@@ -135,6 +135,40 @@ pgrep -fl 'start.sh|compose.*build|buildx'                      # alive?
 
 ---
 
+## 2a · `noctus.vps.*` — the MCP fleet-ops surface (operate over SSH)
+
+The ad-hoc `ssh noctus-vps docker …` ops are consolidated into a tested,
+confirm-gated MCP surface. **Three layers, one rule about where the SSH key
+lives:**
+
+| Layer | Tool(s) | Auth / where it runs |
+|---|---|---|
+| **Build / deliver** | `.github/workflows/build-and-push.yml` → GHCR | GitHub Actions, built-in `GITHUB_TOKEN` — **no SSH key in the cloud** |
+| **Deploy** | `noctus.dev.deploy_pull` (git FF) · `noctus.dev.deploy_image` (image swap + C2 rollback) | **local** MCP runtime, SSH from your machine |
+| **Operate** | `noctus.vps.*` (below) | **local** MCP runtime, SSH from your machine |
+
+**🔒 The methodology rule: the production SSH key never enters CI.** CI only
+builds+pushes images; everything that *touches the box* (deploy + operate) runs
+from the local MCP runtime over SSH, so the key stays in `~/.ssh`. (Rejected: a
+CI deploy job with the root key as a GitHub secret — too high a blast radius.
+Future hardening: a dedicated unprivileged `deploy` user if CI-deploy is ever
+wanted.)
+
+**The surface** (`mcp/noctusai/tools/noctus/dev/vps.py`; default `ssh_host=noctus-vps`):
+- **Read (free):** `ps` (name/image/status/health) · `health` (fleet rollup,
+  `degraded` if any unhealthy) · `logs` (tail + grep) · `inspect`
+  (image/state/health/port) · `images` · `disk` (root use% + `docker system df`)
+  · `stats` (per-container CPU/mem).
+- **Mutate (confirm-gated):** `restart` (stale single-file-mount fix / bounce) ·
+  `recreate` (`compose up -d --force-recreate`) · `prune` (`image prune -f` —
+  **dangling only**, never `-a`, so a tagged `:previous`/running image is never
+  touched).
+
+**Safe by construction:** each op emits a FIXED docker command; mutations are
+confirm-gated; never `rm`/`rmi -a`/`kill`/`down`/`exec-arbitrary` (a colocated
+test asserts no banned token). IO injectable (`run_remote`) for zero-SSH tests.
+Reach for these instead of hand-typing `ssh noctus-vps docker …`.
+
 ## 3 · Known bumps (what to expect, what to do)
 
 Eight learnings codified this session. Each row: **symptom · root · fix

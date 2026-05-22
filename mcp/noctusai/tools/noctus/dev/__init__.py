@@ -64,6 +64,7 @@ def register_all(server) -> None:
     from . import sync_seed_template
     from . import testing
     from . import three_way_sync
+    from . import vps
 
     ai_brain.register(server)
     analyzers.register(server)
@@ -117,6 +118,7 @@ def register_all(server) -> None:
     sync_seed_template.register(server)
     testing.register(server)
     three_way_sync.register(server)
+    vps.register(server)
 
 
 __all__ = ["register_all"]
