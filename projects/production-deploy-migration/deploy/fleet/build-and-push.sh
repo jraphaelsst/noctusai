@@ -150,6 +150,7 @@ if [[ "$PUSH" == "1" ]]; then
   fi
   echo "[fleet] docker login ghcr.io as ${GHCR_USERNAME}"
   echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+  pushed=0
   for slug in "${ALL_SLUGS[@]}"; do
     want "$slug" || continue
     image="${REGISTRY}/noctus-${slug}:${TAG}"
@@ -162,8 +163,9 @@ if [[ "$PUSH" == "1" ]]; then
       docker tag "${image}" "${REGISTRY}/noctus-${slug}:latest"
       docker push "${REGISTRY}/noctus-${slug}:latest"
     fi
+    pushed=$((pushed + 1))
   done
-  echo "[fleet] pushed ${#ALL_SLUGS[@]} product images at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo ' (+ :latest)' )"
+  echo "[fleet] pushed ${pushed} product image(s) at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo ' (+ :latest)' )"
 else
   echo "[fleet] --no-push: built ${#ALL_SLUGS[@]} product images locally (tag ${TAG}), not pushed"
 fi
