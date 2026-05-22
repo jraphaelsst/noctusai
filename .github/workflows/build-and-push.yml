@@ -63,10 +63,10 @@ jobs:
       GHCR_USERNAME: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5  # Node 24 (v4 was Node 20, deprecated)
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3  # @v3 major-pin auto-gets the Node 24 patch
 
       - name: Require VITE secrets (fail-closed — never push a broken-FE image)
         run: |
