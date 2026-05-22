@@ -34,15 +34,18 @@ class TestSymbolScanner:
         """Sanity check: several canonical lib symbols must appear.
 
         Paths reflect the layered layout adopted 2026-04-30 — see
-        `KB § PATTERNS/seed-lib-layout.md`. Old top-level paths like
-        `noctusai_lib.api.auth.*` and `noctusai_lib.primitives.responses.*` are still
-        importable via transitional shims, but the catalog scanner
-        emits the canonical (post-move) module path.
+        `KB § PATTERNS/seed-lib-layout.md`. The catalog scanner emits the
+        canonical path where a symbol is *exported*: `resolve_sso_role` and
+        `first_or_none` are re-exported at the top-level `noctusai_lib`
+        package (post platform-auth-modernization), so the scanner attributes
+        them to `noctusai_lib.<name>`, not the old `noctusai_lib.api.auth.*`
+        (still importable via the transitional shim). Updated 2026-05-22 when
+        this drifted — see deploy-hardening close-out + platform-auth-modernization.
         """
         names = {s.qualified_name for s in scan_lib_symbols()}
         for expected in (
-            "noctusai_lib.api.auth.resolve_sso_role",
-            "noctusai_lib.api.auth.first_or_none",
+            "noctusai_lib.resolve_sso_role",
+            "noctusai_lib.first_or_none",
             "noctusai_lib.primitives.responses.success_response",
             "noctusai_seed.app.create_product_app",
         ):
