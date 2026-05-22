@@ -70,7 +70,7 @@ class FakeRemote:
 
 
 def _run(fake, **kw):
-    return DP.deploy_pull(run_remote=fake, repo_root="/tmp", now=_now, **kw)
+    return DP.deploy_pull(run_remote=fake, now=_now, **kw)
 
 
 # ── status paths ─────────────────────────────────────────────────
@@ -167,9 +167,30 @@ def test_error_when_remote_head_unreadable():
             return (255, "", "ssh: connect to host: Connection refused")
         return (0, "", "")
 
-    r = DP.deploy_pull(run_remote=bad, repo_root="/tmp", now=_now)
+    r = DP.deploy_pull(run_remote=bad, now=_now)
     assert r["status"] == "error" and r["exit_code"] == 1
     assert "cannot read remote HEAD" in r["error"]
+
+
+def test_deploy_local_patterns_from_constant():
+    pats = DP._deploy_local_patterns()
+    assert ".env" in pats and any("tunnel" in p for p in pats)
+
+
+def test_resolve_remote_files_passthrough_and_find():
+    calls = []
+
+    def runner(cmd):
+        calls.append(cmd)
+        if cmd[:1] == ["sh"]:
+            return (0, "./projects/x/deploy/tunnel/abc.json\n", "")
+        return (0, "", "")
+
+    out = DP._resolve_remote_files(runner, "/opt/noctus/noctusai", [".env", "**/tunnel/*.json"])
+    assert ".env" in out  # concrete root file passes through
+    assert "projects/x/deploy/tunnel/abc.json" in out  # find-resolved, ./ stripped
+    # the glob was resolved via `find -path`, NOT a globstar shell glob
+    assert any(c[:1] == ["sh"] and "find" in c[2] for c in calls)
 
 
 def test_tool_registers_with_dotted_name():

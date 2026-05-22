@@ -24,7 +24,7 @@ venv/
 **/tunnel/config.yml
 # cloudflared named-tunnel credentials JSON (<TUNNEL_ID>.json) — a SECRET generated
 # on the VPS by `cloudflared tunnel create`; deploy-local, never committed. Enforces
-# the STATE.json D3 invariant (tunnel/*.json must be gitignored).
+# the deploy_state.py D3 invariant (tunnel/*.json must be gitignored).
 **/tunnel/*.json
 
 # Build

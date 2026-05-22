@@ -35,16 +35,12 @@ zero real SSH, and asserts the destructive-command allowlist holds.
 from __future__ import annotations
 
 import datetime as _dt
-import json
-import pathlib
 import re
 import shlex
 import subprocess
 from typing import Any, Callable
 
-from settings import REPO_ROOT
-
-from .predeploy_check import _find_state_json  # DRY: shared manifest finder
+from deploy_state import DEPLOY_LOCAL_FILES
 
 # git subcommands the tool is allowed to run remotely. The drill NEVER needs
 # reset/checkout/clean/push — keeping them off this list makes a destructive
@@ -98,31 +94,36 @@ def _parse_status_paths(status_short: str) -> list[str]:
     return out
 
 
-def _deploy_local_rel_paths(root: pathlib.Path, state_path: str | None) -> list[str]:
-    """Deploy-local file paths from STATE.json (repo-relative — valid as-is
-    against the VPS checkout). These are what C1 backs up on the remote."""
-    state = pathlib.Path(state_path) if state_path else _find_state_json(root)
-    if state is None or not state.exists():
-        return []
-    try:
-        data = json.loads(state.read_text())
-    except (json.JSONDecodeError, OSError):
-        return []
-    return [e["path"] for e in data.get("deploy_local_files", []) if e.get("path")]
+def _deploy_local_patterns() -> list[str]:
+    """The deploy-local gitignore-style patterns (the deploy_state constant —
+    durable, can't be lost to an archive). These are what C1 backs up; they are
+    resolved to concrete files on the remote."""
+    return [e["pattern"] for e in DEPLOY_LOCAL_FILES if e.get("pattern")]
 
 
-def _resolve_remote_globs(runner, repo_dir: str, rel_paths: list[str]) -> list[str]:
-    """Expand glob entries (e.g. tunnel/*.json) remote-side via `sh -c ls` so
-    tar gets concrete names. Concrete paths pass through (tar uses
-    --ignore-failed-read for any that are absent)."""
+def _resolve_remote_files(runner, repo_dir: str, patterns: list[str]) -> list[str]:
+    """Resolve gitignore-style patterns to concrete repo-relative files on the
+    remote. A root-level concrete name (`.env`) passes through; a path glob
+    (`**/tunnel/*.json`) is resolved with `find -path` — robust, no reliance on
+    the remote shell's globstar. tar later uses --ignore-failed-read for absent
+    ones."""
     resolved: list[str] = []
-    for p in rel_paths:
-        if "*" in p:
-            script = f"cd {shlex.quote(repo_dir)} && ls -1 {p} 2>/dev/null || true"
-            _rc, out, _e = runner(["sh", "-c", script])
-            resolved.extend(x.strip() for x in out.splitlines() if x.strip())
-        else:
-            resolved.append(p)
+    for p in patterns:
+        if "*" not in p and "/" not in p:
+            resolved.append(p)  # root-level concrete file, e.g. .env
+            continue
+        suffix = p.replace("**/", "")  # tunnel/config.yml | tunnel/*.json
+        script = (
+            f"cd {shlex.quote(repo_dir)} && "
+            f"find . -path {shlex.quote('./*/' + suffix)} -type f 2>/dev/null"
+        )
+        _rc, out, _e = runner(["sh", "-c", script])
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("./"):
+                line = line[2:]
+            if line:
+                resolved.append(line)
     return resolved
 
 
@@ -152,9 +153,7 @@ def deploy_pull(
     repo_dir: str = "/opt/noctus/noctusai",
     confirm: bool = False,
     backup_dir: str = "/opt/noctus/backups",
-    state_path: str | None = None,
     run_remote: Callable[[list[str]], tuple[int, str, str]] | None = None,
-    repo_root: str | None = None,
     now: Callable[[], _dt.datetime] | None = None,
 ) -> dict[str, Any]:
     """The §2a drill as a function. Dry-run unless `confirm`. Returns a
@@ -162,7 +161,6 @@ def deploy_pull(
     error}. Never raises on a refusal — it returns it (no silent errors)."""
     runner = run_remote or (lambda cmd: _default_run_remote(ssh_host, cmd))
     clock = now or _dt.datetime.utcnow
-    root = pathlib.Path(repo_root) if repo_root else pathlib.Path(REPO_ROOT)
 
     def git(*args):
         return _git(runner, repo_dir, *args)
@@ -230,7 +228,7 @@ def deploy_pull(
     backup_ref = f"backup/predeploy-{utc}"
     git("tag", "-f", backup_ref, "HEAD")
     backup_tar: str | None = None
-    resolved = _resolve_remote_globs(runner, repo_dir, _deploy_local_rel_paths(root, state_path))
+    resolved = _resolve_remote_files(runner, repo_dir, _deploy_local_patterns())
     if resolved:
         tarpath = f"{backup_dir}/{utc}.tgz"
         runner(["mkdir", "-p", backup_dir])

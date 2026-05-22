@@ -29,12 +29,12 @@ pattern). The default `run_check` shells out (mirrors `noctus.dev.vite_build`
 from __future__ import annotations
 
 import datetime as _dt
-import json
 import pathlib
 import re
 import subprocess
 from typing import Any, Callable
 
+from deploy_state import DEPLOY_LOCAL_FILES
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -46,7 +46,7 @@ DEFAULT_CHECKS: list[str] = [
     "framework_deps",
     "frontend_build",
     "backend_tests",
-    "deploy_local_gitignored",  # D3 — every deploy-local file in STATE.json is gitignored
+    "deploy_local_gitignored",  # D3 — every deploy_state.DEPLOY_LOCAL_FILES pattern is gitignored
 ]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
@@ -117,11 +117,11 @@ _KNOWN: list[dict[str, Any]] = [
             "A deploy-local file (filled-in-place on the VPS — tunnel config.yml, "
             "creds *.json, root .env) is git-tracked or not gitignored, so a "
             "`git pull` on the production box could clobber it (the §2a P4/D3 net). "
-            "The invariant lives in deploy/STATE.json."
+            "The manifest lives in deploy_state.DEPLOY_LOCAL_FILES."
         ),
         "suggested_fix": (
             "git rm --cached <path> + add the path (or its **/ glob) to .gitignore, "
-            "then re-render the file in-place on the box. See deploy/STATE.json + "
+            "then re-render the file in-place on the box. See deploy_state.py + "
             "KB § GUIDES/production-deploy.md § 2a (P4/D3)."
         ),
         "auto_fixable": False,
@@ -148,11 +148,11 @@ def classify_failure(output: str) -> dict[str, Any] | None:
     return None
 
 
-# ── D3 deploy-state manifest assertion (deploy/STATE.json) ─────────
+# ── D3 deploy-state manifest assertion (deploy_state.DEPLOY_LOCAL_FILES) ──
 # The §2a safety-net D3: every deploy-local file (filled-in-place on the VPS)
-# MUST be gitignored so a pull cannot touch it BY CONSTRUCTION. This makes
-# predeploy_check actually ASSERT the manifest the Phase-2 work shipped
-# (previously read "conceptually" but never enforced).
+# MUST be gitignored so a pull cannot touch it BY CONSTRUCTION. The manifest is
+# a code constant (deploy_state.py) — durable, can't be lost to an archive — so
+# this gate ALWAYS runs (it cannot silently skip on a missing file).
 def _default_run_git(root: pathlib.Path, args: list[str]) -> tuple[int, str]:
     """(returncode, stdout) for `git -C <root> <args>`. Injectable in
     audit_deploy_local so the test exercises every branch with zero real git."""
@@ -160,50 +160,32 @@ def _default_run_git(root: pathlib.Path, args: list[str]) -> tuple[int, str]:
     return r.returncode, (r.stdout or "")
 
 
-def _find_state_json(root: pathlib.Path) -> pathlib.Path | None:
-    """Locate the deploy-state manifest (`**/deploy/STATE.json`), skipping
-    archive/ and agent worktrees so we read the live one. None if absent."""
-    for cand in sorted(root.glob("**/deploy/STATE.json")):
-        s = str(cand)
-        if "/archive/" in s or "/.claude/worktrees/" in s:
-            continue
-        return cand
-    return None
-
-
 def audit_deploy_local(
     root: pathlib.Path,
     run_git: Callable[[pathlib.Path, list[str]], tuple[int, str]] | None = None,
-    state_path: str | None = None,
+    entries: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Assert every `deploy_local_files[].path` (with must_be_gitignored) in
-    STATE.json is (a) NOT tracked and (b) covered by a gitignore rule. Glob
-    paths (e.g. `tunnel/*.json`) are handled — ls-files glob-expands, and the
-    ignore probe substitutes a placeholder for `*`. Returns
-    {manifest, checked, violations}. No manifest ⇒ checked=0 (caller skips)."""
+    """Assert every `deploy_state.DEPLOY_LOCAL_FILES` pattern is (a) NOT tracked
+    and (b) covered by a gitignore rule. Patterns are gitignore-style globs
+    (e.g. `**/tunnel/*.json`) — `git ls-files` pathspec finds any tracked match,
+    and the ignore probe substitutes a placeholder for `*`. Returns
+    {source, checked, violations}. `entries` is injectable for the test."""
     run = run_git or _default_run_git
-    state = pathlib.Path(state_path) if state_path else _find_state_json(root)
-    if state is None or not state.exists():
-        return {"manifest": None, "checked": 0, "violations": []}
-    try:
-        data = json.loads(state.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        return {"manifest": str(state), "checked": 0, "violations": [f"STATE.json unreadable: {e}"]}
-    entries = [e for e in data.get("deploy_local_files", []) if e.get("must_be_gitignored")]
+    manifest = entries if entries is not None else DEPLOY_LOCAL_FILES
     violations: list[str] = []
-    for e in entries:
-        path = (e.get("path") or "").strip()
-        if not path:
+    for e in manifest:
+        pattern = (e.get("pattern") or "").strip()
+        if not pattern:
             continue
-        _rc_ls, out_ls = run(root, ["ls-files", "--", path])
+        _rc_ls, out_ls = run(root, ["ls-files", "--", pattern])
         if out_ls.strip():
-            violations.append(f"{path} is TRACKED — must be gitignored (D3)")
+            violations.append(f"{pattern} is TRACKED — must be gitignored (D3)")
             continue
-        probe = path.replace("*", "__probe__")
+        probe = pattern.replace("*", "__probe__")
         rc_ci, _ = run(root, ["check-ignore", "-q", "--", probe])
         if rc_ci != 0:
-            violations.append(f"{path} is NOT gitignored — a future write could be committed (D3)")
-    return {"manifest": str(state), "checked": len(entries), "violations": violations}
+            violations.append(f"{pattern} is NOT gitignored — a future write could be committed (D3)")
+    return {"source": "deploy_state.DEPLOY_LOCAL_FILES", "checked": len(manifest), "violations": violations}
 
 
 def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bool, str]:
@@ -230,12 +212,11 @@ def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bo
         return r.returncode == 0, (r.stdout + r.stderr)
     if check == "deploy_local_gitignored":
         # Platform-wide invariant (product arg unused): D3 manifest assertion.
+        # The manifest is a code constant, so this always runs (never skips).
         audit = audit_deploy_local(root)
-        if audit["manifest"] is None:
-            return True, "no deploy/STATE.json manifest found — D3 deploy-local invariant not asserted"
         if audit["violations"]:
             return False, "D3 deploy-local invariant VIOLATED: " + "; ".join(audit["violations"])
-        return True, f"D3 ok — {audit['checked']} deploy-local file(s) gitignored ({audit['manifest']})"
+        return True, f"D3 ok — {audit['checked']} deploy-local pattern(s) gitignored (deploy_state.py)"
     return False, f"unknown check '{check}'"
 
 

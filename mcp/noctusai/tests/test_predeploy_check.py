@@ -134,64 +134,51 @@ def test_tool_registers_with_dotted_name():
 
 
 # ── D3 deploy-local-gitignored assertion (audit_deploy_local) ─────
-# run_git is injected (root, args) -> (returncode, stdout); zero real git.
-import json as _json  # noqa: E402
-
-
-def _manifest(tmp_path, paths):
-    m = {
-        "version": 1,
-        "deploy_local_files": [
-            {"path": p, "must_be_gitignored": True, "reason": "test"} for p in paths
-        ],
-    }
-    f = tmp_path / "STATE.json"
-    f.write_text(_json.dumps(m))
-    return str(f)
+# The manifest is now a code constant (deploy_state.DEPLOY_LOCAL_FILES); the
+# audit takes `entries` for injection and run_git for zero-real-git tests.
+_E = [{"pattern": ".env"}, {"pattern": "**/tunnel/config.yml"}, {"pattern": "**/tunnel/*.json"}]
 
 
 def test_deploy_local_in_default_checks():
     assert "deploy_local_gitignored" in PC.DEFAULT_CHECKS
 
 
-def test_audit_deploy_local_clean(tmp_path):
-    sp = _manifest(tmp_path, [".env", "deploy/tunnel/config.yml", "deploy/tunnel/*.json"])
+def test_audit_uses_the_constant_by_default():
+    from deploy_state import DEPLOY_LOCAL_FILES  # noqa: E402
+
+    audit = PC.audit_deploy_local(
+        Path("/tmp"), run_git=lambda root, args: (0, "")
+    )  # all clean
+    assert audit["source"] == "deploy_state.DEPLOY_LOCAL_FILES"
+    assert audit["checked"] == len(DEPLOY_LOCAL_FILES) and audit["violations"] == []
+
+
+def test_audit_deploy_local_clean():
     # not tracked (ls-files empty) + ignored (check-ignore rc 0)
     audit = PC.audit_deploy_local(
-        Path("/tmp"),
-        run_git=lambda root, args: (0, "") if args[0] == "ls-files" else (0, ""),
-        state_path=sp,
+        Path("/tmp"), run_git=lambda root, args: (0, ""), entries=_E
     )
     assert audit["checked"] == 3 and audit["violations"] == []
 
 
-def test_audit_deploy_local_tracked_is_violation(tmp_path):
-    sp = _manifest(tmp_path, [".env"])
-
+def test_audit_deploy_local_tracked_is_violation():
     def run_git(root, args):
         if args[0] == "ls-files":
             return (0, ".env\n")  # tracked!
         return (0, "")
 
-    audit = PC.audit_deploy_local(Path("/tmp"), run_git=run_git, state_path=sp)
+    audit = PC.audit_deploy_local(Path("/tmp"), run_git=run_git, entries=[{"pattern": ".env"}])
     assert audit["violations"] and "TRACKED" in audit["violations"][0]
 
 
-def test_audit_deploy_local_not_ignored_is_violation(tmp_path):
-    sp = _manifest(tmp_path, [".env"])
-
+def test_audit_deploy_local_not_ignored_is_violation():
     def run_git(root, args):
         if args[0] == "ls-files":
             return (0, "")  # not tracked
         return (1, "")  # check-ignore MISS → not gitignored
 
-    audit = PC.audit_deploy_local(Path("/tmp"), run_git=run_git, state_path=sp)
+    audit = PC.audit_deploy_local(Path("/tmp"), run_git=run_git, entries=[{"pattern": ".env"}])
     assert audit["violations"] and "NOT gitignored" in audit["violations"][0]
-
-
-def test_audit_deploy_local_no_manifest_skips(tmp_path):
-    audit = PC.audit_deploy_local(Path("/tmp"), state_path=str(tmp_path / "absent.json"))
-    assert audit["manifest"] is None and audit["checked"] == 0 and audit["violations"] == []
 
 
 def test_classify_deploy_local_violation_is_known():
@@ -214,10 +201,10 @@ def test_d3_violation_blocks_via_injected_run_check():
 
 
 def test_audit_deploy_local_real_repo_passes():
-    """Read-only smoke against the live tree: the repo's own deploy-local
-    files are gitignored, so the real manifest must show zero violations."""
+    """Read-only smoke against the live tree with the REAL constant: the repo's
+    own deploy-local files are gitignored, so the audit must show zero
+    violations (the gate would block a real deploy otherwise)."""
     from settings import REPO_ROOT  # noqa: E402
 
     audit = PC.audit_deploy_local(Path(REPO_ROOT))
-    if audit["manifest"] is not None:
-        assert audit["violations"] == [], audit["violations"]
+    assert audit["violations"] == [], audit["violations"]
