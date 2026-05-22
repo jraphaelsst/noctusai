@@ -16,6 +16,13 @@ venv/
 .env.services
 # NOTE: .env.example / .env.services.example are NOT ignored — templates with placeholder values, not secrets
 
+# Deploy-local RENDERED files — filled-in-place on the VPS from a tracked *.template.
+# Gitignored so a `git pull` can NEVER touch the live tunnel config by construction
+# (the "nothing-to-clobber" net, deploy-hardening Phase 2 / P4). The TEMPLATE
+# (config.yml.template, placeholders only — no secrets) stays tracked.
+# See KB § GUIDES/production-deploy.md § 2a and that project's PROJECT.md Phase 2.
+**/tunnel/config.yml
+
 # Build
 dist/
 build/

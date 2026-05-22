@@ -1,11 +1,18 @@
-# config.yml — cloudflared NAMED-tunnel config (template + worked example).
+# config.yml.template — TRACKED template for the cloudflared NAMED-tunnel config.
 #
-# This is the file cloudflared reads inside the container
-# (`tunnel --no-autoupdate run`, mounted at /etc/cloudflared/config.yml).
+# ⚠️ THIS FILE IS THE TEMPLATE (placeholders only — no secrets, safe in git).
+# The RENDERED file `config.yml` (this dir, same name minus `.template`) is
+# what cloudflared actually reads (mounted at /etc/cloudflared/config.yml) and
+# is **gitignored** (`**/tunnel/config.yml`) so it is filled-in-place on the
+# VPS and a `git pull` can never clobber the live tunnel config — the
+# "nothing-to-clobber" net (deploy-hardening Phase 2 / P4). Render once on the
+# VPS:  `cp config.yml.template config.yml` then fill the two <PLACEHOLDERS>
+# (or `TUNNEL_ID=… CRED_PATH=… envsubst < config.yml.template > config.yml`).
+#
 # It is DERIVED from ingress.yml — when you remap a slug there, regenerate
 # the `ingress:` block below and re-apply (see README.md).
 #
-# Replace the two <PLACEHOLDERS>:
+# Replace the two <PLACEHOLDERS> when rendering:
 #   <TUNNEL_ID>  — UUID printed by `cloudflared tunnel create <name>`.
 #   <PATH>       — path to the tunnel credentials JSON (in-container path).
 #

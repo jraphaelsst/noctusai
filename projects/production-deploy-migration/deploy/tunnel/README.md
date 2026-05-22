@@ -15,9 +15,31 @@ Files in this dir:
 | File | Role |
 |---|---|
 | `ingress.yml` | THE map (hostname → `service:port`). Edit this. |
-| `config.yml` | cloudflared named-tunnel config (derived from `ingress.yml`). |
+| `config.yml.template` | **TRACKED** template (placeholders, no secrets) for the cloudflared config, derived from `ingress.yml`. |
+| `config.yml` | **GITIGNORED** rendered file cloudflared reads — filled-in-place on the VPS; a pull cannot touch it (deploy-hardening P4). |
 | `compose.tunnel.yml` | runs the named tunnel on the VPS, on `noctus-net`. |
 | `README.md` | this runbook. |
+
+> **Why the template/rendered split (Phase 2 / P4 — "nothing-to-clobber").**
+> Before, `config.yml` was git-tracked *and* edited-in-place on the VPS, so it
+> showed `M` on every `git status` and every pull had to "dance around" it —
+> one wrong `git reset --hard` / `git checkout --` would wipe the live tunnel
+> config. Now the rendered `config.yml` is **gitignored**, so a pull *cannot*
+> modify or delete it by construction (root fix > careful procedure). The
+> tracked artifact is `config.yml.template` (placeholders only).
+>
+> **One-time VPS migration** (run on the VPS the first time you pull the commit
+> that introduces this split — do NOT skip the back-up):
+> ```bash
+> cd <repo>/projects/production-deploy-migration/deploy/tunnel
+> cp config.yml /tmp/config.yml.live          # 1. back up the live filled config
+> mv config.yml /tmp/config.yml.staging        # 2. move it aside so the pull is clean
+> git -C <repo> pull --ff-only origin <branch> # 3. ff-only pull (now config.yml is gone+ignored)
+> mv /tmp/config.yml.staging config.yml        # 4. restore the live config (now untracked/ignored)
+> git -C <repo> status --short .               # 5. verify: config.yml does NOT appear (ignored ✓)
+> docker compose -f compose.tunnel.yml up -d --force-recreate   # 6. reload tunnel; confirm logs
+> ```
+> From then on the rendered `config.yml` is invisible to git forever.
 
 ---
 

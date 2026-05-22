@@ -3,8 +3,8 @@
 > Living document. Born 2026-05-21 from the production-deploy session: the user asked to (a) codify a safe VPS code-sync methodology, (b) add creative defense-in-depth so production code can never be damaged/reversed/half-deployed, (c) implement a pre-deploy verification gate that *learns* from failures, and (d) separate dev from prod data — currently local dev and the VPS share ONE Supabase project.
 
 - **Created:** 2026-05-21
-- **Last updated:** 2026-05-21
-- **Status:** Phase 1 shipped (safety-net doc) → Phases 2–6 designed, **blocked on 2 user forks** (§7 Q1 DB approach, Q2 branch model) 🅿️
+- **Last updated:** 2026-05-22
+- **Status:** Phases 1 ✅ · 5 ✅ (resolved-by-decision) · 6 ✅ (Supabase MCP) · 2 ✅ (de-track, repo-side) shipped. Phase 3 (prod branch) repo-side + handoff in progress; Phase 4 (predeploy_check) in build. §7 Q1 ✅, Q2 ✅ (user → dedicated `prod` branch).
 - **Owner / stakeholders:** Rapha (devops learner — teach-while-doing) · Claude
 - **Related docs:** `KB § GUIDES/production-deploy.md` (§2a drill + safety-net stack — the authority) · `KB § PATTERNS/containerization.md § 12b` · `[[reference_production_deploy_runbook]]` · `CLAUDE/platform.md` (MCP-first)
 - **Project slug:** `deploy-hardening-and-dev-isolation` (root `projects/` — cross-cutting: deploy methodology + seed DB layer + new MCP connector + dev toolkit)
@@ -97,10 +97,15 @@ Win = a deploy pipeline where no single mistake can damage prod, only-functional
 - The destructive-command ban is a **deterministic predicate** (scan deploy GUIDEs/runbooks/scripts for `reset --hard origin` ∨ `checkout -- <deploy-local>` framed as a sync step) → Stage-4 keeper codification candidate once a 2nd deploy target exists (`s1→s4`, `KB § PATTERNS/methodology-codification-pipeline.md`).
 - §2a now lives canonically in the GUIDE while `[[reference_production_deploy_runbook]]` carries a compressed mirror → a known three-way-sync drift touchpoint; future §2a edits must update both (or trim the memory to a pure pointer).
 
-### Phase 2 — De-track deploy-local files (P4) 🅿️ (low-risk; can start independently)
-- [ ] gitignore `config.yml`; add `config.yml.template`; render-on-deploy from `.env`
-- [ ] migrate the live VPS copy (back up current `config.yml` → untrack → render → verify tunnel unaffected)
-- [ ] D3 `deploy/STATE.json` manifest + drill diff
+### Phase 2 — De-track deploy-local files (P4) ✅ (2026-05-22; repo-side; VPS one-time migration handed off)
+- [x] gitignore the rendered `config.yml` (`**/tunnel/config.yml`); rename tracked `config.yml` → `config.yml.template` (placeholders, no secrets); render-on-deploy documented (`cp`/`envsubst`)
+- [x] document the safe one-time VPS migration (back-up → move-aside → `ff-only` pull → restore → verify ignored → reload tunnel) in `deploy/tunnel/README.md` — *execution is a VPS deploy action (§8); the rendered `config.yml` is now structurally un-clobberable*
+- [x] D3 `deploy/STATE.json` manifest (deploy-local paths + `must_be_gitignored` + the destructive-command-ban invariant) — consumed by the §2a drill + `predeploy_check` (Phase 4)
+
+**Improvements:**
+- The fix is **structural, not procedural** — gitignoring the rendered file means even a wrong `reset --hard`/`checkout --` can't touch it (design principle 2 realized). The remaining residual risk is the *one-time* migration pull on the VPS (the file is still tracked there until that pull) — bounded by the documented back-up-first step; after it, the risk is gone forever.
+- `STATE.json`'s invariants are **deterministic predicates** (`git check-ignore` HIT for each path; no `reset --hard origin`/`checkout -- <deploy-local>` framed as a sync step in deploy docs) → the same Stage-4 keeper candidate flagged in Phase 1's Improvements; `predeploy_check` (Phase 4) is the first consumer, a standalone keeper follows once a 2nd deploy target exists.
+- `envsubst` render is offered as an *option* but the manual `cp`+fill is the documented default (the tunnel isn't live yet — Caddy is the current edge — so an automated renderer is premature; revisit at the Caddy→tunnel cutover).
 
 ### Phase 3 — `prod` promote-branch (P3) 🅿️ (blocked on §7 Q2)
 - [ ] create `prod` off `main`; GitHub branch protection on `prod`+`main`
@@ -172,3 +177,5 @@ Win = a deploy pipeline where no single mistake can damage prod, only-functional
 | 2026-05-21 | §7 Q1 RESOLVED → local Supabase stack (user chose B after the PostgREST-vs-SQLite architecture finding). Phase 5 detailed. Starting build: Phase 6 (self-owned Supabase MCP) dispatched. | Claude |
 | 2026-05-21 | **Phase 6 ✅ shipped** (`mcp/supabase`, commit `31fc8178`; 23 tests green). **Phase 5 🅿️ DEFERRED:** local stack rolls back under Docker 29.4.3 health-gates; free cloud dev project blocked by the 2-active-free-project cap (both slots are live apps — `create_project` failed with the limit error). User chose to keep developing on the NoctusAI project for now ("we're on the right direction"). Resume via Pro (~$25/mo cloud dev project) OR Docker-28 OR a Supabase-CLI fix for Docker 29. Caveat carried: local dev still shares prod DB until resumed. Also shipped this session: explanation-as-signal listener (commit `5ff6bd1a`). | Claude |
 | 2026-05-21 | **Phase 5 → RESOLVED-BY-DECISION ✅** (user: no pay, no 3rd project, "just reshape them"). MCP-verified the 2-project architecture is ALREADY correctly wired — noc fleet → `noctusai` (control-plane tables, RLS on); legacy → `One Permutas` (Django tables; container anon-key ref confirmed). Nothing to reshape; separate-dev-DB descoped; dev runs on `noctusai`; isolation escape-hatches documented (not blocking). **🔴 SECURITY surfaced (not auto-fixed):** One Permutas has RLS disabled on all 27 tables + anon key in the public React bundle → legacy property-owner data (LGPD) publicly read/writable; remediation presented, named destination = user's one-permutas project. Used managed Supabase MCP for inspection; our own `mcp/supabase` awaits a PAT for live use. | Claude |
+| 2026-05-22 | **Credential-class correction (verified vs tree):** root `.env` holds `SUPABASE_{ANON,SERVICE_ROLE}_KEY` = `eyJhbG…` JWTs (data-API keys for PostgREST), NOT a Management PAT (`sbp_…`); no `sbp_` token in any `.env`. Our `mcp/supabase` connector (Management API) can't use the existing key → stays Fake/awaiting-PAT; the managed Supabase MCP (account-OAuth, no `.env` key) is the working door, used for all DB ops this session. Also noted: org has 5 projects, 2 ACTIVE (`NoctusAI`, `One Permutas`), 3 paused — consistent w/ the Phase-5 cap finding. | Claude |
+| 2026-05-22 | **Phase 2 ✅ (repo-side).** De-tracked the rendered tunnel `config.yml` → gitignored `**/tunnel/config.yml`; tracked artifact is now `config.yml.template` (placeholders only). Added `deploy/STATE.json` (D3 deploy-local manifest + invariants) + the safe one-time VPS migration runbook in `deploy/tunnel/README.md`. "Nothing-to-clobber" is now structural; VPS migration execution handed off (§8). | Claude |
