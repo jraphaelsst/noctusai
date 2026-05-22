@@ -51,13 +51,19 @@ REGISTRY="ghcr.io/jraphaelsst"
 TAG="${NOCTUS_IMAGE_TAG:-latest}"
 PUSH=1
 BUILD_BASE=1
+ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring)
+REQUESTED=()   # optional subset of product slugs to build/push (default: all)
 for arg in "$@"; do
   case "$arg" in
     --no-push) PUSH=0 ;;
     --no-base) BUILD_BASE=0 ;;
-    *) echo "unknown arg: $arg" >&2; exit 2 ;;
+    --*) echo "unknown flag: $arg" >&2; exit 2 ;;
+    *) if printf '%s\n' "${ALL_SLUGS[@]}" | grep -qx "$arg"; then REQUESTED+=("$arg")
+       else echo "unknown product slug: $arg (valid: ${ALL_SLUGS[*]})" >&2; exit 2; fi ;;
   esac
 done
+# want <slug> → true iff no subset was requested, or <slug> is in the subset.
+want() { [[ ${#REQUESTED[@]} -eq 0 ]] || printf '%s\n' "${REQUESTED[@]}" | grep -qx "$1"; }
 
 # ── VITE_* build args (BAKED into the bundle at build time) ────────────
 # Names mirror each product's docker-compose.yml `args:` block (ground
@@ -115,24 +121,27 @@ build_product() {
     .
 }
 
-build_product core \
-  "${COMMON_VITE_ARGS[@]}" \
-  --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}"
+if want core; then
+  build_product core \
+    "${COMMON_VITE_ARGS[@]}" \
+    --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}"
+fi
 
-build_product erp-imobiliario \
-  "${COMMON_VITE_ARGS[@]}" \
-  --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}" \
-  --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
+if want erp-imobiliario; then
+  build_product erp-imobiliario \
+    "${COMMON_VITE_ARGS[@]}" \
+    --build-arg "VITE_CORE_API_URL=${VITE_CORE_API_URL}" \
+    --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
+fi
 
 for slug in personal-finance therapy-platform daily-life adconnect dev-team social-wiring; do
+  want "$slug" || continue
   build_product "$slug" \
     "${COMMON_VITE_ARGS[@]}" \
     --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
 done
 
 # ── 3. login + push ───────────────────────────────────────────────────
-ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring)
-
 if [[ "$PUSH" == "1" ]]; then
   if [[ -z "${GHCR_USERNAME:-}" || -z "${GHCR_TOKEN:-}" ]]; then
     echo "ERROR: GHCR_USERNAME / GHCR_TOKEN must be set to push." >&2
@@ -142,6 +151,7 @@ if [[ "$PUSH" == "1" ]]; then
   echo "[fleet] docker login ghcr.io as ${GHCR_USERNAME}"
   echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
   for slug in "${ALL_SLUGS[@]}"; do
+    want "$slug" || continue
     image="${REGISTRY}/noctus-${slug}:${TAG}"
     echo "[fleet] pushing ${image}"
     docker push "${image}"

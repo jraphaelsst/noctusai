@@ -38,6 +38,10 @@ on:
         description: "Image tag (default: short git sha). :latest is always moved too."
         required: false
         default: ""
+      products:
+        description: "Space-separated product slugs to build (default: all 8). e.g. 'social-wiring' for a ~3-min targeted test."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -71,13 +75,14 @@ jobs:
             exit 1
           fi
 
-      - name: Build + push (seed bases + 8 product images)
+      - name: Build + push (seed bases + product images)
         run: |
           set -euo pipefail
           TAG="${{ github.event.inputs.image_tag }}"
           if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
-          echo "Building + pushing fleet at tag: $TAG (+ :latest)"
-          NOCTUS_IMAGE_TAG="$TAG" bash projects/production-deploy-migration/deploy/fleet/build-and-push.sh
+          PRODUCTS="${{ github.event.inputs.products }}"
+          echo "Building + pushing at tag: $TAG (+ :latest) — products: ${PRODUCTS:-ALL}"
+          NOCTUS_IMAGE_TAG="$TAG" bash projects/production-deploy-migration/deploy/fleet/build-and-push.sh $PRODUCTS
 
       - name: Summary
         if: always()
