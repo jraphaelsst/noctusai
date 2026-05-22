@@ -4,13 +4,16 @@
 #
 # For the full setup (hooks + venv + deps), use: bash scripts/setup.sh
 #
-# The only hook installed is `pre-commit`, which:
-#   1. Syncs seed → template if products/seed/ is staged.
-#   2. Regenerates KB count blocks and stages them.
-#   3. Verifies CLAUDE.md ↔ KB INDEX sync (blocking).
+# Hooks installed:
+#   pre-commit — 1. Syncs seed → template if products/seed/ is staged.
+#                2. Regenerates KB count blocks and stages them.
+#                3. Verifies CLAUDE.md ↔ KB INDEX sync (blocking).
+#   pre-push   — client-side branch protection: refuses force-push +
+#                deletion of main/prod (free equivalent of GitHub branch
+#                protection, which needs Pro on a private repo).
 #
-# The canonical script lives at scripts/hooks/pre-commit — the hook is a symlink
-# so edits to scripts/hooks/pre-commit take effect without re-installing.
+# Canonical scripts live at scripts/hooks/{pre-commit,pre-push} — the hooks are
+# symlinks so edits take effect without re-installing.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -24,6 +27,14 @@ rm -f "$HOOKS_DIR/pre-commit"
 ln -s "$REPO_ROOT/scripts/hooks/pre-commit" "$HOOKS_DIR/pre-commit"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-commit"
 echo "  pre-commit: seed→template sync + KB counts + KB sync check"
+
+# ─── pre-push: client-side branch protection (deploy-hardening P3).
+# Blocks force-push + deletion of main/prod (the free equivalent of
+# GitHub branch protection, which needs Pro on a private repo).
+rm -f "$HOOKS_DIR/pre-push"
+ln -s "$REPO_ROOT/scripts/hooks/pre-push" "$HOOKS_DIR/pre-push"
+chmod +x "$REPO_ROOT/scripts/hooks/pre-push"
+echo "  pre-push: refuse force-push/deletion of main + prod"
 
 # ─── Remove legacy post-commit hook (seed sync moved to pre-commit)
 if [[ -f "$HOOKS_DIR/post-commit" && ! -L "$HOOKS_DIR/post-commit" ]]; then

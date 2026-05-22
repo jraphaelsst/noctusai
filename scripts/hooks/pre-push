@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# pre-push — client-side branch protection (deploy-hardening P3).
+#
+# GitHub server-side branch protection / rulesets need Pro on a PRIVATE
+# repo (free-private = 403). This hook is the free, local equivalent: it
+# refuses the two DESTRUCTIVE operations on the protected branches
+# (main, prod) — force-push (non-fast-forward) and deletion — so a wrong
+# command can't rewrite or erase production history. Normal fast-forward
+# pushes pass untouched.
+#
+# Bypass (rare, deliberate): `git push --no-verify` skips all hooks.
+# Carve-out: [carve:hook] — git-hook entry; logic is git-native + thin.
+# See KB § GUIDES/production-deploy.md § 2b and
+# projects/deploy-hardening-and-dev-isolation/PROJECT.md Phase 3.
+# ──────────────────────────────────────────────────────────────
+set -euo pipefail
+
+PROTECTED_RE='^refs/heads/(main|prod)$'
+ZERO_RE='^0+$'   # all-zero OID = a delete (SHA-1 or SHA-256)
+blocked=0
+
+# stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)
+while read -r local_ref local_oid remote_ref remote_oid; do
+    [[ "$remote_ref" =~ $PROTECTED_RE ]] || continue
+    branch="${remote_ref#refs/heads/}"
+
+    # 1) deletion — local side is the zero OID
+    if [[ "$local_oid" =~ $ZERO_RE ]]; then
+        echo "🔴 pre-push: refusing to DELETE protected branch '$branch'." >&2
+        echo "   Production history is preserved by design (P3)." >&2
+        blocked=1
+        continue
+    fi
+
+    # 2) force-push — remote tip exists but is NOT an ancestor of the new tip
+    if [[ ! "$remote_oid" =~ $ZERO_RE ]]; then
+        if ! git merge-base --is-ancestor "$remote_oid" "$local_oid" 2>/dev/null; then
+            echo "🔴 pre-push: refusing NON-FAST-FORWARD (force) push to '$branch'." >&2
+            echo "   This would rewrite/rewind production history." >&2
+            echo "   If truly intended, re-run with: git push --no-verify" >&2
+            blocked=1
+        fi
+    fi
+done
+
+if [[ "$blocked" -ne 0 ]]; then
+    echo "" >&2
+    echo "pre-push BLOCKED (deploy-hardening client-side branch protection)." >&2
+    exit 1
+fi
+exit 0

@@ -82,8 +82,11 @@ Rule of thumb: **CLI = your hands-on local-dev driver; this MCP = the lever the 
   one project · `POST .../database/query` body `{query (req),
   parameters?, read_only?}` → result-set · `GET .../database/migrations`
   → applied set · `POST .../database/migrations` body `{query (req),
-  name?, rollback?}` → applies + records. ⏳ **LIVE validation deferred**
-  until the user pastes a token.
+  name?, rollback?}` → applies + records. ✅ **LIVE-validated 2026-05-22**
+  (PAT pasted): the `request_json` seam authed OK (5 projects visible) ·
+  `project.get` on the default `noctusai` ref · `db.query` read
+  (`select count(*) from organizations` → 15) all returned live data
+  through the connector's own code path.
 
 ## Architecture
 
@@ -127,9 +130,12 @@ config.
 Access Token, **secret ∧ high-privilege**) + `SUPABASE_PROJECT_REF` (the
 default project-scoped ref, ¬ a secret; per-call override). Co-located,
 **independent of the product/root `.env`** (every-connector-owns-its-auth-store,
-`KB § INTEGRATIONS/vista.md § 1`). The token slot was EMPTY at build (the
-user pastes it later) ⇒ run the diagnostic + reads once added. Create a
-PAT at `supabase.com/dashboard/account/tokens` (Account → Access Tokens →
+`KB § INTEGRATIONS/vista.md § 1`). The token slot was EMPTY at build; a
+real PAT was pasted + wired to `mcp/supabase/.env` 2026-05-22 (default
+ref `nyplttplcoyiiqjrvtiw` = `noctusai`) ∧ live-validated (above). ⚠️ That
+PAT was pasted in chat → rotate it once home-ops are stable (a
+transcript-exposed full-account token). Create/rotate a PAT at
+`supabase.com/dashboard/account/tokens` (Account → Access Tokens →
 Generate). ⚠️ A PAT carries **full account scope** across the Management
 API — there is NO per-resource scoping on a PAT, so treat it as a
 high-privilege secret; rotate on any leak. Find the project ref at
