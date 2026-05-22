@@ -12,7 +12,7 @@ test.describe('ERP Authentication', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
     );
 
-    await page.goto('/');
+    await page.goto('/login');
 
     // LoginForm card title is "Entrar" (heading) and there's a submit button "Entrar"
     await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
@@ -28,7 +28,7 @@ test.describe('ERP Authentication', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
     );
 
-    await page.goto('/');
+    await page.goto('/login');
 
     // Start in login mode
     await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
@@ -57,7 +57,7 @@ test.describe('ERP Authentication', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
     );
 
-    await page.goto('/');
+    await page.goto('/login');
 
     await page.locator('input[type="email"]').fill('wrong@email.com');
     await page.locator('input[type="password"]').fill('wrongpassword123');
@@ -75,7 +75,7 @@ test.describe('ERP Authentication', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
     );
 
-    await page.goto('/');
+    await page.goto('/login');
 
     await page.getByText('Esqueci minha senha').click();
 

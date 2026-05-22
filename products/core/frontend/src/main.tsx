@@ -16,6 +16,7 @@ import './index.css';
 
 // Pages — lazy-wrapped so the framework's Suspense fallback renders.
 const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
+const Landing = lazy(() => import('./pages/Landing'));
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const Pricing = lazy(() => import('./pages/Pricing').then(m => ({ default: m.Pricing })));
 const BillingSettings = lazy(() => import('./pages/BillingSettings').then(m => ({ default: m.BillingSettings })));
@@ -46,7 +47,8 @@ const App = createProductApp({
   authProvider: coreAuthProvider,
   Layout: CoreLayout,
   Login,
-  unauthRedirect: '/login',
+  Landing,
+  unauthRedirect: '/landing',
   publicRoutes: [
     { path: '/invite/:token', component: AcceptInvite },
   ],
