@@ -38,6 +38,7 @@ def register_all(server) -> None:
     from . import outline_python
     from . import outline_typescript
     from . import phase_learnings
+    from . import predeploy_check
     from . import products
     from . import promotion
     from . import propagate
@@ -88,6 +89,7 @@ def register_all(server) -> None:
     outline_python.register(server)
     outline_typescript.register(server)
     phase_learnings.register(server)
+    predeploy_check.register(server)
     products.register(server)
     promotion.register(server)
     propagate.register(server)

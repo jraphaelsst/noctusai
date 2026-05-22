@@ -116,6 +116,8 @@ def main():
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
+    parser.add_argument("--predeploy-check", metavar="PRODUCT", help="Pre-deploy gate for a product: framework-dep parity + frontend build + backend pytest; classify failures, auto-fix the framework-dep class (with --fix), report+learn unknowns. Exit 0 ready / 1 blocked. MCP: noctus.dev.predeploy_check.")
+    parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
@@ -809,6 +811,12 @@ def main():
     elif args.smoke_fleet:
         from tools.noctus.dev.smoke_fleet import smoke_fleet
         r = smoke_fleet()
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.predeploy_check:
+        from tools.noctus.dev.predeploy_check import predeploy_check
+        r = predeploy_check(args.predeploy_check, auto_fix=bool(getattr(args, "fix", False)))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 
