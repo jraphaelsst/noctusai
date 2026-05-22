@@ -64,7 +64,7 @@ export default function Dashboard() {
   
   // Memoizar filtros para evitar recálculos desnecessários
   const metasFiltradas = useMemo(() => {
-    let resultado = metas || [];
+    const resultado = metas || [];
     
     // Aplicar todos os filtros de uma vez
     return resultado.filter(meta => {

@@ -25,6 +25,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
@@ -47,6 +54,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
@@ -55,6 +69,9 @@ jobs:
       - name: Run tests
         working-directory: products/core/backend
         run: pytest --tb=short -q
+
+      - name: FRAMEWORK_DEPS parity (moved from compose-validate; needs noctusai_lib from requirements)
+        run: python mcp/noctusai/cli.py --check-framework-deps
 
   pf-backend-tests:
     name: PF Backend Tests
@@ -68,6 +85,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+
+      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies
         run: |
@@ -268,8 +292,6 @@ jobs:
             echo "→ $compose"
             (cd "$(dirname "$compose")" && docker compose config --quiet)
           done
-      - name: FRAMEWORK_DEPS coverage (every product lists every dep that vite dedupe expects)
-        run: python3 scripts/check-framework-deps.py
 
   docker-images-build:
     # SINGLE container per product (KB § PATTERNS/containerization.md).
@@ -356,7 +378,7 @@ jobs:
         # Pinned action; exit-code 1 so a vulnerable image fails the
         # build BEFORE the push step → never lands in the registry.
         id: scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/jraphaelsst/noctus-${{ matrix.product }}:${{ steps.sha.outputs.short }}
           format: sarif
@@ -410,7 +432,7 @@ jobs:
         # exit-code: 1 gates the PR; `trivyignores:` picks up the
         # repo-root `.trivyignore` per the T9 spec.
         id: scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -454,7 +476,7 @@ jobs:
         # Pinned to 1.9.x — confirmed compatible with Python 3.11+ and
         # the bandit.yml shape at repo root. `[toml]` extra so bandit
         # can read pyproject-style configs alongside its own YAML.
-        run: pip install 'bandit[toml]==1.9.4'
+        run: pip install 'bandit[toml]==1.9.4' bandit-sarif-formatter
 
       - name: Run bandit (SARIF output)
         # `--exit-zero` here so we can run BOTH the SARIF report
