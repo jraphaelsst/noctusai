@@ -25,6 +25,7 @@ def register_all(server) -> None:
     from . import context
     from . import cost_evaluation
     from . import diff
+    from . import deploy_image
     from . import deploy_pull
     from . import disk_usage
     from . import dispatch_preflight
@@ -77,6 +78,7 @@ def register_all(server) -> None:
     context.register(server)
     cost_evaluation.register(server)
     diff.register(server)
+    deploy_image.register(server)
     deploy_pull.register(server)
     disk_usage.register(server)
     dispatch_preflight.register(server)

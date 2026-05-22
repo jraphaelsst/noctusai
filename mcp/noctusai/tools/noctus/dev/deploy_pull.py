@@ -261,7 +261,9 @@ def deploy_pull(
         "message": (
             "deployed via clean fast-forward; "
             + (
-                "REBUILD required: " + ", ".join(rebuild["products"] or ["fleet-wide"])
+                "REBUILD required for "
+                + ", ".join(rebuild["products"] or ["fleet-wide"])
+                + " — run noctus.dev.deploy_image <product> (C2 atomic redeploy)"
                 if rebuild["needed"]
                 else "no rebuild needed (docs/non-runtime only)."
             )

@@ -43,6 +43,8 @@ GIT_SSH_COMMAND="ssh -i /root/.ssh/github_deploy" git clone git@github.com:<org>
 
 ## 2 · Build ON the VPS (no GHCR needed for a small fleet)
 
+> **Live model = GHCR-pull (the VPS never builds).** Despite this section's "build on the VPS" framing, the running noctusai.com fleet pulls **pre-built** images from GHCR (`ghcr.io/jraphaelsst/noctus-<slug>:latest`, compose project `noctusai-products-prod`): `deploy/fleet/build-and-push.sh` builds + pushes on a **build host / CI**, the VPS only `docker compose pull && up -d` (see `deploy/fleet/README.md`). The build-on-VPS flow below is the no-registry **alternative**. C2 (`noctus.dev.deploy_image`) operates on the live GHCR-pull model (retag/pull swap, not a rebuild). *(The two models want reconciling into one §2 narrative — follow-up.)*
+
 Product images are the slim `--target runtime` shape (baked dist, node-absent). `deploy/fleet/build-and-push.sh --no-push` builds them locally; for a subset, build by hand:
 
 ```bash
@@ -113,7 +115,7 @@ The drill is the *procedure*; these are the *structural* nets that make it hard 
 
 **Corrective — any mistake is reversible**
 - **C1 · backup ref before any HEAD move** ✅ *(exercised 2026-05-22)* — `git tag -f backup/predeploy-<utc> HEAD` + `tar` the deploy-local files. Refinement: backups land **outside** the repo at `/opt/noctus/backups/<utc>.tgz` (NOT `deploy/backups/` — a backup inside the tracked tree is a footgun that a stray `git add` could commit). One ref + one tarball restore last-known-good (code via reflog/tag, deploy-local via the tarball).
-- **C2 · atomic image rollback** ⏳ *(C1 live; C2 fires at the first product-code/image-rebuild deploy — the docs-only deploys so far have no image to swap)* — keep the prior image tagged `:previous`; on post-restart health failure, swap back ⇒ prod is never left on a broken image.
+- **C2 · atomic image rollback** ✅ *(2026-05-22 — `noctus.dev.deploy_image`)* — a product-image redeploy is atomic: snapshot the running image id as `:previous` → `docker compose pull` + `up -d` → health-probe the container → on a health failure, retag the snapshot back to `:<tag>` + `up -d` ⇒ prod is never left on a broken image. The live fleet is the **GHCR-pull** model (the VPS never builds — see §2 note), so the net is a retag/pull swap, not a rebuild. Run `noctus.dev.deploy_image <product>` (CLI `--deploy-image`; DRY-RUN unless `--deploy-image-confirm`) — by construction it only uses a safe docker allowlist (inspect/image/tag/ps + compose pull/up), never rmi/prune/down (a colocated test asserts it). `deploy_pull`'s rebuild-decision points here when a pull touches product runtime.
 - **C3 · reflog is the time machine** ✅ — commits are never lost; recovery = `git reflog` → `git reset --hard <sha>` is the **ONE** sanctioned hard-reset (recovery onto a backup, *never* as a sync step).
 
 **🔴 The destructive-command ban (and the single exception).** As a *sync* step, NEVER run any of these on the VPS — each destroys exactly what it should preserve:
