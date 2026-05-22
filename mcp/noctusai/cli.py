@@ -124,6 +124,7 @@ def main():
     parser.add_argument("--deploy-host", default="noctus-vps", help="With --deploy-pull/--deploy-image: the SSH host alias for the deploy target (default noctus-vps).")
     parser.add_argument("--deploy-image", metavar="PRODUCT", help="Atomic product-image redeploy with rollback (§2a C2): snapshot :previous → compose pull → up -d → health-probe → roll back on health failure. DRY-RUN unless --deploy-image-confirm; never emits rmi/prune/down. MCP: noctus.dev.deploy_image.")
     parser.add_argument("--deploy-image-confirm", action="store_true", help="With --deploy-image: actually perform the image swap (a production action). Without it, plan/dry-run only.")
+    parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
@@ -841,6 +842,7 @@ def main():
         r = deploy_image(
             args.deploy_image,
             ssh_host=args.deploy_host,
+            source=getattr(args, "deploy_image_source", "pull"),
             confirm=bool(getattr(args, "deploy_image_confirm", False)),
         )
         print(json.dumps(r, indent=2, default=str))

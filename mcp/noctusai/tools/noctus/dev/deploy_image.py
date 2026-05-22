@@ -29,14 +29,18 @@ real SSH and zero real waiting.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 import shlex
 import subprocess
 import time as _time
 from typing import Any, Callable
 
 # Non-compose docker subcommands the tool may run. Excludes rmi/prune/rm/system
-# (would destroy the rollback image) by omission.
-_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps"})
+# (would destroy the rollback image) by omission. `exec` is read-only here (only
+# curls the in-container /api/health for the active probe); `commit` snapshots
+# the running container into the :previous rollback image (additive, never
+# destructive).
+_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit"})
 # `docker compose` sub-actions the tool may run. Excludes down/rm/kill/stop.
 _COMPOSE_ALLOWED = frozenset({"pull", "up"})
 # Asserted-absent by the colocated safety test (defense in depth beyond the
@@ -72,20 +76,53 @@ def _compose(runner, compose_file: str, action: str, *rest) -> tuple[int, str, s
     return runner(["docker", "compose", "-f", compose_file, action, *rest])
 
 
-def _poll_health(runner, sleep, container: str, timeout: int, interval: int) -> tuple[str, list[str]]:
-    """Poll container health → 'healthy' | 'unhealthy' | 'timeout'. Uses
-    Health.Status when a healthcheck exists, else falls back to State.Status."""
-    tmpl = "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}"
+def _container_port(runner, container: str) -> str | None:
+    """The product's port for the active /api/health probe. Prefers the
+    container's healthcheck test (compose always sets `curl …localhost:<port>/
+    api/health` — present even on a broken container); falls back to the image's
+    ExposedPorts. None ⇒ probe uses the docker healthcheck (slower)."""
+    rc, out, _e = _docker(runner, "inspect", "-f",
+                          "{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{end}}", container)
+    m = re.search(r"localhost:(\d+)", out or "")
+    if m:
+        return m.group(1)
+    rc2, out2, _e2 = _docker(runner, "inspect", "-f",
+                             "{{range $p,$_ := .Config.ExposedPorts}}{{$p}} {{end}}", container)
+    m2 = re.search(r"(\d+)", out2 or "")
+    return m2.group(1) if m2 else None
+
+
+def _poll_health(runner, sleep, container: str, timeout: int, interval: int,
+                 port: str | None = None, startup_grace: int = 30) -> tuple[str, list[str]]:
+    """Poll → 'healthy' | 'unhealthy' | 'timeout'. With a port: ACTIVE probe
+    (`exec curl /api/health`) — fast healthy detection, and a curl that still
+    fails *past startup_grace* ⇒ unhealthy (so a broken image rolls back in
+    ~grace, not ~2 min). A container that exits/dies ⇒ immediate unhealthy.
+    Without a port: falls back to the docker healthcheck / state."""
     states: list[str] = []
     waited = 0
     while waited <= timeout:
-        _rc, out, _e = _docker(runner, "inspect", "-f", tmpl, container)
-        st = (out or "").strip()
-        states.append(st)
-        if st in _GOOD:
-            return "healthy", states
-        if st in _BAD:
-            return "unhealthy", states
+        _rc, st, _e = _docker(runner, "inspect", "-f", "{{.State.Status}}", container)
+        st = (st or "").strip()
+        if st in ("exited", "dead"):
+            return "unhealthy", states + [f"state={st}@{waited}s"]
+        if port:
+            rc_c, _o, _ec = _docker(runner, "exec", container, "curl", "-fsS", "-m", "3",
+                                    f"http://localhost:{port}/api/health")
+            if rc_c == 0:
+                return "healthy", states + [f"up@{waited}s"]
+            states.append(f"down@{waited}s")
+            if waited >= startup_grace:  # past the startup window + still failing
+                return "unhealthy", states
+        else:
+            _rc2, hs, _e2 = _docker(runner, "inspect", "-f",
+                "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", container)
+            hs = (hs or "").strip()
+            states.append(hs)
+            if hs in _GOOD:
+                return "healthy", states
+            if hs in _BAD:
+                return "unhealthy", states
         sleep(interval)
         waited += interval
     return "timeout", states
@@ -98,9 +135,11 @@ def deploy_image(
     compose_file: str = DEFAULT_COMPOSE,
     image_repo: str = DEFAULT_IMAGE_REPO,
     tag: str = "latest",
+    source: str = "pull",
     confirm: bool = False,
-    health_timeout: int = 150,
-    poll_interval: int = 10,
+    health_timeout: int = 120,
+    poll_interval: int = 5,
+    startup_grace: int = 40,
     run_remote: Callable[[list[str]], tuple[int, str, str]] | None = None,
     sleep: Callable[[float], None] | None = None,
     now: Callable[[], _dt.datetime] | None = None,
@@ -110,6 +149,9 @@ def deploy_image(
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "exit_code": 1, "error": "product required"}
+    if source not in ("pull", "local"):
+        return {"ok": False, "status": "error", "exit_code": 1,
+                "error": f"source must be 'pull' (GHCR) or 'local' (build-on-VPS), got {source!r}"}
     runner = run_remote or (lambda cmd: _run_remote_default(ssh_host, cmd))
     napper = sleep or _time.sleep
     clock = now or _dt.datetime.utcnow
@@ -129,65 +171,110 @@ def deploy_image(
 
     base: dict[str, Any] = {
         "ok": True, "product": product, "container": container, "ssh_host": ssh_host,
-        "image": f"{image}:{tag}", "current_image_id": current_image_id,
+        "image": f"{image}:{tag}", "source": source, "current_image_id": current_image_id,
         "previous_tag": f"{image}:previous",
     }
+
+    acquire = (f"compose pull {product}" if source == "pull"
+               else f"use the locally-built {image}:{tag}")
 
     # ── DRY-RUN: read-only plan, no snapshot/pull/up ──
     if not confirm:
         return {**base, "status": "planned", "exit_code": 0,
                 "message": (
-                    f"would: tag {current_image_id[:19]} as {image}:previous → "
-                    f"compose pull {product} → up -d → health-probe → rollback on failure. "
-                    "Pass confirm=True to deploy."
+                    f"would: tag {current_image_id[:19]} as {image}:previous → {acquire} → "
+                    f"up -d → health-probe → rollback on failure. Pass confirm=True to deploy."
                 )}
 
-    # ── SNAPSHOT (C2 rollback target) ──
-    _docker(runner, "tag", current_image_id, f"{image}:previous")
+    prev = f"{image}:previous"
 
-    # ── PULL ──
-    rc_p, out_p, err_p = _compose(runner, cf, "pull", product)
-    if rc_p != 0:
+    def _rollback(reason_prefix: str, new_image_id: str | None) -> dict[str, Any]:
+        """Restore :tag from the verified :previous snapshot, force-recreate,
+        re-probe, and VERIFY the container is actually back on the snapshot.
+        Reports rollback_failed (loud, with a manual-recovery command) if not —
+        never a false 'rolled_back'."""
+        _docker(runner, "tag", prev, f"{image}:{tag}")  # retag :latest from the committed snapshot
+        _compose(runner, cf, "up", "-d", "--force-recreate", product)
+        rb_health, rb_states = _poll_health(runner, napper, container, health_timeout,
+                                            poll_interval, port=port, startup_grace=startup_grace)
+        _rcv, running_now, _ev = _docker(runner, "inspect", "-f", "{{.Image}}", container)
+        running_now = running_now.strip()
+        # Verify by HEALTH (robust): containerd digest forms make id-equality
+        # unreliable, but the broken image is unhealthy and the restored snapshot
+        # is healthy — so a healthy container after rollback == restored.
+        restored = rb_health == "healthy"
+        return {
+            **base, "status": "rolled_back" if restored else "rollback_failed",
+            "exit_code": 1,  # either way the deploy did NOT land (status distinguishes safe vs broken)
+            "new_image_id": new_image_id,
+            "rollback_health": rb_health, "rollback_health_states": rb_states,
+            "running_after": running_now,
+            "reason": (
+                f"{reason_prefix} "
+                + (f"Rolled back to the last-known-good image {current_image_id[:19]} (healthy)."
+                   if restored else
+                   f"⚠️ ROLLBACK FAILED — container is on {running_now[:19]} (health={rb_health}). "
+                   f"MANUAL RECOVERY: docker tag {prev} {image}:{tag} && "
+                   f"docker compose -f {cf} up -d --force-recreate {product}")
+            ),
+        }
+
+    # ── SNAPSHOT (C2 rollback target) via `docker commit` — reliable on the
+    #    containerd manifest-list store, where tagging the container's .Image id
+    #    is NOT (it can resolve to a stale digest — the root cause of the
+    #    2026-05-22 social-wiring outage). Commit captures the running container
+    #    as the :previous image. VERIFY it resolves — fail-safe: no confirmed
+    #    rollback target ⇒ REFUSE to deploy (the container is untouched). ──
+    rc_c, _oc, err_c = _docker(runner, "commit", container, prev)
+    rc_s, snap_id, err_s = _docker(runner, "image", "inspect", "-f", "{{.Id}}", prev)
+    snapshot_id = snap_id.strip()
+    if rc_c != 0 or rc_s != 0 or not snapshot_id:
         return {**base, "status": "error", "exit_code": 1,
-                "reason": f"`compose pull {product}` failed: {err_p.strip() or out_p.strip()}. "
-                          "Container untouched (still on the current image); snapshot tag is harmless."}
-    rc_n, new_id, _e = _docker(runner, "image", "inspect", "-f", "{{.Id}}", f"{image}:{tag}")
+                "reason": f"snapshot via `docker commit {container} {prev}` failed "
+                          f"({err_c.strip() or err_s.strip()!r}); REFUSING to deploy without a "
+                          "confirmed rollback target (fail-safe). Container untouched."}
+    base["snapshot_id"] = snapshot_id
+
+    # ── ACQUIRE the new image: pull from GHCR (source=pull, the live model) OR
+    #    use an already-built local tag (source=local, the build-on-VPS model) ──
+    if source == "pull":
+        rc_p, out_p, err_p = _compose(runner, cf, "pull", product)
+        if rc_p != 0:
+            return {**base, "status": "error", "exit_code": 1,
+                    "reason": f"`compose pull {product}` failed: {err_p.strip() or out_p.strip()}. "
+                              "Container untouched (still on the current image)."}
+    rc_n, new_id, err_n = _docker(runner, "image", "inspect", "-f", "{{.Id}}", f"{image}:{tag}")
     new_image_id = new_id.strip()
-    if new_image_id and new_image_id == current_image_id:
+    if rc_n != 0 or not new_image_id:
+        return {**base, "status": "error", "exit_code": 1,
+                "reason": f"no image '{image}:{tag}' available to deploy (source={source}): "
+                          f"{err_n.strip()}. For source=local, build + tag it on the box first."}
+    if new_image_id == current_image_id:
         return {**base, "status": "up_to_date", "exit_code": 0, "new_image_id": new_image_id,
-                "message": "pulled image == running image; no redeploy needed."}
+                "message": f"image '{image}:{tag}' == running image; no redeploy needed."}
 
-    # ── DEPLOY (recreate on the new image) ──
-    rc_u, out_u, err_u = _compose(runner, cf, "up", "-d", product)
+    port = _container_port(runner, container)
+
+    # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
+    #    recreation when only the tag target changed) ──
+    rc_u, out_u, err_u = _compose(runner, cf, "up", "-d", "--force-recreate", product)
     if rc_u != 0:
-        # up failed before swapping — roll back defensively + report.
-        _docker(runner, "tag", current_image_id, f"{image}:{tag}")
-        _compose(runner, cf, "up", "-d", product)
-        return {**base, "status": "rolled_back", "exit_code": 1, "new_image_id": new_image_id,
-                "reason": f"`compose up -d {product}` failed: {err_u.strip() or out_u.strip()} — "
-                          "restored the previous image."}
+        return _rollback(f"`compose up -d {product}` failed: {err_u.strip() or out_u.strip()}.",
+                         new_image_id)
 
-    # ── HEALTH-PROBE ──
-    health, states = _poll_health(runner, napper, container, health_timeout, poll_interval)
+    # ── HEALTH-PROBE (active /api/health when the port is known) ──
+    health, states = _poll_health(runner, napper, container, health_timeout, poll_interval,
+                                  port=port, startup_grace=startup_grace)
     if health == "healthy":
         return {**base, "status": "deployed", "exit_code": 0,
-                "new_image_id": new_image_id, "health": health, "health_states": states,
+                "new_image_id": new_image_id, "health": health, "health_states": states, "port": port,
                 "message": f"deployed {product} on {new_image_id[:19]} — healthy."}
 
-    # ── ROLLBACK (C2) — restore the snapshot, recreate, re-probe ──
-    _docker(runner, "tag", current_image_id, f"{image}:{tag}")
-    _compose(runner, cf, "up", "-d", product)
-    rb_health, rb_states = _poll_health(runner, napper, container, health_timeout, poll_interval)
-    return {
-        **base, "status": "rolled_back", "exit_code": 1,
-        "new_image_id": new_image_id, "health": health, "health_states": states,
-        "rollback_health": rb_health, "rollback_health_states": rb_states,
-        "reason": (
-            f"new image {new_image_id[:19]} was {health} after {health_timeout}s — "
-            f"rolled back to {current_image_id[:19]} (now {rb_health}). "
-            "Production is on the last-known-good image; investigate the new image before retrying."
-        ),
-    }
+    # ── ROLLBACK (C2) ──
+    r = _rollback(f"New image {new_image_id[:19]} was {health}.", new_image_id)
+    r["health"] = health
+    r["health_states"] = states
+    return r
 
 
 def register(server) -> None:
@@ -200,19 +287,22 @@ def register(server) -> None:
             "health-probes the container, and ROLLS BACK to the snapshot on a "
             "health failure so prod is never left on a broken image. DRY-RUN by "
             "default (reports the current image + plan); pass confirm=True to "
-            "perform the swap (production write gate). BY CONSTRUCTION limited to "
-            "a safe docker allowlist (inspect/image/tag/ps + compose pull/up) — "
-            "never rmi/prune/down/rm. status: planned | up_to_date | deployed | "
-            "rolled_back | error. See KB § GUIDES/production-deploy.md § 2a (C2)."
+            "perform the swap (production write gate). source='pull' (default, "
+            "GHCR model §2 ①) compose-pulls the new image; source='local' "
+            "(build-on-VPS model §2 ②) swaps an already-built local tag (no pull). "
+            "BY CONSTRUCTION limited to a safe docker allowlist (inspect/image/tag/"
+            "ps + compose pull/up) — never rmi/prune/down/rm. status: planned | "
+            "up_to_date | deployed | rolled_back | error. See KB § GUIDES/production-deploy.md § 2a (C2)."
         ),
     )
     def _deploy_image(
         product: str,
         confirm: bool = False,
         tag: str = "latest",
+        source: str = "pull",
         ssh_host: str = "noctus-vps",
     ) -> dict:
-        return deploy_image(product, ssh_host=ssh_host, tag=tag, confirm=confirm)
+        return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm)
 
 
 __all__ = ["deploy_image", "_poll_health", "_DOCKER_ALLOWED", "_COMPOSE_ALLOWED", "_BANNED_TOKENS", "register"]

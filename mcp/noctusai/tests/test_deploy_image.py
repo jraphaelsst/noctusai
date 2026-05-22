@@ -1,9 +1,17 @@
 """Colocated tests for noctus.dev.deploy_image (C2 atomic image rollback).
 
-Zero real SSH, zero real waiting — run_remote + sleep are injected. Covers
-planned (dry-run) / up_to_date / deployed / rolled_back / error / pull-failure,
-the safe docker+compose allowlists, and the load-bearing safety invariant: a
-confirmed deploy NEVER emits a destructive docker token (rmi/prune/down/...).
+Zero real SSH / waiting — run_remote + sleep are injected. The FakeDocker is a
+small state machine (tags → ids, a running image, a scripted active-probe
+sequence). Covers planned / up_to_date / deployed / rolled_back /
+rollback_failed / error, the fail-safe snapshot-verify (refuse to deploy with
+no confirmed rollback target), the active health probe, the safe docker+compose
+allowlists, and the invariant that a confirmed deploy never emits a destructive
+docker token.
+
+Born hardened: an earlier version FALSELY reported `rolled_back` while prod was
+left on the broken image (caught by a live validation that took social-wiring
+down). These tests pin the fixes — snapshot-verify, rollback-verify,
+--force-recreate, and the loud rollback_failed status.
 """
 from __future__ import annotations
 
@@ -21,104 +29,174 @@ def _now():
 
 
 class FakeDocker:
-    """Scripts remote docker/compose IO. Health is a sequence consumed across
-    poll calls (so deploy→unhealthy→rollback→healthy is expressible)."""
+    IMG = "ghcr.io/jraphaelsst/noctus-core"
 
-    def __init__(self, current="sha-old", pulled="sha-new", health=("healthy",),
-                 pull_rc=0, up_rc=0, container_found=True):
-        self.current, self.pulled = current, pulled
+    def __init__(self, running="G0", latest="NEW", health=("up",), snapshot_sticks=True,
+                 pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000"):
+        self.running = running
+        self.tags = {f"{self.IMG}:latest": latest}
         self.health = list(health)
-        self.pull_rc, self.up_rc, self.container_found = pull_rc, up_rc, container_found
-        self.calls: list[list[str]] = []
         self._h = 0
+        self.snapshot_sticks = snapshot_sticks
+        self.pull_rc, self.up_rc = pull_rc, up_rc
+        self.container_found, self.image_present, self.port = container_found, image_present, port
+        self.calls: list[list[str]] = []
+
+    def _id_of(self, ref_or_id):
+        return self.tags.get(ref_or_id, ref_or_id)
 
     def __call__(self, cmd):
         self.calls.append(cmd)
         if cmd[:2] == ["docker", "inspect"]:
             tmpl = cmd[3]
             if ".Image" in tmpl:
-                if not self.container_found:
-                    return (1, "", "Error: No such object")
-                return (0, self.current + "\n", "")
-            st = self.health[self._h] if self._h < len(self.health) else self.health[-1]
-            self._h += 1
-            return (0, st + "\n", "")
-        if cmd[:3] == ["docker", "image", "inspect"]:
-            return (0, self.pulled + "\n", "")
-        if cmd[:2] == ["docker", "tag"]:
+                return (1, "", "No such object") if not self.container_found else (0, self.running + "\n", "")
+            if "Healthcheck" in tmpl:  # _container_port prefers the healthcheck test
+                return (0, f'["CMD","curl","-fsS","http://localhost:{self.port}/api/health"]\n'
+                        if self.port else "", "")
+            if "ExposedPorts" in tmpl:
+                return (0, (self.port + "/tcp ") if self.port else "", "")
+            return (0, "running\n", "")  # .State.Status
+        if cmd[:2] == ["docker", "commit"]:  # snapshot: commit container → :previous
+            if not self.snapshot_sticks:
+                return (1, "", "commit failed")
+            self.tags[cmd[3]] = "COMMITTED"
             return (0, "", "")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            ref = cmd[5]  # docker image inspect -f {{.Id}} <ref>
+            tag = ref.rsplit(":", 1)[1]
+            if tag == "previous":
+                return (0, self.tags[ref] + "\n", "") if ref in self.tags else (1, "", "No such image")
+            if tag == "latest" and not self.image_present:
+                return (1, "", "No such image")
+            return (0, self.tags.get(ref, "") + "\n", "")
+        if cmd[:2] == ["docker", "tag"]:
+            self.tags[cmd[3]] = self._id_of(cmd[2])
+            return (0, "", "")
+        if cmd[:2] == ["docker", "exec"]:  # active /api/health probe
+            r = self.health[self._h] if self._h < len(self.health) else self.health[-1]
+            self._h += 1
+            return (0, "", "") if r == "up" else (1, "", "curl: connection refused")
         if cmd[:3] == ["docker", "compose", "-f"]:
             action = cmd[4]
             if action == "pull":
                 return (self.pull_rc, "", "" if self.pull_rc == 0 else "manifest unknown")
             if action == "up":
-                return (self.up_rc, "", "" if self.up_rc == 0 else "no such image")
+                if self.up_rc != 0:
+                    return (self.up_rc, "", "no such image")
+                self.running = self.tags.get(f"{self.IMG}:latest", "")  # recreate on :latest
+                return (0, "", "")
         return (0, "", "")
 
     def flat(self):
         return " ".join(" ".join(c) for c in self.calls)
 
-    def count(self, action):  # compose action occurrences
+    def count(self, action):
         return sum(1 for c in self.calls if c[:3] == ["docker", "compose", "-f"] and c[4] == action)
 
 
 def _run(fake, **kw):
+    kw.setdefault("startup_grace", 0)  # tests: a failing probe → unhealthy immediately
+    kw.setdefault("poll_interval", 5)
     return DI.deploy_image("core", run_remote=fake, sleep=lambda s: None, now=_now, **kw)
 
 
+# ── status paths ─────────────────────────────────────────────────
 def test_dry_run_is_read_only():
     f = FakeDocker()
     r = _run(f, confirm=False)
-    assert r["status"] == "planned" and r["exit_code"] == 0
-    assert r["current_image_id"] == "sha-old"
-    # no mutation: no tag / pull / up
+    assert r["status"] == "planned" and r["current_image_id"] == "G0"
     assert "tag" not in f.flat() and f.count("pull") == 0 and f.count("up") == 0
 
 
 def test_deployed_when_healthy():
-    f = FakeDocker(current="sha-old", pulled="sha-new", health=("healthy",))
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
     r = _run(f, confirm=True)
     assert r["status"] == "deployed" and r["exit_code"] == 0
-    assert r["new_image_id"] == "sha-new" and r["health"] == "healthy"
-    # snapshot taken, pulled once, recreated once, no rollback (single up)
-    assert ["docker", "tag", "sha-old", "ghcr.io/jraphaelsst/noctus-core:previous"] in f.calls
-    assert f.count("pull") == 1 and f.count("up") == 1
+    assert r["new_image_id"] == "NEW" and r["health"] == "healthy"
+    # snapshot via commit + verified, recreated exactly once (no rollback), force-recreate used
+    assert ["docker", "commit", "noctus-core", "ghcr.io/jraphaelsst/noctus-core:previous"] in f.calls
+    assert r["snapshot_id"] == "COMMITTED"
+    assert f.count("up") == 1 and "--force-recreate" in f.flat()
 
 
 def test_up_to_date_when_pulled_equals_running():
-    f = FakeDocker(current="same", pulled="same")
+    f = FakeDocker(running="SAME", latest="SAME")
     r = _run(f, confirm=True)
-    assert r["status"] == "up_to_date" and f.count("up") == 0  # no recreate
+    assert r["status"] == "up_to_date" and f.count("up") == 0
 
 
-def test_rolled_back_on_unhealthy():
-    # new image unhealthy on first probe; rollback re-probe healthy.
-    f = FakeDocker(current="sha-old", pulled="sha-new", health=("unhealthy", "healthy"))
+def test_rolled_back_on_unhealthy_and_verified_restored():
+    # new image unhealthy; rollback re-probe healthy + running back on the snapshot
+    f = FakeDocker(running="G0", latest="BROKEN", health=("down", "up"))
     r = _run(f, confirm=True)
     assert r["status"] == "rolled_back" and r["exit_code"] == 1
     assert r["health"] == "unhealthy" and r["rollback_health"] == "healthy"
-    # restored :latest to the snapshot id, recreated twice (deploy + rollback)
-    assert ["docker", "tag", "sha-old", "ghcr.io/jraphaelsst/noctus-core:latest"] in f.calls
-    assert f.count("up") == 2
+    # rollback retags :latest from the committed :previous, then force-recreates
+    assert ["docker", "tag", "ghcr.io/jraphaelsst/noctus-core:previous",
+            "ghcr.io/jraphaelsst/noctus-core:latest"] in f.calls
+    assert f.count("up") == 2  # deploy + rollback
+
+
+def test_rollback_failed_is_loud_when_not_restored():
+    # rollback re-probe still unhealthy → must NOT claim rolled_back
+    f = FakeDocker(running="G0", latest="BROKEN", health=("down", "down"))
+    r = _run(f, confirm=True)
+    assert r["status"] == "rollback_failed" and r["exit_code"] == 1
+    assert "MANUAL RECOVERY" in r["reason"]
+
+
+def test_snapshot_failsafe_refuses_to_deploy():
+    # snapshot tag does not stick (containerd GC class) → REFUSE, container untouched
+    f = FakeDocker(snapshot_sticks=False)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and "REFUSING" in r["reason"]
+    assert f.count("pull") == 0 and f.count("up") == 0  # nothing deployed
+
+
+def test_source_local_skips_pull():
+    f = FakeDocker(running="G0", latest="LOCALBUILT", health=("up",))
+    r = _run(f, confirm=True, source="local")
+    assert r["status"] == "deployed" and r["source"] == "local"
+    assert f.count("pull") == 0 and f.count("up") == 1
+
+
+def test_source_local_missing_image_errors():
+    f = FakeDocker(image_present=False)
+    r = _run(f, confirm=True, source="local")
+    assert r["status"] == "error" and "no image" in r["reason"]
+    assert f.count("up") == 0
+
+
+def test_invalid_source_errors():
+    r = DI.deploy_image("core", run_remote=FakeDocker(), source="bogus", confirm=True)
+    assert r["status"] == "error" and "source" in r["error"]
+
+
+def test_dry_run_reports_source():
+    r = _run(FakeDocker(), confirm=False, source="local")
+    assert r["status"] == "planned" and r["source"] == "local"
+    assert "locally-built" in r["message"]
 
 
 def test_error_when_container_not_found():
     f = FakeDocker(container_found=False)
     r = _run(f, confirm=True)
     assert r["status"] == "error" and "not found" in r["error"]
-    assert f.count("up") == 0  # nothing touched
+    assert f.count("up") == 0
 
 
 def test_pull_failure_aborts_without_touching_container():
     f = FakeDocker(pull_rc=1)
     r = _run(f, confirm=True)
     assert r["status"] == "error" and "pull" in r["reason"]
-    assert f.count("up") == 0  # container left running on the current image
+    assert f.count("up") == 0
 
 
+# ── safety invariants ────────────────────────────────────────────
 def test_never_emits_destructive_docker_tokens():
-    f = FakeDocker(current="sha-old", pulled="sha-new", health=("unhealthy", "healthy"))
-    _run(f, confirm=True)  # exercise the full deploy + rollback path
+    f = FakeDocker(running="G0", latest="BROKEN", health=("down", "up"))
+    _run(f, confirm=True)  # full deploy + rollback path
     flat = f.flat()
     for banned in DI._BANNED_TOKENS:
         assert banned not in flat, f"deploy_image emitted a banned token: {banned!r}"
@@ -144,12 +222,20 @@ def test_compose_allowlist_blocks_down():
     assert calls == []
 
 
-def test_poll_health_waits_through_starting():
-    f = FakeDocker(health=("starting", "starting", "healthy"))
+def test_active_probe_waits_through_startup_then_healthy():
+    f = FakeDocker(health=("down", "down", "up"))
     naps = []
-    status, states = DI._poll_health(f, lambda s: naps.append(s), "noctus-core", 150, 10)
-    assert status == "healthy" and states[-1] == "healthy"
-    assert len(naps) == 2  # slept twice while 'starting'
+    status, states = DI._poll_health(f, lambda s: naps.append(s), "noctus-core",
+                                     timeout=150, interval=5, port="8000", startup_grace=20)
+    assert status == "healthy" and states[-1].startswith("up")
+    assert len(naps) == 2  # waited through two 'down' probes within the grace window
+
+
+def test_active_probe_unhealthy_past_grace():
+    f = FakeDocker(health=("down",))
+    status, _states = DI._poll_health(f, lambda s: None, "noctus-core",
+                                      timeout=150, interval=5, port="8000", startup_grace=0)
+    assert status == "unhealthy"  # past grace + still failing → fast rollback
 
 
 def test_tool_registers_with_dotted_name():
