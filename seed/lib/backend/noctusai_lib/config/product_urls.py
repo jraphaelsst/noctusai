@@ -5,7 +5,13 @@ Replaces hardcoded ``http://localhost:<port>`` URLs from
 service that constructs cross-product URLs route through
 :func:`resolve_product_url` — same shape across products, including any
 future product, by default wiring (the resolver lives in seed-lib so every
-product inherits it via ``noctusai_lib.api.product_urls``).
+product inherits it via ``noctusai_lib.config.product_urls``).
+
+Lives in the ``config`` layer (pure env resolution, no I/O beyond
+``os.environ``) so both the ``api`` layer (HTTP routers) and the ``config``
+layer (:mod:`noctusai_lib.config.cors_registry`, which derives deploy-aware
+CORS origins from the same ``PRODUCT_URL_*`` scheme) can consume it without
+an upward dependency.
 
 Resolution order (first non-empty wins):
 

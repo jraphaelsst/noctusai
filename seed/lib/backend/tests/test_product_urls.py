@@ -1,4 +1,4 @@
-"""Tests for `noctusai_lib.api.product_urls` — environment-aware product
+"""Tests for `noctusai_lib.config.product_urls` — environment-aware product
 URL resolution. The resolver replaces hardcoded ``http://localhost:<port>``
 URLs with per-product / pattern-driven URLs that adapt to the deploy host
 without DB edits.
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from noctusai_lib.api.product_urls import resolve_product_url
+from noctusai_lib.config.product_urls import resolve_product_url
 
 
 class TestResolveProductUrl:

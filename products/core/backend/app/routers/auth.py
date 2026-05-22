@@ -17,7 +17,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
-from noctusai_lib.api.product_urls import resolve_product_url
+from noctusai_lib.config.product_urls import resolve_product_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])

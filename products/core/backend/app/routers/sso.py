@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 # product gets the same cache with the same concurrency semantics.
 
 from noctusai_lib.api.auth import SSOSessionCache
-from noctusai_lib.api.product_urls import resolve_product_url
+from noctusai_lib.config.product_urls import resolve_product_url
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 

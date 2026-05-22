@@ -32,14 +32,26 @@ Consumers opt in via a sentinel string on their ``cors_origins`` setting
 Both forms automatically include localhost alt ports (``5173`` and
 ``3000``) so plain dev shells without registered ports keep working.
 
+**Deploy-aware.** :func:`derive_cors_origins` also emits each in-scope
+product's *production* origin, resolved from the same ``PRODUCT_URL_*`` env
+scheme the nav layer uses (:mod:`noctusai_lib.config.product_urls`). With no
+override set (local dev) it is a no-op — the result stays localhost-only. On
+a deploy it means ``@registry:all`` auto-allows every product's prod origin
+(+ the apex via ``PRODUCT_URL_CORE``) with **no hand-maintained
+``CORS_ORIGINS``** — the localhost-only-in-prod gap that broke apex login
+2026-05-22.
+
 See ``KB § PATTERNS/environment.md § CORS_ORIGINS cascade``.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Iterable, List, Optional, TypedDict
+
+logger = logging.getLogger(__name__)
 
 
 # Sentinels in start.sh that bracket the PRODUCTS array.
@@ -140,11 +152,26 @@ def derive_cors_origins(
     include_localhost_alts: bool = True,
     include_all_frontends: bool = True,
     own_slug: Optional[str] = None,
+    include_prod_origins: bool = True,
 ) -> List[str]:
     """Return the canonical CORS origins list derivable from ``start.sh``.
 
+    **Deploy-aware.** Alongside the localhost dev origins, this also emits the
+    **production** origin of each in-scope product, resolved from the same
+    ``PRODUCT_URL_*`` env scheme the nav layer uses
+    (:func:`noctusai_lib.config.product_urls.resolve_product_url`). A product
+    contributes a prod origin **only** when an override is configured
+    (``PRODUCT_URL_<SLUG>`` or ``PRODUCT_URL_PATTERN``); with none set (local
+    dev) the resolver raises and the product is skipped — so the dev result
+    is byte-for-byte the historical localhost-only list (back-compat).
+
+    This is what lets ``@registry:all`` work in production with **no
+    hand-maintained ``CORS_ORIGINS``**: set the ``PRODUCT_URL_*`` scheme on the
+    deploy and core's SSO-bridge allowlist auto-includes every product's prod
+    origin (and the apex, via ``PRODUCT_URL_CORE``), including future ones.
+
     The returned list is **deduplicated** and preserves first-seen order
-    (localhost alts first, then registry frontends).
+    (localhost alts, then registry localhost frontends, then prod origins).
 
     Args:
         start_sh: Path to the platform ``start.sh``. Defaults to the
@@ -159,11 +186,17 @@ def derive_cors_origins(
             ``"@registry:own:<slug>"`` sentinel. Required when
             ``include_all_frontends=False`` and a registry-derived port
             is wanted at all.
+        include_prod_origins: When ``True`` (default), also emit each
+            in-scope product's env-resolved production origin (a no-op in dev
+            where no ``PRODUCT_URL_*`` is set). Set ``False`` to force the
+            pure localhost shape regardless of environment.
 
     Returns:
-        List of origin strings in ``http://localhost:<port>`` form. Empty
-        list only when both ``include_localhost_alts=False`` and the
-        registry is empty / unreachable.
+        List of origin strings. Dev: ``http://localhost:<port>`` only. Deploy
+        (``PRODUCT_URL_*`` set): the localhost set plus each in-scope product's
+        ``https://…`` prod origin. Empty list only when
+        ``include_localhost_alts=False``, the registry is empty/unreachable,
+        and no prod overrides resolve.
     """
     entries = parse_products_registry(start_sh)
 
@@ -179,14 +212,40 @@ def derive_cors_origins(
         for origin in _localhost_origins(LOCALHOST_ALT_PORTS):
             _add(origin)
 
+    # In-scope slugs: every registered product (SSO-bridge shape) or just
+    # own_slug (single-product shape). Drives BOTH the localhost frontends
+    # and the deploy-aware prod origins below, so the two stay in lockstep.
     if include_all_frontends:
-        for entry in entries:
-            _add(f"http://localhost:{entry['frontend_port']}")
+        in_scope = [entry["slug"] for entry in entries]
     elif own_slug is not None:
-        for entry in entries:
-            if entry["slug"] == own_slug:
-                _add(f"http://localhost:{entry['frontend_port']}")
-                break
+        in_scope = [own_slug]
+    else:
+        in_scope = []
+
+    # localhost frontends (registry order; filtered to in-scope)
+    for entry in entries:
+        if entry["slug"] in in_scope:
+            _add(f"http://localhost:{entry['frontend_port']}")
+
+    # deploy-aware prod origins — no-op in dev (resolver raises), see docstring
+    if include_prod_origins and in_scope:
+        # Lazy, SAME-LAYER import (config → config): keeps module import cheap,
+        # avoids bootstrap-order coupling (mirrors settings.py's lazy import of
+        # this module), and stays a downward-clean dependency.
+        from noctusai_lib.config.product_urls import resolve_product_url
+
+        for slug in in_scope:
+            try:
+                _add(resolve_product_url(slug))
+            except ValueError:
+                # No PRODUCT_URL_<SLUG>/PRODUCT_URL_PATTERN for this slug in
+                # this environment (e.g. local dev) → nothing to add. Expected
+                # control flow, not an error; debug-logged per no-silent-except.
+                logger.debug(
+                    "derive_cors_origins: no prod URL override for slug=%s; "
+                    "skipping (dev or unconfigured)",
+                    slug,
+                )
 
     return out
 

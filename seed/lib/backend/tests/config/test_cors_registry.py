@@ -222,6 +222,81 @@ def test_derive_dedupes_overlapping_ports(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# derive_cors_origins — deploy-aware prod origins (PRODUCT_URL_* scheme)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_no_prod_env_is_localhost_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Back-compat: with no PRODUCT_URL_* set, output stays localhost-only."""
+    for var in (
+        "PRODUCT_URL_PATTERN",
+        "PRODUCT_URL_CORE",
+        "PRODUCT_URL_ERP_IMOBILIARIO",
+        "PRODUCT_URL_PERSONAL_FINANCE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
+    assert not any(o.startswith("https://") for o in out)
+
+
+def test_derive_pattern_adds_prod_origin_per_product(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRODUCT_URL_PATTERN → every registry product gets its {slug} prod origin."""
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
+    assert "https://core.noctusai.com" in out
+    assert "https://erp-imobiliario.noctusai.com" in out
+    assert "https://personal-finance.noctusai.com" in out
+    # Deploy-aware ADDS, doesn't replace — localhost set still present.
+    assert "http://localhost:5173" in out
+    assert len(out) == len(set(out))  # dedup preserved
+
+
+def test_derive_per_product_override_beats_pattern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRODUCT_URL_<SLUG> wins over PRODUCT_URL_PATTERN for that product."""
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_ERP_IMOBILIARIO", "https://erp.noctusai.com")
+    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
+    assert "https://erp.noctusai.com" in out  # the override
+    assert "https://erp-imobiliario.noctusai.com" not in out  # pattern suppressed
+    assert "https://core.noctusai.com" in out  # others still take the pattern
+
+
+def test_derive_own_slug_adds_only_its_prod_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """own_slug mode emits only that product's prod origin, not the fleet's."""
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    out = derive_cors_origins(
+        start_sh=start_sh, include_all_frontends=False, own_slug="erp-imobiliario"
+    )
+    assert "https://erp-imobiliario.noctusai.com" in out
+    assert "https://core.noctusai.com" not in out
+    assert "https://personal-finance.noctusai.com" not in out
+
+
+def test_derive_include_prod_origins_false_forces_localhost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """include_prod_origins=False suppresses prod origins even when env is set."""
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    out = derive_cors_origins(
+        start_sh=start_sh, include_all_frontends=True, include_prod_origins=False
+    )
+    assert not any(o.startswith("https://") for o in out)
+
+
+# ---------------------------------------------------------------------------
 # BaseAppSettings sentinel resolution
 # ---------------------------------------------------------------------------
 
@@ -303,3 +378,23 @@ def test_settings_core_migration_resolves_to_the_live_product_origin_set() -> No
     # And the sentinel must not invent origins beyond the registry + alts.
     extra = resolved - expected
     assert not extra, f"Sentinel produced non-registry origins: {sorted(extra)}"
+
+
+def test_settings_registry_all_includes_prod_origins_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: `@registry:all` + PRODUCT_URL_* → prod origins allowed.
+
+    This is the seam that fixes prod login/SSO: with the deploy's
+    PRODUCT_URL_* scheme set, core's SSO-bridge allowlist auto-includes every
+    product's https origin (+ the apex), so no hand-maintained CORS_ORIGINS is
+    needed. Dev (no env) keeps the localhost-only shape — see the strict
+    `..._resolves_to_the_live_product_origin_set` regression-pin above.
+    """
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+    s = BaseAppSettings(cors_origins="@registry:all")
+    origins = s.cors_origins_list
+    assert "https://noctusai.com" in origins  # apex (PRODUCT_URL_CORE override)
+    assert "https://erp-imobiliario.noctusai.com" in origins  # {slug} pattern
+    assert "http://localhost:5173" in origins  # localhost set still present
