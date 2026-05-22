@@ -22,6 +22,10 @@ venv/
 # (config.yml.template, placeholders only — no secrets) stays tracked.
 # See KB § GUIDES/production-deploy.md § 2a and that project's PROJECT.md Phase 2.
 **/tunnel/config.yml
+# cloudflared named-tunnel credentials JSON (<TUNNEL_ID>.json) — a SECRET generated
+# on the VPS by `cloudflared tunnel create`; deploy-local, never committed. Enforces
+# the STATE.json D3 invariant (tunnel/*.json must be gitignored).
+**/tunnel/*.json
 
 # Build
 dist/
