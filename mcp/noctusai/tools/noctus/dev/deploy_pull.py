@@ -58,16 +58,26 @@ _RUNTIME_PRODUCT = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
 _RUNTIME_FLEET = re.compile(
     r"(?:^|/)(?:Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Caddyfile|config\.yml)$|^seed/"
 )
+# Auto-generated/cosmetic files that match a runtime path but are behaviourally
+# a no-op — excluded from the rebuild trigger. The pre-commit stamps
+# `_version_static.py` (the git-sha version string) on every commit, so without
+# this every deploy_pull would false-flag a fleet rebuild.
+_COSMETIC_NONRUNTIME = re.compile(r"_version_static\.py$")
 
 
 def _rebuild_decision(files: list[str]) -> dict[str, Any]:
     """Derive — never eyeball — whether the incoming diff needs a rebuild and
     of which products. Per-product runtime path → that product; a Dockerfile /
-    compose / edge-config / seed change → fleet-wide."""
+    compose / edge-config / seed change → fleet-wide. Cosmetic auto-generated
+    files (the pre-commit's `_version_static.py` version-stamp, written on EVERY
+    commit) are excluded — otherwise every deploy_pull falsely flags a fleet
+    rebuild for a no-op version string."""
     products: set[str] = set()
     reasons: list[str] = []
     fleet = False
     for f in files:
+        if _COSMETIC_NONRUNTIME.search(f):
+            continue  # version-stamp etc. — baked but behaviourally a no-op
         m = _RUNTIME_PRODUCT.match(f)
         if m:
             products.add(m.group(1))

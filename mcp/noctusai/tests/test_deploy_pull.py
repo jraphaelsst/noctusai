@@ -141,6 +141,24 @@ def test_rebuild_decision_docs_only_no_rebuild():
     assert d["needed"] is False and d["products"] == []
 
 
+def test_rebuild_decision_version_stamp_only_no_rebuild():
+    # the pre-commit stamps these on every commit — must NOT flag a fleet rebuild
+    d = DP._rebuild_decision([
+        "seed/framework/backend/noctusai_seed/_version_static.py",
+        "seed/lib/backend/noctusai_lib/_version_static.py",
+    ])
+    assert d["needed"] is False and d["fleet_wide"] is False
+
+
+def test_rebuild_decision_real_seed_change_still_rebuilds():
+    # a real seed code change (alongside the stamp) MUST still flag fleet-wide
+    d = DP._rebuild_decision([
+        "seed/lib/backend/noctusai_lib/_version_static.py",
+        "seed/lib/backend/noctusai_lib/api/cors.py",
+    ])
+    assert d["needed"] is True and d["fleet_wide"] is True
+
+
 # ── safety invariants ────────────────────────────────────────────
 def test_never_emits_destructive_command_on_confirmed_deploy():
     f = FakeRemote(head="aaa", target_sha="bbb", is_ancestor=True,
