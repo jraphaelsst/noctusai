@@ -47,6 +47,12 @@ slowapi>=0.1.9
 # Caching (optional)
 redis==5.0.1
 
+# Core audit-hook — SQLAlchemy typed-table writer (core/app/services/audit_hook.py
+# + tests/services/test_audit_hook.py). In core's per-product requirements; also
+# here in the unified superset so the CI backend-test jobs (which install THIS
+# file) can collect test_audit_hook.
+sqlalchemy>=2.0.0
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.21.0

@@ -103,7 +103,7 @@ class _RedisLike(Protocol):
 def _key_for(drive_url: str) -> str:
     """Hash the URL so the Redis key is fixed-length + safe regardless
     of weird query-string characters."""
-    digest = hashlib.sha1(drive_url.encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(drive_url.encode("utf-8"), usedforsecurity=False).hexdigest()
     return f"{_CACHE_KEY_PREFIX}{digest}"
 
 
