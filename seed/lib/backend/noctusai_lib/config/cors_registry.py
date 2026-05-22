@@ -47,6 +47,7 @@ See ``KB § PATTERNS/environment.md § CORS_ORIGINS cascade``.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Iterable, List, Optional, TypedDict
@@ -227,24 +228,52 @@ def derive_cors_origins(
         if entry["slug"] in in_scope:
             _add(f"http://localhost:{entry['frontend_port']}")
 
-    # deploy-aware prod origins — no-op in dev (resolver raises), see docstring
-    if include_prod_origins and in_scope:
+    # deploy-aware prod origins. Unioned (deduped) from TWO sources so the
+    # result is correct in BOTH dev and the slim prod image:
+    #   (a) registry slugs resolved via the PRODUCT_URL_* scheme — needs a
+    #       parseable start.sh (present in dev / a full checkout).
+    #   (b) the PRODUCT_URL_<SLUG> env vars READ DIRECTLY — registry-independent.
+    #       The slim PROD image ships NO start.sh, so (a) yields nothing there;
+    #       the env vars are then the only source of truth for the deployed
+    #       products. Without (b), `@registry:all` collapses to localhost-only
+    #       inside the container — the 2026-05-22 cutover failure.
+    # No-op in dev with no PRODUCT_URL_* set (resolver raises ∧ no env keys).
+    if include_prod_origins:
         # Lazy, SAME-LAYER import (config → config): keeps module import cheap,
         # avoids bootstrap-order coupling (mirrors settings.py's lazy import of
         # this module), and stays a downward-clean dependency.
         from noctusai_lib.config.product_urls import resolve_product_url
 
-        for slug in in_scope:
+        if include_all_frontends:
+            # (a) registry-derived slugs (covers pattern-only products in dev)
+            for slug in in_scope:
+                try:
+                    _add(resolve_product_url(slug))
+                except ValueError:
+                    logger.debug(
+                        "derive_cors_origins: no prod URL override for slug=%s; "
+                        "skipping (dev or unconfigured)",
+                        slug,
+                    )
+            # (b) explicit PRODUCT_URL_<SLUG> env overrides — registry-free, so
+            # this is what makes the SSO-bridge allowlist work in the container.
+            for env_key, env_val in os.environ.items():
+                if (
+                    env_key.startswith("PRODUCT_URL_")
+                    and env_key != "PRODUCT_URL_PATTERN"
+                    and env_val
+                ):
+                    _add(env_val.rstrip("/"))
+        elif own_slug is not None:
+            # Single-product shape: resolve own_slug directly (env-based, needs
+            # no registry — works in the container too).
             try:
-                _add(resolve_product_url(slug))
+                _add(resolve_product_url(own_slug))
             except ValueError:
-                # No PRODUCT_URL_<SLUG>/PRODUCT_URL_PATTERN for this slug in
-                # this environment (e.g. local dev) → nothing to add. Expected
-                # control flow, not an error; debug-logged per no-silent-except.
                 logger.debug(
-                    "derive_cors_origins: no prod URL override for slug=%s; "
+                    "derive_cors_origins: no prod URL override for own_slug=%s; "
                     "skipping (dev or unconfigured)",
-                    slug,
+                    own_slug,
                 )
 
     return out

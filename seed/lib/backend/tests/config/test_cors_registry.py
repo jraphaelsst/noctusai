@@ -296,6 +296,40 @@ def test_derive_include_prod_origins_false_forces_localhost(
     assert not any(o.startswith("https://") for o in out)
 
 
+def test_derive_prod_origins_from_env_without_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Container case: NO start.sh (registry empty) but PRODUCT_URL_<SLUG> env
+    set → @registry:all STILL emits those prod origins.
+
+    Regression-pin for the 2026-05-22 cutover failure: the slim prod image
+    ships no start.sh, so registry-only derivation collapsed to localhost-only
+    and the apex login was CORS-blocked. The PRODUCT_URL_<SLUG> env vars must be
+    a sufficient source on their own.
+    """
+    monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
+    monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_ERP_IMOBILIARIO", "https://erp.noctusai.com")
+    missing = tmp_path / "no-start.sh"  # registry unreachable, like the prod image
+    out = derive_cors_origins(start_sh=missing, include_all_frontends=True)
+    assert "https://noctusai.com" in out  # apex login origin
+    assert "https://erp.noctusai.com" in out  # a deployed product
+    assert out == list(dict.fromkeys(out))  # still deduped
+
+
+def test_derive_own_slug_prod_origin_without_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """own_slug shape resolves its prod origin from env alone (no registry)."""
+    monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
+    monkeypatch.setenv("PRODUCT_URL_ERP_IMOBILIARIO", "https://erp.noctusai.com")
+    missing = tmp_path / "no-start.sh"
+    out = derive_cors_origins(
+        start_sh=missing, include_all_frontends=False, own_slug="erp-imobiliario"
+    )
+    assert "https://erp.noctusai.com" in out
+
+
 # ---------------------------------------------------------------------------
 # BaseAppSettings sentinel resolution
 # ---------------------------------------------------------------------------
