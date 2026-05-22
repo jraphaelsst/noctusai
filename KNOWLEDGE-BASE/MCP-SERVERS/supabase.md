@@ -16,6 +16,20 @@ own auth store (every-connector-owns-its-auth-store). The managed
 connector is fine in `claude.ai`; this is the noc-runtime equivalent the
 operator controls.
 
+## Supabase tooling map — three doors, don't conflate them
+
+There are **three** ways Supabase is touched in this workspace. They overlap (all can run SQL) but serve different sides of the workflow — captured here so the distinction isn't re-explained each time (explanation-as-signal, `KB § 01-PHILOSOPHY.md § Always-hardening`).
+
+| | **Supabase CLI** (`supabase`) | **`mcp/supabase`** (this connector) | **managed `mcp__claude_ai_Supabase__*`** |
+|---|---|---|---|
+| Who runs it | the human, in a terminal | the agent, from the noc runtime | the agent, in `claude.ai` |
+| Primary job | **local dev stack** (`supabase start`) + migrations on your machine | **remote ops** on the cloud project, on-demand | remote ops on the cloud project |
+| Talks to | the local Docker stack (+ a linked project) | the Management API (`https://api.supabase.com`, Bearer PAT) | Supabase's hosted MCP |
+| Auth store | your machine / `supabase link` | self-owned PAT in `mcp/supabase/.env` | Anthropic-managed OAuth |
+| Used in noc for | **Phase 5 dev/prod isolation** (`KB § GUIDES/production-deploy.md`; the local stack = the `dev` target of the `APP_ENV` seam) | "operate the cloud project from home without the managed MCP" | fallback; the dependency we deliberately replaced |
+
+Rule of thumb: **CLI = your hands-on local-dev driver; this MCP = the lever the agent pulls on the live cloud project for you.** Same DB underneath, different door for a different purpose (like `psql` vs a REST admin panel).
+
 ## Tool surface (`supabase.<service>.<action>`, 3-segment dotted)
 
 | Tool | Kind | Endpoint wrapped |
