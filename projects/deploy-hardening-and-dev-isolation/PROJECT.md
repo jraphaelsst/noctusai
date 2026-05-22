@@ -112,24 +112,30 @@ Win = a deploy pipeline where no single mistake can damage prod, only-functional
 - [ ] failure classifier + known-class auto-fix + `predeploy-reports/` + `phase_learnings` log
 - [ ] `backup-ref` (C1) + `atomic image rollback` (C2) as `noctus.dev.*` tools
 
-### Phase 5 — DB dev/prod isolation 🅿️ (blocked on §7 Q1)
-- [ ] `APP_ENV` Supabase-target seam in seed config (Fake unaffected)
-- [ ] stand up the isolated dev datastore (approach per Q1)
-- [ ] split `.env` (local → dev target; VPS → prod) + `.env.example` doc; verify local can't reach prod data
+### Phase 5 — DB dev/prod isolation 🅿️ DEFERRED 2026-05-21 (both free paths walled; user: keep developing on NoctusAI for now)
+> **Why deferred (the right direction, no free path *today*):** (1) **local stack** — `supabase init` + `supabase start` done, but the stack's health-gates roll back under the user's bleeding-edge **Docker 29.4.3** (storage, then analytics/vector/realtime/pg_meta/studio fail health though they log healthy). (2) **free cloud dev project** — blocked by Supabase's **2-active-free-project cap**; both active slots are live apps (`NoctusAI` prod + `One Permutas`/legacy), neither pausable. Paid (Pro ~$25/mo) or Docker-28 downgrade would unblock; user chose to **continue on the NoctusAI project for now** ("bumping into it tells me we're on the right direction"). **Caveat carried:** until resumed, local dev shares the prod `nyplttplcoyiiqjrvtiw` DB — destructive local ops hit real data. Local `supabase/config.toml` scaffolding (storage disabled) left in place (untracked) for resume.
+- [ ] **Resume trigger:** Pro upgrade (cloud dev project) OR Docker→28 (full local stack) OR Supabase-CLI catches up to Docker 29.
+- [ ] `APP_ENV` (`dev`|`prod`) Supabase-target seam in seed config + a guard that refuses/loud-warns if `APP_ENV=dev` resolves to the prod ref (defends against re-introducing the misplacement).
+- [ ] split `.env`: local `.env` → `APP_ENV=dev` + dev target; VPS `.env` → `APP_ENV=prod`. Build dev schema FROM noc migration files (absorbable-by-noc); verify local can't reach prod data.
 
-### Phase 6 — Self-owned Supabase MCP (`mcp/supabase`)
-- [ ] connector composing `_kit`: project/db/migration/diagnostics tools; confirm-gated writes
-- [ ] `mcp/supabase/.env` (token + project-ref); `KB § MCP-SERVERS/supabase.md` + memory; `.mcp.json` user-gated
-- [ ] **commit + push** (the user's "last piece" gate)
+### Phase 6 — Self-owned Supabase MCP (`mcp/supabase`) ✅ (2026-05-21, commit `31fc8178`)
+- [x] connector composing `_kit`: project/db/migration/diagnostics tools (8); confirm-gated writes
+- [x] `mcp/supabase/.env.example` (PAT + project-ref); `KB § MCP-SERVERS/supabase.md` + memory; `.mcp.json` user-gated
+- [x] **commit + push** (31fc8178; 23 tests green; salvaged from the engineer worktree via patch + verified on disk)
+
+**Improvements:**
+- `db.query`'s read/write gate is a best-effort leading-keyword heuristic (documented as NOT a security boundary); if a real safety boundary is ever needed, parse the SQL (sqlglot) instead of keyword-sniffing — deferred until a use-case demands it.
+- The connector-MCP cluster is now N=7 (vista/github/n8n/waha/hostinger/cloudflare/supabase) all composing `_kit` identically — the `_kit` formalization is paying off (supabase added zero `_kit` changes); a `scaffold_connector` generator (mirroring `scaffold_mcp_tool`) would make connector #8 a one-command emit. Candidate for `noctus.dev.*`.
+- Live validation deferred (no PAT at build); the connector ships Fake/typed-error so it's committable now (gated-capability honesty) — wire the PAT when home-ops are needed.
 
 ---
 
 ## 7. Open questions (the two forks gating Phases 3 & 5)
 
-1. **DB dev/prod isolation approach?** — needs answer before Phase 5; decided by user.
-   - **(A) separate dev Supabase project** — same Postgres engine, isolated data, cloud, ~zero local setup. *Recommended for parity + simplicity.*
-   - **(B) local Supabase stack (`supabase start`)** — real Postgres + PostgREST + Auth in Docker, fully offline. *Best parity, heavier local footprint.*
-   - **(C) SQLite local** (user's initial idea) — ⚠️ **parity risk**: SQLite ≠ Postgres (RLS, PostgREST filters, JSON ops, `gen_random_uuid`) → re-introduces "works-locally-breaks-in-prod". *Not recommended; would need a real DB-abstraction layer the codebase doesn't have.*
+1. ✅ **RESOLVED 2026-05-21 → (B) local Supabase stack.** User initially asked for SQLite-local; on surfacing that the whole data layer speaks **PostgREST via `supabase-py create_client`** (`seed/lib/backend/noctusai_lib/integrations/database.py` — no SQL/ORM layer, so SQLite has no compatible driver path and would re-introduce the works-locally-breaks-in-prod class), the user chose the parity-preserving option. Options were:
+   - **(A) separate dev Supabase project** — cloud, isolated, same engine, ~zero local setup.
+   - **(B) local Supabase stack (`supabase start`)** ⭐ CHOSEN — real Postgres + PostgREST + Auth in Docker on localhost; offline, free, isolated, **same engine** ⇒ no parity surprises. Gives what "SQLite local" reached for, compatibly.
+   - **(C) SQLite local** — ❌ rejected: ⚠️ parity risk (RLS, PostgREST filters, JSON ops, `gen_random_uuid`) + needs a full PostgREST-shaped adapter the codebase doesn't have.
 2. **Branch model for the prod gate?** — needs answer before Phase 3; decided by user.
    - **(A) dedicated `prod` branch the VPS tracks**, FF from blessed `main` (user's idea). *Recommended — explicit human promote gate.*
    - **(B) keep VPS on `main` + add branch protection / required PR + CI.** Lighter, fewer steps.
@@ -156,4 +162,6 @@ Win = a deploy pipeline where no single mistake can damage prod, only-functional
 
 | Date | Change | By |
 |---|---|---|
-| 2026-05-21 | Project drafted after the production-deploy session. Phase 1 (safety-net stack + safe-sync drill) shipped to `KB § GUIDES/production-deploy.md § 2a` + CLAUDE.md router row + memory. Two risks evidenced (tracked `config.yml`; local==prod Supabase `nyplttplcoyiiqjrvtiw`). Phases 2–6 designed; blocked on §7 Q1/Q2. | Claude |
+| 2026-05-21 | Project drafted after the production-deploy session. Phase 1 (safety-net stack + safe-sync drill) shipped to `KB § GUIDES/production-deploy.md § 2a` + CLAUDE.md router row + memory (commit `06828bf9`). Two risks evidenced (tracked `config.yml`; local==prod Supabase `nyplttplcoyiiqjrvtiw`). Phases 2–6 designed. | Claude |
+| 2026-05-21 | §7 Q1 RESOLVED → local Supabase stack (user chose B after the PostgREST-vs-SQLite architecture finding). Phase 5 detailed. Starting build: Phase 6 (self-owned Supabase MCP) dispatched. | Claude |
+| 2026-05-21 | **Phase 6 ✅ shipped** (`mcp/supabase`, commit `31fc8178`; 23 tests green). **Phase 5 🅿️ DEFERRED:** local stack rolls back under Docker 29.4.3 health-gates; free cloud dev project blocked by the 2-active-free-project cap (both slots are live apps — `create_project` failed with the limit error). User chose to keep developing on the NoctusAI project for now ("we're on the right direction"). Resume via Pro (~$25/mo cloud dev project) OR Docker-28 OR a Supabase-CLI fix for Docker 29. Caveat carried: local dev still shares prod DB until resumed. Also shipped this session: explanation-as-signal listener (commit `5ff6bd1a`). | Claude |
