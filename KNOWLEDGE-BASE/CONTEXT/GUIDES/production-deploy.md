@@ -61,24 +61,27 @@ docker build --target runtime -f products/<slug>/backend/Dockerfile \
 
 ## 2a · Safe ongoing code-sync — the "pull" drill (the VPS checkout is PRODUCTION)
 
-The VPS clone is a **production artifact, not a workspace.** Code reaches it ONLY by `git pull` of *pushed* commits; secrets + runtime-config live in **deploy-local files** that are gitignored or filled in-place on the box (`deploy/tunnel/config.yml`, the tunnel creds `<id>.json`, the root `.env`, `.env.services`) — a sync MUST always preserve them. Two invariants make it safe: **ff-only** (the merge refuses anything that isn't a clean fast-forward — that refusal IS the safety net) ∧ **inspect → decide → act → verify** (never move HEAD blind). 🔴 NEVER `git reset --hard origin/main` ∨ `git checkout -- <deploy-local-file>` on the VPS — those silently nuke deploy-local state. NEVER edit code on the VPS (it's not a dev box; deploy-local files are the *only* sanctioned divergence).
+The VPS clone is a **production artifact, not a workspace.** Code reaches it ONLY by `git pull` of *pushed* commits; secrets + runtime-config live in **deploy-local files** that are gitignored or filled in-place on the box (`deploy/tunnel/config.yml`, the tunnel creds `<id>.json`, the root `.env`, `.env.services`) — a sync MUST always preserve them. **The VPS tracks `origin/prod`, NOT `origin/main`** (the prod promote-branch cutover landed 2026-05-22 — see §2b): you push work to `main`, *promote* a blessed `main` sha to `prod`, and only then does the VPS pull it. SSH is `ssh noctus-vps` (`~/.ssh/config`, `root@72.61.28.36`). Two invariants make it safe: **ff-only** (the merge refuses anything that isn't a clean fast-forward — that refusal IS the safety net) ∧ **inspect → decide → act → verify** (never move HEAD blind). 🔴 NEVER `git reset --hard origin/main` ∨ `git checkout -- <deploy-local-file>` on the VPS — those silently nuke deploy-local state. NEVER edit code on the VPS (it's not a dev box; deploy-local files are the *only* sanctioned divergence).
 
 **The drill** (run in `/opt/noctus/<repo>`; deploy key pinned per §6 `core.sshCommand`):
 
 ```bash
-# 0) PUSH FIRST (on your machine): `git log origin/main..HEAD` must be empty.
+# 0) PUSH+PROMOTE FIRST (on your machine): push to main, then promote the blessed
+#    sha to prod (§2b): git checkout prod && git merge --ff-only <sha> && git push origin prod
+ssh noctus-vps    # the VPS checkout is /opt/noctus/noctusai, on branch `prod`
 # 1) INSPECT — before moving HEAD
 git log  --oneline -1                       # current deployed HEAD
 git fetch origin                            # refs only — does NOT move HEAD
 git status --short                          # ⭐ RECORD the deploy-local state to preserve (M / ??)
-git log  --oneline HEAD..origin/main        # incoming commits
-git diff --name-only HEAD..origin/main      # incoming files
+git log  --oneline HEAD..origin/prod        # incoming commits
+git diff --name-only HEAD..origin/prod      # incoming files (any product runtime / compose / Caddyfile?)
 # 2) DECIDE — cross-check incoming files vs the M/?? set from `status`:
 #    no overlap → clean FF (safe).   overlap → STOP, resolve deliberately (never reset / checkout-over).
+git tag -f backup/predeploy-$(date +%Y%m%d-%H%M%S) HEAD   # C1 backup ref before the move
 # 3) ACT — ff-only (refuses a non-fast-forward; never plain `git pull`, which can merge-commit)
-git merge --ff-only origin/main
+git merge --ff-only origin/prod
 # 4) VERIFY
-git log  --oneline -1                       # == the pushed sha
+git log  --oneline -1                       # == the promoted sha
 git status --short                          # SAME deploy-local files still M / ?? (preserved)
 grep -c "<marker-from-new-commit>" <a-changed-file>   # the change actually landed on disk
 ```
@@ -96,7 +99,7 @@ The drill is the *procedure*; these are the *structural* nets that make it hard 
 **Preventive — a bad state can't even be created**
 - **P1 · `--ff-only` only** ✅ — the VPS HEAD can only ADVANCE along pushed history; never diverges, rewinds, or merge-commits. A non-FF is *refused*, not forced.
 - **P2 · read-only deploy key** ✅ — the VPS key pulls, never pushes ⇒ the VPS can never mutate the remote (no broken local state escaping upward). Verify write-access is OFF on the GitHub deploy key.
-- **P3 · protected `prod` promote-branch** ⏳ *(designed; cutover handed off — see §2b)* — the VPS tracks `origin/prod`, never `main`; code reaches prod only by a *deliberate* FF of `prod` from a blessed `main` sha. GitHub branch-protection on `prod`+`main`: require PR + green checks, **block force-push, block deletion**. The promote ritual + the one-time cutover (point the VPS at `origin/prod`) are in §2b; branch creation/protection + VPS reconfig are user-gated actions.
+- **P3 · protected `prod` promote-branch** ✅ *(cutover 2026-05-22 — see §2b)* — the VPS tracks `origin/prod` (now at `6b23f4af`), never `main`; code reaches prod only by a *deliberate* FF of `prod` from a blessed `main` sha. Branch-protection is **client-side** (`scripts/hooks/pre-push` refuses force-push+deletion of `main`/`prod`) because server-side GitHub protection needs Pro on a private repo; combined with P2 (read-only deploy key — the VPS can't push at all) the prod history is guarded. Promote ritual + cutover steps in §2b.
 - **P4 · deploy-local files GITIGNORED, never tracked** ✅ *(repo-side, 2026-05-22; VPS one-time migration pending)* — the rendered `deploy/tunnel/config.yml` is now gitignored (`**/tunnel/config.yml`); the tracked artifact is `config.yml.template` (placeholders, no secrets). A pull cannot touch deploy-local state *by construction*. The live VPS file is still tracked until the one-time migration runs (back-up → move-aside → ff-only → restore → verify-ignored — `deploy/tunnel/README.md`).
 - **P5 · pre-deploy verification gate** ✅ *(2026-05-22)* — `noctus.dev.predeploy_check <product>` (CLI `--predeploy-check <product> [--fix]`): runs framework-dep parity + frontend `vite build` + backend `pytest`; `status='ready'` (all pass) only then is code fit to promote/restart ("always-only functional code online"). It also **classifies** failures against the boundary-contract classes, **auto-fixes** the framework-dep class (`--fix`), and **reports+learns** unknowns (`predeploy-reports/` + `phase_learnings` s1). Run it before the promote ritual (§2b). C1/C2 (below) are the VPS-runtime corrective companions.
 
@@ -139,7 +142,7 @@ git push origin prod                                          # now origin/prod 
 ```
 `prod` only ever fast-forwards from `main` ⇒ it can never carry code that didn't pass through integration; the VPS only ever fast-forwards from `prod` (P1) ⇒ production can only advance along promoted history.
 
-**One-time cutover** (the steps that switch the VPS from `main` to `prod` — *user-gated*; the agent prepares the local branch + docs, the user runs the remote/UI/VPS actions):
+**One-time cutover — ✅ DONE 2026-05-22** (the VPS now runs on branch `prod` tracking `origin/prod` at `6b23f4af`; the repoint was a clean docs/connector-only FF, deploy-local `config.yml`+creds preserved, `backup/predeploy-*` ref tagged, fleet verified healthy). The steps, for reference / re-runs on another box:
 1. **Create + push `prod`** off the current deployed sha: `git branch prod <deployed-sha> && git push -u origin prod`. *(Agent stages a local `prod` branch; the push is presented for go/no-go — phased-push policy.)*
 2. **Branch protection.** ⚠️ Server-side GitHub branch protection *and* rulesets need **Pro on a private repo** (free-private ⇒ HTTP 403 "Upgrade to GitHub Pro or make this repository public"). On the free-private plan the equivalent is **client-side**: the `scripts/hooks/pre-push` hook (installed by `scripts/install-hooks.sh`) refuses force-push + deletion of `main`/`prod` (the two destructive ops) — `git push --no-verify` is the deliberate-bypass. Server-side rulesets become the upgrade path *if* the repo ever goes Pro/public; until then P2 (read-only deploy key — the VPS can't push at all) + this hook + the §2a discipline carry the protection.
 3. **Point the VPS at `origin/prod`**: on the box, `git fetch origin && git checkout -B prod origin/prod` then use `origin/prod` in the §2a drill from then on. *(VPS shell — a deploy action; current-state-dependent: a true no-op only if the VPS HEAD already == `origin/prod`, otherwise it's a real deploy → run the full §2a drill + rebuild decision.)* SSH is set up as a one-liner: `~/.ssh/config` `Host noctus-vps` (`root@72.61.28.36`, the `noctusai-deploy` key) ⇒ `ssh noctus-vps '<cmd>'`.
