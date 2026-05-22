@@ -92,6 +92,11 @@ jobs:
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
       - name: Install dependencies
         working-directory: products/erp-imobiliario/frontend
         run: npm ci
@@ -118,6 +123,11 @@ jobs:
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
 
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
       - name: Install dependencies
         working-directory: products/core/frontend
         run: npm ci
@@ -140,6 +150,11 @@ jobs:
           cache: npm
           cache-dependency-path: products/personal-finance/frontend/package-lock.json
 
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
       - name: Install dependencies
         working-directory: products/personal-finance/frontend
         run: npm ci
@@ -161,6 +176,11 @@ jobs:
           node-version: "18"
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
+
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
 
       - name: Install dependencies
         working-directory: products/core/frontend
@@ -196,6 +216,11 @@ jobs:
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
       - name: Install dependencies
         working-directory: products/erp-imobiliario/frontend
         run: npm ci --legacy-peer-deps
@@ -225,6 +250,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Provide .env for compose interpolation (per-product env_file refs ../../.env)
+        # The root .env is gitignored (delivered out-of-band in prod); compose
+        # `config` still resolves the per-product `env_file: ../../.env`, so CI
+        # needs a placeholder. The template carries no secrets.
+        run: cp .env.example .env
       - name: Ensure external noctus-net (compose references it as external)
         run: docker network inspect noctus-net >/dev/null 2>&1 || docker network create noctus-net
       - name: Validate noctusai-products (root, resolves all includes)
@@ -266,12 +296,10 @@ jobs:
           - personal-finance
           - therapy-platform
           - daily-life
-          - mailing
           - adconnect
           - dev-team
+          - social-wiring
           - seed
-          - imobi-scheduling
-          - youtube-crawler
     steps:
       - uses: actions/checkout@v4
 
