@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+from settings import REPO_ROOT, PRODUCTS_DIR, resolve_test_python  # noqa: E402  (path constants)
 
 
 def run_product_tests(slug: str, timeout: int = 120) -> dict:
@@ -17,7 +17,7 @@ def run_product_tests(slug: str, timeout: int = 120) -> dict:
 
     try:
         result = subprocess.run(
-            ["python", "-m", "pytest", "tests/", "-q", "--tb=short"],
+            [resolve_test_python(), "-m", "pytest", "tests/", "-q", "--tb=short"],
             cwd=str(backend),
             capture_output=True, text=True, timeout=timeout,
         )
@@ -36,7 +36,10 @@ def run_product_tests(slug: str, timeout: int = 120) -> dict:
             "passed": passed,
             "failed": failed,
             "errors": errors,
-            "success": failed == 0 and errors == 0,
+            # pytest's exit code is the authority: a crash / missing-module /
+            # collection error returns non-zero with NO summary line, which
+            # would otherwise parse as 0/0/0 → false green. Gate on returncode.
+            "success": result.returncode == 0 and failed == 0 and errors == 0,
             "output": output[-2000:] if len(output) > 2000 else output,
         }
     except subprocess.TimeoutExpired:

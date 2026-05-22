@@ -34,7 +34,7 @@ import re
 import subprocess
 from typing import Any, Callable
 
-from settings import REPO_ROOT
+from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
 from . import check_framework_deps as _cfd
@@ -143,7 +143,7 @@ def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bo
         be = root / "products" / product / "backend"
         if not be.exists():
             return True, f"no backend dir for {product} (skipped)"
-        r = subprocess.run(["python", "-m", "pytest", "-q"], cwd=be, capture_output=True, text=True)
+        r = subprocess.run([resolve_test_python(), "-m", "pytest", "-q"], cwd=be, capture_output=True, text=True)
         return r.returncode == 0, (r.stdout + r.stderr)
     return False, f"unknown check '{check}'"
 

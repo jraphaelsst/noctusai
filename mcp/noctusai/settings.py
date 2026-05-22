@@ -21,6 +21,7 @@ instead of computing its own.
 
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -46,4 +47,17 @@ def get_settings() -> Settings:
     return Settings()
 
 
-__all__ = ["Settings", "get_settings", "REPO_ROOT", "PRODUCTS_DIR"]
+def resolve_test_python() -> str:
+    """Interpreter path for running product pytest. The repo-root ``venv``
+    carries ``noctusai_lib`` + pytest + the product deps; a bare ``python``
+    on PATH often resolves to a system interpreter WITHOUT pytest, which
+    silently breaks the test runners — a false *block* in
+    ``noctus.dev.predeploy_check`` (P5 gate) and a false *green* in
+    ``noctus.dev.pytest`` (0 passed / 0 failed parsed as success). Both call
+    sites resolve the interpreter here instead of hardcoding ``"python"``.
+    Falls back to the current interpreter when the repo-root venv is absent."""
+    cand = REPO_ROOT / "venv" / "bin" / "python"
+    return str(cand) if cand.exists() else sys.executable
+
+
+__all__ = ["Settings", "get_settings", "REPO_ROOT", "PRODUCTS_DIR", "resolve_test_python"]
