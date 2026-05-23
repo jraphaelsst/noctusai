@@ -13,7 +13,9 @@ from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from supabase import create_client
 
+from app.config import settings
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
@@ -318,7 +320,17 @@ def _generate_session(email: str) -> dict:
             if not email_otp:
                 raise Exception("generate_link não retornou email_otp")
 
-            session_response = supabase_admin.auth.verify_otp({
+            # verify_otp ESTABLISHES a session, so supabase-py propagates the
+            # new user token onto the calling client's PostgREST layer. Running
+            # it on the shared service-role singleton (`supabase_admin`) would
+            # downgrade every later get_admin_client() call from service_role
+            # to authenticated — process-wide until restart — tripping RLS on
+            # unrelated requests (42P17 recursion on noctus_users, broke
+            # GET /api/auth/me 2026-05-23). Use a throwaway anon client, like
+            # login/refresh/logout already do. generate_link above stays on the
+            # admin singleton (admin API; it does not set a session).
+            otp_client = create_client(settings.supabase_url, settings.supabase_anon_key)
+            session_response = otp_client.auth.verify_otp({
                 "email": email,
                 "token": email_otp,
                 "type": "magiclink",
