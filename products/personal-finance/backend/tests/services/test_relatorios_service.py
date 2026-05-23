@@ -18,9 +18,9 @@ class TestRelatorioMensal:
         svc, sb = make_service()
         sb.set_table_data("resumos_mensais", [])  # no cache
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 5000, "data": "2026-03-10", "categoria": {"id": "c1", "nome": "Salario", "icone": "", "cor": ""}},
-            {"id": "t2", "tipo": "despesa", "valor": 1500, "data": "2026-03-15", "categoria": {"id": "c2", "nome": "Moradia", "icone": "", "cor": ""}},
-            {"id": "t3", "tipo": "despesa", "valor": 800, "data": "2026-03-20", "categoria": {"id": "c3", "nome": "Alimentacao", "icone": "", "cor": ""}},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 5000, "data": "2026-03-10", "categoria": {"id": "c1", "nome": "Salario", "icone": "", "cor": ""}},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 1500, "data": "2026-03-15", "categoria": {"id": "c2", "nome": "Moradia", "icone": "", "cor": ""}},
+            {"id": "t3", "org_id": ORG_ID, "tipo": "despesa", "valor": 800, "data": "2026-03-20", "categoria": {"id": "c3", "nome": "Alimentacao", "icone": "", "cor": ""}},
         ])
         result = await svc.relatorio_mensal("2026-03")
         assert result["receita_total"] == 5000
@@ -59,8 +59,8 @@ class TestRelatorioMensal:
         svc, sb = make_service()
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 10000, "data": "2026-03-01", "categoria": None},
-            {"id": "t2", "tipo": "despesa", "valor": 6000, "data": "2026-03-15", "categoria": None},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 10000, "data": "2026-03-01", "categoria": None},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 6000, "data": "2026-03-15", "categoria": None},
         ])
         result = await svc.relatorio_mensal("2026-03")
         assert result["taxa_poupanca"] == 40.0
@@ -70,9 +70,9 @@ class TestRelatorioMensal:
         svc, sb = make_service()
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "despesa", "valor": 500, "data": "2026-03-01", "categoria": {"id": "c1", "nome": "Alimentacao", "icone": "", "cor": ""}},
-            {"id": "t2", "tipo": "despesa", "valor": 2000, "data": "2026-03-05", "categoria": {"id": "c2", "nome": "Moradia", "icone": "", "cor": ""}},
-            {"id": "t3", "tipo": "despesa", "valor": 300, "data": "2026-03-10", "categoria": {"id": "c1", "nome": "Alimentacao", "icone": "", "cor": ""}},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "despesa", "valor": 500, "data": "2026-03-01", "categoria": {"id": "c1", "nome": "Alimentacao", "icone": "", "cor": ""}},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 2000, "data": "2026-03-05", "categoria": {"id": "c2", "nome": "Moradia", "icone": "", "cor": ""}},
+            {"id": "t3", "org_id": ORG_ID, "tipo": "despesa", "valor": 300, "data": "2026-03-10", "categoria": {"id": "c1", "nome": "Alimentacao", "icone": "", "cor": ""}},
         ])
         result = await svc.relatorio_mensal("2026-03")
         cats = result["top_categorias"]
@@ -87,8 +87,8 @@ class TestRelatorioAnual:
         svc, sb = make_service()
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 5000, "data": "2026-01-10", "categoria": None},
-            {"id": "t2", "tipo": "despesa", "valor": 3000, "data": "2026-01-15", "categoria": None},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 5000, "data": "2026-01-10", "categoria": None},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 3000, "data": "2026-01-15", "categoria": None},
         ])
         result = await svc.relatorio_anual("2026")
         assert result["ano"] == "2026"
@@ -119,9 +119,9 @@ class TestFluxoCaixa:
     async def test_daily_aggregation(self):
         svc, sb = make_service()
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 5000, "data": "2026-03-01"},
-            {"id": "t2", "tipo": "despesa", "valor": 200, "data": "2026-03-01"},
-            {"id": "t3", "tipo": "despesa", "valor": 800, "data": "2026-03-02"},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 5000, "data": "2026-03-01"},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 200, "data": "2026-03-01"},
+            {"id": "t3", "org_id": ORG_ID, "tipo": "despesa", "valor": 800, "data": "2026-03-02"},
         ])
         result = await svc.fluxo_caixa("2026-03-01", "2026-03-31")
         assert len(result["fluxo"]) == 2
@@ -144,7 +144,7 @@ class TestCacheOperations:
         svc, sb = make_service()
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 5000, "data": "2026-03-01", "categoria": None},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 5000, "data": "2026-03-01", "categoria": None},
         ])
         result = await svc.atualizar_resumo_mensal("2026-03")
         assert result["receita_total"] == 5000

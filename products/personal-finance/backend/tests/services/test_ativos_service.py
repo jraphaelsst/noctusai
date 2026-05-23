@@ -17,8 +17,8 @@ class TestListar:
     async def test_returns_all_ativos(self):
         svc, sb = make_service()
         sb.set_table_data("ativos", [
-            {"id": "a1", "ticker": "PETR4", "valor_atual": 5000},
-            {"id": "a2", "ticker": "VALE3", "valor_atual": 8000},
+            {"id": "a1", "org_id": ORG_ID, "ticker": "PETR4", "valor_atual": 5000},
+            {"id": "a2", "org_id": ORG_ID, "ticker": "VALE3", "valor_atual": 8000},
         ])
         result = await svc.listar()
         assert len(result) == 2
