@@ -42,6 +42,7 @@ const AdminUsers = lazy(() => import('./pages/admin/AdminUsers').then(m => ({ de
 const AdminLogoutBehavior = lazy(() => import('./pages/admin/AdminLogoutBehavior').then(m => ({ default: m.AdminLogoutBehavior })));
 const AdminTemplates = lazy(() => import('./pages/admin/AdminTemplates').then(m => ({ default: m.AdminTemplates })));
 const AdminAuditDigest = lazy(() => import('./pages/admin/AdminAuditDigest').then(m => ({ default: m.AdminAuditDigest })));
+const FleetControl = lazy(() => import('./pages/FleetControl').then(m => ({ default: m.FleetControl })));
 
 const App = createProductApp({
   authProvider: coreAuthProvider,
@@ -78,6 +79,7 @@ const App = createProductApp({
     { path: '/admin/logout-behavior', component: AdminLogoutBehavior },
     { path: '/admin/templates', component: AdminTemplates },
     { path: '/admin/audit-digest', component: AdminAuditDigest },
+    { path: '/admin/fleet', component: FleetControl },
   ],
 });
 
