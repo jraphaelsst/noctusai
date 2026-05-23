@@ -86,6 +86,21 @@ Enforcement (`mcp/noctusai/tools/noctus/dev/compliance.py`, `severity="warning"`
 
 ---
 
+## 5b · The pre-deploy gate — `prod_config_parity` (value-correctness)
+
+The **3rd leg**. §4's boot guard (`require_prod_config`) fails loud on a **missing** required key *at boot on the box*; §5's keeper catches **source** deriving from a dev-only artifact. This gate validates the **actual prod env snapshot** *before* the deploy ships — and crucially catches a **present-but-wrong** value the boot guard cannot: `PRODUCT_URL_CORE=http://localhost:8000` is PRESENT ⇒ passes `require_prod_config`, yet is exactly the ARC1/ARC2 localhost drift.
+
+Lives in `noctus.dev.predeploy_check` (`mcp/noctusai/tools/noctus/dev/predeploy_check.py`) as a default check + the pure auditor `audit_prod_config_parity(roster_slugs, env)`:
+
+- **(1) resolution** — for every product in the live roster (`parse_products_registry`, never a frozen list), a prod origin must resolve WITHOUT the DB-localhost fallthrough: `PRODUCT_URL_<SLUG>` set `∨` `PRODUCT_URL_PATTERN` set (one pattern covers the fleet).
+- **(2) value-correctness** — no `PRODUCT_URL_*` / `CORS_ORIGINS` value carries a localhost/loopback host (`localhost`/`127.0.0.1`/`0.0.0.0`/`::1`).
+
+**Snapshot source** (option b — deterministic core): the auditor is **pure** (takes a provided env mapping ⇒ the test needs no real env). The runner resolves the snapshot in priority order — explicit `prod_env_path` → `NOCTUS_PROD_ENV_FILE` → a PROD-named file (`.env.prod` / `.env.production`) at the repo root. The dev `.env` is **deliberately excluded** (it carries localhost by design). No snapshot ⇒ a **LOUD skip** (`ok=True` + a "SKIPPED — set …" note), never a silent pass. Failures classify as `prod_config_localhost` (B4 container env). Colocated tests in `tests/test_predeploy_check.py`.
+
+> Three legs, three layers: STATIC source (§5 keeper) · PRE-DEPLOY env-snapshot value-correctness (§5b, this) · RUNTIME boot presence (§4 guard). Defence-in-depth against the platform's #1 drift class.
+
+---
+
 ## 6 · dev↔prod-parity checklist → seam table
 
 Each dev↔prod-divergent knob routes through a named seam — never a per-product re-resolution, never a silent fallback.
@@ -110,4 +125,4 @@ New divergent knob ⇒ add a row + route it through `resolve_config` / `require_
 
 ---
 
-**Doc anchors.** Memory entry: `feedback_deploy_config_contract.md` (to be authored). CLAUDE.md §1 bullet + §2 Map pointer (deploy-config-contract rule) — wired by the architect at reconciliation. Siblings: [[dev-prod-parity]] · [[seed-canonical-defaults]]. Project: `seed-deploy-config-contract` (2026-05-23). Primitive: `noctusai_lib.config.deploy_config`. Keeper: `check_derives_from_dev_only_artifact`.
+**Doc anchors.** Memory entry: `feedback_deploy_config_contract.md` (authored 2026-05-23). CLAUDE.md §2 Map pointer (deploy-config-contract rule) — wired. Siblings: [[dev-prod-parity]] (the discipline; doc authored 2026-05-23) · [[seed-canonical-defaults]]. Project: `seed-deploy-config-contract` (2026-05-23). Primitive: `noctusai_lib.config.deploy_config`. Keepers: `check_derives_from_dev_only_artifact` (static) + `prod_config_parity` pre-deploy gate (§5b).

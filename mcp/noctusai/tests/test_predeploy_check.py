@@ -208,3 +208,199 @@ def test_audit_deploy_local_real_repo_passes():
 
     audit = PC.audit_deploy_local(Path(REPO_ROOT))
     assert audit["violations"] == [], audit["violations"]
+
+
+# ── prod_config_parity (value-correctness, 3rd leg of deploy-config-contract) ──
+# Pure auditor + .env parser + snapshot resolution + runner integration +
+# classification. The deterministic core takes a provided env mapping → no real
+# environment needed (deploy-config-contract option b).
+def test_prod_config_parity_in_default_checks():
+    assert "prod_config_parity" in PC.DEFAULT_CHECKS
+
+
+def test_prod_config_parity_clean_per_product():
+    a = PC.audit_prod_config_parity(
+        ["core", "erp-imobiliario"],
+        {
+            "PRODUCT_URL_CORE": "https://noctusai.com",
+            "PRODUCT_URL_ERP_IMOBILIARIO": "https://erp.noctusai.com",
+        },
+    )
+    assert a["violations"] == [] and a["checked"] == 2
+    assert a["source"] == "prod-env-snapshot"
+
+
+def test_prod_config_parity_clean_with_pattern_covers_fleet():
+    a = PC.audit_prod_config_parity(
+        ["core", "x", "y"], {"PRODUCT_URL_PATTERN": "https://{slug}.noctusai.com"}
+    )
+    assert a["violations"] == []  # one pattern resolves the whole roster
+
+
+def test_prod_config_parity_missing_override_flags_each_slug():
+    a = PC.audit_prod_config_parity(["core", "erp-imobiliario"], {})
+    assert len(a["violations"]) == 2
+    assert any("'core'" in v for v in a["violations"])
+    assert any("erp-imobiliario" in v for v in a["violations"])
+
+
+def test_prod_config_parity_localhost_value_flagged_even_with_pattern():
+    # PRESENCE passes (pattern set), but the explicit value is localhost — the
+    # exact present-but-wrong shape the boot guard can't catch.
+    a = PC.audit_prod_config_parity(
+        ["core"],
+        {
+            "PRODUCT_URL_PATTERN": "https://{slug}.noctusai.com",
+            "PRODUCT_URL_CORE": "http://localhost:8000",
+        },
+    )
+    assert any("loopback" in v and "PRODUCT_URL_CORE" in v for v in a["violations"])
+
+
+def test_prod_config_parity_flags_loopback_in_cors_origins():
+    a = PC.audit_prod_config_parity(
+        ["core"],
+        {
+            "PRODUCT_URL_PATTERN": "https://{slug}.noctusai.com",
+            "CORS_ORIGINS": "https://a.com,http://127.0.0.1:3000",
+        },
+    )
+    assert any("CORS_ORIGINS" in v and "loopback" in v for v in a["violations"])
+
+
+def test_classify_prod_config_localhost_unresolved_is_known():
+    c = PC.classify_failure(
+        "prod-config parity VIOLATED: prod URL unresolved for 'erp-imobiliario': "
+        "neither PRODUCT_URL_ERP_IMOBILIARIO nor PRODUCT_URL_PATTERN set"
+    )
+    assert c is not None and c["class_id"] == "prod_config_localhost"
+    assert c["auto_fixable"] is False
+
+
+def test_classify_prod_config_localhost_value_wins_over_vite_class():
+    # message quotes http://localhost:8000 — prod_config_localhost must still win
+    # the first-match (it is ordered BEFORE vite_baked_localhost).
+    c = PC.classify_failure(
+        "prod-config parity VIOLATED: PRODUCT_URL_CORE carries a localhost/"
+        "loopback host ('http://localhost:8000') — not prod-safe"
+    )
+    assert c is not None and c["class_id"] == "prod_config_localhost"
+
+
+def test_parse_env_file_handles_comments_quotes_export():
+    text = (
+        "# comment\n"
+        "\n"
+        'export PRODUCT_URL_CORE="https://noctusai.com"\n'
+        "FOO = bar \n"
+        "QUOTED='x y'\n"
+        "NOEQUALS\n"
+    )
+    parsed = PC._parse_env_file(text)
+    assert parsed["PRODUCT_URL_CORE"] == "https://noctusai.com"
+    assert parsed["FOO"] == "bar"
+    assert parsed["QUOTED"] == "x y"
+    assert "NOEQUALS" not in parsed
+
+
+def test_resolve_prod_env_path_priority(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    assert PC._resolve_prod_env_path(tmp_path) is None  # none present
+
+    conv = tmp_path / ".env.prod"
+    conv.write_text("X=1")
+    assert PC._resolve_prod_env_path(tmp_path) == conv  # conventional
+
+    other = tmp_path / "snap.env"
+    other.write_text("Y=2")
+    monkeypatch.setenv("NOCTUS_PROD_ENV_FILE", str(other))
+    assert PC._resolve_prod_env_path(tmp_path) == other  # env var beats conventional
+
+    expl = tmp_path / "explicit.env"
+    expl.write_text("Z=3")
+    assert PC._resolve_prod_env_path(tmp_path, str(expl)) == expl  # explicit wins
+
+    # explicit-but-missing → None (never a silent fallthrough to a weaker source)
+    assert PC._resolve_prod_env_path(tmp_path, str(tmp_path / "nope.env")) is None
+
+
+def test_prod_config_parity_runner_skips_without_snapshot(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is True and "SKIPPED" in out  # loud skip, not a silent pass
+
+
+def test_prod_config_parity_runner_skips_on_empty_roster(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    (tmp_path / ".env.prod").write_text("PRODUCT_URL_PATTERN=https://{slug}.x.com")
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: [])
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is True and "empty product roster" in out
+
+
+def test_prod_config_parity_runner_clean_with_pattern(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    (tmp_path / ".env.production").write_text(
+        "PRODUCT_URL_PATTERN=https://{slug}.noctusai.com\n"
+    )
+    monkeypatch.setattr(
+        PC, "_load_roster_slugs", lambda root: ["core", "erp-imobiliario", "social-wiring"]
+    )
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is True and "parity ok" in out
+
+
+def test_prod_config_parity_runner_audits_snapshot_and_blocks(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    # core resolves; erp-imobiliario has no matching key → violation
+    (tmp_path / ".env.prod").write_text(
+        "PRODUCT_URL_CORE=https://noctusai.com\nPRODUCT_URL_ERP=https://erp.x\n"
+    )
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "erp-imobiliario"])
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is False and "erp-imobiliario" in out and "VIOLATED" in out
+
+
+def test_prod_config_parity_blocks_and_classifies_via_injected_run_check():
+    r = PC.predeploy_check(
+        "core",
+        run_check=lambda c, p, root: (
+            False,
+            "prod-config parity VIOLATED: prod URL unresolved for "
+            "'erp-imobiliario': neither PRODUCT_URL_ERP_IMOBILIARIO nor "
+            "PRODUCT_URL_PATTERN set",
+        )
+        if c == "prod_config_parity"
+        else (True, "ok"),
+        repo_root="/tmp",
+        now=_now,
+    )
+    assert r["status"] == "blocked" and r["exit_code"] == 1
+    assert any(x["class_id"] == "prod_config_localhost" for x in r["classified"])
+    assert r["unknown_count"] == 0  # classified, not a spurious unknown
+
+
+def test_prod_env_path_threads_to_default_runner(tmp_path, monkeypatch):
+    # an explicit prod_env_path passed to predeploy_check must reach the default
+    # runner (functools.partial threading), so the parity check audits it.
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    snap = tmp_path / "prod.env"
+    snap.write_text("PRODUCT_URL_PATTERN=https://{slug}.noctusai.com\n")
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core"])
+    r = PC.predeploy_check(
+        "core",
+        checks=["prod_config_parity"],
+        prod_env_path=str(snap),
+        repo_root=str(tmp_path),
+        now=_now,
+    )
+    assert r["status"] == "ready"  # pattern resolves the roster, no violations
+
+
+def test_load_roster_slugs_returns_list_against_real_tree():
+    from settings import REPO_ROOT  # noqa: E402
+
+    slugs = PC._load_roster_slugs(Path(REPO_ROOT))
+    assert isinstance(slugs, list)
+    if slugs:  # seed import + start.sh reachable → core is always in the roster
+        assert "core" in slugs

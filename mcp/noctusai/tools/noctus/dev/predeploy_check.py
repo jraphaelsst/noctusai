@@ -29,6 +29,8 @@ pattern). The default `run_check` shells out (mirrors `noctus.dev.vite_build`
 from __future__ import annotations
 
 import datetime as _dt
+import functools
+import os
 import pathlib
 import re
 import subprocess
@@ -47,6 +49,7 @@ DEFAULT_CHECKS: list[str] = [
     "frontend_build",
     "backend_tests",
     "deploy_local_gitignored",  # D3 — every deploy_state.DEPLOY_LOCAL_FILES pattern is gitignored
+    "prod_config_parity",  # value-correctness: prod env resolves a non-localhost URL per product
 ]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
@@ -82,6 +85,33 @@ _KNOWN: list[dict[str, Any]] = [
             "manifest the Dockerfile installs → fails only in a clean build."
         ),
         "suggested_fix": "Add the implicit dep (e.g. Pillow) to requirements.txt, pinned.",
+        "auto_fixable": False,
+    },
+    {
+        # Ordered BEFORE vite_baked_localhost: a parity violation message can
+        # quote a localhost value, so this specific class must win the first-match.
+        "class_id": "prod_config_localhost",
+        "rx": re.compile(
+            r"prod-config parity VIOLATED|prod URL unresolved for|"
+            r"carries a localhost/loopback host"
+        ),
+        "boundary": "B4 container env",
+        "explanation": (
+            "The prod env would reproduce the ARC1/ARC2 cutover drift: a product "
+            "has no PRODUCT_URL_<SLUG>/PRODUCT_URL_PATTERN override (nav + CORS "
+            "fall through to the DB localhost default), or a PRODUCT_URL_*/"
+            "CORS_ORIGINS value still carries a localhost/loopback host. The "
+            "deploy-config boot guard checks only PRESENCE, so a present-but-"
+            "localhost value passes it but is caught here. Both shapes broke apex "
+            "login + cross-product nav on the 2026-05-22 cutover."
+        ),
+        "suggested_fix": (
+            "On the deploy box's root .env set PRODUCT_URL_PATTERN="
+            "https://{slug}.<domain> (or per-product PRODUCT_URL_<SLUG>="
+            "https://…) with NO localhost; core uses @registry:all so CORS "
+            "auto-allows every prod origin. See KB § PATTERNS/deploy-config-"
+            "contract.md + KB § GUIDES/production-deploy.md."
+        ),
         "auto_fixable": False,
     },
     {
@@ -188,7 +218,137 @@ def audit_deploy_local(
     return {"source": "deploy_state.DEPLOY_LOCAL_FILES", "checked": len(manifest), "violations": violations}
 
 
-def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bool, str]:
+# ── Prod-config parity (value-correctness, pre-deploy) ────────────────────
+# The THIRD leg of the deploy-config-contract (KB § PATTERNS/deploy-config-contract.md):
+#   • check_derives_from_dev_only_artifact — STATIC (seed source derives a value
+#     from a dev-only artifact without an env fallback);
+#   • require_prod_config / resolve_config — RUNTIME boot guard (a required key is
+#     PRESENT in a deploy context);
+#   • prod_config_parity (this) — PRE-DEPLOY VALUE-correctness over the actual prod
+#     env snapshot: every product resolves a prod URL (no DB-localhost fallthrough)
+#     AND no PRODUCT_URL_*/CORS_ORIGINS value carries a localhost/loopback host.
+#     The boot guard checks PRESENCE only — a present-but-localhost value (the exact
+#     ARC1/ARC2 cutover drift) passes it but is caught here.
+# Deterministic core (deploy-config-contract option b): operates on a PROVIDED prod
+# env snapshot mapping, so the test needs no real environment; the runner resolves
+# the snapshot from an explicit path / NOCTUS_PROD_ENV_FILE / a PROD-named file
+# (never the ambiguous dev `.env`, which legitimately carries localhost).
+
+# loopback / non-routable hosts that must never appear in a prod-destined URL.
+_LOOPBACK_RE = re.compile(r"localhost|127\.0\.0\.1|0\.0\.0\.0|::1", re.I)
+# PROD-named snapshot discovery probes (NEVER plain `.env` — the dev-local file).
+_PROD_ENV_NAMES: tuple[str, ...] = (".env.prod", ".env.production")
+_PROD_URL_PREFIX = "PRODUCT_URL_"
+_PROD_URL_PATTERN_KEY = "PRODUCT_URL_PATTERN"
+
+
+def _slug_env_key(slug: str) -> str:
+    """`media-scheduling` → `PRODUCT_URL_MEDIA_SCHEDULING` (the exact scheme
+    noctusai_lib.config.product_urls.resolve_product_url reads)."""
+    return f"{_PROD_URL_PREFIX}{slug.replace('-', '_').upper()}"
+
+
+def audit_prod_config_parity(
+    roster_slugs: list[str], env: dict[str, str] | None
+) -> dict[str, Any]:
+    """Pure: assert a prod env snapshot resolves a non-localhost URL for every
+    product. For each slug a prod origin must resolve WITHOUT the DB-localhost
+    fallthrough — ``PRODUCT_URL_<SLUG>`` set OR ``PRODUCT_URL_PATTERN`` set (one
+    pattern covers the whole fleet) — and no ``PRODUCT_URL_*`` / ``CORS_ORIGINS``
+    value may carry a localhost/loopback host. ``env`` is any str→str mapping (a
+    parsed prod ``.env`` snapshot), injected so the test needs no real
+    environment. Returns ``{source, checked, violations}``."""
+    env = dict(env or {})
+    pattern_set = bool((env.get(_PROD_URL_PATTERN_KEY) or "").strip())
+    violations: list[str] = []
+    # (1) per-product prod URL resolves (no silent DB-localhost fallthrough).
+    # A fleet-wide PRODUCT_URL_PATTERN covers every slug, so per-slug vars are
+    # only required when no pattern is set.
+    if not pattern_set:
+        for slug in roster_slugs:
+            key = _slug_env_key(slug)
+            if not (env.get(key) or "").strip():
+                violations.append(
+                    f"prod URL unresolved for '{slug}': neither {key} nor "
+                    f"{_PROD_URL_PATTERN_KEY} set — nav + CORS fall through to the "
+                    "DB localhost default (the ARC1/ARC2 cutover drift)"
+                )
+    # (2) value-correctness: no loopback host in a prod-destined URL value (this
+    # is what the PRESENCE-only boot guard cannot catch).
+    for key in sorted(env):
+        value = env[key]
+        if (
+            (key.startswith(_PROD_URL_PREFIX) or key == "CORS_ORIGINS")
+            and value
+            and _LOOPBACK_RE.search(value)
+        ):
+            violations.append(
+                f"{key} carries a localhost/loopback host ({value!r}) — not "
+                "prod-safe (present-but-wrong passes the boot guard, fails here)"
+            )
+    return {
+        "source": "prod-env-snapshot",
+        "checked": len(roster_slugs),
+        "violations": violations,
+    }
+
+
+def _parse_env_file(text: str) -> dict[str, str]:
+    """Minimal ``.env`` parser (KEY=VALUE; ignores blanks / ``#`` comments /
+    ``export `` prefix; strips one layer of matching quotes). Config-file
+    parsing, not source — no dotenv dependency, no AST."""
+    out: dict[str, str] = {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
+def _resolve_prod_env_path(
+    root: pathlib.Path, explicit: str | None = None
+) -> pathlib.Path | None:
+    """Resolve the prod env snapshot to audit, in priority order: explicit arg →
+    ``NOCTUS_PROD_ENV_FILE`` → a PROD-named file in ``root``. Returns ``None``
+    when none exists (the runner then SKIPs loudly — never silently passes). The
+    ambiguous dev ``.env`` is deliberately NOT a source (it carries localhost by
+    design)."""
+    if explicit:
+        explicit_path = pathlib.Path(explicit)
+        return explicit_path if explicit_path.exists() else None
+    from_env = os.environ.get("NOCTUS_PROD_ENV_FILE")
+    if from_env and pathlib.Path(from_env).exists():
+        return pathlib.Path(from_env)
+    for name in _PROD_ENV_NAMES:
+        candidate = root / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_roster_slugs(root: pathlib.Path) -> list[str]:
+    """Live product roster slugs via the seed registry parser (never a frozen
+    list). Lazy seed import (the seed is on the MCP runtime path); returns ``[]``
+    if unavailable so the caller SKIPs rather than crashing."""
+    try:
+        from noctusai_lib.config.cors_registry import parse_products_registry
+    except Exception:
+        return []
+    return [entry["slug"] for entry in parse_products_registry(root / "start.sh")]
+
+
+def _default_run_check(
+    check: str, product: str, root: pathlib.Path, prod_env_path: str | None = None
+) -> tuple[bool, str]:
     """Real runner — shells the deploy-relevant build/test (mirrors
     noctus.dev.vite_build / pytest); framework_deps composes the existing
     audit. Returns (ok, combined_output)."""
@@ -217,6 +377,32 @@ def _default_run_check(check: str, product: str, root: pathlib.Path) -> tuple[bo
         if audit["violations"]:
             return False, "D3 deploy-local invariant VIOLATED: " + "; ".join(audit["violations"])
         return True, f"D3 ok — {audit['checked']} deploy-local pattern(s) gitignored (deploy_state.py)"
+    if check == "prod_config_parity":
+        # Platform-wide value-correctness (product arg unused): audit the prod
+        # env snapshot. SKIPs (ok=True, loud note) when no snapshot resolves —
+        # local dev has none and its `.env` is deliberately excluded.
+        env_path = _resolve_prod_env_path(root, prod_env_path)
+        if env_path is None:
+            return True, (
+                "prod_config_parity SKIPPED — no prod env snapshot resolvable "
+                "(pass prod_env_path, set NOCTUS_PROD_ENV_FILE, or add a "
+                ".env.prod/.env.production at the repo root). The dev .env is "
+                "intentionally NOT used (it carries localhost by design)."
+            )
+        roster = _load_roster_slugs(root)
+        if not roster:
+            return True, (
+                "prod_config_parity SKIPPED — empty product roster "
+                "(start.sh registry unreadable from here)."
+            )
+        env = _parse_env_file(env_path.read_text(encoding="utf-8"))
+        audit = audit_prod_config_parity(roster, env)
+        if audit["violations"]:
+            return False, "prod-config parity VIOLATED: " + "; ".join(audit["violations"])
+        return True, (
+            f"prod-config parity ok — {audit['checked']} product(s) resolve a "
+            f"non-localhost prod URL ({env_path.name})"
+        )
     return False, f"unknown check '{check}'"
 
 
@@ -250,6 +436,7 @@ def predeploy_check(
     product: str,
     checks: list[str] | None = None,
     auto_fix: bool = False,
+    prod_env_path: str | None = None,
     run_check: Callable[[str, str, pathlib.Path], tuple[bool, str]] | None = None,
     write_report: Callable[[str, str], str] | None = None,
     log_fn: Callable[..., int] | None = None,
@@ -263,7 +450,9 @@ def predeploy_check(
     'blocked' (≥1 fail). Never raises on a check failure — it returns it."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "error": "product required", "exit_code": 1}
-    runner = run_check or _default_run_check
+    # default runner threads the resolved prod env path; injected runners keep
+    # the 3-arg (check, product, root) contract the tests rely on.
+    runner = run_check or functools.partial(_default_run_check, prod_env_path=prod_env_path)
     logger = log_fn or _pl.log_learning
     fixer = fix_framework_deps or _default_fix_framework_deps
     clock = now or _dt.datetime.utcnow
@@ -344,8 +533,13 @@ def register(server) -> None:
         description=(
             "Pre-deploy verification + learning gate (deploy-hardening P5). "
             "For a product, runs the deploy-relevant checks (framework-dep "
-            "parity, frontend vite build, backend pytest, and the D3 "
-            "deploy-local-gitignored manifest assertion), CLASSIFIES any "
+            "parity, frontend vite build, backend pytest, the D3 "
+            "deploy-local-gitignored manifest assertion, and the "
+            "prod_config_parity value-correctness gate — the 3rd leg of the "
+            "deploy-config-contract: every product resolves a non-localhost "
+            "prod URL, no PRODUCT_URL_*/CORS_ORIGINS value carries a loopback "
+            "host; feed it a snapshot via prod_env_path / NOCTUS_PROD_ENV_FILE "
+            "/ a .env.prod, else it SKIPs loudly), CLASSIFIES any "
             "failure against the known boundary-contract classes, AUTO-FIXES "
             "the framework-dep class when auto_fix=True (composes "
             "check_framework_deps), and for an UNKNOWN failure writes "
@@ -360,14 +554,21 @@ def register(server) -> None:
         product: str,
         auto_fix: bool = False,
         worktree_path: str | None = None,
+        prod_env_path: str | None = None,
     ) -> dict:
-        return predeploy_check(product, auto_fix=auto_fix, worktree_path=worktree_path)
+        return predeploy_check(
+            product,
+            auto_fix=auto_fix,
+            worktree_path=worktree_path,
+            prod_env_path=prod_env_path,
+        )
 
 
 __all__ = [
     "predeploy_check",
     "classify_failure",
     "audit_deploy_local",
+    "audit_prod_config_parity",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",
     "register",

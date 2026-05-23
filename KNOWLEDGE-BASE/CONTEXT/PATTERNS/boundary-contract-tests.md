@@ -71,7 +71,7 @@ rationale-and-destination.
 | **B1** Build-injection | `check_seed_canonical_default` (Stage-4 keeper, 2026-05-20) — flags consumer-#1 port literals in seed source. Source-side, not bundle-side. | ✅ Class covered at source; bundle-side assertion is a follow-up. |
 | **B2** HTTP schema | None today. **Triggers `[A]` accept-with-rationale** — destination: `<product>-fe-be-schema-contract` follow-up when N=2 (next instance of FE/BE-cap drift fires the recurrence rule). | ⏳ Accepted; destination filed. |
 | **B3** Third-party library contract | `check_query_fn_returns_undefined` (Stage-4 keeper, 2026-05-20 — this doc's primary deliverable). | ✅ Class covered. |
-| **B4** Container env propagation | Manual container-freshness rule (`KB § PATTERNS/containerization.md § 12b`). No automated detector. | ⏳ Accepted; destination = `smoke-fleet-env-propagation` when N=2. |
+| **B4** Container env propagation | **Partial:** `prod_config_parity` (`noctus.dev.predeploy_check`, 2026-05-23) — pre-deploy audit of the prod env snapshot: every product resolves a non-localhost prod URL, no `PRODUCT_URL_*`/`CORS_ORIGINS` loopback value (the deploy-config-contract 3rd leg, `KB § PATTERNS/deploy-config-contract.md § 5b`). Container-freshness still manual (`KB § PATTERNS/containerization.md § 12b`); full `.env`↔compose↔stage-chain smoke is the remaining gap. | ⏳ Env-value subclass detected; full-chain `smoke-fleet-env-propagation` still destination when N=2. |
 | **B5** Library-default propagation | `check_seed_canonical_default` (same keeper as B1 — the source-side rule is identical). | ✅ Class covered. |
 
 ---
