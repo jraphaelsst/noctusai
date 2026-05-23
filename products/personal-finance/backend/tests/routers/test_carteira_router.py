@@ -169,7 +169,7 @@ class TestExcluirCarteira:
 
 class TestDefinirAlocacaoAlvo:
     def test_creates_target_allocation(self, client):
-        client._mock_supabase.set_table_data("carteiras", [{"id": "cart-001"}])
+        client._mock_supabase.set_table_data("carteiras", [{"id": "cart-001", "org_id": "test-org-123"}])
         client._mock_supabase.set_table_data("alocacao_alvo", [{
             "id": "aloc-001",
             "carteira_id": "cart-001",

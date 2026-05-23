@@ -17,11 +17,11 @@ class TestCalcularAtual:
     async def test_positive_balances(self):
         svc, sb = make_service()
         sb.set_table_data("contas", [
-            {"id": "c1", "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
-            {"id": "c2", "nome": "Poupanca", "tipo": "poupanca", "saldo": 10000, "ativo": True},
+            {"id": "c1", "org_id": ORG_ID, "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
+            {"id": "c2", "org_id": ORG_ID, "nome": "Poupanca", "tipo": "poupanca", "saldo": 10000, "ativo": True},
         ])
         sb.set_table_data("ativos", [
-            {"id": "a1", "ticker": "PETR4", "valor_atual": 8000, "carteira_id": "cart1"},
+            {"id": "a1", "org_id": ORG_ID, "ticker": "PETR4", "valor_atual": 8000, "carteira_id": "cart1"},
         ])
         result = await svc.calcular_atual()
         assert result["total_ativos"] == 23000  # 5000 + 10000 + 8000
@@ -32,8 +32,8 @@ class TestCalcularAtual:
     async def test_credit_card_as_liability(self):
         svc, sb = make_service()
         sb.set_table_data("contas", [
-            {"id": "c1", "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
-            {"id": "c2", "nome": "Cartao", "tipo": "cartao_credito", "saldo": -2000, "ativo": True},
+            {"id": "c1", "org_id": ORG_ID, "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
+            {"id": "c2", "org_id": ORG_ID, "nome": "Cartao", "tipo": "cartao_credito", "saldo": -2000, "ativo": True},
         ])
         sb.set_table_data("ativos", [])
         result = await svc.calcular_atual()
@@ -45,8 +45,8 @@ class TestCalcularAtual:
     async def test_loan_as_liability(self):
         svc, sb = make_service()
         sb.set_table_data("contas", [
-            {"id": "c1", "nome": "Corrente", "tipo": "corrente", "saldo": 10000, "ativo": True},
-            {"id": "c2", "nome": "Emprestimo", "tipo": "emprestimo", "saldo": -5000, "ativo": True},
+            {"id": "c1", "org_id": ORG_ID, "nome": "Corrente", "tipo": "corrente", "saldo": 10000, "ativo": True},
+            {"id": "c2", "org_id": ORG_ID, "nome": "Emprestimo", "tipo": "emprestimo", "saldo": -5000, "ativo": True},
         ])
         sb.set_table_data("ativos", [])
         result = await svc.calcular_atual()
@@ -68,10 +68,10 @@ class TestCalcularAtual:
     async def test_detalhamento_structure(self):
         svc, sb = make_service()
         sb.set_table_data("contas", [
-            {"id": "c1", "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
+            {"id": "c1", "org_id": ORG_ID, "nome": "Corrente", "tipo": "corrente", "saldo": 5000, "ativo": True},
         ])
         sb.set_table_data("ativos", [
-            {"id": "a1", "ticker": "VALE3", "valor_atual": 3000, "carteira_id": "cart1"},
+            {"id": "a1", "org_id": ORG_ID, "ticker": "VALE3", "valor_atual": 3000, "carteira_id": "cart1"},
         ])
         result = await svc.calcular_atual()
         assert "detalhamento" in result
