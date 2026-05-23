@@ -1,61 +1,34 @@
-"""WhatsApp outbound emission helpers.
+"""WhatsApp outbound emission — thin product shim over the seed delivery primitive.
 
-Two responsibilities:
+The split + sequential-send logic was lifted to the seed 2026-05-23 and now
+lives in `noctusai_lib.domain.chatbot.delivery` (`split_reply` +
+`send_reply_parts`). This module keeps the product-local names + binds the
+channel-neutral seed seam to social-wiring's specifics:
 
-- ``split_for_whatsapp(text)`` — split a multi-paragraph reply on ``\\n\\n``
-  into individual WhatsApp messages. Reflects how humans chat: each
-  paragraph lands as its own bubble, not a single wall of text.
-- ``send_paragraphs(intake, sender, text)`` — drive ``intake.send_reply``
-  once per paragraph with a short inter-message delay so WAHA + the
-  mobile clients render the messages in order.
+- the toggle/delay come from `settings.whatsapp_paragraph_split` /
+  `settings.whatsapp_paragraph_delay_seconds`;
+- the `send_one` seam is bound to `intake.send_reply(sender, part)`.
 
-Both honor ``settings.whatsapp_paragraph_split`` — when ``False``, the
-helpers degrade to the legacy single-message behavior so the toggle is
-truly reversible.
+Behavior is unchanged — see `tests/services/test_whatsapp_outbound.py`.
 """
 from __future__ import annotations
 
-import asyncio
-import logging
-import re
 from typing import Any
+
+from noctusai_lib.domain.chatbot import send_reply_parts, split_reply
 
 from app.config import settings
 
-logger = logging.getLogger(__name__)
-
-
-# Matches one-or-more blank lines (``\n\n`` or more, possibly with
-# whitespace-only lines between). Module-private so the public
-# ``split_for_whatsapp`` keeps the regex detail hidden.
-_PARAGRAPH_RE = re.compile(r"\n\s*\n+")
+__all__ = ["send_paragraphs", "split_for_whatsapp"]
 
 
 def split_for_whatsapp(text: str) -> list[str]:
-    """Return ``text`` split into one entry per paragraph.
+    """Split `text` into one entry per paragraph, honoring the product toggle.
 
-    Splits on ``\\n\\n`` (one or more blank lines between paragraphs),
-    strips empties, and trims each entry. When
-    ``settings.whatsapp_paragraph_split`` is ``False`` returns a
-    single-element list so callers can loop unconditionally.
-
-    Examples:
-
-        >>> split_for_whatsapp("hello")
-        ['hello']
-        >>> split_for_whatsapp("oi\\n\\ntudo bem?\\n\\nsim")
-        ['oi', 'tudo bem?', 'sim']
-        >>> split_for_whatsapp("")
-        []
+    Delegates to the seed `split_reply`; `settings.whatsapp_paragraph_split`
+    drives the `enabled` flag (when False → single trimmed entry).
     """
-    if not text or not text.strip():
-        return []
-    if not settings.whatsapp_paragraph_split:
-        return [text.strip()]
-    # Treat sequences of 2+ newlines as paragraph breaks; single newlines
-    # inside a paragraph are kept as soft-wraps (WhatsApp renders them).
-    raw_parts = [part.strip() for part in _PARAGRAPH_RE.split(text)]
-    return [part for part in raw_parts if part]
+    return split_reply(text, enabled=settings.whatsapp_paragraph_split)
 
 
 async def send_paragraphs(
@@ -65,47 +38,28 @@ async def send_paragraphs(
     text: str,
     delay_seconds: float | None = None,
 ) -> int:
-    """Send ``text`` to ``sender`` as one WAHA message per paragraph.
+    """Send `text` to `sender` as one WAHA message per paragraph.
 
-    Returns the number of paragraphs actually sent. Exceptions from
-    individual sends are logged and DO NOT halt the loop — partial
-    delivery beats no delivery for chatbot replies.
+    Returns the number of paragraphs actually sent. Delegates to the seed
+    `send_reply_parts` with the `send_one` seam bound to
+    `intake.send_reply(sender, part)`. `delay_seconds` defaults to
+    `settings.whatsapp_paragraph_delay_seconds`.
 
     Args:
-        intake: Any object exposing ``async send_reply(sender, text)`` —
-            today's ``WhatsAppIntakeService`` satisfies this.
-        sender: WAHA chat id (phone + ``@c.us``, or whatever form the
-            inbound carried).
+        intake: Any object exposing `async send_reply(sender, text)` —
+            today's `WhatsAppIntakeService` satisfies this.
+        sender: WAHA chat id (phone + `@c.us`, or whatever the inbound carried).
         text: The bot's reply; may contain multiple paragraphs.
-        delay_seconds: Inter-paragraph delay override. Defaults to
-            ``settings.whatsapp_paragraph_delay_seconds``.
+        delay_seconds: Inter-paragraph delay override.
     """
-    paragraphs = split_for_whatsapp(text)
-    if not paragraphs:
-        return 0
-
     delay = (
         delay_seconds
         if delay_seconds is not None
         else settings.whatsapp_paragraph_delay_seconds
     )
-
-    sent = 0
-    for idx, paragraph in enumerate(paragraphs):
-        try:
-            await intake.send_reply(sender, paragraph)
-            sent += 1
-        except Exception:
-            logger.exception(
-                "send_paragraphs: WAHA send failed (paragraph %d/%d, sender=%s)",
-                idx + 1,
-                len(paragraphs),
-                sender,
-            )
-            continue
-        if idx + 1 < len(paragraphs) and delay > 0:
-            await asyncio.sleep(delay)
-    return sent
-
-
-__all__ = ["send_paragraphs", "split_for_whatsapp"]
+    return await send_reply_parts(
+        text,
+        lambda part: intake.send_reply(sender, part),
+        split=settings.whatsapp_paragraph_split,
+        delay_seconds=delay,
+    )

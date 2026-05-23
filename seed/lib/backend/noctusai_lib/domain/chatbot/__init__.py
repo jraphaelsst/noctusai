@@ -48,6 +48,11 @@ from noctusai_lib.domain.chatbot.content_stats import (
     SchemaHint,
     compute_content_stats,
 )
+from noctusai_lib.domain.chatbot.delivery import (
+    send_reply_parts,
+    send_reply_parts_sync,
+    split_reply,
+)
 from noctusai_lib.domain.chatbot.llm_dispatcher import (
     AuditWriter,
     LLMDispatcher,
@@ -131,7 +136,10 @@ __all__ = [
     "memory_key_for",
     "memory_to_chat_messages",
     "sample_key",
+    "send_reply_parts",
+    "send_reply_parts_sync",
     "shape_fingerprint",
+    "split_reply",
     "summarize_conversation",
     "with_url_immutability",
 ]

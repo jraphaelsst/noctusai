@@ -70,6 +70,8 @@ swapping the connector.
 | `ToolHandler`, `AuditWriter` | Consumer-supplied callables (audit_writer optional; default no-op). |
 | `memory_to_chat_messages`, `format_conversation_for_transcript` | Pure-function translators. |
 | `summarize_conversation(client, model, memory, output_schema, system_prompt, ...)` | Structured-output summary runner (opt-in). |
+| `split_reply(text, *, enabled=True)` | Pure split of a reply on blank-line (paragraph) boundaries → one entry per bubble. `enabled=False` → single trimmed entry. |
+| `send_reply_parts(text, send_one, *, split=True, delay_seconds=0.0)` / `send_reply_parts_sync(...)` | Drive `send_one(part)` once per bubble with an inter-message delay; per-part errors logged + skipped (partial delivery beats none). Channel-neutral — the `send_one` seam binds WAHA `send_text`/`send_text_sync`, Telegram, or in-app. Human-like multi-bubble replies (sibling of the inbound debounce). Lifted to the seed 2026-05-23 from social-wiring's `whatsapp_outbound.py`. |
 
 LLM input-shape helpers (`image_bytes_to_data_url`, `audio_bytes_to_named_buffer`)
 moved to `noctusai_lib.integrations.llm` — they're vendor-shape adapters
@@ -91,6 +93,9 @@ class Settings(BaseAppSettings):
     redis_stream_maxlen: int = 10_000
     worker_poll_seconds: float = 2.0
     worker_due_batch_size: int = 25
+
+    reply_split: bool = True               # multi-bubble outbound (split on blank lines)
+    reply_part_delay_seconds: float = 0.6  # inter-bubble gap (seconds)
 
     openai_model: str = "gpt-4o-mini"  # already in noctusai_lib.integrations.llm scope
 ```
@@ -154,7 +159,7 @@ adopts named routers.
 ```python
 from noctusai_lib.domain.chatbot import (
     ConversationWorker, LLMDispatcher, memory_to_chat_messages,
-    ToolCall, ToolResult,
+    send_reply_parts_sync, ToolCall, ToolResult,
 )
 from noctusai_lib.integrations.whatsapp import WahaClient
 
@@ -191,7 +196,15 @@ def processor(conversation_id: str, memory: list[dict]) -> None:
         # audit_writer=make_audit_writer(...),  # optional, see KB § PATTERNS/llm-tool-audit.md
     )
     if reply:
-        waha.send_text_sync(chat_id_for_phone(conversation_id), reply)
+        # Human-like multi-bubble emit: split the reply on blank lines and
+        # send each part with a short gap (set reply_split=False for one bubble).
+        chat_id = chat_id_for_phone(conversation_id)
+        send_reply_parts_sync(
+            reply,
+            lambda part: waha.send_text_sync(chat_id, part),
+            split=settings.reply_split,
+            delay_seconds=settings.reply_part_delay_seconds,
+        )
         buffer.append_to_memory(QueuedConversationMessage(
             conversation_id=conversation_id, text=reply, direction="outbound",
         ))
