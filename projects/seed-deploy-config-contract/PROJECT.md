@@ -37,11 +37,11 @@ INDEX.md + CLAUDE.md rows for slice C's new doc = **architect wires at reconcili
 
 ## 6 · Phases / waves
 
-- **⏳ Wave 1 (parallel, C1 file-disjoint, no inter-dependency)** — dispatch A + B + C concurrently, isolated worktrees, push own branches.
+- **✅ Wave 1 (parallel, C1 file-disjoint, no inter-dependency)** — A + B + C dispatched concurrently (isolated worktrees, pushed own branches), merged `--no-ff` (`81fc3cf0`/`7abbc67c`/`970dc522`), authoritatively re-verified in the main checkout (A 17/17 · B 6/6 + meta-keeper 0 + live baseline 0 · C symbol-clean + API↔A consistent). Cross-tree overlay leak recovered (see findings.md).
   - **A — primitive.** `deploy_config.py`: `is_deploy_context() -> bool`; `resolve_config(key, *, canonical_default=None, required_in_prod=False) -> str | None` (env → canonical → if `required_in_prod ∧ is_deploy_context() ∧ unset` → raise `MissingProdConfigError`); `require_prod_config(keys: list[str]) -> None` (aggregate-raise listing ALL missing). Pure/env-only. `__all__`. Colocated test covers: dev no-op, prod-missing raises, canonical fallback, aggregate message.
   - **B — keeper.** `check_derives_from_dev_only_artifact`: flags seed `*.py` that reads `start.sh` / calls `parse_products_registry` / opens a `scripts/` artifact to DERIVE a value **without** an env fallback in the same function. Must PASS `cors_registry.py` (it HAS the env fallback). `severity="warning"`. Escape hatch `dev-artifact-derivation-ok`. Colocated `TestCheckDerivesFromDevOnlyArtifact` (required by `check_detector_has_regression_test`, compliance.py:6320). **Proactive (N=1, user-directed) — marked as such.**
   - **C — docs.** `deploy-config-contract.md`: the contract (dev↔prod-parity checklist → seam table), consume recipe (import `resolve_config`/`require_prod_config`; wire the guard), the keeper, relationship to `dev-prod-parity.md` / `seed-canonical-defaults.md`. Symbol-first. Must match A's API exactly (semantic-consistency point — see §6a).
-- **🔒 Wave 2 (gated on A merge)** — startup guard: `create_product_app` calls `require_prod_config([...])` at boot (architect inline, app.py is the critical shared factory). + erp pilot consume-proof.
+- **⏳ Wave 2 (A merged → unblocked)** — startup guard: `create_product_app` gains an opt-in `required_prod_config: list[str] | None = None` param (back-compat default None = no-op) and calls `require_prod_config(...)` at boot (architect inline, app.py is the critical shared factory). + erp pilot consume-proof.
 
 ## 6a · Collision classes (decided at dispatch)
 
@@ -68,3 +68,4 @@ keeper: cd mcp/noctusai && .venv/bin/python -m pytest tests/test_compliance.py -
 ## 11 · Change log
 
 - 2026-05-23 — filed; Wave 1 decomposed (A/B/C, C1 file-disjoint); integration branch `feat/seed-deploy-config-contract` created off `main`; branching-dispatch runbook (just absorbed) governs.
+- 2026-05-23 — Wave 1 ✅ shipped via parallel branching-dispatch (3 engineers, isolated worktrees, dash-form branches). A↔C semantic-consistency PASS. Merged `--no-ff` + reconciliation commit (INDEX/CLAUDE wired for C's doc; branch-naming N=3 + overlay-leak refinements folded into `branching-dispatch.md`). Authoritative verify green in main checkout. Overlay-leak recovered (findings.md). main still gated → Wave 2 next.

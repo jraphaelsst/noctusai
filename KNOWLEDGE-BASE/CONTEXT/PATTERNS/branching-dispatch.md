@@ -22,7 +22,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 |---|---|---|
 | `main` (`origin/main`) | 🔒 **Frozen.** | NEVER commit/merge/push without explicit per-action consent. Gated until 100% resolved. |
 | `feat/<project>` | **Integration branch** — the working "fake-main"; all reconciled work converges here. | Commit/merge freely; PR → `main` only at close. |
-| `feat/<project>/<slice>` | **One worker branch per subtask.** | Forked from the integration tip; own worktree; deleted after merge. |
+| `feat/<project>-<slice>` | **One worker branch per subtask** (DASH form — see §2 ⚠). | Forked from the integration tip; own worktree; deleted after merge. |
 
 ---
 
@@ -41,9 +41,15 @@ Each slice owns a **disjoint file-set**. Overlapping sets are the #1 collision s
 ### 2 · Create isolated worktrees + parallel branches
 From the integration branch:
 ```bash
-git worktree add -b feat/<project>/<slice> ../noc-wt-<slice> feat/<project>
+git worktree add -b feat/<project>-<slice> ../noc-wt-<slice> feat/<project>   # DASH, not slash
 ```
-One per slice, deterministic branch name. The harness `Agent isolation: "worktree"` flag is the built-in alternative — both work in noc (git is NOT init'd mid-session, the KE caveat that forced manual worktrees there); manual worktrees give **deterministic branch names** for the push-and-merge model.
+One per slice, deterministic branch name. The harness `Agent isolation: "worktree"` flag is the built-in alternative.
+
+> **⚠ Branch-naming — worker branches use the DASH form `feat/<project>-<slice>`, never the slash form `feat/<project>/<slice>`.** Git cannot create a nested ref under an existing **leaf** ref: if the integration branch is literally `feat/<project>`, then `feat/<project>/<slice>` fails with `cannot lock ref … 'feat/<project>' exists`. (KE avoided this by using *distinct* prefixes — `methodology-dev` integration + `feat/<name>` workers.) Either use the dash form OR name the integration branch distinctly (`<project>-integration`). **N=3, 2026-05-23** — all three engineers on `seed-deploy-config-contract` hit it and self-corrected to the dash form.
+>
+> **⚠ Harness `isolation: "worktree"` forks from `main`/`origin/main`, not your current working-branch HEAD.** So the worktrees do NOT carry commits that live only on the integration branch (e.g. an uncommitted-elsewhere PROJECT.md or a same-session methodology absorb). Consequences: (a) **briefs MUST be self-contained** (inline the full API/spec — don't rely on the engineer reading the integration-branch PROJECT.md); (b) `dispatch_preflight project_slug=…` is moot for these engineers (the doc isn't on their base); (c) each slice branch is `main`-based → merge it onto the **integration tip** (`--no-ff`), which is a strict superset.
+>
+> **⚠ Cross-tree overlay leak — verify true disk at integration.** The harness file overlay can leak an engineer's in-progress edits into the **main checkout's** working tree (a `M`/`??` on a file the engineer "owns" elsewhere), and that leak may DIFFER from the engineer's *committed* branch. The committed+pushed branch is source-of-truth: `git diff origin/<slice-branch> -- <file>` to compare, then **discard the working-tree leak** (`git checkout --` / `rm` the untracked) and merge the branch. Seen 2026-05-23 (`compliance.py` + `deploy-config-contract.md` leaked into main; recovered by discard-leak + merge-branch). Strict instance of [[harness-overlay-worktree-divergence]].
 
 ### 3 · Dispatch in parallel
 Send all `Agent` calls **in a single message** so they run concurrently. Each brief carries the **Worker Contract** (below).
@@ -53,14 +59,14 @@ Each engineer reports **branch name · HEAD hash · files changed**. **[noc] ove
 
 ### 5 · Evaluate + detect collisions — TWO types
 ```bash
-git diff --name-status feat/<project> feat/<project>/<slice>
+git diff --name-status feat/<project> feat/<project>-<slice>
 ```
 - **(a) Path-overlap** — two branches touch the same file. Git flags it at merge.
 - **(b) Semantic-duplicate [the sharp one]** — *different paths, same content* (two agents each author a registry / bibliography / helper). **Git will NOT flag this — the architect must.** Read the deliverables, not just the file list.
 
 ### 6 · Merge — `--no-ff`, provenance-preserving
 ```bash
-git merge --no-ff feat/<project>/<slice> -m "Merge feat/<project>/<slice>: <summary>" \
+git merge --no-ff feat/<project>-<slice> -m "Merge feat/<project>-<slice>: <summary>" \
   -m "Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 `--no-ff` keeps each agent's commits intact so history shows **what each agent contributed**. (FF/concat-clean per [[branching-and-merging]] §10.4 is the alternative when slices are provably C1 and provenance doesn't matter; for collision-prone parallel work, prefer `--no-ff`.)
@@ -74,7 +80,7 @@ Tests/builds green for touched code (`pytest` / `vite build`); KB sync (`--verif
 ### 9 · Clean up
 ```bash
 git worktree remove ../noc-wt-<slice> && git worktree prune
-git branch -d feat/<project>/<slice>   # safe: already merged
+git branch -d feat/<project>-<slice>   # safe: already merged
 ```
 
 ### 10 · Gate `main`
