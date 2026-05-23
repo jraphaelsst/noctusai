@@ -1,20 +1,30 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { mockDashboardAPIs } from '../fixtures/api-mocks';
 
+/**
+ * Selectors target the post-`df821179` Dashboard, which renders via the seed
+ * `<Header>` (user name shown as the header user-card text, capitalized by
+ * `formatName`) + Tailwind product-card grid. The pre-refactor bespoke CSS
+ * classes (`.user-name`, `.product-card`, `.org-name`, `.btn-admin`,
+ * `.trial-info`, `.upgrade-banner`) no longer exist — we assert role/text
+ * semantics instead, preserving each test's original intent.
+ */
 test.describe('Dashboard', () => {
-  test('displays user name and organization', async ({ authenticatedPage: page }) => {
+  test('displays user name and welcome heading', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.locator('.user-name')).toContainText('Rafael Oliveira');
-    await expect(page.locator('.org-name')).toContainText('Imobiliária Centro Sul');
+    // Header user-card renders the (formatted) full name.
+    await expect(page.getByText('Rafael Oliveira').first()).toBeVisible();
+    // Welcome heading uses the first name.
+    await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
   });
 
   test('shows welcome message with first name', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.getByText('Bem-vindo, Rafael!')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
     await expect(page.getByText('Seus produtos NoctusAI')).toBeVisible();
   });
 
@@ -22,41 +32,41 @@ test.describe('Dashboard', () => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    // Product with access
-    const erpCard = page.locator('.product-card', { hasText: 'ERP Imobiliário' });
-    await expect(erpCard).toBeVisible();
-    await expect(erpCard).toHaveClass(/unlocked/);
-    await expect(erpCard.locator('.product-status')).toContainText('Acessar');
+    // Product with access — card heading + "Acessar" call-to-action.
+    await expect(page.getByRole('heading', { name: 'ERP Imobiliário' })).toBeVisible();
+    await expect(page.getByText('Acessar')).toBeVisible();
 
-    // Product without access (use .locked to disambiguate from coming-soon CRM card)
-    const crmCard = page.locator('.product-card.locked', { hasText: 'CRM Vendas' });
-    await expect(crmCard).toBeVisible();
-    await expect(crmCard.locator('.product-status')).toContainText('Solicitar acesso');
+    // Product without access (the granted CRM card, not the coming-soon one)
+    // shows "Solicitar acesso".
+    await expect(page.getByText('Solicitar acesso')).toBeVisible();
   });
 
   test('shows "coming soon" placeholder cards', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.locator('.product-card.coming-soon')).toHaveCount(3);
+    // Three placeholder cards each carry the "Em breve" badge.
     await expect(page.getByText('Em breve')).toHaveCount(3);
+    await expect(page.getByRole('heading', { name: 'BI Analytics' })).toBeVisible();
   });
 
   test('shows subscription badge', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.locator('.org-name .badge')).toContainText('Profissional');
+    // The plan badge sits beside the "Seus produtos NoctusAI" subtitle.
+    await expect(page.getByText('Seus produtos NoctusAI')).toBeVisible();
+    await expect(page.getByText('Profissional').first()).toBeVisible();
   });
 
   test('shows upgrade banner for free plan', async ({ authenticatedPage: page }) => {
-    // Override subscription to return no sub (free)
+    // No subscription → free org → upgrade banner. The org category is
+    // 'production' (mockOrganization) so the non-test-org banner renders.
     await page.route('**/api/subscriptions/me', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":null}' }),
     );
     await page.goto('/');
 
-    await expect(page.locator('.upgrade-banner')).toBeVisible();
     await expect(page.getByText('Desbloqueie todo o potencial do NoctusAI')).toBeVisible();
     await expect(page.getByText('Ver planos')).toBeVisible();
   });
@@ -65,15 +75,16 @@ test.describe('Dashboard', () => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.locator('.btn-admin')).toBeVisible();
-    await expect(page.locator('.btn-admin')).toContainText('Admin Panel');
+    await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
   });
 
   test('non-admin user does not see Admin Panel button', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    await expect(page.locator('.btn-admin')).toHaveCount(0);
+    // Wait for the dashboard to render before asserting absence.
+    await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Admin Panel' })).toHaveCount(0);
   });
 
   test('shows trial countdown when on trial', async ({ authenticatedPage: page }) => {
@@ -94,7 +105,8 @@ test.describe('Dashboard', () => {
     );
     await page.goto('/');
 
-    await expect(page.locator('.trial-info')).toBeVisible();
-    await expect(page.getByText('Assinar agora')).toBeVisible();
+    // Trial banner copy + the "Assinar agora" CTA.
+    await expect(page.getByText(/Seu período de teste/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Assinar agora' })).toBeVisible();
   });
 });

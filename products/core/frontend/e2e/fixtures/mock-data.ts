@@ -69,12 +69,17 @@ export const mockTrialSubscription = {
   plans: { name: 'Profissional', slug: 'pro' },
 };
 
+// The /api/plans consumers (Pricing, AdminPlans, Onboarding) read the
+// Portuguese contract fields `nome` / `descricao` (mirroring mockOrganization
+// and mockProducts). The pre-refactor mock used `name` / `description`, which
+// the pages never read → cards rendered with undefined names. Match the real
+// contract here.
 export const mockPlans = [
   {
     id: 'plan-001',
-    name: 'Gratuito',
+    nome: 'Gratuito',
     slug: 'free',
-    description: 'Para conhecer a plataforma',
+    descricao: 'Para conhecer a plataforma',
     price_monthly: 0,
     price_yearly: 0,
     max_users: 1,
@@ -85,9 +90,9 @@ export const mockPlans = [
   },
   {
     id: 'plan-002',
-    name: 'Profissional',
+    nome: 'Profissional',
     slug: 'pro',
-    description: 'Para equipes em crescimento',
+    descricao: 'Para equipes em crescimento',
     price_monthly: 199.9,
     price_yearly: 1999.9,
     max_users: 10,
