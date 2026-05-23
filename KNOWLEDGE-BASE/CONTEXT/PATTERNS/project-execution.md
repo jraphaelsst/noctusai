@@ -919,6 +919,18 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 - Chronological ordering (`<YYYY-MM-DD>/<NN>-<slug>`) preserves within-day sequence + day-by-day shape.
 - Aligns with `KB § 01-PHILOSOPHY.md § Safety nets capture failures; failures become learnings; methodology evolves` — closing isn't erasure; it's preservation.
 
+### Learn-before-archive gate (REQUIRED — 2026-05-23)
+
+**A project's lessons must OUTLIVE its folder.** `archive/` is not persisted long-term and durable docs MUST NOT link to `projects/`/`archive/` paths (`KB § 01-PHILOSOPHY.md § Durable docs are self-contained`). So **before** a project is archived, every useful lesson is absorbed into a durable doc (KB / CLAUDE.md / memory) — the lesson persists even after the folder is gone or later deleted. **Learn before archiving.**
+
+`noctus.dev.archive(mode="project")` **enforces** this: when the project carries a `findings.md` (the captured-lessons artifact), it refuses unless `learnings_absorbed=True`, returning a checklist (no `findings.md` ⇒ no captured lessons ⇒ no gate; learn-before-archive stays the behavioral rule regardless):
+1. Read `findings.md` + PROJECT.md §11 (lessons / slips / knowledge).
+2. Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory (three-way sync) — not only inside the folder.
+3. Verify no durable doc links to this `projects/<slug>` path (inline the substance; cite code/dated facts, never the slug/archive path).
+4. Re-call with `learnings_absorbed=True`.
+
+The gate is **curatorial** — it can't auto-detect absorption, so it forces the affirmation. Skipping the learn-step = anchoring knowledge to a non-persisting structure = silent knowledge-loss. The sanctioned durable indices the substance lands beside: `project-history/ledger.ndjson` + the accept-with-rationale catalog. Test: `mcp/noctusai/tests/test_archive.py::TestLearnBeforeArchiveGate`.
+
 ### Folder structure
 
 ```

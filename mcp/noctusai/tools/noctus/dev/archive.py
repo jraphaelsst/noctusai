@@ -145,6 +145,7 @@ def archive(
     summary_md: str | None = None,
     review_md: str | None = None,
     outcome_signals: list[str] | None = None,
+    learnings_absorbed: bool = False,
 ) -> dict:
     """Move target to the archive folder per `KB § PATTERNS/project-execution.md § 11.2`.
 
@@ -181,6 +182,16 @@ def archive(
             body — phases are best-effort regex-extracted from it.
         outcome_signals: optional list of measured outcomes for the
             ledger record.
+        learnings_absorbed: **Learn-before-archive gate** (project mode). Must
+            be ``True`` to archive a project — the caller's affirmation that
+            every durable lesson has been absorbed into KB / CLAUDE.md / memory,
+            so the lesson outlives the folder (``archive/`` is not persisted
+            long-term + durable docs must not link to ``projects/``/``archive/``;
+            KB § 01-PHILOSOPHY.md § "Durable docs are self-contained"). Default
+            ``False`` ⇒ when the project carries a ``findings.md`` (captured
+            lessons), ``archive()`` raises a checklist ``ValueError`` instead of
+            moving the folder (no ``findings.md`` ⇒ no gate). Ignored for
+            ``feature`` / ``ad_hoc`` modes.
 
     Returns:
         {
@@ -235,6 +246,35 @@ def archive(
         if not name or not name.strip():
             raise ValueError("name is required when mode='ad_hoc'")
         slug = name.strip()
+
+    # Learn-before-archive gate (project mode only). A project's lessons must
+    # OUTLIVE the folder: `archive/` is not persisted long-term and durable docs
+    # MUST NOT link to `projects/`/`archive/` paths (KB § 01-PHILOSOPHY.md §
+    # "Durable docs are self-contained"). So before a project is archived, every
+    # useful lesson must already be absorbed into a durable doc (KB / CLAUDE.md /
+    # memory). This gate cannot DETECT absorption (it is curatorial judgment), so
+    # it forces the caller to affirm it — refusing until `learnings_absorbed=True`.
+    # The gate FIRES when the project carries a `findings.md` — the captured-
+    # lessons artifact ([[knowledge-tracking]]). No findings.md ⇒ no captured
+    # lessons to lose ⇒ no gate. With one present, refuse until the caller
+    # affirms `learnings_absorbed=True`. (Learn-before-archive is the standing
+    # BEHAVIORAL rule for every close; the gate enforces the detectable case.)
+    findings_md = target / "findings.md"
+    if resolved_mode == "project" and findings_md.exists() and not learnings_absorbed:
+        checklist = [
+            "Read findings.md + PROJECT.md §11 (lessons / slips / knowledge).",
+            "Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory "
+            "(three-way sync) — not only inside this project folder.",
+            "Verify no durable doc links to this `projects/<slug>` path "
+            "(self-contained rule — inline the substance, cite code/dated facts).",
+            "Then re-call: archive(..., learnings_absorbed=True).",
+        ]
+        raise ValueError(
+            f"learn-before-archive gate: refusing to archive project '{slug}' — "
+            f"it carries findings.md ({findings_md}) whose lessons must be "
+            "absorbed into durable docs first (the lesson must persist after the "
+            "folder is gone).\nChecklist:\n  - " + "\n  - ".join(checklist)
+        )
 
     # Compute destination.
     today = _today_str()

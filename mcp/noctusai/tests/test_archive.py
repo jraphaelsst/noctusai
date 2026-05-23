@@ -671,3 +671,31 @@ class TestArchiveCleanMcpRegistration:
         from server import build_server
         s = build_server()
         assert "noctus.dev.archive_clean" in s._tool_manager._tools
+
+
+class TestLearnBeforeArchiveGate:
+    """archive() refuses to archive a PROJECT until learnings_absorbed=True —
+    the lesson must outlive the folder (KB § "Durable docs are self-contained")."""
+
+    def test_project_refuses_without_learnings_absorbed(self, tmp_repo):
+        proj = _make_project(tmp_repo, "demo-proj")
+        (proj / "findings.md").write_text("# findings\n- a lesson\n")
+        with pytest.raises(ValueError, match="learn-before-archive"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert proj.exists(), "project must NOT be moved when the gate refuses"
+
+    def test_project_proceeds_with_learnings_absorbed(self, tmp_repo):
+        proj = _make_project(tmp_repo, "demo-proj2")
+        (proj / "findings.md").write_text("# findings\n- a lesson\n")  # gate WOULD fire
+        result = archive(
+            str(proj), repo_root=tmp_repo, skip_history=True,
+            learnings_absorbed=True,  # ...the flag bypasses it
+        )
+        assert result["mode"] == "project"
+        assert result["archived_to"].startswith("archive/projects/")
+        assert not proj.exists()
+
+    def test_feature_mode_unaffected_by_gate(self, tmp_repo):
+        feat = _make_feature(tmp_repo, "demo-feat")
+        result = archive(str(feat), repo_root=tmp_repo, skip_history=True)
+        assert result["mode"] == "feature"
