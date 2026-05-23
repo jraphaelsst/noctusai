@@ -5610,6 +5610,172 @@ def check_dockerfile_vite_supabase_args(
     return issues
 
 
+# House single-container model markers — the canonical shape every in-noc
+# product mirrors (products/seed/backend/Dockerfile + docker-compose.yml).
+# See KB § PATTERNS/containerization.md § 1a Container-first.
+# Universal markers — required of every in-noc product Dockerfile.
+_HOUSE_DOCKERFILE_MARKERS: tuple[tuple[str, str], ...] = (
+    (
+        "FROM noctus-seed-backend-base",
+        "the shared backend base seam (`FROM noctus-seed-backend-base ... AS runtime`)",
+    ),
+    (
+        "AS runtime-watch",
+        "the `runtime-watch` develop-inside target (container-first dev: "
+        "bind-mount + `vite build --watch` + `uvicorn --reload`)",
+    ),
+)
+# SPA markers — required ONLY when the product ships a `frontend/` (a
+# backend-only product has no SPA to serve, so these don't apply).
+_HOUSE_SPA_MARKERS: tuple[tuple[str, str], ...] = (
+    (
+        "FROM noctus-seed-frontend-base",
+        "the shared SPA-build base seam (`FROM noctus-seed-frontend-base`)",
+    ),
+    (
+        "SERVE_SPA_DIR",
+        "the single-container `SERVE_SPA_DIR` SPA-serve seam",
+    ),
+)
+
+
+def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
+    """Every in-noc product conforms to the house SINGLE-container model.
+
+    Container-first (KB § PATTERNS/containerization.md § 1a): a product is
+    developed INSIDE its container via the `runtime-watch` target and ships
+    the slim `runtime` target — ONE container, ONE shape. This detector flags
+    an in-noc `products/<slug>/` missing the house shape:
+
+      - `backend/Dockerfile` absent (not containerized to the house model —
+        e.g. a freshly-absorbed product before its containerize phase); OR
+      - the Dockerfile is missing a house marker: the
+        `FROM noctus-seed-backend-base ... AS runtime` base seam, the
+        `runtime-watch` develop-inside target, `SERVE_SPA_DIR`, or (when the
+        product ships a `frontend/`) `FROM noctus-seed-frontend-base`; OR
+      - `docker-compose.yml` absent, or not building `target: runtime-watch`,
+        or `noctus-net` not `external`, or no profile-gated `<slug>-tunnel`.
+
+    `seed` is the canonical source (skipped — it cannot drift). The structural
+    fix is `noctus.dev.propagate` (re-renders from the seed); this guards
+    hand-edits + freshly-absorbed products. Severity `warning` — drift, not a
+    hard contract break, but loud in the report so a product can't silently
+    ship without the house container.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products_dir = root / "products"
+    if not products_dir.exists():
+        return issues
+
+    fix = (
+        "run `noctus.dev.propagate` (re-renders the house Dockerfile/compose "
+        "from products/seed) or containerize the product to the house model "
+        "(KB § PATTERNS/containerization.md § 1a)"
+    )
+
+    for prod_dir in sorted(products_dir.iterdir()):
+        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
+            continue
+        slug = prod_dir.name
+        if slug == "seed":
+            continue  # the canonical source — it IS the shape
+        if not (prod_dir / "backend").is_dir():
+            continue  # not a backend product tree
+        has_frontend = (prod_dir / "frontend").is_dir()
+
+        # ── Dockerfile ──
+        dockerfile = prod_dir / "backend" / "Dockerfile"
+        df_rel = f"products/{slug}/backend/Dockerfile"
+        if not dockerfile.exists():
+            issues.append({
+                "product": slug,
+                "file": df_rel,
+                "issue": (
+                    f"In-noc product `{slug}` has no `{df_rel}` — it is not "
+                    f"containerized to the house single-container model "
+                    f"(container-first; KB § PATTERNS/containerization.md § 1a). "
+                    f"A freshly-absorbed product must add the thin house "
+                    f"Dockerfile (`FROM noctus-seed-*-base`) before it can be "
+                    f"developed inside its container. Remediation: {fix}."
+                ),
+                "severity": "warning",
+            })
+        else:
+            try:
+                df_text = dockerfile.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", dockerfile, exc)
+                df_text = ""
+            checks = _HOUSE_DOCKERFILE_MARKERS + (
+                _HOUSE_SPA_MARKERS if has_frontend else ()
+            )
+            for marker, desc in checks:
+                if marker not in df_text:
+                    issues.append({
+                        "product": slug,
+                        "file": df_rel,
+                        "issue": (
+                            f"`{df_rel}` is missing {desc}. The house "
+                            f"single-container model (KB § PATTERNS/"
+                            f"containerization.md § 1a) requires it. "
+                            f"Remediation: {fix}."
+                        ),
+                        "severity": "warning",
+                    })
+
+        # ── docker-compose.yml ──
+        compose = prod_dir / "docker-compose.yml"
+        comp_rel = f"products/{slug}/docker-compose.yml"
+        if not compose.exists():
+            issues.append({
+                "product": slug,
+                "file": comp_rel,
+                "issue": (
+                    f"In-noc product `{slug}` has no `{comp_rel}` — the local "
+                    f"single-container orchestration (builds `target: "
+                    f"runtime-watch`) is missing. Remediation: {fix}."
+                ),
+                "severity": "warning",
+            })
+            continue
+        try:
+            comp_text = compose.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", compose, exc)
+            continue
+        comp_checks: tuple[tuple[str, str], ...] = (
+            (
+                "target: runtime-watch",
+                "build the `runtime-watch` target (the develop-inside "
+                "container — container-first)",
+            ),
+            (
+                "external: true",
+                "declare `noctus-net` as `external: true` (the shared fabric "
+                "from the two-project split)",
+            ),
+            (
+                f"{slug}-tunnel",
+                f"wire the mandatory profile-gated `{slug}-tunnel` service "
+                "(Cloudflare quick-tunnel, run-on-demand)",
+            ),
+        )
+        for marker, desc in comp_checks:
+            if marker not in comp_text:
+                issues.append({
+                    "product": slug,
+                    "file": comp_rel,
+                    "issue": (
+                        f"`{comp_rel}` does not {desc}. The house "
+                        f"single-container model requires it. Remediation: {fix}."
+                    ),
+                    "severity": "warning",
+                })
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # `check_seed_canonical_default` — seed fallback values must be the
 # canonical-shared answer for the architectural model, never a per-product
@@ -6704,6 +6870,12 @@ def check_all_products() -> tuple[int, list]:
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
+    # container-first codification (2026-05-23) — every in-noc product
+    # conforms to the house single-container model (FROM noctus-seed-*-base,
+    # runtime-watch develop-inside target, serve_spa; compose target +
+    # external net + tunnel). Flags a freshly-absorbed-but-uncontainerized
+    # product (the knowledge-extractor pilot) + hand-edit drift (warning).
+    all_issues.extend(check_product_container_shape())
     # containerization §3.2a — a product pulling a source-only (no
     # arm64-wheel) dep needs a per-slug PIP_RUN toolchain seam, else the
     # fleet build aborts in the slim runtime (2026-05-18 fix-on-contact).

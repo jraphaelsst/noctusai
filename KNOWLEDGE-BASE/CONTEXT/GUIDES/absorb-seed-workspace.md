@@ -200,6 +200,16 @@ build. Then deliver a completeness sign-off vs the Gate-2 audit. **The user
 retires the originating workspace manually — we never delete it.** Our
 deliverable is the explicit "safe to delete" sign-off, not the deletion.
 
+**Container-first (KB § PATTERNS/containerization.md § 1a).** Containerizing the
+absorbed product to the house single-container model is **not a final polish — it
+is the gate** that lets development continue *inside* the container (the
+`runtime-watch` develop-inside loop), not on the host. Render the thin
+`backend/Dockerfile` + `docker-compose.yml` from the seed via `noctus.dev.propagate`
+(`FROM noctus-seed-*-base`, `runtime-watch` target, `SERVE_SPA_DIR` when the
+product ships a `frontend/`). The **green gate is the `check_product_container_shape`
+keeper** — it flags a freshly-absorbed-but-uncontainerized product, so this Gate is
+not "done" until that keeper is clean for the new slug.
+
 ---
 
 ## An absorption is a methodology-epoch merge, not just a code move
