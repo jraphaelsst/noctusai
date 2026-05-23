@@ -20,7 +20,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 
 | Branch | Role | Rule |
 |---|---|---|
-| `main` (`origin/main`) | 🔒 **Production** — what the VPS deploys; the preserved, shippable line. | NEVER push/merge without explicit per-action consent, and **only to deploy**. Pre-push hook hard-blocks it unless `NOCTUS_ALLOW_MAIN_PUSH=1` (sanctioned-deploy override). `dev → main` = the deploy gate ([[branching-and-merging]] §0.2). |
+| `main` (`origin/main`) | 🔒 **Blessed release line** (sacred); production is the further `main → prod` promote the VPS tracks ([[branching-and-merging]] §0.2). | NEVER push/merge without explicit per-action consent, and **only to release**. Pre-push hook hard-blocks pushes to `main`/`prod` unless `NOCTUS_ALLOW_MAIN_PUSH=1` (sanctioned override). `dev → main` = the release gate. |
 | `dev` (`origin/dev`) | **Persistent integration branch + the everyday default** — the working "fake-main"; all reconciled work converges here. GitHub default branch. | Commit/merge/push **freely** (own work). This is the everyday landing ref; `main` is deploy-only. |
 | `feat/<project>` *(optional)* | **Per-project staging integration** for a large multi-wave project — cut FROM `dev`, merged back to `dev` at close. | Use only when a project needs its own integration buffer; otherwise workers land **straight on `dev`**. |
 | `feat/<project>-<slice>` | **One worker branch per subtask** (DASH form — see §2 ⚠). | Forked from the active integration ref (**`dev`**, or the project staging branch if one is in use); own worktree; deleted after merge. |

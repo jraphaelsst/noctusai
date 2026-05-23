@@ -19,9 +19,11 @@
 
 | Branch | Role | Rule |
 |---|---|---|
-| `main` (`origin/main`) | 🔒 **Production.** What the VPS deploys (`deploy_pull` ff-only on `origin/main`) — the *preserved, shippable* line. | **NEVER push/merge without explicit, per-action user consent**, and only to deploy/ship. The pre-push hook (`scripts/hooks/pre-push`) hard-blocks pushes to `main` unless `NOCTUS_ALLOW_MAIN_PUSH=1` is set for that one sanctioned deploy. |
+| `main` (`origin/main`) | 🔒 **Blessed release line** — the preserved, shippable sha you promote to production. Sacred. | **NEVER push/merge without explicit, per-action user consent.** Pre-push hook (`scripts/hooks/pre-push`) hard-blocks pushes to `main` unless `NOCTUS_ALLOW_MAIN_PUSH=1`. Reached only by `dev → main` (§0.2). |
+| `prod` (`origin/prod`) | 🔒 **Production deploy-branch** — what the VPS actually tracks (`deploy_pull` ff-only on `origin/prod`). | Advanced only by the deliberate `main → prod` promote ritual ([[production-deploy]] §2b, deploy-hardening P3); also pre-push-hook-protected. The VPS deploy key is read-only (P2). |
 | `dev` (`origin/dev`) | **Persistent integration branch + the everyday default** — the working "fake-main"; all real work converges here. GitHub default branch. | Commit/merge/push **freely** (your own work). Solo work commits here; parallel work merges here. |
 | `feat/<slice>` | **One worker branch per dispatched slice.** | Forked **from `dev`**, own worktree, merged back **to `dev`**, deleted after merge. |
+| `prod-backup` (`origin/prod-backup`) | **Snapshot of the production line** (safety/restore). | Preservation-only; automation to manage it is a near-future follow-up. Don't hand-rewrite. |
 
 ### 0.1 The generalization rule (read before §§3–14)
 §§3–14 were authored when `main` was both production **and** the everyday integration target. **Under the dev-layer model the everyday integration ref's name moved from `main` to `dev`** — the mechanics are otherwise identical. So when an older section says:
@@ -31,14 +33,19 @@
 
 `main` is reached ONLY via the explicit `dev → main` deploy merge (§0.2). Everything else — isolation, cherry-pick, FF-vs-merge, conflict resolution, recovery — is unchanged with `dev` substituted for the integration ref.
 
-### 0.2 `dev → main` — the deploy gate (explicit-consent-only)
-`main` advances ONLY when the user explicitly asks to **deploy / ship / "merge to main"**. The architect PRESENTS {the `dev..main` range + evidence: CI green, `predeploy_check` for deploy-affecting changes, prod live-probe plan} → user gives the explicit per-action go → architect runs the gated, FF-only push:
+### 0.2 The release + deploy gates (both explicit-consent-only)
+Two deliberate, consented hops sit between everyday `dev` work and the live VPS. Each is gated by the pre-push hook (`NOCTUS_ALLOW_MAIN_PUSH=1`) and by user judgment — the hook is the deterministic Stage-4 backstop, not a substitute for the decision.
+
+**Gate 1 — `dev → main` (bless a release).** `main` advances ONLY when the user explicitly asks to **ship / "merge to main"**. Architect PRESENTS {the `dev..main` range + evidence: CI green, `predeploy_check` for deploy-affecting changes, prod live-probe plan} → user gives the explicit per-action go → architect runs the gated, FF-only push:
 ```bash
 git switch dev && git pull --ff-only                 # dev current & clean
-# user has explicitly authorized THIS deploy:
+# user has explicitly authorized THIS release:
 NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main     # FF-only; hook still blocks force/delete even under the override
 ```
-Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-increment go/no-go) and `feedback_dont_push_main_on_local_green.md` (local-green ≠ sufficient — CI + prod-shape parity first). The pre-push hook is the deterministic Stage-4 backstop, not a substitute for the judgment.
+
+**Gate 2 — `main → prod` (promote to production).** The VPS tracks `origin/prod`, not `main` (deploy-hardening P3). Code reaches production only by a deliberate FF of `prod` from a blessed `main` sha — the **promote ritual** in [[production-deploy]] §2b — then the VPS pulls `origin/prod` (`deploy_pull`, ff-only, read-only deploy key). `prod` is pre-push-hook-protected too.
+
+Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-increment go/no-go) and `feedback_dont_push_main_on_local_green.md` (local-green ≠ sufficient — CI + prod-shape parity first).
 
 ### 0.3 Always return to `dev`
 `dev` is the **default resting state** of the primary checkout. Whenever you `git switch`/`checkout`/inspect a worker branch, **switch back to `dev`** when done — never leave the primary checkout parked on a worker branch or on `main`. Prefer inspecting worker branches **without switching** (`git diff dev feat/<slice>`, `git show <branch>:<path>`); concurrent *active* work uses isolated worktrees, never a shared switch (§9a — concurrent agents never share one checkout).
