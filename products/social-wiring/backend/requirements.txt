@@ -35,7 +35,8 @@ google-auth-httplib2>=0.2.0
 cryptography>=42.0.0
 
 # Google Drive download fallback (gdrive_service)
-gdown>=5.1.0
+# Floor aligned with knowledge-extractor (fleet-consistent gdown pin; audit_python_deps)
+gdown>=5.2.0
 
 # PDF text extraction + page rasterization (media_service multimodal).
 # pdfminer.six covers text-PDFs; PyMuPDF rasterizes scanned-image PDFs
