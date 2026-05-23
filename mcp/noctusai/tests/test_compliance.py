@@ -19,6 +19,7 @@ from tools.noctus.dev.compliance import (
     check_slowapi_with_pep563,
     check_seed_canonical_default,
     check_query_fn_returns_undefined,
+    check_derives_from_dev_only_artifact,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1865,3 +1866,103 @@ class TestCheckSlowapiWithPep563:
             f"Known-baseline case(s) appear to be fixed: {sorted(missing)}. "
             f"Shrink the `known_baseline` set in this test."
         )
+# ---------------------------------------------------------------------------
+# `check_derives_from_dev_only_artifact` -- dev-only-artifact derivation
+# without an env fallback (the dev<->prod silent-fallback class). PROACTIVE
+# keeper (N=1). `projects/seed-deploy-config-contract` slice B.
+# ---------------------------------------------------------------------------
+
+class TestCheckDerivesFromDevOnlyArtifact:
+    def _mk_repo_with_seed(self, content: str, rel: str = "lib/backend/noctusai_lib/config/x.py") -> Path:
+        """Write a seed `.py` at `seed/<rel>` under a temp repo root."""
+        tmp = Path(tempfile.mkdtemp(prefix="dev_artifact_test_"))
+        target = tmp / "seed" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        return tmp
+
+    def test_flags_registry_derivation_without_env_fallback(self):
+        # Derives from `parse_products_registry` with NO env read -> the
+        # silent-dev-value-in-prod shape. Exactly 1 finding.
+        content = (
+            "from noctusai_lib.config.cors_registry import parse_products_registry\n\n"
+            "def build_ports():\n"
+            "    entries = parse_products_registry()\n"
+            "    return {e['slug']: e['backend_port'] for e in entries}\n"
+        )
+        repo = self._mk_repo_with_seed(content)
+        issues = check_derives_from_dev_only_artifact(repo)
+        assert len(issues) == 1, f"expected 1 finding, got: {issues}"
+        assert issues[0]["severity"] == "warning"
+        assert "build_ports" in issues[0]["issue"]
+
+    def test_does_not_flag_when_env_fallback_present(self):
+        # The `derive_cors_origins` shape: derives from the registry AND reads
+        # `os.environ` (the prod-safe seam). MUST NOT flag -- the key signal.
+        content = (
+            "import os\n"
+            "from noctusai_lib.config.cors_registry import parse_products_registry\n\n"
+            "def derive_origins():\n"
+            "    entries = parse_products_registry()\n"
+            "    out = [f\"http://localhost:{e['frontend_port']}\" for e in entries]\n"
+            "    for k, v in os.environ.items():\n"
+            "        if k.startswith('PRODUCT_URL_') and v:\n"
+            "            out.append(v)\n"
+            "    return out\n"
+        )
+        repo = self._mk_repo_with_seed(content)
+        issues = check_derives_from_dev_only_artifact(repo)
+        assert issues == [], f"env-fallback derivation should pass, got: {issues}"
+
+    def test_escape_hatch_comment_waives(self):
+        # A `dev-artifact-derivation-ok` comment in the preceding window waives.
+        content = (
+            "from noctusai_lib.config.cors_registry import parse_products_registry\n\n"
+            "# dev-artifact-derivation-ok: dev-only helper, never on the prod path\n"
+            "def build_ports():\n"
+            "    entries = parse_products_registry()\n"
+            "    return {e['slug']: e['backend_port'] for e in entries}\n"
+        )
+        repo = self._mk_repo_with_seed(content)
+        issues = check_derives_from_dev_only_artifact(repo)
+        assert issues == [], f"escape-hatch comment should suppress, got: {issues}"
+
+    def test_real_cors_registry_is_not_flagged(self):
+        # CRITICAL ACCEPTANCE: the live `derive_cors_origins` reads `os.environ`
+        # -> the real seed module must pass against the real repo root.
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_derives_from_dev_only_artifact(_ROOT)
+        cors_hits = [
+            i for i in issues
+            if i.get("file", "").endswith("config/cors_registry.py")
+        ]
+        assert cors_hits == [], (
+            "derive_cors_origins HAS the os.environ fallback and MUST NOT be "
+            f"flagged; got: {cors_hits}"
+        )
+
+    def test_seed_test_files_are_excluded(self):
+        # Seed test code legitimately calls `parse_products_registry` to
+        # exercise the parser -- it is not prod-path derivation, so the
+        # `seed/.../tests/` tree is out of scope (live baseline stays clean).
+        content = (
+            "from noctusai_lib.config.cors_registry import parse_products_registry\\n\\n"
+            "def test_parses():\\n"
+            "    assert parse_products_registry() is not None\\n"
+        )
+        repo = self._mk_repo_with_seed(
+            content, rel="lib/backend/tests/config/test_x.py"
+        )
+        issues = check_derives_from_dev_only_artifact(repo)
+        assert issues == [], f"seed test files should be excluded, got: {issues}"
+
+    def test_no_derivation_means_no_finding(self):
+        # A plain pure function touching neither the registry nor a dev artifact.
+        content = (
+            "def add(a, b):\n"
+            "    return a + b\n"
+        )
+        repo = self._mk_repo_with_seed(content)
+        issues = check_derives_from_dev_only_artifact(repo)
+        assert issues == [], f"non-derivation should pass, got: {issues}"
+

@@ -5995,6 +5995,181 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_derives_from_dev_only_artifact` — seed code that DERIVES a runtime
+# value from a dev-only artifact (the `start.sh PRODUCTS` registry / a
+# `scripts/` file) WITHOUT an env fallback in the same function body silently
+# serves the dev answer in prod (the slim deploy image ships NO `start.sh` ->
+# the derivation collapses to empty / a localhost default).
+#
+# This is the executable form of `KB section PATTERNS/dev-prod-parity.md` 2 (the
+# dev<->prod difference checklist) — the same class bit >=3x in the
+# 2026-05-22 cutover (nav SSO'd to localhost, CORS collapsed to localhost in the
+# slim image, `infra.tsx` localhost default). The cure shape lives one file over
+# in `cors_registry.derive_cors_origins`: it derives from the registry AND reads
+# `os.environ` (the env fallback) so the slim container still resolves prod
+# origins. A derivation lacking that env read is the recurring root.
+#
+# PROACTIVE keeper (N=1, user-directed). The user asked to "eternalize possible
+# conflicts as features products consume from seed code" — this
+# anticipatory detector is that contract made enforceable: a derivation from a
+# dev-only artifact MUST pair with an env seam, so a product cannot silently
+# ship the dev value to prod. Filed by `projects/seed-deploy-config-contract`.
+#
+# Severity: `warning` (proactive posture — warn so a legitimate edge
+# case can waive via `dev-artifact-derivation-ok` rather than tank the score).
+# ---------------------------------------------------------------------------
+
+
+# Tokens that, when present in a function body, mean it DERIVES a runtime
+# value from a dev-only artifact. `parse_products_registry(` is the registry
+# consumer; `start.sh` / `scripts/` are the raw-artifact reads. Matched on the
+# code-only (string + comment stripped) body so a docstring mentioning
+# `start.sh` doesn't trigger.
+_DEV_ARTIFACT_DERIVATION_TOKENS: tuple[str, ...] = (
+    "parse_products_registry(",
+    "start.sh",
+    "scripts/",
+)
+
+# Tokens that count as an env fallback in the SAME function body. Their
+# presence means the derivation has the prod-safe seam (the
+# `derive_cors_origins` shape) and is NOT flagged.
+_DEV_ARTIFACT_ENV_FALLBACK_TOKENS: tuple[str, ...] = (
+    "os.environ",
+    "os.getenv",
+    "getenv(",
+    "environ[",
+    "environ.get",
+    "resolve_config(",
+)
+
+# Escape-hatch keyword: a `dev-artifact-derivation-ok` token on the function
+# line or in the preceding window waives (mirrors `canonical-default-ok`).
+_DEV_ARTIFACT_RATIONALE_RE = re.compile(r"dev-artifact-derivation-ok", re.IGNORECASE)
+
+
+def check_derives_from_dev_only_artifact(repo_root: Path | None = None) -> list[dict]:
+    """Flag seed functions that derive a runtime value from a dev-only artifact.
+
+    PROACTIVE keeper (N=1, user-directed -- `projects/seed-deploy-config-contract`).
+    The executable form of `KB section PATTERNS/dev-prod-parity.md` 2: seed code
+    in `seed/{lib,framework}/**/*.py` that derives a value from the dev-only
+    `start.sh PRODUCTS` registry (``parse_products_registry(``) or a
+    ``scripts/``/``start.sh`` file -- WITHOUT any env fallback (``os.environ`` /
+    ``os.getenv`` / ``getenv`` / ``resolve_config``) in the SAME function body --
+    silently serves the dev answer in production (the slim deploy image ships no
+    ``start.sh`` so the derivation collapses to empty / a localhost default).
+    That gap was the recurring root of the 2026-05-22 cutover failures.
+
+    The correct shape -- derive from the registry AND read ``os.environ`` so the
+    container still resolves prod values -- lives in
+    :func:`noctusai_lib.config.cors_registry.derive_cors_origins`. This detector
+    MUST NOT flag it (it reads ``os.environ``); a passing ``derive_cors_origins``
+    is the key correctness signal.
+
+    Comment/string-aware: the body is scanned on its code-only projection (via
+    the shared :func:`_strip_for_scan` helper) so a docstring or string literal
+    mentioning ``start.sh`` does not trigger.
+
+    Severity: ``warning``. Escape hatch: a ``dev-artifact-derivation-ok`` token
+    in a comment on the ``def`` line or the 5 preceding lines waives.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    # Scope: seed lib + framework Python only (the layer where a derivation
+    # propagates across all product consumers).
+    seed_bases = ("seed/lib", "seed/framework")
+    for base_rel in seed_bases:
+        base = root / base_rel
+        if not base.exists():
+            continue
+        for path in base.rglob("*.py"):
+            if not path.is_file():
+                continue
+            if any(p in _SEED_CANONICAL_DEFAULT_EXCLUDED_PARTS for p in path.parts):
+                continue
+            # Skip seed test code -- a test legitimately calls
+            # `parse_products_registry` to exercise the parser; it is not
+            # prod-path derivation, so it is out of scope for this keeper.
+            if "tests" in path.parts:
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            try:
+                tree = ast.parse(content, filename=str(path))
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+
+            raw_lines = content.splitlines()
+            # Code-only projection (comments + string contents blanked) so a
+            # docstring / string mentioning `start.sh` doesn't false-trigger.
+            _nc_lines, code_only_lines = _strip_for_scan(content, ".py")
+
+            # Walk every function/method def (top-level + nested + methods).
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                start = node.lineno  # 1-based, the `def` line
+                end = getattr(node, "end_lineno", None) or start
+                # Code-only body slice (excludes the `def` line itself, which
+                # carries no derivation logic -- just the signature).
+                body_code = "\n".join(code_only_lines[start:end])
+
+                derives = any(
+                    tok in body_code for tok in _DEV_ARTIFACT_DERIVATION_TOKENS
+                )
+                if not derives:
+                    continue
+                has_env_fallback = any(
+                    tok in body_code for tok in _DEV_ARTIFACT_ENV_FALLBACK_TOKENS
+                )
+                if has_env_fallback:
+                    continue
+                # Escape hatch -- scan the `def` line + 5 preceding raw lines
+                # (the natural carrier for a waiving comment / decorator note).
+                window_start = max(0, start - 1 - _SEED_CANONICAL_RATIONALE_WINDOW)
+                window = raw_lines[window_start:start]  # incl. the `def` line
+                if any(_DEV_ARTIFACT_RATIONALE_RE.search(ln) for ln in window):
+                    continue
+
+                issues.append({
+                    "product": "<seed>",
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{start}` function `{node.name}` derives a "
+                        f"runtime value from a dev-only artifact "
+                        f"(`parse_products_registry` / `start.sh` / `scripts/`) "
+                        f"with NO env fallback (`os.environ` / `os.getenv` / "
+                        f"`getenv` / `resolve_config`) in the same body. The "
+                        f"slim deploy image ships no `start.sh`, so this "
+                        f"silently serves the dev value in production -- the "
+                        f"2026-05-22 cutover root. Right shape: pair the "
+                        f"derivation with an env seam (see "
+                        f"`noctusai_lib.config.cors_registry.derive_cors_origins`, "
+                        f"which derives from the registry AND reads `os.environ`). "
+                        f"Per `KB section PATTERNS/dev-prod-parity.md` 2. Escape "
+                        f"hatch: add `dev-artifact-derivation-ok` to a comment "
+                        f"on the `def` line or the 5 preceding lines."
+                    ),
+                    "severity": "warning",
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_query_fn_returns_undefined` — TanStack Query v5 contract: a
 # `queryFn` MUST NOT return `undefined`. v5 surfaces "data is undefined"
 # as the consumer's error — exactly the toast a 404-swallow path is
@@ -6537,6 +6712,12 @@ def check_all_products() -> tuple[int, list]:
     # consumer-#1-coincidence port literals as `||`/`??` fallbacks in
     # seed source (URL form + numeric-port-from-registry form).
     all_issues.extend(check_seed_canonical_default())
+    # seed-deploy-config-contract (2026-05-23) — PROACTIVE (N=1,
+    # user-directed). Flags seed code that derives a runtime value from a
+    # dev-only artifact (`parse_products_registry` / `start.sh` / `scripts/`)
+    # WITHOUT an env fallback in the same function body — the dev<->prod
+    # silent-fallback class that bit >=3x in the 2026-05-22 cutover.
+    all_issues.extend(check_derives_from_dev_only_artifact())
     # boundary-contract-tests B3 (2026-05-20) — TanStack Query v5
     # contract: a `queryFn` body MUST NOT return `undefined`. Catches
     # the `useLLMSpend` shape on the next instance (the toast was the
