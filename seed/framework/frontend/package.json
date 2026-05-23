@@ -2,7 +2,7 @@
   "name": "@noctusai/seed",
   "version": "0.1.0",
   "private": true,
-  "description": "NoctusAI Seed Framework — structural bones for all product frontends",
+  "description": "NoctusAI Seed Framework \u2014 structural bones for all product frontends",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -88,5 +88,11 @@
     "typescript": "^5.8.3",
     "vitest": "^2.1.8",
     "zustand": "^5.0.13"
+  },
+  "overrides": {
+    "postcss": "8.5.10",
+    "react-router": "6.30.2",
+    "ws": "8.20.1",
+    "yaml": "2.8.3"
   }
 }

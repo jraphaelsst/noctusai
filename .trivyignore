@@ -56,3 +56,28 @@ CVE-2026-27904
 # personal-finance frontend lockfile (both transitive instances).
 CVE-2026-33671
 
+# -----------------------------------------------------------------
+# 2026-05-22 — the CLEANLY-fixable CVEs this round were BUMPED, not
+# ignored: python-dotenv 1.2.2, sentry-sdk 1.45.1 (backends);
+# postcss 8.5.10, react-router 6.30.2 (direct), ws 8.20.1, yaml 2.8.3
+# (overrides) across the frontends. The 3 below have NO safe bump:
+# -----------------------------------------------------------------
+
+# lodash prototype-pollution (_.unset/_.omit). The advisory "fix" 4.18.0
+# is an npm-flagged BAD RELEASE ("npm warn deprecated lodash@4.18.0: Bad
+# release. Please use lodash@4.17.21"); 4.17.21 stays the trusted version.
+# Not invoked with untrusted input here. Revisit when a trusted fix ships.
+CVE-2026-2950
+CVE-2025-13465
+
+# brace-expansion DoS (zero-step brace range). Multi-major in the tree
+# (1.x via workbox/glob + 2.x); forcing 2.0.3 BREAKS workbox's 1.x consumer
+# (verified: build fails `brace_expansion.expand is not a function`).
+# Build-tool only (not in the shipped SPA bundle); DoS input unreachable.
+CVE-2026-33750
+
+# picomatch method-injection. Multi-major (2.3.1 + 4.0.3); a single global
+# override breaks one major's consumers. Build-tool only (glob at build,
+# not shipped). Revisit with per-major targeted (nested) overrides.
+CVE-2026-33672
+
