@@ -132,11 +132,11 @@ The ONLY sanctioned `reset --hard` is **C3 recovery** onto a `backup/` ref after
 
 ## 2b · Branch model — the `prod` promote gate (P3; the extra layer beyond "git = the wall")
 
-`main` is the **integration** branch (where work lands + accumulates). `prod` is the **promotion** branch — the *only* ref the VPS pulls. Code becomes production *exclusively* by a deliberate human FF of `prod` from a blessed `main` sha. This adds a second wall: a push to `main` does NOT reach prod; someone must **promote**. (The user's requirement: *"when any branch is 100% to go for main it goes to prod branch and the vps only accepts pulls from prod branch."*)
+`dev` is the everyday **integration** branch (where work lands + accumulates — `KB § PATTERNS/branching-and-merging.md § 0`). `main` is the **blessed-release** ref (a deliberate `dev → main` FF promotes a reviewed, green line). `prod` is the **promotion** branch — the *only* ref the VPS pulls. Code becomes production *exclusively* by a deliberate human FF of `prod` from a blessed `main` sha. Two walls: a push to `dev` does NOT reach `main`, and a push to `main` does NOT reach prod — someone must **bless** (`dev → main`) then **promote** (`main → prod`). Both hops are pre-push-hook-gated (`NOCTUS_ALLOW_MAIN_PUSH=1`). (The user's requirement: *"when any branch is 100% to go for main it goes to prod branch and the vps only accepts pulls from prod branch."*)
 
 ```
-feature/* ──PR──▶ main ──(bless a green sha)──▶ prod ──(VPS §2a pull)──▶ production
-                  ▲ integration                 ▲ promotion gate         ▲ live
+feat/* ──▶ dev ──(bless: dev→main FF)──▶ main ──(promote: prod FF)──▶ prod ──(VPS §2a pull)──▶ production
+           ▲ integration                ▲ release                   ▲ promotion gate          ▲ live
 ```
 
 **The promote ritual** (run on your machine when a `main` sha is 100% ready):

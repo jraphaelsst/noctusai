@@ -23,7 +23,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 | `main` (`origin/main`) | 🔒 **Blessed release line** (sacred); production is the further `main → prod` promote the VPS tracks ([[branching-and-merging]] §0.2). | NEVER push/merge without explicit per-action consent, and **only to release**. Pre-push hook hard-blocks pushes to `main`/`prod` unless `NOCTUS_ALLOW_MAIN_PUSH=1` (sanctioned override). `dev → main` = the release gate. |
 | `dev` (`origin/dev`) | **Persistent integration branch + the everyday default** — the working "fake-main"; all reconciled work converges here. GitHub default branch. | Commit/merge/push **freely** (own work). This is the everyday landing ref; `main` is deploy-only. |
 | `feat/<project>` *(optional)* | **Per-project staging integration** for a large multi-wave project — cut FROM `dev`, merged back to `dev` at close. | Use only when a project needs its own integration buffer; otherwise workers land **straight on `dev`**. |
-| `feat/<project>-<slice>` | **One worker branch per subtask** (DASH form — see §2 ⚠). | Forked from the active integration ref (**`dev`**, or the project staging branch if one is in use); own worktree; deleted after merge. |
+| `feat/<project>-<slice>` | **One worker branch per subtask** (DASH form — see §2 ⚠). | Forked from the active integration ref (**`dev`**, or the project staging branch if one is in use); own worktree. Engineer **only commits** here; the **architect** merges it to `dev` (step 6) + deletes it. |
 
 > **`dev` is the default resting state.** The architect dispatches FROM `dev`, resolves merges ON `dev`, and **always returns the primary checkout to `dev`** after inspecting any worker branch (§ Safety rules 6). `main` never appears in everyday dispatch — only in the explicit `dev → main` deploy step.
 
@@ -32,7 +32,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 ## Roles ([noc] = [[branching-and-merging]] § Roles)
 
 - **Architect** = the main session. Decomposes, dispatches, **collects signals, detects collisions, reconciles, verifies**, lands on the integration branch, cleans up, gates `main`. Does NOT do the subtask work.
-- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-default.md`).
+- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-default.md`). **Engineers only stage + commit on their own worker branch — they never merge, switch branches, or push to `dev`/`main`.** All integration (merge, reconcile, push) is the architect's job.
 
 ---
 
