@@ -35,6 +35,7 @@ from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging
 from noctusai_lib.api.app_factory import configure_app
 from noctusai_lib.config.credentials import configure_credentials
+from noctusai_lib.config.deploy_config import require_prod_config
 from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.budget import configure_budget_module
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
@@ -63,6 +64,7 @@ def create_product_app(
     consent_features: Optional[str] = None,
     health_config: Optional[HealthEndpointConfig] = None,
     serve_spa: Optional[str] = None,
+    required_prod_config: Optional[list[str]] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -155,10 +157,24 @@ def create_product_app(
     The app instance has extra attributes for product code to access:
       - app.state.db: DatabaseModule instance
       - app.state.deps: ProductDependencies instance
+        required_prod_config: Optional list of env var names that MUST be set in
+            a deploy context (``is_deploy_context()`` True). Boot aborts loudly
+            via ``MissingProdConfigError`` listing every missing key; no-op in
+            dev. Opt-in (default None) — the deploy-config-contract seam every
+            product inherits. See ``KB § PATTERNS/deploy-config-contract.md``.
     """
     # 1. Configure logging
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
     configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name=app_name)
+
+    # 1a. Deploy-config guard — fail loud at boot if a required-in-prod config
+    #     key is unset in a deploy context (no-op in dev). Opt-in per product via
+    #     `required_prod_config=[...]` — the seam every product inherits with zero
+    #     per-product code; a missing key aborts the boot listing every gap at
+    #     once, never a half-booted app silently serving dev values.
+    #     → KB § PATTERNS/deploy-config-contract.md
+    if required_prod_config:
+        require_prod_config(required_prod_config)
 
     # 2. Auto-wire credential resolution (Tier 1+2 need a public-schema client).
     #    Every product's settings carries the same Supabase URL + keys from the
