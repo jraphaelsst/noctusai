@@ -23,7 +23,7 @@ agreed with itself; nothing exercised the translation.
 
 ---
 
-## 2 · Recurring shapes — five named boundaries
+## 2 · Recurring shapes — seven named boundaries
 
 | # | Boundary | Recent bit | Why unit tests miss it |
 |---|---|---|---|
@@ -32,6 +32,8 @@ agreed with itself; nothing exercised the translation.
 | **B3** | **Third-party library contract** — TanStack Query v5 `queryFn` may not return `undefined` | `useLLMSpend` swallowed 404 by `return undefined` → v5 surfaced `data is undefined` as a toast on every dashboard render. | Component tests mock `useQuery({ data, isLoading })`. The real queryFn + real React Query Provider + 404 response is the only path that exercises the v5 contract. |
 | **B4** | **Container env propagation** — `.env` ↔ compose `env_file` ↔ stage chain ↔ running container | `ENCRYPTION_KEY` empty in container despite being in `.env` — stage `frontend-build` had it, `runtime-watch` (which `FROM runtime`, not `FROM frontend-build`) didn't. | BE tests inject a Fake CredentialStore. The full env chain only resolves in `docker compose up`. |
 | **B5** | **Library-default propagation** — seed fallback literal ↔ N consumer products | `infra.tsx` fallback was a literal that worked for consumer #1, silently misrouted #2..N. | Each consumer's unit tests pass (the consumer either overrides or matches by coincidence). The default itself is unit-tested in isolation — no consumer-sweep test exists. |
+| **B6** | **E2E-harness env injection** — `.env` `VITE_SUPABASE_*` ↔ playwright `webServer.env` | core + erp playwright configs didn't inject `VITE_SUPABASE_*` → the seed supabase client threw at module load → React never mounted → 43/44 specs failed "element(s) not found". | A dev's local `.env` feeds the webServer so E2E is green **locally**; CI has no `.env` → the whole suite collapses. The local↔CI parity gap. Unit/component tests mock the supabase client, never boot the real webServer. |
+| **B7** | **Fixture ↔ real-schema** — a test fixture asserts a column/shape the production schema lacks | erp-portal `documentos` fixture set `compartilhado_portal: True`, but the column didn't exist → the mock honored the predicate (test green) while the production query had no such filter (LGPD over-exposure). | Both sides agree with the **fixture**: the fixture invents the column, the query is tested against the fixture. Nothing asserts the **real** schema has it. Surfaces on a data-source migration / schema change. |
 
 Each shape has the same anatomy:
 1. A contract crosses a process / build / wire / runtime boundary.
@@ -73,6 +75,8 @@ rationale-and-destination.
 | **B3** Third-party library contract | `check_query_fn_returns_undefined` (Stage-4 keeper, 2026-05-20 — this doc's primary deliverable). | ✅ Class covered. |
 | **B4** Container env propagation | **Partial:** `prod_config_parity` (`noctus.dev.predeploy_check`, 2026-05-23) — pre-deploy audit of the prod env snapshot: every product resolves a non-localhost prod URL, no `PRODUCT_URL_*`/`CORS_ORIGINS` loopback value (the deploy-config-contract 3rd leg, `KB § PATTERNS/deploy-config-contract.md § 5b`). Container-freshness still manual (`KB § PATTERNS/containerization.md § 12b`); full `.env`↔compose↔stage-chain smoke is the remaining gap. | ⏳ Env-value subclass detected; full-chain `smoke-fleet-env-propagation` still destination when N=2. |
 | **B5** Library-default propagation | `check_seed_canonical_default` (same keeper as B1 — the source-side rule is identical). | ✅ Class covered. |
+| **B6** E2E-harness env injection | `check_playwright_supabase_env` (Stage-4 keeper, 2026-05-23) — every `products/*/frontend/playwright.config.ts` whose `webServer` boots the SPA MUST inject `VITE_SUPABASE_*` into `webServer.env`. The E2E-harness sibling of B1's `check_dockerfile_vite_supabase_args`. `error` severity; live baseline 0 (core + erp). | ✅ Class covered. |
+| **B7** Fixture ↔ real-schema | None today. **Triggers `[A]` accept-with-rationale** — destination: a `check_fixture_asserts_real_column` migration-aware detector when N=2 (next instance of a fixture asserting an absent schema column fires the recurrence rule). The authoring-discipline rule (§3) holds until then. | ⏳ Accepted; destination filed. |
 
 ---
 

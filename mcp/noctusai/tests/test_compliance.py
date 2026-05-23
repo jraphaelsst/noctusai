@@ -21,6 +21,7 @@ from tools.noctus.dev.compliance import (
     check_query_fn_returns_undefined,
     check_derives_from_dev_only_artifact,
     check_limiter_conftest_import,
+    check_playwright_supabase_env,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -2054,4 +2055,80 @@ class TestCheckDerivesFromDevOnlyArtifact:
         repo = self._mk_repo_with_seed(content)
         issues = check_derives_from_dev_only_artifact(repo)
         assert issues == [], f"non-derivation should pass, got: {issues}"
+
+
+class TestCheckPlaywrightSupabaseEnv:
+    """Boundary-contract-tests B6 — the E2E-harness VITE_SUPABASE_* keeper."""
+
+    def _mk(self, slug: str, config_text: str | None) -> Path:
+        """Temp repo with one product; ``config_text=None`` ⇒ no playwright
+        config at all (backend-only / out-of-scope)."""
+        tmp = Path(tempfile.mkdtemp(prefix="playwright_env_test_"))
+        frontend = tmp / "products" / slug / "frontend"
+        frontend.mkdir(parents=True, exist_ok=True)
+        if config_text is not None:
+            (frontend / "playwright.config.ts").write_text(config_text)
+        return tmp
+
+    _BOTH = (
+        "export default defineConfig({\n"
+        "  webServer: {\n"
+        "    command: 'npm run dev',\n"
+        "    env: {\n"
+        "      VITE_SUPABASE_URL: 'http://localhost:54321',\n"
+        "      VITE_SUPABASE_PUBLISHABLE_KEY: 'test-key',\n"
+        "    },\n"
+        "  },\n"
+        "});\n"
+    )
+
+    # ── No-flag: both vars injected ────────────────────────────────────
+    def test_both_vars_present_passes(self):
+        repo = self._mk("good", self._BOTH)
+        assert check_playwright_supabase_env(repo) == []
+
+    # ── Flag: one var missing → single error ───────────────────────────
+    def test_missing_one_var_flags_error(self):
+        cfg = self._BOTH.replace(
+            "      VITE_SUPABASE_PUBLISHABLE_KEY: 'test-key',\n", ""
+        )
+        issues = check_playwright_supabase_env(self._mk("erp", cfg))
+        assert len(issues) == 1
+        assert issues[0]["product"] == "erp"
+        assert issues[0]["severity"] == "error"
+        assert "VITE_SUPABASE_PUBLISHABLE_KEY" in issues[0]["issue"]
+
+    # ── Flag: both missing → two errors ────────────────────────────────
+    def test_missing_both_vars_flags_two(self):
+        cfg = (
+            "export default defineConfig({\n"
+            "  webServer: { command: 'npm run dev', env: {} },\n"
+            "});\n"
+        )
+        issues = check_playwright_supabase_env(self._mk("core", cfg))
+        assert len(issues) == 2
+        assert all(i["severity"] == "error" for i in issues)
+
+    # ── Flag: var named only in a COMMENT does not false-pass ──────────
+    def test_var_only_in_comment_still_flags(self):
+        cfg = (
+            "export default defineConfig({\n"
+            "  webServer: {\n"
+            "    command: 'npm run dev',\n"
+            "    // VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY needed\n"
+            "    env: {},\n"
+            "  },\n"
+            "});\n"
+        )
+        issues = check_playwright_supabase_env(self._mk("commented", cfg))
+        assert len(issues) == 2, f"comment mention must not pass: {issues}"
+
+    # ── No-flag: backend-only product (no playwright config) ───────────
+    def test_no_config_is_out_of_scope(self):
+        assert check_playwright_supabase_env(self._mk("ke", None)) == []
+
+    # ── No-flag: a config with no webServer never loads supabase ───────
+    def test_no_webserver_is_out_of_scope(self):
+        cfg = "export default defineConfig({ testDir: './e2e' });\n"
+        assert check_playwright_supabase_env(self._mk("nows", cfg)) == []
 

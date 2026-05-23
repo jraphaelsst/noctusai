@@ -6560,6 +6560,108 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_playwright_supabase_env` — the E2E-harness sibling of
+# `check_dockerfile_vite_supabase_args`. Every product's frontend Playwright
+# config whose `webServer` boots the real SPA MUST inject the boot-critical
+# VITE_SUPABASE_* into `webServer.env`, or the seed supabase client
+# (`@noctusai/lib` design-system) THROWS at module load → the React tree
+# never mounts → every E2E spec fails "element(s) not found".
+#
+# The trap is a local<->CI parity gap: locally a dev's `.env` feeds the
+# webServer so E2E is green; CI has no `.env`, so absent injection collapses
+# the whole suite silently. Bit BOTH core + erp (N=2 → formalize). It is the
+# same boot-critical-env contract as the Dockerfile keeper (B1 build-
+# injection), at the E2E test-harness boundary (boundary-contract-tests B6).
+#
+# Predicate is prose-class (playwright.config.ts is TS but parsed
+# structurally here, not via the TS AST tool — mirrors the Dockerfile keeper).
+# Comments are blanked first so a config that only NAMES the var in a comment
+# does not false-pass. Severity: `error` (a missing pair zeroes the product's
+# entire E2E signal).
+# ---------------------------------------------------------------------------
+
+
+def check_playwright_supabase_env(repo_root: Path | None = None) -> list[dict]:
+    """Boot-critical VITE_SUPABASE_* must be injected into the E2E webServer.
+
+    For each `products/<slug>/frontend/playwright.config.ts` that defines a
+    `webServer` (it boots the real SPA via `npm run dev`), the
+    `webServer.env` block MUST set `VITE_SUPABASE_URL` +
+    `VITE_SUPABASE_PUBLISHABLE_KEY`. The seed supabase client throws at
+    module load when these build-time vars are absent ⇒ the React tree never
+    mounts ⇒ every spec fails "element(s) not found".
+
+    The slip is a local<->CI parity gap: locally a dev `.env` feeds the
+    webServer (E2E green); CI has no `.env`, so absent injection collapses the
+    suite. Bit BOTH core + erp (N=2 → formalize). The E2E-harness sibling of
+    `check_dockerfile_vite_supabase_args` (the prod-build instance of the same
+    contract); boundary-contract-tests B6.
+
+    Products with no Playwright config (backend-only, e.g.
+    knowledge-extractor) are out of scope. Severity: `error`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+    products_dir = root / "products"
+    if not products_dir.exists():
+        return issues
+
+    remediation = (
+        "add both keys to the `webServer.env` block (non-secret placeholders "
+        "are correct — E2E mocks the backend; see "
+        "products/core/frontend/playwright.config.ts)"
+    )
+
+    for prod_dir in sorted(products_dir.iterdir()):
+        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
+            continue
+        slug = prod_dir.name
+        cfg = prod_dir / "frontend" / "playwright.config.ts"
+        if not cfg.exists():
+            # No E2E harness (backend-only product) → out of scope.
+            continue
+        try:
+            raw = cfg.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", cfg, exc)
+            continue
+
+        # Blank comments (string contents preserved) so a config that only
+        # MENTIONS the var in a comment doesn't pass; the actual `env` keys
+        # are code identifiers and survive the strip.
+        no_comments, _ = _strip_for_scan(raw, ".ts")
+        scrubbed = "\n".join(no_comments)
+
+        # Only configs that boot the SPA via a `webServer` are in scope; a
+        # config with no webServer never loads the supabase client.
+        if "webServer" not in scrubbed:
+            continue
+
+        cfg_rel = f"products/{slug}/frontend/playwright.config.ts"
+        for var in _REQUIRED_VITE_ARGS:
+            if re.search(rf"\b{re.escape(var)}\b", scrubbed):
+                continue
+            issues.append({
+                "product": slug,
+                "file": cfg_rel,
+                "issue": (
+                    f"`{cfg_rel}` boots the SPA via `webServer` but does not "
+                    f"inject `{var}` into `webServer.env`. It is BOOT-CRITICAL "
+                    f"— the seed supabase client throws at module load when "
+                    f"absent ⇒ the React tree never mounts ⇒ every E2E spec "
+                    f"fails 'element(s) not found'. Passes locally (dev `.env` "
+                    f"feeds the webServer) but collapses the suite in CI. "
+                    f"Remediation: {remediation}."
+                ),
+                "severity": "error",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_limiter_conftest_import` — every product whose backend ships
 # `app/rate_limit.py` (a slowapi `limiter`) MUST import the seed autouse
 # fixture `reset_rate_limiter` in its `tests/conftest.py`. Without it, the
@@ -6948,6 +7050,11 @@ def check_all_products() -> tuple[int, list]:
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
+    # boundary-contract-tests B6 (2026-05-23) — E2E-harness sibling of the
+    # Dockerfile keeper above: a product's playwright.config.ts webServer must
+    # inject VITE_SUPABASE_* or the seed supabase client throws at module load
+    # ⇒ every E2E spec fails. local<->CI parity gap; bit core + erp (N=2).
+    all_issues.extend(check_playwright_supabase_env())
     # container-first codification (2026-05-23) — every in-noc product
     # conforms to the house single-container model (FROM noctus-seed-*-base,
     # runtime-watch develop-inside target, serve_spa; compose target +
