@@ -5,9 +5,43 @@
 > - **Branching** (§§1-9, 11-14) — the structural solution to authorship-violation pressure. When parallel-agent commits sit in your unpushed range, you cannot push from local main without sweeping up their work. Branch from `origin/main`, isolate your commits, push the branch (or fast-forward to main when ready). Also the workflow shape for parallel projects under seed-workspace, multi-session work, speculative experiments, and PR-shape review.
 > - **Merging** (§10) — the companion methodology for what happens when fast-forward push fails (origin/main moved past your branch base), when N branches converge on main, when same-line conflicts need resolution, when a branch accumulates integration debt, and when a merge goes wrong. Builds on `git merge` as the safety net (`KB § 01-PHILOSOPHY.md § Safety nets capture failures`).
 >
+> **Branch model (§0, 2026-05-23 refinement).** `main` = **production** (🔒 sacred — deploy-only, consent-gated, pre-push-hook-enforced); `dev` = **persistent integration branch + the everyday default** (all real work converges here); `feat/*` = **worker branches forked off `dev`**. Where §§3–14 below say `main` as the everyday *base-to-branch-from* or *landing target*, read **`dev`** (the generalization rule, §0.1). Adopted from the `knowledge-extractor` sibling's proven `main`+`methodology-dev` split — it dissolves the collision class §1 was written to manage by ensuring **nobody works on `main` at all**.
+>
 > **What this replaces.** Ad-hoc decisions like "should I just `git push --force` to bypass the parallel-agent commits?", "how do I rescue this bad merge?", "which branch goes first?" — all of which are destructive or unanswered without the methodology. Branching + merging together = a complete answer to the multi-agent git-workflow question.
 >
 > **Cross-references.** `KB § PATTERNS/project-execution.md § 2.10 Commit + push authorship discipline` (the rule branching solves), `KB § 01-PHILOSOPHY.md § Safety nets capture failures` (foundational principle that anchors §10 Merging), `feedback_commit_only_own_work.md`, `feedback_branching_methodology.md`, `feedback_merging_methodology.md`, `KB § PATTERNS/master-tree-parallel-batches.md` (parallel-agent collision context), `feedback_parallel_agent_collision_protocol.md`.
+
+---
+
+## 0. Branch model — `main` is production, `dev` is the integration layer
+
+> **The governing frame (2026-05-23 refinement; runbook sibling [[branching-dispatch]]).** Adopted from the `knowledge-extractor` sibling's proven `main`+`methodology-dev` split. It eliminated the collision class §1 below was written to manage — by ensuring **nobody works on `main` at all**. noc's name for the integration branch is `dev`.
+
+| Branch | Role | Rule |
+|---|---|---|
+| `main` (`origin/main`) | 🔒 **Production.** What the VPS deploys (`deploy_pull` ff-only on `origin/main`) — the *preserved, shippable* line. | **NEVER push/merge without explicit, per-action user consent**, and only to deploy/ship. The pre-push hook (`scripts/hooks/pre-push`) hard-blocks pushes to `main` unless `NOCTUS_ALLOW_MAIN_PUSH=1` is set for that one sanctioned deploy. |
+| `dev` (`origin/dev`) | **Persistent integration branch + the everyday default** — the working "fake-main"; all real work converges here. GitHub default branch. | Commit/merge/push **freely** (your own work). Solo work commits here; parallel work merges here. |
+| `feat/<slice>` | **One worker branch per dispatched slice.** | Forked **from `dev`**, own worktree, merged back **to `dev`**, deleted after merge. |
+
+### 0.1 The generalization rule (read before §§3–14)
+§§3–14 were authored when `main` was both production **and** the everyday integration target. **Under the dev-layer model the everyday integration ref's name moved from `main` to `dev`** — the mechanics are otherwise identical. So when an older section says:
+- "**branch FROM `origin/main`**" ⇒ branch FROM **`origin/dev`** (§3.1).
+- "**fast-forward / push branch tip to `main`**" ⇒ land it on **`dev`** (§4.2, §12).
+- "**`origin/main` moved past your base**" ⇒ read **`origin/dev`** (§10).
+
+`main` is reached ONLY via the explicit `dev → main` deploy merge (§0.2). Everything else — isolation, cherry-pick, FF-vs-merge, conflict resolution, recovery — is unchanged with `dev` substituted for the integration ref.
+
+### 0.2 `dev → main` — the deploy gate (explicit-consent-only)
+`main` advances ONLY when the user explicitly asks to **deploy / ship / "merge to main"**. The architect PRESENTS {the `dev..main` range + evidence: CI green, `predeploy_check` for deploy-affecting changes, prod live-probe plan} → user gives the explicit per-action go → architect runs the gated, FF-only push:
+```bash
+git switch dev && git pull --ff-only                 # dev current & clean
+# user has explicitly authorized THIS deploy:
+NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main     # FF-only; hook still blocks force/delete even under the override
+```
+Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-increment go/no-go) and `feedback_dont_push_main_on_local_green.md` (local-green ≠ sufficient — CI + prod-shape parity first). The pre-push hook is the deterministic Stage-4 backstop, not a substitute for the judgment.
+
+### 0.3 Always return to `dev`
+`dev` is the **default resting state** of the primary checkout. Whenever you `git switch`/`checkout`/inspect a worker branch, **switch back to `dev`** when done — never leave the primary checkout parked on a worker branch or on `main`. Prefer inspecting worker branches **without switching** (`git diff dev feat/<slice>`, `git show <branch>:<path>`); concurrent *active* work uses isolated worktrees, never a shared switch (§9a — concurrent agents never share one checkout).
 
 ---
 
@@ -48,8 +82,10 @@ The same shape generalizes to any situation where your work shouldn't go directl
 
 ### 3.1 Branch FROM `origin/main`, not from local main
 
+> **Dev-layer model (§0.1): branch FROM `origin/dev`.** `origin/main` here = the integration ref; read `origin/dev`. The clean-base reasoning is identical — `origin/dev` is what's currently visible to other agents.
+
 ```bash
-git checkout -b <branch-name> origin/main
+git checkout -b <branch-name> origin/dev   # §0.1: dev is the integration base (was origin/main pre-2026-05-23)
 ```
 
 **Why `origin/main`** rather than local main: local main may carry parallel-agent commits, in-flight WIP, or stale state. Branching from `origin/main` guarantees a clean base — your branch starts at exactly what is currently visible on the remote. If the parallel agent later pushes their commits to main, your branch is still independent.
@@ -106,11 +142,13 @@ The `-u` sets upstream tracking; future `git push` / `git pull` on this branch u
 
 ### 4.2 Branch-tip-to-main fast-forward (when ready to ship)
 
+> **Dev-layer model (§0.1): land the branch tip on `dev`, not `main`.** Everyday "ready to ship" = converge on `dev` (`git push origin <branch>:dev`, or merge into `dev` per the runbook). Reaching `main` is the separate, consent-gated **deploy** step (§0.2) — not the everyday landing.
+
 ```bash
-git push origin <branch-name>:main
+git push origin <branch-name>:dev   # §0.1: dev is the everyday landing ref (main is deploy-only, §0.2)
 ```
 
-Pushes your branch's tip to remote `main`. **Allowed only when `origin/main` is an ancestor of your branch tip** — i.e. no other commits landed on `origin/main` between when you branched and now. If allowed, git fast-forwards (no merge commit, no risk).
+Pushes your branch's tip to the integration ref. **Allowed only when `origin/main` is an ancestor of your branch tip** — i.e. no other commits landed on `origin/main` between when you branched and now. If allowed, git fast-forwards (no merge commit, no risk).
 
 If git rejects with `Updates were rejected because the remote contains work that you do not have locally`, that's the **non-fast-forward case**. Stop. The merging methodology (§10, TBD) covers that path. For now: leave the branch unmerged, surface to user.
 

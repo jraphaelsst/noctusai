@@ -1,23 +1,36 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-# pre-push — client-side branch protection (deploy-hardening P3).
+# pre-push — client-side branch protection.
+#
+# `main` is PRODUCTION (what the VPS deploys). `dev` is the everyday
+# integration branch — all routine work + pushes go there. This hook is
+# the deterministic Stage-4 backstop for "main is sacred" (the dev-layer
+# branch model, KB § PATTERNS/branching-and-merging.md § 0):
+#
+#   1. ANY push to a protected branch (main, prod) is REFUSED unless the
+#      sanctioned-deploy override `NOCTUS_ALLOW_MAIN_PUSH=1` is set. Routine
+#      work lands on `dev`; reaching `main` is the explicit dev→main deploy
+#      (§0.2) and must be a deliberate, consented act.
+#   2. DELETION of a protected branch is ALWAYS refused (even under the
+#      override) — production history is preserved by design.
+#   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused
+#      (even under the override) — a deploy is FF-only; never rewind prod.
 #
 # GitHub server-side branch protection / rulesets need Pro on a PRIVATE
-# repo (free-private = 403). This hook is the free, local equivalent: it
-# refuses the two DESTRUCTIVE operations on the protected branches
-# (main, prod) — force-push (non-fast-forward) and deletion — so a wrong
-# command can't rewrite or erase production history. Normal fast-forward
-# pushes pass untouched.
+# repo (free-private = 403); this hook is the free, local equivalent.
 #
-# Bypass (rare, deliberate): `git push --no-verify` skips all hooks.
+# Sanctioned deploy:  NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main
+# Hard bypass (rare): git push --no-verify   (skips ALL hooks — last resort)
 # Carve-out: [carve:hook] — git-hook entry; logic is git-native + thin.
-# See KB § GUIDES/production-deploy.md § 2b and
-# projects/deploy-hardening-and-dev-isolation/PROJECT.md Phase 3.
+# Provenance: extended 2026-05-23 from force/delete-only → full main-push
+#   gate, when `dev` became the integration branch and `main` deploy-only.
+# See KB § PATTERNS/branching-and-merging.md § 0.2 and § PATTERNS/branching-dispatch.md.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
 PROTECTED_RE='^refs/heads/(main|prod)$'
 ZERO_RE='^0+$'   # all-zero OID = a delete (SHA-1 or SHA-256)
+ALLOW="${NOCTUS_ALLOW_MAIN_PUSH:-}"
 blocked=0
 
 # stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)
@@ -25,28 +38,42 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     [[ "$remote_ref" =~ $PROTECTED_RE ]] || continue
     branch="${remote_ref#refs/heads/}"
 
-    # 1) deletion — local side is the zero OID
+    # 1) deletion — local side is the zero OID. Always refused.
     if [[ "$local_oid" =~ $ZERO_RE ]]; then
         echo "🔴 pre-push: refusing to DELETE protected branch '$branch'." >&2
-        echo "   Production history is preserved by design (P3)." >&2
+        echo "   Production history is preserved by design." >&2
         blocked=1
         continue
     fi
 
-    # 2) force-push — remote tip exists but is NOT an ancestor of the new tip
+    # 2) force-push — remote tip exists but is NOT an ancestor of the new tip.
+    #    Always refused, even under NOCTUS_ALLOW_MAIN_PUSH (a deploy is FF-only).
     if [[ ! "$remote_oid" =~ $ZERO_RE ]]; then
         if ! git merge-base --is-ancestor "$remote_oid" "$local_oid" 2>/dev/null; then
             echo "🔴 pre-push: refusing NON-FAST-FORWARD (force) push to '$branch'." >&2
             echo "   This would rewrite/rewind production history." >&2
             echo "   If truly intended, re-run with: git push --no-verify" >&2
             blocked=1
+            continue
         fi
     fi
+
+    # 3) ordinary (fast-forward / create) push to a protected branch.
+    #    Gated: routine work goes to dev. main is deploy-only (§0.2).
+    if [[ "$ALLOW" != "1" ]]; then
+        echo "🔒 pre-push: BLOCKED — '$branch' is production; pushes are gated." >&2
+        echo "   Land everyday work on 'dev' (the integration branch)." >&2
+        echo "   For a sanctioned deploy: NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:$branch" >&2
+        blocked=1
+        continue
+    fi
+
+    echo "✅ pre-push: NOCTUS_ALLOW_MAIN_PUSH=1 — allowing fast-forward deploy push to '$branch'." >&2
 done
 
 if [[ "$blocked" -ne 0 ]]; then
     echo "" >&2
-    echo "pre-push BLOCKED (deploy-hardening client-side branch protection)." >&2
+    echo "pre-push BLOCKED (client-side branch protection — main is sacred, § 0)." >&2
     exit 1
 fi
 exit 0

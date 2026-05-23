@@ -8,9 +8,11 @@
 #   pre-commit — 1. Syncs seed → template if products/seed/ is staged.
 #                2. Regenerates KB count blocks and stages them.
 #                3. Verifies CLAUDE.md ↔ KB INDEX sync (blocking).
-#   pre-push   — client-side branch protection: refuses force-push +
-#                deletion of main/prod (free equivalent of GitHub branch
-#                protection, which needs Pro on a private repo).
+#   pre-push   — client-side branch protection: gates ALL pushes to
+#                main/prod behind NOCTUS_ALLOW_MAIN_PUSH=1 (routine work
+#                goes to dev; main is deploy-only, § 0), and always refuses
+#                force-push + deletion of main/prod. Free equivalent of
+#                GitHub branch protection (which needs Pro on a private repo).
 #
 # Canonical scripts live at scripts/hooks/{pre-commit,pre-push} — the hooks are
 # symlinks so edits take effect without re-installing.
@@ -28,13 +30,13 @@ ln -s "$REPO_ROOT/scripts/hooks/pre-commit" "$HOOKS_DIR/pre-commit"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-commit"
 echo "  pre-commit: seed→template sync + KB counts + KB sync check"
 
-# ─── pre-push: client-side branch protection (deploy-hardening P3).
-# Blocks force-push + deletion of main/prod (the free equivalent of
-# GitHub branch protection, which needs Pro on a private repo).
+# ─── pre-push: client-side branch protection.
+# Gates ALL pushes to main/prod behind NOCTUS_ALLOW_MAIN_PUSH=1 (routine
+# work → dev; main deploy-only, § 0); always refuses force-push + deletion.
 rm -f "$HOOKS_DIR/pre-push"
 ln -s "$REPO_ROOT/scripts/hooks/pre-push" "$HOOKS_DIR/pre-push"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-push"
-echo "  pre-push: refuse force-push/deletion of main + prod"
+echo "  pre-push: gate main/prod pushes (NOCTUS_ALLOW_MAIN_PUSH=1 to deploy) + refuse force/delete"
 
 # ─── Remove legacy post-commit hook (seed sync moved to pre-commit)
 if [[ -f "$HOOKS_DIR/post-commit" && ! -L "$HOOKS_DIR/post-commit" ]]; then
