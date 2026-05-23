@@ -99,5 +99,9 @@ scripts/archive-clean-last-sweep.log
 
 # Migration reference — external read-only repo snapshot (the `one-permutas` legacy app).
 # Brought in for the production-deploy-migration project as reference only; NOT noc code
-# (117M of upstream-committed venv/staticfiles/frontend_build). See that project's PROJECT.md.
-projects/production-deploy-migration/reference/
+# (117M of upstream-committed venv/staticfiles/frontend_build, incl. a real .env.production
+# secret + .DS_Store). The `*` + leading `**/` match BOTH the live location and the archived
+# one (archiving moves the project to `archive/projects/<date>/NN-…` with a numeric prefix —
+# `01-production-deploy-migration`). NOT a blanket `archive/` ignore: archive/ intentionally
+# tracks every project's PROJECT.md/findings.md history. See that project's PROJECT.md.
+**/*production-deploy-migration/reference/
