@@ -47,6 +47,8 @@ NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main     # FF-only; hook still bloc
 
 Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-increment go/no-go) and `feedback_dont_push_main_on_local_green.md` (local-green ≠ sufficient — CI + prod-shape parity first).
 
+**Tooling — `noctus.dev.release` codifies both gates.** `stage='status'` shows the `feat→dev→main→prod` chain read-only; `stage='bless'` FFs `main → dev` tip; `stage='promote'` snapshots the current prod onto `prod-backup` then FFs `prod →` a blessed `main` sha. DRY-RUN by default → `confirm=True` to push. It is the **only sanctioned setter of `NOCTUS_ALLOW_MAIN_PUSH`** (and only for its own FF push), so you never hand-manage that env var — the pre-push hook keeps blocking every other path. FF-only by construction (a colocated test asserts no force/reset/checkout token ever). After a promote, `noctus.dev.deploy_pull` pulls `origin/prod` onto the VPS.
+
 ### 0.3 Always return to `dev`
 `dev` is the **default resting state** of the primary checkout. Whenever you `git switch`/`checkout`/inspect a worker branch, **switch back to `dev`** when done — never leave the primary checkout parked on a worker branch or on `main`. Prefer inspecting worker branches **without switching** (`git diff dev feat/<slice>`, `git show <branch>:<path>`); concurrent *active* work uses isolated worktrees, never a shared switch (§9a — concurrent agents never share one checkout).
 

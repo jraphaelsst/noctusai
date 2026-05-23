@@ -47,6 +47,7 @@ def register_all(server) -> None:
     from . import proposals
     from . import recurrence
     from . import refs
+    from . import release
     from . import review
     from . import salvage_worktree
     from . import scaffold
@@ -101,6 +102,7 @@ def register_all(server) -> None:
     proposals.register(server)
     recurrence.register(server)
     refs.register(server)
+    release.register(server)
     review.register(server)
     salvage_worktree.register(server)
     scaffold.register(server)
