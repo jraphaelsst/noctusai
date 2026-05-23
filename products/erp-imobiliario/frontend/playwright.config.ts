@@ -24,7 +24,11 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     env: {
       VITE_SUPABASE_URL: 'http://localhost:54321',
-      VITE_SUPABASE_PUBLISHABLE_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
+      // E2E mocks the backend, so the frontend never round-trips to Supabase —
+      // a non-secret placeholder is the correct value (real key not needed and
+      // not wanted: a JWT-shaped literal here trips Trivy's secret scanner).
+      VITE_SUPABASE_PUBLISHABLE_KEY:
+        process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'test-publishable-key-e2e-only',
       VITE_BACKEND_API_URL: 'http://localhost:8001',
     },
   },
