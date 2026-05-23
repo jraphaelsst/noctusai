@@ -42,12 +42,14 @@ test.describe('Matching de Ativos', () => {
     await expect(page.getByRole('button', { name: /Rejeitar/ }).first()).toBeVisible();
   });
 
-  test('has "Gerar Matches" button', async ({ authenticatedPage: page }) => {
+  test('has "Recalcular Tudo" button', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page);
     await mockMatchingAPIs(page);
     await page.goto('/matching');
 
-    await expect(page.getByRole('button', { name: /Gerar Matches/ })).toBeVisible();
+    // The bulk-regenerate action is now labelled "Recalcular Tudo"
+    // (was "Gerar Matches"). Same intent: trigger match (re)generation.
+    await expect(page.getByRole('button', { name: /Recalcular Tudo/ })).toBeVisible();
   });
 
   test('has "Embed Batch" button', async ({ authenticatedPage: page }) => {
@@ -63,8 +65,11 @@ test.describe('Matching de Ativos', () => {
     await mockMatchingAPIs(page);
     await page.goto('/matching');
 
-    await expect(page.getByPlaceholder(/origem/i)).toBeVisible();
-    await expect(page.getByText(/Score mínimo/)).toBeVisible();
+    // Filtering was simplified to a single Status dropdown (the prior
+    // origem-search input + "Score mínimo" slider were removed). Intent
+    // preserved: the page exposes a filter control.
+    await expect(page.getByText('Status:')).toBeVisible();
+    await expect(page.getByRole('combobox')).toBeVisible();
   });
 
   test('shows status filter', async ({ authenticatedPage: page }) => {

@@ -6,7 +6,7 @@ test.describe('ERP Dashboard', () => {
   test('displays metric cards', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page);
     await mockDashboardAPIs(page);
-    await page.goto('/');
+    await page.goto('/dashboard');
 
     // Use heading role for card titles (avoids matching description text)
     await expect(page.getByRole('heading', { name: 'Total de Metas' })).toBeVisible();
@@ -18,7 +18,7 @@ test.describe('ERP Dashboard', () => {
   test('shows performance section', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page);
     await mockDashboardAPIs(page);
-    await page.goto('/');
+    await page.goto('/dashboard');
 
     await expect(page.getByText('Performance').first()).toBeVisible();
   });
@@ -26,7 +26,7 @@ test.describe('ERP Dashboard', () => {
   test('displays chart containers', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page);
     await mockDashboardAPIs(page);
-    await page.goto('/');
+    await page.goto('/dashboard');
 
     await expect(page.getByText('Resumo de Progresso').first()).toBeVisible();
   });
@@ -34,7 +34,7 @@ test.describe('ERP Dashboard', () => {
   test('shows header with user name', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page);
     await mockDashboardAPIs(page);
-    await page.goto('/');
+    await page.goto('/dashboard');
 
     await expect(page.getByText('Rafael Oliveira').first()).toBeVisible();
   });
