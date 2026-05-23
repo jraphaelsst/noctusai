@@ -536,7 +536,10 @@ def register(server) -> None:
             "When mode=project and skip_history=False (default), a single NDJSON record is "
             "stamped into project-history/ledger.ndjson via noctus.dev.history_record BEFORE the "
             "git mv (status_at_close default 'shipped'; summary/review derived from PROJECT.md "
-            "when not supplied). See KB § PATTERNS/project-execution.md § 11.2."
+            "when not supplied). LEARN-BEFORE-ARCHIVE GATE: when mode=project and the folder has a "
+            "findings.md, the call REFUSES unless learnings_absorbed=True — first absorb every "
+            "durable lesson into KB/CLAUDE/memory (it must outlive the folder), then re-call with "
+            "learnings_absorbed=True. See KB § PATTERNS/project-execution.md § 11.2."
         ),
     )
     def _archive(
@@ -549,6 +552,7 @@ def register(server) -> None:
         summary_md: str | None = None,
         review_md: str | None = None,
         outcome_signals: list[str] | None = None,
+        learnings_absorbed: bool = False,
     ) -> dict:
         return archive(
             target_path=target_path,
@@ -560,6 +564,7 @@ def register(server) -> None:
             summary_md=summary_md,
             review_md=review_md,
             outcome_signals=outcome_signals,
+            learnings_absorbed=learnings_absorbed,
         )
     @server.tool(
         name="noctus.dev.archive_clean",

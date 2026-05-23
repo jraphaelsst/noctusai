@@ -304,6 +304,23 @@ class TestMcpRegistration:
         manager = s._tool_manager
         assert "noctus.dev.archive" in manager._tools
 
+    def test_mcp_wrapper_exposes_learnings_absorbed_gate_param(self):
+        """The learn-before-archive gate must be reachable through the MCP
+        surface. Regression: the wrapper originally dropped
+        ``learnings_absorbed``, so it always defaulted False — making the gate
+        permanently un-passable via MCP for any project carrying a findings.md.
+        """
+        import inspect
+        from server import build_server
+        s = build_server()
+        tool = s._tool_manager._tools["noctus.dev.archive"]
+        fn = getattr(tool, "fn", None) or getattr(tool, "func", None)
+        if fn is not None:
+            assert "learnings_absorbed" in inspect.signature(fn).parameters
+        else:  # fall back to the published JSON schema
+            props = getattr(tool, "parameters", {}).get("properties", {})
+            assert "learnings_absorbed" in props
+
 
 # ---------------------------------------------------------------------------
 # worktree_path — caller-aware path resolution.
