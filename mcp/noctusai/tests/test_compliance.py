@@ -19,6 +19,7 @@ from tools.noctus.dev.compliance import (
     check_slowapi_with_pep563,
     check_seed_canonical_default,
     check_query_fn_returns_undefined,
+    check_limiter_conftest_import,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1375,6 +1376,94 @@ class TestCheckQueryFnReturnsUndefined:
         )
         issues = check_query_fn_returns_undefined(repo)
         assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# `check_limiter_conftest_import` — products with app/rate_limit.py must
+# import the seed `reset_rate_limiter` autouse fixture into tests/conftest.py
+# (fleet-limiter-conftest-adoption Stage-4, 2026-05-23).
+# ---------------------------------------------------------------------------
+
+
+class TestCheckLimiterConftestImport:
+    def _mk_product(
+        self,
+        slug: str,
+        *,
+        has_rate_limit: bool,
+        conftest_text: str | None,
+    ) -> Path:
+        """Build a temp repo with one product and return the repo root.
+
+        - ``has_rate_limit`` controls whether ``backend/app/rate_limit.py``
+          exists (the predicate's gate).
+        - ``conftest_text=None`` ⇒ no ``tests/conftest.py`` file at all;
+          otherwise the file is written with that content.
+        """
+        tmp = Path(tempfile.mkdtemp(prefix="limiter_conftest_test_"))
+        backend = tmp / "products" / slug / "backend"
+        backend.mkdir(parents=True, exist_ok=True)
+        if has_rate_limit:
+            (backend / "app").mkdir(parents=True, exist_ok=True)
+            (backend / "app" / "rate_limit.py").write_text(
+                "from noctusai_lib.api import create_product_limiter\n"
+                "limiter = create_product_limiter(settings)\n"
+            )
+        if conftest_text is not None:
+            (backend / "tests").mkdir(parents=True, exist_ok=True)
+            (backend / "tests" / "conftest.py").write_text(conftest_text)
+        return tmp
+
+    # ── No-flag: product imports the fixture ───────────────────────────
+    def test_product_with_import_passes(self):
+        repo = self._mk_product(
+            "good",
+            has_rate_limit=True,
+            conftest_text=(
+                "from noctusai_lib.testing import MockSupabaseClient  # noqa: F401\n"
+                "from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401\n"
+            ),
+        )
+        issues = check_limiter_conftest_import(repo)
+        assert issues == []
+
+    # ── Flag: rate_limit.py present, conftest lacks the import ──────────
+    def test_product_with_rate_limit_but_no_import_warns(self):
+        repo = self._mk_product(
+            "bad",
+            has_rate_limit=True,
+            conftest_text=(
+                "from noctusai_lib.testing import MockSupabaseClient  # noqa: F401\n"
+            ),
+        )
+        issues = check_limiter_conftest_import(repo)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "bad"
+        assert issues[0]["file"] == "backend/tests/conftest.py"
+        assert issues[0]["severity"] == "warning"
+        assert "reset_rate_limiter" in issues[0]["issue"]
+
+    # ── Flag: rate_limit.py present, conftest missing entirely ─────────
+    def test_product_with_rate_limit_but_no_conftest_warns(self):
+        repo = self._mk_product("noconf", has_rate_limit=True, conftest_text=None)
+        issues = check_limiter_conftest_import(repo)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "noconf"
+
+    # ── No-flag: no rate_limit.py ⇒ leak class can't occur ─────────────
+    def test_product_without_rate_limit_is_skipped(self):
+        repo = self._mk_product(
+            "nolimiter",
+            has_rate_limit=False,
+            conftest_text="# no noctusai_lib import\n",
+        )
+        issues = check_limiter_conftest_import(repo)
+        assert issues == []
+
+    # ── No products dir ⇒ empty, no crash ──────────────────────────────
+    def test_missing_products_dir_returns_empty(self):
+        tmp = Path(tempfile.mkdtemp(prefix="limiter_conftest_empty_"))
+        assert check_limiter_conftest_import(tmp) == []
 
 
 # ---------------------------------------------------------------------------

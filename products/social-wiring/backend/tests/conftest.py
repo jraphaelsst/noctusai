@@ -45,6 +45,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     AuthClient,
     bind_consent_module_to_mock,
 )
+from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 
 def pytest_configure(config):

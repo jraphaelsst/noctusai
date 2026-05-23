@@ -106,6 +106,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported
     bind_consent_module_to_mock,
     patch_credentials_to_mock,
 )
+from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # ERP-specific defaults

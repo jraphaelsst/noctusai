@@ -70,6 +70,7 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     bind_consent_module_to_mock,
     bind_user_metadata,
 )
+from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
