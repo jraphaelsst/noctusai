@@ -155,7 +155,7 @@ async def ingest_methodology(
         A :class:`~app.integrations.vectors.protocol.VectorStore` (real or fake).
     embed_fn:
         Async callable ``(text: str) -> list[float]``.  Defaults to
-        :func:`~app.integrations.llm.embeddings.generate_embedding` when
+        :func:`~app.integrations.llm.generate_embedding` when
         called from the CLI.  Injected in tests.
 
     Returns

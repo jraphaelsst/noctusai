@@ -126,6 +126,18 @@ summarizer. Default wiring builds the real adapters; tests inject fakes. Each
 seam's local module mirrors the signature of its `noctusai_lib` counterpart, so
 **absorption = delete the local adapter, import the seed one** (the caller is unchanged).
 
+> **ABSORBED 2026-05-23 — seam status** (project `container-first-codify-and-absorb-ke`):
+> - **LLM — SWAPPED ✅.** `transcribe_audio` / `chat_completion` / `generate_embedding`
+>   now come from `noctusai_lib.integrations.llm` (re-exported by
+>   `app/integrations/llm/__init__.py`; the local OpenAI adapters were deleted;
+>   `create_product_app` auto-wires credential + provider resolution).
+> - **google_drive / media / vectors — GAPS, kept local ⏳.** The seed ships no
+>   signature-compatible counterpart (Drive: no `download_folder`/write surface;
+>   media: no audio extract/chunk; vectors: no pgvector store at all). Per
+>   verify-the-seed-ships-it these stay local + a seed-lift is filed:
+>   `projects/seed-lift-ke-gap-seams/` (vectors/pgvector is the high-value
+>   cross-product lift). Do NOT degrade them to force a swap.
+
 | Pipeline stage | Local module (now) | noc seam (on absorption) |
 |---|---|---|
 | Resolve link / list folder | `app/integrations/google_drive/` (`parse_drive_url`, `DriveV3Downloader._walk_sync` recursive `files.list`) | `noctusai_lib.integrations.google_drive` (`parse_drive_url`, `make_drive_downloader`, `DriveReader`) |

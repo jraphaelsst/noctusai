@@ -39,7 +39,7 @@ Why (this is the noc-methodology reasoning, encode it):
 - noc's Supabase architecture is fixed at **2 active projects** — `noctusai`
   (whole fleet, RLS on) + One Permutas (legacy). A 3rd active project exceeds the
   free 2-active cap; the supervisor will not pay for it. (See
-  `../noctusai/` memory `reference_supabase_projects_architecture`.)
+  the memory `reference_supabase_projects_architecture`.)
 - The migration is already **schema-isolated** (`CREATE SCHEMA knowledge_extractor`,
   every object namespaced). That is precisely the shape designed to coexist inside
   a shared project — the same way noc products share one project with
@@ -85,11 +85,11 @@ Make this an **explicit, documented decision — never silent**:
 - **Option A (accept-with-rationale):** these two tables hold the supervisor's
   *own* course-methodology content (not multi-tenant customer PII), and anon is
   already RPC-gated. Record the acceptance in a one-line note in `doc/` +
-  (post-absorption) `../noctusai/KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md`.
+  (post-absorption) `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md`.
 - **Option B (full RLS parity):** `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on
   both tables, make `match_kb` `SECURITY DEFINER` (so the RPC still works under
   RLS), and add the minimal anon read policy the RPC needs. Reference
-  `../noctusai/KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md`.
+  `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md`.
 - Pick one, write it down, then proceed. (Recommended: A for now, with a
   follow-up to B if this schema ever holds anything beyond the user's own docs.)
 

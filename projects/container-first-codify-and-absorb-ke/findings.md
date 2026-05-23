@@ -8,7 +8,10 @@ Append in-the-moment. Categories: slips · errors · mistakes · lessons · know
 - **knowledge-extractor** = standalone sibling repo (`../knowledge-extractor`, branch `methodology-dev`), a "noc product in waiting" (its CLAUDE.md mirrors noc seams 1:1 for absorption). Step-1 platform built + tested; has NO Docker artifacts yet. Persistence = Supabase schema `knowledge_extractor` (live DB authorized separately).
 
 ## lessons
-- The P1 keeper + P3 containerize form a validation loop: post-absorption (P2) the keeper FLAGS knowledge-extractor as missing the house shape; P3 containerizes → keeper green = the methodology proven on the pilot.
+- The P1 keeper + P3 containerize form a validation loop: post-absorption (P2) the keeper FLAGS knowledge-extractor as missing the house shape; P3 containerizes → keeper green = the methodology proven on the pilot. ✅ confirmed at P2 (keeper emits 2 findings for KE: no Dockerfile, no compose).
+- **Seam-swap reality (verify-the-seed-ships-it):** of KE's 4 seams, only **llm** had a signature-compatible seed counterpart (transcribe/chat/embeddings — swapped to `noctusai_lib`, local adapters deleted). **google_drive / media / vectors are GAPS** (seed ships no compatible counterpart) → kept LOCAL + filed `projects/seed-lift-ke-gap-seams/` (vectors/pgvector is the high-value cross-product lift). Don't degrade a consumer to force a swap.
+- **`create_product_app` + `ProductSettings` subclass boots clean** in a venv (seed editables installed) — "Product app 'Knowledge Extractor' created". Verifying P2 in a real venv (131 tests) is the honest pre-push check; the container (P3) is the deeper verify-in-the-real-shape.
 
 ## slips / errors / mistakes
-- (none yet)
+- **Test-isolation surfaced by the env change (fixed):** `test_vectors::test_no_credentials_raises` passed standalone (empty `.env`) but FAILED in noc — the vectors factory did `url or settings.supabase_url`, so `url=""` fell back to noc's root-`.env` supabase creds → no raise. Fix = factory now distinguishes `None` (not supplied → fall back) from `""` (explicit no-creds → raise); clearer contract + deterministic test, no monkeypatching our own code. Lesson: a test that depends on ambient-empty credentials breaks when absorbed into a credentialed workspace.
+- **REPO_ROOT depth (fixed):** KE's `config.py` had `parents[2]` (correct when repo root = KE root); in noc the file is 2 levels deeper → `parents[4]`. Caught at authoring; would have mis-resolved `data_path`.

@@ -55,12 +55,19 @@ def make_vector_store(
 
     from app.integrations.vectors.supabase_adapter import SupabaseVectorStore
 
-    effective_url = url or getattr(settings, "supabase_url", None) or ""
+    # `None` = "not supplied" → fall back to settings. An explicit "" means
+    # the caller is asserting "no credentials" → no fallback (so the no-creds
+    # path is testable in a credentialed env like noc, where settings carries
+    # the dev .env supabase_url). Distinguishing None from "" is what keeps the
+    # raise path deterministic regardless of ambient .env.
+    effective_url = (
+        getattr(settings, "supabase_url", None) if url is None else url
+    ) or ""
     effective_key = (
-        service_role_key
-        or getattr(settings, "supabase_service_role_key", None)
-        or ""
-    )
+        getattr(settings, "supabase_service_role_key", None)
+        if service_role_key is None
+        else service_role_key
+    ) or ""
 
     if not effective_url or not effective_key:
         raise VectorStoreNotConfigured(

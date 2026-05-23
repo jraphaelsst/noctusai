@@ -1,27 +1,28 @@
-"""Configuration.
+"""Configuration — noc-native ProductSettings subclass (absorbed 2026-05-23).
 
-Mirrors noc's `ProductSettings` shape (pydantic-settings, read from `.env`).
-On absorption this becomes a `ProductSettings` subclass.
+Inherits `noctusai_seed.config.ProductSettings` (→ `BaseAppSettings`) so the
+product gets noc's standard fields (`supabase_*`, `jwt_secret`, `core_api_url`,
+`cors_origins`, `debug`) + the prod-safety validators for free, and declares
+only the knowledge-extractor domain fields here.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from noctusai_seed.config import ProductSettings
 
-# Repo root = two levels up from this file (backend/app/config.py → repo/).
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# Repo root = backend/app/config.py → up 4 = products/<slug>/backend/app →
+# .../products/<slug>/backend → .../products/<slug> → .../products → repo root.
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
-class Settings(BaseSettings):
-    """Runtime settings, sourced from environment / `.env`."""
+class Settings(ProductSettings):
+    """Knowledge-extractor settings — ProductSettings + the domain fields.
 
-    model_config = SettingsConfigDict(
-        env_file=str(REPO_ROOT / ".env"),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    `supabase_url` / `supabase_anon_key` / `supabase_service_role_key` are
+    inherited from `BaseAppSettings` (the live KB / vector store reads them).
+    """
 
     # ── OpenAI ──────────────────────────────────────────────────────
     openai_api_key: str = ""
@@ -32,15 +33,10 @@ class Settings(BaseSettings):
     # ── Google Drive ────────────────────────────────────────────────
     # Backend selection: "auto" | "oauth" | "api" | "gdown" (see factory.py).
     drive_backend: str = "auto"
-    # API key path (reaches "anyone-with-link" public files only).
     google_api_key: str = ""
-    # OAuth path (required for folders shared privately *with your account*).
-    # Reused from noc's working Google OAuth client (same account).
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
     google_oauth_redirect_uri: str = "http://localhost:8140/oauth/google/callback"
-    # Alternative: a downloaded "Desktop app" client_secret.json (used only if
-    # client_id/secret above are unset).
     google_oauth_client_secret_file: str = "secrets/client_secret.json"
     google_oauth_token_file: str = "secrets/drive_token.json"
 
@@ -49,14 +45,9 @@ class Settings(BaseSettings):
     data_dir: str = "data"
 
     # ── Knowledge base / agents ─────────────────────────────────────
-    # Backend for the methodology KB. "local" (file cache, offline) now;
-    # swap to Supabase by setting the creds below (seam swap, no code change).
     embedding_model: str = "text-embedding-3-small"  # 1536-dim
     kb_local_path: str = "data/kb_local.json"        # gitignored local cache
     agent_model: str = "gpt-4o"                       # chat model for specialist agents
-    # Supabase KB (optional — only needed for the live/remote backend):
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
 
     @property
     def data_path(self) -> Path:
@@ -67,12 +58,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings accessor (mirrors noc's `settings` singleton)."""
+    """Cached settings accessor (the `settings` singleton below)."""
     return Settings()
 
 
 # Module-level singleton — `create_product_app` (app/main.py) + the CLI both
-# import `settings`. NOTE (absorption follow-up): make `Settings` subclass
-# `noctusai_lib`'s ProductSettings so credential/LLM resolution is fully
-# noc-native (Gate-6 consumer adaptation, in flight).
+# import `settings`.
 settings = get_settings()
