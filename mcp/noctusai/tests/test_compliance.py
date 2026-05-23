@@ -22,6 +22,8 @@ from tools.noctus.dev.compliance import (
     check_derives_from_dev_only_artifact,
     check_limiter_conftest_import,
     check_playwright_supabase_env,
+    check_rls_policy_self_reference,
+    check_auth_session_mutation_on_shared_client,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -2131,4 +2133,119 @@ class TestCheckPlaywrightSupabaseEnv:
     def test_no_webserver_is_out_of_scope(self):
         cfg = "export default defineConfig({ testDir: './e2e' });\n"
         assert check_playwright_supabase_env(self._mk("nows", cfg)) == []
+
+
+class TestCheckRlsPolicySelfReference:
+    """An RLS policy whose USING/WITH CHECK subqueries its own table (42P17)."""
+
+    def _mk(self, slug: str, files: dict[str, str]) -> Path:
+        """Temp repo with one product; `files` maps migration filename -> SQL."""
+        tmp = Path(tempfile.mkdtemp(prefix="rls_selfref_test_"))
+        mig = tmp / "products" / slug / "backend" / "migrations"
+        mig.mkdir(parents=True, exist_ok=True)
+        for fname, sql in files.items():
+            (mig / fname).write_text(sql)
+        return tmp / "products" / slug
+
+    _SELF_REF = (
+        'CREATE POLICY "members_read" ON public.team_members FOR SELECT '
+        'TO authenticated USING (\n'
+        '  org_id IN (SELECT org_id FROM team_members WHERE id = auth.uid())\n'
+        ');\n'
+    )
+    _SAFE = (
+        'CREATE POLICY "members_read" ON public.team_members FOR SELECT '
+        'TO authenticated USING (\n'
+        '  org_id = public.current_user_org_id()\n'
+        ');\n'
+    )
+
+    # ── Flag: a self-referencing policy ────────────────────────────────
+    def test_self_reference_flags(self):
+        issues = check_rls_policy_self_reference(self._mk("p", {"001.sql": self._SELF_REF}))
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "warning"
+        assert "team_members" in issues[0]["issue"]
+
+    # ── No-flag: a helper-based policy (no FROM self) ──────────────────
+    def test_helper_based_policy_passes(self):
+        assert check_rls_policy_self_reference(self._mk("p", {"001.sql": self._SAFE})) == []
+
+    # ── No-flag: supersession — 001 self-ref DROP+recreated safe in 035 ─
+    def test_later_drop_recreate_supersedes(self):
+        fixed = (
+            'DROP POLICY IF EXISTS "members_read" ON public.team_members;\n'
+            + self._SAFE
+        )
+        repo = self._mk("p", {"001_init.sql": self._SELF_REF, "035_fix.sql": fixed})
+        assert check_rls_policy_self_reference(repo) == [], "last create wins"
+
+    # ── Flag: JOIN-form self-reference ─────────────────────────────────
+    def test_join_self_reference_flags(self):
+        sql = (
+            'CREATE POLICY "p" ON public.team_members FOR SELECT TO authenticated '
+            'USING (EXISTS (SELECT 1 FROM team_members t WHERE t.id = auth.uid()));\n'
+        )
+        assert len(check_rls_policy_self_reference(self._mk("p", {"001.sql": sql}))) == 1
+
+    # ── No-flag: no migrations dir ─────────────────────────────────────
+    def test_no_migrations_dir(self):
+        tmp = Path(tempfile.mkdtemp(prefix="rls_none_"))
+        (tmp / "products" / "p").mkdir(parents=True)
+        assert check_rls_policy_self_reference(tmp / "products" / "p") == []
+
+
+class TestCheckAuthSessionMutationOnSharedClient:
+    """Session-establishing supabase-py auth on the shared service-role client."""
+
+    def _mk(self, slug: str, py: str, *, rel: str = "backend/app/routers/auth.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="auth_poison_test_"))
+        f = tmp / "products" / slug / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(py)
+        return tmp / "products" / slug
+
+    # ── Flag: verify_otp on the supabase_admin singleton ───────────────
+    def test_verify_otp_on_singleton_flags(self):
+        py = (
+            "def gen():\n"
+            "    return supabase_admin.auth.verify_otp({'email': e})\n"
+        )
+        issues = check_auth_session_mutation_on_shared_client(self._mk("p", py))
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "warning"
+        assert "verify_otp" in issues[0]["issue"]
+
+    # ── Flag: sign_in on a get_admin_client() binding ──────────────────
+    def test_sign_in_on_admin_binding_flags(self):
+        py = (
+            "def login():\n"
+            "    sb = get_admin_client()\n"
+            "    return sb.auth.sign_in_with_password({'email': e})\n"
+        )
+        assert len(check_auth_session_mutation_on_shared_client(self._mk("p", py))) == 1
+
+    # ── No-flag: session call on a throwaway create_client ─────────────
+    def test_throwaway_client_passes(self):
+        py = (
+            "def login():\n"
+            "    client = create_client(url, anon_key)\n"
+            "    return client.auth.sign_in_with_password({'email': e})\n"
+        )
+        assert check_auth_session_mutation_on_shared_client(self._mk("p", py)) == []
+
+    # ── No-flag: a NON-session admin call (generate_link, reads) ───────
+    def test_non_session_admin_call_passes(self):
+        py = (
+            "def gen():\n"
+            "    supabase_admin.auth.admin.generate_link({'email': e})\n"
+            "    return get_admin_client().table('noctus_users').select('*')\n"
+        )
+        assert check_auth_session_mutation_on_shared_client(self._mk("p", py)) == []
+
+    # ── No-flag: tests/ are out of scope ───────────────────────────────
+    def test_tests_dir_excluded(self):
+        py = "def t():\n    supabase_admin.auth.verify_otp({'email': e})\n"
+        repo = self._mk("p", py, rel="backend/tests/test_auth.py")
+        assert check_auth_session_mutation_on_shared_client(repo) == []
 

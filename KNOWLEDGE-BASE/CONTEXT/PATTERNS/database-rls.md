@@ -95,6 +95,50 @@ CREATE POLICY "service_role_bypass" ON erp.contratos FOR ALL TO service_role USI
 
 **Coverage gap context:** Engineer RR's triage (`projects/keeper-trio-platform-triage/phase-0-triage.md`, 2026-05-11) classified 192 of 215 keeper findings as this same DEFENSE_IN_DEPTH cluster — every per-product admin client call on a table that lacks the literal `service_role_bypass` policy. Wave 1 per-product children (`keeper-trio-{core,erp,mailing,pf}`) consume this helper to close the cluster.
 
+### RLS self-reference recursion (Postgres 42P17) — N=3
+
+**The bug.** An RLS policy whose `USING` / `WITH CHECK` clause **subqueries the
+table the policy is ON** recurses at evaluation: reading `foo` applies `foo`'s
+policy, which reads `foo`, which re-applies the policy → `42P17 "infinite
+recursion detected in policy for relation foo"`. A **hard prod outage**, not a
+degradation — the table becomes unreadable for `authenticated` (service_role has
+BYPASSRLS, so it's masked until a real authenticated read hits it: the frontend's
+direct supabase-js reads, or `GET /api/auth/me`).
+
+The classic shape:
+```sql
+-- ❌ recursive: the policy reads its own table
+CREATE POLICY "users_read_own" ON public.noctus_users FOR SELECT TO authenticated
+  USING (org_id IN (SELECT org_id FROM noctus_users WHERE id = auth.uid()));
+```
+
+**The fix — a SECURITY DEFINER bypass helper.** Resolve the scope in a
+`SECURITY DEFINER` function (runs as the owner → BYPASSRLS → does NOT re-trigger
+the policy), then call it from the policy. Always `SET search_path = ''` +
+fully-qualify (search-path hardening) and `REVOKE ALL ... FROM PUBLIC; GRANT
+EXECUTE ... TO authenticated`.
+```sql
+-- ✅ non-recursive
+CREATE OR REPLACE FUNCTION public.current_user_org_id() RETURNS uuid
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid()); $$;
+REVOKE ALL ON FUNCTION public.current_user_org_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_user_org_id() TO authenticated;
+CREATE POLICY "users_read_own" ON public.noctus_users FOR SELECT TO authenticated
+  USING (id = (SELECT auth.uid()) OR org_id = public.current_user_org_id());
+```
+Fixing the table's OWN policy cures the whole cascade — the other policies that
+subquery `SELECT org_id FROM noctus_users WHERE id = auth.uid()` become safe once
+`noctus_users`' own policy no longer recurses.
+
+**Recurrence (N=3).** `erp.equipe_membros` (`026_fix_equipe_membros_rls_recursion`)
+· `public.noctus_users` (`035_fix_noctus_users_rls_recursion`, the 2026-05-23 core
+login outage) · `therapy.conversation_participants` (`001_therapy_platform.sql`,
+**latent** — flagged by the keeper, fix pending). **Keeper:**
+`check_rls_policy_self_reference` (Stage-4, `compliance.py`; migration-supersession
+aware so a later DROP+recreate clears the original; severity `warning` until the
+therapy finding is fixed → then `error`). Memory: `feedback_rls_policy_self_reference`.
+
 ## Migrations
 
 Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql`, etc. These files are the **authoritative replay log** — the DB is mutable state and can be wiped; the files are what rebuild it.

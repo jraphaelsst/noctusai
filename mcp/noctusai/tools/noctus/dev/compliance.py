@@ -2671,6 +2671,136 @@ def check_function_search_path_pinned(product_path: Path) -> list[dict]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# `check_rls_policy_self_reference` — an RLS policy whose USING / WITH CHECK
+# clause subqueries the SAME table the policy is ON recurses at evaluation
+# time → Postgres 42P17 "infinite recursion detected in policy". N=2:
+# erp.equipe_membros (026) + public.noctus_users (035) both shipped this and
+# both broke prod. The fix in both was a SECURITY DEFINER helper (BYPASSRLS)
+# that resolves the scope WITHOUT re-reading the policy's own table. This
+# keeper is the PREVENTION layer — not the fix; it flags the next instance.
+#
+# Migration-supersession aware (mirrors check_function_search_path_pinned):
+# migrations are append-only, so the original recursive policy still lives in
+# its first migration (e.g. 001) even after a later one DROPs + recreates it
+# non-recursively (035). The detector evaluates only the LAST surviving
+# operation per (table, policy-name) in lexical-file order — so a fixed
+# policy yields a clean baseline (0 on the live fleet: 026 + 035 both fixed).
+#
+# Predicate is prose-class (SQL, not Python AST): the policy's own table must
+# not appear in a FROM / JOIN inside its USING / WITH CHECK body. Severity
+# `error` (a recursive policy is a hard prod 42P17 outage).
+# ---------------------------------------------------------------------------
+
+_CREATE_POLICY_RE = re.compile(
+    r'CREATE\s+POLICY\s+"?(?P<name>[a-zA-Z0-9_]+)"?\s+ON\s+'
+    r'"?(?P<table>(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+)"?',
+    re.IGNORECASE,
+)
+_DROP_POLICY_RE = re.compile(
+    r'DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?"?(?P<name>[a-zA-Z0-9_]+)"?\s+ON\s+'
+    r'"?(?P<table>(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+)"?',
+    re.IGNORECASE,
+)
+
+
+def check_rls_policy_self_reference(product_path: Path) -> list[dict]:
+    """Flag RLS policies whose body subqueries the table the policy is ON.
+
+    A `CREATE POLICY ... ON foo USING (... SELECT ... FROM foo ...)` recurses:
+    evaluating `foo`'s policy requires reading `foo`, which re-applies the
+    policy → Postgres 42P17. N=2 in the fleet — `erp.equipe_membros` (026)
+    and `public.noctus_users` (035), each a prod login/auth outage; both
+    fixed with a SECURITY DEFINER (BYPASSRLS) helper. This detector is the
+    prevention layer (it does NOT re-implement the fix — it stops the next
+    self-referencing policy from shipping).
+
+    Supersession-aware: only the LAST operation per (table, policy-name) in
+    lexical migration order is evaluated, so the original recursive policy
+    that a later migration DROPs + recreates non-recursively does NOT
+    false-flag (live baseline 0: 026 + 035 are both fixed).
+
+    Self-reference = the policy's own (bare) table name appears after a
+    `FROM` / `JOIN` inside the statement body (the `ON <table>` clause uses
+    `ON`, not `FROM`, so it is not a false hit; a column-qualifier like
+    `foo.col` is not a FROM/JOIN either).
+
+    Severity `warning` until baseline 0 — 1 pre-existing finding
+    (`therapy.conversation_participants` policy `conversation_participants_access`,
+    a latent 42P17; follow-up filed) — promote to `error` once cleared, matching
+    the platform's first-ship keeper posture.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    migrations_dir = product_path / "backend" / "migrations"
+    if not migrations_dir.exists():
+        return issues
+
+    # Pass 1: collect every CREATE/DROP POLICY op per (table, policy) across
+    # all migrations in lexical filename order, then within-file by position.
+    ops_by_policy: dict[tuple[str, str], list[dict]] = {}
+    for sql_file in sorted(migrations_dir.glob("*.sql")):
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        try:
+            rel = str(sql_file.relative_to(product_path))
+        except ValueError:
+            rel = str(sql_file)
+
+        events: list[tuple[int, str, re.Match]] = []
+        for m in _CREATE_POLICY_RE.finditer(content):
+            events.append((m.start(), "create", m))
+        for m in _DROP_POLICY_RE.finditer(content):
+            events.append((m.start(), "drop", m))
+        events.sort(key=lambda e: e[0])
+
+        for pos, kind, m in events:
+            bare_table = m.group("table").split(".")[-1].lower()
+            key = (bare_table, m.group("name").lower())
+            if kind == "drop":
+                ops_by_policy.setdefault(key, []).append({"kind": "drop"})
+                continue
+            # CREATE — capture the statement body (up to the terminating `;`)
+            semi = content.find(";", m.start())
+            body = content[m.start(): semi if semi != -1 else len(content)]
+            self_ref = bool(re.search(
+                rf"\b(?:FROM|JOIN)\s+(?:[a-zA-Z0-9_]+\.)?{re.escape(bare_table)}\b",
+                body,
+                re.IGNORECASE,
+            ))
+            ops_by_policy.setdefault(key, []).append({
+                "kind": "create",
+                "file": rel,
+                "line": content[:m.start()].count("\n") + 1,
+                "self_ref": self_ref,
+            })
+
+    # Pass 2: evaluate only the LAST surviving op per policy.
+    for (bare_table, policy), ops in ops_by_policy.items():
+        last = ops[-1]
+        if last["kind"] != "create" or not last["self_ref"]:
+            continue
+        issues.append({
+            "product": name,
+            "file": last["file"],
+            "line": last["line"],
+            "issue": (
+                f"{last['file']}:{last['line']} RLS policy `{policy}` ON "
+                f"`{bare_table}` subqueries `{bare_table}` in its own "
+                f"USING/WITH CHECK body → Postgres 42P17 infinite recursion "
+                f"at evaluation (broke prod on equipe_membros/026 + "
+                f"noctus_users/035). Resolve the scope via a SECURITY DEFINER "
+                f"(BYPASSRLS) helper instead of self-querying — see "
+                f"`KB § PATTERNS/database-rls.md` (RLS self-reference)."
+            ),
+            "severity": "warning",
+        })
+    return issues
+
+
 def _admin_client_bindings(tree: ast.Module) -> set[str]:
     """Return the set of local variable names that hold a `get_admin_client()`
     return value within `tree`.
@@ -6662,6 +6792,106 @@ def check_playwright_supabase_env(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_auth_session_mutation_on_shared_client` — a session-establishing
+# supabase-py auth call (verify_otp / sign_in_* / set_session /
+# refresh_session / exchange_code_for_session) run on the SHARED service-role
+# client (`supabase_admin` / `get_admin_client()`) poisons the singleton's
+# PostgREST token PROCESS-WIDE (service_role → authenticated until restart) →
+# silent RLS breakage on unrelated requests. The 2026-05-23 core prod login
+# outage. PROACTIVE (N=1) — the prod blast radius justifies a standing guard.
+# This is PREVENTION, not the fix (the fix was a throwaway anon client).
+# AST-based; reuses `_admin_client_bindings`. Severity `error`.
+# ---------------------------------------------------------------------------
+
+_SESSION_AUTH_METHODS = frozenset({
+    "verify_otp", "sign_in_with_password", "sign_in_with_otp",
+    "sign_in_with_oauth", "sign_in_with_sso", "sign_up",
+    "set_session", "refresh_session", "exchange_code_for_session",
+})
+_SHARED_ADMIN_NAMES = frozenset({"supabase_admin"})
+
+
+def _is_shared_admin_receiver(node: ast.expr, admin_bindings: set[str]) -> bool:
+    """True if `node` is the shared service-role client: the module-level
+    `supabase_admin` singleton, a var bound to `get_admin_client()`, or a
+    direct `get_admin_client()` call (chained)."""
+    if isinstance(node, ast.Name):
+        return node.id in _SHARED_ADMIN_NAMES or node.id in admin_bindings
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return node.func.id == "get_admin_client"
+    return False
+
+
+def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dict]:
+    """Flag session-establishing supabase-py auth calls on a SHARED client.
+
+    `verify_otp` / `sign_in_*` / `set_session` / `refresh_session` /
+    `exchange_code_for_session` ESTABLISH a session — supabase-py then
+    propagates the new user token onto the calling client's PostgREST auth
+    layer. Run on the shared service-role singleton (`supabase_admin` /
+    `get_admin_client()`), that downgrades EVERY later admin call from
+    service_role to authenticated PROCESS-WIDE until restart → silent RLS
+    breakage on unrelated requests (the 2026-05-23 core prod login outage:
+    GET /api/auth/me 42P17). Fix: run session-establishing auth on a
+    THROWAWAY `create_client(url, anon_key)`, never the shared singleton.
+
+    N=2 (core sso.py verify_otp — fixed; social-wiring auth.py
+    sign_in_with_password — found by this keeper, follow-up filed). The blast
+    radius (process-wide prod auth) justifies the guard. Prevention, not the fix.
+
+    Severity `warning` until baseline 0 — 1 pre-existing finding
+    (social-wiring `auth.py` login on the shared client) — promote to `error`
+    once cleared, matching the platform's first-ship keeper posture.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    backend = product_path / "backend"
+    if not backend.exists():
+        return issues
+    for py in sorted(backend.rglob("*.py")):
+        norm = str(py).replace("\\", "/")
+        if "/tests/" in norm or "/node_modules/" in norm or "/__pycache__/" in norm:
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", py, exc)
+            continue
+        admin_bindings = _admin_client_bindings(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _SESSION_AUTH_METHODS):
+                continue
+            auth_attr = node.func.value
+            if not (isinstance(auth_attr, ast.Attribute) and auth_attr.attr == "auth"):
+                continue
+            if not _is_shared_admin_receiver(auth_attr.value, admin_bindings):
+                continue
+            try:
+                rel = str(py.relative_to(product_path))
+            except ValueError:
+                rel = str(py)
+            issues.append({
+                "product": name,
+                "file": rel,
+                "line": node.lineno,
+                "issue": (
+                    f"{rel}:{node.lineno} `.auth.{node.func.attr}(...)` runs on "
+                    f"the SHARED service-role client (supabase_admin / "
+                    f"get_admin_client()). Session-establishing auth poisons the "
+                    f"singleton's PostgREST token PROCESS-WIDE → service_role "
+                    f"downgraded to authenticated → silent RLS breakage (core "
+                    f"prod login outage 2026-05-23). Use a throwaway "
+                    f"create_client(url, anon_key) — see `KB § PATTERNS/backend.md` "
+                    f"(admin-client poisoning)."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_limiter_conftest_import` — every product whose backend ships
 # `app/rate_limit.py` (a slowapi `limiter`) MUST import the seed autouse
 # fixture `reset_rate_limiter` in its `tests/conftest.py`. Without it, the
@@ -7009,7 +7239,9 @@ def check_all_products() -> tuple[int, list]:
             + check_test_status_assertion(d)
             + check_unknown_table_references(d)
             + check_function_search_path_pinned(d)
+            + check_rls_policy_self_reference(d)
             + check_admin_endpoint_service_role_bypass(d)
+            + check_auth_session_mutation_on_shared_client(d)
             + check_slowapi_with_pep563(d)
         )
         all_issues.extend(issues)

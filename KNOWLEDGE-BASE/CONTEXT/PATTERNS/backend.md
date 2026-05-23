@@ -114,6 +114,36 @@ bind the tenant via the opaque `state` token (`f"{org_id}:{nonce}"`)
 parsed in the callback body. RLS bypass is bounded by state-token
 validity, not blanket trust.
 
+### Admin-client poisoning — session-establishing auth needs a throwaway client
+
+**Never** run a session-establishing supabase-py auth call — `verify_otp`,
+`sign_in_with_password` / `sign_in_with_otp` / `sign_in_with_oauth`, `set_session`,
+`refresh_session`, `sign_up`, `exchange_code_for_session` — on the **shared
+service-role client** (`supabase_admin` / `get_admin_client()`). These methods
+**establish a session**, and supabase-py then propagates the new user token onto
+the *calling client's* PostgREST auth layer. On the shared singleton that
+downgrades **every later** `get_admin_client()` call from `service_role` to
+`authenticated` — **process-wide until the process restarts** — silently tripping
+RLS on unrelated requests (the 2026-05-23 core login outage: `verify_otp` on
+`supabase_admin` → later `GET /api/auth/me` hit a 42P17 recursion; see
+`KB § PATTERNS/database-rls.md` § RLS self-reference recursion).
+
+```python
+# ❌ poisons the shared singleton process-wide
+sb = get_admin_client()
+sb.auth.sign_in_with_password({"email": e, "password": p})
+
+# ✅ throwaway anon client — you don't need service_role to sign a user in
+client = create_client(settings.supabase_url, settings.supabase_anon_key)
+client.auth.sign_in_with_password({"email": e, "password": p})
+```
+Admin *reads/writes* and non-session admin-API calls (e.g.
+`supabase_admin.auth.admin.generate_link`) stay on `get_admin_client()` — they set
+no session. N=2: core `sso.py` `verify_otp` (fixed) + social-wiring `auth.py`
+`sign_in_with_password` (flagged, fix pending). **Keeper:**
+`check_auth_session_mutation_on_shared_client` (Stage-4, `compliance.py`; AST-based;
+`warning` until baseline 0 → then `error`). Memory: `feedback_admin_client_poisoning`.
+
 ### Late-binding rule
 
 Pass `lambda: _db.get_client()` to `make_get_current_user`, NOT
