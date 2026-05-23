@@ -75,3 +75,42 @@
 - **Pipe vs heredoc on `python3 -`** — `cmd | python3 - <<'PY'` makes the pipe and the heredoc fight for stdin; write the data to a file and read it instead.
 - **macOS BSD `sed -i`** needs an extension arg (`sed -i '' ...`); for line-range deletes in YAML, a small Python splice + `yaml.safe_load` validation is cleaner + portable.
 - **`--ignore-unfixed` Trivy findings each HAVE a fix** — so "ignore-unfixed + still failing" means real fixable CVEs *in whatever was scanned*; check the scope before assuming the deployable surface is at fault.
+
+---
+
+## Codification close-out (2026-05-22) — the headline learning, FORMALIZED
+
+The user asked to consolidate this session so a future agent *can't* repeat the drift ("past agent's fault that missed this"). Per DRY recurrence the dev↔prod drift has now bitten **the same shape ≥3×** (infra.tsx-localhost 2026-05-20 · nav→localhost 2026-05-22 · CORS-registry-empty-in-slim 2026-05-22) → **MUST formalize**, not stay in findings prose. Routed s1→s4:
+
+- **s3 KB pattern** — NEW `KB § PATTERNS/dev-prod-parity.md`: the **umbrella class** "works in dev ≠ works in prod; verify in the production shape." `seed-canonical-defaults` (wrong value), `boundary-contract-tests` B4 (env propagation), `containerization §12b` (stale container) are now documented as **special cases** of it. Carries the **noc dev↔prod difference checklist** (open taxonomy), the authoring-time **parity question**, and the deploy-time **live-probe** discipline.
+- **s1 CLAUDE.md** — §1 "Finish the session — verify" bullet gained a dev↔prod-parity clause (front-and-center, every session); §2 Map pointer; §3 When-to-read row ("shipping env-sensitive code / works locally but breaks in prod").
+- **s2 memory** — `feedback_dev_prod_parity_verify_in_prod_shape.md` (the behavioral rule) + MEMORY.md headline line; `reference_cross_product_nav_url_resolution.md` already holds the specifics.
+- **INDEX.md** — new doc indexed (tree + table). `--verify-kb-sync` ✓, doc-symbology drift from new files = 0.
+- **s4 detection honesty** — wrong-value sub-class already has its Stage-4 keeper (`check_seed_canonical_default`); the *derives-from-dev-only-artifact* sub-class is N=1 for that exact shape → deterministic detector **deferred to N=2** (named, not silently skipped); verify-in-prod-shape is judgment-dependent → stays Stage-3 by design.
+
+---
+
+## ARC 7 — The Trivy "still red" deep-dive — a scanner-CONFIG bug masquerading as CVE debt (2026-05-22)
+
+**Issue.** After the CVE round (eb7c952a), the Trivy fs-scan CI job stayed RED — and a re-run on a fresh CI DB failed again (not transient). Yet my local exact-CI replica (both scanners, all flags, fresh DB, a superset of CI's files) exited **0**.
+
+**The chase (each step corrected a wrong assumption):**
+1. My first local "0" was a **stale-`19:06`-DB false-zero** — `trivy fs` reuses the cached DB until `NextUpdate`. Forced fresh via `rm -rf ~/Library/Caches/trivy/db`.
+2. Suspected the grandfathered CVEs (`.trivyignore` not applied in CI) — disproven: **0 HIGH/CRITICAL even *without* the ignorefile**.
+3. Suspected a vuln — disproven: 0 HIGH/CRITICAL vulns, fresh DB. The only vuln near erp was `CVE-2025-68470` (react-router) at **MEDIUM**.
+4. Pulled the **raw CI SARIF** (`gh api .../code-scanning/analyses/{id} -H "Accept: application/sarif+json"`) — ground truth: **exactly 2 findings, BOTH MEDIUM** (CVE-2025-68470 sec-sev 6.5; `jwt-token` sec-sev 5.5). Yet the step exited 1.
+
+**Root cause.** The gate is **misconfigured, not in debt.** In `format: sarif` mode `trivy-action` writes **all** severities to the SARIF *regardless* of `severity: HIGH,CRITICAL`, and `exit-code: 1` then trips on **any** finding — including MEDIUM. The gate **advertised HIGH/CRITICAL but failed on two MEDIUMs.** My local runs passed because `--severity HIGH,CRITICAL` as a real CLI flag gates the exit-code correctly; the action doesn't, without `limit-severities-for-sarif: true`. **A scanner-config bug masquerading as CVE debt** — the exact "scan-CONFIG before scan-severity" extension of ARC 4's scope lesson.
+
+**Fix (resolve, not ignore — both layers):**
+1. `.github/workflows/test.yml` — added `limit-severities-for-sarif: true` so SARIF + exit-code honor the declared HIGH/CRITICAL threshold (the gate stops lying).
+2. Resolved the two MEDIUMs at source anyway: `react-router-dom → 6.30.3` (erp lockfile; CVE-2025-68470 gone); de-hardcoded the **public Supabase demo JWT** from `playwright.config.ts` (`process.env... || 'test-publishable-key-e2e-only'`) + `test.yml` (placeholder) — E2E mocks the backend so no real key is needed. Removed the now-dead `.gitleaks.toml` allowlist entry for that JWT.
+
+**Verified:** exact-CI gate replica → exit 0; lockfile CVE-2025-68470 = 0; demo JWT gone from all tracked source (the one remaining `jwt-token` is in an untracked, gitignored `dist/` bundle, absent in CI); gitleaks unaffected (it scans diffs, not my 325 MB local tree).
+
+**Lessons `[→codified: ci-security-gates §2a + scan-scope/config memory]`:**
+- **Raw SARIF is the ground truth** for "what failed the gate" when `format: sarif` hides the table.
+- **GitHub buckets by CVSS; the Trivy gate uses VENDOR severity** — they diverge; don't trust the GitHub "medium" label to predict the gate.
+- **Default scanners are `vuln,secret`** — a `--scanners vuln` diagnostic silently skips the secret that was the failer.
+- **A gate can lie about its own threshold.** "scan-scope before severity" now extends to "scan-**config** before severity."
+- **Public-key false-positive → de-hardcode (env/placeholder), never allowlist-as-fix.**

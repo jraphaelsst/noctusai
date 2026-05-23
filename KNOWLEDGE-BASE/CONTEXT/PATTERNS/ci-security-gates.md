@@ -21,8 +21,8 @@ Lives at `.github/workflows/test.yml`. First landed 2026-05-11 via the `ci-secur
 
 | Gate | Tool | Config file | Action / image | Scope | Gate condition |
 |---|---|---|---|---|---|
-| **Trivy fs-scan** | `aquasecurity/trivy-action@0.24.0` | `.trivyignore` | `scan-type: fs` | Lockfiles (`requirements.txt`, `package-lock.json`, `Pipfile.lock`, `yarn.lock`, …) at repo root | HIGH/CRITICAL not in `.trivyignore` |
-| **Trivy image-scan** (pre-existing) | `aquasecurity/trivy-action@0.24.0` | `.trivyignore` | inside `docker-images-build` matrix | Every built `noctus-<slug>-<role>` image | HIGH/CRITICAL not in `.trivyignore` |
+| **Trivy fs-scan** | `aquasecurity/trivy-action@v0.36.0` | `.trivyignore` | `scan-type: fs` | Lockfiles (`requirements.txt`, `package-lock.json`, `Pipfile.lock`, `yarn.lock`, …) at repo root | HIGH/CRITICAL not in `.trivyignore` — **requires `limit-severities-for-sarif: true`**, else gates on ALL severities (§ 2a) |
+| ~~**Trivy image-scan**~~ (removed 2026-05-22) | — | — | was inside `docker-images-build` matrix | — | Removed — duplicated `build-and-push.yml`; image CVE coverage rides the deploy build |
 | **Bandit** | `bandit==1.9.4` | `bandit.yml` + `bandit-baseline.json` | `setup-python@v5` + `pip install` | `products/*/backend/app/` + `seed/lib/backend/noctusai_lib/` | NEW MEDIUM+ finding (existing findings grandfathered in baseline) |
 | **Gitleaks** | `gitleaks/gitleaks-action@v2` | `.gitleaks.toml` | GH Action | Full repo on push to main; diff on PR | Any leaked secret not in allowlist |
 
@@ -46,6 +46,39 @@ aquasec/trivy:0.49.1 (pinned, not @latest)
 ```
 
 The action wraps the CLI; pass `severity` / `ignore-unfixed` / `trivyignores` as YAML keys.
+
+> **Action version:** the fs-scan now pins `aquasecurity/trivy-action@v0.36.0` (the prior `@0.24.0` was **yanked** — 2026-05-22). Tags are v-prefixed. The standalone Trivy **image-scan** matrix was removed 2026-05-22 (it duplicated `build-and-push.yml`'s build); image CVE coverage rides the deploy build, not `test.yml`.
+
+---
+
+## 2a · The severity-filter gotcha — `limit-severities-for-sarif` (THE 2026-05-22 bit)
+
+**A single-step Trivy gate with `format: sarif` does NOT gate on `severity:` unless you also set `limit-severities-for-sarif: true`.**
+
+In `format: sarif` mode, `trivy-action` writes **ALL** severities to the SARIF *regardless* of the `severity:` input (by design — so the GitHub Security tab shows everything). `exit-code: 1` is then evaluated against **that full SARIF**, so the gate trips on **ANY** finding — **including MEDIUM/LOW**. A step that reads `severity: HIGH,CRITICAL` + `format: sarif` + `exit-code: '1'` is therefore a **liar**: it advertises HIGH/CRITICAL but fails on a MEDIUM.
+
+```yaml
+# WRONG — fails on MEDIUM despite claiming HIGH/CRITICAL:
+with:
+  format: sarif
+  severity: HIGH,CRITICAL
+  exit-code: '1'
+# RIGHT — SARIF + exit-code both honor `severity:`:
+with:
+  format: sarif
+  severity: HIGH,CRITICAL
+  limit-severities-for-sarif: true   # ← the missing line
+  exit-code: '1'
+```
+
+**The bit.** 2026-05-22 the fs-scan gate stayed red for hours after the deployable tree was provably 0 HIGH/CRITICAL. Root cause: the SARIF carried **two MEDIUMs** — `CVE-2025-68470` (react-router, CVSS 6.5) + a `jwt-token` (the public Supabase **demo** anon key hardcoded in `playwright.config.ts` + `test.yml`, CVSS 5.5) — and the gate tripped on them. **Fix = both layers (resolve, not ignore):** (1) add `limit-severities-for-sarif: true` so the gate enforces its declared threshold; (2) resolve the two mediums at source anyway — bump `react-router-dom` → 6.30.3, and de-hardcode the demo JWT to a non-secret placeholder (`test-publishable-key-e2e-only`; E2E mocks the backend so no real key is needed). Also removed the now-dead `.gitleaks.toml` allowlist entry for that JWT.
+
+**Diagnostic lessons (how the truth was found — `format: sarif` hides the table):**
+- **Raw SARIF is the ground truth** for "what failed the gate": `gh api repos/{owner}/{repo}/code-scanning/analyses` → newest `category=="trivy-fs"` → `gh api .../analyses/{id} -H "Accept: application/sarif+json"`. Read each result's `level` + the rule's `properties.security-severity`.
+- **GitHub buckets by CVSS, the Trivy gate uses VENDOR severity** — they diverge. A code-scanning alert shown as "medium" (CVSS 5–6.9) can still be what a *vendor-severity* gate trips on, and a trivy-HIGH can display as CVSS-medium. Don't trust the GitHub bucket to predict the gate.
+- **Stale local Trivy DB → false 0.** `trivy fs` reuses a cached DB until `NextUpdate`, so a "fresh" local scan can be hours stale and report a false clean. Force it: `rm -rf ~/Library/Caches/trivy/db` then re-scan. Verify the DB `UpdatedAt` in `metadata.json`.
+- **Default scanners are `vuln,secret`.** A diagnostic run with `--scanners vuln` silently skips the secret scanner — and the failer here was a secret. Match CI: no `--scanners` override, or pass both.
+- The **public-key false-positive** resolution is **de-hardcoding** (env / non-secret placeholder), NOT a scanner allowlist (the user rightly rejects allowlist-as-fix). A JWT-shaped literal in committed source is bad hygiene even when the value is a documented public demo key.
 
 **Why this dual-scan shape:**
 1. **Faster signal.** Lockfile-changed PRs fail in the fs-scan within seconds; no need to wait 5-15min for image builds.
@@ -127,7 +160,7 @@ Every security job in `.github/workflows/test.yml` follows the same 3-step shape
 
 The split is intentional: the SARIF upload is the diagnostic value (reviewers see WHICH CVE / WHICH B-code / WHICH leaked-secret-pattern failed). The gate is the merge-blocker.
 
-For Trivy the action handles both in one step via `exit-code: '1'`; for bandit we run twice with different flags; gitleaks-action does both itself.
+For Trivy the action does both in one step via `exit-code: '1'` — **but only correctly if `limit-severities-for-sarif: true` is also set** (else `format: sarif` reports all severities and the exit-code gates on all of them, including MEDIUM — see § 2a). For bandit we run twice with different flags; gitleaks-action does both itself.
 
 ---
 
