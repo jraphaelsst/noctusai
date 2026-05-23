@@ -53,6 +53,11 @@ redis==5.0.1
 # file) can collect test_audit_hook.
 sqlalchemy>=2.0.0
 
+# ERP DIMOB — defusedxml for safe XML parsing (erp dimob_service +
+# tests/services/test_dimob_service.py). Same superset-completeness reason as
+# sqlalchemy above (CI backend jobs install the root superset).
+defusedxml>=0.7.1
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.21.0

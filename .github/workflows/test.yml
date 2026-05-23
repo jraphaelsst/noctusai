@@ -258,7 +258,9 @@ jobs:
         run: npx playwright test
         env:
           VITE_SUPABASE_URL: http://localhost:54321
-          VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+          # Non-secret placeholder — E2E mocks the backend (no real Supabase
+          # round-trip). A JWT-shaped literal here trips Trivy's secret scanner.
+          VITE_SUPABASE_PUBLISHABLE_KEY: test-publishable-key-e2e-only
           VITE_BACKEND_API_URL: http://localhost:8001
 
       - name: Upload report
@@ -319,6 +321,16 @@ jobs:
         # exit-code: 1 GATES the PR (blocking — noc's deployable code is clean,
         # so this passes honestly; not a workaround). `trivyignores:` picks up
         # the repo-root `.trivyignore`.
+        #
+        # `limit-severities-for-sarif: true` is REQUIRED for the gate to mean
+        # what it says. In `format: sarif` mode, trivy-action otherwise writes
+        # ALL severities to the SARIF regardless of `severity:` (so the Security
+        # tab shows everything), and `exit-code: 1` then trips on ANY finding —
+        # including MEDIUM. That made this gate fail on two MEDIUMs while
+        # advertising "HIGH/CRITICAL" (scanner-config bug masquerading as CVE
+        # debt — diagnosed 2026-05-22 from the raw CI SARIF: both findings
+        # sec-sev <7.0). This flag makes the SARIF + exit-code both honor
+        # `severity:` so the gate genuinely enforces HIGH/CRITICAL only.
         id: scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -327,6 +339,7 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: .trivyignore
