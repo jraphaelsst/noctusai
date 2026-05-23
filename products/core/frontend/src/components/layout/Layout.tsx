@@ -42,6 +42,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
       { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
       { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
+      { name: 'Fleet Control', href: '/admin/fleet', icon: Zap },
       { name: 'Digest de auditoria', href: '/admin/audit-digest', icon: FileText },
       { name: 'Logout Behavior', href: '/admin/logout-behavior', icon: LogOut },
       { name: 'Templates', href: '/admin/templates', icon: PackageOpen },
