@@ -100,7 +100,7 @@ class TestBalanceReversalOnDelete:
     @pytest.mark.asyncio
     async def test_reverses_balance_on_delete(self):
         svc, sb = make_service()
-        tx = {"id": "tx-001", "tipo": "despesa", "valor": 300, "conta_id": "c-1", "data": "2026-02-05"}
+        tx = {"id": "tx-001", "org_id": ORG_ID, "tipo": "despesa", "valor": 300, "conta_id": "c-1", "data": "2026-02-05"}
         sb.set_table_data("transacoes", [tx])
         sb.set_table_data("contas", [{"id": "c-1", "saldo": 700}])
         sb.set_table_data("orcamento_itens", [])
@@ -113,7 +113,7 @@ class TestBalanceReversalOnDelete:
     @pytest.mark.asyncio
     async def test_delete_transfer_reverses_both_accounts(self):
         svc, sb = make_service()
-        tx = {"id": "tx-003", "tipo": "transferencia", "valor": 200, "conta_id": "c-1", "conta_destino_id": "c-2", "data": "2026-02-10"}
+        tx = {"id": "tx-003", "org_id": ORG_ID, "tipo": "transferencia", "valor": 200, "conta_id": "c-1", "conta_destino_id": "c-2", "data": "2026-02-10"}
         sb.set_table_data("transacoes", [tx])
         sb.set_table_data("contas", [{"id": "c-1", "saldo": 800}])
         sb.set_table_data("orcamento_itens", [])

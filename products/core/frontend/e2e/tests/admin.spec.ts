@@ -8,8 +8,12 @@ test.describe('Admin Panel', () => {
     );
     await page.goto('/admin');
 
-    // AdminRoute redirects non-admins to /
+    // SECURITY INTENT: CoreLayout's admin guard (`if (!isAdmin) <Navigate
+    // to="/" replace>`) sends a member off /admin to the dashboard. Assert
+    // both the redirect AND that no admin-only content rendered.
     await expect(page).toHaveURL('/');
+    await expect(page.getByRole('heading', { name: 'Bem-vindo, Rafael!' })).toBeVisible();
+    await expect(page.getByText('Visao geral da plataforma NoctusAI')).toHaveCount(0);
   });
 
   test('admin can access /admin and sees sidebar', async ({ adminPage: page }) => {
@@ -32,8 +36,10 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    // The admin dashboard should load
-    await expect(page.locator('.admin-layout')).toBeVisible();
+    // The AdminDashboard renders its heading + the platform overview within
+    // the AppShell (the pre-refactor `.admin-layout` class was dropped).
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    await expect(page.getByText('Visao geral da plataforma NoctusAI')).toBeVisible();
   });
 
   test('navigates to Organizations page', async ({ adminPage: page }) => {
@@ -72,7 +78,10 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    await expect(page.getByText('Ana Souza')).toBeVisible();
-    await expect(page.getByText('Sair')).toBeVisible();
+    // Seed Header renders the (formatted) name; logout is the icon-button
+    // (title="Sair") inside the user-card HoverCard — hover to reveal it.
+    await expect(page.getByText('Ana Souza').first()).toBeVisible();
+    await page.getByText('Ana Souza').first().hover();
+    await expect(page.getByRole('button', { name: 'Sair' })).toBeVisible();
   });
 });

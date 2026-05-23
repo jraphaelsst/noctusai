@@ -18,15 +18,15 @@ class TestKPIs:
     async def test_aggregates_patrimonio_and_cash_flow(self):
         svc, sb = make_service()
         sb.set_table_data("contas", [
-            {"id": "c1", "nome": "Corrente", "tipo": "corrente", "saldo": 10000, "ativo": True},
+            {"id": "c1", "org_id": ORG_ID, "nome": "Corrente", "tipo": "corrente", "saldo": 10000, "ativo": True},
         ])
         sb.set_table_data("ativos", [
-            {"id": "a1", "ticker": "PETR4", "valor_atual": 5000, "ganho_perda": 500, "carteira_id": "cart1"},
+            {"id": "a1", "org_id": ORG_ID, "ticker": "PETR4", "valor_atual": 5000, "ganho_perda": 500, "carteira_id": "cart1"},
         ])
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 8000, "data": f"{date.today().isoformat()}", "categoria": None},
-            {"id": "t2", "tipo": "despesa", "valor": 3000, "data": f"{date.today().isoformat()}", "categoria": None},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 8000, "data": f"{date.today().isoformat()}", "categoria": None},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 3000, "data": f"{date.today().isoformat()}", "categoria": None},
         ])
         result = await svc.kpis()
         assert result["patrimonio_liquido"] == 15000
@@ -55,8 +55,8 @@ class TestKPIs:
         svc, sb = make_service()
         sb.set_table_data("contas", [])
         sb.set_table_data("ativos", [
-            {"id": "a1", "valor_atual": 10000, "ganho_perda": 1500, "carteira_id": "c1"},
-            {"id": "a2", "valor_atual": 5000, "ganho_perda": -200, "carteira_id": "c1"},
+            {"id": "a1", "org_id": ORG_ID, "valor_atual": 10000, "ganho_perda": 1500, "carteira_id": "c1"},
+            {"id": "a2", "org_id": ORG_ID, "valor_atual": 5000, "ganho_perda": -200, "carteira_id": "c1"},
         ])
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [])
@@ -71,8 +71,8 @@ class TestKPIs:
         sb.set_table_data("ativos", [])
         sb.set_table_data("resumos_mensais", [])
         sb.set_table_data("transacoes", [
-            {"id": "t1", "tipo": "receita", "valor": 10000, "data": f"{date.today().isoformat()}", "categoria": None},
-            {"id": "t2", "tipo": "despesa", "valor": 6000, "data": f"{date.today().isoformat()}", "categoria": None},
+            {"id": "t1", "org_id": ORG_ID, "tipo": "receita", "valor": 10000, "data": f"{date.today().isoformat()}", "categoria": None},
+            {"id": "t2", "org_id": ORG_ID, "tipo": "despesa", "valor": 6000, "data": f"{date.today().isoformat()}", "categoria": None},
         ])
         result = await svc.kpis()
         assert result["taxa_poupanca"] == 40.0
@@ -84,7 +84,7 @@ class TestResumo:
         svc, sb = make_service()
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         sb.set_table_data("transacoes", [
-            {"id": "t1", "descricao": "Compra", "data": yesterday, "valor": 100, "tipo": "despesa"},
+            {"id": "t1", "org_id": ORG_ID, "descricao": "Compra", "data": yesterday, "valor": 100, "tipo": "despesa"},
         ])
         sb.set_table_data("recorrentes", [])
         sb.set_table_data("metas", [])
@@ -98,7 +98,7 @@ class TestResumo:
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         sb.set_table_data("transacoes", [])
         sb.set_table_data("recorrentes", [
-            {"id": "r1", "nome": "Aluguel", "valor": 2000, "proxima_data": tomorrow, "ativo": True},
+            {"id": "r1", "org_id": ORG_ID, "nome": "Aluguel", "valor": 2000, "proxima_data": tomorrow, "ativo": True},
         ])
         sb.set_table_data("metas", [])
         result = await svc.resumo()
@@ -111,7 +111,7 @@ class TestResumo:
         sb.set_table_data("transacoes", [])
         sb.set_table_data("recorrentes", [])
         sb.set_table_data("metas", [
-            {"id": "m1", "nome": "Emergencia", "valor_alvo": 10000, "valor_atual": 4000, "status": "ativa", "prioridade": "alta"},
+            {"id": "m1", "org_id": ORG_ID, "nome": "Emergencia", "valor_alvo": 10000, "valor_atual": 4000, "status": "ativa", "prioridade": "alta"},
         ])
         result = await svc.resumo()
         assert len(result["metas_ativas"]) == 1

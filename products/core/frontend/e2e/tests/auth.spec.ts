@@ -53,18 +53,21 @@ test.describe('Authentication', () => {
     await page.locator('input[type="password"]').fill('wrongpassword');
     await page.locator('button[type="submit"]').click();
 
-    await expect(page.locator('.error')).toContainText('Email ou senha incorretos');
+    // The login form surfaces the API `detail` in an inline error div
+    // (the pre-refactor `.error` class was dropped in the Tailwind rewrite).
+    await expect(page.getByText('Email ou senha incorretos')).toBeVisible();
   });
 
-  test('redirects to login when accessing protected route without auth', async ({ page }) => {
+  test('redirects to landing when accessing protected route without auth', async ({ page }) => {
     await page.route('**/api/auth/oauth/providers', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[]}' }),
     );
     await page.goto('/');
 
-    // ProtectedRoute checks localStorage for noctus_token
-    // Without it, redirects to /login
-    await expect(page).toHaveURL(/\/login/);
+    // No token → the seed createProductApp guard redirects unauthenticated
+    // users to `unauthRedirect`, which core sets to '/landing' (apex landing
+    // page added in df821179). The login form lives at /login.
+    await expect(page).toHaveURL(/\/landing/);
   });
 
   test('successful login redirects to dashboard', async ({ page }) => {
@@ -99,7 +102,8 @@ test.describe('Authentication', () => {
     await page.locator('button[type="submit"]').click();
 
     await expect(page).toHaveURL('/');
-    await expect(page.locator('.user-name')).toContainText('Rafael');
+    // Authed dashboard renders the user's name via the seed Header user-card.
+    await expect(page.getByText('Rafael').first()).toBeVisible();
   });
 
   test('logout clears token and redirects to login', async ({ authenticatedPage: page }) => {
@@ -108,9 +112,13 @@ test.describe('Authentication', () => {
     );
 
     await page.goto('/');
-    await expect(page.getByText('Rafael Oliveira')).toBeVisible();
+    await expect(page.getByText('Rafael Oliveira').first()).toBeVisible();
 
-    await page.getByText('Sair').click();
+    // Logout moved into the seed Header user-card HoverCard: hover the user
+    // card to open it, then click the logout icon-button (title="Sair").
+    // Dashboard handleLogout() clears the token then navigates to /login.
+    await page.getByText('Rafael Oliveira').first().hover();
+    await page.getByRole('button', { name: 'Sair' }).click();
 
     await expect(page).toHaveURL(/\/login/);
 

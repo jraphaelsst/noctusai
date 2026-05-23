@@ -49,6 +49,10 @@ from noctusai_lib.testing import (  # noqa: F401
     AuthClient,
     bind_consent_module_to_mock,
 )
+# Autouse: clears the slowapi in-memory limiter between tests so a rate-limit
+# test that exhausts an endpoint's bucket can't 429 a later test under random
+# ordering (pytest-randomly). Mirrors products/core/backend/tests/conftest.py.
+from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")

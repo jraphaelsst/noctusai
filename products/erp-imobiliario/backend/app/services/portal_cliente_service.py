@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from app.dependencies import get_admin_client
+from app.services.portal_documentos_query import fetch_shared_documentos
 
 logger = logging.getLogger(__name__)
 
@@ -200,18 +201,22 @@ class PortalClienteService:
             financeiro_q = financeiro_q.eq("org_id", self.org_id)
         financeiro_result = financeiro_q.order("data_vencimento", desc=True).limit(10).execute()
 
-        # Shared documents
-        documentos_q = self.db.table("documentos").select("*").eq(
-            "cliente_id", cliente_id
+        # Shared documents — LGPD per-document portal-sharing gate.
+        # The compartilhado_portal=True filter lives in fetch_shared_documentos
+        # so the SAME gate is applied by every public portal read path (this
+        # dashboard + portal_externo.portal_documentos). Without it the
+        # dashboard leaks every doc.
+        documentos = fetch_shared_documentos(
+            self.db,
+            cliente_id=cliente_id,
+            org_id=self.org_id,
+            limit=20,
         )
-        if self.org_id:
-            documentos_q = documentos_q.eq("org_id", self.org_id)
-        documentos_result = documentos_q.order("created_at", desc=True).limit(20).execute()
 
         return {
             "contratos": contratos_result.data or [],
             "financeiro": financeiro_result.data or [],
-            "documentos": documentos_result.data or [],
+            "documentos": documentos,
         }
 
     def get_financeiro(self, cliente_id: str) -> List[Dict[str, Any]]:

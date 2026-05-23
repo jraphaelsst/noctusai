@@ -59,7 +59,9 @@ class TestSeedDefaultCategories:
     def test_idempotent_when_already_seeded(self):
         db = MockSupabaseClient(validate_schema=False)
         # Simulate already-seeded org — at least one is_sistema row exists.
-        db.set_table_data("categorias", [{"id": "cat-1", "is_sistema": True}])
+        # `org_id` must equal the org being seeded ("org-2") because the
+        # idempotency pre-check filters `.eq("org_id", org_id).eq("is_sistema", True)`.
+        db.set_table_data("categorias", [{"id": "cat-1", "org_id": "org-2", "is_sistema": True}])
 
         inserted = _run(seed_default_categories(db, "org-2"))
 
@@ -100,8 +102,11 @@ class TestEnsurePfPersonalOrg:
             "noctus_users",
             [{"id": "u-2", "email": "b@x.com", "org_id": "org-existing"}],
         )
+        # `org_id` matches the existing org so the idempotency pre-check
+        # (`.eq("org_id", "org-existing").eq("is_sistema", True)`) finds the
+        # row and skips re-seeding.
         db.set_table_data(
-            "categorias", [{"id": "cat-x", "is_sistema": True}]
+            "categorias", [{"id": "cat-x", "org_id": "org-existing", "is_sistema": True}]
         )
 
         org_id = _run(ensure_pf_personal_org(db, "u-2", "b@x.com"))

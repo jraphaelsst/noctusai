@@ -4,7 +4,10 @@ from noctusai_lib.testing import MockSupabaseResponse
 
 MOCK_NOTIFICATION = {
     "id": "notif-001",
-    "user_id": "test-user-id",
+    # Must equal the conftest MockUser default id ("test-user-123") because the
+    # seed notificacoes router filters `.eq("user_id", str(user.id))` — a
+    # mismatched user_id matches no rows.
+    "user_id": "test-user-123",
     "type": "system",
     "title": "Bem-vindo",
     "message": "Sua conta foi criada",

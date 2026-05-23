@@ -6560,6 +6560,84 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_limiter_conftest_import` — every product whose backend ships
+# `app/rate_limit.py` (a slowapi `limiter`) MUST import the seed autouse
+# fixture `reset_rate_limiter` in its `tests/conftest.py`. Without it, the
+# slowapi in-memory limiter (used when Redis is down, e.g. in CI) leaks
+# bucket state across tests → a rate-limit test exhausts a bucket and a
+# later test on that endpoint gets a 429 under pytest-randomly ordering
+# (latent order-dependent flake). The fixture (in
+# `noctusai_lib.testing.fixtures`, exported via `noctusai_lib.testing`)
+# clears the limiter between tests; merely importing it into the conftest
+# namespace activates it (autouse). N=6 byte-identical per-product fixtures
+# pre-existed → lifted to the seed → DRY recurrence ⇒ MUST formalize.
+# Per KB § PATTERNS/methodology-codification-pipeline.md (Stage-4).
+# ---------------------------------------------------------------------------
+
+
+def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
+    """Flag products with `app/rate_limit.py` whose `tests/conftest.py`
+    does NOT reference the seed `reset_rate_limiter` autouse fixture.
+
+    Predicate (per product under ``products/``):
+      - SKIP unless ``backend/app/rate_limit.py`` exists (no limiter ⇒
+        the leak class cannot occur).
+      - WARN if ``backend/tests/conftest.py`` is missing OR its text does
+        not contain the token ``reset_rate_limiter``.
+
+    The expected line (mirroring core/daily-life/therapy/personal-finance)::
+
+        from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
+
+    String containment is sufficient and robust: the only way the token
+    appears in a conftest is the import (it is not a common identifier),
+    and importing the name is exactly what activates the autouse fixture.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products_dir = root / "products"
+    if not products_dir.exists():
+        return issues
+
+    for product_path in sorted(products_dir.iterdir()):
+        if not product_path.is_dir() or product_path.name.startswith("."):
+            continue
+        name = product_path.name
+        rate_limit_py = product_path / "backend" / "app" / "rate_limit.py"
+        if not rate_limit_py.exists():
+            continue  # no limiter ⇒ the cross-test leak class can't occur
+
+        conftest = product_path / "backend" / "tests" / "conftest.py"
+        has_import = False
+        if conftest.exists():
+            try:
+                has_import = "reset_rate_limiter" in conftest.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", conftest, exc)
+                # Cannot prove it's present → treat as missing (no silent pass).
+                has_import = False
+
+        if not has_import:
+            issues.append({
+                "product": name,
+                "file": "backend/tests/conftest.py",
+                "issue": (
+                    "Has app/rate_limit.py (slowapi limiter) but tests/conftest.py "
+                    "does not import the seed autouse fixture `reset_rate_limiter`. "
+                    "The in-memory slowapi limiter (used when Redis is down, e.g. CI) "
+                    "leaks bucket state across tests → order-dependent 429 flake under "
+                    "pytest-randomly. Add "
+                    "`from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401` "
+                    "near the other noctusai_lib.testing imports. Per "
+                    "KB § PATTERNS/methodology-codification-pipeline.md."
+                ),
+                "severity": "warning",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -6896,6 +6974,11 @@ def check_all_products() -> tuple[int, list]:
     # only signal because no unit test exercises the real Provider +
     # real queryFn + real 404 response).
     all_issues.extend(check_query_fn_returns_undefined())
+    # fleet-limiter-conftest-adoption Stage-4 (2026-05-23) — products with
+    # app/rate_limit.py must import the seed `reset_rate_limiter` autouse
+    # fixture into tests/conftest.py, else the in-memory slowapi limiter
+    # leaks bucket state across tests → order-dependent 429 flake (N=6).
+    all_issues.extend(check_limiter_conftest_import())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

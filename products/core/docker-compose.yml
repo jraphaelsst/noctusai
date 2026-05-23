@@ -72,6 +72,15 @@ services:
       # resolves while seed source stays live-editable. (§3.2b)
       - /app/seed/framework/frontend/node_modules
       - /app/seed/lib/frontend/node_modules
+      # CONTROL-PLANE: core's admin-only "Fleet Control" panel switches sibling
+      # product containers ON/OFF via the seed primitive
+      # noctusai_lib.domain.fleet_control (the same shape in dev + prod). It
+      # talks to THIS host's docker via the socket. Mounted read-only (:ro) —
+      # the seed controller only ever runs `docker ps` + `docker
+      # {start|stop|restart} noctus-<slug>` against a HARD allowlist, and every
+      # endpoint is gated by core's get_current_admin. Core ONLY (control-plane
+      # product) — do NOT propagate this mount to other products.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "8000:8000"
     networks:

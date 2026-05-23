@@ -23,11 +23,10 @@ description = "Known-safe public values that ship in the repo"
 regexTarget = "match"
 
 regexes = [
-  # Supabase demo publishable JWT — ships in `.github/workflows/test.yml`
-  # (`VITE_SUPABASE_PUBLISHABLE_KEY` for E2E tests) and in `.env.example`.
-  # This is the documented Supabase local-dev demo key, public, safe.
-  # Anchored on the unique payload claim `"iss":"supabase-demo"`.
-  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9\.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0''',
+  # (The Supabase demo publishable JWT allowlist was removed 2026-05-22 when the
+  # demo key was de-hardcoded from test.yml + playwright.config.ts — replaced by
+  # a non-secret placeholder `test-publishable-key-e2e-only`. No JWT literal
+  # remains in any scanned source, so the allowlist entry was dead config.)
 
   # NoctusAI API-key prefix placeholders in router tests.
   # Pattern: `noctus_k_<short-ascii>` — these are fabricated string

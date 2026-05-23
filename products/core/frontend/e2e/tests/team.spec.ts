@@ -1,21 +1,27 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { mockTeamAPIs } from '../fixtures/api-mocks';
 
+/**
+ * TeamManagement was rewritten to a real <table> + Tailwind modals in the seed
+ * migration. The bespoke `.team-page-title` / `.team-page-subtitle` /
+ * `.admin-table` / `.badge` / `.modal-content` classes are gone. We use
+ * table/role/text semantics. Modals are `fixed inset-0` overlays whose dialog
+ * box carries a heading + the action buttons.
+ */
 test.describe('Team Management', () => {
   test('displays members list with table headers', async ({ authenticatedPage: page }) => {
     await mockTeamAPIs(page);
     await page.goto('/team');
 
-    await expect(page.locator('.team-page-title')).toContainText('Equipe');
-    await expect(page.locator('.team-page-subtitle')).toContainText('2 membros');
+    await expect(page.getByRole('heading', { name: 'Equipe' })).toBeVisible();
+    await expect(page.getByText('2 membros na organização')).toBeVisible();
 
-    // Table headers (first table = members table)
-    const membersTable = page.locator('.admin-table').first();
+    // Members table (first table on the page) + its column headers.
+    const membersTable = page.locator('table').first();
     await expect(membersTable.getByRole('columnheader', { name: 'Nome' })).toBeVisible();
     await expect(membersTable.getByRole('columnheader', { name: 'E-mail' })).toBeVisible();
     await expect(membersTable.getByRole('columnheader', { name: 'Papel' })).toBeVisible();
 
-    // Member rows (scope to table body)
     await expect(membersTable.getByText('Rafael Oliveira')).toBeVisible();
     await expect(membersTable.getByText('Mariana Lima')).toBeVisible();
   });
@@ -24,28 +30,25 @@ test.describe('Team Management', () => {
     await mockTeamAPIs(page);
     await page.goto('/team');
 
-    const ownerRow = page.locator('tr', { hasText: 'Rafael Oliveira' });
-    await expect(ownerRow.locator('.badge', { hasText: 'Você' })).toBeVisible();
+    // The current user's row (Rafael, id user-001) carries the "Você" badge.
+    const ownerRow = page.getByRole('row', { name: /Rafael Oliveira/ });
+    await expect(ownerRow.getByText('Você')).toBeVisible();
   });
 
   test('opens invite modal and submits invite', async ({ authenticatedPage: page }) => {
     await mockTeamAPIs(page);
     await page.goto('/team');
 
-    await page.getByText('Convidar').click();
+    await page.getByRole('button', { name: 'Convidar' }).click();
 
-    // Modal should be visible
-    await expect(page.locator('.modal-content')).toBeVisible();
-    await expect(page.locator('.modal-content h2')).toContainText('Convidar membro');
+    // Modal heading + email field.
+    await expect(page.getByRole('heading', { name: 'Convidar membro' })).toBeVisible();
+    await page.locator('input[type="email"]').fill('novo@empresa.com');
 
-    // Fill in the email
-    await page.locator('.modal-content input[type="email"]').fill('novo@empresa.com');
+    await page.getByRole('button', { name: 'Enviar convite' }).click();
 
-    // Submit
-    await page.getByText('Enviar convite').click();
-
-    // Modal should close
-    await expect(page.locator('.modal-content')).toHaveCount(0);
+    // Modal closes — its heading is gone.
+    await expect(page.getByRole('heading', { name: 'Convidar membro' })).toHaveCount(0);
   });
 
   test('shows pending invitations section', async ({ authenticatedPage: page }) => {
@@ -66,14 +69,14 @@ test.describe('Team Management', () => {
     });
     await page.goto('/team');
 
-    // The remove button should be present for Mariana (non-owner, not current user)
-    const marianaRow = page.locator('tr', { hasText: 'Mariana Lima' });
-    await marianaRow.getByText('Remover').click();
+    // Mariana (org_role member, not the current user) has a "Remover" action.
+    const marianaRow = page.getByRole('row', { name: /Mariana Lima/ });
+    await marianaRow.getByRole('button', { name: 'Remover' }).click();
 
-    // Confirm modal
-    await expect(page.locator('.modal-content')).toBeVisible();
-    await expect(page.locator('.modal-content h2')).toContainText('Remover membro');
-    await expect(page.locator('.modal-content strong')).toContainText('Mariana Lima');
-    await expect(page.getByText('Confirmar remoção')).toBeVisible();
+    // Confirm modal heading + name (the modal renders it in a <strong>,
+    // distinct from the table cell) + confirm button.
+    await expect(page.getByRole('heading', { name: 'Remover membro' })).toBeVisible();
+    await expect(page.locator('strong', { hasText: 'Mariana Lima' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Confirmar remoção' })).toBeVisible();
   });
 });

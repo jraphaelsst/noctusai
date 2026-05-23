@@ -20,7 +20,11 @@ test.describe('ERP Authentication', () => {
     await expect(page.locator('input[type="password"]')).toBeVisible();
   });
 
-  test('can toggle between login and signup mode', async ({ page }) => {
+  test('login form shows email, password and forgot-password link', async ({ page }) => {
+    // The seed LoginForm (consumed at /login) is sign-in only — there is no
+    // inline signup toggle. ERP onboards via SSO/invite, not self-signup.
+    // Intent: the login form exposes its core affordances (credentials +
+    // password recovery), targeted via stable label/role/text selectors.
     await page.route('**/auth/v1/token**', (route) =>
       route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"invalid_grant"}' }),
     );
@@ -30,19 +34,11 @@ test.describe('ERP Authentication', () => {
 
     await page.goto('/login');
 
-    // Start in login mode
     await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
-
-    // Toggle to signup
-    await page.getByText('Cadastre-se').click();
-    await expect(page.getByRole('button', { name: 'Criar Conta' })).toBeVisible();
-
-    // Signup fields should be visible
-    await expect(page.getByPlaceholder(/nome/i)).toBeVisible();
-
-    // Toggle back
-    await page.getByText('Faça login').click();
-    await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByLabel('Senha')).toBeVisible();
+    // Password-recovery affordance is a link to the /forgot-password route.
+    await expect(page.getByRole('link', { name: 'Esqueceu a senha?' })).toBeVisible();
   });
 
   test('shows error on invalid credentials', async ({ page }) => {
@@ -67,7 +63,10 @@ test.describe('ERP Authentication', () => {
     await expect(page.getByText(/incorretos|Invalid|erro/i).first()).toBeVisible({ timeout: 5000 });
   });
 
-  test('shows password recovery dialog', async ({ page }) => {
+  test('navigates to password recovery page', async ({ page }) => {
+    // Password recovery is no longer an in-page dialog — it moved to the
+    // dedicated /forgot-password route (seed ForgotPasswordPage). Intent
+    // preserved: a user CAN reach password recovery from the login screen.
     await page.route('**/auth/v1/token**', (route) =>
       route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"invalid_grant"}' }),
     );
@@ -77,9 +76,10 @@ test.describe('ERP Authentication', () => {
 
     await page.goto('/login');
 
-    await page.getByText('Esqueci minha senha').click();
+    await page.getByRole('link', { name: 'Esqueceu a senha?' }).click();
 
-    await expect(page.getByText('Recuperar Senha').first()).toBeVisible();
-    await expect(page.getByText('Informe seu email cadastrado')).toBeVisible();
+    await expect(page).toHaveURL(/\/forgot-password/);
+    await expect(page.getByRole('heading', { name: 'Recuperar Senha' })).toBeVisible();
+    await expect(page.getByText(/Informe seu email para receber o link/i)).toBeVisible();
   });
 });

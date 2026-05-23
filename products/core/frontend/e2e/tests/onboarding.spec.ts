@@ -9,11 +9,14 @@ test.describe('Onboarding', () => {
 
     await expect(page.getByText('Configure sua conta em poucos passos')).toBeVisible();
 
-    // All 4 step labels visible in progress bar
-    await expect(page.locator('.onboarding-step-label', { hasText: 'Dados da Empresa' })).toBeVisible();
-    await expect(page.locator('.onboarding-step-label', { hasText: 'Escolher Plano' })).toBeVisible();
-    await expect(page.locator('.onboarding-step-label', { hasText: 'Convidar Equipe' })).toBeVisible();
-    await expect(page.locator('.onboarding-step-label', { hasText: 'Ativar Produto' })).toBeVisible();
+    // All 4 step labels render in the progress bar (each is a clickable step
+    // button; the pre-refactor `.onboarding-step-label` class was dropped).
+    // "Dados da Empresa" also appears as the active step <h2>, so we anchor on
+    // the step buttons via their accessible name (step number + label).
+    await expect(page.getByRole('button', { name: /Dados da Empresa/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Escolher Plano/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Convidar Equipe/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Ativar Produto/ })).toBeVisible();
   });
 
   test('step 1 shows company details form', async ({ authenticatedPage: page }) => {
