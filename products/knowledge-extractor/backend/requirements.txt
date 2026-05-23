@@ -1,0 +1,28 @@
+# knowledge-extractor backend dependencies (absorbed into noc 2026-05-23).
+#
+# Shared stack (fastapi/pydantic/supabase/httpx/uvicorn/pytest) comes from the
+# seed editable installs below — the seed Dockerfile strips the `-e seed/` lines
+# (they live in the shared base venv) and installs the rest. Only the
+# DOMAIN deps not already in the seed base are listed here.
+#
+# SYSTEM dependency (not pip): ffmpeg must be on PATH — added in the product
+# Dockerfile at the containerize gate (P3), not here.
+
+-e seed/lib/backend
+-e seed/framework/backend
+
+# AI — transcription + summarization (lazy-imported)
+openai>=1.50.0
+
+# Google Drive — v3 API (primary) + public-link fallback
+google-api-python-client>=2.120.0
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+gdown>=5.2.0
+
+# Methodology export to .docx
+python-docx>=1.1.0
+
+# Testing (pytest itself is in the seed framework dev deps)
+pytest-asyncio>=0.21.0

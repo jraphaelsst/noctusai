@@ -17,6 +17,7 @@
 | **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **Social Wiring** | `products/social-wiring/` | Social-ops hub: email-marketing + WhatsApp-scheduling. Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` |
+| **Knowledge Extractor** | `products/knowledge-extractor/` | Course-methodology RAG: Drive→transcribe→summarize→extract methodology→pgvector KB. Backend-only; absorbed from the sibling `knowledge-extractor` repo 2026-05-23 (seam-swap + container gate in flight, `container-first-codify-and-absorb-ke`) | 8012/— | `knowledge_extractor` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
 
@@ -31,7 +32,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 28 | 13 | 26 | 0 | 47 | 499 |
+| Core | 28 | 13 | 27 | 0 | 47 | 499 |
 | Erp Imobiliario | 60 | 53 | 67 | 67 | 127 | 1,798 |
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
@@ -40,14 +41,14 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 8 | 19 | 14 | 8 | 43 | 431 |
-| **Total** | **168** | **170** | **243** | **137** | **398** | **4,859** |
+| **Total** | **168** | **170** | **244** | **137** | **398** | **4,859** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (9):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 303** distributed across the schemas.
+- **Schemas (10):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
+- **Tables: 305** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.
