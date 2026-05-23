@@ -2164,7 +2164,7 @@ class TestCheckRlsPolicySelfReference:
     def test_self_reference_flags(self):
         issues = check_rls_policy_self_reference(self._mk("p", {"001.sql": self._SELF_REF}))
         assert len(issues) == 1
-        assert issues[0]["severity"] == "warning"
+        assert issues[0]["severity"] == "error"
         assert "team_members" in issues[0]["issue"]
 
     # ── No-flag: a helper-based policy (no FROM self) ──────────────────
@@ -2213,7 +2213,7 @@ class TestCheckAuthSessionMutationOnSharedClient:
         )
         issues = check_auth_session_mutation_on_shared_client(self._mk("p", py))
         assert len(issues) == 1
-        assert issues[0]["severity"] == "warning"
+        assert issues[0]["severity"] == "error"
         assert "verify_otp" in issues[0]["issue"]
 
     # ── Flag: sign_in on a get_admin_client() binding ──────────────────

@@ -140,9 +140,10 @@ client.auth.sign_in_with_password({"email": e, "password": p})
 Admin *reads/writes* and non-session admin-API calls (e.g.
 `supabase_admin.auth.admin.generate_link`) stay on `get_admin_client()` — they set
 no session. N=2: core `sso.py` `verify_otp` (fixed) + social-wiring `auth.py`
-`sign_in_with_password` (flagged, fix pending). **Keeper:**
+`sign_in_with_password` (both fixed 2026-05-23). **Keeper:**
 `check_auth_session_mutation_on_shared_client` (Stage-4, `compliance.py`; AST-based;
-`warning` until baseline 0 → then `error`). Memory: `feedback_admin_client_poisoning`.
+severity `error`, baseline 0 since 2026-05-23; deploying social-wiring's fix to prod
+is the separate gated step). Memory: `feedback_admin_client_poisoning`.
 
 ### Late-binding rule
 

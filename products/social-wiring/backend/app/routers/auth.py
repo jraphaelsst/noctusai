@@ -41,6 +41,9 @@ from app.dependencies import (
     get_auth_context,
 )
 
+from supabase import create_client
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -147,9 +150,9 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
     the HttpOnly cookie. The browser never sees the JWT or refresh
     token — only the opaque session id.
     """
-    sb = get_admin_client()
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
-        auth_response = sb.auth.sign_in_with_password(
+        auth_response = client.auth.sign_in_with_password(
             {"email": body.email, "password": body.password}
         )
     except Exception as exc:

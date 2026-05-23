@@ -2725,10 +2725,10 @@ def check_rls_policy_self_reference(product_path: Path) -> list[dict]:
     `ON`, not `FROM`, so it is not a false hit; a column-qualifier like
     `foo.col` is not a FROM/JOIN either).
 
-    Severity `warning` until baseline 0 — 1 pre-existing finding
-    (`therapy.conversation_participants` policy `conversation_participants_access`,
-    a latent 42P17; follow-up filed) — promote to `error` once cleared, matching
-    the platform's first-ship keeper posture.
+    Severity `error` (baseline 0 since 2026-05-23 — therapy migration `015`
+    DROP+recreated `conversation_participants_access` through a SECURITY DEFINER
+    helper, clearing the last fleet finding; live-apply of 015 is the gated
+    prod-DB step, separate from this code-level guard).
     """
     issues: list[dict] = []
     name = product_path.name
@@ -2796,7 +2796,7 @@ def check_rls_policy_self_reference(product_path: Path) -> list[dict]:
                 f"(BYPASSRLS) helper instead of self-querying — see "
                 f"`KB § PATTERNS/database-rls.md` (RLS self-reference)."
             ),
-            "severity": "warning",
+            "severity": "error",
         })
     return issues
 
@@ -6835,13 +6835,12 @@ def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dic
     GET /api/auth/me 42P17). Fix: run session-establishing auth on a
     THROWAWAY `create_client(url, anon_key)`, never the shared singleton.
 
-    N=2 (core sso.py verify_otp — fixed; social-wiring auth.py
-    sign_in_with_password — found by this keeper, follow-up filed). The blast
+    N=2 (core sso.py verify_otp + social-wiring auth.py sign_in_with_password —
+    both fixed 2026-05-23, the latter via a throwaway anon client). The blast
     radius (process-wide prod auth) justifies the guard. Prevention, not the fix.
 
-    Severity `warning` until baseline 0 — 1 pre-existing finding
-    (social-wiring `auth.py` login on the shared client) — promote to `error`
-    once cleared, matching the platform's first-ship keeper posture.
+    Severity `error` (baseline 0 since 2026-05-23 — both findings cleared;
+    deploying social-wiring's fix to prod is the separate gated step).
     """
     issues: list[dict] = []
     name = product_path.name
@@ -6886,7 +6885,7 @@ def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dic
                     f"create_client(url, anon_key) — see `KB § PATTERNS/backend.md` "
                     f"(admin-client poisoning)."
                 ),
-                "severity": "warning",
+                "severity": "error",
             })
     return issues
 

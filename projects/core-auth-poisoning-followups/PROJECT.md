@@ -56,21 +56,22 @@ mis-scoped read, not a 500). 035 is **already applied to live** (do NOT re-apply
 Path: `main` pushed → CI builds core GHCR image → gated promote `main→prod` →
 `deploy_image core`. Gated prod action — **deploy only when everything's tied up.**
 
-### ⏳ F5 — Fix social-wiring login poisoning (clears the F3 warning)
-`products/social-wiring/backend/app/routers/auth.py:~150` `login()`: `sb =
-get_admin_client(); sb.auth.sign_in_with_password(...)` poisons the singleton.
-Recipe: swap `sb` to a throwaway `create_client(settings.supabase_url,
-settings.supabase_anon_key)` (exactly core `auth.py:113`). Verify with social-wiring
-tests before shipping. Then promote `check_auth_session_mutation_on_shared_client`
-to `error`.
+### ✅ F5 — Fix social-wiring login poisoning — DONE (code)
+`products/social-wiring/backend/app/routers/auth.py` `login()` now uses a throwaway
+`create_client(settings.supabase_url, settings.supabase_anon_key)` (mirrors core
+`auth.py:113`). Dispatched to Engineer SW-AUTH (isolated worktree), reconciled by
+architect. Verified: social-wiring auth tests 82 passed; keeper `[]`. F3 promoted to
+`error`. **Gated remainder:** deploy social-wiring to prod so the fix takes effect
+(prod still runs the old code) — same gated class as F1.
 
-### ⏳ F6 — Fix therapy RLS self-reference (clears the F2 warning)
-`products/therapy-platform/backend/migrations/001_therapy_platform.sql:1311`
-`conversation_participants_access` self-queries `therapy.conversation_participants`
-(latent 42P17). Recipe: a new therapy migration adding a SECURITY DEFINER helper
-(mirror `035` / `026`) + rewrite the policy to call it. Validate therapy
-conversation access before shipping. Then promote `check_rls_policy_self_reference`
-to `error`.
+### ✅ F6 — Fix therapy RLS self-reference — DONE (migration in git)
+`products/therapy-platform/backend/migrations/015_fix_conversation_participants_rls_recursion.sql`
+adds a SECURITY DEFINER `therapy.is_conversation_member()` helper + DROP/recreates
+`conversation_participants_access` to call it (mirrors 035/026, intent preserved).
+Dispatched to Engineer TH-RLS (isolated worktree), reconciled by architect. Verified:
+therapy suite 1381 passed / 14 skipped; keeper `[]` (supersession). F2 promoted to
+`error`. **Gated remainder:** **live-apply 015 to the therapy Supabase** (git-only
+so far → git↔live drift until applied; latent 42P17 persists in live until then).
 
 ## 3a · Seed-first analysis
 F2/F3 are platform keepers (single `compliance.py` file, 0 per-product code). F4 is

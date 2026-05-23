@@ -136,8 +136,9 @@ subquery `SELECT org_id FROM noctus_users WHERE id = auth.uid()` become safe onc
 login outage) · `therapy.conversation_participants` (`001_therapy_platform.sql`,
 **latent** — flagged by the keeper, fix pending). **Keeper:**
 `check_rls_policy_self_reference` (Stage-4, `compliance.py`; migration-supersession
-aware so a later DROP+recreate clears the original; severity `warning` until the
-therapy finding is fixed → then `error`). Memory: `feedback_rls_policy_self_reference`.
+aware so a later DROP+recreate clears the original; severity `error`, baseline 0
+since 2026-05-23 — therapy `015` cleared the last finding; live-apply of 015 is the
+separate gated prod-DB step). Memory: `feedback_rls_policy_self_reference`.
 
 ## Migrations
 
