@@ -12,6 +12,10 @@ export interface Documento {
   cliente_id?: string;
   proposta_id?: string;
   template_id?: string;
+  // LGPD per-document portal-sharing flag. Admin opt-in (default false).
+  // Gates visibility on the public client portal (portal_externo /
+  // portal-cliente dashboard). Toggled via PATCH /{id}/compartilhamento.
+  compartilhado_portal?: boolean;
   metadata: Record<string, unknown>;
   created_by: string;
   created_at: string;

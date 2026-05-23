@@ -172,6 +172,37 @@ class TestGetDashboard:
         assert result["financeiro"] == []
         assert result["documentos"] == []
 
+    def test_documentos_gated_by_compartilhado_portal(self):
+        """LGPD gate: the dashboard surfaces ONLY shared documents.
+
+        Mirrors `portal_externo.portal_documentos` (and its router test
+        `test_documentos_success_returns_only_shared`): the public client
+        portal must not leak documents the admin has not opted in. Rows with
+        `compartilhado_portal=False` (or missing the flag) are excluded by the
+        `.eq("compartilhado_portal", True)` filter in `get_dashboard`.
+        """
+        db = MockSupabaseClient()
+        db.set_table_data("contratos", [])
+        db.set_table_data("lancamentos", [])
+        db.set_table_data("documentos", [
+            {"id": "shared", "cliente_id": "client-1",
+             "compartilhado_portal": True, "created_at": "2026-01-10T10:00:00Z"},
+            {"id": "private", "cliente_id": "client-1",
+             "compartilhado_portal": False, "created_at": "2026-01-11T10:00:00Z"},
+            {"id": "unset", "cliente_id": "client-1",
+             "created_at": "2026-01-12T10:00:00Z"},
+        ])
+
+        from app.services.portal_cliente_service import PortalClienteService
+        svc = PortalClienteService(db)
+
+        result = svc.get_dashboard("client-1")
+
+        ids = {d["id"] for d in result["documentos"]}
+        assert ids == {"shared"}, (
+            f"portal dashboard leaked unshared documents: {ids}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # get_financeiro

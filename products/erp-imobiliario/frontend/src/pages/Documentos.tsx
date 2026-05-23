@@ -5,6 +5,7 @@ import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
 import { Label } from '@noctusai/seed/components/ui/label';
 import { Textarea } from '@noctusai/seed/components/ui/textarea';
+import { Switch } from '@noctusai/seed/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -48,6 +49,7 @@ import {
   useCreateTemplate,
   useGenerateDocument,
   useDeleteDocumento,
+  useToggleCompartilhamento,
 } from '@/hooks/useDocumentos';
 import {
   TipoDocumento,
@@ -106,6 +108,8 @@ export default function Documentos() {
   const { mutate: createTemplate, isPending: isCreatingTemplate } = useCreateTemplate();
   const { mutate: generateDocument, isPending: isGenerating } = useGenerateDocument();
   const { mutate: deleteDocumento } = useDeleteDocumento();
+  const { mutate: toggleCompartilhamento, isPending: isTogglingShare } =
+    useToggleCompartilhamento();
 
   const handleCreateDoc = () => {
     if (!docForm.nome || !docForm.tipo) return;
@@ -269,6 +273,24 @@ export default function Documentos() {
                           </a>
                         </div>
                       )}
+
+                      {/* LGPD: per-document portal-sharing toggle (admin opt-in). */}
+                      <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+                        <label
+                          htmlFor={`compartilhar-${doc.id}`}
+                          className="text-sm text-muted-foreground cursor-pointer"
+                        >
+                          Compartilhar com portal
+                        </label>
+                        <Switch
+                          id={`compartilhar-${doc.id}`}
+                          checked={!!doc.compartilhado_portal}
+                          disabled={isTogglingShare}
+                          onCheckedChange={(checked) =>
+                            toggleCompartilhamento({ id: doc.id, shared: checked })
+                          }
+                        />
+                      </div>
                     </CardContent>
                   </Card>
                 );

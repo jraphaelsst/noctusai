@@ -145,3 +145,39 @@ export function useDeleteDocumento() {
     },
   });
 }
+
+/**
+ * Toggle the LGPD per-document portal-sharing flag.
+ *
+ * Calls `PATCH /api/documentos/{id}/compartilhamento` with `{ shared }` and
+ * invalidates the docs query on success. Backend (`toggle_compartilhamento`)
+ * audit-logs the change and role-gates it; the public client portal only
+ * surfaces docs with `compartilhado_portal = true`.
+ */
+export function useToggleCompartilhamento() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, shared }: { id: string; shared: boolean }) => {
+      const result = await api.patch(`/api/documentos/${id}/compartilhamento`, {
+        shared,
+      });
+      // Backend returns the updated row via success_response(row); never
+      // returns undefined — mutationFn yields the typed Documento.
+      return result.data as Documento;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['documentos'] });
+      toast.success(
+        variables.shared
+          ? 'Documento compartilhado com o portal do cliente'
+          : 'Documento removido do portal do cliente',
+      );
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao atualizar compartilhamento', {
+        description: error.message,
+      });
+    },
+  });
+}

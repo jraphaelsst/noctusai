@@ -200,9 +200,14 @@ class PortalClienteService:
             financeiro_q = financeiro_q.eq("org_id", self.org_id)
         financeiro_result = financeiro_q.order("data_vencimento", desc=True).limit(10).execute()
 
-        # Shared documents
+        # Shared documents — LGPD per-document portal-sharing gate.
+        # Mirrors portal_externo.portal_documentos: only docs explicitly opted
+        # in by an admin (compartilhado_portal=True) are surfaced to the public
+        # client portal. Without this filter the dashboard leaks every doc.
         documentos_q = self.db.table("documentos").select("*").eq(
             "cliente_id", cliente_id
+        ).eq(
+            "compartilhado_portal", True
         )
         if self.org_id:
             documentos_q = documentos_q.eq("org_id", self.org_id)
