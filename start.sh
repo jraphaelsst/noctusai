@@ -51,6 +51,7 @@ PRODUCTS=(
   "adconnect:AdConnect:8007:8130"
   "dev-team:Dev Team:8009:8123"
   "social-wiring:Social Wiring:8011:8160"
+  "knowledge-extractor:Knowledge Extractor:8012:8012"
 )
 # END_PRODUCTS_REGISTRY
 

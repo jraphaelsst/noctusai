@@ -1,27 +1,36 @@
 # knowledge-extractor backend dependencies (absorbed into noc 2026-05-23).
 #
-# Shared stack (fastapi/pydantic/supabase/httpx/uvicorn/pytest) comes from the
-# seed editable installs below — the seed Dockerfile strips the `-e seed/` lines
-# (they live in the shared base venv) and installs the rest. Only the
-# DOMAIN deps not already in the seed base are listed here.
+# The shared seed base venv (noctus-seed-backend-base) carries the `-e seed/`
+# editables + their transitive deps — but each product still PINS the app/server
+# stack (fastapi/uvicorn/etc.), exactly like products/seed/backend/requirements.txt.
+# The seed Dockerfile strips the `-e seed/` lines (inherited) and installs the rest.
 #
-# SYSTEM dependency (not pip): ffmpeg must be on PATH — added in the product
-# Dockerfile at the containerize gate (P3), not here.
+# SYSTEM dependency (not pip): ffmpeg — added in the product Dockerfile.
 
 -e seed/lib/backend
 -e seed/framework/backend
 
-# AI — transcription + summarization (lazy-imported)
-openai>=1.50.0
+# Shared app/server stack — pinned to the seed canonical (uvicorn is the server
+# the base does NOT provide; the container CMD needs it on PATH).
+fastapi==0.115.5
+uvicorn[standard]==0.30.6
+supabase==2.9.1
+pydantic==2.9.0
+pydantic-settings==2.5.2
+python-dotenv==1.2.2
+email-validator>=2.0.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+PyJWT==2.12.0
+slowapi>=0.1.9
 
-# Google Drive — v3 API (primary) + public-link fallback
+# Domain deps (knowledge-extractor specific) — not in the seed base.
+openai>=1.50.0
 google-api-python-client>=2.120.0
 google-auth>=2.30.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 gdown>=5.2.0
-
-# Methodology export to .docx
 python-docx>=1.1.0
 
 # Testing (pytest itself is in the seed framework dev deps)

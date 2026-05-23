@@ -1,0 +1,57 @@
+# knowledge-extractor — per-product compose fragment (SINGLE CONTAINER, backend-only).
+#
+# One service `knowledge-extractor`: uvicorn serves the API on one port (no SPA —
+# this product has no frontend, so there is no SERVE_SPA_DIR / no frontend
+# bind-mount / no node_modules anon volumes that the canonical products/seed/
+# compose carries). Build target `runtime-watch` (the develop-inside container);
+# deploy/CI build the slim `runtime` target. `noctus-net` is the external shared
+# fabric (created once by start.sh). `knowledge-extractor-tunnel` is wired-in but
+# profile-gated (run-on-demand).
+
+services:
+  knowledge-extractor:
+    build:
+      context: ../..
+      dockerfile: products/knowledge-extractor/backend/Dockerfile
+      target: runtime-watch
+    container_name: noctus-knowledge-extractor
+    image: ghcr.io/jraphaelsst/noctus-knowledge-extractor:${NOCTUS_IMAGE_TAG:-dev}
+    env_file:
+      - ../../.env
+    # Source bind-mounted → uvicorn --reload restarts on .py edits. Backend-only,
+    # so only the backend + the seed are mounted (no frontend / node_modules).
+    volumes:
+      - ./backend:/app/products/knowledge-extractor/backend
+      - ../../seed:/app/seed
+    ports:
+      - "8012:8012"
+    networks:
+      - noctus-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8012/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  knowledge-extractor-tunnel:
+    # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com at this container.
+    # `--protocol http2` forces TCP (QUIC/UDP dies behind NATs in ~5min).
+    image: cloudflare/cloudflared:latest
+    container_name: noctus-knowledge-extractor-tunnel
+    command: tunnel --no-autoupdate --protocol http2 --url http://knowledge-extractor:8012
+    depends_on:
+      knowledge-extractor:
+        condition: service_healthy
+    networks:
+      - noctus-net
+    restart: unless-stopped
+    profiles:
+      - tunnel-knowledge-extractor
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true
