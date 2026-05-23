@@ -6,7 +6,7 @@
 
 - **Created:** 2026-05-20
 - **Last updated:** 2026-05-20
-- **Status:** ⏳ **IN PROGRESS** — P0+P1+P2 ✅ landed by Engineer D 2026-05-20; P3/P4/P5 deferred to next-wave dispatch.
+- **Status:** ✅ **SHIPPED** (closed 2026-05-23). P0+P1+P2 landed by Engineer D 2026-05-20 (migration `031` + `portal_documentos` filter + admin toggle + audit). P3 FE portal-sharing toggle + the 2nd portal LGPD-leak gate landed on `main` (`d399ea22`); the single gated `documentos` read helper was formalized N=2→seed-shape (`portal_documentos_query.py`, `710f06ce`). Durable lesson absorbed: the fixture↔real-schema gap (the `compartilhado_portal` coincidence) is now boundary-contract-tests **B7** (`KB § PATTERNS/boundary-contract-tests.md` + `feedback_fixture_vs_real_schema_drift`).
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `LGPD-WARNINGS.md` entry: "Public bearer-token endpoint surfaces full documentos rows without filter on document sensitivity / sharing-status flag"
