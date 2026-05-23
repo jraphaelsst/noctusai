@@ -27,6 +27,7 @@ from pydantic import Field
 
 from app.dependencies import get_current_user, get_user_client, get_admin_client, log_action, first_or_none
 from app.responses import success_response, paginated_response, ok_response, calculate_pagination
+from app.services.portal_documentos_query import fetch_shared_documentos
 from app.config import settings
 from app.rate_limit import limiter
 from noctusai_lib.api import StrictHttpModel
@@ -302,15 +303,14 @@ async def portal_documentos(request: Request, portal_token: str):
     token_data = _validate_token(portal_token)
 
     admin = _get_admin()
-    result = admin.table("documentos").select("*").eq(
-        "org_id", token_data["org_id"]
-    ).eq(
-        "cliente_id", token_data["pessoa_id"]
-    ).eq(
-        "compartilhado_portal", True
-    ).order("created_at", desc=True).execute()
-
-    rows = result.data or []
+    # Single gated portal read — the LGPD `compartilhado_portal=True` filter
+    # lives in fetch_shared_documentos so it cannot drift between the two
+    # public portal read paths (router + dashboard service).
+    rows = fetch_shared_documentos(
+        admin,
+        cliente_id=token_data["pessoa_id"],
+        org_id=token_data["org_id"],
+    )
 
     # LGPD Art. 18 audit-log — record every portal-side READ. Uses the
     # token-issuing user.id is NOT available here (portal access is public-
