@@ -95,6 +95,79 @@ def settings_override():
 
 
 @pytest.fixture
+def override_settings():
+    """Production DI-seam settings override (`app.dependency_overrides`).
+
+    The honest replacement for ``settings_override`` / raw
+    ``monkeypatch.setattr(settings, "X", ...)``: routers depend on
+    ``Depends(get_settings)`` (``app.dependencies.get_settings``); this
+    fixture installs an ``app.dependency_overrides[get_settings]`` that
+    returns a ``model_copy``-updated settings object, then tears the
+    override down automatically. No production singleton mutation, no
+    self-monkeypatch — per ``KB § PATTERNS/di-test-seam.md`` (Class-A,
+    Pydantic-settings-via-Depends).
+
+    Usage::
+
+        def test_x(client, override_settings):
+            override_settings(encryption_key="", youtube_client_id="cid")
+            ...
+
+    Multiple calls in one test are additive (later override wins). The
+    ``client`` fixture must be requested too (it builds + binds the app).
+    """
+    from app.config import settings as _settings
+    from app.dependencies import get_settings
+    from app.main import app
+
+    _overrides: dict = {}
+    _prev = app.dependency_overrides.get(get_settings)
+
+    def _apply(**overrides):
+        _overrides.update(overrides)
+        stub = _settings.model_copy(update=dict(_overrides))
+        app.dependency_overrides[get_settings] = lambda: stub
+        return stub
+
+    yield _apply
+
+    # Restore the prior override state (usually absent).
+    if _prev is None:
+        app.dependency_overrides.pop(get_settings, None)
+    else:
+        app.dependency_overrides[get_settings] = _prev
+
+
+@pytest.fixture
+def override_upload_service():
+    """Inject a fake :class:`UploadService` via the ``get_upload_service``
+    DI seam (``app.dependency_overrides``).
+
+    The honest replacement for ``patch.object(UploadService,
+    "retry_failed_job", ...)``: the router resolves the service through
+    ``Depends(get_upload_service)``; this fixture swaps it for a test
+    double and tears the override down automatically. No self-monkeypatch
+    of our own service method — per ``KB § PATTERNS/di-test-seam.md``
+    (Class-B, service DI).
+    """
+    from app.main import app
+    from app.modules.youtube.routers.upload import get_upload_service
+
+    _prev = app.dependency_overrides.get(get_upload_service)
+
+    def _apply(fake_service):
+        app.dependency_overrides[get_upload_service] = lambda: fake_service
+        return fake_service
+
+    yield _apply
+
+    if _prev is None:
+        app.dependency_overrides.pop(get_upload_service, None)
+    else:
+        app.dependency_overrides[get_upload_service] = _prev
+
+
+@pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(

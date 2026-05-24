@@ -37,12 +37,13 @@ from fastapi import (
 )
 from pydantic import ValidationError
 
-from app.config import settings
+from app.config import SocialWiringSettings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
     get_current_user_org_unified,
+    get_settings,
     get_user_client,
 )
 from app.modules.youtube.schemas.upload import (
@@ -78,10 +79,14 @@ _UPLOAD_DIR = Path("/tmp/uploads")
 
 
 # ─── Service construction helper ───────────────────────────────────────
-def _build_upload_service(token: str) -> UploadService:
+def _build_upload_service(token: str, cfg: SocialWiringSettings) -> UploadService:
     """Wire the upload service together. Mirrors the settings_router
     helper's 503-on-config-gap shape so the operator gets an actionable
     error instead of a 500.
+
+    Config values arrive via ``cfg`` (resolved by ``Depends(get_settings)``
+    at the endpoint) — the DI seam that replaces direct
+    ``app.config.settings`` reads. See ``KB § PATTERNS/di-test-seam.md``.
 
     When `token` is a Supabase JWT (legacy bearer or session-cookie bridge),
     the user-scoped supabase client RLS-bounds the inserts. When `token`
@@ -101,7 +106,9 @@ def _build_upload_service(token: str) -> UploadService:
         user_supabase = admin_supabase
 
     try:
-        store = build_credential_store(admin_supabase)
+        store = build_credential_store(
+            admin_supabase, encryption_key=cfg.encryption_key
+        )
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -110,9 +117,9 @@ def _build_upload_service(token: str) -> UploadService:
 
     try:
         youtube = YouTubeService(
-            client_id=settings.youtube_client_id,
-            client_secret=settings.youtube_client_secret,
-            redirect_uri=settings.youtube_redirect_uri,
+            client_id=cfg.youtube_client_id,
+            client_secret=cfg.youtube_client_secret,
+            redirect_uri=cfg.youtube_redirect_uri,
             credential_store=store,
         )
     except YouTubeServiceError as exc:
@@ -123,13 +130,13 @@ def _build_upload_service(token: str) -> UploadService:
 
     notification = NotificationService(
         admin_supabase=admin_supabase,
-        smtp_host=settings.smtp_host,
-        smtp_port=settings.smtp_port,
-        smtp_user=settings.smtp_user,
-        smtp_password=settings.smtp_password,
-        waha_base_url=settings.waha_base_url,
-        waha_api_key=settings.waha_api_key,
-        waha_session=settings.waha_session,
+        smtp_host=cfg.smtp_host,
+        smtp_port=cfg.smtp_port,
+        smtp_user=cfg.smtp_user,
+        smtp_password=cfg.smtp_password,
+        waha_base_url=cfg.waha_base_url,
+        waha_api_key=cfg.waha_api_key,
+        waha_session=cfg.waha_session,
     )
 
     # Best-effort Redis client so this path queues uniformly with the
@@ -140,7 +147,7 @@ def _build_upload_service(token: str) -> UploadService:
     try:
         import redis as _redis
 
-        redis_client = _redis.from_url(settings.redis_url, decode_responses=True)
+        redis_client = _redis.from_url(cfg.redis_url, decode_responses=True)
         redis_client.ping()
     except Exception:
         # Logged at warn so the gap is visible without spamming.
@@ -148,7 +155,7 @@ def _build_upload_service(token: str) -> UploadService:
 
         logging.getLogger(__name__).warning(
             "upload_router: Redis unreachable at %s — uploads will bypass the queue.",
-            settings.redis_url,
+            cfg.redis_url,
         )
         redis_client = None
 
@@ -160,6 +167,25 @@ def _build_upload_service(token: str) -> UploadService:
         notification_service=notification,
         redis_client=redis_client,
     )
+
+
+def get_upload_service(
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> UploadService:
+    """FastAPI dependency yielding a wired :class:`UploadService`.
+
+    The DI seam for the upload service: endpoints depend on
+    ``Depends(get_upload_service)`` and tests override via
+    ``app.dependency_overrides[get_upload_service]`` (see the
+    ``override_upload_service`` conftest fixture) instead of
+    ``patch.object(UploadService, "retry_failed_job", ...)`` — which
+    neuters our own logic and trips ``check_no_self_monkeypatch``. Per
+    ``KB § PATTERNS/di-test-seam.md`` (Class-B — service DI). The
+    config-gap 503s raised by ``_build_upload_service`` surface from the
+    dependency the same way they did from the inline call."""
+    _user, token, _raw_org = auth
+    return _build_upload_service(token, cfg)
 
 
 def _row_to_out(row: dict[str, Any]) -> UploadJobOut:
@@ -192,6 +218,7 @@ async def _resolve_metadata_from_product_code(
     *,
     product_code: str,
     privacy_status: str,
+    cfg: SocialWiringSettings,
 ) -> UploadMetadata:
     """Vista CRM lookup → UploadMetadata. Mirrors the chatbot intake's
     enrichment path (``whatsapp_intake_service.prepare_upload_request``)
@@ -223,8 +250,8 @@ async def _resolve_metadata_from_product_code(
 
     try:
         crm = CRMService(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
+            base_url=cfg.crm_base_url,
+            api_key=cfg.crm_api_key,
         )
     except CRMNotConfigured as exc:
         raise HTTPException(
@@ -286,7 +313,7 @@ async def upload_video(
         description='JSON-encoded UploadMetadata: {"title":"...","description":"...","tags":[...],"privacy_status":"private","category_id":"22","notify_recipients":[]}',
     ),
     auth: tuple = Depends(get_current_user_org),
-) -> UploadJobCreated:
+cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobCreated:
     """Browser drag-and-drop upload. Multipart body carries the file +
     a single JSON-encoded ``metadata`` field — JSON-in-form rather than
     one form field per metadata key so nested types (tags[], notify_recipients[])
@@ -308,7 +335,7 @@ async def upload_video(
             detail="upload missing filename",
         )
 
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
 
     # Stage the multipart body to disk BEFORE inserting the job row, so
     # if the disk write fails we don't leave a queued-but-unrunnable row.
@@ -358,12 +385,12 @@ async def upload_from_drive(
     payload: GdriveUploadRequest,
     background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org),
-) -> UploadJobCreated:
+cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobCreated:
     """Queue a Drive-sourced upload. Download happens in the background
     (it can take minutes for big files) — the response is immediate."""
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
 
     try:
         queued = service.queue_drive_upload(
@@ -392,7 +419,7 @@ async def upload_from_drive_folder(
     payload: GdriveFolderUploadRequest,
     background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org_unified),
-) -> BatchUploadCreated:
+cfg: SocialWiringSettings = Depends(get_settings)) -> BatchUploadCreated:
     """Queue a Drive **folder** as a batch of independent upload jobs.
 
     Every video in the folder (recursing one level into subfolders)
@@ -421,7 +448,7 @@ async def upload_from_drive_folder(
     """
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
 
     # Resolve metadata: either explicit (manual mode) or Vista lookup.
     if payload.metadata is not None:
@@ -430,6 +457,7 @@ async def upload_from_drive_folder(
         resolved_metadata = await _resolve_metadata_from_product_code(
             product_code=payload.product_code or "",
             privacy_status=payload.privacy_status,
+            cfg=cfg,
         )
 
     try:
@@ -482,12 +510,12 @@ async def upload_from_drive_folder(
 async def get_upload_status(
     job_id: UUID,
     auth: tuple = Depends(get_current_user_org),
-) -> UploadJobOut:
+cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobOut:
     """UI polls this every ~2s while a job is in flight. RLS-bounded so
     a caller can't peek at another org's jobs by guessing UUIDs."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
     row = service.get_job(job_id=job_id, org_id=org_id)
     if row is None:
         raise HTTPException(
@@ -507,6 +535,7 @@ async def retry_upload(
     job_id: UUID,
     background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org),
+    service: UploadService = Depends(get_upload_service),
 ) -> UploadJobOut:
     """Re-queue a previously-failed upload job.
 
@@ -520,9 +549,8 @@ async def retry_upload(
     — the operator can see the failure on the same job row and decide
     whether to re-issue the original WhatsApp command.
     """
-    _user, token, raw_org = auth
+    _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
 
     try:
         refreshed = service.retry_failed_job(job_id=job_id, org_id=org_id)
@@ -548,14 +576,14 @@ async def retry_upload(
 async def get_batch_status(
     batch_id: UUID,
     auth: tuple = Depends(get_current_user_org_unified),
-) -> BatchStatusOut:
+cfg: SocialWiringSettings = Depends(get_settings)) -> BatchStatusOut:
     """Aggregate state of one Drive-folder fan-out batch.
 
     Returns 404 when no rows match the batch_id within the caller's
     org — RLS-bounded so a guess can't leak another org's batch."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
 
     snapshot = service.get_batch_status(org_id=org_id, batch_id=batch_id)
     if snapshot is None:
@@ -577,7 +605,7 @@ async def get_batch_status(
 async def list_upload_history(
     limit: int = 25,
     auth: tuple = Depends(get_current_user_org),
-) -> list[UploadJobOut]:
+cfg: SocialWiringSettings = Depends(get_settings)) -> list[UploadJobOut]:
     """Most-recent jobs for the Upload page's history table."""
     if limit < 1 or limit > 100:
         raise HTTPException(
@@ -586,7 +614,7 @@ async def list_upload_history(
         )
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_upload_service(token)
+    service = _build_upload_service(token, cfg)
     rows = service.list_history(org_id=org_id, limit=limit)
     return [_row_to_out(row) for row in rows]
 

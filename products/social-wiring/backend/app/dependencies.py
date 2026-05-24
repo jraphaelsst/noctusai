@@ -50,6 +50,21 @@ from app.sqlite_client import SQLiteClient
 
 _logger = _logging.getLogger(__name__)
 
+
+def get_settings() -> "SocialWiringSettings":
+    """FastAPI dependency returning the product settings singleton.
+
+    The honest DI seam for config-value access: routers depend on
+    ``Depends(get_settings)`` and read ``cfg.X`` off the returned object;
+    tests override via ``app.dependency_overrides[get_settings]`` (see the
+    ``override_settings`` conftest fixture) instead of
+    ``monkeypatch.setattr(settings, "X", ...)`` — which trips
+    ``check_no_self_monkeypatch``. Per ``KB § PATTERNS/di-test-seam.md``
+    (Class-A — Pydantic-settings-via-Depends).
+    """
+    return settings
+
+
 _sqlite_client = SQLiteClient(settings.sqlite_path)
 _db = None
 _deps = None
@@ -313,6 +328,7 @@ __all__ = [
     "get_current_user_org",
     "get_current_user_org_unified",
     "get_org_id",
+    "get_settings",
     "get_user_client",
     "get_user_role",
     "resolve_sso_role",
