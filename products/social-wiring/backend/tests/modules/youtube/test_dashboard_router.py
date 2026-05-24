@@ -9,16 +9,16 @@ _ENC_KEY = "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg="
 
 
 class TestStatsConfigGap:
-    def test_missing_encryption_key_returns_503(self, client, settings_override):
-        settings_override(encryption_key="")
+    def test_missing_encryption_key_returns_503(self, client, override_settings):
+        override_settings(encryption_key="")
         resp = client.get("/api/dashboard/stats")
         assert resp.status_code == 503, resp.text
         assert "encryption_key" in resp.text.lower()
 
 
 class TestStatsHappyPath:
-    def test_returns_kpi_shape(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_returns_kpi_shape(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/stats")
         assert resp.status_code == 200, resp.text
         data = resp.json()
@@ -28,31 +28,31 @@ class TestStatsHappyPath:
 
 
 class TestTopVideosLimit:
-    def test_limit_above_50_rejected(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_limit_above_50_rejected(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/top-videos?limit=51")
         assert resp.status_code == 422
 
-    def test_limit_zero_rejected(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_limit_zero_rejected(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/top-videos?limit=0")
         assert resp.status_code == 422
 
-    def test_default_limit_returns_list(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_default_limit_returns_list(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/top-videos")
         assert resp.status_code == 200, resp.text
         assert isinstance(resp.json(), list)
 
 
 class TestRecentUploadsLimit:
-    def test_limit_above_50_rejected(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_limit_above_50_rejected(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/recent-uploads?limit=100")
         assert resp.status_code == 422
 
-    def test_default_limit_returns_list(self, client, settings_override):
-        settings_override(encryption_key=_ENC_KEY)
+    def test_default_limit_returns_list(self, client, override_settings):
+        override_settings(encryption_key=_ENC_KEY)
         resp = client.get("/api/dashboard/recent-uploads")
         assert resp.status_code == 200, resp.text
         assert isinstance(resp.json(), list)

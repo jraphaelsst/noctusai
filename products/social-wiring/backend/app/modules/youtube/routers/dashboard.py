@@ -20,11 +20,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.config import settings
+from app.config import SocialWiringSettings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
+    get_settings,
     get_user_client,
 )
 from app.modules.youtube.schemas.dashboard import (
@@ -43,14 +44,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def _build_dashboard_service(token: str) -> DashboardService:
+def _build_dashboard_service(token: str, cfg: SocialWiringSettings) -> DashboardService:
     """503-on-config-gap shape — same convention as upload + videos
-    routers. Operator-actionable error rather than a 500 trace."""
+    routers. Operator-actionable error rather than a 500 trace.
+
+    Config arrives via ``cfg`` (``Depends(get_settings)`` DI seam) — see
+    ``KB § PATTERNS/di-test-seam.md``."""
     user_supabase = get_user_client(token)
     admin_supabase = get_admin_client()
 
     try:
-        store = build_credential_store(admin_supabase)
+        store = build_credential_store(
+            admin_supabase, encryption_key=cfg.encryption_key
+        )
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -65,12 +71,12 @@ def _build_dashboard_service(token: str) -> DashboardService:
 
 
 @router.get("/stats", response_model=KpiStats)
-def get_stats(auth: tuple = Depends(get_current_user_org)) -> KpiStats:
+def get_stats(auth: tuple = Depends(get_current_user_org), cfg: SocialWiringSettings = Depends(get_settings)) -> KpiStats:
     """Top-row KPI tiles. Single RLS-bounded SUM aggregate plus the
     connected-channel metadata."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token)
+    service = _build_dashboard_service(token, cfg)
     return KpiStats(**service.kpi_stats(org_id=org_id))
 
 
@@ -78,14 +84,14 @@ def get_stats(auth: tuple = Depends(get_current_user_org)) -> KpiStats:
 def get_top_videos(
     limit: int = Query(default=5, ge=1, le=50),
     auth: tuple = Depends(get_current_user_org),
-) -> list[TopVideoItem]:
+cfg: SocialWiringSettings = Depends(get_settings)) -> list[TopVideoItem]:
     """Top videos ordered by view count, descending. Default 5
     matches the dashboard panel's row count; cap raised to 50 so the
     cumulative-views chart (Dashboard.tsx "Visualizacoes acumuladas
     — top 50 do cache") can fetch its full window in one call."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token)
+    service = _build_dashboard_service(token, cfg)
     rows = service.top_videos(org_id=org_id, limit=limit)
     return [TopVideoItem(**_coerce_row(row)) for row in rows]
 
@@ -94,11 +100,11 @@ def get_top_videos(
 def get_recent_uploads(
     limit: int = Query(default=10, ge=1, le=50),
     auth: tuple = Depends(get_current_user_org),
-) -> list[RecentUploadItem]:
+cfg: SocialWiringSettings = Depends(get_settings)) -> list[RecentUploadItem]:
     """Last N upload jobs + per-job notification dispatch summary."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token)
+    service = _build_dashboard_service(token, cfg)
     rows = service.recent_uploads(org_id=org_id, limit=limit)
     return [RecentUploadItem(**row) for row in rows]
 
@@ -106,7 +112,7 @@ def get_recent_uploads(
 @router.get("/queue-state", response_model=QueueState)
 def get_queue_state(
     auth: tuple = Depends(get_current_user_org),
-) -> QueueState:
+cfg: SocialWiringSettings = Depends(get_settings)) -> QueueState:
     """Snapshot of the global upload queue — what's running + waiting.
 
     Lets the dashboard render a live "what's in the pipeline" panel:
@@ -118,7 +124,7 @@ def get_queue_state(
     unreachable rather than 500 — the dashboard degrades gracefully.
     """
     _user, _token, _ = auth
-    max_concurrent = max(1, getattr(settings, "upload_max_concurrent", 1))
+    max_concurrent = max(1, getattr(cfg, "upload_max_concurrent", 1))
 
     # Build the Redis client locally. The dashboard endpoint is
     # request-scoped + Redis is sync; no constructor injection needed.
@@ -128,7 +134,7 @@ def get_queue_state(
 
         from app.modules.youtube.services.upload_queue import UploadQueue, _QUEUE_KEY  # type: ignore
 
-        redis_client = _redis.from_url(settings.redis_url, decode_responses=True)
+        redis_client = _redis.from_url(cfg.redis_url, decode_responses=True)
         redis_client.ping()
         raw_entries = redis_client.lrange(_QUEUE_KEY, 0, -1) or []
     except Exception:

@@ -9,10 +9,10 @@ class TestKeysStatus:
     """The keys/status endpoint never echoes secrets — only configured /
     missing flags."""
 
-    def test_returns_keys_status_shape(self, client, settings_override):
+    def test_returns_keys_status_shape(self, client, override_settings):
         # Force every secret-bearing field to a known state so the test
         # is independent of whatever .env the dev machine carries.
-        settings_override(
+        override_settings(
             youtube_client_id="",
             youtube_client_secret="configured-value",
             encryption_key="",

@@ -16,8 +16,8 @@ _YT_COMPLETE = dict(
 
 
 class TestListConfigGaps:
-    def test_missing_encryption_key_returns_503(self, client, settings_override):
-        settings_override(
+    def test_missing_encryption_key_returns_503(self, client, override_settings):
+        override_settings(
             encryption_key="",
             youtube_client_id="cid",
             youtube_client_secret="csecret",
@@ -26,8 +26,8 @@ class TestListConfigGaps:
         assert resp.status_code == 503, resp.text
         assert "encryption_key" in resp.text.lower()
 
-    def test_missing_youtube_creds_returns_503(self, client, settings_override):
-        settings_override(
+    def test_missing_youtube_creds_returns_503(self, client, override_settings):
+        override_settings(
             encryption_key=_ENC_KEY,
             youtube_client_id="",
             youtube_client_secret="",
@@ -38,14 +38,14 @@ class TestListConfigGaps:
 
 
 class TestListLimitValidation:
-    def test_limit_above_100_rejected(self, client, settings_override):
-        settings_override(**_YT_COMPLETE)
+    def test_limit_above_100_rejected(self, client, override_settings):
+        override_settings(**_YT_COMPLETE)
         resp = client.get("/api/videos?limit=500")
         # FastAPI Query(le=100) → 422 with "less_than_equal" in detail.
         assert resp.status_code == 422, resp.text
 
-    def test_limit_zero_rejected(self, client, settings_override):
-        settings_override(**_YT_COMPLETE)
+    def test_limit_zero_rejected(self, client, override_settings):
+        override_settings(**_YT_COMPLETE)
         resp = client.get("/api/videos?limit=0")
         assert resp.status_code == 422, resp.text
 
@@ -57,8 +57,8 @@ class TestListUnauthenticated:
 
 
 class TestGetVideoNotInCache:
-    def test_unknown_id_returns_404(self, client, settings_override):
-        settings_override(**_YT_COMPLETE)
+    def test_unknown_id_returns_404(self, client, override_settings):
+        override_settings(**_YT_COMPLETE)
         resp = client.get("/api/videos/ghost-video-id-xyz")
         # The mock supabase client returns no rows by default.
         assert resp.status_code == 404, resp.text

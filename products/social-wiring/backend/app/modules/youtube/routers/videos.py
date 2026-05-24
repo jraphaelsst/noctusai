@@ -22,11 +22,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.config import settings
+from app.config import SocialWiringSettings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
+    get_settings,
     get_user_client,
 )
 from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
@@ -49,17 +50,23 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 # trigger — see its docstring there.)
 
 
-def _build_video_cache_service(token: str) -> VideoCacheService:
+def _build_video_cache_service(token: str, cfg: SocialWiringSettings) -> VideoCacheService:
     """Wire the read+write split for the cache service.
 
     503 on encryption-key / youtube-credentials gaps — same shape as
     settings_router / upload_router. Operator-actionable error rather
-    than a 500 trace."""
+    than a 500 trace.
+
+    Config arrives via ``cfg`` (resolved by ``Depends(get_settings)`` at
+    the endpoint) — the DI seam replacing direct ``app.config.settings``
+    reads. See ``KB § PATTERNS/di-test-seam.md``."""
     user_supabase = get_user_client(token)
     admin_supabase = get_admin_client()
 
     try:
-        store = build_credential_store(admin_supabase)
+        store = build_credential_store(
+            admin_supabase, encryption_key=cfg.encryption_key
+        )
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -68,9 +75,9 @@ def _build_video_cache_service(token: str) -> VideoCacheService:
 
     try:
         youtube = YouTubeService(
-            client_id=settings.youtube_client_id,
-            client_secret=settings.youtube_client_secret,
-            redirect_uri=settings.youtube_redirect_uri,
+            client_id=cfg.youtube_client_id,
+            client_secret=cfg.youtube_client_secret,
+            redirect_uri=cfg.youtube_redirect_uri,
             credential_store=store,
         )
     except YouTubeServiceError as exc:
@@ -116,13 +123,13 @@ def list_videos(
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
     limit: int = Query(default=50, ge=1, le=100),
     uploaded_via_app: bool | None = Query(default=None, alias="uploaded_via_app"),
-) -> VideoListResponse:
+cfg: SocialWiringSettings = Depends(get_settings)) -> VideoListResponse:
     """Paginated list of cached videos. Cursor-based — the next_cursor
     in the response is opaque; pass it back as `?cursor=...` to fetch
     the next page."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token)
+    service = _build_video_cache_service(token, cfg)
 
     rows, next_cursor, total_known = service.list(
         org_id=org_id,
@@ -142,12 +149,12 @@ def list_videos(
 def get_video(
     youtube_video_id: str,
     auth: tuple = Depends(get_current_user_org),
-) -> VideoOut:
+cfg: SocialWiringSettings = Depends(get_settings)) -> VideoOut:
     """Single video by YouTube ID. Returns 404 if not in the cache —
     callers can trigger a sync to populate."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token)
+    service = _build_video_cache_service(token, cfg)
 
     row = service.get(org_id=org_id, youtube_video_id=youtube_video_id)
     if row is None:
@@ -165,13 +172,13 @@ def get_video(
 @router.post("/sync", response_model=VideoSyncResult)
 def sync_videos(
     auth: tuple = Depends(get_current_user_org),
-) -> VideoSyncResult:
+cfg: SocialWiringSettings = Depends(get_settings)) -> VideoSyncResult:
     """Walk the channel's full video list (multi-page) + upsert into the
     local cache. Synchronous — the response includes the count summary
     so the UI doesn't need a separate status round-trip."""
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token)
+    service = _build_video_cache_service(token, cfg)
 
     try:
         outcome = service.sync(org_id=org_id)

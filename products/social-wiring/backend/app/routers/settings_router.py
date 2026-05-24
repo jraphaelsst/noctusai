@@ -31,12 +31,13 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
-from app.config import settings
+from app.config import SocialWiringSettings, settings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user,
     get_current_user_org,
+    get_settings,
     get_user_client,
 )
 from app.schemas.settings import (
@@ -202,89 +203,89 @@ def _entry(value: str | None, label: str, description: str) -> KeyStatusEntry:
 @router.get("/keys/status", response_model=KeysStatus)
 def get_keys_status(
     _user=Depends(get_current_user),  # auth-gate the endpoint; the values matter for tenants too
-) -> KeysStatus:
+cfg: SocialWiringSettings = Depends(get_settings)) -> KeysStatus:
     """Show the operator which secrets are wired vs absent — never echoes
     the actual values back. The UI uses this to render configured /
     missing badges and prompt the user to fix .env when red."""
     return KeysStatus(
         youtube_client_id=_entry(
-            settings.youtube_client_id, "YouTube Client ID",
+            cfg.youtube_client_id, "YouTube Client ID",
             "Required for OAuth — issued by Google Cloud Console.",
         ),
         youtube_client_secret=_entry(
-            settings.youtube_client_secret, "YouTube Client Secret",
+            cfg.youtube_client_secret, "YouTube Client Secret",
             "Pairs with the Client ID. Keep secret.",
         ),
         youtube_redirect_uri=_entry(
-            settings.youtube_redirect_uri, "YouTube Redirect URI",
+            cfg.youtube_redirect_uri, "YouTube Redirect URI",
             "Must match the OAuth-client redirect URI EXACTLY.",
         ),
         frontend_base_url=_entry(
-            settings.frontend_base_url, "Frontend Base URL",
+            cfg.frontend_base_url, "Frontend Base URL",
             "Where OAuth should return the operator after Google callback.",
         ),
         openai_api_key=_entry(
-            settings.openai_api_key, "OpenAI API Key",
+            cfg.openai_api_key, "OpenAI API Key",
             "Required for the WhatsApp chatbot reasoning and tool orchestration layer.",
         ),
         openai_chat_model=_entry(
-            settings.openai_chat_model, "OpenAI Chat Model",
+            cfg.openai_chat_model, "OpenAI Chat Model",
             "Model used by the WhatsApp chatbot orchestration loop.",
         ),
         whatsapp_chatbot_enabled=_entry(
-            str(settings.whatsapp_chatbot_enabled), "WhatsApp Chatbot",
+            str(cfg.whatsapp_chatbot_enabled), "WhatsApp Chatbot",
             "When true and OpenAI is configured, WhatsApp uses GPT tool orchestration.",
         ),
         encryption_key=_entry(
-            settings.encryption_key, "Encryption Key",
+            cfg.encryption_key, "Encryption Key",
             "Fernet key used to encrypt refresh tokens at rest.",
         ),
         smtp_user=_entry(
-            settings.smtp_user, "SMTP User",
+            cfg.smtp_user, "SMTP User",
             "Email address used as the From: header for notifications.",
         ),
         smtp_password=_entry(
-            settings.smtp_password, "SMTP Password",
+            cfg.smtp_password, "SMTP Password",
             "Gmail App Password (not the account password).",
         ),
         waha_base_url=_entry(
-            settings.waha_base_url, "WAHA Base URL",
+            cfg.waha_base_url, "WAHA Base URL",
             "WAHA server base URL. Empty = FakeWahaClient (dev).",
         ),
         waha_api_key=_entry(
-            settings.waha_api_key, "WAHA API Key",
+            cfg.waha_api_key, "WAHA API Key",
             "Bearer token for WAHA. Required when WAHA Base URL is set.",
         ),
         waha_dashboard_url=_entry(
-            settings.waha_dashboard_url, "WAHA Dashboard URL",
+            cfg.waha_dashboard_url, "WAHA Dashboard URL",
             "Human/browser URL for the local WAHA dashboard.",
         ),
         waha_webhook_url=_entry(
-            settings.waha_webhook_url, "WAHA Webhook URL",
+            cfg.waha_webhook_url, "WAHA Webhook URL",
             "Public URL WAHA should call for inbound message webhooks.",
         ),
         waha_webhook_hmac_secret=_entry(
-            settings.waha_webhook_hmac_secret, "WAHA Webhook Secret",
+            cfg.waha_webhook_hmac_secret, "WAHA Webhook Secret",
             "Optional shared secret for webhook hardening. Empty in local dev is allowed.",
         ),
         vista_base_url=_entry(
-            settings.crm_base_url or settings.vista_base_url, "Vista Base URL",
+            cfg.crm_base_url or cfg.vista_base_url, "Vista Base URL",
             "Vista tenant REST base URL. Server-side only.",
         ),
         vista_api_key=_entry(
-            settings.crm_api_key or settings.vista_api_key, "Vista API Key",
+            cfg.crm_api_key or cfg.vista_api_key, "Vista API Key",
             "Vista API key. Server-side only; never expose as VITE_*.",
         ),
         database_backend=_entry(
-            settings.database_backend, "Database Backend",
+            cfg.database_backend, "Database Backend",
             "sqlite for local development, supabase for production.",
         ),
         supabase_url=_entry(
-            settings.supabase_url, "Supabase URL",
+            cfg.supabase_url, "Supabase URL",
             "Project URL. Only required when DATABASE_BACKEND=supabase.",
         ),
         supabase_service_role_key=_entry(
-            settings.supabase_service_role_key, "Supabase Service Role Key",
+            cfg.supabase_service_role_key, "Supabase Service Role Key",
             "Used for service-side writes when DATABASE_BACKEND=supabase.",
         ),
     )

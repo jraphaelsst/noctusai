@@ -42,25 +42,21 @@ def test_split_strips_each_paragraph():
     assert split_for_whatsapp(text) == ["hello", "world"]
 
 
-def test_split_honors_toggle_off(settings_override):
-    """When settings.whatsapp_paragraph_split is False, return a single-
-    element list with the original text trimmed — caller loops
-    unconditionally."""
-    settings_override(whatsapp_paragraph_split=False)
-    result = split_for_whatsapp("a\n\nb\n\nc")
+def test_split_honors_toggle_off():
+    """When the paragraph-split toggle is False, return a single-element
+    list with the original text trimmed — caller loops unconditionally.
+    Injected via the `enabled` DI seam (no settings-singleton mutation)."""
+    result = split_for_whatsapp("a\n\nb\n\nc", enabled=False)
     assert result == ["a\n\nb\n\nc"]
 
 
 @pytest.mark.asyncio
-async def test_send_paragraphs_sends_one_per_part(settings_override):
-    settings_override(
-        whatsapp_paragraph_split=True,
-        whatsapp_paragraph_delay_seconds=0.0,
-    )
+async def test_send_paragraphs_sends_one_per_part():
     intake = AsyncMock()
     intake.send_reply = AsyncMock()
     sent = await send_paragraphs(
-        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
+        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc",
+        split=True, delay_seconds=0.0,
     )
     assert sent == 3
     assert intake.send_reply.await_count == 3
@@ -70,19 +66,16 @@ async def test_send_paragraphs_sends_one_per_part(settings_override):
 
 
 @pytest.mark.asyncio
-async def test_send_paragraphs_continues_after_a_send_failure(settings_override):
+async def test_send_paragraphs_continues_after_a_send_failure():
     """One failed paragraph send must NOT block subsequent ones —
     partial delivery beats no delivery for chatbot replies."""
-    settings_override(
-        whatsapp_paragraph_split=True,
-        whatsapp_paragraph_delay_seconds=0.0,
-    )
     intake = AsyncMock()
     intake.send_reply = AsyncMock(
         side_effect=[Exception("WAHA fail"), None, None]
     )
     sent = await send_paragraphs(
-        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc"
+        intake=intake, sender="+5511999999999@c.us", text="a\n\nb\n\nc",
+        split=True, delay_seconds=0.0,
     )
     assert sent == 2  # one failed, two succeeded
     assert intake.send_reply.await_count == 3  # all attempted
