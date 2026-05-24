@@ -5,8 +5,8 @@
 > **Symbol-first authoring** per `KB § PATTERNS/doc-symbology.md`.
 
 - **Created:** 2026-05-20
-- **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — awaits dispatch when picked up.
+- **Last updated:** 2026-05-24
+- **Status:** ✅ **COMPLETE** — delivered 2026-05-24 (Engineer E P0-P4 + architect P4c). `check_no_self_monkeypatch` social-wiring **43→0**; `settings_override` fixture removed; 5 `# self-patch-ok:` markers removed; the last site (media_creation publish flow) migrated to a `get_publish_service` DI seam; social-wiring ratcheted into `_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS`. On `origin/dev` `fd223c83`. social-wiring 508 tests + compliance 136 green.
 - **Owner / stakeholders:** joaoraphaelsst@gmail.com · architect
 - **Related docs:**
   - `projects/social-wiring-monkeypatch-test-refactor/` (parent — closed P1-P4 with `settings_override` fixture + 9 sanctioned residual)
@@ -95,3 +95,4 @@ Fresh worktree off `origin/main`. Engineer obeys `.claude/agents/engineer-defaul
 | Date | Entry | By |
 |---|---|---|
 | 2026-05-20 | Filed by Engineer SW-P5 as the named follow-up from `social-wiring-monkeypatch-test-refactor` P3 (9 sites sanctioned with `# self-patch-ok:` that require production DI to truly resolve). | Engineer SW-P5 |
+| 2026-05-24 | **Delivered.** P0 re-grounded (live keeper found 43, not the filed 9). P1 credential_vault `encryption_key` kwarg seam. P2 `get_settings`/`get_upload_service` Depends on the youtube routers. P3 UploadService `classifier` kwarg. P4 removed `settings_override` + 5 `# self-patch-ok:` markers via real DI seams (`get_redis_client`, `audit_writer_factory`, `email_service_factory`). Architect P4c: migrated the last site (media_creation publish) to a `get_publish_service` DI seam → 43→0 → ratcheted social-wiring to high severity. 508 social-wiring + 136 compliance green. | Engineer E + architect |
