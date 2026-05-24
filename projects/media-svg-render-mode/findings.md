@@ -18,6 +18,18 @@
 
 ## slips / errors / mistakes
 - (Phase 0) First Cormorant fetch saved a 404 HTML page as `.ttf` (wrong Google-fonts path) — caught by HTTP-404 + size-mismatch; corrected via the GitHub contents API (real path `CormorantGaramond[wght].ttf`). Lesson: verify downloaded asset is the asset (curl `-w "HTTP %{http_code}"` + `file`), don't trust exit 0.
+- (P2) First render put a `📍` emoji on the CTA/cover → rasterized as TOFU (no emoji font bundled, `skip_system_fonts=True`). Caught by visual-verify (Read the PNG), NOT by tests. Fixed → drew a gold teardrop `<path>` pin glyph (font-independent). Lesson: with bundled-only fonts, NO emoji/glyph outside the bundled faces; verify visually, tests can't see tofu.
+
+## decisions (P2)
+- Migration = forward `002_media_svg_render.sql` (idempotent `ADD COLUMN IF NOT EXISTS`), NOT an edit to canonical `001` — 001 already applied to prod (deployed 2026-05-22). Matches core 030+ convention. Offline local-db builder only takes `001_*` per product, so cols absent there (same as core 030-35); tests mock the DB so unaffected. Applied to real Supabase = deploy step (surfaced, not run unprompted).
+- SVG builders = direct Python builders + explicit `_esc()` XML-escape (NOT Jinja2 as planned) — positional SVG math is clearer in Python ∧ explicit escape IS the injection boundary. Minor deviation from plan, equally seed-first (deterministic token-driven engine). jinja2 stays the seed dep for digest/email.
+- Premium/educational presets = GENERIC structure (neutral dark+gold / light+navy), NOT Wilson's exact hexes — honors "Wilson brand = user's data"; brand supplies exact tokens via `mc_brand_kits.design_tokens` JSONB. Verified: Wilson tokens-as-data render the media-creator look faithfully.
+- v1 photo = gradient placeholder (faithful to media-creator's validated slide-01 first pass). AI-photo-embed (data-URI into `<image>`) = fast-follow.
+- v1 PNG persistence = inline `data:` URL on `image_url` (mirrors image_gen dev fallback) when no `upload_url_resolver`; prod wires a Supabase-Storage resolver. `svg_markup` (editable source) always persisted.
+
+## verification (P2)
+- 18 svg tests + 60 media_creation + 499 full social-wiring suite GREEN.
+- Real end-to-end render of all 4 roles → valid 1080×1350 PNGs; cover + cta visually confirmed (Cormorant serif + Inter, PT-BR accents correct, gold accents, pill button, drawn pin). `/tmp/svg_render_demo/`.
 
 ## fix-on-contact (bumped-into pre-existing)
 - Eval README `tests/.../evals/README.md` points at `projects/media-creator-evals-cases/PROJECT.md` which no longer exists → durable-doc→transient-`projects/`-path violation. Fix in Phase 3.

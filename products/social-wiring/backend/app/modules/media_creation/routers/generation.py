@@ -32,6 +32,12 @@ from app.modules.media_creation.services.publish_service import (
 
 class RenderRequest(BaseModel):
     renderer: str = "nano_banana"
+    # "raster" (default) → AI image per slide via image-gen; "svg" →
+    # deterministic brand-locked SVG slides rasterized via the seed svg_render.
+    mode: str = "raster"
+    # Optional design-token variant override for svg mode (premium/educational);
+    # defaults to the post's own variant.
+    variant: str | None = None
 
 
 class PublishRequest(BaseModel):
@@ -103,18 +109,25 @@ async def render_post(
     body: RenderRequest | None = None,
     auth=Depends(get_current_user_org),
 ):
-    """Render slide images via the seed image-gen adapter (Gemini "Nano Banana").
+    """Render the post's slides.
 
-    Iterates over the post's slides, picks the renderer-flavored prompt
-    (``nano_banana`` default), calls the seed adapter, persists ``image_url``
-    + ``image_renderer`` per slide. Returns ``configured`` so the FE can
-    show a "configure Gemini key" prompt when the Fake fired.
+    ``mode="raster"`` (default) — one AI image per slide via the seed
+    image-gen adapter (Gemini "Nano Banana"). Returns ``configured`` so the
+    FE can show a "configure Gemini key" prompt when the Fake fired.
+
+    ``mode="svg"`` — deterministic, brand-locked SVG slides (locked palette /
+    typography / layout from the brand kit's design tokens; AI not used for
+    text/layout) rasterized via the seed ``svg_render`` primitive.
     """
     user, _, _ = auth
     post = _require_post(user, post_id)
     renderer = (body.renderer if body else "nano_banana") or "nano_banana"
+    mode = (body.mode if body else "raster") or "raster"
+    variant = body.variant if body else None
     try:
-        data = _gen_svc(user).render_post(post, renderer=renderer)
+        data = _gen_svc(user).render_post(
+            post, renderer=renderer, mode=mode, variant=variant
+        )
     except GenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return success_response(data)

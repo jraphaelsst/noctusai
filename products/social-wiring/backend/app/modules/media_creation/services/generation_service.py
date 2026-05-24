@@ -21,6 +21,8 @@ import json
 import logging
 from typing import Any, Optional
 
+import base64
+
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.image_gen import (
     FakeImageGenAdapter,
@@ -29,7 +31,13 @@ from noctusai_lib.integrations.image_gen import (
     get_image_gen_adapter,
 )
 from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.integrations.svg_render import (
+    SvgRenderAdapter,
+    SvgRenderInput,
+    get_svg_render_adapter,
+)
 
+from app.modules.media_creation.design import build_slide_svg, resolve_tokens
 from app.modules.media_creation.prompts import (
     COPY_SYSTEM_PROMPT,
     IMAGE_PROMPTS_SYSTEM_PROMPT,
@@ -80,10 +88,12 @@ class GenerationService:
         org_id: str,
         *,
         image_gen_adapter: ImageGenAdapter | None = None,
+        svg_render_adapter: SvgRenderAdapter | None = None,
     ):
         self.db = db
         self.org_id = org_id
         self._image_gen_adapter = image_gen_adapter
+        self._svg_render_adapter = svg_render_adapter
 
     # ── Stage 1: storyboard ─────────────────────────────────────────────
 
@@ -201,6 +211,29 @@ class GenerationService:
         post: dict[str, Any],
         *,
         renderer: str = "nano_banana",
+        mode: str = "raster",
+        variant: str | None = None,
+    ) -> dict[str, Any]:
+        """Render the post's slides — two modes.
+
+        ``mode="raster"`` (default) — the original path below: each slide's
+        renderer-flavored prompt → a full AI image via the seed image-gen
+        adapter (Gemini "Nano Banana").
+
+        ``mode="svg"`` — deterministic, brand-locked SVG slides (locked
+        palette / typography / layout from the brand kit's design tokens;
+        AI is NOT used for the slide text/layout) → rasterized to PNG via
+        the seed ``svg_render`` primitive. See :meth:`_render_post_svg`.
+        """
+        if mode == "svg":
+            return self._render_post_svg(post, variant=variant)
+        return self._render_post_raster(post, renderer=renderer)
+
+    def _render_post_raster(
+        self,
+        post: dict[str, Any],
+        *,
+        renderer: str = "nano_banana",
     ) -> dict[str, Any]:
         """Storyboard prompts → real images via the seed image-gen adapter.
 
@@ -306,6 +339,114 @@ class GenerationService:
             key_provider=_default_gemini_key_provider,
             org_id=self.org_id,
         )
+
+    # ── Stage 4 (svg): deterministic brand-locked slide render ───────────
+
+    def _resolve_svg_render_adapter(self) -> SvgRenderAdapter:
+        if self._svg_render_adapter is not None:
+            return self._svg_render_adapter
+        # No upload resolver wired in v1 → the rasterized PNG is returned
+        # inline as a data: URL (dev fallback, mirrors image_gen). Prod
+        # should pass an upload_url_resolver that puts bytes in Supabase
+        # Storage and returns the persistent URL.
+        return get_svg_render_adapter(real=True)
+
+    def _render_post_svg(
+        self,
+        post: dict[str, Any],
+        *,
+        variant: str | None = None,
+    ) -> dict[str, Any]:
+        """Compose + rasterize deterministic SVG slides for the post.
+
+        For each slide: resolve design tokens (brand kit's ``design_tokens``
+        overriding the variant preset) → build the role-specific SVG →
+        rasterize via the seed ``svg_render`` adapter → persist ``svg_markup``
+        + the PNG (``image_url`` as a ``data:`` URL when no storage resolver
+        is wired) + ``image_renderer='svg'``.
+
+        Unlike the raster path there is no credential gate — rasterization
+        always works (resvg + bundled fonts), so ``configured`` is always
+        ``True``.
+        """
+        kit = self._load_brand_kit(post["brand_kit_id"])
+        if not kit:
+            raise GenerationError("brand_kit_not_found")
+
+        tokens = resolve_tokens(kit, variant or post.get("variant") or "premium")
+
+        slides = (
+            self.db.table("mc_post_slides")
+            .select("*")
+            .eq("post_id", post["id"])
+            .eq("org_id", self.org_id)
+            .order("slide_n")
+            .execute()
+        )
+        slide_rows = slides.data or []
+        if not slide_rows:
+            raise GenerationError(
+                "slides_missing — run generate_storyboard first"
+            )
+
+        adapter = self._resolve_svg_render_adapter()
+        cta_word = (post.get("cta") or "").split()[0] if post.get("cta") else None
+
+        results: list[dict[str, Any]] = []
+        for slide in slide_rows:
+            svg_markup = build_slide_svg(
+                slide.get("role") or "cover",
+                slide,
+                tokens,
+                cta_word=cta_word,
+            )
+            rendered = adapter.render(
+                SvgRenderInput(
+                    svg_markup=svg_markup,
+                    width=tokens.canvas_w,
+                    height=tokens.canvas_h,
+                    request_id=f"{post['id']}:{slide['slide_n']}",
+                ),
+                org_id=self.org_id,
+            )
+            image_url = rendered.image_url
+            if image_url is None:
+                image_url = (
+                    "data:image/png;base64,"
+                    + base64.b64encode(rendered.png_bytes).decode("ascii")
+                )
+            (
+                self.db.table("mc_post_slides")
+                .update(
+                    {
+                        "svg_markup": svg_markup,
+                        "image_url": image_url,
+                        "image_renderer": "svg",
+                    }
+                )
+                .eq("post_id", post["id"])
+                .eq("org_id", self.org_id)
+                .eq("slide_n", slide["slide_n"])
+                .execute()
+            )
+            results.append(
+                {
+                    "slide_n": slide["slide_n"],
+                    "role": slide.get("role"),
+                    "image_url": image_url,
+                    "renderer": "svg",
+                    "svg_len": len(svg_markup),
+                    "backend": rendered.backend,
+                }
+            )
+
+        return {
+            "configured": True,
+            "renderer": "svg",
+            "mode": "svg",
+            "variant": tokens.variant,
+            "slides": results,
+        }
 
     # ── Helpers ─────────────────────────────────────────────────────────
 
