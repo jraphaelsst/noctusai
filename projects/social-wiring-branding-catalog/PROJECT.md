@@ -1,6 +1,6 @@
 # PROJECT — social-wiring-branding-catalog
 
-**Status:** ⏳ in-flight · **Branch:** `social-wiring-branding-catalog` (off `dev`) · **Started:** 2026-05-24
+**Status:** ✅ complete — on `origin/dev` `1d366eba` (cherry-picked clean past a shared-checkout collision; see findings + `project_branding_catalog` memory) · **Started/closed:** 2026-05-24
 
 ## §1 Context
 Follow-on to `media-svg-render-mode`. The user reversed the earlier "leave Wilson as my data" call: Wilson's brand becomes the **first entry in a real multi-brand branding system** in noc. User decisions:

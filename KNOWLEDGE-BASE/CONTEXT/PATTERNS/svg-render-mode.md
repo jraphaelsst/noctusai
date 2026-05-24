@@ -85,10 +85,41 @@ into `<image>`) is a fast-follow.
 only each product's `001_*`, so these cols are absent there (same as core 030+);
 tests mock the DB. Apply to the real Supabase at deploy.
 
-## 3 · Provenance / triage
+## 3 · Branding system — the brand-data layer that feeds the render mode
+
+`social-wiring/media_creation/branding/` (project `social-wiring-branding-catalog`,
+2026-05-24). **Agency model**: one org manages many real-estate **agents**
+(`mc_brand_owners`, the agent/client layer) → each agent has 1+ **brandings**
+(`mc_brand_kits` rows, each with `design_tokens` the §2 render mode consumes).
+"≥1 branding per agent" = multiple kit rows under one owner (Wilson ships
+premium + educational).
+
+- **Source of truth = a version-controlled repo catalog**: `branding/catalog/
+  <owner>/brand.json` (owner + brandings[] + references[]) + assets
+  (`design-system.md`, reference images). `load_catalog()` parses it.
+- **`seed_catalog(db, org_id, owners)`** upserts a catalog into ONE org —
+  **idempotent** (slug-keyed: `(org_id, owner.slug)` + `(org_id, owner,
+  branding.slug)`; UUIDs generated in-loader so the path works on the real +
+  `MockSupabaseClient`). Re-running updates in place, never duplicates.
+- **Endpoints** (`routers/branding.py`): `GET /branding/owners` + `/owners/{id}`
+  (agents + their brandings) · `POST /branding/seed-catalog` (load the repo
+  catalog into the caller's org).
+- **Migration** `003_brand_owners.sql` — forward/idempotent: `mc_brand_owners`
+  (org-scoped RLS) + `mc_brand_kits.brand_owner_id` FK + `.slug` + partial-unique
+  catalog key. `DROP POLICY IF EXISTS`+`CREATE` (PG has no `CREATE POLICY IF NOT
+  EXISTS`).
+- First agent = **Wilson** (Granja Viana real-estate), design_tokens converted
+  from the media-creator `DESIGN-SYSTEM.md` (preserved in the catalog). Earlier
+  "leave Wilson as user data" was reversed — it's now the first catalog entry.
+- Triage: `mc_brand_owners` + catalog/loader = [A] accept at N=1
+  (media_creation-only); seed-convergence destination if a 2nd product needs a
+  brand-owner layer.
+
+## 4 · Provenance / triage
 - `svg_render` primitive = [F] formalize-to-seed (outbound render is reusable).
 - SVG slide engine = [A] accept at N=1 (only `media_creation` consumes it);
   seed-convergence destination if N=2 surfaces.
 - Built by `projects/media-svg-render-mode` (the media-creator absorption residual).
   media-creator's functional core was already ported into `media_creation`
-  (Wave 2.4); this closed the one remaining capability gap.
+  (Wave 2.4); this closed the one remaining capability gap. The branding system
+  (§3) followed as `projects/social-wiring-branding-catalog`.
