@@ -19,7 +19,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from noctusai_lib.integrations.whatsapp import (
@@ -81,6 +81,7 @@ class NotificationService:
         waha_base_url: str,
         waha_api_key: str,
         waha_session: str,
+        email_service_factory: "Callable[..., EmailService] | None" = None,
     ):
         self._admin = admin_supabase
         self._smtp_host = smtp_host
@@ -90,6 +91,13 @@ class NotificationService:
         self._waha_base_url = waha_base_url
         self._waha_api_key = waha_api_key
         self._waha_session = waha_session
+        # DI seam for the SMTP wrapper. Defaults to the real ``EmailService``
+        # class; tests inject a fake factory through the kwarg instead of
+        # ``patch("...notification_service.EmailService")``. Per
+        # ``KB § PATTERNS/di-test-seam.md`` (Class-C — service-factory DI).
+        self._email_service_factory: "Callable[..., EmailService]" = (
+            email_service_factory or EmailService
+        )
 
     async def notify_upload(self, *, job_id: UUID) -> DispatchOutcome:
         """Fan-out alerts for a published upload job.
@@ -266,7 +274,7 @@ class NotificationService:
         """Returns None when SMTP isn't configured — callers log the
         skip per-recipient rather than raising globally."""
         try:
-            return EmailService(
+            return self._email_service_factory(
                 smtp_host=self._smtp_host,
                 smtp_port=self._smtp_port,
                 smtp_user=self._smtp_user,

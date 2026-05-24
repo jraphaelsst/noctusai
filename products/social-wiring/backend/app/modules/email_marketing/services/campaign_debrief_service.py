@@ -37,7 +37,7 @@ import logging
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.domain.ai import get_feature
 from noctusai_lib.domain.ai.tool_audit import (
@@ -71,13 +71,21 @@ def _record_audit(
     duration_ms: int,
     error: Optional[str] = None,
     org_id: Optional[str] = None,
+    audit_writer_factory: Optional[Callable[[], Callable[[Any], None]]] = None,
 ) -> None:
     """Best-effort: build AuditRecord, apply the feature's LGPD redactors,
     write via the lazy audit hook. Never raises — a redactor bug or
     audit-DB outage cannot break the user-facing debrief. Same canonical
     shape as `ai_service._record_audit` / `segmentation_service._record_audit`
     (mailing keeps one thin copy per LLM-dispatching service module rather
-    than a cross-service helper for a 3-consumer surface)."""
+    than a cross-service helper for a 3-consumer surface).
+
+    ``audit_writer_factory`` is the Class-E DI seam: defaults to the
+    module-level ``get_audit_writer`` (the lazy noop hook in production);
+    tests inject a real seed-backed / capturing writer factory through the
+    kwarg instead of ``patch.object(cds, "get_audit_writer", ...)``. Per
+    ``KB § PATTERNS/di-test-seam.md``."""
+    _writer_factory = audit_writer_factory or get_audit_writer
     try:
         record = AuditRecord(
             tool_name=tool_name,
@@ -96,7 +104,7 @@ def _record_audit(
                 redact_arguments=feature.redact_arguments,
                 redact_result=feature.redact_result,
             )
-        writer = get_audit_writer()
+        writer = _writer_factory()
         writer(record)
     except Exception:
         logger.exception(
@@ -123,7 +131,15 @@ async def _generate_narrative(
     top_links: list[tuple[str, int]],
     org_id: Optional[str],
     campaign_id: Optional[str] = None,
+    narrator: Optional[Callable[..., Awaitable[str]]] = None,
+    audit_writer_factory: Optional[Callable[[], Callable[[Any], None]]] = None,
 ) -> str:
+    # DI seams: ``narrator`` defaults to the external LLM digest boundary
+    # ``digest_narrative``; ``audit_writer_factory`` threads to
+    # ``_record_audit``. Tests inject both via kwargs instead of
+    # ``patch.object(cds, "digest_narrative"/"get_audit_writer", ...)``.
+    # Per ``KB § PATTERNS/di-test-seam.md``.
+    _narrate = narrator or digest_narrative
     link_lines = "\n".join(
         f"- {url}: {n} cliques" for url, n in top_links[:5]
     ) or "- (sem cliques rastreados)"
@@ -161,7 +177,7 @@ async def _generate_narrative(
     # by `_drop_body` (see `ai_consent_features.py`).
     started = time.perf_counter()
     arguments = {"campaign_id": campaign_id, "org_id": org_id}
-    text = await digest_narrative(
+    text = await _narrate(
         system=system,
         user_prompt=user_prompt,
         model=MODEL,
@@ -178,6 +194,7 @@ async def _generate_narrative(
         duration_ms=int((time.perf_counter() - started) * 1000),
         error="LLM unavailable (fallback narrative)" if text == fallback else None,
         org_id=org_id,
+        audit_writer_factory=audit_writer_factory,
     )
     return text
 

@@ -34,11 +34,12 @@ from uuid import UUID
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.config import settings
+from app.config import SocialWiringSettings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
+    get_settings,
 )
 from app.schemas.whatsapp import (
     IntakeCancelResult,
@@ -58,8 +59,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/whatsapp/intake", tags=["WhatsApp"])
 
 
-def _redis_client():
-    return redis.from_url(settings.redis_url, decode_responses=True)
+def get_redis_client(cfg: SocialWiringSettings = Depends(get_settings)):
+    """FastAPI dependency yielding a Redis client.
+
+    The DI seam for the monitor's Redis boundary: endpoints depend on
+    ``Depends(get_redis_client)`` and tests override via
+    ``app.dependency_overrides[get_redis_client]`` (a FakeRedis) instead
+    of ``monkeypatch.setattr(mod, "_redis_client", ...)`` — which patched
+    our own module symbol. Per ``KB § PATTERNS/di-test-seam.md`` (Class-D
+    — Redis-via-Depends)."""
+    return redis.from_url(cfg.redis_url, decode_responses=True)
 
 
 def _session_id_from_key(key: str) -> str:
@@ -91,6 +100,7 @@ def _to_dto(session_id: str, pending: PendingUpload, active: int) -> IntakeConve
 @router.get("/conversations", response_model=list[IntakeConversationDTO])
 def list_conversations(
     auth: tuple = Depends(get_current_user_org),
+    r=Depends(get_redis_client),
 ) -> list[IntakeConversationDTO]:
     """Every conversation with a live pending-state snapshot in Redis.
 
@@ -98,7 +108,6 @@ def list_conversations(
     then session id for stable rendering.
     """
     _user, _token, _raw_org = auth
-    r = _redis_client()
     out: list[IntakeConversationDTO] = []
     for key in r.scan_iter(match=f"{_REDIS_KEY_PREFIX}*", count=100):
         raw = r.get(key)
@@ -123,11 +132,11 @@ def get_conversation(
     session_id: str,
     message_limit: int = Query(default=50, ge=1, le=200),
     auth: tuple = Depends(get_current_user_org),
+    r=Depends(get_redis_client),
 ) -> IntakeConversationDetailDTO:
     """One conversation's live state + recent message history."""
     _user, _token, raw_org = auth
     org_id: UUID = coerce_org_uuid(raw_org)
-    r = _redis_client()
 
     raw = r.get(f"{_REDIS_KEY_PREFIX}{session_id}")
     if not raw:
@@ -177,6 +186,7 @@ def get_conversation(
 def cancel_conversation(
     session_id: str,
     auth: tuple = Depends(get_current_user_org),
+    r=Depends(get_redis_client),
 ) -> IntakeCancelResult:
     """Clear a stuck conversation's pending state.
 
@@ -185,6 +195,5 @@ def cancel_conversation(
     durable record (conversation_messages audit log) is touched.
     """
     _user, _token, _raw_org = auth
-    r = _redis_client()
     deleted = r.delete(f"{_REDIS_KEY_PREFIX}{session_id}")
     return IntakeCancelResult(session_id=session_id, cleared=bool(deleted))

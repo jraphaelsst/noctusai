@@ -171,24 +171,20 @@ class TestCampaignDebriefAuditWiring:
                 session.close()
             captured.append(record)
 
-        # Inject the real seed-backed writer in place of the lazy noop hook
-        # (audit_hook.get_audit_writer is the seam; substituting the SEAM,
-        # not patching our redaction/record-build logic, which is what runs).
-        # get_audit_writer is the module-level audit-writer factory (the
-        # lazy noop hook is the production default); test substitutes the
-        # SEAM not the logic.
-        import unittest.mock as _m
-
-        with _m.patch.object(cds, "get_audit_writer", lambda: capturing_writer):  # self-patch-ok: di-seam-substitute
-            cds._record_audit(
-                "mailing.campaign_debrief",
-                "campaign_debrief",
-                arguments={"campaign_id": "c-77", "org_id": "org-1"},
-                result="Narrativa longa com joao@x.com — sigiloso.",
-                status="success",
-                duration_ms=42,
-                org_id="org-1",
-            )
+        # Inject the real seed-backed writer through the Class-E DI seam
+        # (`audit_writer_factory` kwarg) instead of patching our own
+        # `get_audit_writer` module symbol — the redaction/record-build
+        # logic still runs, which is the point. Per KB § PATTERNS/di-test-seam.md.
+        cds._record_audit(
+            "mailing.campaign_debrief",
+            "campaign_debrief",
+            arguments={"campaign_id": "c-77", "org_id": "org-1"},
+            result="Narrativa longa com joao@x.com — sigiloso.",
+            status="success",
+            duration_ms=42,
+            org_id="org-1",
+            audit_writer_factory=lambda: capturing_writer,
+        )
 
         assert len(captured) == 1
         from app.modules.email_marketing.models import SCHEMA
@@ -212,11 +208,11 @@ class TestCampaignDebriefAuditWiring:
     @pytest.mark.asyncio
     async def test_generate_narrative_records_audit_on_llm_unavailable(self):
         # When the external LLM is unavailable, digest_narrative returns the
-        # fallback; the site must still record a 'failure' audit row. We
-        # patch ONLY the external LLM boundary (digest_narrative wraps
-        # chat_completion) and capture via an injected real writer.
-        import unittest.mock as _m
-
+        # fallback; the site must still record a 'failure' audit row. Both the
+        # LLM boundary (narrator) and the audit-writer factory are injected
+        # through the Class-E DI seams (kwargs) instead of patching our own
+        # cds.digest_narrative / cds.get_audit_writer symbols. Per
+        # KB § PATTERNS/di-test-seam.md.
         from app.modules.email_marketing.services import (
             campaign_debrief_service as cds,
         )
@@ -233,18 +229,15 @@ class TestCampaignDebriefAuditWiring:
         async def _fake_narrative(*, fallback, **_kw):
             return fallback  # external LLM "unavailable" path
 
-        # digest_narrative wraps the external LLM boundary (chat_completion);
-        # patching it at the consumer-side import binding substitutes the LLM
-        # boundary per KB § PATTERNS/di-test-seam.md Pattern-2. get_audit_writer
-        # is the audit-writer factory seam (Pattern-1 DI default).
-        with _m.patch.object(cds, "digest_narrative", _fake_narrative), _m.patch.object(cds, "get_audit_writer", lambda: captured.append):  # self-patch-ok: di-seam-substitute
-            out = await cds._generate_narrative(
-                campaign_name="Promo X",
-                metrics=metrics,
-                top_links=[("https://a", 3)],
-                org_id="org-1",
-                campaign_id="c-9",
-            )
+        out = await cds._generate_narrative(
+            campaign_name="Promo X",
+            metrics=metrics,
+            top_links=[("https://a", 3)],
+            org_id="org-1",
+            campaign_id="c-9",
+            narrator=_fake_narrative,
+            audit_writer_factory=lambda: captured.append,
+        )
 
         assert out  # fallback string returned
         assert len(captured) == 1

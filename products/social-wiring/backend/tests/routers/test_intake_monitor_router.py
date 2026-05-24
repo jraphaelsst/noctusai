@@ -1,11 +1,12 @@
 """Tests for intake_monitor_router — read-only conversation/flow monitor.
 
 Redis is the external IO boundary; we inject a minimal in-memory fake
-through the router's own ``_redis_client`` seam (the analog of the
-seed Fake/Real factory pattern — we exercise router logic, not a
-mocked-out internal). Auth + Supabase come from the shared ``client``
-fixture (MockSupabaseClient). MessageStore reads resolve to empty via
-the mock, exercising the best-effort message-fetch path.
+through the router's ``get_redis_client`` DI seam
+(``app.dependency_overrides``) — exercising router logic, not a
+mocked-out internal, with no self-monkeypatch. Auth + Supabase come from
+the shared ``client`` fixture (MockSupabaseClient). MessageStore reads
+resolve to empty via the mock, exercising the best-effort message-fetch
+path. Per ``KB § PATTERNS/di-test-seam.md`` (Class-D).
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 
 import pytest
 
-from app.routers import intake_monitor_router as mod
+from app.routers.intake_monitor_router import get_redis_client
 
 
 class FakeRedis:
@@ -45,18 +46,25 @@ def _pending(state: str, code: str = "ONE9967", **extra) -> str:
 
 
 @pytest.fixture
-def fake_redis_with(monkeypatch):
+def fake_redis_with():
+    """Install a FakeRedis via the ``get_redis_client`` DI seam
+    (``app.dependency_overrides``) — no self-monkeypatch. Auto-restores
+    the prior override on teardown. Per KB § PATTERNS/di-test-seam.md."""
+    from app.main import app
+
+    _prev = app.dependency_overrides.get(get_redis_client)
+
     def _install(store: dict[str, str]):
         fr = FakeRedis(store)
-        # mod._redis_client is a module-level factory function (the
-        # production DI seam analogous to _resolve_core_db in
-        # therapy-platform/ai_pipeline.py per KB § PATTERNS/di-test-seam.md).
-        # Substituting the seam IS the blessed test pattern; Real-DI
-        # follow-up = social-wiring-settings-di-rewrite (Depends-able).
-        monkeypatch.setattr(mod, "_redis_client", lambda: fr)  # self-patch-ok: di-seam-substitute
+        app.dependency_overrides[get_redis_client] = lambda: fr
         return fr
 
-    return _install
+    yield _install
+
+    if _prev is None:
+        app.dependency_overrides.pop(get_redis_client, None)
+    else:
+        app.dependency_overrides[get_redis_client] = _prev
 
 
 class TestListConversations:
