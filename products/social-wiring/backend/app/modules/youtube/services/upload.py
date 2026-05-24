@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Callable, Iterator, TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from app.modules.youtube.schemas.upload import UploadMetadata
@@ -118,11 +118,19 @@ class UploadService:
         youtube_service: YouTubeService,
         notification_service: "NotificationService | None" = None,
         redis_client: Any = None,
+        classifier: Callable[[Path], str] | None = None,
     ):
         self._user = user_supabase
         self._admin = admin_supabase
         self._upload_dir = upload_dir
         self._youtube = youtube_service
+        # DI seam for the on-disk video classifier. Defaults to the real
+        # ``gdrive_service.classify_video_format``; tests inject a stub via
+        # the constructor instead of patching our own module function (which
+        # trips ``check_no_self_monkeypatch``). Per KB § PATTERNS/di-test-seam.md.
+        self._classifier: Callable[[Path], str] = (
+            classifier or gdrive_service.classify_video_format
+        )
         # Optional: when None, the publishing path stops at status='published'
         # and skips the notification dispatch. Backward-compatible with
         # Phase 2/3 tests that constructed the service without it.
@@ -980,7 +988,7 @@ class UploadService:
             return existing
 
         try:
-            raw = gdrive_service.classify_video_format(local_path)
+            raw = self._classifier(local_path)
         except Exception:
             logger.exception(
                 "classify_video_format raised for job %s (path=%s) — stamping 'unknown'",

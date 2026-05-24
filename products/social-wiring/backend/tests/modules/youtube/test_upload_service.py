@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 from app.modules.youtube.schemas.upload import UploadMetadata
-from app.services import gdrive_service
 from app.modules.youtube.services.upload import (
     UploadService,
     UploadServiceError,
@@ -486,7 +485,11 @@ class TestClassifyAndStampTargetFormat:
     know what the row is. Best-effort: a classify failure stamps
     'unknown' rather than failing the upload."""
 
-    def _make_service(self, upload_dir, yt_mock):
+    def _make_service(self, upload_dir, yt_mock, classifier=None):
+        # `classifier` is the Class-B DI seam: inject a stub video classifier
+        # through the constructor instead of patching
+        # `gdrive_service.classify_video_format` (our own module fn). Per
+        # KB § PATTERNS/di-test-seam.md.
         sb = _MockSupabase()
         admin = _MockSupabase()
         svc = UploadService(
@@ -494,6 +497,7 @@ class TestClassifyAndStampTargetFormat:
             admin_supabase=admin,
             upload_dir=upload_dir,
             youtube_service=yt_mock,
+            classifier=classifier,
         )
         return svc, admin
 
@@ -512,13 +516,11 @@ class TestClassifyAndStampTargetFormat:
             "idempotent path must NOT write to the DB"
         )
 
-    def test_classify_reels_is_mapped_to_shorts(
-        self, upload_dir, yt_mock, monkeypatch
-    ):
+    def test_classify_reels_is_mapped_to_shorts(self, upload_dir, yt_mock):
         """classify_video_format returns 'reels' → DB column gets 'shorts'."""
-        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "reels")
-
-        svc, admin = self._make_service(upload_dir, yt_mock)
+        svc, admin = self._make_service(
+            upload_dir, yt_mock, classifier=lambda p: "reels"
+        )
         local = upload_dir / "vertical.mp4"
         local.write_bytes(b"\x00" * 10)
 
@@ -529,11 +531,10 @@ class TestClassifyAndStampTargetFormat:
         assert admin.updated_payloads
         assert admin.updated_payloads[0]["target_format"] == "shorts"
 
-    def test_classify_youtube_stamped_directly(
-        self, upload_dir, yt_mock, monkeypatch
-    ):
-        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "youtube")
-        svc, admin = self._make_service(upload_dir, yt_mock)
+    def test_classify_youtube_stamped_directly(self, upload_dir, yt_mock):
+        svc, admin = self._make_service(
+            upload_dir, yt_mock, classifier=lambda p: "youtube"
+        )
         local = upload_dir / "horizontal.mp4"
         local.write_bytes(b"\x00" * 10)
 
@@ -543,15 +544,12 @@ class TestClassifyAndStampTargetFormat:
         assert out == "youtube"
         assert admin.updated_payloads[0]["target_format"] == "youtube"
 
-    def test_classify_failure_stamps_unknown(
-        self, upload_dir, yt_mock, monkeypatch
-    ):
+    def test_classify_failure_stamps_unknown(self, upload_dir, yt_mock):
         """A raise from classify_video_format → stamp 'unknown', no abort."""
         def boom(_p):
             raise RuntimeError("ffprobe gone wild")
 
-        monkeypatch.setattr(gdrive_service, "classify_video_format", boom)
-        svc, admin = self._make_service(upload_dir, yt_mock)
+        svc, admin = self._make_service(upload_dir, yt_mock, classifier=boom)
         local = upload_dir / "video.mp4"
         local.write_bytes(b"\x00" * 10)
 
@@ -561,14 +559,13 @@ class TestClassifyAndStampTargetFormat:
         assert out == "unknown"
         assert admin.updated_payloads[0]["target_format"] == "unknown"
 
-    def test_unexpected_classify_value_defensive_unknown(
-        self, upload_dir, yt_mock, monkeypatch
-    ):
+    def test_unexpected_classify_value_defensive_unknown(self, upload_dir, yt_mock):
         """If classify_video_format ever returns a NEW value we don't
         recognise, the stamp falls back to 'unknown' so the DB CHECK
         constraint is never violated."""
-        monkeypatch.setattr(gdrive_service, "classify_video_format", lambda p: "experimental")
-        svc, admin = self._make_service(upload_dir, yt_mock)
+        svc, admin = self._make_service(
+            upload_dir, yt_mock, classifier=lambda p: "experimental"
+        )
         local = upload_dir / "weird.mp4"
         local.write_bytes(b"\x00" * 10)
 
