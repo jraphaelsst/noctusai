@@ -50,7 +50,7 @@ if [[ -d "$REPO_ROOT/products/seed" ]] && have_py; then
     STAGED_SEED=$(git diff --cached --name-only -- products/seed/ 2>/dev/null || true)
     if [[ -n "$STAGED_SEED" ]]; then
         echo "[pre-commit] Seed product changed — syncing template..."
-        "$PY" "$CLI" --sync-seed-template 2>&1 | sed 's/^/[pre-commit] /'
+        "$PY" "$CLI" --sync-seed-template --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'
 
         TEMPLATE_DIFF=$(git status --porcelain -- templates/product-seed/ 2>/dev/null || true)
         if [[ -n "$TEMPLATE_DIFF" ]]; then
@@ -66,7 +66,7 @@ fi
 # ─── 2. KB auto-derived counts ──────────────────────────────────
 if have_py; then
     echo "[pre-commit] Updating KB auto-derived counts..."
-    "$PY" "$CLI" --update-kb-counts 2>&1 | sed 's/^/[pre-commit] /'
+    "$PY" "$CLI" --update-kb-counts --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'
 
     # Restage count-refreshed docs — but ONLY docs ALREADY part of THIS
     # commit. `git diff --name-only` lists every working-tree-modified KB
@@ -97,7 +97,7 @@ fi
 # ─── 3. Seed version stamp (matches _version_static.py to current HEAD) ──
 # Keeps the keeper drift-detector honest. Idempotent; gitignored output.
 if have_py; then
-    "$PY" "$CLI" --stamp-seed-version 2>&1 | sed 's/^/[pre-commit] /' || true
+    "$PY" "$CLI" --stamp-seed-version --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
 # ─── 3b. Project-history ledger → PROJECT-HISTORY.md render ─────
@@ -109,7 +109,7 @@ if have_py; then
     UNSTAGED_LEDGER=$(git status --porcelain -- project-history/ledger.ndjson 2>/dev/null || true)
     if [[ -n "$STAGED_LEDGER" || -n "$UNSTAGED_LEDGER" ]]; then
         echo "[pre-commit] Rendering project-history/PROJECT-HISTORY.md..."
-        "$PY" "$CLI" --render-project-history 2>&1 | sed 's/^/[pre-commit] /'
+        "$PY" "$CLI" --render-project-history --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'
         CHANGED_HISTORY=$(git status --porcelain -- project-history/PROJECT-HISTORY.md 2>/dev/null || true)
         if [[ -n "$CHANGED_HISTORY" ]]; then
             echo "[pre-commit] Staging updated project-history/PROJECT-HISTORY.md"
@@ -121,7 +121,7 @@ fi
 # ─── 4. KB ↔ CLAUDE.md sync verification (blocking) ─────────────
 if have_py; then
     echo "[pre-commit] Verifying KB sync..."
-    if ! "$PY" "$CLI" --verify-kb-sync; then
+    if ! "$PY" "$CLI" --verify-kb-sync --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] KB sync check FAILED. Commit aborted." >&2
         echo "[pre-commit] Fix the broken pointers in CLAUDE.md or update KNOWLEDGE-BASE/INDEX.md." >&2
         exit 1
@@ -134,7 +134,7 @@ fi
 # but the generated files weren't re-propagated, they drift silently.
 # `cli --propagate both --check` exits non-zero on drift.
 if git diff --cached --name-only | grep -qE '^products/seed/(backend/Dockerfile|docker-compose\.(yml|override\.yml))$|^seed/docker/Dockerfile\.'; then
-    if have_py && ! "$PY" "$CLI" --propagate both --check >/dev/null 2>&1; then
+    if have_py && ! "$PY" "$CLI" --propagate both --check --worktree-path "$REPO_ROOT" >/dev/null 2>&1; then
         echo "[pre-commit] propagation drift — per-product files stale vs products/seed/." >&2
         echo "[pre-commit] Run: python mcp/noctusai/cli.py --propagate both   then re-stage. Commit aborted." >&2
         exit 1
@@ -149,7 +149,7 @@ fi
 STAGED_PROJECT_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '(^|/)PROJECT\.md$' || true)
 if [[ -n "$STAGED_PROJECT_MD" ]] && have_py; then
     echo "[pre-commit] Checking §6 ↔ §11 phase-state consistency..."
-    if ! "$PY" "$CLI" --check-phase-state; then
+    if ! "$PY" "$CLI" --check-phase-state --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] Phase-state check FAILED. Commit aborted." >&2
         echo "[pre-commit] Fix the §6 live state (tick checkboxes / flip header / add Improvements block) before committing." >&2
         exit 1
@@ -162,7 +162,7 @@ fi
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.(py|pyi|ts|tsx|js|jsx|mjs|cjs)$' || true)
 if [[ -n "$STAGED_SRC" ]] && have_py; then
     echo "[pre-commit] Checking staged files are AST-outline-able..."
-    if ! "$PY" "$CLI" --check-outlined; then
+    if ! "$PY" "$CLI" --check-outlined --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] Outline-ability check FAILED. Commit aborted." >&2
         echo "[pre-commit] A staged source file can't be AST-read (SyntaxError/parse). Fix it; run: python mcp/noctusai/cli.py --scan-outlined" >&2
         exit 1
