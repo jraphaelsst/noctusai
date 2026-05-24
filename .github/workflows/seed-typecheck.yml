@@ -13,13 +13,13 @@ name: Seed Typecheck
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]  # dev is the integration branch — validate its tip pre-bless
     paths:
       - "seed/lib/frontend/**"
       - "seed/framework/frontend/**"
       - ".github/workflows/seed-typecheck.yml"
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "seed/lib/frontend/**"
       - "seed/framework/frontend/**"

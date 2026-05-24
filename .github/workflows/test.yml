@@ -1,10 +1,13 @@
 name: Tests & Build
 
+# `dev` is the integration branch — CI runs on every push to it so its tip is
+# already proven green by bless-time (dev→main is then a clean FF of validated
+# code). `main` stays gated too. KB § PATTERNS/branching-and-merging.md § 0.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: read

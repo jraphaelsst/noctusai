@@ -38,7 +38,9 @@ class FakeDriveDownloader:
             name=name,
             size_bytes=len(content),
             mime_type=mime_type,
-            md5_checksum=hashlib.md5(content).hexdigest(),  # noqa: S324 (Drive uses md5)
+            # mirrors Drive's md5Checksum field — a content fingerprint, NOT a
+            # security control (usedforsecurity=False satisfies bandit B324 / ruff S324)
+            md5_checksum=hashlib.md5(content, usedforsecurity=False).hexdigest(),
         )
         self._files[file_id] = (meta, content)
         return meta
