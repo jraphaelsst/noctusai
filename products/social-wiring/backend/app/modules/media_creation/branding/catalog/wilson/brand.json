@@ -1,0 +1,79 @@
+{
+  "owner": {
+    "slug": "wilson",
+    "name": "Wilson — Granja Viana",
+    "kind": "real_estate_agent",
+    "notes": "Real-estate agent, Granja Viana / Cotia (São Paulo). High-end residential; gated communities. Handle @wilson_one2022. First brand absorbed from the media-creator prototype (design-system.md is the full source)."
+  },
+  "brandings": [
+    {
+      "slug": "premium",
+      "name": "Wilson Premium",
+      "default_lang": "pt-BR",
+      "persona": "Voice: editorial, calm, premium real-estate. The image suggests more than it states — the reader feels exclusivity, not promotion. Forbidden: hype, exclamations, sales-y language, generic stock real-estate. Audience: families 35-55, high / upper-middle income, São Paulo metro, seeking gated communities in Granja Viana (security + space + quality of life + appreciation). Hook in the first 7 words; one idea per slide.",
+      "design_system": "Variant: premium (default). Warm dark, sober, high-end. Palette: bg #2A2620 (warm dark olive) / deep #1A1612 / gold #C5A55E / off-white #F5F1EA / muted #A89B85. Typography: Cormorant Garamond (serif display, 1 word may be gold-highlighted) + Inter (sans body). Canvas 1080x1350 (4:5). Roles: cover (hook over full-bleed photo) / develop (headline + bullets + curved-arch photo) / insight (typographic statement) / cta (gold pill button). Photography: architecture / interiors / landscape / lifestyle — golden-hour warm tones, ~30-40% negative space, NEVER agent-posing or stock handshakes. Handle @wilson_one2022 bottom-left every slide; 'GRANJA VIANA' gold pin on cover+cta. Full source: design-system.md.",
+      "design_tokens": {
+        "variant": "premium",
+        "canvas_w": 1080,
+        "canvas_h": 1350,
+        "margin": 96,
+        "bg_primary": "#2A2620",
+        "bg_deep": "#1A1612",
+        "accent_gold": "#C5A55E",
+        "accent_gold_bright": "#E0C076",
+        "text_primary": "#F5F1EA",
+        "text_muted": "#A89B85",
+        "divider": "#3D362B",
+        "serif_family": "Cormorant Garamond",
+        "sans_family": "Inter",
+        "handle": "@wilson_one2022",
+        "location_pin": "GRANJA VIANA"
+      },
+      "references": [
+        {
+          "kind": "model",
+          "label": "post1",
+          "asset_url": "catalog/wilson/references/models/post1",
+          "notes": "Example IG carousel set that defines the premium look (7 frames)."
+        },
+        {
+          "kind": "model",
+          "label": "post2",
+          "asset_url": "catalog/wilson/references/models/post2",
+          "notes": "WhatsApp-shared reference posts (4 frames)."
+        },
+        {
+          "kind": "prompt",
+          "label": "brief-chatgpt",
+          "asset_url": "catalog/wilson/references/brief-chatgpt.md",
+          "notes": "Original GPT brief that seeded the first validated carousel."
+        }
+      ]
+    },
+    {
+      "slug": "educational",
+      "name": "Wilson Educational",
+      "default_lang": "pt-BR",
+      "persona": "Same editorial premium voice, in an accessible / didactic register — for tutorials, listicles, dicas. Clear, scannable, but never hype. Audience identical to premium; tone is teaching, not selling.",
+      "design_system": "Variant: educational (lite). Accessible, scannable. Palette: lavender-grey #E8E5F0 / navy royal #3A4FB8 / yellow #F0E63A accents. Same Cormorant + Inter type and the same 4 slide roles + canvas as premium. Use only when the brief is explicitly tutorial / listicle; premium is the default. Full source: design-system.md.",
+      "design_tokens": {
+        "variant": "educational",
+        "canvas_w": 1080,
+        "canvas_h": 1350,
+        "margin": 96,
+        "bg_primary": "#E8E5F0",
+        "bg_deep": "#3A4FB8",
+        "accent_gold": "#3A4FB8",
+        "accent_gold_bright": "#F0E63A",
+        "text_primary": "#3A4FB8",
+        "text_muted": "#5A6BC0",
+        "divider": "#C7CBE8",
+        "serif_family": "Cormorant Garamond",
+        "sans_family": "Inter",
+        "handle": "@wilson_one2022",
+        "location_pin": "GRANJA VIANA"
+      },
+      "references": []
+    }
+  ]
+}

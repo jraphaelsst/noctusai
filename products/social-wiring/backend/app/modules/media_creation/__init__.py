@@ -72,6 +72,7 @@ def register() -> Any:
     """
     from app.modules.media_creation.routers import (
         brand_kits,
+        branding,
         generation,
         posts,
         references,
@@ -82,6 +83,7 @@ def register() -> Any:
     return ModuleRegistration(
         routers=[
             brand_kits.router,
+            branding.router,
             references.router,
             posts.router,
             generation.router,
