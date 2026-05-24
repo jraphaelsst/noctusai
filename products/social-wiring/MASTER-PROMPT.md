@@ -69,13 +69,14 @@ scheduling appointments. RLS scoped to the product.
 
 ## Seed seams consumed (do NOT re-implement product-locally)
 
-> **Status (2026-05-19, post `social-wiring-google-seed-consume`):** the
-> **Google stack** rows below are **TRUE** — youtube / Calendar / Drive /
-> OAuth-lifecycle / Fernet vault all consume the seed seams; ~3.5k LoC of
-> product fork retired; the prior drift marker is removed (project closed).
-> **Meta** is still hand-rolled (~1302 LoC `services/meta/*`) — tracked in
-> `products/social-wiring/projects/social-wiring-meta-seed-consume/`; that row
-> becomes TRUE when the follow-up closes. Non-Google rows (chatbot, whatsapp,
+> **Status (2026-05-24, post `social-wiring-meta-seed-consume`):** the
+> **Google stack AND Meta** rows below are **TRUE** — youtube / Calendar /
+> Drive / OAuth-lifecycle / Fernet vault AND the Meta FB/IG adapter all
+> consume the seed seams; the ~3.5k LoC Google fork **and** the ~1.3k LoC
+> Meta fork (`services/meta/*`) are retired. `services/meta/` is now a
+> zero-API-logic shim over `noctusai_lib.integrations.meta` (factory
+> wrapper + `META_PROVIDER` re-export); the drift markers for both stacks
+> are removed (both projects closed). Non-stack rows (chatbot, whatsapp,
 > multimodal media, frontend hooks) are not re-verified by this pass —
 > agents editing them should re-confirm against the tree.
 

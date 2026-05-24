@@ -1,500 +1,220 @@
-"""Tests for the Meta (Facebook + Instagram) integration.
+"""Tests for the social-wiring Meta seam (post seed-consume migration).
 
-Mocked tests cover wire-shape correctness — body parsers, error
-parsing, OAuth token-exchange call shape, factory resolution. They do
-NOT hit live Graph API; end-to-end validation lives in the
-SESSION-NOTES doc + the manual validation log, same posture as
-``test_google_integrations.py``.
+The hand-rolled Meta fork was retired by
+`social-wiring-meta-seed-consume` — the product now consumes the
+canonical `noctusai_lib.integrations.meta` (Protocol + Fake + Real +
+factory + mappers + OAuth helpers). The seed owns the deep contract
+(mapper field maps, Graph error classification, OAuth token exchange,
+scope discovery, system-user/user-OAuth auth resolution, Fake adapter)
+and exercises it in
+`seed/lib/backend/tests/integrations/meta/test_meta_integration.py`.
+Duplicating those here would violate DRY.
+
+These tests cover the **product-side seam** only:
+
+1. `app.services.meta.get_meta_adapter` — the product-convention
+   factory wrapper that adapts (`org_id`, `credential_store`,
+   product `settings`) onto the seed factory and resolves the
+   three-tier auth priority (system_user → user_oauth → Fake).
+2. `META_PROVIDER` re-export (the credential-vault storage key).
+3. The shim re-export surface the app imports rely on.
+4. The two consumer projection helpers in `whatsapp_intake_service`
+   that recover `attachments_summary` / insight `period` from the seed
+   value objects (NEW product logic introduced by the migration).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import patch
-
-import httpx
-import pytest
+from uuid import uuid4
 
 from app.services.meta import (
+    META_PROVIDER,
     FacebookPage,
     FacebookPost,
     FakeMetaAdapter,
     InstagramAccount,
     InstagramMedia,
+    MetaAdapter,
+    MetaConnectionStatus,
+    MetaGraphError,
+    MetaOAuthAdapter,
     PostInsights,
     get_meta_adapter,
 )
-from app.services.meta._meta_api import (
-    META_KITCHEN_SINK_SCOPES,
-    MetaGraphError,
-    _raise_for_graph_error,
-    app_access_token,
-    discover_app_permissions,
-    exchange_code_for_token,
-    exchange_short_for_long_lived,
-    resolve_oauth_scopes,
-)
-from app.services.meta.mappers import (
-    ig_account_body_to_instagram_account,
-    insight_body_to_post_insights,
-    media_body_to_instagram_media,
-    page_body_to_facebook_page,
-    parse_graph_datetime,
-    post_body_to_facebook_post,
-)
 
 
-# ─── Mappers ───────────────────────────────────────────────────────────
-class TestMappers:
-    def test_parse_graph_datetime_normalizes_z_offset(self):
-        dt = parse_graph_datetime("2026-05-13T10:15:30+0000")
-        assert dt is not None
-        assert dt == datetime(2026, 5, 13, 10, 15, 30, tzinfo=timezone.utc)
+# ─── Product factory wrapper — auth resolution via the local call shape ──
+class _Settings:
+    """Minimal product-settings stand-in for the factory wrapper."""
 
-    def test_parse_graph_datetime_accepts_full_offset(self):
-        dt = parse_graph_datetime("2026-05-13T07:15:30-03:00")
-        assert dt is not None
-        assert dt.utcoffset().total_seconds() == -3 * 3600
-
-    def test_parse_graph_datetime_returns_none_for_garbage(self):
-        assert parse_graph_datetime("not a date") is None
-        assert parse_graph_datetime(None) is None
-        assert parse_graph_datetime(123) is None
-
-    def test_page_body_maps_canonical_fields(self):
-        body = {
-            "id": "111",
-            "name": "Imobiliaria One",
-            "category": "Real Estate",
-            "access_token": "PAGE-TOKEN",
-            "fan_count": "1500",
-            "followers_count": 1530,
-            "link": "https://facebook.com/one",
-            "tasks": ["MANAGE", "ANALYZE"],
-        }
-        page = page_body_to_facebook_page(body)
-        assert isinstance(page, FacebookPage)
-        assert page.page_id == "111"
-        assert page.fan_count == 1500  # str → int coercion
-        assert page.followers_count == 1530
-        assert page.tasks == ["MANAGE", "ANALYZE"]
-        assert page.access_token == "PAGE-TOKEN"
-
-    def test_post_body_summarizes_likes_comments_shares(self):
-        body = {
-            "id": "111_222",
-            "message": "Novo lancamento",
-            "created_time": "2026-05-10T12:00:00+0000",
-            "permalink_url": "https://facebook.com/111/posts/222",
-            "full_picture": "https://scontent.../pic.jpg",
-            "likes": {"summary": {"total_count": 42}},
-            "comments": {"summary": {"total_count": 7}},
-            "shares": {"count": 3},
-            "attachments": {
-                "data": [
-                    {"title": "Vista da varanda", "type": "photo"},
-                    {"type": "video_inline"},
-                ]
-            },
-        }
-        post = post_body_to_facebook_post(body, page_id="111")
-        assert isinstance(post, FacebookPost)
-        assert post.page_id == "111"
-        assert post.likes_count == 42
-        assert post.comments_count == 7
-        assert post.shares_count == 3
-        assert post.attachments_summary == ["Vista da varanda", "video_inline"]
-        assert post.created_at is not None and post.created_at.year == 2026
-
-    def test_ig_account_maps_canonical_fields_and_linked_page(self):
-        body = {
-            "id": "999",
-            "username": "one.consultoria",
-            "name": "One Consultoria",
-            "profile_picture_url": "https://cdn/pic.jpg",
-            "followers_count": 2300,
-            "follows_count": 180,
-            "media_count": 412,
-            "biography": "Imoveis em SP",
-            "website": "https://one.com.br",
-        }
-        account = ig_account_body_to_instagram_account(body, linked_page_id="111")
-        assert isinstance(account, InstagramAccount)
-        assert account.ig_user_id == "999"
-        assert account.linked_page_id == "111"
-        assert account.followers_count == 2300
-
-    def test_media_body_maps_canonical_fields(self):
-        body = {
-            "id": "MEDIA-1",
-            "caption": "ONE5970 — vista panoramica",
-            "media_type": "VIDEO",
-            "media_url": "https://cdn/video.mp4",
-            "permalink": "https://instagram.com/p/abc",
-            "thumbnail_url": "https://cdn/thumb.jpg",
-            "timestamp": "2026-05-12T08:00:00+0000",
-            "like_count": 88,
-            "comments_count": 4,
-        }
-        media = media_body_to_instagram_media(body, ig_user_id="999")
-        assert isinstance(media, InstagramMedia)
-        assert media.id == "MEDIA-1"
-        assert media.ig_user_id == "999"
-        assert media.media_type == "VIDEO"
-        assert media.like_count == 88
-
-    def test_insight_body_flattens_to_metric_dict(self):
-        body = {
-            "data": [
-                {
-                    "name": "post_impressions",
-                    "period": "lifetime",
-                    "values": [{"value": 1234}],
-                },
-                {
-                    "name": "post_engaged_users",
-                    "period": "lifetime",
-                    "values": [{"value": 87}],
-                },
-                {
-                    "name": "post_reactions_like_total",
-                    "period": "lifetime",
-                    "values": [{"value": {"like": 40, "love": 2}}],  # dict flatten
-                },
-            ]
-        }
-        insights = insight_body_to_post_insights(body, object_id="111_222")
-        assert isinstance(insights, PostInsights)
-        assert insights.object_id == "111_222"
-        assert insights.period == "lifetime"
-        assert insights.metrics["post_impressions"] == 1234
-        assert insights.metrics["post_engaged_users"] == 87
-        # dict-valued metric got summed.
-        assert insights.metrics["post_reactions_like_total"] == 42
-
-    def test_insight_body_handles_empty_data(self):
-        insights = insight_body_to_post_insights({"data": []}, object_id="x")
-        assert insights.metrics == {}
+    def __init__(
+        self,
+        *,
+        system_user_token: str = "",
+        app_id: str = "",
+        app_secret: str = "",
+        graph_version: str = "v21.0",
+    ) -> None:
+        self.meta_system_user_token = system_user_token
+        self.meta_app_id = app_id
+        self.meta_app_secret = app_secret
+        self.meta_graph_api_version = graph_version
 
 
-# ─── Error envelope parser ────────────────────────────────────────────
-class TestGraphErrorParsing:
-    def _make_response(self, json_body, status_code):
-        request = httpx.Request("GET", "https://graph.facebook.com/v21.0/me")
-        return httpx.Response(
-            status_code=status_code,
-            json=json_body,
-            request=request,
-        )
-
-    def test_raises_for_error_envelope_even_on_http_200(self):
-        # Graph occasionally returns 200 with an error body (paging edge cases).
-        body = {
-            "error": {
-                "message": "Invalid OAuth access token.",
-                "type": "OAuthException",
-                "code": 190,
-                "fbtrace_id": "ABC123",
-            }
-        }
-        response = self._make_response(body, status_code=200)
-        with pytest.raises(MetaGraphError) as exc_info:
-            _raise_for_graph_error(response)
-        err = exc_info.value
-        assert err.code == 190
-        assert err.is_auth_error is True
-        assert err.fbtrace_id == "ABC123"
-
-    def test_rate_limit_codes_classified(self):
-        body = {"error": {"message": "rate", "code": 4, "type": "OAuthException"}}
-        response = self._make_response(body, status_code=200)
-        with pytest.raises(MetaGraphError) as exc_info:
-            _raise_for_graph_error(response)
-        assert exc_info.value.is_rate_limited is True
-        assert exc_info.value.is_auth_error is False
-
-    def test_http_error_without_envelope_still_raises(self):
-        # Some upstream failures (503, gateway timeouts) return text/html.
-        request = httpx.Request("GET", "https://graph.facebook.com/v21.0/me")
-        response = httpx.Response(
-            status_code=503,
-            content=b"<html>Service unavailable</html>",
-            request=request,
-        )
-        with pytest.raises(MetaGraphError) as exc_info:
-            _raise_for_graph_error(response)
-        assert exc_info.value.http_status == 503
-
-    def test_success_body_passes_through(self):
-        response = self._make_response({"data": [{"id": "1"}]}, status_code=200)
-        _raise_for_graph_error(response)  # must not raise
+class _Stored:
+    def __init__(self, access_token: str | None = "USER-OAUTH-TOKEN") -> None:
+        self.tokens = {"access_token": access_token} if access_token else {}
+        self.metadata: dict = {}
 
 
-# ─── OAuth token exchange (httpx-mocked) ──────────────────────────────
-class TestOAuthExchange:
-    def test_code_for_token_passes_correct_params(self):
-        captured = {}
+class _Store:
+    """A `CredentialStore`-shaped fake — only `.get` is exercised."""
 
-        def fake_get(url, params=None, timeout=None):
-            captured["url"] = url
-            captured["params"] = params
-            request = httpx.Request("GET", url)
-            return httpx.Response(
-                status_code=200,
-                json={"access_token": "SHORT", "token_type": "bearer"},
-                request=request,
-            )
+    def __init__(self, stored=None) -> None:
+        self._stored = stored
 
-        with patch("httpx.get", side_effect=fake_get):
-            bundle = exchange_code_for_token(
-                code="THE-CODE",
-                client_id="APP-ID",
-                client_secret="APP-SECRET",
-                redirect_uri="https://example.com/cb",
-            )
-
-        assert bundle["access_token"] == "SHORT"
-        assert captured["url"].endswith("/oauth/access_token")
-        assert captured["params"]["code"] == "THE-CODE"
-        assert captured["params"]["client_id"] == "APP-ID"
-        assert captured["params"]["client_secret"] == "APP-SECRET"
-        assert captured["params"]["redirect_uri"] == "https://example.com/cb"
-
-    def test_short_to_long_lived_uses_fb_exchange_grant(self):
-        captured = {}
-
-        def fake_get(url, params=None, timeout=None):
-            captured["params"] = params
-            request = httpx.Request("GET", url)
-            return httpx.Response(
-                status_code=200,
-                json={
-                    "access_token": "LONG",
-                    "token_type": "bearer",
-                    "expires_in": 5183944,
-                },
-                request=request,
-            )
-
-        with patch("httpx.get", side_effect=fake_get):
-            bundle = exchange_short_for_long_lived(
-                short_lived_token="SHORT",
-                client_id="APP-ID",
-                client_secret="APP-SECRET",
-            )
-
-        assert bundle["access_token"] == "LONG"
-        assert captured["params"]["grant_type"] == "fb_exchange_token"
-        assert captured["params"]["fb_exchange_token"] == "SHORT"
+    def get(self, org_id, provider):  # noqa: ARG002
+        return self._stored
 
 
-# ─── Factory ───────────────────────────────────────────────────────────
-class TestFactory:
-    def test_returns_fake_when_no_credentials(self):
-        adapter = get_meta_adapter()
+class TestProductFactoryWrapper:
+    def test_no_credentials_falls_back_to_fake(self):
+        adapter = get_meta_adapter(settings=_Settings())
         assert isinstance(adapter, FakeMetaAdapter)
 
-    def test_returns_fake_when_no_credential_row(self):
-        from uuid import uuid4
-
-        class _NoRowStore:
-            def get(self, org_id, provider):  # noqa: ARG002
-                return None
-
-        class _Settings:
-            meta_app_id = "x"
-            meta_app_secret = "y"
-
+    def test_no_credential_row_falls_back_to_fake(self):
         adapter = get_meta_adapter(
             org_id=uuid4(),
-            credential_store=_NoRowStore(),
-            settings=_Settings(),
+            credential_store=_Store(stored=None),
+            settings=_Settings(app_id="x", app_secret="y"),
         )
         assert isinstance(adapter, FakeMetaAdapter)
 
-
-# ─── Scope discovery / resolution ─────────────────────────────────────
-class TestScopeDiscovery:
-    def test_app_access_token_concatenates(self):
-        assert app_access_token("123", "secret") == "123|secret"
-
-    def test_discover_returns_graph_perms_when_present(self):
-        body = {
-            "data": [
-                {"permission": "pages_show_list", "status": "live"},
-                {"permission": "instagram_basic", "status": "approved"},
-                # status="declined" should be filtered out
-                {"permission": "something_else", "status": "declined"},
-            ]
-        }
-
-        def fake_get(url, params=None, timeout=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=200, json=body, request=request)
-
-        with patch("httpx.Client") as mock_client_cls:
-            client = mock_client_cls.return_value.__enter__.return_value
-            client.get.side_effect = fake_get
-            perms = discover_app_permissions(app_id="123", app_secret="x")
-
-        assert perms == ["pages_show_list", "instagram_basic"]
-
-    def test_discover_falls_back_to_kitchen_sink_on_empty(self):
-        body = {"data": []}
-
-        def fake_get(url, params=None, timeout=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=200, json=body, request=request)
-
-        with patch("httpx.Client") as mock_client_cls:
-            client = mock_client_cls.return_value.__enter__.return_value
-            client.get.side_effect = fake_get
-            perms = discover_app_permissions(app_id="123", app_secret="x")
-
-        assert perms == list(META_KITCHEN_SINK_SCOPES)
-
-    def test_discover_falls_back_on_graph_error(self):
-        def fake_get(url, params=None, timeout=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(
-                status_code=400,
-                json={"error": {"message": "boom", "code": 100}},
-                request=request,
-            )
-
-        with patch("httpx.Client") as mock_client_cls:
-            client = mock_client_cls.return_value.__enter__.return_value
-            client.get.side_effect = fake_get
-            perms = discover_app_permissions(app_id="123", app_secret="x")
-
-        assert perms == list(META_KITCHEN_SINK_SCOPES)
-
-    def test_resolve_uses_configured_when_explicit(self):
-        scopes = resolve_oauth_scopes(
-            configured="a,b,c",
-            app_id="123",
-            app_secret="x",
+    def test_system_user_token_selects_oauth_adapter(self):
+        adapter = get_meta_adapter(
+            settings=_Settings(system_user_token="SYS-TOKEN-123")
         )
-        assert scopes == ["a", "b", "c"]
-
-    def test_resolve_deduplicates_and_strips(self):
-        scopes = resolve_oauth_scopes(
-            configured="a, b , a, c, b",
-            app_id="123",
-            app_secret="x",
-        )
-        assert scopes == ["a", "b", "c"]
-
-    def test_resolve_auto_triggers_discovery(self):
-        body = {
-            "data": [
-                {"permission": "pages_show_list", "status": "live"},
-            ]
-        }
-
-        def fake_get(url, params=None, timeout=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=200, json=body, request=request)
-
-        with patch("httpx.Client") as mock_client_cls:
-            client = mock_client_cls.return_value.__enter__.return_value
-            client.get.side_effect = fake_get
-            scopes = resolve_oauth_scopes(
-                configured="auto",
-                app_id="123",
-                app_secret="x",
-            )
-
-        assert scopes == ["pages_show_list"]
-
-    def test_resolve_empty_string_treated_as_auto(self):
-        body = {"data": []}  # → fallback path
-
-        def fake_get(url, params=None, timeout=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(status_code=200, json=body, request=request)
-
-        with patch("httpx.Client") as mock_client_cls:
-            client = mock_client_cls.return_value.__enter__.return_value
-            client.get.side_effect = fake_get
-            scopes = resolve_oauth_scopes(
-                configured="",
-                app_id="123",
-                app_secret="x",
-            )
-
-        assert scopes == list(META_KITCHEN_SINK_SCOPES)
-
-
-# ─── System User Token path ───────────────────────────────────────────
-class TestSystemUserToken:
-    """The Path B auth mode — token-based, no OAuth flow."""
-
-    def test_factory_prefers_system_user_token_over_oauth(self):
-        from app.services.meta import MetaOAuthAdapter, get_meta_adapter
-
-        class _Settings:
-            meta_system_user_token = "SYSTEM_USER_TOKEN_VALUE"
-            meta_app_id = ""
-            meta_app_secret = ""
-
-        adapter = get_meta_adapter(settings=_Settings())
         assert isinstance(adapter, MetaOAuthAdapter)
         assert adapter.auth_mode == "system_user"
 
-    def test_user_token_returns_system_token_when_configured(self):
-        from app.services.meta import MetaOAuthAdapter
-
-        class _Settings:
-            meta_system_user_token = "SYS-TOKEN-123"
-
-        adapter = MetaOAuthAdapter(settings=_Settings())
-        assert adapter._user_token() == "SYS-TOKEN-123"
+    def test_system_user_token_wins_over_credential_store(self):
+        adapter = get_meta_adapter(
+            org_id=uuid4(),
+            credential_store=_Store(stored=_Stored()),
+            settings=_Settings(
+                system_user_token="SYS-TOKEN", app_id="x", app_secret="y"
+            ),
+        )
+        assert isinstance(adapter, MetaOAuthAdapter)
         assert adapter.auth_mode == "system_user"
 
-    def test_user_oauth_mode_when_no_system_token(self):
-        from uuid import uuid4
-
-        from app.services.meta import MetaOAuthAdapter
-
-        class _Settings:
-            meta_system_user_token = ""
-
-        class _Store:
-            class _Stored:
-                tokens = {"access_token": "USER-OAUTH-TOKEN"}
-
-            def get(self, org_id, provider):  # noqa: ARG002
-                return self._Stored()
-
-        adapter = MetaOAuthAdapter(
-            credential_store=_Store(),
+    def test_user_oauth_credential_selects_oauth_adapter(self):
+        adapter = get_meta_adapter(
             org_id=uuid4(),
-            settings=_Settings(),
+            credential_store=_Store(stored=_Stored("USER-OAUTH-TOKEN")),
+            settings=_Settings(app_id="x", app_secret="y"),
         )
-        assert adapter._user_token() == "USER-OAUTH-TOKEN"
+        assert isinstance(adapter, MetaOAuthAdapter)
         assert adapter.auth_mode == "user_oauth"
 
-    def test_user_token_raises_when_neither_path_configured(self):
-        from app.services.meta import MetaOAuthAdapter
-        from app.services.meta._meta_api import MetaGraphError
+    def test_uuid_org_id_is_stringified_for_the_resolver(self):
+        captured: dict = {}
 
-        class _Settings:
-            meta_system_user_token = ""
+        class _CapturingStore:
+            def get(self, org_id, provider):  # noqa: ARG002
+                captured["org_id"] = org_id
+                return _Stored("USER-OAUTH-TOKEN")
 
-        adapter = MetaOAuthAdapter(settings=_Settings())
-        with pytest.raises(MetaGraphError) as exc_info:
-            adapter._user_token()
-        assert "META_SYSTEM_USER_TOKEN" in str(exc_info.value)
+        org = uuid4()
+        get_meta_adapter(
+            org_id=org,
+            credential_store=_CapturingStore(),
+            settings=_Settings(app_id="x", app_secret="y"),
+        )._user_token()
+        # The seed resolver does `store.get(org_id, provider)`; the
+        # product wrapper must pass the UUID as a string (the vault keys
+        # on str) — never the bare UUID object.
+        assert captured["org_id"] == str(org)
+        assert isinstance(captured["org_id"], str)
 
 
-# ─── Fake adapter sanity ──────────────────────────────────────────────
-class TestFakeAdapter:
-    def test_seeded_data_is_returned_in_order(self):
+# ─── Re-export surface the app imports rely on ───────────────────────────
+class TestShimSurface:
+    def test_meta_provider_is_the_vault_key(self):
+        assert META_PROVIDER == "meta"
+
+    def test_value_objects_and_adapters_reexported(self):
+        # These must remain importable from `app.services.meta` so the
+        # existing consumers (meta_router, whatsapp_intake) keep working.
+        assert FacebookPage is not None
+        assert FacebookPost is not None
+        assert InstagramAccount is not None
+        assert InstagramMedia is not None
+        assert PostInsights is not None
+        assert MetaConnectionStatus is not None
+        assert MetaGraphError is not None
+        assert issubclass(MetaOAuthAdapter, object)
+
+    def test_metaadapter_protocol_is_seed_protocol(self):
+        from noctusai_lib.integrations.meta import MetaAdapter as SeedMetaAdapter
+
+        assert MetaAdapter is SeedMetaAdapter
+
+
+# ─── Consumer projection helpers (new product logic from the migration) ──
+class TestConsumerProjectionHelpers:
+    def test_attachments_summary_prefers_title_then_description_then_type(self):
+        from app.services.whatsapp_intake_service import _meta_attachments_summary
+
+        attachments = [
+            {"title": "Vista da varanda", "type": "photo"},
+            {"description": "Sem titulo", "type": "video"},
+            {"type": "video_inline"},
+            {},  # all-empty → dropped
+        ]
+        assert _meta_attachments_summary(attachments) == [
+            "Vista da varanda",
+            "Sem titulo",
+            "video_inline",
+        ]
+
+    def test_attachments_summary_empty_and_none(self):
+        from app.services.whatsapp_intake_service import _meta_attachments_summary
+
+        assert _meta_attachments_summary(None) == []
+        assert _meta_attachments_summary([]) == []
+        assert _meta_attachments_summary(["not-a-dict"]) == []
+
+    def test_insights_period_reads_first_raw_row(self):
+        from app.services.whatsapp_intake_service import _meta_insights_period
+
+        insights = PostInsights(
+            object_id="111_222",
+            metrics={"post_impressions": 1234},
+            raw=[{"name": "post_impressions", "period": "day"}],
+        )
+        assert _meta_insights_period(insights) == "day"
+
+    def test_insights_period_defaults_to_lifetime(self):
+        from app.services.whatsapp_intake_service import _meta_insights_period
+
+        # No raw rows / no period key → the documented default.
+        assert _meta_insights_period(PostInsights(object_id="x")) == "lifetime"
+        assert (
+            _meta_insights_period(
+                PostInsights(object_id="x", raw=[{"name": "m"}])
+            )
+            == "lifetime"
+        )
+
+
+# ─── Fake adapter sanity through the product seam ────────────────────────
+class TestFakeAdapterThroughSeam:
+    def test_seeded_pages_and_posts_roundtrip(self):
         adapter = FakeMetaAdapter()
         adapter.seed(
             pages=[
                 FacebookPage(
-                    page_id="111",
+                    id="111",
                     name="Imobiliaria One",
                     category="Real Estate",
                     access_token="P",
@@ -502,40 +222,12 @@ class TestFakeAdapter:
             ],
             posts_by_page={
                 "111": [
-                    FacebookPost(
-                        id="111_222",
-                        page_id="111",
-                        message="Novo imovel",
-                        created_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
-                        permalink_url=None,
-                        likes_count=12,
-                        comments_count=3,
-                    ),
+                    FacebookPost(id="111_222", message="Novo imovel", likes=12),
                 ]
             },
         )
-        assert adapter.list_pages()[0].page_id == "111"
+        pages = adapter.list_facebook_pages()
+        assert pages[0].id == "111"
         posts = adapter.list_facebook_posts("111", limit=10)
-        assert posts[0].likes_count == 12
-        assert adapter.list_facebook_posts("999") == []  # unknown page
-
-    def test_limit_truncates(self):
-        adapter = FakeMetaAdapter()
-        adapter.seed(
-            pages=[
-                FacebookPage(page_id="111", name="X", category=None, access_token=""),
-            ],
-            posts_by_page={
-                "111": [
-                    FacebookPost(
-                        id=f"111_{i}",
-                        page_id="111",
-                        message=f"post {i}",
-                        created_at=None,
-                        permalink_url=None,
-                    )
-                    for i in range(20)
-                ]
-            },
-        )
-        assert len(adapter.list_facebook_posts("111", limit=5)) == 5
+        assert posts[0].likes == 12
+        assert adapter.list_facebook_posts("999") == []

@@ -72,6 +72,41 @@ _ACTIVE_UPLOADS_PREFIX = "whatsapp:active_uploads:"
 _ACTIVE_UPLOADS_TTL = 2 * 60 * 60  # 2h — far exceeds even slow uploads, auto-self-heals on stuck counters
 
 
+def _meta_attachments_summary(attachments: list[dict[str, Any]] | None) -> list[str]:
+    """Project the seed ``FacebookPost.attachments`` (raw Graph dicts) into
+    the terse label list the chatbot JSON exposes.
+
+    The seed value object carries the raw attachment dicts (it does not
+    pre-summarize, unlike the retired product mapper). We reproduce the
+    old projection here at the consumer: ``title → description → type``,
+    dropping empties. Keeps the ``attachments_summary`` response key
+    shape identical to the pre-seed-consume behavior.
+    """
+    labels: list[str] = []
+    for att in attachments or []:
+        if not isinstance(att, dict):
+            continue
+        label = att.get("title") or att.get("description") or att.get("type") or ""
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _meta_insights_period(insights: Any) -> str:
+    """Recover the insight rollup window from the seed ``PostInsights``.
+
+    The seed flattens insights to ``{object_id, metrics, raw}`` and drops
+    the dedicated ``period`` field the product mapper exposed. We read it
+    back off the first raw row (Graph stamps every metric row with a
+    ``period``), defaulting to ``"lifetime"`` — the value the retired
+    mapper used and what engagement counts are reported over.
+    """
+    for row in getattr(insights, "raw", None) or []:
+        if isinstance(row, dict) and row.get("period"):
+            return row["period"]
+    return "lifetime"
+
+
 def _format_size(bytes_: int | None) -> str:
     """Render a byte count as human-readable size for choice menus.
 
@@ -1732,7 +1767,7 @@ class WhatsAppIntakeService:
         """Self-check: is Meta wired up, who's connected, how many
         pages + IG accounts visible?
         """
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         adapter, is_fake = await self._meta_adapter()
         if is_fake:
@@ -1750,7 +1785,7 @@ class WhatsAppIntakeService:
             }
         try:
             me = await asyncio.to_thread(adapter.me)
-            pages = await asyncio.to_thread(adapter.list_pages)
+            pages = await asyncio.to_thread(adapter.list_facebook_pages)
             ig_accounts = await asyncio.to_thread(adapter.list_instagram_accounts)
         except MetaGraphError as exc:
             return {
@@ -1765,15 +1800,15 @@ class WhatsAppIntakeService:
             "user_id": me.get("id"),
             "user_name": me.get("name"),
             "pages": [
-                {"page_id": p.page_id, "name": p.name, "category": p.category}
+                {"page_id": p.id, "name": p.name, "category": p.category}
                 for p in pages
             ],
             "instagram_accounts": [
                 {
-                    "ig_user_id": a.ig_user_id,
+                    "ig_user_id": a.id,
                     "username": a.username,
                     "name": a.name,
-                    "linked_page_id": a.linked_page_id,
+                    "linked_page_id": a.page_id,
                     "followers_count": a.followers_count,
                 }
                 for a in ig_accounts
@@ -1781,13 +1816,13 @@ class WhatsAppIntakeService:
         }
 
     async def list_facebook_pages(self) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         adapter, is_fake = await self._meta_adapter()
         if is_fake:
             return {"ok": False, "error": "meta_not_connected"}
         try:
-            pages = await asyncio.to_thread(adapter.list_pages)
+            pages = await asyncio.to_thread(adapter.list_facebook_pages)
         except MetaGraphError as exc:
             return {
                 "ok": False,
@@ -1799,7 +1834,7 @@ class WhatsAppIntakeService:
             "count": len(pages),
             "pages": [
                 {
-                    "page_id": p.page_id,
+                    "page_id": p.id,
                     "name": p.name,
                     "category": p.category,
                     "fan_count": p.fan_count,
@@ -1814,7 +1849,7 @@ class WhatsAppIntakeService:
     async def list_facebook_posts(
         self, *, page_id: str, limit: int = 10
     ) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         if not page_id:
             return {"ok": False, "error": "missing_page_id"}
@@ -1836,9 +1871,9 @@ class WhatsAppIntakeService:
         # have to add up like_count fields itself. Same posture as
         # query_drive_sheet — deterministic aggregates beat token-level
         # counting.
-        total_likes = sum((p.likes_count or 0) for p in posts)
-        total_comments = sum((p.comments_count or 0) for p in posts)
-        total_shares = sum((p.shares_count or 0) for p in posts)
+        total_likes = sum((p.likes or 0) for p in posts)
+        total_comments = sum((p.comments or 0) for p in posts)
+        total_shares = sum((p.shares or 0) for p in posts)
 
         return {
             "ok": True,
@@ -1859,13 +1894,15 @@ class WhatsAppIntakeService:
                 {
                     "id": p.id,
                     "message": (p.message or "")[:400],
-                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "created_at": (
+                        p.created_time.isoformat() if p.created_time else None
+                    ),
                     "permalink_url": p.permalink_url,
                     "full_picture": p.full_picture,
-                    "likes_count": p.likes_count,
-                    "comments_count": p.comments_count,
-                    "shares_count": p.shares_count,
-                    "attachments_summary": p.attachments_summary,
+                    "likes_count": p.likes,
+                    "comments_count": p.comments,
+                    "shares_count": p.shares,
+                    "attachments_summary": _meta_attachments_summary(p.attachments),
                 }
                 for p in posts
             ],
@@ -1874,7 +1911,7 @@ class WhatsAppIntakeService:
     async def get_facebook_post_insights(
         self, *, post_id: str, page_id: str | None = None
     ) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         if not post_id:
             return {"ok": False, "error": "missing_post_id"}
@@ -1896,12 +1933,12 @@ class WhatsAppIntakeService:
         return {
             "ok": True,
             "post_id": insights.object_id,
-            "period": insights.period,
+            "period": _meta_insights_period(insights),
             "metrics": dict(insights.metrics),
         }
 
     async def list_instagram_accounts(self) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         adapter, is_fake = await self._meta_adapter()
         if is_fake:
@@ -1919,7 +1956,7 @@ class WhatsAppIntakeService:
             "count": len(accounts),
             "accounts": [
                 {
-                    "ig_user_id": a.ig_user_id,
+                    "ig_user_id": a.id,
                     "username": a.username,
                     "name": a.name,
                     "biography": a.biography,
@@ -1928,7 +1965,7 @@ class WhatsAppIntakeService:
                     "followers_count": a.followers_count,
                     "follows_count": a.follows_count,
                     "media_count": a.media_count,
-                    "linked_page_id": a.linked_page_id,
+                    "linked_page_id": a.page_id,
                 }
                 for a in accounts
             ],
@@ -1937,7 +1974,7 @@ class WhatsAppIntakeService:
     async def list_instagram_media(
         self, *, ig_user_id: str, limit: int = 10
     ) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         if not ig_user_id:
             return {"ok": False, "error": "missing_ig_user_id"}
@@ -1995,7 +2032,7 @@ class WhatsAppIntakeService:
     async def get_instagram_media_insights(
         self, *, media_id: str
     ) -> dict[str, Any]:
-        from app.services.meta._meta_api import MetaGraphError
+        from app.services.meta import MetaGraphError
 
         if not media_id:
             return {"ok": False, "error": "missing_media_id"}
@@ -2017,7 +2054,7 @@ class WhatsAppIntakeService:
         return {
             "ok": True,
             "media_id": insights.object_id,
-            "period": insights.period,
+            "period": _meta_insights_period(insights),
             "metrics": dict(insights.metrics),
         }
 

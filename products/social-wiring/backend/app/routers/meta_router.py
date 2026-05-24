@@ -43,12 +43,12 @@ from app.services.meta import (
     MetaOAuthAdapter,
     get_meta_adapter,
 )
-from app.services.meta._meta_api import (
+from noctusai_lib.integrations.meta._meta_api import (
     META_KITCHEN_SINK_SCOPES,
     MetaGraphError,
     discover_app_permissions,
     exchange_code_for_token,
-    exchange_short_for_long_lived,
+    exchange_for_long_lived,
     graph_get,
     resolve_oauth_scopes,
 )
@@ -168,7 +168,7 @@ def meta_status(org_id: str | None = Query(default=None)) -> MetaStatusResponse:
     # Live adapter — probe /me + counts.
     try:
         me = adapter.me()
-        pages = adapter.list_pages()
+        pages = adapter.list_facebook_pages()
         ig_accounts = adapter.list_instagram_accounts()
     except MetaGraphError as exc:
         return MetaStatusResponse(
@@ -328,7 +328,7 @@ def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
                 body = graph_get(
                     "/me/permissions",
                     access_token=stored.tokens["access_token"],
-                )
+                version=settings.meta_graph_api_version)
                 granted = [
                     r["permission"] for r in (body.get("data") or [])
                     if r.get("status") == "granted"
@@ -395,13 +395,17 @@ def meta_oauth_callback(
 
     store = _build_store()
 
-    # 1) code → short-lived user token
+    # 1) code → short-lived user token. The seed exchange returns the
+    # access-token string directly (raising MetaGraphError on a Graph
+    # error envelope) — never a dict, so an empty/falsey result already
+    # surfaces as an exception, not a silent None.
     try:
-        short_bundle = exchange_code_for_token(
+        short_token = exchange_code_for_token(
             code=code,
-            client_id=settings.meta_app_id,
-            client_secret=settings.meta_app_secret,
+            app_id=settings.meta_app_id,
+            app_secret=settings.meta_app_secret,
             redirect_uri=settings.meta_oauth_redirect_uri,
+            version=settings.meta_graph_api_version,
         )
     except MetaGraphError as exc:
         logger.exception("meta oauth code exchange failed")
@@ -410,19 +414,19 @@ def meta_oauth_callback(
             detail=f"OAuth code exchange failed: {exc}",
         ) from exc
 
-    short_token = short_bundle.get("access_token")
     if not short_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Meta did not return an access_token from the code exchange.",
         )
 
-    # 2) short → long-lived user token
+    # 2) short → long-lived user token (also returns the token string).
     try:
-        long_bundle = exchange_short_for_long_lived(
-            short_lived_token=short_token,
-            client_id=settings.meta_app_id,
-            client_secret=settings.meta_app_secret,
+        long_token = exchange_for_long_lived(
+            short_token=short_token,
+            app_id=settings.meta_app_id,
+            app_secret=settings.meta_app_secret,
+            version=settings.meta_graph_api_version,
         )
     except MetaGraphError as exc:
         logger.exception("meta oauth long-lived exchange failed")
@@ -431,8 +435,16 @@ def meta_oauth_callback(
             detail=f"Long-lived token exchange failed: {exc}",
         ) from exc
 
-    long_token = long_bundle.get("access_token") or short_token
-    expires_in = long_bundle.get("expires_in")
+    long_token = long_token or short_token
+    # The seed exchange surfaces only the token string. Meta long-lived
+    # user tokens are always bearer; `expires_in` (~60d) is not surfaced
+    # by the seed helper and is not read anywhere downstream (the
+    # CredentialStoreMetaResolver resolves on `access_token` only). We
+    # persist the documented bearer type and leave `expires_in` unset.
+    # See the `seed-meta-projection-enrichment` follow-up for a
+    # bundle-returning seed exchange variant if a consumer ever needs it.
+    token_type = "bearer"
+    expires_in = None
 
     # 3) probe /me so we can store user_id + name for display.
     user_id: str | None = None
@@ -442,7 +454,7 @@ def meta_oauth_callback(
             "/me",
             access_token=long_token,
             params={"fields": "id,name"},
-        )
+        version=settings.meta_graph_api_version)
         user_id = me.get("id")
         user_name = me.get("name")
     except MetaGraphError:
@@ -460,7 +472,7 @@ def meta_oauth_callback(
 
     stored_tokens = {
         "access_token": long_token,
-        "token_type": long_bundle.get("token_type", "bearer"),
+        "token_type": token_type,
         "expires_in": expires_in,
         "scope": ",".join(requested_scopes),
         "user_id": user_id,
