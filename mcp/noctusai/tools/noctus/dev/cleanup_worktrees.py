@@ -5,13 +5,13 @@ Behaviour-preserving native port of ``scripts/cleanup-stale-worktrees.sh``.
 Why this exists
     Each ``Agent(isolation: "worktree")`` call creates a worktree at
     ``.claude/worktrees/agent-<id>/`` (hydrated with node_modules + Python
-    venvs). The orchestrator FFs to dev; the worktree stays on disk
+    venvs). The orchestrator FFs to main; the worktree stays on disk
     ~880 MiB each. 75 stale worktrees = 67 GiB unrecoverable until cleanup.
 
 What "stale" means (identical predicate to the shell script + mole.sh)
     An agent worktree whose branch is either:
-      (a) reachable from ``origin/dev`` by SHA ancestry (true merge), OR
-      (b) all commits already present on ``origin/dev`` by PATCH-ID
+      (a) reachable from ``origin/main`` by SHA ancestry (true merge), OR
+      (b) all commits already present on ``origin/main`` by PATCH-ID
           (cherry-pick — the orchestrator FFs via cherry-pick: new SHA, same
           patch; ``git cherry`` is the patch-id equivalent).
     Unmerged work-in-progress worktrees are KEPT.
@@ -67,7 +67,7 @@ def _is_ancestor(root: Path, branch: str, base: str) -> bool:
 def _all_commits_cherry_picked(root: Path, branch: str, base: str) -> bool:
     """Patch-id equivalence: every commit on ``branch`` is on ``base``.
 
-    Mirrors the shell ``_all_commits_cherry_picked_to_dev``: the branch
+    Mirrors the shell ``_all_commits_cherry_picked_to_main``: the branch
     must have ≥1 commit and ZERO ``+`` lines in ``git cherry base branch``
     (``+`` = genuinely unmerged; ``-`` = on base by patch-id).
     """
@@ -139,7 +139,7 @@ def cleanup_stale_worktrees(
     worktree_path: str | Path | None = None,
     force: bool = False,
 ) -> dict:
-    """Classify + (when ``force``) remove merged-to-dev agent worktrees.
+    """Classify + (when ``force``) remove merged-to-main agent worktrees.
 
     Behaviour-preserving native port of
     ``scripts/cleanup-stale-worktrees.sh``. **Dry-run unless
@@ -194,13 +194,13 @@ def cleanup_stale_worktrees(
             "status": "nothing",
         }
 
-    # Refresh dev's tip (best-effort, read-only).
-    _git(root, "fetch", "origin", "dev", "--quiet")
+    # Refresh main's tip (best-effort, read-only).
+    _git(root, "fetch", "origin", "main", "--quiet")
 
-    # Resolve comparison base: prefer origin/dev, fall back to dev.
-    base = "origin/dev"
+    # Resolve comparison base: prefer origin/main, fall back to main.
+    base = "origin/main"
     if _git(root, "rev-parse", "--verify", "--quiet", base).returncode != 0:
-        base = "dev"
+        base = "main"
 
     # Snapshot main-repo stashes for shared-stash subtraction (THE-P11).
     main_stashes = set(
@@ -373,7 +373,7 @@ def register(server) -> None:
         name="noctus.dev.cleanup_stale_worktrees",
         description=(
             "Remove engineer worktrees whose branch is merged to "
-            "origin/dev (SHA-ancestry OR patch-id/cherry-pick). DRY-RUN by "
+            "origin/main (SHA-ancestry OR patch-id/cherry-pick). DRY-RUN by "
             "default — force=True actually removes. NEVER removes main, "
             "sibling workspaces, or worktrees with uncommitted/stashed work "
             "(force does NOT override safety gates); git-refused locked "

@@ -30,10 +30,10 @@ def _git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """A repo with `main`, an `origin/dev` ref, and a .claude/worktrees dir.
+    """A repo with `main`, an `origin/main` ref, and a .claude/worktrees dir.
 
-    `origin/dev` is faked as a local ref so the tool's base-resolution
-    (`origin/dev` then fallback `dev`) resolves deterministically.
+    `origin/main` is faked as a local ref so the tool's base-resolution
+    (`origin/main` then fallback `main`) resolves deterministically.
     """
     r = tmp_path / "noc"
     r.mkdir()
@@ -43,8 +43,8 @@ def repo(tmp_path: Path) -> Path:
     (r / "f").write_text("base\n")
     _git(r, "add", "f")
     _git(r, "commit", "-qm", "base")
-    # Fake origin/dev pointing at current main tip.
-    _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
+    # Fake origin/main pointing at current main tip.
+    _git(r, "update-ref", "refs/remotes/origin/main", "HEAD")
     (r / ".claude" / "worktrees").mkdir(parents=True)
     return r
 
@@ -94,13 +94,13 @@ class TestMergePredicate:
         _git(wt, "add", "h")
         _git(wt, "commit", "-qm", "feat: work to be cherry-picked")
         # Cherry-pick that commit onto main (new SHA, same patch-id), then
-        # bump the fake origin/dev ref.
+        # bump the fake origin/main ref.
         sha = _git(wt, "rev-parse", "HEAD").strip()
         _git(repo, "cherry-pick", sha)
-        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         result = cleanup_stale_worktrees(repo_root=repo)
         assert str(wt) in result["stale"], (
-            "cherry-picked-to-dev branch must classify as stale (patch-id)"
+            "cherry-picked-to-main branch must classify as stale (patch-id)"
         )
 
 
@@ -164,39 +164,3 @@ class TestMcpRegistration:
         s = FastMCP(name="t")
         register(s)
         assert "noctus.dev.cleanup_stale_worktrees" in s._tool_manager._tools
-
-
-class TestComparisonBaseIsDev:
-    """The merged-detection base is origin/dev, not origin/main."""
-
-    def test_base_reference_is_origin_dev(self):
-        # The tool source must reference origin/dev (and never origin/main)
-        # for the comparison base.
-        src = (
-            Path(__file__).resolve().parents[1]
-            / "tools" / "noctus" / "dev" / "cleanup_worktrees.py"
-        ).read_text()
-        assert "origin/dev" in src, "comparison base must reference origin/dev"
-        assert 'base = "origin/dev"' in src
-        # No lingering main-keyed comparison base. (result["main"] dict KEYS
-        # legitimately remain; the base ref must not.)
-        assert "origin/main" not in src, (
-            "merged-base reference must be dev, not main"
-        )
-        assert 'base = "main"' not in src and 'base = "origin/main"' not in src
-
-    def test_branch_on_origin_dev_classified_stale(self, repo):
-        # repo fixture fakes refs/remotes/origin/dev at the base tip. A branch
-        # with no new commits is an ancestor of origin/dev -> stale. Proves
-        # the tool resolves the dev base ref (not a missing origin/main).
-        wt = _add_worktree(repo, "agent-devbase", "wt-devbase")
-        # Sanity: no origin/main ref exists in this fixture at all.
-        rc = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"],
-            cwd=str(repo), capture_output=True, text=True,
-        ).returncode
-        assert rc != 0, "fixture must NOT define origin/main"
-        result = cleanup_stale_worktrees(repo_root=repo)
-        assert str(wt) in result["stale"], (
-            "branch merged into origin/dev must classify as stale"
-        )
