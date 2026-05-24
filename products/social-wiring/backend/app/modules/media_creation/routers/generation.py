@@ -59,7 +59,11 @@ def _gen_svc(user) -> GenerationService:
     return GenerationService(get_admin_client(), get_org_id(user))
 
 
-def _publish_svc(user) -> PublishService:
+def get_publish_service(auth=Depends(get_current_user_org)) -> PublishService:
+    """Publish-service DI seam. Overridable via ``app.dependency_overrides``
+    in tests so a gated/Fake ``MetaAdapter`` is injected through DI rather
+    than monkeypatching the class — per KB § PATTERNS/di-test-seam.md."""
+    user, _, _ = auth
     return PublishService(get_admin_client(), get_org_id(user))
 
 
@@ -138,6 +142,7 @@ async def publish_post(
     post_id: str,
     body: PublishRequest,
     auth=Depends(get_current_user_org),
+    svc: PublishService = Depends(get_publish_service),
 ):
     """Publish a rendered post to Meta (IG carousel / IG single / FB photo).
 
@@ -150,7 +155,7 @@ async def publish_post(
     user, _, _ = auth
     post = _require_post(user, post_id)
     try:
-        data = _publish_svc(user).publish_post(
+        data = svc.publish_post(
             post,
             target=body.target,
             destination_id=body.destination_id,

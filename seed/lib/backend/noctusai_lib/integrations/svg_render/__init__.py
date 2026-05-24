@@ -1,7 +1,6 @@
 """SVG→PNG render seed primitive — Protocol + Fake + Real(resvg) + factory.
 
-Built 2026-05-24 by ``projects/media-svg-render-mode/`` — the final
-residual of the media-creator absorption. media-creator rendered each
+Built 2026-05-24 — the final residual of the media-creator absorption. media-creator rendered each
 carousel slide as a deterministic SVG (locked palette / typography /
 layout, AI only for photography) → rasterized via ``@resvg/resvg-js``.
 This is the noc-native, Python, seed-first equivalent: the **outbound**

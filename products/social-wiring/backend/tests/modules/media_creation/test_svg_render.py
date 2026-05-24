@@ -1,8 +1,7 @@
 """SVG render mode — design tokens, slide builders, and the render path.
 
-The SVG mode (``projects/media-svg-render-mode``) renders deterministic
-brand-locked slides via the seed ``svg_render`` primitive, alongside the
-existing raster (image-gen) mode.
+The SVG mode renders deterministic brand-locked slides via the seed
+``svg_render`` primitive, alongside the existing raster (image-gen) mode.
 
 Layers tested:
 - ``TestDesignTokens`` — preset + per-brand ``design_tokens`` override (no IO).

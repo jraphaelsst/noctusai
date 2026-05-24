@@ -91,11 +91,15 @@ The image-publish surface (`publish_facebook_post` / `publish_instagram_media` /
 - [x] Implement on `FakeMetaAdapter` (deterministic, instant-ready, records on existing `published_media` / `published_posts` lists).
 - [x] Fake tests: records-call + bounds (empty video_url rejected).
 
+**Improvements:** none — clean Protocol+Fake mirror of the existing image-publish surface.
+
 ### Phase 2 — Real adapter + polling helper ✅
 - [x] Implement `_meta_api.poll_media_status(creation_id, *, access_token, timeout_seconds=90, poll_interval_seconds=2, transient_retries=3, sleep=time.sleep)`.
 - [x] Implement `MetaOAuthAdapter.publish_instagram_reel` (3-step: `media_type=REELS` container → poll → `media_publish`).
 - [x] Implement `MetaOAuthAdapter.publish_facebook_video` (unified `as_reel` flag: `/videos` synchronous-or-poll vs `/video_reels` start→poll→finish).
 - [x] Real tests: happy path (mocked `httpx.get`/`httpx.post` cycles) · timeout path · `ERROR`/`EXPIRED` status path · scope-absent (`requires_app_review`) path · transient-5xx-retry path.
+
+**Improvements:** factored the poll loop into a shared `_meta_api.poll_media_status` helper (reused by both the Reel and video paths) instead of duplicating the IN_PROGRESS→FINISHED loop per method.
 
 ### Phase 3 — Consumer wiring (gated on N≥1 consumer) ⏳ REMAINING
 - [ ] Extend `social-wiring/media_creation/services/publish_service.py` with new target enums (`instagram_reel` / `facebook_video` / `facebook_reel`). **The remaining thin step** — deferred here because (a) the project's own gate ("awaits a consumer", N=0 video-output pipeline) and (b) Engineer E was concurrently refactoring `products/social-wiring/` backend (file-disjoint discipline).
@@ -105,7 +109,9 @@ The image-publish surface (`publish_facebook_post` / `publish_instagram_media` /
 ### Phase 4 — Three-way sync ✅ (seed half)
 - [x] `KB § INTEGRATIONS/meta.md` §1 publish-methods section extended (2 video methods + `poll_media_status`) + value-objects table (`MediaProcessingStatus`).
 - [x] `KB § INTEGRATIONS/meta.md` §5 video / Reels row updated "out-of-scope v1" → **SHIPS** (behind same App Review scope).
-- [ ] Memory note `feedback_meta_video_reels_publish_shipped` — architect-side (engineers do not touch `memory/` / `MEMORY.md`).
+- [x] Memory note `feedback_meta_video_reels_publish_shipped` — written 2026-05-24 (architect-side).
+
+**Improvements:** none — doc + memory sync only.
 
 ---
 

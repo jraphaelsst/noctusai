@@ -119,7 +119,7 @@ premium + educational).
 - `svg_render` primitive = [F] formalize-to-seed (outbound render is reusable).
 - SVG slide engine = [A] accept at N=1 (only `media_creation` consumes it);
   seed-convergence destination if N=2 surfaces.
-- Built by `projects/media-svg-render-mode` (the media-creator absorption residual).
-  media-creator's functional core was already ported into `media_creation`
-  (Wave 2.4); this closed the one remaining capability gap. The branding system
-  (§3) followed as `projects/social-wiring-branding-catalog`.
+- Born 2026-05-24 as the media-creator absorption residual: media-creator's
+  functional core was already ported into `media_creation` (Wave 2.4); this
+  closed the one remaining capability gap (SVG-composited slides). The branding
+  system (§3) followed the same day (on `origin/dev` `1d366eba`).

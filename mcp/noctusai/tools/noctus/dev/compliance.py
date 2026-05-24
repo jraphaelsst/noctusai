@@ -1410,6 +1410,7 @@ _SELF_PATCH_OK_COMMENT_RE = re.compile(r"#\s*self-patch-ok\b", re.IGNORECASE)
 # carve-out is dropped and the detector goes `high` repo-wide.
 _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
     "therapy-platform",  # ratcheted 2026-05-01 (closed `therapy-tests-no-self-patch`)
+    "social-wiring",  # ratcheted 2026-05-24 (closed `social-wiring-settings-di-rewrite`: 43→0)
 })
 
 

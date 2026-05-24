@@ -74,7 +74,7 @@ dependencies = [
     # the Fake render path stays importable if it's absent. Bundled OFL fonts
     # (svg_render/fonts/) are passed with skip_system_fonts=True so text renders
     # deterministically without a system font install (dev↔prod parity). Added
-    # 2026-05-24 (projects/media-svg-render-mode, the media-creator absorption residual).
+    # Added 2026-05-24 (media-creator absorption residual).
     "resvg-py>=0.3.0",
 ]
 

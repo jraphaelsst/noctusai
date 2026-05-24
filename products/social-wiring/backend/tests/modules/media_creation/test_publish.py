@@ -7,8 +7,6 @@ unconfigured-shape tests don't need an explicit adapter.
 """
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from noctusai_lib.integrations.meta import FakeMetaAdapter, MetaGraphError
 
 
@@ -174,32 +172,42 @@ class TestPublish:
         self, client, seeded_kit
     ):
         _seed_rendered_post(client, seeded_kit, slide_count=3)
-        gated = FakeMetaAdapter()
 
-        def _raise(*args, **kwargs):
-            err = MetaGraphError(
-                "(#10) instagram_content_publish not granted",
-                code=10,
-                error_subcode=None,
-                error_type="OAuthException",
-            )
-            raise err
+        class _GatedFakeMetaAdapter(FakeMetaAdapter):
+            """Carousel publish is App-Review-gated. A real subclass
+            override (DI test-double), not a monkeypatch of our own Fake —
+            per KB § PATTERNS/di-test-seam.md."""
 
-        with patch.object(gated, "publish_instagram_carousel", _raise), patch(
-            "app.modules.media_creation.routers.generation.PublishService"
-        ) as MockSvc:
-            # Re-instantiate so the patched adapter wires in.
-            from app.modules.media_creation.services.publish_service import (
-                PublishService,
-            )
+            def publish_instagram_carousel(self, *args, **kwargs):
+                raise MetaGraphError(
+                    "(#10) instagram_content_publish not granted",
+                    code=10,
+                    error_subcode=None,
+                    error_type="OAuthException",
+                )
 
-            MockSvc.side_effect = lambda db, org_id: PublishService(
-                db, org_id, meta_adapter=gated
-            )
+        gated = _GatedFakeMetaAdapter()
+
+        # Inject the gated adapter through the router's DI seam
+        # (`app.dependency_overrides`) — no patching of our own class.
+        from app.modules.media_creation.routers.generation import (
+            get_publish_service,
+        )
+        from app.modules.media_creation.services.publish_service import (
+            PublishService,
+        )
+
+        app = client.raw().app
+        app.dependency_overrides[get_publish_service] = lambda: PublishService(
+            client.mock_supabase, "test-org-123", meta_adapter=gated
+        )
+        try:
             resp = client.post(
                 "/api/media-creation/posts/post-1/publish",
                 json={"target": "instagram_carousel", "destination_id": "IG1"},
             )
+        finally:
+            app.dependency_overrides.pop(get_publish_service, None)
         assert resp.status_code == 422, resp.text
         assert "meta_scope_pending_app_review" in resp.text
 
