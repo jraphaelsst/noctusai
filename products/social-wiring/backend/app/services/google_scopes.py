@@ -15,7 +15,8 @@ This module is the source of truth: a kitchen-sink scope list covering
 Calendar + Drive (the two we ship today), a resolver that respects the
 ``GOOGLE_OAUTH_SCOPES=auto`` convention, and a ``tokeninfo`` probe for
 post-consent introspection. Same shape as
-``app/services/meta/_meta_api.resolve_oauth_scopes`` (sibling branch).
+``noctusai_lib.integrations.meta.resolve_oauth_scopes`` (the seed Meta
+module the product Meta consumer now wraps).
 
 Important Google-vs-Meta nuance: Google does NOT expose a "list my app's
 configured scopes" endpoint. Scopes must be added to the OAuth Consent
