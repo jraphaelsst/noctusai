@@ -108,6 +108,46 @@ def _git_mv(src: Path, dst: Path, repo_root: Path) -> None:
     )
 
 
+def _durable_refs_into_project(root: Path, slug: str, run=subprocess.run) -> list[str]:
+    """Return tracked lines OUTSIDE ``projects/`` + ``archive/`` that reference
+    ``projects/<slug>/``.
+
+    The recurring **"durable config anchored to a ``projects/`` path"** class:
+    a PERMANENT surface (a CI workflow, a ``scripts/`` entry, ``.mcp.json``, a
+    compose file, a KB doc) that points into an archivable project **breaks**
+    the moment that project is archived. Concrete bite, 2026-05-24:
+    ``.github/workflows/build-and-push.yml`` called
+    ``projects/production-deploy-migration/deploy/fleet/build-and-push.sh`` →
+    exit 127 ("No such file or directory") after that project was archived.
+    The fix is structural: the archive gate refuses until the reference is
+    relocated to a durable home (``scripts/infra/``, ``seed/``, or inlined
+    into KB) — see KB § 01-PHILOSOPHY.md § "Durable docs are self-contained".
+
+    ``project-history/`` (the sanctioned durable index — it records slugs as
+    *data*) is excluded. Searches tracked files only (``git grep``); rc 0 =
+    matches, 1 = none, >1 = a real error we surface (no silent pass).
+    """
+    pattern = f"projects/{slug}/"
+    proc = run(
+        [
+            "git", "grep", "-n", "--fixed-strings", pattern, "--",
+            ".",
+            ":(exclude)projects",
+            ":(exclude)archive",
+            ":(exclude)project-history",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode not in (0, 1):
+        raise RuntimeError(
+            f"durable-refs scan failed for slug={slug!r} "
+            f"(git grep rc={proc.returncode}): {(proc.stderr or '').strip()}"
+        )
+    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+
+
 def _derive_default_summary(project_md_text: str) -> str:
     """Derive a 1-sentence default summary from a PROJECT.md body.
 
@@ -146,6 +186,7 @@ def archive(
     review_md: str | None = None,
     outcome_signals: list[str] | None = None,
     learnings_absorbed: bool = False,
+    allow_durable_refs: bool = False,
 ) -> dict:
     """Move target to the archive folder per `KB § PATTERNS/project-execution.md § 11.2`.
 
@@ -192,6 +233,16 @@ def archive(
             lessons), ``archive()`` raises a checklist ``ValueError`` instead of
             moving the folder (no ``findings.md`` ⇒ no gate). Ignored for
             ``feature`` / ``ad_hoc`` modes.
+        allow_durable_refs: **Durable-refs gate** (project mode). When ``False``
+            (default), ``archive()`` ``git grep``s every tracked file OUTSIDE
+            ``projects/`` + ``archive/`` for ``projects/<slug>/`` and REFUSES
+            (deterministic ``ValueError``) if any durable surface — a CI
+            workflow, a ``scripts/`` entry, ``.mcp.json``, a compose file, a KB
+            doc — still points into the project (it would break on archive; the
+            recurring "config anchored to a ``projects/`` path" class, e.g.
+            build-and-push.yml → exit 127, 2026-05-24). Relocate the reference
+            to a durable home + update the referrer first. Pass ``True`` ONLY to
+            override a vetted non-breaking mention. Ignored for non-project modes.
 
     Returns:
         {
@@ -275,6 +326,34 @@ def archive(
             "absorbed into durable docs first (the lesson must persist after the "
             "folder is gone).\nChecklist:\n  - " + "\n  - ".join(checklist)
         )
+
+    # Durable-refs gate (project mode only). The recurring "durable config
+    # anchored to a `projects/` path" class: a PERMANENT surface (CI workflow,
+    # `scripts/` entry, `.mcp.json`, compose, KB doc) that references this
+    # project's folder will BREAK when it is archived (e.g. build-and-push.yml
+    # → exit 127 after production-deploy-migration was archived 2026-05-24).
+    # This is DETECTABLE (unlike learnings absorption), so it is a hard,
+    # deterministic block — not a checklist. Relocate the reference to a durable
+    # home (`scripts/infra/`, `seed/`, inline into KB) + update the referrer
+    # FIRST, then re-archive. `allow_durable_refs=True` overrides ONLY a vetted
+    # false-positive (a historical mention that genuinely won't break).
+    # KB § 01-PHILOSOPHY.md § "Durable docs are self-contained".
+    if resolved_mode == "project" and not allow_durable_refs:
+        durable_refs = _durable_refs_into_project(root, slug)
+        if durable_refs:
+            shown = durable_refs[:30]
+            listed = "\n  - ".join(shown)
+            more = f"\n  - …(+{len(durable_refs) - 30} more)" if len(durable_refs) > 30 else ""
+            raise ValueError(
+                f"durable-refs gate: refusing to archive project '{slug}' — "
+                f"{len(durable_refs)} durable reference(s) outside projects/ still "
+                f"point into projects/{slug}/ and WILL break when it is archived "
+                "(the recurring CI/script/config-anchored-to-a-projects-path class). "
+                "Relocate each to a durable home (scripts/infra/, seed/, or inline "
+                "into KB) and update the referrer, THEN re-archive. Override with "
+                "allow_durable_refs=True ONLY for a vetted non-breaking mention."
+                "\nReferences:\n  - " + listed + more
+            )
 
     # Compute destination.
     today = _today_str()
@@ -539,7 +618,13 @@ def register(server) -> None:
             "when not supplied). LEARN-BEFORE-ARCHIVE GATE: when mode=project and the folder has a "
             "findings.md, the call REFUSES unless learnings_absorbed=True — first absorb every "
             "durable lesson into KB/CLAUDE/memory (it must outlive the folder), then re-call with "
-            "learnings_absorbed=True. See KB § PATTERNS/project-execution.md § 11.2."
+            "learnings_absorbed=True. DURABLE-REFS GATE: when mode=project, the call also REFUSES "
+            "(deterministically) if any tracked file OUTSIDE projects/+archive/ still references "
+            "projects/<slug>/ — a CI workflow / scripts/ entry / .mcp.json / compose / KB doc that "
+            "would BREAK on archive (the recurring 'config anchored to a projects/ path' class, e.g. "
+            "build-and-push.yml → exit 127). Relocate it to a durable home (scripts/infra, seed/, "
+            "inline KB) + update the referrer first; allow_durable_refs=True overrides only a vetted "
+            "non-breaking mention. See KB § PATTERNS/project-execution.md § 11.2."
         ),
     )
     def _archive(
@@ -553,6 +638,7 @@ def register(server) -> None:
         review_md: str | None = None,
         outcome_signals: list[str] | None = None,
         learnings_absorbed: bool = False,
+        allow_durable_refs: bool = False,
     ) -> dict:
         return archive(
             target_path=target_path,
@@ -565,6 +651,7 @@ def register(server) -> None:
             review_md=review_md,
             outcome_signals=outcome_signals,
             learnings_absorbed=learnings_absorbed,
+            allow_durable_refs=allow_durable_refs,
         )
     @server.tool(
         name="noctus.dev.archive_clean",

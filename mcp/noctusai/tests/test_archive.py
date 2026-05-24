@@ -716,3 +716,79 @@ class TestLearnBeforeArchiveGate:
         feat = _make_feature(tmp_repo, "demo-feat")
         result = archive(str(feat), repo_root=tmp_repo, skip_history=True)
         assert result["mode"] == "feature"
+
+
+class TestDurableRefsGate:
+    """archive() refuses to archive a PROJECT while a durable surface (CI
+    workflow / scripts / config / KB doc) still references projects/<slug>/ —
+    the recurring "config anchored to a projects/ path" class that broke
+    build-and-push.yml (exit 127) when its project was archived 2026-05-24."""
+
+    def _add_durable_ref(self, repo: Path, rel: str, body: str) -> None:
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+        subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", f"file {rel}"], cwd=str(repo), check=True)
+
+    def test_refuses_when_ci_workflow_references_the_project(self, tmp_repo):
+        proj = _make_project(tmp_repo, "deploy-proj")
+        self._add_durable_ref(
+            tmp_repo, ".github/workflows/x.yml",
+            "run: bash projects/deploy-proj/deploy/build.sh\n",
+        )
+        with pytest.raises(ValueError, match="durable-refs gate"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert proj.exists(), "project must NOT move while a durable surface points into it"
+
+    def test_proceeds_when_no_durable_ref(self, tmp_repo):
+        proj = _make_project(tmp_repo, "clean-proj")
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert result["mode"] == "project"
+        assert not proj.exists()
+
+    def test_allow_durable_refs_overrides(self, tmp_repo):
+        proj = _make_project(tmp_repo, "vetted-proj")
+        self._add_durable_ref(
+            tmp_repo, "scripts/note.sh", "# see projects/vetted-proj/ for history\n",
+        )
+        result = archive(
+            str(proj), repo_root=tmp_repo, skip_history=True, allow_durable_refs=True,
+        )
+        assert result["mode"] == "project"
+        assert not proj.exists()
+
+    def test_project_history_index_ref_is_excluded(self, tmp_repo):
+        # project-history/ is the sanctioned durable index — a slug-path there
+        # must NOT block the archive.
+        proj = _make_project(tmp_repo, "ledgered-proj")
+        self._add_durable_ref(
+            tmp_repo, "project-history/ledger.ndjson",
+            '{"path": "projects/ledgered-proj/"}\n',
+        )
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert not proj.exists(), "project-history/ reference must not trip the gate"
+
+    def test_reference_from_another_project_does_not_count(self, tmp_repo):
+        # Only DURABLE surfaces (outside projects/) gate; a sibling project
+        # referencing it is not the durable-config class.
+        proj = _make_project(tmp_repo, "target-proj")
+        sibling = tmp_repo / "projects" / "other"
+        sibling.mkdir()
+        (sibling / "PROJECT.md").write_text("# other\nsee projects/target-proj/ thing\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "sibling"], cwd=str(tmp_repo), check=True)
+        result = archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert not proj.exists(), "a sibling projects/ reference must not trip the gate"
+
+    def test_mcp_wrapper_exposes_allow_durable_refs_param(self):
+        import inspect
+        from server import build_server
+        s = build_server()
+        tool = s._tool_manager._tools["noctus.dev.archive"]
+        fn = getattr(tool, "fn", None) or getattr(tool, "func", None)
+        if fn is not None:
+            assert "allow_durable_refs" in inspect.signature(fn).parameters
+        else:
+            props = getattr(tool, "parameters", {}).get("properties", {})
+            assert "allow_durable_refs" in props

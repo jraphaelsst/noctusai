@@ -43,6 +43,7 @@ Every `scripts/**/*.sh` / `scripts/**/*.py` file MUST have a row here, **matched
 | `bootstrap-seed-workspace.sh` | [carve:bootstrap] | `bootstrap/bootstrap-seed-workspace.sh`; pre-venv workspace hydrate |
 | `build-init-local-db.sh` | [carve:bootstrap] | `bootstrap/build-init-local-db.sh`; regenerates init-local-db SQL pre-venv |
 | `build-base-images.sh` | [carve:docker] | `infra/build-base-images.sh`; thin `docker build` of seed base images |
+| `build-and-push.sh` | [carve:docker] | `infra/build-and-push.sh`; thin `docker build --target runtime` + push of the fleet to GHCR (the CI build/deliver step). Relocated here from `projects/production-deploy-migration/` 2026-05-24 — a permanent CI surface must live outside `projects/` (durable-refs gate). |
 
 > Manifest parsed by `check_new_script_lacks_mcp_analog` (`compliance.py`). The keeper does NOT require disposition fidelity — it asserts only *presence of a row* per disk file: it catches the "someone added `scripts/foo.sh` without a bucket decision" slip. Disposition is human-curated. Non-script `scripts/` entries (`codemods/` lib, `init-local-db/*.sql` data, `*.log`, `README.md`, `.DS_Store`) are out of scope by construction (only top-level `*.sh`/`*.py`). Carve-out rows pair 1:1 with `KB § PATTERNS/accept-with-rationale.md`.
 
