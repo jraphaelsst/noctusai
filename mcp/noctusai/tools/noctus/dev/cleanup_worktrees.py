@@ -5,16 +5,21 @@ Behaviour-preserving native port of ``scripts/cleanup-stale-worktrees.sh``.
 Why this exists
     Each ``Agent(isolation: "worktree")`` call creates a worktree at
     ``.claude/worktrees/agent-<id>/`` (hydrated with node_modules + Python
-    venvs). The orchestrator FFs to main; the worktree stays on disk
+    venvs). The orchestrator integrates to dev; the worktree stays on disk
     ~880 MiB each. 75 stale worktrees = 67 GiB unrecoverable until cleanup.
 
-What "stale" means (identical predicate to the shell script + mole.sh)
+What "stale" means (shared predicate — ``_worktree_staleness``, the SAME
+core ``noctus.dev.mole``'s worktree scope consumes)
     An agent worktree whose branch is either:
-      (a) reachable from ``origin/main`` by SHA ancestry (true merge), OR
-      (b) all commits already present on ``origin/main`` by PATCH-ID
-          (cherry-pick — the orchestrator FFs via cherry-pick: new SHA, same
-          patch; ``git cherry`` is the patch-id equivalent).
-    Unmerged work-in-progress worktrees are KEPT.
+      (a) reachable from ``origin/dev`` by SHA ancestry (true merge), OR
+      (b) all commits already present on ``origin/dev`` by PATCH-ID
+          (cherry-pick — the orchestrator integrates via cherry-pick: new
+          SHA, same patch; ``git cherry`` is the patch-id equivalent).
+    Engineer worktrees fork from + integrate to the ``dev`` integration
+    branch, NOT ``main`` (KB § PATTERNS/branching-and-merging.md § 0) — a
+    merged-to-dev-but-not-yet-blessed-to-main worktree was never swept under
+    the old ``origin/main`` keying. Unmerged work-in-progress worktrees are
+    KEPT.
 
 Safety (identical contract — the THE-P10 / THE-P11 lessons)
     * Never removes the main worktree.
@@ -46,6 +51,7 @@ from pathlib import Path
 
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
+from tools.noctus.dev import _worktree_staleness as wts
 
 logger = logging.getLogger(__name__)
 
@@ -57,29 +63,6 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
-
-
-def _is_ancestor(root: Path, branch: str, base: str) -> bool:
-    """``git merge-base --is-ancestor branch base`` — SHA ancestry."""
-    return _git(root, "merge-base", "--is-ancestor", branch, base).returncode == 0
-
-
-def _all_commits_cherry_picked(root: Path, branch: str, base: str) -> bool:
-    """Patch-id equivalence: every commit on ``branch`` is on ``base``.
-
-    Mirrors the shell ``_all_commits_cherry_picked_to_main``: the branch
-    must have ≥1 commit and ZERO ``+`` lines in ``git cherry base branch``
-    (``+`` = genuinely unmerged; ``-`` = on base by patch-id).
-    """
-    cherry = _git(root, "cherry", base, branch)
-    if cherry.returncode != 0:
-        return False
-    plus_lines = sum(
-        1 for ln in cherry.stdout.splitlines() if ln.startswith("+")
-    )
-    log = _git(root, "log", "--oneline", f"{base}..{branch}")
-    total = len([ln for ln in log.stdout.splitlines() if ln.strip()])
-    return total > 0 and plus_lines == 0
 
 
 def _pid_alive(pid: int) -> bool:
@@ -139,7 +122,7 @@ def cleanup_stale_worktrees(
     worktree_path: str | Path | None = None,
     force: bool = False,
 ) -> dict:
-    """Classify + (when ``force``) remove merged-to-main agent worktrees.
+    """Classify + (when ``force``) remove merged-to-dev agent worktrees.
 
     Behaviour-preserving native port of
     ``scripts/cleanup-stale-worktrees.sh``. **Dry-run unless
@@ -194,13 +177,15 @@ def cleanup_stale_worktrees(
             "status": "nothing",
         }
 
-    # Refresh main's tip (best-effort, read-only).
-    _git(root, "fetch", "origin", "main", "--quiet")
+    # Refresh dev's tip (best-effort, read-only). Engineer worktrees integrate
+    # to the dev integration branch, not main (KB § branching-and-merging § 0).
+    _git(root, "fetch", "origin", "dev", "--quiet")
 
-    # Resolve comparison base: prefer origin/main, fall back to main.
-    base = "origin/main"
-    if _git(root, "rev-parse", "--verify", "--quiet", base).returncode != 0:
-        base = "main"
+    # Resolve comparison base (prefer origin/dev, fall back to dev) + the
+    # merged predicate via the shared _worktree_staleness helper — the single
+    # source of truth shared with noctus.dev.mole's worktree scope.
+    wts_run = wts.make_subprocess_runner(root)
+    base = wts.resolve_merged_base(wts_run)
 
     # Snapshot main-repo stashes for shared-stash subtraction (THE-P11).
     main_stashes = set(
@@ -236,10 +221,8 @@ def cleanup_stale_worktrees(
                 if _git(root, "worktree", "unlock", wt).returncode == 0:
                     nonlocal_locked = False
 
-        # Merge predicate: ancestry OR patch-id equivalence.
-        merged = _is_ancestor(root, branch, base) or _all_commits_cherry_picked(
-            root, branch, base
-        )
+        # Merge predicate (shared helper): ancestry OR patch-id equivalence.
+        merged = wts.is_merged(wts_run, branch, base)
         if not merged:
             active.append(wt)
             return
@@ -373,14 +356,16 @@ def register(server) -> None:
         name="noctus.dev.cleanup_stale_worktrees",
         description=(
             "Remove engineer worktrees whose branch is merged to "
-            "origin/main (SHA-ancestry OR patch-id/cherry-pick). DRY-RUN by "
-            "default — force=True actually removes. NEVER removes main, "
-            "sibling workspaces, or worktrees with uncommitted/stashed work "
-            "(force does NOT override safety gates); git-refused locked "
-            "paths are surfaced, never rm-rf'd (THE-P10). Shared-stash "
-            "subtraction + dead-pid auto-unlock (THE-P11). Port of "
-            "scripts/cleanup-stale-worktrees.sh. Pass worktree_path when "
-            "called from inside a git worktree."
+            "origin/dev (SHA-ancestry OR patch-id/cherry-pick) — the dev "
+            "integration branch worktrees integrate to. DRY-RUN by "
+            "default — force=True actually removes. NEVER removes the main "
+            "worktree, sibling workspaces, or worktrees with uncommitted/"
+            "stashed work (force does NOT override safety gates); git-refused "
+            "locked paths are surfaced, never rm-rf'd (THE-P10). Shared-stash "
+            "subtraction + dead-pid auto-unlock (THE-P11). Shares the "
+            "merged-base + merged predicate with noctus.dev.mole via "
+            "_worktree_staleness. Pass worktree_path when called from inside "
+            "a git worktree."
         ),
     )
     def _cleanup_stale_worktrees(

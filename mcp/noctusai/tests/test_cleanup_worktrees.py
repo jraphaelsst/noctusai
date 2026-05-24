@@ -30,21 +30,23 @@ def _git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """A repo with `main`, an `origin/main` ref, and a .claude/worktrees dir.
+    """A repo with `dev`, an `origin/dev` ref, and a .claude/worktrees dir.
 
-    `origin/main` is faked as a local ref so the tool's base-resolution
-    (`origin/main` then fallback `main`) resolves deterministically.
+    Engineer worktrees integrate to the `dev` integration branch, so the
+    tool keys staleness off `origin/dev` (KB § branching-and-merging § 0).
+    `origin/dev` is faked as a local ref so the tool's base-resolution
+    (`origin/dev` then fallback `dev`) resolves deterministically.
     """
     r = tmp_path / "noc"
     r.mkdir()
-    _git(r, "init", "-q", "-b", "main")
+    _git(r, "init", "-q", "-b", "dev")
     _git(r, "config", "user.email", "t@t.t")
     _git(r, "config", "user.name", "t")
     (r / "f").write_text("base\n")
     _git(r, "add", "f")
     _git(r, "commit", "-qm", "base")
-    # Fake origin/main pointing at current main tip.
-    _git(r, "update-ref", "refs/remotes/origin/main", "HEAD")
+    # Fake origin/dev pointing at current dev tip.
+    _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
     (r / ".claude" / "worktrees").mkdir(parents=True)
     return r
 
@@ -66,7 +68,7 @@ class TestDryRunDefault:
         assert result["dry_run"] is True
 
     def test_merged_worktree_is_stale_but_dry_run_keeps_it(self, repo):
-        # Branch with NO new commits beyond main → merge-base ancestor → merged.
+        # Branch with NO new commits beyond dev → merge-base ancestor → merged.
         wt = _add_worktree(repo, "agent-merged", "wt-merged")
         result = cleanup_stale_worktrees(repo_root=repo)  # force defaults False
         assert str(wt) in result["stale"]
@@ -93,14 +95,14 @@ class TestMergePredicate:
         (wt / "h").write_text("cp\n")
         _git(wt, "add", "h")
         _git(wt, "commit", "-qm", "feat: work to be cherry-picked")
-        # Cherry-pick that commit onto main (new SHA, same patch-id), then
-        # bump the fake origin/main ref.
+        # Cherry-pick that commit onto dev (new SHA, same patch-id), then
+        # bump the fake origin/dev ref.
         sha = _git(wt, "rev-parse", "HEAD").strip()
         _git(repo, "cherry-pick", sha)
-        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
         result = cleanup_stale_worktrees(repo_root=repo)
         assert str(wt) in result["stale"], (
-            "cherry-picked-to-main branch must classify as stale (patch-id)"
+            "cherry-picked-to-dev branch must classify as stale (patch-id)"
         )
 
 

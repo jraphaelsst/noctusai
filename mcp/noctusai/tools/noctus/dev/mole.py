@@ -12,10 +12,12 @@ Project cleanup is a DIFFERENT surface — already `noctus.dev.archive`.
 Destructive ONLY under `mode="sweep", force=True`. The classifier NEVER
 removes:
   • a worktree with uncommitted changes,
-  • a worktree whose branch is NOT merged-to-`main` — "merged" =
-    reachable from `origin/main` by SHA-ancestry OR all commits present
-    by PATCH-ID (our orchestrator FFs via cherry-pick → new SHA, same
-    patch; the patch-id / `git cherry` check covers that),
+  • a worktree whose branch is NOT merged-to-`dev` — "merged" =
+    reachable from `origin/dev` (the integration branch engineer worktrees
+    integrate to — KB § PATTERNS/branching-and-merging.md § 0) by
+    SHA-ancestry OR all commits present by PATCH-ID (our orchestrator
+    integrates via cherry-pick → new SHA, same patch; the patch-id /
+    `git cherry` check covers that),
   • the main worktree, sibling/seed workspaces, `.env`, or migration
     files.
 Additional operator gate (NOT enforced here — caller's duty):
@@ -33,8 +35,10 @@ scope, same 6-category worktree taxonomy (`_classify_worktrees` →
 STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM), same
 shared-stash subtraction (THE-P11), same dead-pid auto-unlock, same
 self-skip, same severity grading + next_action thresholds, same JSON
-result shape. `scripts/cleanup-stale-worktrees.sh` shares the same
-predicate — keep them in sync.
+result shape. The merged-base + merged predicate is the shared
+`_worktree_staleness` helper (consumed identically by
+`noctus.dev.cleanup_stale_worktrees`) — one source of truth, no parity
+drift.
 """
 from __future__ import annotations
 
@@ -47,6 +51,7 @@ from typing import Any, Literal
 
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
+from tools.noctus.dev import _worktree_staleness as wts
 
 # ── Severity thresholds (mirror disk-usage-monitor.sh exit-code semantics) ──
 ARTIFACT_WARNING_MB = 2048    # 2 GB
@@ -67,7 +72,7 @@ ARTIFACT_DIR_NAMES = (
 ARTIFACT_FRONTEND_BUILD_NAMES = ("dist", "build", ".next")
 
 _SAFE_GATE = (
-    "sweep deletes ONLY merged-to-main (SHA-ancestry|patch-id) "
+    "sweep deletes ONLY merged-to-dev (SHA-ancestry|patch-id) "
     "worktrees + regenerable artifacts; never uncommitted / "
     "unmerged / main / siblings / .env / migrations. Caller MUST "
     "also confirm no agent is mid-flight in a target worktree. "
@@ -268,8 +273,16 @@ def _classify_worktrees(root: Path) -> list[tuple[str, str, str, str]]:
     worktree_dir = root / ".claude" / "worktrees"
     records: list[tuple[str, str, str, str]] = []
 
-    # Refresh origin/main once for accurate merge detection.
-    _git(root, "fetch", "origin", "main", "--quiet")
+    # Refresh origin/dev once for accurate merge detection. Engineer worktrees
+    # integrate to the dev integration branch, not main
+    # (KB § PATTERNS/branching-and-merging.md § 0).
+    _git(root, "fetch", "origin", "dev", "--quiet")
+
+    # Resolve the merged-base (prefer origin/dev, fall back to dev) + the
+    # merged predicate via the shared _worktree_staleness helper — the single
+    # source of truth shared with noctus.dev.cleanup_stale_worktrees.
+    wts_run = wts.make_subprocess_runner(root, timeout=60)
+    base = wts.resolve_merged_base(wts_run)
 
     # Snapshot main repo stash hashes (THE-P11 shared-stash false positive).
     main_stashes: set[str] = set()
@@ -291,7 +304,7 @@ def _classify_worktrees(root: Path) -> list[tuple[str, str, str, str]]:
         if wt and branch:
             _classify_emit_registered(
                 root, worktree_dir, wt, branch, locked,
-                records, seen_paths, main_stashes,
+                records, seen_paths, main_stashes, wts_run, base,
             )
 
     for line in lines:
@@ -356,6 +369,8 @@ def _classify_emit_registered(
     records: list[tuple[str, str, str, str]],
     seen_paths: set[str],
     main_stashes: set[str],
+    wts_run: wts.GitRunner,
+    base: str,
 ) -> None:
     # Filter: only agent-* worktrees under WORKTREE_DIR. Non-agent paths
     # (main repo, sibling workspaces) ignored entirely.
@@ -371,22 +386,10 @@ def _classify_emit_registered(
     if wt == str(root):
         return
 
-    # Merge check: ancestry OR patch-id (`git cherry`) equivalence. BEFORE
-    # the on-disk check so an unmerged phantom is ACTIVE not PHANTOM.
-    merged = False
-    if _git(
-        root, "merge-base", "--is-ancestor", branch, "origin/main"
-    ).returncode == 0:
-        merged = True
-    else:
-        cherry = _git(root, "cherry", "origin/main", branch)
-        plus_lines = sum(
-            1 for ln in cherry.stdout.splitlines() if ln.startswith("+")
-        )
-        log = _git(root, "log", "--oneline", f"origin/main..{branch}")
-        total = len([ln for ln in log.stdout.splitlines() if ln.strip()])
-        if total > 0 and plus_lines == 0:
-            merged = True
+    # Merge check (shared _worktree_staleness helper): ancestry OR patch-id
+    # (`git cherry`) equivalence vs the dev integration base. BEFORE the
+    # on-disk check so an unmerged phantom is ACTIVE not PHANTOM.
+    merged = wts.is_merged(wts_run, branch, base)
 
     if not merged:
         records.append(
@@ -455,7 +458,7 @@ def _classify_emit_registered(
                 "STALE",
                 wt,
                 branch,
-                "branch merged to origin/main; safe to remove",
+                "branch merged to origin/dev; safe to remove",
             )
         )
 
@@ -707,12 +710,13 @@ def register(server) -> None:
             "removes it — but ONLY with `force=True`; without force it is "
             "a DRY-RUN. SAFE-GATE: never deletes uncommitted / unmerged / "
             "main / sibling / .env / migration content; removes a worktree "
-            "only when its branch is merged-to-main by SHA-ancestry OR "
-            "patch-id. Caller's extra duty: confirm no other agent is "
-            "mid-flight in a target worktree before force-sweeping. Project "
-            "cleanup is the separate noctus.dev.archive tool. Pass "
-            "worktree_path when called from inside a git worktree. See KB "
-            "§ PATTERNS/storage-hygiene.md."
+            "only when its branch is merged-to-dev by SHA-ancestry OR "
+            "patch-id (shares the _worktree_staleness predicate with "
+            "noctus.dev.cleanup_stale_worktrees). Caller's extra duty: "
+            "confirm no other agent is mid-flight in a target worktree "
+            "before force-sweeping. Project cleanup is the separate "
+            "noctus.dev.archive tool. Pass worktree_path when called from "
+            "inside a git worktree. See KB § PATTERNS/storage-hygiene.md."
         ),
     )
     def _mole(

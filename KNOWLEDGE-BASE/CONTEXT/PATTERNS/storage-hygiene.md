@@ -1,6 +1,6 @@
 # Storage hygiene — the `mole` and the trio
 
-> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`; `noctus.dev.mole` is the impl, `cleanup-stale-worktrees.sh` shares the worktree predicate). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`main` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
+> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`); its worktree-scope merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_staleness.py` helper**, consumed identically by `noctus.dev.cleanup_stale_worktrees` (one source of truth — no parity drift). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`dev` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
 
 ---
 
@@ -75,16 +75,18 @@ Each agent has **observation-only scan** (default) + **destructive sweep** (gate
 
 ### 2.3 · Worktrees (stale `.claude/worktrees/agent-*/`)
 
-**Definition**: agent worktree directories under `.claude/worktrees/` whose branch is reachable from `origin/main` by SHA ancestry OR patch-id equivalence (cherry-pick).
+**Definition**: agent worktree directories under `.claude/worktrees/` whose branch is reachable from `origin/dev` by SHA ancestry OR patch-id equivalence (cherry-pick). Engineer worktrees fork from + integrate to the `dev` integration branch, NOT `main` (KB § PATTERNS/branching-and-merging.md § 0) — a merged-to-dev-but-not-yet-blessed-to-main worktree was never swept under the old `origin/main` keying.
+
+This merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_staleness.py` helper** — the single source of truth consumed identically by both `noctus.dev.mole` (worktree scope) and `noctus.dev.cleanup_stale_worktrees`, so changing one can no longer drift the other.
 
 **Patterns**:
-- `.claude/worktrees/agent-<id>/` with branch SHA-merged to origin/main (true merge)
-- `.claude/worktrees/agent-<id>/` with branch commits all present on origin/main by patch-id (cherry-pick — the gap §19 of branching-and-merging.md captures)
+- `.claude/worktrees/agent-<id>/` with branch SHA-merged to origin/dev (true merge)
+- `.claude/worktrees/agent-<id>/` with branch commits all present on origin/dev by patch-id (cherry-pick — the gap §19 of branching-and-merging.md captures)
 - Orphan dirs under `.claude/worktrees/agent-*/` that git doesn't recognize as worktrees (rm'd manually but metadata left)
 
 **Reversibility test**: is the work merged? Either:
-- `git merge-base --is-ancestor <branch> origin/main` ✓ → SHA-merged, safe to remove
-- `git cherry origin/main <branch>` empty `^+` lines ✓ → patch-id merged, safe to remove
+- `git merge-base --is-ancestor <branch> origin/dev` ✓ → SHA-merged, safe to remove
+- `git cherry origin/dev <branch>` empty `^+` lines ✓ → patch-id merged, safe to remove
 - Both fail → UNMERGED, do NOT remove (active work, cherry-pick pending, or stalled engineer)
 
 **Lock detection + "resolve before sweep"**: `git worktree list --porcelain` reports `locked` flag. Cleanup script's `git worktree remove --force` (single force) does NOT break locks. **The mole NEVER auto-`-f -f` past a lock** — locks exist because another process is using the dir (active agent, stale lock, recovery handle). Force-removing a lock could destroy uncommitted work, stashes, or inflight artifacts the agent hadn't yet committed.
@@ -217,7 +219,7 @@ Mirrors `disk-usage-monitor.sh` exit-code semantics:
 1. **Never deletes uncommitted work** — checks `git diff --quiet` and `git diff --cached --quiet` before any destructive op.
 2. **Never deletes the main worktree** — refuses to operate on `$REPO_ROOT` directly.
 3. **Never deletes sibling workspaces** — paths NOT under `.claude/worktrees/agent-*/` are skipped.
-4. **Never deletes unmerged branches** — `git merge-base --is-ancestor` OR `git cherry origin/main <branch>` must confirm reachability.
+4. **Never deletes unmerged branches** — `git merge-base --is-ancestor` OR `git cherry origin/dev <branch>` must confirm reachability (the shared `_worktree_staleness` predicate).
 5. **Never deletes `.env` files** — they contain secrets; always in the deny-list.
 6. **Never deletes migration files** — `products/*/backend/migrations/*.sql` always preserved.
 7. **Always dry-run first when destructive** — `sweep` without `--force` only prints what would be removed.
@@ -303,7 +305,7 @@ The mole is the **only** member of the trio with built-in destructive authority.
 
 **Phase 1 (shipped 2026-05-11)** — script-level mole:
 - `noctus.dev.mole` orchestrator
-- `noctus.dev.cleanup_stale_worktrees` continues to exist; mole delegates worktree-scope to it
+- `noctus.dev.cleanup_stale_worktrees` continues to exist alongside mole's own worktree classifier (originally framed as "mole delegates worktree-scope to it"; **2026-05-24** both were refactored to consume the shared `_worktree_staleness` merged-base + merged predicate — no delegation, one source of truth)
 - KB pattern doc (this file)
 - CLAUDE.md §1 bullet
 - Memory entry `feedback_mole_storage_hygiene.md`
@@ -328,7 +330,7 @@ The mole is the **only** member of the trio with built-in destructive authority.
 
 - §19 of `KB § PATTERNS/branching-and-merging.md` — worktree lifecycle methodology (worktree-scope predecessor)
 - `feedback_worktree_auto_cleanup.md` + `feedback_disk_usage_monitor.md` — memory entries that motivated this
-- `noctus.dev.cleanup_stale_worktrees` — worktree-scope implementation (mole delegates)
+- `noctus.dev.cleanup_stale_worktrees` — sibling worktree-cleanup tool; shares the `tools/noctus/dev/_worktree_staleness.py` merged-base + merged predicate with mole's worktree scope (one source of truth)
 - `noctus.dev.check_disk_usage` — companion (prevention vs the mole's recovery)
 - `KB § PATTERNS/seed-absorption.md § noctus.hound.scan` — hound metaphor parent
 

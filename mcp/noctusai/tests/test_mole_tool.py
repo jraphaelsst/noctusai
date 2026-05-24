@@ -24,7 +24,10 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _init_repo(root: Path) -> None:
-    _git(root, "init", "-q", "-b", "main")
+    # Engineer worktrees integrate to the `dev` integration branch, so the
+    # classifier keys staleness off `origin/dev` (KB § branching-and-merging
+    # § 0). Init on `dev` + provide a self-referential `origin/dev`.
+    _git(root, "init", "-q", "-b", "dev")
     _git(root, "config", "user.email", "t@t.t")
     _git(root, "config", "user.name", "t")
     _git(root, "config", "commit.gpgsign", "false")
@@ -34,7 +37,7 @@ def _init_repo(root: Path) -> None:
     (root / "README.md").write_text("seed\n")
     _git(root, "add", "README.md")
     _git(root, "commit", "-qm", "init")
-    # A self-referential 'origin/main' so merge-base checks resolve offline.
+    # A self-referential 'origin/dev' so merge-base checks resolve offline.
     _git(root, "remote", "add", "origin", str(root))
     _git(root, "fetch", "-q", "origin")
 
@@ -139,8 +142,8 @@ def test_worktree_classifier_categories(tmp_path):
     orphan.mkdir()
     (orphan / "f.txt").write_text("x")
 
-    # STALE: registered worktree whose branch is merged to origin/main
-    # (created from main, no new commits → ancestor of origin/main).
+    # STALE: registered worktree whose branch is merged to origin/dev
+    # (created from dev, no new commits → ancestor of origin/dev).
     stale = wt_dir / "agent-stale"
     _git(root, "worktree", "add", "-q", "-b", "merged-br", str(stale))
 
@@ -244,7 +247,7 @@ def test_result_shape_unchanged_keys(tmp_path):
         "worktrees_stale", "next_action", "safe_gate", "stderr_tail",
     ):
         assert key in out, f"result-shape key missing: {key}"
-    assert "merged-to-main" in out["safe_gate"]
+    assert "merged-to-dev" in out["safe_gate"]
 
 
 def test_unresolvable_root_surfaces_error_never_silent(tmp_path):
