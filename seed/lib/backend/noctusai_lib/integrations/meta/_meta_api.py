@@ -23,6 +23,7 @@ layer, not part of the package's public surface.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -264,6 +265,97 @@ def graph_post(
             http_status=resp.status_code,
         )
     return body
+def poll_media_status(
+    creation_id: str,
+    *,
+    access_token: str,
+    version: str = DEFAULT_GRAPH_VERSION,
+    timeout_seconds: float = 90.0,
+    poll_interval_seconds: float = 2.0,
+    transient_retries: int = 3,
+    sleep=time.sleep,
+) -> "MediaProcessingStatus":
+    """Poll a video / Reel media container until it is publish-ready.
+
+    The IG Reel / FB video publish flow is asynchronous: the container
+    create (``media_type=REELS`` / ``/video_reels``) returns a creation
+    id whose ``status_code`` is ``IN_PROGRESS`` while Graph transcodes.
+    This polls ``GET /{creation-id}?fields=status,status_code`` every
+    ``poll_interval_seconds`` until the status is terminal:
+
+    - ``FINISHED`` (or ``PUBLISHED``) → returns the
+      ``MediaProcessingStatus`` so the caller proceeds to
+      ``media_publish``.
+    - ``ERROR`` / ``EXPIRED`` → raises ``MetaGraphError`` (the transcode
+      failed or the upload window lapsed) — **never** a silent or faked
+      ready signal (no-silent-errors).
+    - timeout (``timeout_seconds`` elapsed without a terminal status) →
+      raises ``MetaGraphError("video_processing_timeout", ...)`` — the
+      poll loop is hard-capped and never blocks indefinitely (the same
+      gated-capability-honesty discipline as the App-Review gate).
+
+    Transient HTTP 5xx during a status read are retried up to
+    ``transient_retries`` times within the overall timeout budget
+    (Graph's status endpoint occasionally 5xx's mid-transcode);
+    permission / auth errors are NOT retried — they re-raise immediately
+    (an unapproved scope or a dead token will not recover by polling).
+
+    ``sleep`` is injected (defaults to ``time.sleep``) so tests drive the
+    loop deterministically with zero wall-clock wait. The Graph boundary
+    itself (``graph_get``) is patched in tests, never this function."""
+
+    from noctusai_lib.integrations.meta.types import MediaProcessingStatus
+
+    deadline = time.monotonic() + timeout_seconds
+    transient_left = transient_retries
+    while True:
+        try:
+            body = graph_get(
+                creation_id,
+                access_token=access_token,
+                params={"fields": "status,status_code"},
+                version=version,
+            )
+        except MetaGraphError as exc:
+            # Permission / auth failures will not recover by polling —
+            # re-raise loud so the App-Review gate / re-consent surfaces.
+            if exc.is_permission or exc.is_auth_error:
+                raise
+            # Transient (5xx / network) — retry within the timeout budget.
+            transient_left -= 1
+            if transient_left < 0 or time.monotonic() >= deadline:
+                raise MetaGraphError(
+                    f"Media container {creation_id} status read failed "
+                    f"after {transient_retries} transient retries: "
+                    f"{exc.message}",
+                    code=exc.code,
+                    http_status=exc.http_status,
+                )
+            sleep(poll_interval_seconds)
+            continue
+        status_code = str(body.get("status_code") or "").upper()
+        result = MediaProcessingStatus(
+            creation_id=creation_id,
+            status_code=status_code,
+            status=body.get("status"),
+            raw=dict(body),
+        )
+        if result.is_error:
+            raise MetaGraphError(
+                f"Media container {creation_id} processing failed "
+                f"(status_code={status_code!r}, status={body.get('status')!r})",
+                code=body.get("code"),
+            )
+        if result.is_finished:
+            return result
+        # Still IN_PROGRESS — wait, then re-poll if there is budget left.
+        if time.monotonic() >= deadline:
+            raise MetaGraphError(
+                f"video_processing_timeout: media container {creation_id} "
+                f"not FINISHED within {timeout_seconds:g}s "
+                f"(last status_code={status_code!r})",
+            )
+        sleep(poll_interval_seconds)
 
 
 # ─── OAuth token chain ────────────────────────────────────────────────────
@@ -412,5 +504,5 @@ __all__ = [
     "graph_get",
     "graph_paged",
     "graph_post",
-    "resolve_oauth_scopes",
+    "poll_media_status", "resolve_oauth_scopes",
 ]

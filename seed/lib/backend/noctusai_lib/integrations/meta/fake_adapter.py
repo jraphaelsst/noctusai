@@ -216,6 +216,64 @@ class FakeMetaAdapter:
         )
         self.published_media.append(media)
         return media
+    def publish_instagram_reel(
+        self,
+        ig_user_id: str,
+        video_url: str,
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        """Deterministic Reel publish — mirrors the Real 3-step async flow
+        but instant-ready (no transcode wait). ``processing_duration_ms``
+        is a small fixed value so consumer code that logs / asserts the
+        field has a stable non-None number. The Fake NEVER raises the
+        App-Review gate — that lives on the live adapter only; the Fake is
+        the "scope already approved + transcode done" path."""
+
+        if not video_url:
+            raise ValueError(
+                "publish_instagram_reel requires a non-empty video_url"
+            )
+        self._media_seq += 1
+        media = PublishedMedia(
+            id=f"{ig_user_id}_reel_{self._media_seq}",
+            ig_user_id=ig_user_id,
+            container_id=f"{ig_user_id}_reel_container_{self._media_seq}",
+            caption=caption,
+            permalink=f"https://instagram.com/reel/{ig_user_id}_{self._media_seq}",
+            processing_duration_ms=0,
+        )
+        self.published_media.append(media)
+        return media
+
+    def publish_facebook_video(
+        self,
+        page_id: str,
+        video_url: str,
+        description: str | None = None,
+        *,
+        as_reel: bool = False,
+    ) -> PublishedPost:
+        """Deterministic FB Page video / Reel publish — mirrors the Real
+        method's ``as_reel`` discriminator, instant-ready. Records on
+        ``published_posts``. The Fake never raises the App-Review gate."""
+
+        if not video_url:
+            raise ValueError(
+                "publish_facebook_video requires a non-empty video_url"
+            )
+        self._post_seq += 1
+        kind = "reel" if as_reel else "video"
+        post = PublishedPost(
+            id=f"{page_id}_{kind}_{self._post_seq}",
+            page_id=page_id,
+            message=description,
+            permalink_url=(
+                f"https://facebook.com/{page_id}/{kind}/{self._post_seq}"
+            ),
+            processing_duration_ms=0,
+        )
+        self.published_posts.append(post)
+        return post
 
     def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:
         acct = (

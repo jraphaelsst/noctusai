@@ -44,6 +44,8 @@ don't infer from the Protocol).
 | `InstagramMedia` | An IG media item (read) |
 | `PostInsights` | Per-post engagement metrics |
 | `MetaConnectionStatus` | `status()` return — `auth_mode` discriminator surfaced here |
+| `PublishedMedia` / `PublishedPost` | Publish results; `processing_duration_ms` populated on the video / Reel path |
+| `MediaProcessingStatus` | One reading of a video / Reel container's async processing state (`is_finished` / `is_error`); returned by `poll_media_status` |
 
 ### Contract + adapters
 | Symbol | Role |
@@ -53,7 +55,7 @@ don't infer from the Protocol).
 | `get_meta_adapter(...)` | **Factory** — auth-resolution priority (§3) |
 
 **Publish methods on `MetaAdapter`** (added 2026-05-16, carousel added
-2026-05-20):
+2026-05-20, video / Reels added 2026-05-24):
 - `publish_facebook_post(page_id, message, link=None, photo_url=None)` →
   `PublishedPost`. Single-step `POST /{page-id}/feed` (text) or
   `POST /{page-id}/photos` (when `photo_url` given). Production needs
@@ -67,6 +69,29 @@ don't infer from the Protocol).
   (`media_type=CAROUSEL`, `children=<csv>`) → `media_publish`. 2-10
   children enforced client-side (loud `ValueError` outside bounds). Same
   scope as single-publish.
+- `publish_instagram_reel(ig_user_id, video_url, caption=None)` →
+  `PublishedMedia`. **Asynchronous** 3-step: `POST /{ig-user}/media`
+  with `media_type=REELS` + `video_url` → container; poll
+  `poll_media_status(creation_id)` until `FINISHED` (hard-capped 90s,
+  raises on `ERROR` / `EXPIRED` / timeout); `media_publish`.
+  `processing_duration_ms` records the transcode wait. Same
+  `instagram_content_publish` scope as image publish.
+- `publish_facebook_video(page_id, video_url, description=None, *, as_reel=False)` →
+  `PublishedPost`. `as_reel=False` → `POST /{page-id}/videos` (`file_url`,
+  synchronous unless Graph returns an `IN_PROGRESS` container, then it
+  polls); `as_reel=True` → `POST /{page-id}/video_reels` start → poll →
+  finish (`video_state=PUBLISHED`). Production needs the Page write scope
+  (`pages_manage_posts`, plus the Reels-publishing capability for
+  `as_reel=True`) through Meta App Review.
+
+`poll_media_status(creation_id, *, access_token, version=..., timeout_seconds=90, poll_interval_seconds=2, transient_retries=3, sleep=time.sleep)`
+(in `meta._meta_api`) is the resumable-upload status poll the video /
+Reel methods share: polls `GET /{creation-id}?fields=status,status_code`
+until `FINISHED`, raises `MetaGraphError` on `ERROR` / `EXPIRED` /
+timeout (`video_processing_timeout`), retries transient 5xx within the
+budget, and re-raises permission / auth errors immediately (an
+unapproved scope will not recover by polling). `sleep` is injected so
+tests drive the loop with zero wall-clock wait.
 
 When the active token lacks the gated scope, the live adapter raises
 `MetaGraphError` with `requires_app_review=True` — never a silent or
@@ -201,7 +226,7 @@ pattern, `CONTEXT/PATTERNS/backend.md`).
 | FB Page **post** / IG **publish** (write scopes) | **SHIPS** (`publish_facebook_post` / `publish_instagram_media` / `publish_instagram_carousel`) — live behind Meta App Review for production | First consumer: `products/social-wiring/backend/app/modules/media_creation/services/publish_service.py` (carousel + single + FB photo). Surfaces 422 + `meta_scope_pending_app_review` when the App Review gate trips at request time |
 | Ads / Insights beyond per-post `PostInsights` | **SHIPS** — read campaigns + ad-insights; full management surface (campaign create/update) ships separately via `meta.ads_management` | See `tests/integrations/meta/test_meta_ads_management.py` |
 | Webhook subscriptions (Page/IG change events) | out-of-scope | Separate future `integrations/meta/webhooks/` module |
-| Video / Reels publish | out-of-scope v1 — different Graph flow (resumable upload + processing-status poll) | Additive extension on the same Protocol; surface a `meta-video-publish` follow-up when a consumer needs it |
+| Video / Reels publish | **SHIPS** (`publish_instagram_reel` / `publish_facebook_video` — async resumable-upload + `poll_media_status` processing poll) — same App Review scope as image publish (`instagram_content_publish` for IG Reels; `pages_manage_posts` + Reels capability for FB) | Seed extension shipped 2026-05-24 (`projects/meta-video-reels-publish`). **Consumer wiring is the remaining thin step**: `social-wiring/media_creation/services/publish_service.py` extends with `target='instagram_reel'` / `'facebook_video'` / `'facebook_reel'` + widens the `mc_posts.published_target` CHECK constraint — gated on a `format='video'` consumer surfacing |
 | TikTok | n/a — different vendor | Separate future `integrations/tiktok/` module |
 | OAuth start/callback router | **not duplicated by design** | Consume `noctusai_lib.security.oauth` as-is |
 

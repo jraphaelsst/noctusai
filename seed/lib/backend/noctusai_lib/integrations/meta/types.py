@@ -131,12 +131,20 @@ class PublishedPost:
     (or `{"post_id": ...}` for some object kinds). `id` is the
     composite post id; `permalink_url` is populated only when the
     follow-up read succeeds (best-effort — publish success does not
-    depend on it)."""
+    depend on it).
+
+    `processing_duration_ms` is populated only for the **video / Reel**
+    publish path (the asynchronous resumable-upload flow that polls a
+    processing-status container until `FINISHED`) — it records the
+    wall-clock the Real adapter spent waiting on Graph to transcode, so
+    a consumer can log / surface slow renders. It stays `None` for the
+    synchronous text / link / photo path (no processing wait)."""
 
     id: str
     page_id: str
     message: str | None = None
     permalink_url: str | None = None
+    processing_duration_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -147,13 +155,54 @@ class PublishedMedia:
     a media *container* (returns a creation id), then `POST
     /{ig-user}/media_publish` publishes it (returns the final media
     id). `container_id` is kept for debugging / retry; `id` is the
-    published media id."""
+    published media id.
+
+    `processing_duration_ms` is populated only for the **Reel** publish
+    path (`media_type=REELS` — an asynchronous resumable-upload flow
+    that polls the container's `status_code` until `FINISHED` before
+    `media_publish`). It records the wall-clock the Real adapter spent
+    waiting on Graph to transcode the video, so a consumer can log /
+    surface slow renders. It stays `None` for the synchronous image /
+    carousel path (no processing wait)."""
 
     id: str
     ig_user_id: str
     container_id: str | None = None
     caption: str | None = None
     permalink: str | None = None
+    processing_duration_ms: int | None = None
+@dataclass(frozen=True)
+class MediaProcessingStatus:
+    """One reading of a video / Reel media container's processing state.
+
+    The video publish flow is asynchronous: ``POST .../media`` (or
+    ``.../video_reels``) returns a container creation id whose
+    ``status_code`` is ``IN_PROGRESS`` while Graph transcodes. The
+    publisher polls ``GET /{creation-id}?fields=status_code`` until it
+    flips to ``FINISHED`` (publish-ready), ``ERROR`` (transcode failed
+    — raise), or ``EXPIRED``. ``is_finished`` / ``is_error`` let the
+    poll loop branch deterministically; ``raw`` keeps the original
+    ``status`` envelope (Graph sometimes returns a richer ``status``
+    string alongside the coarse ``status_code``)."""
+
+    creation_id: str
+    status_code: str  # IN_PROGRESS | FINISHED | ERROR | EXPIRED | PUBLISHED
+    status: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_finished(self) -> bool:
+        """Ready to publish — ``status_code`` is ``FINISHED`` (or already
+        ``PUBLISHED``, a no-op-safe terminal state)."""
+
+        return self.status_code in ("FINISHED", "PUBLISHED")
+
+    @property
+    def is_error(self) -> bool:
+        """Transcode failed (``ERROR``) or the upload window lapsed
+        (``EXPIRED``) — a terminal failure the poll loop raises on."""
+
+        return self.status_code in ("ERROR", "EXPIRED")
 
 
 @dataclass(frozen=True)
@@ -336,11 +385,15 @@ class MetaAdapter(Protocol):
     `auth_mode` mirrors `MetaConnectionStatus.auth_mode`. The contract
     carries both the read surface and the write/ads surface
     (`publish_facebook_post`, `publish_instagram_media`,
-    `list_ad_campaigns`, `ad_insights`) — the write methods were added
-    additively; pre-existing read callers are unaffected. On the live
-    adapter the write/ads methods raise `MetaGraphError` with
-    `requires_app_review` set when the gated scope is absent (never a
-    silent or faked success)."""
+    `publish_instagram_carousel`, `publish_instagram_reel`,
+    `publish_facebook_video`, `list_ad_campaigns`, `ad_insights`) — the
+    write methods were added additively; pre-existing read callers are
+    unaffected. The video / Reel methods use a different Graph contract
+    than the image methods (asynchronous resumable upload + a
+    processing-status poll until `FINISHED`) but the same typed error
+    model. On the live adapter the write/ads methods raise
+    `MetaGraphError` with `requires_app_review` set when the gated scope
+    is absent (never a silent or faked success)."""
 
     auth_mode: str
 
@@ -391,6 +444,21 @@ class MetaAdapter(Protocol):
         image_urls: list[str],
         caption: str | None = None,
     ) -> PublishedMedia: ...
+    def publish_instagram_reel(
+        self,
+        ig_user_id: str,
+        video_url: str,
+        caption: str | None = None,
+    ) -> PublishedMedia: ...
+
+    def publish_facebook_video(
+        self,
+        page_id: str,
+        video_url: str,
+        description: str | None = None,
+        *,
+        as_reel: bool = False,
+    ) -> PublishedPost: ...
 
     def list_ad_campaigns(
         self, ad_account_id: str
@@ -443,6 +511,7 @@ __all__ = [
     "FacebookPost",
     "InstagramAccount",
     "InstagramMedia",
+    "MediaProcessingStatus",
     "MetaAdapter",
     "MetaConnectionStatus",
     "PostInsights",

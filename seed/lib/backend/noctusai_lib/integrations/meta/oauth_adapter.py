@@ -42,6 +42,7 @@ deployment gate, not a reason to defer the code (exactly how
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from noctusai_lib.integrations.meta import _meta_api
@@ -565,6 +566,232 @@ class MetaOAuthAdapter:
             container_id=container_id,
             caption=caption,
             permalink=permalink,
+        )
+    def publish_instagram_reel(
+        self,
+        ig_user_id: str,
+        video_url: str,
+        caption: str | None = None,
+    ) -> PublishedMedia:
+        """Publish an Instagram Reel — the 3-step asynchronous Graph flow.
+
+        Reels (and IG video generally) do NOT publish synchronously like
+        images. Step 1 ``POST /{ig-user}/media`` with ``media_type=REELS``
+        + ``video_url`` (+ optional ``caption``) creates a media
+        *container* whose ``status_code`` starts ``IN_PROGRESS`` while
+        Graph downloads + transcodes the video. Step 2 polls
+        ``GET /{creation-id}?fields=status,status_code`` until ``FINISHED``
+        (``poll_media_status`` — hard-capped at 90s, raises on ``ERROR`` /
+        ``EXPIRED`` / timeout). Step 3 ``POST /{ig-user}/media_publish``
+        (``creation_id``) → the published media id.
+
+        ``processing_duration_ms`` on the returned ``PublishedMedia``
+        records the wall-clock spent waiting on the transcode so the
+        consumer can log / surface slow renders.
+
+        **Production gate:** ``instagram_content_publish`` is App-Review-
+        gated (the same scope that gates image / carousel publish). Absent
+        it the container-create call raises ``MetaGraphError`` with
+        ``requires_app_review`` true — never a faked success. The 3-step
+        flow is fully implemented and runs end-to-end the moment the scope
+        is approved."""
+
+        if not video_url:
+            raise ValueError(
+                "publish_instagram_reel requires a non-empty video_url"
+            )
+        token = self._user_token()
+        create_data: dict[str, Any] = {
+            "media_type": "REELS",
+            "video_url": video_url,
+        }
+        if caption is not None:
+            create_data["caption"] = caption
+        created = _meta_api.graph_post(
+            f"{ig_user_id}/media",
+            access_token=token,
+            data=create_data,
+            version=self._version,
+        )
+        container_id = str(created.get("id") or "")
+        if not container_id:
+            raise MetaGraphError(
+                f"IG Reel container creation for {ig_user_id} "
+                "returned no creation id",
+                code=200,
+            )
+        started = time.monotonic()
+        _meta_api.poll_media_status(
+            container_id,
+            access_token=token,
+            version=self._version,
+        )
+        processing_ms = int((time.monotonic() - started) * 1000)
+        published = _meta_api.graph_post(
+            f"{ig_user_id}/media_publish",
+            access_token=token,
+            data={"creation_id": container_id},
+            version=self._version,
+        )
+        media_id = str(published.get("id") or "")
+        if not media_id:
+            raise MetaGraphError(
+                f"IG Reel media_publish for container {container_id} "
+                "returned no media id",
+                code=200,
+            )
+        permalink: str | None = None
+        try:
+            detail = _meta_api.graph_get(
+                media_id,
+                access_token=token,
+                params={"fields": "permalink"},
+                version=self._version,
+            )
+            permalink = detail.get("permalink")
+        except MetaGraphError as exc:
+            logger.warning(
+                "IG Reel %s published; permalink read-back failed: %s",
+                media_id,
+                exc,
+            )
+        return PublishedMedia(
+            id=media_id,
+            ig_user_id=ig_user_id,
+            container_id=container_id,
+            caption=caption,
+            permalink=permalink,
+            processing_duration_ms=processing_ms,
+        )
+
+    def publish_facebook_video(
+        self,
+        page_id: str,
+        video_url: str,
+        description: str | None = None,
+        *,
+        as_reel: bool = False,
+    ) -> PublishedPost:
+        """Publish a video (or Reel) to a Facebook Page.
+
+        Two endpoint families share one method via the ``as_reel``
+        discriminator (Open Question #2 — unified flag, same Protocol
+        shape):
+
+        - ``as_reel=False`` (default) → ``POST /{page-id}/videos`` with
+          ``file_url`` (Graph fetches the hosted asset) + ``description``.
+          The Page video endpoint returns the video id synchronously;
+          some Pages still report an ``IN_PROGRESS`` container, so when a
+          processing container is returned this polls it to ``FINISHED``
+          (``poll_media_status``) before returning.
+        - ``as_reel=True`` → ``POST /{page-id}/video_reels`` — the FB
+          Reel surface, which is always asynchronous: create the
+          container, poll its ``status_code`` to ``FINISHED``, then
+          ``POST /{page-id}/video_reels`` again with
+          ``video_state=PUBLISHED`` to finalize.
+
+        ``processing_duration_ms`` on the returned ``PublishedPost``
+        records the wall-clock the transcode poll spent (``None`` if the
+        endpoint returned a ready id with no poll).
+
+        **Production gate:** FB Page video / Reel posting needs the Page
+        write scope approved through Meta App Review (``pages_manage_posts``
+        plus, for Reels, the Reels-publishing capability). Absent it the
+        create call raises ``MetaGraphError`` with ``requires_app_review``
+        true — never a faked success."""
+
+        if not video_url:
+            raise ValueError(
+                "publish_facebook_video requires a non-empty video_url"
+            )
+        token = self._page_token(page_id)
+        started = time.monotonic()
+        processing_ms: int | None = None
+        if as_reel:
+            # FB Reel — always async: create container, poll, finalize.
+            create_data: dict[str, Any] = {
+                "upload_phase": "start",
+                "video_url": video_url,
+            }
+            if description is not None:
+                create_data["description"] = description
+            created = _meta_api.graph_post(
+                f"{page_id}/video_reels",
+                access_token=token,
+                data=create_data,
+                version=self._version,
+            )
+            video_id = str(created.get("video_id") or created.get("id") or "")
+            if not video_id:
+                raise MetaGraphError(
+                    f"FB Reel container creation for {page_id} "
+                    "returned no video id",
+                    code=200,
+                )
+            _meta_api.poll_media_status(
+                video_id,
+                access_token=token,
+                version=self._version,
+            )
+            processing_ms = int((time.monotonic() - started) * 1000)
+            _meta_api.graph_post(
+                f"{page_id}/video_reels",
+                access_token=token,
+                data={
+                    "video_id": video_id,
+                    "upload_phase": "finish",
+                    "video_state": "PUBLISHED",
+                },
+                version=self._version,
+            )
+            post_id = video_id
+        else:
+            create_data = {"file_url": video_url}
+            if description is not None:
+                create_data["description"] = description
+            created = _meta_api.graph_post(
+                f"{page_id}/videos",
+                access_token=token,
+                data=create_data,
+                version=self._version,
+            )
+            post_id = str(created.get("id") or "")
+            if not post_id:
+                raise MetaGraphError(
+                    f"FB Page video publish to {page_id} returned no id",
+                    code=200,
+                )
+            # Some Pages return an IN_PROGRESS container even on /videos;
+            # poll only when Graph signals processing is still pending.
+            status_code = str(created.get("status_code") or "").upper()
+            if status_code and status_code not in ("FINISHED", "PUBLISHED", "READY"):
+                _meta_api.poll_media_status(
+                    post_id,
+                    access_token=token,
+                    version=self._version,
+                )
+                processing_ms = int((time.monotonic() - started) * 1000)
+        permalink: str | None = None
+        try:
+            detail = _meta_api.graph_get(
+                post_id,
+                access_token=token,
+                params={"fields": "permalink_url"},
+                version=self._version,
+            )
+            permalink = detail.get("permalink_url")
+        except MetaGraphError as exc:
+            logger.warning(
+                "FB video %s published; permalink read-back failed: %s",
+                post_id,
+                exc,
+            )
+        return PublishedPost(
+            id=post_id,
+            page_id=page_id,
+            message=description,
+            permalink_url=permalink,
+            processing_duration_ms=processing_ms,
         )
 
     def list_ad_campaigns(self, ad_account_id: str) -> list[AdCampaign]:

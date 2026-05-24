@@ -11,10 +11,14 @@ account). Sibling to `google_calendar/`, `google_maps/`,
 **What ships:**
 - Value objects: `FacebookPage`, `InstagramAccount`, `FacebookPost`,
   `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`,
-  `PublishedPost`, `PublishedMedia`, `AdCampaign`, `AdInsights`.
+  `PublishedPost`, `PublishedMedia`, `MediaProcessingStatus`,
+  `AdCampaign`, `AdInsights`.
 - Contract: `MetaAdapter` (Protocol) — read surface + write/ads
-  surface (publish FB post / publish IG media / list ad campaigns /
-  ad insights).
+  surface (publish FB post / IG media / IG carousel / IG Reel /
+  FB video+Reel / list ad campaigns / ad insights). Video / Reel
+  publish uses the asynchronous resumable-upload + processing-status
+  poll contract (`poll_media_status`), distinct from the synchronous
+  image flow but with the same typed error model.
 - `FakeMetaAdapter` — deterministic in-memory; dev/test default.
 - `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
   (production; required for Business-Portfolio-owned assets) →
@@ -62,7 +66,7 @@ from noctusai_lib.integrations.meta._meta_api import (
     discover_app_permissions,
     exchange_code_for_token,
     exchange_for_long_lived,
-    resolve_oauth_scopes,
+    poll_media_status, resolve_oauth_scopes,
 )
 from noctusai_lib.integrations.meta.credentials import (
     MetaCredentialResolver,
@@ -85,7 +89,7 @@ from noctusai_lib.integrations.meta.types import (
     FacebookPost,
     InstagramAccount,
     InstagramMedia,
-    MetaAdapter,
+    MediaProcessingStatus, MetaAdapter,
     MetaConnectionStatus,
     PostInsights,
     PublishedMedia,
@@ -122,7 +126,7 @@ def get_meta_adapter(
     per-product resolver bridge). Ignored when `resolver` is given.
     """
 
-    from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION
+    from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION, poll_media_status
     from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
     version = graph_version or DEFAULT_GRAPH_VERSION
@@ -154,7 +158,7 @@ __all__ = [
     "InstagramAccount",
     "InstagramMedia",
     "META_KITCHEN_SINK_SCOPES",
-    "MetaAdapter",
+    "MediaProcessingStatus", "MetaAdapter",
     "MetaConnectionStatus",
     "MetaCredentialResolver",
     "MetaGraphError",
@@ -173,5 +177,5 @@ __all__ = [
     "page_from_body",
     "parse_graph_datetime",
     "post_from_body",
-    "resolve_oauth_scopes",
+    "poll_media_status", "resolve_oauth_scopes",
 ]

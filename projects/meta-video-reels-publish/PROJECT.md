@@ -3,8 +3,8 @@
 > **Filed 2026-05-20** as the **§2.13a class-1 external-blocker** follow-up to `media-creator-w2-4` close-out. User explicitly authorized filing because the blocker is structural: the Meta video / Reels publish flow uses a different Graph contract (resumable upload + async processing-status poll) than the image publish flow, AND no consumer has yet surfaced a "we need to publish a video" requirement. Self-contained (durable-docs rule). Symbol-first authoring per `KB § PATTERNS/doc-symbology.md`.
 
 - **Created:** 2026-05-20
-- **Last updated:** 2026-05-20
-- **Status:** 📋 **FILED** — awaits dispatch when a consumer surfaces (or when `media_creation` extends to `format='video'` end-to-end).
+- **Last updated:** 2026-05-24
+- **Status:** ⏳ **SEED SHIPPED** (Phases 1+2+4 done 2026-05-24) — Protocol+Fake+Real+poll helper+tests+KB live in `noctusai_lib.integrations.meta`. Phase 3 (consumer wiring in `social-wiring/media_creation/publish_service.py`) is the remaining thin step, gated on a `format='video'` consumer surfacing.
 - **Owner / stakeholders:** USER (joaoraphaelsst) · architect
 - **Related docs:**
   - `KB § INTEGRATIONS/meta.md` § publish methods (the image-publish surface this extends)
@@ -86,26 +86,26 @@ The image-publish surface (`publish_facebook_post` / `publish_instagram_media` /
 
 ## 6. Implementation phases (when executed)
 
-### Phase 1 — Seed extension (Protocol + Fake)
-- [ ] Add Protocol methods on `MetaAdapter` (`publish_instagram_reel`, `publish_facebook_video`).
-- [ ] Implement on `FakeMetaAdapter` (deterministic, instant-ready, records on existing `published_media` / `published_posts` lists).
-- [ ] Fake tests: records-call + bounds (empty video_url rejected).
+### Phase 1 — Seed extension (Protocol + Fake) ✅
+- [x] Add Protocol methods on `MetaAdapter` (`publish_instagram_reel`, `publish_facebook_video`).
+- [x] Implement on `FakeMetaAdapter` (deterministic, instant-ready, records on existing `published_media` / `published_posts` lists).
+- [x] Fake tests: records-call + bounds (empty video_url rejected).
 
-### Phase 2 — Real adapter + polling helper
-- [ ] Implement `_meta_api.poll_media_status(creation_id, *, token, timeout_seconds=90, poll_interval_seconds=2)`.
-- [ ] Implement `MetaOAuthAdapter.publish_instagram_reel` (3-step: `media_type=REELS` container → poll → `media_publish`).
-- [ ] Implement `MetaOAuthAdapter.publish_facebook_video` (2-step or 3-step depending on FB Reel vs Video).
-- [ ] Real tests: happy path with mocked `_meta_api.graph_post` / `graph_get` cycles · timeout path · `ERROR` status path · scope-absent path.
+### Phase 2 — Real adapter + polling helper ✅
+- [x] Implement `_meta_api.poll_media_status(creation_id, *, access_token, timeout_seconds=90, poll_interval_seconds=2, transient_retries=3, sleep=time.sleep)`.
+- [x] Implement `MetaOAuthAdapter.publish_instagram_reel` (3-step: `media_type=REELS` container → poll → `media_publish`).
+- [x] Implement `MetaOAuthAdapter.publish_facebook_video` (unified `as_reel` flag: `/videos` synchronous-or-poll vs `/video_reels` start→poll→finish).
+- [x] Real tests: happy path (mocked `httpx.get`/`httpx.post` cycles) · timeout path · `ERROR`/`EXPIRED` status path · scope-absent (`requires_app_review`) path · transient-5xx-retry path.
 
-### Phase 3 — Consumer wiring (gated on N≥1 consumer)
-- [ ] Extend `social-wiring/media_creation/services/publish_service.py` with new target enums.
+### Phase 3 — Consumer wiring (gated on N≥1 consumer) ⏳ REMAINING
+- [ ] Extend `social-wiring/media_creation/services/publish_service.py` with new target enums (`instagram_reel` / `facebook_video` / `facebook_reel`). **The remaining thin step** — deferred here because (a) the project's own gate ("awaits a consumer", N=0 video-output pipeline) and (b) Engineer E was concurrently refactoring `products/social-wiring/` backend (file-disjoint discipline).
 - [ ] Widen `mc_posts.published_target` CHECK constraint via additive migration.
 - [ ] Consumer tests: 422 unsupported-target (only `'video'` format), 200 fake-path, persisted state.
 
-### Phase 4 — Three-way sync
-- [ ] `KB § INTEGRATIONS/meta.md` §1 publish-methods table extended.
-- [ ] `KB § INTEGRATIONS/meta.md` §5 video / Reels row updated from "out-of-scope v1" → "ships, behind same App Review scope".
-- [ ] Memory note: `feedback_meta_video_reels_publish_shipped`.
+### Phase 4 — Three-way sync ✅ (seed half)
+- [x] `KB § INTEGRATIONS/meta.md` §1 publish-methods section extended (2 video methods + `poll_media_status`) + value-objects table (`MediaProcessingStatus`).
+- [x] `KB § INTEGRATIONS/meta.md` §5 video / Reels row updated "out-of-scope v1" → **SHIPS** (behind same App Review scope).
+- [ ] Memory note `feedback_meta_video_reels_publish_shipped` — architect-side (engineers do not touch `memory/` / `MEMORY.md`).
 
 ---
 
@@ -151,4 +151,5 @@ Per the inline-cutoff rule: this is too large to inline-dispatch in a sibling cl
 
 | Date | Entry | By |
 |---|---|---|
+| 2026-05-24 | Seed extension shipped (Phases 1+2+4): `publish_instagram_reel` + `publish_facebook_video` (Protocol+Fake+Real) + `poll_media_status` async-poll helper + `MediaProcessingStatus` value object + `processing_duration_ms` on `PublishedMedia`/`PublishedPost` + 19 new seed tests (107 meta-dir tests green) + KB §1/§5 sync. Phase 3 consumer wiring is the remaining thin step (gated on a `format='video'` consumer + file-disjoint from concurrent social-wiring refactor). | Engineer F |
 | 2026-05-20 | Filed per user's explicit request as a class-1 external-blocker follow-up to `media-creator-w2-4` close-out. The image-publish surface is live; video / Reels uses a structurally different Graph contract (resumable upload + processing-status poll) and has N=0 consumers today. | Architect |

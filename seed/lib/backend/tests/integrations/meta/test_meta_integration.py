@@ -840,6 +840,9 @@ class TestReadPathRegression:
             "get_instagram_media_insights",
             "publish_facebook_post",
             "publish_instagram_media",
+            "publish_instagram_carousel",
+            "publish_instagram_reel",
+            "publish_facebook_video",
             "list_ad_campaigns",
             "ad_insights",
         )
@@ -848,3 +851,279 @@ class TestReadPathRegression:
                 assert callable(getattr(impl, name)), (
                     f"{type(impl).__name__} missing {name}"
                 )
+
+
+# ─── TestPollMediaStatus ──────────────────────────────────────────────────
+
+
+class TestPollMediaStatus:
+    """The resumable-upload processing-status poll helper — the new
+    contract shape video / Reel publish needs. External Graph boundary
+    mocked (httpx.get patched); `sleep` injected so the loop runs with
+    zero wall-clock wait."""
+
+    def test_polls_until_finished(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        get_resps = [
+            _FakeResponse({"status_code": "IN_PROGRESS"}),
+            _FakeResponse({"status_code": "IN_PROGRESS"}),
+            _FakeResponse({"status_code": "FINISHED", "status": "ready"}),
+        ]
+        sleeps: list = []
+        with patch.object(httpx, "get", side_effect=get_resps):
+            res = poll_media_status(
+                "CONT1",
+                access_token="TOK",
+                poll_interval_seconds=0.01,
+                sleep=lambda s: sleeps.append(s),
+            )
+        assert res.creation_id == "CONT1"
+        assert res.status_code == "FINISHED"
+        assert res.is_finished is True
+        assert len(sleeps) == 2
+
+    def test_finished_immediately_no_sleep(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"status_code": "FINISHED"})
+        ):
+            res = poll_media_status(
+                "CONT1", access_token="TOK", sleep=lambda s: pytest.fail("slept")
+            )
+        assert res.is_finished is True
+
+    def test_error_status_raises(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        with patch.object(
+            httpx,
+            "get",
+            return_value=_FakeResponse(
+                {"status_code": "ERROR", "status": "transcode failed"}
+            ),
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                poll_media_status("CONT1", access_token="TOK")
+        assert "processing failed" in str(exc.value)
+
+    def test_expired_status_raises(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"status_code": "EXPIRED"})
+        ):
+            with pytest.raises(MetaGraphError):
+                poll_media_status("CONT1", access_token="TOK")
+
+    def test_timeout_raises_typed(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"status_code": "IN_PROGRESS"})
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                poll_media_status(
+                    "CONT1",
+                    access_token="TOK",
+                    timeout_seconds=0.0,
+                    sleep=lambda s: None,
+                )
+        assert "video_processing_timeout" in str(exc.value)
+
+    def test_permission_error_not_retried(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        perm = {"error": {"message": "no scope", "code": 200}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(perm)):
+            with pytest.raises(MetaGraphError) as exc:
+                poll_media_status(
+                    "CONT1", access_token="TOK", sleep=lambda s: None
+                )
+        assert exc.value.requires_app_review is True
+
+    def test_transient_5xx_retried_then_succeeds(self):
+        from noctusai_lib.integrations.meta._meta_api import poll_media_status
+
+        get_resps = [
+            _FakeResponse("<html>503</html>", status_code=503, is_text=True),
+            _FakeResponse({"status_code": "FINISHED"}),
+        ]
+        with patch.object(httpx, "get", side_effect=get_resps):
+            res = poll_media_status(
+                "CONT1", access_token="TOK", sleep=lambda s: None
+            )
+        assert res.is_finished is True
+
+
+# ─── TestVideoReelPublish ─────────────────────────────────────────────────
+
+
+class TestVideoReelPublish:
+    """Video / IG Reel publish — the asynchronous resumable-upload +
+    processing-status-poll surface. Fake = instant-ready; Real = full
+    3-step Graph flow with the boundary (`httpx.get` / `httpx.post`)
+    mocked, `sleep` injected for the poll. The App-Review gate is honest
+    on the Real path; the Fake is the 'scope approved' path."""
+
+    def _pages_body(self):
+        return {
+            "data": [{"id": "P1", "name": "Page1", "access_token": "PT1"}],
+            "paging": {},
+        }
+
+    def test_fake_publish_instagram_reel_records(self):
+        fake = FakeMetaAdapter()
+        m = fake.publish_instagram_reel("IG1", "https://cdn/r.mp4", "cap")
+        assert m.id == "IG1_reel_1"
+        assert m.container_id == "IG1_reel_container_1"
+        assert m.caption == "cap"
+        assert m.processing_duration_ms == 0
+        assert fake.published_media == [m]
+
+    def test_fake_publish_facebook_video_records(self):
+        fake = FakeMetaAdapter()
+        v = fake.publish_facebook_video("P1", "https://cdn/v.mp4", "desc")
+        assert v.id == "P1_video_1"
+        assert v.message == "desc"
+        assert fake.published_posts == [v]
+
+    def test_fake_publish_facebook_reel_distinct_id(self):
+        fake = FakeMetaAdapter()
+        r = fake.publish_facebook_video("P1", "https://cdn/v.mp4", as_reel=True)
+        assert r.id == "P1_reel_1"
+        assert "/reel/" in r.permalink_url
+
+    def test_fake_video_methods_reject_empty_url(self):
+        fake = FakeMetaAdapter()
+        with pytest.raises(ValueError, match="non-empty video_url"):
+            fake.publish_instagram_reel("IG1", "")
+        with pytest.raises(ValueError, match="non-empty video_url"):
+            fake.publish_facebook_video("P1", "")
+
+    def test_real_publish_instagram_reel_happy_path(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        post_resps = [
+            _FakeResponse({"id": "CONT1"}),
+            _FakeResponse({"id": "MED1"}),
+        ]
+        get_resps = [
+            _FakeResponse({"status_code": "IN_PROGRESS"}),
+            _FakeResponse({"status_code": "FINISHED"}),
+            _FakeResponse({"permalink": "https://ig/reel/MED1"}),
+        ]
+        with patch.object(
+            httpx, "post", side_effect=post_resps
+        ), patch.object(httpx, "get", side_effect=get_resps), patch(
+            "noctusai_lib.integrations.meta._meta_api.time.sleep",
+            lambda s: None,
+        ):
+            out = a.publish_instagram_reel("IG1", "https://cdn/r.mp4", "cap")
+        assert out.id == "MED1"
+        assert out.container_id == "CONT1"
+        assert out.permalink == "https://ig/reel/MED1"
+        assert out.processing_duration_ms is not None
+        assert out.processing_duration_ms >= 0
+
+    def test_real_publish_instagram_reel_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        perm_err = {
+            "error": {
+                "message": "(#10) instagram_content_publish not granted",
+                "code": 10,
+                "type": "OAuthException",
+            }
+        }
+        with patch.object(httpx, "post", return_value=_FakeResponse(perm_err)):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_instagram_reel("IG1", "https://cdn/r.mp4")
+        assert exc.value.requires_app_review is True
+
+    def test_real_publish_instagram_reel_processing_error_raises(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "CONT1"})
+        ), patch.object(
+            httpx, "get", return_value=_FakeResponse({"status_code": "ERROR"})
+        ), patch(
+            "noctusai_lib.integrations.meta._meta_api.time.sleep",
+            lambda s: None,
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_instagram_reel("IG1", "https://cdn/r.mp4")
+        assert "processing failed" in str(exc.value)
+
+    def test_real_publish_instagram_reel_validates_empty_url(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with pytest.raises(ValueError, match="non-empty video_url"):
+            a.publish_instagram_reel("IG1", "")
+
+    def test_real_publish_facebook_video_happy_path(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(self._pages_body())
+        ):
+            a.list_facebook_pages()
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "VID9"})
+        ), patch.object(
+            httpx,
+            "get",
+            return_value=_FakeResponse({"permalink_url": "https://fb/VID9"}),
+        ):
+            out = a.publish_facebook_video("P1", "https://cdn/v.mp4", "desc")
+        assert out.id == "VID9"
+        assert out.page_id == "P1"
+        assert out.message == "desc"
+        assert out.permalink_url == "https://fb/VID9"
+        assert out.processing_duration_ms is None
+
+    def test_real_publish_facebook_reel_async_finalize(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(self._pages_body())
+        ):
+            a.list_facebook_pages()
+        post_resps = [
+            _FakeResponse({"video_id": "RV1"}),
+            _FakeResponse({"success": True}),
+        ]
+        get_resps = [
+            _FakeResponse({"status_code": "FINISHED"}),
+            _FakeResponse({"permalink_url": "https://fb/RV1"}),
+        ]
+        with patch.object(
+            httpx, "post", side_effect=post_resps
+        ), patch.object(httpx, "get", side_effect=get_resps), patch(
+            "noctusai_lib.integrations.meta._meta_api.time.sleep",
+            lambda s: None,
+        ):
+            out = a.publish_facebook_video(
+                "P1", "https://cdn/v.mp4", "reel desc", as_reel=True
+            )
+        assert out.id == "RV1"
+        assert out.permalink_url == "https://fb/RV1"
+        assert out.processing_duration_ms is not None
+
+    def test_real_publish_facebook_video_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(self._pages_body())
+        ):
+            a.list_facebook_pages()
+        perm_err = {
+            "error": {
+                "message": "(#200) Requires pages_manage_posts permission",
+                "code": 200,
+            }
+        }
+        with patch.object(httpx, "post", return_value=_FakeResponse(perm_err)):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_facebook_video("P1", "https://cdn/v.mp4")
+        assert exc.value.requires_app_review is True
+
+    def test_real_publish_facebook_video_validates_empty_url(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with pytest.raises(ValueError, match="non-empty video_url"):
+            a.publish_facebook_video("P1", "")
