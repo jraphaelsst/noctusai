@@ -56,7 +56,10 @@ optional — omit any to skip that check.
 
 ## Source of cases
 
-The case-curation backlog lives at
-`projects/media-creator-evals-cases/PROJECT.md`. Cases originate from
-the sibling `media-creator/` repo's `output/carousels/*` (Phase-3
-completed posts).
+Each case is a shape-eval fixture: pinned LLM outputs (storyboard /
+prompts / copy) + asserted shape invariants. Cases originated from the
+validated carousels produced by the **media-creator prototype**
+(consolidated into this module 2026-05-20, prototype retired 2026-05-24 —
+see `KB § PATTERNS/svg-render-mode.md`). Add a new case by curating a
+real generation run into a `<name>.json` here; no external project is
+required.

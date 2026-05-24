@@ -1,6 +1,6 @@
 # PROJECT — media-svg-render-mode
 
-**Status:** ⏳ in-flight · **Branch:** `media-svg-render-mode` (off `dev`) · **Started:** 2026-05-24
+**Status:** ✅ complete (P1+P2+P3 green; awaiting merge→dev + user push) · **Branch:** `media-svg-render-mode` (off `dev`) · **Started/closed:** 2026-05-24 · **Sign-off:** `SIGN-OFF.md`
 
 ## §1 Context
 Final residual of the media-creator absorption. Audit (see `findings.md`) proved media-creator's functional core already lives in `social-wiring/media_creation` (Wave 2.4). The ONE genuine delta = **SVG-composited slide rendering** (deterministic typography/layout/brand via SVG; AI for photos only). noc is raster-only today. User chose: absorb it as a 2nd render mode. Demo-brand: no (user's data). Retire workspace: yes (Gate-9 sign-off).
