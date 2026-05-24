@@ -94,41 +94,30 @@ class TestLoudEncryptionCheck:
     """The seed factory silently returns a Fake when the key is absent.
     The product seam must instead fail loud so routers can 503."""
 
-    def test_empty_key_raises(self, monkeypatch):
-        # Drive the product setting, not our code: patch the config value
-        # (an external input), then assert the seam fails loud.
-        from app.services import credential_vault
-
-        monkeypatch.setattr(credential_vault.settings, "encryption_key", "")
+    def test_empty_key_raises(self):
+        # Drive the product setting via the DI seam, not our code: inject
+        # the config value (an external input), then assert the seam
+        # fails loud. Per KB § PATTERNS/di-test-seam.md (Class-B kwarg).
         with pytest.raises(EncryptionNotConfigured):
-            build_credential_store(_RecordingClient())
+            build_credential_store(_RecordingClient(), encryption_key="")
 
-    def test_invalid_key_raises(self, monkeypatch):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", "not-a-fernet-key"
-        )
+    def test_invalid_key_raises(self):
         with pytest.raises(EncryptionNotConfigured):
-            build_credential_store(_RecordingClient())
+            build_credential_store(
+                _RecordingClient(), encryption_key="not-a-fernet-key"
+            )
 
-    def test_valid_key_builds_real_store(self, monkeypatch, fernet_key):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
+    def test_valid_key_builds_real_store(self, fernet_key):
+        store = build_credential_store(
+            _RecordingClient(), encryption_key=fernet_key
         )
-        store = build_credential_store(_RecordingClient())
         assert isinstance(store, SupabaseCredentialStore)
 
-    def test_no_client_still_loud_on_bad_key(self, monkeypatch):
+    def test_no_client_still_loud_on_bad_key(self):
         """Even with no client, a missing key is a config gap, not a
         silent Fake — the product never silently degrades."""
-        from app.services import credential_vault
-
-        monkeypatch.setattr(credential_vault.settings, "encryption_key", "")
         with pytest.raises(EncryptionNotConfigured):
-            build_credential_store(None)
+            build_credential_store(None, encryption_key="")
 
 
 class TestMetadataColumnRoundTrip:
@@ -137,15 +126,10 @@ class TestMetadataColumnRoundTrip:
     into discrete columns; get() must re-inflate them into .metadata."""
 
     def test_put_flattens_metadata_into_discrete_columns(
-        self, monkeypatch, fernet_key
+        self, fernet_key
     ):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
-        )
         client = _RecordingClient()
-        store = build_credential_store(client)
+        store = build_credential_store(client, encryption_key=fernet_key)
         org = uuid4()
 
         store.put(
@@ -172,15 +156,10 @@ class TestMetadataColumnRoundTrip:
         assert "RT" not in payload["encrypted_tokens"]
 
     def test_get_reinflates_metadata_from_columns(
-        self, monkeypatch, fernet_key
+        self, fernet_key
     ):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
-        )
         client = _RecordingClient()
-        store = build_credential_store(client)
+        store = build_credential_store(client, encryption_key=fernet_key)
         org = uuid4()
 
         # Round-trip: persist, then reflect the recorded payload back as
@@ -209,15 +188,10 @@ class TestPayloadColumnContract:
     drift cannot hide behind the mock."""
 
     def test_persisted_payload_keys_subset_of_ddl_columns(
-        self, monkeypatch, fernet_key
+        self, fernet_key
     ):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
-        )
         client = _RecordingClient()
-        store = build_credential_store(client)
+        store = build_credential_store(client, encryption_key=fernet_key)
 
         store.put(
             str(uuid4()),
@@ -241,17 +215,12 @@ class TestPayloadColumnContract:
         )
 
     def test_metadata_only_subset_still_legal(
-        self, monkeypatch, fernet_key
+        self, fernet_key
     ):
         """The first OAuth-callback upsert writes scopes only (no channel
         yet). That partial payload must also stay within the DDL."""
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
-        )
         client = _RecordingClient()
-        store = build_credential_store(client)
+        store = build_credential_store(client, encryption_key=fernet_key)
 
         store.put(
             str(uuid4()),
@@ -268,12 +237,9 @@ class TestFakeFallbackIsNotReachableViaSeam:
     — that would be a silent degrade. With a valid key it is always the
     encrypted Real store; without a key it raises (covered above)."""
 
-    def test_seam_never_returns_fake(self, monkeypatch, fernet_key):
-        from app.services import credential_vault
-
-        monkeypatch.setattr(
-            credential_vault.settings, "encryption_key", fernet_key
+    def test_seam_never_returns_fake(self, fernet_key):
+        store = build_credential_store(
+            _RecordingClient(), encryption_key=fernet_key
         )
-        store = build_credential_store(_RecordingClient())
         assert not isinstance(store, FakeCredentialStore)
         assert isinstance(store, SupabaseCredentialStore)

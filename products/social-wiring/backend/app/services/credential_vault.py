@@ -72,7 +72,7 @@ class EncryptionNotConfigured(RuntimeError):
     """
 
 
-def build_credential_store(client) -> CredentialStore:
+def build_credential_store(client, *, encryption_key: Optional[str]=None) -> CredentialStore:
     """Build the seed-backed credential store for ``client``.
 
     Validates ``settings.encryption_key`` loudly first (a missing /
@@ -81,7 +81,11 @@ def build_credential_store(client) -> CredentialStore:
     routers' 503-on-config-gap behavior), then delegates persistence to
     the seed factory wired with the Phase-1 table-shape seam.
     """
-    key = settings.encryption_key
+    # DI seam: tests inject `encryption_key=...`; production resolves
+    # the module singleton. `settings.encryption_key` stays the
+    # canonical runtime source so the 503-on-config-gap behavior is
+    # unchanged. See KB § PATTERNS/di-test-seam.md (Class-B kwarg).
+    key = encryption_key if encryption_key is not None else settings.encryption_key
     if not key:
         raise EncryptionNotConfigured(
             "ENCRYPTION_KEY is empty. Generate with `python -c \"from "
