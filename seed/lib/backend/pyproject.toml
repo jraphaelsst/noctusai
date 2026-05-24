@@ -67,10 +67,25 @@ dependencies = [
     # imported — the Fake media path stays importable if these are absent.
     "PyMuPDF>=1.24.0",
     "pdfminer.six>=20231228",
+    # SVG→PNG rasterization — noctusai_lib.integrations.svg_render.ResvgRenderAdapter.
+    # `resvg-py` is a self-contained Rust `resvg` binding (ships manylinux2014
+    # + macOS cp3x wheels, NO system libs) → works unchanged in the slim prod
+    # `runtime` image (unlike cairosvg, which needs libcairo). Lazily imported —
+    # the Fake render path stays importable if it's absent. Bundled OFL fonts
+    # (svg_render/fonts/) are passed with skip_system_fonts=True so text renders
+    # deterministically without a system font install (dev↔prod parity). Added
+    # 2026-05-24 (projects/media-svg-render-mode, the media-creator absorption residual).
+    "resvg-py>=0.3.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["noctusai_lib*"]
+
+[tool.setuptools.package-data]
+# Ship the bundled OFL font faces + their licenses with the installed
+# package so ResvgRenderAdapter finds them via Path(__file__)/"fonts" in
+# any install layout (editable in dev; copied into the slim image).
+"noctusai_lib.integrations.svg_render" = ["fonts/*.ttf", "fonts/*.txt"]
 
 # Pytest auto-loaded plugin — every test session that has `noctusai-lib`
 # installed gets `noctusai_lib.testing.pytest_plugin` registered. The
