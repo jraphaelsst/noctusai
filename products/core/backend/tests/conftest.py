@@ -226,6 +226,10 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock
         ("app.routers.sso.get_admin_client", mock_sb),
         ("app.routers.sso.get_current_user", mock_get_user),
         ("app.routers.sso.supabase_admin", mock_sb),
+        # /session verify_otp runs on a throwaway anon client (035 RLS-poison
+        # fix) — seam its create_client like the auth router's, so the mocked
+        # mock_sb.auth.verify_otp is what runs (no real supabase_url needed).
+        ("app.routers.sso.create_client", mock_sb),
         # Onboarding router
         ("app.routers.onboarding.get_admin_client", mock_sb),
         ("app.routers.onboarding.get_current_user", mock_get_user),
