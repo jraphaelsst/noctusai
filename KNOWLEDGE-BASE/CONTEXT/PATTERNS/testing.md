@@ -28,6 +28,8 @@ cd <product>/backend && pytest tests/routers    # just router tests
 cd <product>/backend && pytest -k test_contacts # by name
 ```
 
+**Stale-bytecode gotcha — verify test COUNTS against fresh bytecode.** When verifying pytest **test counts** (especially inside a git worktree), a stale `__pycache__` / `.pytest_cache` can make pytest import an OLD compiled module ⇒ it collects the wrong number of tests (we hit 11-vs-13: an appended test class was on disk but pytest ran cached bytecode). Remedy: nuke caches first (`find <dir> -name '*.pyc' -delete && rm -rf __pycache__ .pytest_cache`), or run with `PYTHONDONTWRITEBYTECODE=1 … -p no:cacheprovider`, or trust the OS line-count (`git diff --numstat`) over a cached pytest collection. An "absence of N tests" is a claim — confirm against fresh bytecode (`KB § 01-PHILOSOPHY.md § No silent errors`).
+
 ## Mock helpers
 
 Import from the seed test kit:

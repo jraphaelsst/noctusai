@@ -41,6 +41,8 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 ### 1 · Decompose into file-disjoint subtasks
 Each slice owns a **disjoint file-set**. Overlapping sets are the #1 collision source — design them out: prefer **new files per agent**; **at most ONE agent edits any given existing file**. **[noc]** classify each slice's edit-set vs the parallel-active set at *dispatch* time ([[branching-and-merging]] §21 collision-class): **C1 file-disjoint** → parallel-clean · **C2 same-file-additive** → brief additive-only · **C3 substantive-overlap** → re-scope to a sibling file OR sequence into a later wave. **[noc]** wave-gate dependencies ([[branching-and-merging]] §18): a slice that consumes another's output dispatches only after that one merges.
 
+**[noc] Scope a slice against its SIBLINGS before dispatch.** Before briefing an engineer to change a tool/helper/predicate, grep for SIBLING/DUPLICATE implementations + doc references of the thing being changed (a tool whose docstring claims "parity" with another · a duplicated predicate · KB refs). A change scoped to ONE copy silently breaks an undocumented-to-the-brief twin. Bit 2026-05-24: a `cleanup_worktrees.py` merged-base edit broke its documented parity with `mole.py` (same predicate, second copy) ⇒ reverted, re-done as a unify. The under-scope is an estimate-off-evidence miss at *dispatch* time (`KB § 01-PHILOSOPHY.md § Estimate off evidence`) — open the would-be-touched surface AND its twins, not just the one named file.
+
 ### 2 · Create isolated worktrees + parallel branches
 From `dev` (the integration branch — or the project staging branch if one is in use):
 ```bash
