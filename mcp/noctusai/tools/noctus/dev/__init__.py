@@ -63,6 +63,7 @@ def register_all(server) -> None:
     from . import status
     from . import supabase_advisors
     from . import sync_seed_template
+    from . import task_branch
     from . import testing
     from . import three_way_sync
     from . import vps
@@ -118,6 +119,7 @@ def register_all(server) -> None:
     status.register(server)
     supabase_advisors.register(server)
     sync_seed_template.register(server)
+    task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
     vps.register(server)

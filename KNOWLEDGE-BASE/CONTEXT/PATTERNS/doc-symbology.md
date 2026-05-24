@@ -23,6 +23,9 @@
 | `≡` | equivalent to | "N=3 ≡ MUST formalize" |
 | `≠` | not equal | "Stage 3 ≠ Stage 4" |
 | `≈` | approximately | "≈70% token saving" |
+| `⊄` | not a subset of | "product shape ⊄ seed contract" |
+| `⊥` | incompatible with / orthogonal to | "absorbed shape ⊥ seed default"; "Harness overlay ⊥ worktree divergence" |
+| `≫` | much greater than | "rebuild-all-fleet time ≫ rebuild-modified" |
 
 ### Counts & comparisons
 | Symbol | Meaning | Example |

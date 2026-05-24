@@ -32,7 +32,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 ## Roles ([noc] = [[branching-and-merging]] § Roles)
 
 - **Architect** = the main session. Decomposes, dispatches, **collects signals, detects collisions, reconciles, verifies**, lands on the integration branch, cleans up, gates `main`. Does NOT do the subtask work.
-- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-default.md`). **Engineers only stage + commit on their own worker branch — they never merge, switch branches, or push to `dev`/`main`.** All integration (merge, reconcile, push) is the architect's job.
+- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-default.md`). **Engineers only stage + commit on their own worker branch — they never merge, switch branches, or push to `dev`/`main`/`prod`.** All integration (merge, reconcile, push) is the architect's job.
 
 ---
 
@@ -100,7 +100,7 @@ Once every slice is merged onto `dev`, every collision (incl. semantic) resolved
 - Follow CLAUDE.md (seed-first, AST-first, no silent errors, symbol-first docs).
 - Write `/tmp/<slice>.patch` **early** (survives the ~600s watchdog); paste on-disk grep-proof of your change.
 - Stage **only your files by explicit path** — never `git add .` / `-A`. Commit on your worker branch; message ends with the `Co-Authored-By` trailer.
-- **Never** touch `main`, `dev`, or another slice's branch; never switch the primary checkout or push to `main`. Work stays on your worker branch.
+- **Never** touch `main`, `dev`, `prod`, or another slice's branch; never switch the primary checkout or push to `main`/`prod`. Work stays on your worker branch.
 - Final message reports: **branch · HEAD hash · files changed** (+ the patch path).
 
 ---
@@ -114,4 +114,4 @@ Once every slice is merged onto `dev`, every collision (incl. semantic) resolved
 5. **[noc]** run `noctus.dev.dispatch_preflight` before dispatch (fork-base + collision + env-pin + project-doc-phantom checks); keep a root `findings.md`.
 6. **Always return to `dev`.** The architect dispatches FROM `dev`, reconciles ON `dev`, and returns the primary checkout to `dev` after inspecting any worker branch — `dev` is the default resting state. Inspect branches read-only (`git diff dev …`, `git show <branch>:<path>`) rather than switching; concurrent active work uses isolated worktrees (§9a), never a shared switch.
 
-→ Deep reference: [[branching-and-merging]]. Pre-dispatch tooling: [[dev-toolkit-scaffolders]] (`dispatch_preflight` / `salvage_worktree` / `findings`). Collision-class derivation: [[branching-and-merging]] §21.
+→ Deep reference: [[branching-and-merging]]. Pre-dispatch tooling: [[dev-toolkit-scaffolders]] (`dispatch_preflight` / `salvage_worktree` / `findings`). Collision-class derivation: [[branching-and-merging]] §21. The **self**-case (an agent isolates *itself* per writing task instead of dispatching engineers — peer terminal-agents on one checkout): [[self-branching-mode]] (`noctus.dev.task_branch`).

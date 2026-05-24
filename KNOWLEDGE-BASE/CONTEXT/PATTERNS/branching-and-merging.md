@@ -340,6 +340,17 @@ mechanism in the future, parallelism reopens).
 
 ---
 
+## 9b. Self-branching mode — §9a made the automatic per-writing-task default (NEW 2026-05-24)
+
+§9a isolates **conditionally** — *"is a second agent active? then worktree-isolate."* **Self-branching mode is its unconditional generalization** for the multi-terminal world (N peer agents, N terminals, **same checkout**): a peer can't cheaply know whether a sibling is active in the shared checkout, so the safe default is **assume yes ⇒ self-isolate every WRITING task**, automatically — no "branch this" keyword.
+
+- **Trigger = write-vs-read, NOT size.** A task that produces committable changes self-branches (any size, even 1 line — the driver is collision-safety, not effort); a read-only/conversational task stays on `dev`. **Orthogonal to the §18.2.1 inline cutoff** (size-based "no-dispatch"); a tiny *inline* writing task still self-branches. Don't conflate the two — `inline` = no-dispatch; *self-branch* = self-isolate.
+- **Lifecycle** (`dev → feat/<slug> → dev`): fetch → `git worktree add .claude/worktrees/<slug> -b feat/<slug> origin/dev` → work+commit THERE → integrate straight to `origin/dev` (**§10.2 Option A** rebase + FF-push `HEAD:refs/heads/dev`, fetch-rebase-**retry** on the concurrent-push race; rebase conflict ⇒ abort + surface, never auto-resolve) → `worktree remove` + `branch -d` → idle on the `dev` baseline. The shared primary checkout's `HEAD` is **never switched** (that's the §9a sin) — `origin/dev` is the only integration site.
+- **Peer = architect-of-its-own-task** ⇒ it MAY integrate its own branch to `dev`; if it dispatches engineers, those engineers commit only on their sub-branches and the peer integrates (the model **nests**). Engineers never touch `dev`/`main`/`prod` (§0).
+- **Tooled:** `noctus.dev.task_branch` (`action=start|integrate|cleanup|status`, dry-run→`confirm`, dev-only push boundary, FF/rebase-only). Full protocol + anti-patterns: [[self-branching-mode]].
+
+---
+
 ## 10. Merging methodology
 
 The companion methodology to branching. Covers what to do when `git push origin <branch>:main` fails as non-fast-forward (origin/main moved past your branch base), when N branches converge on main, when same-line conflicts need resolution, when a branch sits long enough to accumulate integration debt, and when a merge goes wrong.
