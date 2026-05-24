@@ -47,6 +47,13 @@ jobs:
         working-directory: seed/lib/frontend
         run: npm ci
 
+      # lib's tsconfig path-maps @noctusai/seed/infra → ../../framework/frontend;
+      # tsc resolves that file's bare imports against ITS node_modules, so the
+      # sibling package must be installed too (cross-package typecheck).
+      - name: Install sibling (framework) deps
+        working-directory: seed/framework/frontend
+        run: npm ci
+
       - name: Type-check (tsc --noEmit, strict)
         working-directory: seed/lib/frontend
         run: npm run check
@@ -67,6 +74,13 @@ jobs:
 
       - name: Install dependencies
         working-directory: seed/framework/frontend
+        run: npm ci
+
+      # framework's tsconfig path-maps @noctusai/lib → ../../lib/frontend; tsc
+      # resolves those files' bare imports against lib's node_modules, so the
+      # sibling package must be installed too (cross-package typecheck).
+      - name: Install sibling (lib) deps
+        working-directory: seed/lib/frontend
         run: npm ci
 
       - name: Type-check (tsc --noEmit, strict)
