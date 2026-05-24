@@ -41,8 +41,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 8 | 19 | 14 | 8 | 43 | 431 |
-| Knowledge Extractor | 0 | 10 | 0 | 0 | 13 | 80 |
-| **Total** | **169** | **181** | **245** | **138** | **413** | **4,953** |
+| Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
+| **Total** | **173** | **183** | **258** | **142** | **417** | **4,969** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

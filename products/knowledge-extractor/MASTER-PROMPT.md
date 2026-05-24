@@ -232,7 +232,9 @@ been removed — use `build-manual` to rebuild the manual from the per-module fi
 
 ## 6 · Absorption checklist (when noc absorbs us)
 
-1. Move repo contents → `products/knowledge-extractor/` (backend/, frontend/ later).
+> **Status (2026-05-23): ABSORBED + frontend-bearing.** P1–P3 absorbed + containerized (backend); **P4** added the HTTP API (`app/routers/{catalog,methodology,kb,runs}_router.py` — the CLI pipeline over HTTP) + the full house SPA (`frontend/`, `createProductApp` nav, single-container `serve_spa`). Items 1 & 4 below are DONE; the CLI (`app/cli.py`) is retained for local/batch use. See `projects/container-first-codify-and-absorb-ke/` §6 (P4).
+
+1. Move repo contents → `products/knowledge-extractor/` (backend/ + frontend/). ✅
 2. `backend/app/main.py` → `create_product_app("Knowledge Extractor", "knowledge_extractor", settings, …)`.
 3. Swap each local seam for its `noctusai_lib` counterpart per §3 (callers unchanged).
 4. `cli.py` flow → product routers + a `noctus.*` MCP tool (MCP-first).

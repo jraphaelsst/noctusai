@@ -650,6 +650,14 @@ state change, not a removal.
 - **Revisit trigger:** a second product's recovery / baseline-drain surfaces ≥3 mock-skew failures with the same root-cause shape (fixture rows missing predicate columns vs production `.eq()`/`.gte()`/`.is_()` filters). At that point cross-product recurrence is confirmed → flip `[A]→[F]` and build `noctus.dev.scan_mock_predicate_skew`. The libcst infrastructure to do this already exists (`noctus.dev.scan_outlined` + `scan_pydantic_model_shapes` patterns). Pre-emptive scan now during next platform-wide test pass: `pytest --collect-only` across all products; if mock-skew failures appear elsewhere, that's the trigger.
 - **Recorded by:** `erp-imobiliario-test-baseline-recovery` close-out (2026-05-20, architect + Engineer G).
 
+### core's `docker-compose.yml` control-plane `docker.sock` — FORMALIZED into the propagate generator [A]→[F] (2026-05-24)
+
+- **Divergence:** `products/core/docker-compose.yml` carries a control-plane mount — `/var/run/docker.sock:/var/run/docker.sock:ro` — that the canonical `products/seed/docker-compose.yml` deliberately lacks (core alone operates the fleet via `noctusai_lib.domain.fleet_control`; commit `336e7657`).
+- **Why it could NOT stay an accept:** the pre-commit propagate gate (`cli --propagate both --check`) fires on **any staged seed-docker change**. The first-pass workaround — re-propagate then `git checkout -- products/core/docker-compose.yml` — **cannot survive a seed Dockerfile commit** (e.g. the npm-10 tarball fix): the gate sees core's compose `stale` and aborts. The safety net firing forced the formalize (per *"safety nets capture failures → methodology evolves"*).
+- **Formalized fix:** `propagate.py` now has a slug-keyed compose-extras hook — `_C_VOLUME_EXTRA = {"core": _C_CORE_DOCKER_SOCK}` injected after the seed-lib FE `node_modules` anchor in `_render_compose` (mirrors the Dockerfile `_D_EXTRA` map). Core's compose now **regenerates WITH the socket** (byte-identical to the committed file → `in-sync`), so `propagate composes` is safe to run blindly and the drift gate passes. Guarded by `test_compose_core_gets_docker_sock_others_dont` (core gets it once; every other product gets none).
+- **To add another product's control-plane mount:** add a slug entry to `_C_VOLUME_EXTRA` (+ extend the test). No hand-restore, no accept entry.
+- **Recorded by:** `container-first-codify-and-absorb-ke` P4 (2026-05-23 surfaced → 2026-05-24 formalized) — the npm-10 seed-Dockerfile commit tripped the gate and converted this from accept to formalize.
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

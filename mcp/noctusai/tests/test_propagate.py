@@ -126,3 +126,40 @@ def test_missing_canonical(tmp_path, fn):
     res = fn(repo_root=str(tmp_path))
     assert res["ok"] is False
     assert "not found" in res["error"]
+
+
+# ── per-product extras (compose volumes + Dockerfile backend extras) ────────
+# Regression guards for the slug-keyed extras maps: the seed canonical carries
+# NONE of these (correctly), so they must be INJECTED for their owning product
+# and ABSENT for every other — else a fleet re-propagate silently strips a
+# control-plane mount / a system dep. See accept-with-rationale (formalized).
+_SOCK = "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+
+def test_compose_core_gets_docker_sock_others_dont():
+    canon = (REPO / "products/seed/docker-compose.yml").read_text()
+    assert _SOCK not in canon, "seed compose must NOT carry the host socket"
+    core = P._render_compose(canon, "core", "8000")
+    assert _SOCK in core, "core compose MUST regenerate WITH the Fleet Control socket"
+    # exactly once, anchored right after the seed-lib FE node_modules volume
+    assert core.count(_SOCK) == 1
+    for slug, port in P.PRODUCTS:
+        if slug == "core":
+            continue
+        assert _SOCK not in P._render_compose(canon, slug, port), (
+            f"{slug} compose must NOT get the docker socket (core-only)"
+        )
+
+
+def test_dockerfile_backend_extras_are_product_scoped():
+    canon = (REPO / "products/seed/backend/Dockerfile").read_text()
+    ke = P._render_dockerfile(canon, "knowledge-extractor", "8012")
+    assert "ffmpeg" in ke, "knowledge-extractor MUST get the ffmpeg system dep"
+    dt = P._render_dockerfile(canon, "dev-team", "8009")
+    assert "COPY dev_team /opt/dev_team" in dt, "dev-team MUST get its editable engine install"
+    # a product with no extras gets neither real extra (match the install
+    # lines, not the header-comment example that mentions dev_team in all files)
+    core = P._render_dockerfile(canon, "core", "8000")
+    assert "ffmpeg" not in core
+    assert "COPY dev_team /opt/dev_team" not in core
+    assert "# (no product extras)" in core, "no-extra products get the placeholder"

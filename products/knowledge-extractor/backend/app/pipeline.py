@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -315,6 +316,51 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def build_fake_pipeline() -> ExtractionPipeline:
+    """A fully in-memory pipeline: no OpenAI key, no ffmpeg, no network.
+
+    Shared by the CLI (`run --fake`) and the runs API (`POST /api/runs {fake:true}`)
+    so the demo path has a single source of truth.
+    """
+    from app.integrations.google_drive import FakeDriveDownloader
+
+    settings = get_settings()
+    drive = FakeDriveDownloader()
+    drive.add_fake_file(
+        "fake-aula-01",
+        "aula-01-introducao.mp4",
+        b"FAKE_VIDEO_BYTES",
+        mime_type="video/mp4",
+    )
+
+    def fake_extract(video: Path, out: Path) -> Path:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(video, out)
+        return out
+
+    async def fake_transcribe(audio: Path, chunk_dir: Path) -> str:
+        return (
+            "Bem-vindos à primeira aula do curso de social media. "
+            "Hoje vamos falar sobre planejamento de conteúdo e a regra dos "
+            "três pilares: educar, engajar e converter."
+        )
+
+    async def fake_summarize(title: str, transcript: str) -> str:
+        return (
+            "## Resumo\nAula introdutória sobre planejamento de conteúdo.\n\n"
+            "## Pontos-chave\n- Três pilares: educar, engajar, converter.\n\n"
+            "## Metodologia / passo a passo\n- Planejar conteúdo pelos pilares.\n"
+        )
+
+    return ExtractionPipeline(
+        downloader=drive,
+        audio_extractor=fake_extract,
+        transcriber=fake_transcribe,
+        summarizer=fake_summarize,
+        data_dir=settings.data_path,
+    )
+
+
 def build_default_pipeline(*, use_fake_drive: bool = False) -> ExtractionPipeline:
     """Wire the real adapters (Drive v3 + ffmpeg + OpenAI)."""
     settings = get_settings()
@@ -331,4 +377,10 @@ def build_default_pipeline(*, use_fake_drive: bool = False) -> ExtractionPipelin
     )
 
 
-__all__ = ["ExtractionPipeline", "VideoResult", "build_default_pipeline", "is_video"]
+__all__ = [
+    "ExtractionPipeline",
+    "VideoResult",
+    "build_default_pipeline",
+    "build_fake_pipeline",
+    "is_video",
+]

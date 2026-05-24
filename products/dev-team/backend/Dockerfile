@@ -105,17 +105,36 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
 # THIS target is intentionally not a shippable artifact — `runtime` is.
 FROM runtime AS runtime-watch
 USER root
-# Node for the in-container SPA rebuild. NodeSource keeps it one layer;
-# only the local image carries it (deploy = `runtime`).
+# Node for the in-container SPA rebuild — from the OFFICIAL nodejs.org binary
+# tarball (node 20 + npm 10 BUNDLED). Only the local runtime-watch image
+# carries node (deploy = slim `runtime`, node absent). Two deliberate NOTs:
+#  • NOT NodeSource — the Docker build VM persistently fails the TLS handshake
+#    to deb.nodesource.com ("curl: (35) ...unexpected eof while reading", every
+#    retry) while host + deb.debian.org + nodejs.org all work (§3.19). nodejs.org
+#    is a DIFFERENT, reachable host.
+#  • NOT Debian's `apt install nodejs npm` — trixie bundles npm 9.2.0, whose
+#    peer-dep resolver chokes on the file:-linked @noctusai/lib
+#    ("ERESOLVE ... @supabase/supabase-js@undefined"); npm 10 (the tarball's)
+#    resolves it correctly. The tarball lands npm in /usr/local/bin (ahead of
+#    Debian's /usr/bin in PATH) so there's no dpkg-vs-global shadowing fight.
+# (Bit 2026-05-24: the §3.19 Debian swap silently downgraded npm 10→9.2.0,
+# regressing the FE install — caught by a faithful repro: npm 9.2.0 ERESOLVE
+# vs npm 10 EXIT=0 on the same package.json set. KB §3.19/§3.21.)
+ARG NODE_VERSION=v20.19.0
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gnupg \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
-         > /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends curl xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$(dpkg --print-architecture)" in \
+         amd64) NODE_ARCH=x64 ;; \
+         arm64) NODE_ARCH=arm64 ;; \
+         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 \
+         "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+         -o /tmp/node.tar.xz \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && node --version && npm --version
 # Frontend deps installed HERE (glibc) — esbuild/vite ship platform
 # binaries; the alpine frontend-base node_modules are not ABI-portable.
 # Seed framework/lib FE deps too: local-watch's `vite build` loads the

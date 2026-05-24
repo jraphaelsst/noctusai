@@ -45,6 +45,7 @@ PRODUCTS: list[tuple[str, str]] = [
     ("adconnect", "8007"),
     ("dev-team", "8009"),
     ("social-wiring", "8011"),
+    ("knowledge-extractor", "8012"),
 ]
 
 # ── compose substitution constants (verbatim from propagate-composes.sh) ──
@@ -63,7 +64,36 @@ _C_VITE: dict[str, str] = {
         + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
         "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
     ),
+    "knowledge-extractor": (
+        _C_VITE_SUPABASE
+        + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
+        "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
+    ),
 }
+
+
+# ── per-product compose volume extras (injected after the seed-lib FE
+# node_modules anchor) ─────────────────────────────────────────────────────
+# core is the control-plane product: its admin-only Fleet Control panel needs
+# the host docker socket. The seed compose has no socket (correctly — no other
+# product gets one), so without this hook core's compose would perpetually
+# read as `stale` vs seed and a blanket re-propagate would STRIP the mount.
+# Formalized 2026-05-24 (was accept-with-rationale): the pre-commit propagate
+# gate fires on any staged seed-docker change, so the hand-restore workaround
+# couldn't survive a seed Dockerfile commit. Mirrors the Dockerfile `_D_EXTRA`.
+_C_VOLUME_ANCHOR = "      - /app/seed/lib/frontend/node_modules\n"
+_C_CORE_DOCKER_SOCK = (
+    "      # CONTROL-PLANE: core's admin-only \"Fleet Control\" panel switches sibling\n"
+    "      # product containers ON/OFF via the seed primitive\n"
+    "      # noctusai_lib.domain.fleet_control (the same shape in dev + prod). It\n"
+    "      # talks to THIS host's docker via the socket. Mounted read-only (:ro) —\n"
+    "      # the seed controller only ever runs `docker ps` + `docker\n"
+    "      # {start|stop|restart} noctus-<slug>` against a HARD allowlist, and every\n"
+    "      # endpoint is gated by core's get_current_admin. Core ONLY (control-plane\n"
+    "      # product) — do NOT propagate this mount to other products.\n"
+    "      - /var/run/docker.sock:/var/run/docker.sock:ro\n"
+)
+_C_VOLUME_EXTRA: dict[str, str] = {"core": _C_CORE_DOCKER_SOCK}
 
 
 def _render_compose(canon: str, slug: str, port: str) -> str:
@@ -92,6 +122,10 @@ def _render_compose(canon: str, slug: str, port: str) -> str:
         f"{slug} compose — SINGLE CONTAINER (generated from "
         f"products/seed/docker-compose.yml; edit there + re-propagate).",
     )
+    # per-product compose volume extras (e.g. core's control-plane docker.sock)
+    extra = _C_VOLUME_EXTRA.get(slug)
+    if extra:
+        s = s.replace(_C_VOLUME_ANCHOR, _C_VOLUME_ANCHOR + extra, 1)
     return s
 
 
@@ -112,6 +146,11 @@ _D_VITE: dict[str, str] = {
         + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
         "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
     ),
+    "knowledge-extractor": (
+        _D_VITE_SUPABASE
+        + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
+        "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
+    ),
 }
 _D_EXTRA_MARKER = (
     "# {{BACKEND_EXTRA}} — product extras (e.g. dev-team: COPY dev_team +\n"
@@ -122,6 +161,18 @@ _D_DEVTEAM_EXTRA = (
     "COPY dev_team /opt/dev_team\n"
     "RUN --mount=type=cache,target=/root/.cache/pip pip install -e /opt/dev_team\n"
 )
+_D_KE_EXTRA = (
+    "# knowledge-extractor: ffmpeg — system dep for audio extraction/chunking\n"
+    "# (app/integrations/media/audio.py). Not a pip package.\n"
+    "RUN apt-get update \\\n"
+    "    && apt-get install -y --no-install-recommends ffmpeg \\\n"
+    "    && rm -rf /var/lib/apt/lists/*\n"
+)
+# slug → backend-stage extra injected at the seed's {{BACKEND_EXTRA}} marker.
+_D_EXTRA: dict[str, str] = {
+    "dev-team": _D_DEVTEAM_EXTRA,
+    "knowledge-extractor": _D_KE_EXTRA,
+}
 _D_PIP_RUN_SEED = (
     "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
     "    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
@@ -149,10 +200,7 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
     s = s.replace("8004", port)
     s = s.replace(_D_VITE_SEED, _D_VITE.get(slug, _D_VITE_SEED))
     s = s.replace(_D_PIP_RUN_SEED, _D_PIP_RUN.get(slug, _D_PIP_RUN_SEED))
-    s = s.replace(
-        _D_EXTRA_MARKER,
-        _D_DEVTEAM_EXTRA if slug == "dev-team" else "# (no product extras)\n",
-    )
+    s = s.replace(_D_EXTRA_MARKER, _D_EXTRA.get(slug, "# (no product extras)\n"))
     s = s.replace(
         "seed — CANONICAL thin product image (the reference every product mirrors).",
         f"{slug} — thin product image (generated from "

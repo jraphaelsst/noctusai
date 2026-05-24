@@ -1,30 +1,34 @@
 """Knowledge Extractor — noc product entry point.
 
-Absorbed from the sibling `knowledge-extractor` repo 2026-05-23. This wires the
-product onto the seed factory (`create_product_app`) so it inherits logging,
-DB clients, auth deps, CORS, credential + LLM resolution, and the standard
-health endpoint with zero per-product boilerplate.
+Absorbed from the sibling `knowledge-extractor` repo 2026-05-23, then given its
+HTTP API + SPA 2026-05-23 (P4 of `container-first-codify-and-absorb-ke`). Wires
+onto the seed factory (`create_product_app`) so it inherits logging, DB clients,
+auth deps, CORS, credential + LLM resolution, rate limiting, and the standard
+health / team / notification surfaces with zero per-product boilerplate.
 
-Backend-only (no SPA): the pipeline (Drive → transcribe → summarize → extract
-methodology → pgvector KB) is currently CLI-driven (`app/cli.py`). Turning the
-CLI into product routers + a `noctus.*` MCP tool is the next gate; until then
-this app exposes the standard health surface only.
-
-ABSORPTION FOLLOW-UPS (Gate 6/7, in flight — `container-first-codify-and-absorb-ke`):
-  - make `app.config.Settings` subclass `noctusai_lib` ProductSettings;
-  - swap the local seams (`app/integrations/{google_drive,llm,media,vectors}`)
-    for their `noctusai_lib` counterparts (callers unchanged — see MASTER-PROMPT.md §3);
-  - add domain routers as the CLI pipeline is exposed over HTTP.
+Domain surface — the CLI pipeline, now exposed over HTTP (`app/routers/`):
+  - `catalog`     browse the extracted transcripts/summaries (filesystem);
+  - `methodology` the synthesized course manual;
+  - `kb`          semantic search over the methodology KB (pgvector);
+  - `runs`        trigger + track extraction-pipeline runs (Drive → summary).
+The SPA (single container via the seed `serve_spa` seam) lives in `../frontend`.
+The CLI (`app/cli.py`) remains for local/batch operation.
 """
 from noctusai_seed import create_product_app
 
 from app.config import settings
+from app.rate_limit import limiter
+from app.routers.catalog_router import router as catalog_router
+from app.routers.kb_router import router as kb_router
+from app.routers.methodology_router import router as methodology_router
+from app.routers.runs_router import router as runs_router
 
 app = create_product_app(
     name="Knowledge Extractor",
     schema="knowledge_extractor",
     settings=settings,
     version="0.1.0",
-    standard_routers=["health"],
-    routers=[],
+    limiter=limiter,
+    standard_routers=["health", "notificacoes", "team"],
+    routers=[catalog_router, methodology_router, kb_router, runs_router],
 )

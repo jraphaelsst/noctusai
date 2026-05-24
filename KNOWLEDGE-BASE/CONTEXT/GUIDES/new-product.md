@@ -67,12 +67,23 @@ The noc dashboard (`products/core/frontend/src/pages/Dashboard.tsx`) reads produ
 
 **When the auto-emit is skipped** (e.g., a template workspace where `products/core/backend/migrations/` doesn't exist — "templates can't modify noc" rule), the scaffold response surfaces the gap in `next_steps` and the operator emits the migration manually in noc.
 
+## Propagate-set registration (compose + Dockerfile regeneration)
+
+A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from the canonical `products/seed/` shape** by `noctus.dev.propagate` (`target='composes'|'dockerfiles'`), and the pre-commit drift gate enforces it. The set propagate operates on is a **hardcoded list** — `PRODUCTS` (+ the per-product `_C_VITE` arg map) in `mcp/noctusai/tools/noctus/dev/propagate.py`, which by its own contract must stay in **parity with `start.sh` `PRODUCTS` and `vite.config.factory` `PRODUCT_MAP`** (the same slug→port list hardcoded in three places).
+
+**Rule.** A new **frontend-bearing** product MUST be added to `propagate.py` `PRODUCTS` (+ `_C_VITE`) **at creation** — same slug+port as its `start.sh` block (item 5). Miss it and the product is silently outside propagation: its compose/Dockerfile never regenerate from seed, so every future seed-level container fix (a base-image change, a node-source swap, a mount, …) **skips that product** and it drifts. The fix never reaches it and nobody notices until a build breaks. This is precisely how `knowledge-extractor` ended up outside the 8-product set — and why the 2026-05-23 Debian-node Dockerfile fix would have missed any frontend product left unregistered.
+
+**Every noc product ships a frontend.** The house model is a single container where uvicorn serves the API **and** the built SPA (the `serve_spa` seam), so every product is frontend-bearing and belongs in the propagate set. A product that landed **without a `frontend/`** (e.g. an incompletely-absorbed `knowledge-extractor`) is an **incomplete shape to fix** — give it the seed FE skeleton, convert its Dockerfile to the full house shape (frontend-build stage + `runtime-watch` node + `serve_spa`), link it into the sidebar nav, then register it — **not** a backend-only state to bless. ("Backend-only" is not a sanctioned product class here.)
+
+**Methodology gap → formalize candidate (flagged 2026-05-23).** `scaffold_product` does **not** yet auto-register a product into `propagate.py` `PRODUCTS`/`_C_VITE`, and the slug→port list lives hardcoded in **3 places** (`start.sh` · `propagate.py` · `vite.config.factory`) — N≥3, so the recurrence rule says *formalize*. Root fix: single-source the list (derive `propagate.py` + the vite factory map from the `start.sh` registry, the canonical one) **and** have `scaffold_product` add the row by construction so it can never be missed ("filled upon creation"). Until that lands, this registration is a **mandatory manual creation step** — this section is the interim guard.
+
 ## Checklist for launch
 
 - [ ] Schema migration runs clean on a fresh Supabase.
 - [ ] RLS policies on every table (see `../PATTERNS/database-rls.md`).
 - [ ] Backend starts on its port, hits `/api/health` green.
 - [ ] Frontend starts on its port, loads the login page.
+- [ ] Product (always frontend-bearing — house model serves a SPA) registered in `propagate.py` `PRODUCTS` + `_C_VITE` (parity with `start.sh` + vite factory). Verify with `noctus.dev.propagate target='both' check=True` → no unexpected `stale`/missing. (See "Propagate-set registration" above.)
 - [ ] SSO works from Core.
 - [ ] Notifications proxy works (`/api/notificacoes/contagem`).
 - [ ] Port added to root `.env CORS_ORIGINS`.
