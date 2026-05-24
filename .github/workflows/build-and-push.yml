@@ -30,7 +30,7 @@ on:
     paths:
       - "products/**"
       - "seed/**"
-      - "projects/production-deploy-migration/deploy/fleet/build-and-push.sh"
+      - "scripts/infra/build-and-push.sh"
       - "scripts/infra/build-base-images.sh"
   workflow_dispatch:
     inputs:
@@ -82,7 +82,7 @@ jobs:
           if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
           PRODUCTS="${{ github.event.inputs.products }}"
           echo "Building + pushing at tag: $TAG (+ :latest) — products: ${PRODUCTS:-ALL}"
-          NOCTUS_IMAGE_TAG="$TAG" bash projects/production-deploy-migration/deploy/fleet/build-and-push.sh $PRODUCTS
+          NOCTUS_IMAGE_TAG="$TAG" bash scripts/infra/build-and-push.sh $PRODUCTS
 
       - name: Summary
         if: always()
