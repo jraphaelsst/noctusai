@@ -6,6 +6,7 @@
 
 - **Componentize everything.** Check `KB § 04-SHARED-LIBRARY.md` before writing anything new. If another product will need it, build it shared from day one — don't fork. → `KB § 04-SHARED-LIBRARY.md`
 - **Gamification is subtle.** Rankings, points, progress bars — discrete; with a ⓘ icon explaining the formula; tied to real business activity (never "logged in today"-style rewards). → `KB § 07-GAMIFICATION.md`
+- **Core-URL routing is MANDATORY via the seed getter.** Any product→core link (SSO callback, "back to dashboard" nav, product→core XHR) resolves core's URL through `env.CORE_URL` / `env.CORE_API_URL` (`import { env } from "@noctusai/lib"`). **Never** hand-roll `import.meta.env.VITE_CORE_* || "<literal>"` — the bare-`localhost` default is the SSO "Failed to fetch" / stale-`5173`-nav recurrence (N≥3, prod outage). The `check_handrolled_core_url` keeper blocks it (carve-out: core's own same-origin `lib/api.ts`). → `KB § PATTERNS/core-url-routing.md`
 
 ## Pointers (depth)
 

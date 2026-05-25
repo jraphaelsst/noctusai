@@ -12,8 +12,10 @@ import {
   Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { env } from "@noctusai/lib";
 
-const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
+// canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
+const CORE_URL = env.CORE_URL;
 
 // ── Features ──────────────────────────────────────────────
 

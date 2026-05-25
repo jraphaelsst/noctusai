@@ -84,7 +84,7 @@ A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from t
 - [ ] Backend starts on its port, hits `/api/health` green.
 - [ ] Frontend starts on its port, loads the login page.
 - [ ] Product (always frontend-bearing — house model serves a SPA) registered in `propagate.py` `PRODUCTS` + `_C_VITE` (parity with `start.sh` + vite factory). Verify with `noctus.dev.propagate target='both' check=True` → no unexpected `stale`/missing. (See "Propagate-set registration" above.)
-- [ ] SSO works from Core.
+- [ ] SSO works from Core. **Works by construction — do NOT hand-wire it.** The seed SSO callback (`seed/framework/frontend/src/app.tsx`) + the template `Login`/`Landing`/`AcceptInvite` pages already resolve core's URL through the canonical getter `env.CORE_URL` / `env.CORE_API_URL` (`@noctusai/lib`). **MANDATORY:** any product→core link you write (SSO XHR, "back to dashboard" nav) reads the getter — **NEVER** hand-roll `import.meta.env.VITE_CORE_* || "<literal>"` (the SSO "Failed to fetch" / stale-`5173`-nav recurrence; the `check_handrolled_core_url` keeper blocks it). The Dockerfile bakes `VITE_CORE_URL` ⇒ prod resolves the real core. Full system: `../PATTERNS/core-url-routing.md`.
 - [ ] Notifications proxy works (`/api/notificacoes/contagem`).
 - [ ] Port added to root `.env CORS_ORIGINS`.
 - [ ] All three test layers pass (routers, services, integration).

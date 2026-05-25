@@ -467,6 +467,66 @@ def check_frontend_entrypoint(product_path: Path) -> list[dict]:
     return issues
 
 
+def check_handrolled_core_url(product_path: Path) -> list[dict]:
+    """Flag hand-rolled core-URL resolution in a product frontend.
+
+    Mandatory routing rule: the SSO callback + every cross-product nav site
+    MUST resolve core's URL through the canonical seed getter `env.CORE_URL` /
+    `env.CORE_API_URL` (`@noctusai/lib`, source `seed/lib/frontend/src/env.ts`)
+    — NEVER hand-roll `import.meta.env.VITE_CORE_URL || "<literal>"`. The getter
+    encodes the same-origin fallback (VITE_CORE_API_URL ‖ VITE_CORE_URL) + the
+    house-port dev default ONCE, for every consumer.
+
+    The recurrence this closes (N≥3, prod outage 2026-05-25): a bare
+    `localhost:8000` default broke `/sso` ("Failed to fetch") for every product
+    whose bundle bakes only VITE_CORE_URL; a stale `localhost:5173` default (the
+    dead pre-house vite port) broke cross-product nav. See
+    `KB § PATTERNS/core-url-routing.md` + `KB § PATTERNS/boundary-contract-tests.md` B1.
+
+    Carve-out: `core/frontend/src/lib/api.ts` — core is same-origin to ITSELF,
+    so its api client legitimately reads VITE_CORE_API_URL with a
+    `window.location.origin` fallback (NOT VITE_CORE_URL). That is the one
+    correct hand-roll; every other `import.meta.env.VITE_CORE_*` in a product
+    frontend is the bug.
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    src = product_path / "frontend" / "src"
+    if not src.is_dir():
+        return []  # backend-only product
+
+    # The single legitimate same-origin self-reference (core IS core).
+    core_api_carveout = product_path / "frontend" / "src" / "lib" / "api.ts"
+
+    pattern = re.compile(r"import\.meta\.env\.VITE_CORE_(?:API_)?URL")
+    for f in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.tsx"))):
+        if not f.is_file():
+            continue
+        if name == "core" and f == core_api_carveout:
+            continue
+        try:
+            content = f.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            if line.lstrip().startswith(("//", "*")):
+                continue  # comment line (e.g. a breadcrumb referencing the var)
+            if pattern.search(line):
+                issues.append({
+                    "product": name,
+                    "file": f.relative_to(product_path).as_posix(),
+                    "issue": (
+                        f"Hand-rolled `import.meta.env.VITE_CORE_*` at line {lineno} — "
+                        "resolve core's URL through the canonical seed getter "
+                        "`env.CORE_URL` / `env.CORE_API_URL` (@noctusai/lib) instead. A "
+                        "hand-rolled `|| <literal>` default is the SSO 'Failed to fetch' / "
+                        "stale-5173-nav recurrence (KB core-url-routing; boundary B1)."
+                    ),
+                    "severity": "high",
+                })
+    return issues
+
+
 def check_out_of_contract_trees(repo_root: Path | None = None) -> list[dict]:
     """Detect product-shaped directories living outside `products/*/`.
 
@@ -7232,6 +7292,7 @@ def check_all_products() -> tuple[int, list]:
             + check_path_references(d)
             + check_standard_routers_audit(d)
             + check_frontend_entrypoint(d)
+            + check_handrolled_core_url(d)
             + check_config_extends_product_settings(d)
             + check_frontend_config_paths(d)
             + check_mock_schema_validation(d)
