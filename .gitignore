@@ -10,7 +10,10 @@
 /SUBMISSION.md
 
 # Dependencies
-node_modules/
+# No trailing slash: also matches the §5a wire_env node_modules SYMLINKS
+# (`node_modules/` matches dirs only ⇒ a symlink-to-dir leaked as untracked and
+# blocked `git worktree remove` during a self-branch cleanup — 2026-05-25 dogfood).
+node_modules
 __pycache__/
 *.pyc
 venv/
