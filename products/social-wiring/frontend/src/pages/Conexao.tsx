@@ -1,28 +1,26 @@
 /**
- * Conexão page — manage MULTIPLE WhatsApp (WAHA) connections from one place,
- * without the WAHA dashboard.
+ * Conexão page — a LISTING of WhatsApp (WAHA) sessions. Click a session row to
+ * open a MODAL that views + edits + manages that session (status, QR pairing,
+ * start / restart / unlink / webhook, edit fields, delete). "Nova conexão"
+ * opens the same modal in create mode.
  *
- * Each row is one connection "line" the user owns: a WAHA server URL +
- * session + API key (stored encrypted; the key is write-only). Per line you
- * can scan a QR to pair, see live status, start / restart / unlink the
- * session, wire the inbound webhook, and edit or delete the line. "Nova
- * conexão" wires another session to another WhatsApp.
- *
- * All data + mutations come from the product `/api/whatsapp/connections`
- * router via the `useWhatsAppConnections` hooks; this page is presentation.
+ * One row = one connection "line" the user owns: a WAHA server URL + session +
+ * API key (stored encrypted; the key is write-only). Per-user isolated. All
+ * data + mutations come from the product `/api/whatsapp/connections` router via
+ * the `useWhatsAppConnections` hooks; this page is presentation only.
  */
 import { useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
   Link as LinkIcon,
   Loader2,
-  Pencil,
   Plus,
   Power,
-  QrCode,
   RefreshCw,
+  Save,
   Smartphone,
   Trash2,
 } from "lucide-react";
@@ -90,7 +88,7 @@ function StatusBadge({ status, paired }: { status: string | null; paired: boolea
   );
 }
 
-// ─── Create / edit form ─────────────────────────────────────────────────────
+// ─── Shared form fields ──────────────────────────────────────────────────────
 interface FormState {
   label: string;
   base_url: string;
@@ -99,118 +97,122 @@ interface FormState {
   webhook_url: string;
 }
 
-function ConnectionFormDialog({
+function FormFields({
+  form,
+  set,
+  isCreate,
+  disabled,
+}: {
+  form: FormState;
+  set: (patch: Partial<FormState>) => void;
+  isCreate: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-1.5">
+        <Label htmlFor="conn-label">Nome *</Label>
+        <Input
+          id="conn-label"
+          value={form.label}
+          onChange={(e) => set({ label: e.target.value })}
+          placeholder="Ex: Atendimento SP"
+          disabled={disabled}
+        />
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor="conn-apikey">
+          API key {isCreate ? "*" : "(opcional — só para trocar)"}
+        </Label>
+        <Input
+          id="conn-apikey"
+          type="password"
+          value={form.api_key}
+          onChange={(e) => set({ api_key: e.target.value })}
+          placeholder={isCreate ? "X-Api-Key da sessão WAHA" : "••••••••"}
+          disabled={disabled}
+          autoComplete="off"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor="conn-session">Sessão</Label>
+          <Input
+            id="conn-session"
+            value={form.session_name}
+            onChange={(e) => set({ session_name: e.target.value })}
+            placeholder="default"
+            disabled={disabled}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="conn-baseurl">Servidor WAHA</Label>
+          <Input
+            id="conn-baseurl"
+            value={form.base_url}
+            onChange={(e) => set({ base_url: e.target.value })}
+            placeholder="(padrão do sistema)"
+            disabled={disabled}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Deixe o servidor em branco para usar o WAHA padrão do sistema.
+      </p>
+      <div className="grid gap-1.5">
+        <Label htmlFor="conn-webhook">Webhook de entrada (opcional)</Label>
+        <Input
+          id="conn-webhook"
+          value={form.webhook_url}
+          onChange={(e) => set({ webhook_url: e.target.value })}
+          placeholder={DEFAULT_WEBHOOK_URL}
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Create modal ────────────────────────────────────────────────────────────
+function CreateConnectionDialog({
   open,
   onOpenChange,
-  mode,
-  line,
   onSubmit,
   pending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode: "create" | "edit";
-  line?: WhatsAppConnectionLine;
   onSubmit: (form: FormState) => void;
   pending: boolean;
 }) {
-  const [form, setForm] = useState<FormState>(() => ({
-    label: line?.label ?? "",
-    base_url: line?.base_url ?? "",
-    session_name: line?.session_name ?? "default",
+  const [form, setForm] = useState<FormState>({
+    label: "",
+    base_url: "",
+    session_name: "default",
     api_key: "",
-    webhook_url: line?.webhook_url ?? "",
-  }));
-
+    webhook_url: "",
+  });
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
-
-  const isCreate = mode === "create";
-  const canSubmit =
-    form.label.trim().length > 0 &&
-    (!isCreate || form.api_key.trim().length > 0) &&
-    !pending;
+  const canSubmit = form.label.trim() && form.api_key.trim() && !pending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{isCreate ? "Nova conexão" : "Editar conexão"}</DialogTitle>
+          <DialogTitle>Nova conexão</DialogTitle>
           <DialogDescription>
-            {isCreate
-              ? "Conecte uma sessão WAHA informando a API key. Escaneie o QR depois de criar."
-              : "Atualize os dados da linha. Deixe a API key em branco para manter a atual."}
+            Conecte uma sessão WAHA informando a API key. Abra a linha depois
+            para escanear o QR.
           </DialogDescription>
         </DialogHeader>
-
-        <div className="grid gap-3 py-2">
-          <div className="grid gap-1.5">
-            <Label htmlFor="conn-label">Nome *</Label>
-            <Input
-              id="conn-label"
-              value={form.label}
-              onChange={(e) => set({ label: e.target.value })}
-              placeholder="Ex: Atendimento SP"
-              disabled={pending}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="conn-apikey">
-              API key {isCreate ? "*" : "(opcional — só para trocar)"}
-            </Label>
-            <Input
-              id="conn-apikey"
-              type="password"
-              value={form.api_key}
-              onChange={(e) => set({ api_key: e.target.value })}
-              placeholder={isCreate ? "X-Api-Key da sessão WAHA" : "••••••••"}
-              disabled={pending}
-              autoComplete="off"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="conn-session">Sessão</Label>
-              <Input
-                id="conn-session"
-                value={form.session_name}
-                onChange={(e) => set({ session_name: e.target.value })}
-                placeholder="default"
-                disabled={pending}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="conn-baseurl">Servidor WAHA</Label>
-              <Input
-                id="conn-baseurl"
-                value={form.base_url}
-                onChange={(e) => set({ base_url: e.target.value })}
-                placeholder="(padrão do sistema)"
-                disabled={pending}
-              />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Deixe o servidor em branco para usar o WAHA padrão do sistema.
-          </p>
-          <div className="grid gap-1.5">
-            <Label htmlFor="conn-webhook">Webhook de entrada (opcional)</Label>
-            <Input
-              id="conn-webhook"
-              value={form.webhook_url}
-              onChange={(e) => set({ webhook_url: e.target.value })}
-              placeholder={DEFAULT_WEBHOOK_URL}
-              disabled={pending}
-            />
-          </div>
-        </div>
-
+        <FormFields form={form} set={set} isCreate disabled={pending} />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             Cancelar
           </Button>
           <Button onClick={() => onSubmit(form)} disabled={!canSubmit}>
             {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {isCreate ? "Criar conexão" : "Salvar"}
+            Criar conexão
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -218,7 +220,7 @@ function ConnectionFormDialog({
   );
 }
 
-// ─── Per-line QR ─────────────────────────────────────────────────────────────
+// ─── QR panel (inside the detail modal) ──────────────────────────────────────
 function QrPanel({ connectionId }: { connectionId: string }) {
   const { data: qr } = useWhatsAppConnectionQr(connectionId, true);
   return (
@@ -228,14 +230,14 @@ function QrPanel({ connectionId }: { connectionId: string }) {
           <img
             src={`data:image/png;base64,${qr.png_base64}`}
             alt="QR code para parear o WhatsApp"
-            className="h-56 w-56 rounded-md border bg-white p-2"
+            className="h-52 w-52 rounded-md border bg-white p-2"
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-center text-xs text-muted-foreground">
             WhatsApp → Aparelhos conectados → Conectar aparelho. Atualiza sozinho.
           </p>
         </>
       ) : (
-        <div className="flex h-56 w-56 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div className="flex h-52 w-52 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
           {qr?.status ? `Aguardando QR (${qr.status})` : "Gerando QR..."}
         </div>
@@ -244,51 +246,38 @@ function QrPanel({ connectionId }: { connectionId: string }) {
   );
 }
 
-// ─── One connection line ─────────────────────────────────────────────────────
-function ConnectionRow({ line }: { line: WhatsAppConnectionLine }) {
+// ─── Detail / edit / manage modal (per session) ──────────────────────────────
+function ConnectionDetailDialog({
+  line,
+  onClose,
+  onRequestDelete,
+}: {
+  line: WhatsAppConnectionLine;
+  onClose: () => void;
+  onRequestDelete: (line: WhatsAppConnectionLine) => void;
+}) {
   const { data: status } = useWhatsAppConnectionStatus(line.id);
   const { start, restart, logout, configureWebhook } = useWhatsAppConnectionActions();
-  const { update, remove } = useWhatsAppConnectionMutations();
+  const { update } = useWhatsAppConnectionMutations();
 
-  const [showQr, setShowQr] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [form, setForm] = useState<FormState>({
+    label: line.label,
+    base_url: line.base_url,
+    session_name: line.session_name,
+    api_key: "",
+    webhook_url: line.webhook_url ?? "",
+  });
+  const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
   const paired = !!status?.paired;
 
-  const onStart = () =>
-    start.mutate(line.id, {
-      onSuccess: () => {
-        setShowQr(true);
-        toast.success("Sessão iniciada — escaneie o QR");
-      },
-      onError: (e: any) => toast.error(e?.message ?? "Falha ao iniciar"),
+  const run = (mut: ReturnType<typeof start>, ok: string) =>
+    mut.mutate(line.id, {
+      onSuccess: () => toast.success(ok),
+      onError: (e: any) => toast.error(e?.message ?? "Falha"),
     });
 
-  const onRestart = () =>
-    restart.mutate(line.id, {
-      onSuccess: () => toast.success("Sessão reiniciada"),
-      onError: (e: any) => toast.error(e?.message ?? "Falha ao reiniciar"),
-    });
-
-  const onLogout = () =>
-    logout.mutate(line.id, {
-      onSuccess: () => toast.success("Conta desvinculada"),
-      onError: (e: any) => toast.error(e?.message ?? "Falha ao desvincular"),
-    });
-
-  const onWireWebhook = () => {
-    const url = line.webhook_url || DEFAULT_WEBHOOK_URL;
-    configureWebhook.mutate(
-      { id: line.id, url },
-      {
-        onSuccess: (r) => toast.success(`Webhook conectado (${r.events.length} eventos)`),
-        onError: (e: any) => toast.error(e?.message ?? "Falha ao conectar webhook"),
-      },
-    );
-  };
-
-  const onEditSubmit = (form: FormState) => {
+  const onSave = () => {
     const body: UpdateConnectionBody = {
       label: form.label.trim(),
       session_name: form.session_name.trim() || "default",
@@ -300,106 +289,40 @@ function ConnectionRow({ line }: { line: WhatsAppConnectionLine }) {
       { id: line.id, body },
       {
         onSuccess: () => {
-          setEditing(false);
           toast.success("Conexão atualizada");
+          onClose();
         },
         onError: (e: any) => toast.error(e?.message ?? "Falha ao salvar"),
       },
     );
   };
 
-  const onDelete = () =>
-    remove.mutate(line.id, {
-      onSuccess: () => toast.success("Conexão removida"),
-      onError: (e: any) => toast.error(e?.message ?? "Falha ao remover"),
-    });
+  const onWireWebhook = () =>
+    configureWebhook.mutate(
+      { id: line.id, url: form.webhook_url.trim() || DEFAULT_WEBHOOK_URL },
+      {
+        onSuccess: (r) => toast.success(`Webhook conectado (${r.events.length} eventos)`),
+        onError: (e: any) => toast.error(e?.message ?? "Falha ao conectar webhook"),
+      },
+    );
 
   return (
-    <Card>
-      <CardContent className="space-y-3 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Smartphone className="h-4 w-4 text-muted-foreground" />
-              <span className="truncate font-medium">{line.label}</span>
-              <StatusBadge status={status?.status ?? null} paired={paired} />
-            </div>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">
-              {paired ? (
-                <span>
-                  Conectado: <strong>{status?.me_name ?? status?.me_id ?? "—"}</strong>
-                </span>
-              ) : (
-                <span>Não pareado</span>
-              )}
-              {" · "}
-              <code className="font-mono">{line.session_name}</code>
-              {" @ "}
-              <span className="break-all">{line.base_url}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {!paired && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowQr((v) => !v)}
-                title="Mostrar QR"
-              >
-                <QrCode className="h-4 w-4" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onRestart}
-              disabled={restart.isPending}
-              title="Reiniciar sessão"
-            >
-              {restart.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onWireWebhook}
-              disabled={configureWebhook.isPending}
-              title="Conectar webhook"
-            >
-              {configureWebhook.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <LinkIcon className="h-4 w-4" />
-              )}
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => setEditing(true)} title="Editar">
-              <Pencil className="h-4 w-4" />
-            </Button>
-            {paired && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onLogout}
-                disabled={logout.isPending}
-                title="Desvincular conta"
-              >
-                <Power className="h-4 w-4" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-destructive"
-              onClick={() => setConfirmDelete(true)}
-              title="Excluir conexão"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Smartphone className="h-5 w-5" />
+            {line.label}
+          </DialogTitle>
+          <DialogDescription className="flex items-center gap-2">
+            <StatusBadge status={status?.status ?? null} paired={paired} />
+            <span className="text-xs">
+              {paired
+                ? `Conectado: ${status?.me_name ?? status?.me_id ?? "—"}`
+                : "Não pareado"}
+            </span>
+          </DialogDescription>
+        </DialogHeader>
 
         {status?.error && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
@@ -407,15 +330,15 @@ function ConnectionRow({ line }: { line: WhatsAppConnectionLine }) {
           </div>
         )}
 
-        {!paired && showQr && (
-          <>
-            <Separator />
-            <div className="flex flex-col items-center gap-2">
-              <QrPanel connectionId={line.id} />
+        {/* QR pairing — only while unpaired */}
+        {!paired && (
+          <div className="space-y-2">
+            <QrPanel connectionId={line.id} />
+            <div className="flex justify-center">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onStart}
+                onClick={() => run(start, "Sessão iniciada — escaneie o QR")}
                 disabled={start.isPending}
               >
                 {start.isPending ? (
@@ -426,45 +349,114 @@ function ConnectionRow({ line }: { line: WhatsAppConnectionLine }) {
                 Gerar nova sessão / QR
               </Button>
             </div>
-          </>
+          </div>
         )}
-      </CardContent>
 
-      {editing && (
-        <ConnectionFormDialog
-          open={editing}
-          onOpenChange={setEditing}
-          mode="edit"
-          line={line}
-          onSubmit={onEditSubmit}
-          pending={update.isPending}
-        />
-      )}
+        <Separator />
 
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir "{line.label}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A linha e sua API key serão removidas. A sessão no WAHA não é
-              encerrada — use "Desvincular" antes se quiser deslogar a conta.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>Excluir</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Card>
+        {/* Editable fields */}
+        <FormFields form={form} set={set} isCreate={false} disabled={update.isPending} />
+
+        {/* Session actions */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => run(restart, "Sessão reiniciada")}
+            disabled={restart.isPending}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Reiniciar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onWireWebhook}
+            disabled={configureWebhook.isPending}
+          >
+            <LinkIcon className="mr-2 h-4 w-4" />
+            Conectar webhook
+          </Button>
+          {paired && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => run(logout, "Conta desvinculada")}
+              disabled={logout.isPending}
+            >
+              <Power className="mr-2 h-4 w-4" />
+              Desvincular
+            </Button>
+          )}
+        </div>
+
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          <Button
+            variant="ghost"
+            className="text-destructive"
+            onClick={() => onRequestDelete(line)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Excluir
+          </Button>
+          <Button onClick={onSave} disabled={update.isPending || !form.label.trim()}>
+            {update.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── One clickable session row ───────────────────────────────────────────────
+function ConnectionRow({
+  line,
+  onSelect,
+}: {
+  line: WhatsAppConnectionLine;
+  onSelect: (line: WhatsAppConnectionLine) => void;
+}) {
+  const { data: status } = useWhatsAppConnectionStatus(line.id);
+  const paired = !!status?.paired;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(line)}
+      className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 text-left transition hover:bg-muted/40"
+    >
+      <Smartphone className="h-5 w-5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-medium">{line.label}</span>
+          <StatusBadge status={status?.status ?? null} paired={paired} />
+        </div>
+        <div className="truncate text-xs text-muted-foreground">
+          {paired ? (
+            <span>Conectado: {status?.me_name ?? status?.me_id ?? "—"}</span>
+          ) : (
+            <span>Não pareado</span>
+          )}
+          {" · "}
+          <code className="font-mono">{line.session_name}</code>
+        </div>
+      </div>
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
   );
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function ConexaoPage() {
   const { data: lines, isLoading } = useWhatsAppConnections();
-  const { create } = useWhatsAppConnectionMutations();
+  const { create, remove } = useWhatsAppConnectionMutations();
   const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<WhatsAppConnectionLine | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<WhatsAppConnectionLine | null>(null);
 
   const onCreateSubmit = (form: FormState) => {
     const body: CreateConnectionBody = {
@@ -477,10 +469,20 @@ export default function ConexaoPage() {
     create.mutate(body, {
       onSuccess: () => {
         setCreating(false);
-        toast.success("Conexão criada — abra o QR para parear");
+        toast.success("Conexão criada — abra a linha para parear");
       },
       onError: (e: any) => toast.error(e?.message ?? "Falha ao criar conexão"),
     });
+  };
+
+  const onDelete = () => {
+    if (!confirmDelete) return;
+    const id = confirmDelete.id;
+    remove.mutate(id, {
+      onSuccess: () => toast.success("Conexão removida"),
+      onError: (e: any) => toast.error(e?.message ?? "Falha ao remover"),
+    });
+    setConfirmDelete(null);
   };
 
   return (
@@ -489,8 +491,8 @@ export default function ConexaoPage() {
         <div>
           <h1 className="text-2xl font-semibold">Conexões WhatsApp</h1>
           <p className="text-sm text-muted-foreground">
-            Gerencie várias sessões WAHA aqui — API key e QR code, sem abrir o
-            painel do WAHA.
+            Clique numa sessão para ver, editar e gerenciar — API key e QR code,
+            sem abrir o painel do WAHA.
           </p>
         </div>
         <Button onClick={() => setCreating(true)}>
@@ -508,28 +510,54 @@ export default function ConexaoPage() {
           <CardHeader>
             <CardTitle className="text-base">Nenhuma conexão ainda</CardTitle>
             <CardDescription>
-              Clique em "Nova conexão", informe a API key da sua sessão WAHA e
-              escaneie o QR para parear um WhatsApp.
+              Clique em "Nova conexão", informe a API key da sua sessão WAHA;
+              depois abra a linha para escanear o QR e parear um WhatsApp.
             </CardDescription>
           </CardHeader>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {lines.map((line) => (
-            <ConnectionRow key={line.id} line={line} />
+            <ConnectionRow key={line.id} line={line} onSelect={setSelected} />
           ))}
         </div>
       )}
 
       {creating && (
-        <ConnectionFormDialog
+        <CreateConnectionDialog
           open={creating}
           onOpenChange={setCreating}
-          mode="create"
           onSubmit={onCreateSubmit}
           pending={create.isPending}
         />
       )}
+
+      {selected && (
+        <ConnectionDetailDialog
+          line={selected}
+          onClose={() => setSelected(null)}
+          onRequestDelete={(line) => {
+            setSelected(null);
+            setConfirmDelete(line);
+          }}
+        />
+      )}
+
+      <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir "{confirmDelete?.label}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A linha e sua API key serão removidas. A sessão no WAHA não é
+              encerrada — use "Desvincular" antes se quiser deslogar a conta.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={onDelete}>Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
