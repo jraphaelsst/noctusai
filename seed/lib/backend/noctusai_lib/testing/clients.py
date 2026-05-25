@@ -30,6 +30,17 @@ from typing import Any, Optional
 from unittest.mock import MagicMock
 
 
+#: Canonical test identity — the seed-default ``MockUser`` id and the org id the
+#: framework suites assert against. **Products' mock fixtures MUST reference these
+#: constants, never a hand-typed literal**: a mock row whose ``user_id`` / ``org_id``
+#: drifts from the ``MockUser`` default silently fails every ``.eq(user_id|org_id, …)``
+#: predicate once ``MockRequestBuilder`` filtering is accurate (the ``"test-user-id"``
+#: vs ``"test-user-123"`` footgun, N=2 daily-life + erp). Import via
+#: ``from noctusai_lib.testing import TEST_USER_ID, TEST_ORG_ID``.
+TEST_USER_ID = "test-user-123"
+TEST_ORG_ID = "test-org-123"
+
+
 class MockUser:
     """Simulates a Supabase auth user object.
 
@@ -43,7 +54,7 @@ class MockUser:
 
     def __init__(
         self,
-        id: str = "test-user-123",
+        id: str = TEST_USER_ID,
         email: str = "test@example.com",
         *,
         role: Optional[str] = None,

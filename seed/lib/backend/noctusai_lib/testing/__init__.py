@@ -31,6 +31,8 @@ from noctusai_lib.testing.mocks import (
     MockSupabaseClient,
 )
 from noctusai_lib.testing.clients import (
+    TEST_USER_ID,
+    TEST_ORG_ID,
     MockUser,
     MockUserResponse,
     AuthClient,
@@ -72,6 +74,8 @@ from noctusai_lib.testing.framework_test_suites import (
 from noctusai_lib.testing.fixtures import reset_rate_limiter
 
 __all__ = [
+    "TEST_USER_ID",
+    "TEST_ORG_ID",
     "MockSupabaseResponse",
     "MockSelectBuilder",
     "MockFilterBuilder",

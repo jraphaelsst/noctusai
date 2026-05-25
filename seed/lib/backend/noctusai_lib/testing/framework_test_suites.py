@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from noctusai_lib.testing.clients import TEST_ORG_ID, TEST_USER_ID
+
 
 # ---------------------------------------------------------------------------
 # Health endpoint — provided by seed framework
@@ -74,7 +76,7 @@ _DEFAULT_SAMPLE_MEMBER = {
 }
 
 #: Default user-id used in delete/no-auth probes.
-_DEFAULT_USER_ID = "test-user-123"
+_DEFAULT_USER_ID = TEST_USER_ID
 
 
 class TeamRouterListMembersSuite:
@@ -213,7 +215,7 @@ class TeamFlowSuite:
     #: Org id the conftest-bound ``MockUser`` carries. Subclasses
     #: override when their fixture binds a different value. Defaults to
     #: ``"test-org-123"`` to match the seed-default ``MockUser``.
-    expected_org_id: ClassVar[str] = "test-org-123"
+    expected_org_id: ClassVar[str] = TEST_ORG_ID
 
     def test_list_members_returns_data(self, client):
         """Authenticated user can list org members.
@@ -240,7 +242,7 @@ class TeamFlowSuite:
 
     def test_cannot_remove_self(self, client):
         """Framework prevents self-removal."""
-        resp = client.delete("/api/team/test-user-123")
+        resp = client.delete(f"/api/team/{TEST_USER_ID}")
         # Returns 400 (self-removal) or 403 (not admin) — both are correct rejections
         assert resp.status_code in (400, 403)
 
@@ -255,7 +257,7 @@ class NotificationFlowSuite:
     def test_list_notifications(self, client):
         """Authenticated user can list notifications."""
         client._mock_supabase.set_table_data("notifications", [
-            {"id": "n1", "user_id": "test-user-123", "type": "system",
+            {"id": "n1", "user_id": TEST_USER_ID, "type": "system",
              "title": "Welcome", "message": "Hello", "read": False,
              "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
         ])

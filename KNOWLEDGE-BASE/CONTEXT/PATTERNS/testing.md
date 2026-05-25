@@ -64,6 +64,18 @@ Lifted from N=15+ inline `mock.auth.get_user = MagicMock(return_value=MockUserRe
 
 Products with product-specific role names / claim shapes wrap this with a thin product-bound helper in their own conftest (e.g. AdConnect's `bind_adconnect_user(client, *, role, distributor_id, org_id)` mapping `distributor_id` → `extra_metadata["distributor_id"]` → `user["distributorId"]` via `auth_deps`).
 
+### Canonical test identity — `TEST_USER_ID` / `TEST_ORG_ID` (since 2026-05-25)
+
+Mock DB rows MUST reference the seed constants for owner ids — **never a hand-typed literal**:
+
+```python
+from noctusai_lib.testing import TEST_USER_ID, TEST_ORG_ID, MockUser
+
+SAMPLE_TASK = {"id": "t1", "user_id": TEST_USER_ID, "org_id": TEST_ORG_ID, "title": "…"}
+```
+
+`TEST_USER_ID == MockUser().id` and `TEST_ORG_ID` is exactly what the framework suites assert against — single source in `noctusai_lib.testing.clients`. **Why it matters:** a row whose `user_id` / `org_id` drifts from the `MockUser` default (the `"test-user-id"` vs `"test-user-123"` typo) silently fails every `.eq(user_id|org_id, …)` predicate once `MockRequestBuilder` filtering is accurate — surfacing as a spurious `assert 0 == N`. Importing the constant makes the drift structurally impossible. Promoted from a private `_DEFAULT_USER_ID` to a public export after the N=2 daily-life + erp recurrence (test mocks are shareable seed content). Straggler tell: grep `user_id": "test-user` in a product's tests.
+
 ### Parallel-worktree shadow purge — `purge_shadowing_editable_finders`
 
 When the host venv carries an editable-install of `noctusai_lib` pointing at one
