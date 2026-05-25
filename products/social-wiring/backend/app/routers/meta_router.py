@@ -48,7 +48,7 @@ from noctusai_lib.integrations.meta._meta_api import (
     MetaGraphError,
     discover_app_permissions,
     exchange_code_for_token,
-    exchange_for_long_lived,
+    exchange_for_long_lived_bundle,
     graph_get,
     resolve_oauth_scopes,
 )
@@ -422,7 +422,7 @@ def meta_oauth_callback(
 
     # 2) short → long-lived user token (also returns the token string).
     try:
-        long_token = exchange_for_long_lived(
+        long_bundle = exchange_for_long_lived_bundle(
             short_token=short_token,
             app_id=settings.meta_app_id,
             app_secret=settings.meta_app_secret,
@@ -435,16 +435,14 @@ def meta_oauth_callback(
             detail=f"Long-lived token exchange failed: {exc}",
         ) from exc
 
-    long_token = long_token or short_token
-    # The seed exchange surfaces only the token string. Meta long-lived
-    # user tokens are always bearer; `expires_in` (~60d) is not surfaced
-    # by the seed helper and is not read anywhere downstream (the
-    # CredentialStoreMetaResolver resolves on `access_token` only). We
-    # persist the documented bearer type and leave `expires_in` unset.
-    # See the `seed-meta-projection-enrichment` follow-up for a
-    # bundle-returning seed exchange variant if a consumer ever needs it.
-    token_type = "bearer"
-    expires_in = None
+    long_token = long_bundle.access_token or short_token
+    # The seed bundle surfaces `expires_in` (~60d) + `token_type` from the
+    # Graph `oauth/access_token` response (the `seed-meta token-bundle`
+    # follow-up that closed the prior "expires_in not surfaced" gap). Meta
+    # long-lived user tokens are bearer; persist the surfaced values, falling
+    # back to the documented bearer type when the response omits `token_type`.
+    token_type = long_bundle.token_type or "bearer"
+    expires_in = long_bundle.expires_in
 
     # 3) probe /me so we can store user_id + name for display.
     user_id: str | None = None
