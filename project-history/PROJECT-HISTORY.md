@@ -5,6 +5,7 @@ _Source of truth: `project-history/ledger.ndjson` (see `projects/project-history
 
 | Date | Slug | Scope | Status | Total Tokens | Short Summary |
 | :--- | :--- | :--- | :--- | ---: | :--- |
+| 2026-05-25 | social-wiring-drive-projection-enrichment | single-product | shipped | 1914 | **Status:** Filed (gap-spec captured; ready for in-flight resolution as part of `social-wiring-google-seed-consume` Phase 6a OR as a standalone follow-up if scope shifts) |
 | 2026-05-24 | media-svg-render-mode | cross-product | shipped | 14515 | **Status:** ✅ complete (P1+P2+P3 green; awaiting merge→dev + user push) · **Branch:** `media-svg-render-mode` (off `dev`) · **Started/closed:** 2026-05-24 · **Sign-off:** `SIGN-OFF.md` |
 | 2026-05-24 | social-wiring-branding-catalog | cross-product | shipped | 9327 | **Status:** ✅ complete — on `origin/dev` `1d366eba` (cherry-picked clean past a shared-checkout collision; see findings + `project_branding_catalog` memory) · **Started/closed:** 2026-05-24 |
 | 2026-05-24 | social-wiring-followups | cross-product | shipped | 1242 | **Created:** 2026-05-25 |
