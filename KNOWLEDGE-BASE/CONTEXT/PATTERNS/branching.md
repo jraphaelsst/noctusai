@@ -106,6 +106,9 @@ Pick the row; route to its depth. Axis order: **write-vs-read first** (isolation
 | B11 | agent killed; work seemingly lost | the ~600s watchdog killed stalled return-text gen | write `/tmp/<slice>.patch` EARLY (it survives) | §4 |
 | B12 | bless put un-CI'd commits on `main` | bless FF'd to the LIVE `dev` tip, not the verified sha | bless only when `dev` is quiet ∧ assert `origin/dev` == verified-sha | [[branching-and-merging]] §0.2 |
 | B13 | green local, red CI / prod | local-green ≠ the CI / slim-prod shape | confirm CI green (+ `predeploy_check` for deploys) before `main` | [[dev-prod-parity]] |
+| B14 | the "smallest" projects picked for dispatch include a deploy / blocked / deferred one | folder-size ≠ readiness | select dispatch candidates by **readiness-triage** (state + risk + concurrency), never by size; ground each before dispatching | §1 · [[project-execution]] |
+| B15 | two "independent" projects both edit one cross-cutting file (e.g. `compliance.py`) | project-disjoint assumed ⇒ file-disjoint | classify the **actual edit-set** (`git diff --name-only` of would-touch), not project scope (§4 C1/C2/C3) | §4 |
+| B16 | dispatched a "filed / not-started" project that was already ~done | the project doc is derived + drifts vs the tree | ground project state against the tree (grep the success signal) before dispatch; doc-size ≠ work-size | §2 · [[project-execution]] |
 
 ---
 
