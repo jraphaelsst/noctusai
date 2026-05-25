@@ -8,7 +8,7 @@
 
 - **Created:** 2026-05-11
 - **Last updated:** 2026-05-25 (Phase 3 ✅ · Phase 4 ✅)
-- **Status:** ✅ **shipped-pending-archive** — Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅. Pattern F (auth-factory) + Pattern H (orphan deletes) shipped Phase 1; Pattern A (EN-rename `/api/metricas` → `/api/metrics`) shipped Phase 2; `ai_outputs` mount + migration 006 + mount-smoke (10 tests) + pre-existing notificacoes fix shipped Phase 3; lessons file + PROJECT.md close-out shipped Phase 4.
+- **Status:** ✅ **shipped-pending-archive** — Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅. Pattern F (auth-factory) + Pattern H (orphan deletes) shipped Phase 1; Pattern A (EN-rename `/api/metricas` → `/api/metrics`) shipped Phase 2; `ai_outputs` mount + migration 006 + mount-smoke (10 tests) + pre-existing notificacoes fix shipped Phase 3; lessons file + PROJECT.md close-out shipped Phase 4. **DEPLOY-TIME-DEFERRED (user decision 2026-05-25):** apply migration `006_ai_outputs.sql` to live Supabase when daily-life is deployed — code + 242 tests pass on the seed Fake without it, but the live `/api/ai-outputs` route needs the `daily_life.ai_outputs` table; any live role-tier QA also runs at deploy, not now (grep DEPLOY-TIME-DEFERRED).
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `archive/projects/2026-05-11/16-personal-finance-wiring/personal-finance-wiring-lessons.md` — direct prior-art reference

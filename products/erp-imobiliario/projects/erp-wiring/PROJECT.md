@@ -27,8 +27,12 @@
   PII routers covered with `<entity>_row_to_dto` mappers; Phase 4 ✅ scaffolding debt;
   Phase 5 ✅ corretor wiring; Phase 6 ✅ portal-cliente + portal-externo;
   Phase 7 ✅ standard-router smoke + vista SSO + financial LGPD; Phase 8 ✅
-  verification + retro (2026-05-25). Manual browser QA deferred to architect/user
-  vs live fleet (stack not running in worktree context).
+  verification + retro (2026-05-25). **Manual browser QA = DEPLOY-TIME-DEFERRED**
+  (user decision 2026-05-25): run per-product when erp-imobiliario is deployed — NOT
+  now. Reason: headless role-tier QA needs live login creds, and bringing erp up on
+  the shared dev Docker daemon overloads it (it destabilized the running fleet on
+  attempt 2026-05-25). Re-flip Phase 8 ⏳→✅ once that deploy-time QA passes. Grep
+  marker: DEPLOY-TIME-DEFERRED.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `CLAUDE.md § Universal rules` — behavioral rules, loaded every session
@@ -526,7 +530,7 @@ Every `/admin/*` + corretor-tier surface — Atividades, Funil, Distribuição, 
 
 - [x] **Backend pytest — baseline-no-regress.** `pytest tests/ -q` → **2082 passed / 34 skipped / 0 failed** (Phase 7 close baseline was 1920 passed / 34 skipped / 33 pre-existing failed; improvement reflects fixes on `origin/dev` between 2026-05-20 and 2026-05-25 — 0 new failures, all 34 skips unchanged). Run from worktree with `PYTHONPATH="$WT/seed/lib/backend:$WT/seed/framework/backend"`.
 - [x] **Frontend build — deferred (worktree environment constraint).** `vite build` fails in worktrees via symlinked `node_modules` due to `tailwindcss-animate` PostCSS `require.resolve` breakage (surfaced Phase 5; confirmed environmental, not a code defect). Architect runs from primary tree. Last known green: Phase 4 close (5.93s) ∧ Phase 6 close (5.93s) ∧ Phase 7 confirms 0 frontend code changes in Phase 7 scope. **Acceptance: architect runs `vite build` at merge and records result in §11.**
-- [ ] **Manual browser QA per role tier** — ⏳ **deferred: requires live fleet.** Cannot execute in worktree context (no running container, no DB connection). Destination: architect/user vs live fleet after `dev` integration. Golden paths: admin login → dashboard → clients → contracts → financeiro; corretor → funil → agenda → campo; portal-cliente token flow; portal-externo public link; vista-showcase admin gate.
+- [ ] **Manual browser QA per role tier** — ⏳ **DEPLOY-TIME-DEFERRED (user decision 2026-05-25):** run when erp-imobiliario is deployed, NOT now — headless role-tier QA needs live login creds, and erp's first-boot build overloads the shared dev Docker daemon (destabilized the fleet on attempt). Destination: deploy-time live fleet (grep DEPLOY-TIME-DEFERRED). Golden paths: admin login → dashboard → clients → contracts → financeiro; corretor → funil → agenda → campo; portal-cliente token flow; portal-externo public link; vista-showcase admin gate.
 - [x] **`accept-with-rationale` catalog confirmed.** `grep -n "ERP" KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md` returns entries for: `contratos.parcelas` mixed path shape (Pattern G, Phase 4), `Configuracoes.tsx` cross-product reach (Phase 4), `ERP metas digest does NOT use noctusai_lib.domain.digest` (pre-project), `validate_schema=False` (ERP schema-drift project), `Vista audit path uses ERP's validate_schema=False` (pre-project). All Phase 4/6/7 decisions properly catalogued. **No edit required — KB is read-only for this engineer.**
 - [x] **Lessons retro authored.** `products/erp-imobiliario/projects/erp-wiring/erp-wiring-lessons.md` — 6-category synthesis (a-f) across Phases 0–7. Inherits PF retro template. Self-contained; no `archive/` anchors. Path differs from §9 spec (`archive/projects/…`) — kept in-project as a durable surface per the "durable docs are self-contained" rule; architect copies to archive at close if desired.
 
