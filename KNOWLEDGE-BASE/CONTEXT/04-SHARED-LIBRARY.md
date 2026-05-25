@@ -598,7 +598,7 @@ Import: `import { ... } from '@noctusai/lib'`
 
 ### `hooks.ts`
 
-`createCrudHooks<T>(options)` → `useList`, `useOne`, `useCreate`, `useUpdate`, `useDelete` with auto-invalidation.
+`createCrudHooks<T>(options)` → `useList`, `useOne`, `useCreate`, `useUpdate`, `useDelete` with auto-invalidation. **TanStack-Query data layer** — requires a `QueryClientProvider` in the host app. NOTE: most products are NOT wired for react-query, so the no-dependency default for a CRUD page is `<ResourceManager/>` (see `components/`), which is self-contained on the `api` client. Use `createCrudHooks` only when the product already opts into react-query.
 
 ### `notifications.ts`
 
@@ -625,7 +625,9 @@ Required vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`. Optional wi
 
 ### `components/`
 
-`SSOCallback` (token exchange + session setup), `ErrorBoundary` / `withErrorBoundary`, `createAuthProvider(supabase, useAuthStore)`.
+`SSOCallback` (token exchange + session setup), `ErrorBoundary` / `withErrorBoundary`, `createAuthProvider(supabase, useAuthStore)`, `FakeModeBadge`.
+
+**`ResourceManager<T>`** — the canonical **page-scoped-CRUD** component (the product-internal-wiring rule's UI half). One config-driven component renders list/table + "Novo" button + create/edit modal + delete-confirm + loading/empty/error states, driven by `columns` (display) + `fields` (form). **Self-contained on the `api` client** (plain `useState` + `sonner` toasts; NO `QueryClientProvider` needed) so any product adopts it with zero host setup. Import `from '@noctusai/lib/components'`. **Before hand-rolling a list+manage page, use this** (it formalizes the ~290-line `AdminPlans`-style hand-roll into config-only). Canonical consumer + usage example: `products/seed/frontend/src/pages/Example.tsx`. Adopters: seed (reference) · core (AdminOrganizations/Subscriptions) · social-wiring (EmailMarketing). Props: `title`/`api`/`apiPath`/`singularName`/`columns`/`fields` + optional `idKey`/`extractRows`/`toForm`/`toPayload`/`canCreate|canEdit|canDelete`/`deleteLabel`/`rowActions`/`onMutate`.
 
 ---
 

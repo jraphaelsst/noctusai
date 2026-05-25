@@ -79,3 +79,24 @@ For each UI surface (page/widget/stat/table):
 |---|---|---|
 | 2026-05-25 | Filed. Rule doc'd (`KB § PATTERNS/product-internal-wiring.md` + CLAUDE.md §1 + memory). Wave 1 = core/seed/social-wiring + the `scan_wiring` tool; Wave 2 = 7 deferred products. core admin already fixed + shipped to prod (`1ef21ba8`). | claude-opus-4-7 · architect |
 | 2026-05-25 | **Page-scoped CRUD** folded into the rule (user clarification): each page manages its **own** related data (manage subscriptions on the subscriptions page); audit grows to 7 steps; propagates to every product. KB §2a + audit step 7 + CLAUDE.md §1/§2 + memory updated. | claude-opus-4-7 · architect |
+| 2026-05-25 | Wave 1 shipped to `dev`: `scan_wiring` tool + 3 keepers (`4c889827`,`c2a3035e`) · shared `ResourceManager` + seed canonical CRUD (`5c88db02`) · core CRUD (orgs/subs/users + 5 shared-catch fixes) · social CRUD (EmailMarketing page; was backend-no-frontend). Methodology learnings codified (§9). | claude-opus-4-7 · architect |
+
+## 9 · Process retro + learnings (the "doc process" deliverable)
+
+**The playbook that worked** (rule → enforcement → seed-first → products), a reusable shape for any new product-quality rule:
+1. **Rule first** (s3): KB pattern doc + CLAUDE.md §1 bullet + memory, three-way synced. The rule named the slip ("route-exists ≠ wired"; later "read-only ≠ managed").
+2. **Enforcement** (s4): the static, deterministic legs became BOTH an on-demand scanner (`noctus.dev.scan_wiring`) AND `check_*` keepers — **one predicate, two surfaces** (`analyze_*` extracted once, imported by both). The judgment/runtime legs stayed advisory (honest about what a keeper can't assert).
+3. **Seed-first formalize** before touching products: the hand-rolled list+modal CRUD was N=3 → built ONE shared `<ResourceManager>` + made the **seed** the canonical consumer, so it propagated into the scaffold template (new products inherit page-scoped CRUD by construction). **Meta-lesson:** the data layer (`createCrudHooks`) was *already* half-formalized-but-unused — check that before formalizing, and don't force a heavy dep (react-query) when self-contained-on-`api` fits the actual adoption reality.
+4. **Products consume, in waves**: seed (reference) → core + social (parallel, file-disjoint engineers consuming the shared component). Existing working CRUD pages left as-is (don't churn).
+
+**What surfaced + was codified (three-way synced this session):**
+- **Self-branch verification-env recipe** — fresh worktrees lack node_modules/.venv; the symlink + `@noctusai` repoint + venv-PYTHONPATH recipe → `KB § PATTERNS/self-branching-mode.md § 5a` + `feedback_self_branch_verification_env`. (Biggest time-sink.)
+- **Engineer worktree-slip** — one engineer drifted onto the primary checkout; hardened `engineer-default.md §1` (confirm `pwd` + never-touch-primary + FF-rebase-clean-behind-don't-blanket-STOP). VALIDATED: the next 2 engineers stayed in-worktree.
+- **`ResourceManager` discoverability** → `KB § 04-SHARED-LIBRARY.md components/` (so the next product consumes, not re-hand-rolls).
+- **Lib vitest render-harness dual-React gap** → `reference_lib_frontend_vitest_render_harness_gap` (not CI-gated; gate = tsc).
+
+## 10 · Open follow-ups (filed, non-silent)
+- **`scan_wiring` not live as an MCP tool** in long sessions (no `cli.py` flag) — engineers called the pure fn. Add the `cli.py --scan-wiring` flag + confirm `.mcp.json`/registration ships (MCP-first-scripts convention: tool + flag + test).
+- **`scan_wiring` leg-4 precision** — the `Promise.all` shared-catch detector near-false-positives on the "one-primary + degrading-aux" shape (bare *first* element that's the deliberate auth/error driver, siblings already `.catch()`-guarded). Refinement: treat an element as guarded if ≥1 sibling has `.catch()` AND the bare element is the documented primary. Route through the codification pipeline.
+- **`task_branch action=start` env auto-wire** — automate the §5a verification-env recipe so FE/backend self-branch tasks can build/test without manual symlinking.
+- **Wave 2** — the 7 deferred products (erp/PF/therapy/daily-life/adconnect/dev-team/knowledge-extractor) get the 7-step audit + page-scoped CRUD in a later wave (gated on Wave 1 green). The keepers now flag their leg-2 debt in the baseline (adconnect 20 / therapy 9 / erp 3).

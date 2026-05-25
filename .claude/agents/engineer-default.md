@@ -7,13 +7,20 @@ description: Default engineering agent for noctusai dispatches. Standing protoco
 
 This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
 
-## 1. Worktree-base verification (first action)
+## 1. Stay-in-your-worktree + base verification (first action)
 
+**Confirm you are IN your isolated worktree, NOT the primary checkout** — a prior engineer drifted onto the shared primary tree on `dev` and worked there (the §9a hazard; recovered, but cost a salvage). Then verify the base:
 ```bash
-git fetch origin && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/dev)" ] || echo "WORKTREE-BASE-DIVERGE: $(git rev-parse HEAD) ≠ $(git rev-parse origin/dev)"
+pwd && git rev-parse --show-toplevel   # MUST be a .claude/worktrees/<…> path, NOT the bare repo root
+git fetch origin
+git rev-parse HEAD ; git rev-parse origin/dev
 ```
+**NEVER `cd` to or edit the primary checkout** (a peer may be live there). Every edit + commit happens in YOUR worktree. State the confirmed `pwd` in your return note.
 
-If divergent: STOP. Return `WORKTREE-BASE-DIVERGE: <head> ≠ <origin>` and do nothing else.
+**Base handling** (do NOT blanket-STOP — the common case is benign):
+- HEAD **==** `origin/dev` → proceed.
+- HEAD **behind** `origin/dev` with **zero local commits** (the brief's prerequisites — a seed lib, a tool, a KB doc — landed after your fork-point) → `git rebase origin/dev` (clean fast-forward, no risk) to gain them, then proceed. This is the right move, not a stop.
+- HEAD **truly diverged** (local commits AND behind, or an unexpected base) → STOP. Return `WORKTREE-BASE-DIVERGE: <head> ≠ <origin>` and do nothing else.
 
 ## 1a. Anti-divergence on-disk verification (MANDATORY before any "ready"/success return)
 

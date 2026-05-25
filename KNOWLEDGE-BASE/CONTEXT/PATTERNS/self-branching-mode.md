@@ -98,6 +98,32 @@ Each peer-agent's edits land **on disk in its worktree** (`.claude/worktrees/<sl
 
 ---
 
+## 5a. Verifying builds/tests in a fresh worktree (the env recipe)
+
+A fresh worktree is a clean git checkout — `node_modules/`, `.venv/`, and seed-version stamps are **gitignored, so they are ABSENT**. `noctus.dev.vite_build`/`noctus.dev.pytest` (MCP) run against the **primary** tree, not the worktree — so to verify *your worktree's* changes before integrate, wire the env in (all gitignored ⇒ never staged):
+
+**Frontend (vite build / vitest):** symlink the PRIMARY's per-package `node_modules` into the worktree, then **re-point the `file:` local deps to the WORKTREE copies** so your lib edits are seen:
+```
+PRIMARY=/Users/rapha/Documents/repository/NoctusAI/noctusai ; WT=$PRIMARY/.claude/worktrees/<slug>
+ln -sfn "$PRIMARY/products/<slug>/frontend/node_modules" "$WT/products/<slug>/frontend/node_modules"
+ln -sfn "$PRIMARY/seed/lib/frontend/node_modules"        "$WT/seed/lib/frontend/node_modules"
+ln -sfn "$PRIMARY/seed/framework/frontend/node_modules"  "$WT/seed/framework/frontend/node_modules"
+ln -sfn "$WT/seed/lib/frontend"       "$WT/products/<slug>/frontend/node_modules/@noctusai/lib"
+ln -sfn "$WT/seed/framework/frontend" "$WT/products/<slug>/frontend/node_modules/@noctusai/seed"
+( cd "$WT/products/<slug>/frontend" && npx vite build )   # the product-FE CI gate (esbuild — compiles, no typecheck)
+```
+The `@noctusai/{lib,seed}` re-point is the crux: the symlinked `node_modules/@noctusai/lib` otherwise points at the PRIMARY lib, so your worktree lib changes are invisible to the build.
+
+**Backend (pytest):** the seed backend has no per-product venv; use the PRIMARY root `./venv` (it carries the deps) + put the framework + lib on `PYTHONPATH` (conftest only adds the lib):
+```
+PYTHONPATH="$WT/seed/framework/backend:$WT/seed/lib/backend" "$PRIMARY/venv/bin/python" -m pytest products/<slug>/backend/tests/ -q
+```
+MCP-toolkit tests: `"$PRIMARY/mcp/noctusai/.venv/bin/python" -m pytest tests/ -q` run from `$WT/mcp/noctusai` (cwd selects the worktree's files).
+
+**Known worktree-env caveats (codified breadcrumbs):** (a) the lib's *vitest render* tests dual-React-fail in a symlinked worktree — pre-existing, **not CI-gated** (lib CI gate is `tsc`); see [[reference_lib_frontend_vitest_render_harness_gap]]. (b) Seed-version-stamp critical false-positives in compliance scans (stamp gitignored/absent) — scope the scan or copy the stamp. (c) `noctus.dev.scan_wiring` may not be live as an MCP tool in a long-running session (no CLI flag yet); call the pure `analyze_*`/`scan_wiring()` functions directly. **Fallback when env-wiring is too fragile: author in the worktree, let the architect build-verify on the primary at integrate** (the documented verify-on-integrate path). *Follow-up:* `noctus.dev.task_branch action=start` should optionally auto-wire this env (the recipe is mechanical) — filed, not yet built.
+
+---
+
 ## 6. Anti-patterns
 
 - **Sharing one checkout + independent `git switch`.** The cardinal §9a sin; self-branching exists to make avoiding it automatic. A peer NEVER switches the primary checkout's branch.
