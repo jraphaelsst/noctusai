@@ -71,18 +71,18 @@ export function BillingSettings() {
     if (!user) { navigate('/login'); return; }
 
     async function fetchBilling() {
-      try {
-        const [statusRes, invoicesRes] = await Promise.all([
-          api.get('/api/billing/status'),
-          api.get('/api/billing/invoices').catch(() => ({ data: [] })),
-        ]);
-        setBilling(statusRes.data || statusRes);
-        setInvoices(invoicesRes.data || []);
-      } catch (err) {
-        console.error('Erro ao carregar faturamento:', err);
-      } finally {
-        setLoading(false);
-      }
+      // product-internal-wiring §4: status + invoices each degrade independently
+      // via their own `.catch()` — a failure in one must not zero the other.
+      const [statusRes, invoicesRes] = await Promise.all([
+        api.get('/api/billing/status').catch((err) => {
+          console.error('Erro ao carregar faturamento:', err);
+          return { data: null };
+        }),
+        api.get('/api/billing/invoices').catch(() => ({ data: [] })),
+      ]);
+      setBilling(statusRes.data || statusRes);
+      setInvoices(invoicesRes.data || []);
+      setLoading(false);
     }
     fetchBilling();
   }, [authLoading, user]);

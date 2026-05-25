@@ -25,11 +25,20 @@ interface Organization {
   slug: string;
 }
 
+const STATUS_OPTIONS = ['active', 'trial', 'canceled', 'expired'];
+
 function statusBadgeClasses(s: string): string {
   if (s === 'active') return 'bg-success/10 text-success';
   if (s === 'canceled' || s === 'expired') return 'bg-danger/10 text-danger';
   if (s === 'trial') return 'bg-warning/10 text-warning';
   return 'bg-muted text-muted-foreground';
+}
+
+interface EditState {
+  id: string;
+  plan_id: string;
+  status: string;
+  expires_at: string;
 }
 
 export function AdminSubscriptions() {
@@ -39,22 +48,32 @@ export function AdminSubscriptions() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({ org_id: '', plan_id: '', status: 'active' });
+  const [edit, setEdit] = useState<EditState | null>(null);
 
   async function fetchData() {
-    try {
-      const [subsRes, plansRes, orgsRes] = await Promise.all([
-        api.get('/api/subscriptions'),
-        api.get('/api/plans'),
-        api.get('/api/organizations'),
-      ]);
-      setSubs(subsRes.data || []);
-      setPlans(plansRes.data || []);
-      setOrgs(orgsRes.data || []);
-    } catch (err) {
-      console.error('Error:', err);
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true);
+    // product-internal-wiring §4: each fetch degrades independently via its own
+    // `.catch()` — one endpoint failing must NOT zero the whole page (the
+    // all-zeros dashboard bug). Subscriptions are the page's primary data;
+    // plans/orgs are auxiliary (the create/edit dropdowns).
+    const [subsRes, plansRes, orgsRes] = await Promise.all([
+      api.get('/api/subscriptions').catch((err) => {
+        console.error('Falha ao carregar assinaturas:', err);
+        return { data: [] };
+      }),
+      api.get('/api/plans').catch((err) => {
+        console.error('Falha ao carregar planos:', err);
+        return { data: [] };
+      }),
+      api.get('/api/organizations').catch((err) => {
+        console.error('Falha ao carregar organizacoes:', err);
+        return { data: [] };
+      }),
+    ]);
+    setSubs(subsRes.data || []);
+    setPlans(plansRes.data || []);
+    setOrgs(orgsRes.data || []);
+    setLoading(false);
   }
 
   useEffect(() => { fetchData(); }, []);
@@ -65,6 +84,31 @@ export function AdminSubscriptions() {
       await api.post('/api/subscriptions', formData);
       setShowModal(false);
       setFormData({ org_id: '', plan_id: '', status: 'active' });
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
+  function openEdit(sub: Subscription) {
+    setEdit({
+      id: sub.id,
+      plan_id: sub.plan_id,
+      status: sub.status,
+      expires_at: sub.expires_at ? sub.expires_at.slice(0, 10) : '',
+    });
+  }
+
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!edit) return;
+    try {
+      await api.patch(`/api/subscriptions/${edit.id}`, {
+        plan_id: edit.plan_id,
+        status: edit.status,
+        expires_at: edit.expires_at || null,
+      });
+      setEdit(null);
       fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -130,14 +174,22 @@ export function AdminSubscriptions() {
                 <td className="px-4 py-3 text-muted-foreground">{new Date(sub.started_at).toLocaleDateString('pt-BR')}</td>
                 <td className="px-4 py-3 text-muted-foreground">{sub.expires_at ? new Date(sub.expires_at).toLocaleDateString('pt-BR') : 'Sem limite'}</td>
                 <td className="px-4 py-3">
-                  {sub.status === 'active' && (
+                  <div className="flex gap-2">
                     <button
-                      className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
-                      onClick={() => handleCancel(sub.id)}
+                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+                      onClick={() => openEdit(sub)}
                     >
-                      Cancelar
+                      Editar
                     </button>
-                  )}
+                    {sub.status === 'active' && (
+                      <button
+                        className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
+                        onClick={() => handleCancel(sub.id)}
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -206,6 +258,64 @@ export function AdminSubscriptions() {
                   className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
                 >
                   Criar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {edit && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setEdit(null)}>
+          <div className="bg-card rounded-lg border border-border shadow-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-foreground mb-4">Editar Assinatura</h2>
+            <form onSubmit={handleUpdate} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Plano</label>
+                <select
+                  value={edit.plan_id}
+                  onChange={e => setEdit({ ...edit, plan_id: e.target.value })}
+                  required
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">Selecione...</option>
+                  {plans.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Status</label>
+                <select
+                  value={edit.status}
+                  onChange={e => setEdit({ ...edit, status: e.target.value })}
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Expira em</label>
+                <input
+                  type="date"
+                  value={edit.expires_at}
+                  onChange={e => setEdit({ ...edit, expires_at: e.target.value })}
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">Deixe vazio para sem limite.</p>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  className="border border-border bg-card text-foreground rounded-md px-4 py-2 text-sm hover:bg-accent transition-colors"
+                  onClick={() => setEdit(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
+                  Salvar
                 </button>
               </div>
             </form>

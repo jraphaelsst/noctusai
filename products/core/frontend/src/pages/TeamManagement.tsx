@@ -55,20 +55,23 @@ export function TeamManagement() {
   const [removing, setRemoving] = useState(false);
 
   async function fetchData() {
-    try {
-      const [membersRes, invitesRes, rolesRes] = await Promise.all([
-        api.get('/api/team'),
-        api.get('/api/team/invitations').catch(() => ({ data: [] })),
-        api.get('/api/roles').catch(() => ({ data: [] })),
-      ]);
-      setMembers(membersRes.data || []);
-      setInvitations(invitesRes.data || []);
-      setRoles(rolesRes.data || []);
-    } catch (err: any) {
-      setError(err.message || 'Erro ao carregar dados da equipe');
-    } finally {
-      setLoading(false);
-    }
+    // product-internal-wiring §4: each fetch degrades independently via its own
+    // `.catch()` — a failure in one (members vs invitations vs roles) must not
+    // zero the others. The members fetch is the primary surface; its failure
+    // sets the page-level error, the auxiliary lists fall back to empty.
+    setError('');
+    const [membersRes, invitesRes, rolesRes] = await Promise.all([
+      api.get('/api/team').catch((err: any) => {
+        setError(err?.message || 'Erro ao carregar dados da equipe');
+        return { data: [] };
+      }),
+      api.get('/api/team/invitations').catch(() => ({ data: [] })),
+      api.get('/api/roles').catch(() => ({ data: [] })),
+    ]);
+    setMembers(membersRes.data || []);
+    setInvitations(invitesRes.data || []);
+    setRoles(rolesRes.data || []);
+    setLoading(false);
   }
 
   useEffect(() => {

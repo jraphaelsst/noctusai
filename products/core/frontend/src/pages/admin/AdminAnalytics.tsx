@@ -80,20 +80,27 @@ export function AdminAnalytics() {
 
   useEffect(() => {
     async function fetchData() {
-      try {
-        const [overviewRes, revenueRes, tenantsRes] = await Promise.all([
-          api.get('/api/admin/analytics/overview'),
-          api.get('/api/admin/analytics/revenue'),
-          api.get('/api/admin/analytics/tenants'),
-        ]);
-        setOverview(overviewRes.data);
-        setRevenue(revenueRes.data || []);
-        setTenants(tenantsRes.data || []);
-      } catch (err) {
-        console.error('Error fetching analytics:', err);
-      } finally {
-        setLoading(false);
-      }
+      // product-internal-wiring §4: overview / revenue / tenants each degrade
+      // independently via their own `.catch()` — one analytics endpoint failing
+      // must NOT zero the other two (the all-zeros dashboard bug).
+      const [overviewRes, revenueRes, tenantsRes] = await Promise.all([
+        api.get('/api/admin/analytics/overview').catch((err) => {
+          console.error('Error fetching analytics overview:', err);
+          return { data: null };
+        }),
+        api.get('/api/admin/analytics/revenue').catch((err) => {
+          console.error('Error fetching analytics revenue:', err);
+          return { data: [] };
+        }),
+        api.get('/api/admin/analytics/tenants').catch((err) => {
+          console.error('Error fetching analytics tenants:', err);
+          return { data: [] };
+        }),
+      ]);
+      setOverview(overviewRes.data);
+      setRevenue(revenueRes.data || []);
+      setTenants(tenantsRes.data || []);
+      setLoading(false);
     }
     fetchData();
   }, []);

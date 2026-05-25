@@ -42,23 +42,30 @@ export function Dashboard() {
     if (!user) { navigate('/login'); return; }
 
     async function fetchData() {
+      // `/api/auth/me` is the auth-critical call: its failure means the session
+      // is invalid, so it (and only it) drives logout. The auxiliary calls
+      // (subscription, deployment-status) each degrade independently via their
+      // own `.catch()` — a failure there must never log the user out or zero
+      // the dashboard (product-internal-wiring §4: no fast-fail aggregation).
+      let meRes: any;
       try {
-        const [meRes, subRes, deployRes] = await Promise.all([
-          api.get('/api/auth/me'),
-          api.get('/api/subscriptions/me').catch(() => ({ data: null })),
-          // Deployment status is best-effort: a failure must never block the
-          // dashboard, it just means no "dev" badges are shown.
-          api.get('/api/products/deployment-status').catch(() => ({ deployed: {} })),
-        ]);
-        setProducts(meRes.products || []);
-        setSubscription(subRes.data);
-        setDeployed(deployRes.deployed || {});
+        meRes = await api.get('/api/auth/me');
       } catch {
         logout();
         navigate('/login');
-      } finally {
         setLoading(false);
+        return;
       }
+      const [subRes, deployRes] = await Promise.all([
+        api.get('/api/subscriptions/me').catch(() => ({ data: null })),
+        // Deployment status is best-effort: a failure must never block the
+        // dashboard, it just means no "dev" badges are shown.
+        api.get('/api/products/deployment-status').catch(() => ({ deployed: {} })),
+      ]);
+      setProducts(meRes.products || []);
+      setSubscription(subRes.data);
+      setDeployed(deployRes.deployed || {});
+      setLoading(false);
     }
     fetchData();
   }, [authLoading, user]);

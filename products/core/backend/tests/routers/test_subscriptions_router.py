@@ -191,6 +191,26 @@ class TestUpdateSubscription:
         })
         assert resp.status_code == 422
 
+    def test_update_subscription_edit_modal_payload(self, admin_client):
+        """The AdminSubscriptions edit modal sends plan_id + status + expires_at
+        together (page-scoped CRUD edit leg). Lock that the PATCH route accepts
+        this exact combined shape — the FE→route wiring contract."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("subscriptions", [
+            {"id": "sub-1", "org_id": "org-1", "plan_id": "plan-2",
+             "status": "active", "expires_at": "2026-12-31"},
+        ])
+
+        resp = admin_client.patch("/api/subscriptions/sub-1", json={
+            "plan_id": "plan-2",
+            "status": "active",
+            "expires_at": "2026-12-31",
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["plan_id"] == "plan-2"
+        assert data["expires_at"] == "2026-12-31"
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/subscriptions/{id} (admin only)
