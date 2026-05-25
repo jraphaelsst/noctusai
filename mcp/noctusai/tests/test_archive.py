@@ -741,6 +741,23 @@ class TestDurableRefsGate:
             archive(str(proj), repo_root=tmp_repo, skip_history=True)
         assert proj.exists(), "project must NOT move while a durable surface points into it"
 
+    def test_refuses_when_py_constant_references_the_project(self, tmp_repo):
+        # The prod-deploy-compose-durable-relocate incident class: a .py module
+        # constant (a tool's DEFAULT_COMPOSE) pointing at projects/<slug>/ breaks
+        # the tool the instant the project is archived. The gate greps ALL tracked
+        # files (only projects/, archive/, project-history/ excluded) — so .py
+        # constants ARE covered. This regression-pins it: the gate's historical
+        # gap was TEMPORAL (it postdated the production-deploy-migration archive),
+        # NOT a scanning-scope limit.
+        proj = _make_project(tmp_repo, "deploy-tooling-proj")
+        self._add_durable_ref(
+            tmp_repo, "mcp/tool.py",
+            'DEFAULT_COMPOSE = "projects/deploy-tooling-proj/deploy/fleet/docker-compose.prod.yml"\n',
+        )
+        with pytest.raises(ValueError, match="durable-refs gate"):
+            archive(str(proj), repo_root=tmp_repo, skip_history=True)
+        assert proj.exists(), "a .py constant pointing into projects/ must trip the gate"
+
     def test_proceeds_when_no_durable_ref(self, tmp_repo):
         proj = _make_project(tmp_repo, "clean-proj")
         result = archive(str(proj), repo_root=tmp_repo, skip_history=True)

@@ -69,4 +69,26 @@ The Caddy→CF-tunnel A→B cutover (runbook `KB § GUIDES/production-deploy.md 
 
 A timestamped backup of the pre-reconcile config sits next to it (`config.yml.bak.20260525-*`). When relocating, the new durable `deploy/tunnel/config.yml.template` + `ingress.yml` should be authored from the live VPS file, and the dormant full-slug rules kept (they support the `PRODUCT_URL_PATTERN={slug}.noctusai.com` future scheme — harmless, no DNS points at them yet).
 
-**Caddy retired ✅ (2026-05-25, same session):** `noctus-caddy` container + `caddy_data`/`caddy_config` volumes + the deploy-local `caddy/` dir removed; VPS ports 80/443 freed; the dead `caddy/Caddyfile` + `caddy/compose.caddy.yml` were also removed from the archived migration tree (`archive/projects/2026-05-23/01-production-deploy-migration/deploy/caddy/`). **So this relocation's `deploy/` tree must NOT include a `caddy/` subdir** — only `fleet/` + `tunnel/` (+ `services/`) graduate. The relocate itself (move `fleet`/`tunnel` out of `projects/`, fix the `DEFAULT_COMPOSE` constants in `deploy_image.py`/`vps.py`, MCP restart) is the remaining work.
+**Caddy retired ✅ (2026-05-25, same session):** `noctus-caddy` container + `caddy_data`/`caddy_config` volumes + the deploy-local `caddy/` dir removed; VPS ports 80/443 freed; the dead `caddy/Caddyfile` + `caddy/compose.caddy.yml` were also removed from the archived migration tree (`archive/projects/2026-05-23/01-production-deploy-migration/deploy/caddy/`). **So this relocation's `deploy/` tree must NOT include a `caddy/` subdir** — only `fleet/` + `tunnel/` (+ `services/`) graduate.
+
+## 8. Execution — Phase A (repo relocation) ✅ + the gated tail (2026-05-25)
+
+**Phase A — repo-side relocation, SHIPPED to `dev` (no prod impact; the VPS keeps its §2 stopgap until the gated cutover):**
+- ✅ `git mv` `fleet/` + `services/` + `tunnel/` out of the archived migration tree → **repo-root `deploy/`** (the durable home). Dropped the superseded `deploy/fleet/build-and-push.sh` (the live one is `scripts/infra/build-and-push.sh` — DRY).
+- ✅ Fixed the only depth-sensitive path: `deploy/fleet/docker-compose.prod.yml` `env_file: ../../../../.env` → `../../.env` (2-deep). services/infra composes have no relative paths; tunnel uses `./` (depth-independent) — nothing else to fix.
+- ✅ Updated **both** `DEFAULT_COMPOSE` constants → `"deploy/fleet/docker-compose.prod.yml"` (`deploy_image.py` + `vps.py`). Verified both tools import + resolve the new path.
+- ✅ Gate regression test `test_refuses_when_py_constant_references_the_project` (test_archive.py) — pins that the durable-refs gate catches a `.py` `DEFAULT_COMPOSE` constant.
+- ✅ Guide §7 rewritten to document the durable `deploy/` home.
+
+**Scope corrections (verified against code — `§ Codebase is source of truth`, the doc's claims were wrong):**
+- **Item 2 over-stated.** `vps.py` has NO separate infra-compose constant (only `DEFAULT_COMPOSE`). And `archive.py:120` + `scripts/infra/build-and-push.sh:8` are **historical-incident NARRATIVE** ("→ exit 127", "lived at … and broke CI"), NOT live refs — left intact (they document the exact incident this project fixes). The grep is therefore LIVE-clean.
+- **Item 3 unnecessary as written.** The durable-refs gate already `git grep`s **all** tracked files (only `projects/`+`archive/`+`project-history/` excluded) → it ALREADY scans `.py` constants. The gap that let the original archive through was **temporal** (the gate postdated it), not a scanning-scope limit. So "extend the gate" = a no-op; the right artifact is the regression test above (done).
+- **`legacy/` deferred (rationale, named destination = this project):** its `compose.legacy.yml` build context points at `../../reference/one-permutas` (an archived source dir); relocating it cleanly needs that source relocated too (can't point `deploy/` into `archive/`). Out of the tooling-fix scope; tracked here.
+
+**Gated tail — REMAINING (needs user consent + an MCP restart; NOT yet done):**
+1. Release: `noctus.dev.release bless` (`dev`→`main`) → `promote` (`main`→`prod`) — user-gated.
+2. `noctus.dev.deploy_pull confirm=True` → the VPS gets `deploy/`.
+3. **MCP server restart (USER action)** — so the running `deploy_image`/`vps` tools load the new `DEFAULT_COMPOSE`.
+4. Re-point the running compose projects on the VPS to `deploy/fleet/docker-compose.prod.yml` (per-product `up -d --force-recreate`; project name `noctusai-products-prod` is stable → containers migrate cleanly), then **remove the §2 deploy-local stopgap** at the old `projects/…` path.
+5. Reconcile the durable `deploy/tunnel/config.yml.template` + `ingress.yml` from the **live** VPS `config.yml` (§7) — author from the live file, not the stale snapshot.
+6. Live-probe the fleet, then **archive this project with learnings absorbed** (learn-before-archive gate).

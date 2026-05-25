@@ -47,7 +47,7 @@ _COMPOSE_ALLOWED = frozenset({"pull", "up"})
 # allowlists): the tool must never emit any of these.
 _BANNED_TOKENS = ("rmi", "prune", "system", "down", "kill", "volume", "stop")
 
-DEFAULT_COMPOSE = "projects/production-deploy-migration/deploy/fleet/docker-compose.prod.yml"
+DEFAULT_COMPOSE = "deploy/fleet/docker-compose.prod.yml"
 DEFAULT_IMAGE_REPO = "ghcr.io/jraphaelsst"
 
 # Container health classes (Go-template returns Health.Status, else State.Status).

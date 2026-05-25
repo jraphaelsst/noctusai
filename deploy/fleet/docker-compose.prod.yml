@@ -42,7 +42,7 @@ name: noctusai-products-prod
 # restart unless-stopped; join the external noctus-net.
 x-prod-defaults: &prod-defaults
   env_file:
-    - ../../../../.env
+    - ../../.env
   restart: unless-stopped
   networks:
     - noctus-net

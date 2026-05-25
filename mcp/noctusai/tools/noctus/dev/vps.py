@@ -22,7 +22,7 @@ import subprocess
 from typing import Any, Callable
 
 DEFAULT_HOST = "noctus-vps"
-DEFAULT_COMPOSE = "projects/production-deploy-migration/deploy/fleet/docker-compose.prod.yml"
+DEFAULT_COMPOSE = "deploy/fleet/docker-compose.prod.yml"
 DEFAULT_REPO_DIR = "/opt/noctus/noctusai"
 CONTAINER_PREFIX = "noctus-"  # product + infra containers
 
