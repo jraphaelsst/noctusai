@@ -919,6 +919,8 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 - Chronological ordering (`<YYYY-MM-DD>/<NN>-<slug>`) preserves within-day sequence + day-by-day shape.
 - Aligns with `KB § 01-PHILOSOPHY.md § Safety nets capture failures; failures become learnings; methodology evolves` — closing isn't erasure; it's preservation.
 
+**Ship→archive is the close-out — surfaced so it can't be forgotten (2026-05-25).** A fully-shipped project (`✅`, post subtask-sanity demotion) still sitting in the live tree owes this archive step. `noctus.dev.status` returns `shipped_unarchived` (their relative paths) + a `next_action` nudge on every call, so a lingering shipped folder is loud, not silent — the structural fix for the gap that left 5 shipped social-wiring folders un-archived until swept 2026-05-25 (shipping via the `noctus.dev.task_branch` lifecycle, which has no archive step). The nudge complements the learn-before-archive gate below: status says *which* shipped projects to close; the gate makes each close absorb-first.
+
 ### Learn-before-archive gate (REQUIRED — 2026-05-23)
 
 **A project's lessons must OUTLIVE its folder.** `archive/` is not persisted long-term and durable docs MUST NOT link to `projects/`/`archive/` paths (`KB § 01-PHILOSOPHY.md § Durable docs are self-contained`). So **before** a project is archived, every useful lesson is absorbed into a durable doc (KB / CLAUDE.md / memory) — the lesson persists even after the folder is gone or later deleted. **Learn before archiving.**

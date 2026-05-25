@@ -14,6 +14,11 @@ every PROJECT.md across the three valid locations + emits a summary.
 - `seed_first_section` — boolean (§3a present?).
 - `flags` — list of issues found by sibling detectors (`check_phase_state_consistency`, `check_clean_folder_violations` once shipped).
 
+**Digest-level keys:** `buckets` (count per bucket) · `total` · `shipped_unarchived`
+(relative paths of fully-shipped `✅` projects still in the LIVE tree — each owes a
+`noctus.dev.archive` close-out) · `next_action` (the ship→archive **learn-before-archive**
+reminder; the structural nudge so a shipped project is never silently left un-archived).
+
 **Sort order:** active first (`⏳`/`📋`), then parked, then blocked, then
 shipped (audit history at the bottom). Most-recently-updated within
 each bucket. Useful for "next likely to execute" picking.
@@ -287,10 +292,33 @@ def project_status_digest(repo_root: Path | None = None) -> dict:
     for s in summaries:
         buckets[_BUCKET_LABEL.get(s.status_icon, "unknown")] += 1
 
+    # Ship→archive close-out nudge. Every PROJECT.md this walk finds lives in
+    # the LIVE tree (`projects/` + `products/*/projects/` + `core/projects/`),
+    # never under `archive/`. So any project whose final icon is `✅` (after
+    # the subtask-sanity demotion that filters partial-ship false positives) is
+    # a fully-shipped project that was never closed out via `noctus.dev.archive`
+    # — surface it loudly so the ship→archive step can't be silently forgotten
+    # (the gap that left 5 shipped social-wiring folders lingering, 2026-05-25).
+    shipped_unarchived = [
+        s.relative_path for s in summaries if s.status_icon == "✅"
+    ]
+    if shipped_unarchived:
+        next_action = (
+            f"{len(shipped_unarchived)} fully-shipped project(s) still in the "
+            "live tree — CLOSE each via `noctus.dev.archive` (LEARN-BEFORE-"
+            "ARCHIVE: first absorb durable data/learnings into KB/memory/seed "
+            "so they outlive the non-persisted `archive/`). "
+            "See CLAUDE/projects.md § Archive-on-close."
+        )
+    else:
+        next_action = "Close-out clean — no fully-shipped project left un-archived."
+
     return {
         "projects": [s.to_dict() for s in summaries],
         "buckets": buckets,
         "total": len(summaries),
+        "shipped_unarchived": shipped_unarchived,
+        "next_action": next_action,
     }
 
 
@@ -315,7 +343,10 @@ def register(server) -> None:
             "sub-task progress, phase count + visibly-shipped-phase count, "
             "last-updated date, §3a presence, `icon_demoted` boolean (true when a "
             "false-positive ✅ was demoted to ⏳), and phase-state-detector flags. "
-            "Sorted by bucket (executing → ready → parked → blocked → shipped)."
+            "Sorted by bucket (executing → ready → parked → blocked → shipped). "
+            "Also returns `shipped_unarchived` (fully-shipped projects still in the "
+            "live tree) + a `next_action` ship→archive close-out nudge "
+            "(learn-before-archive)."
         ),
     )
     def _status() -> dict:

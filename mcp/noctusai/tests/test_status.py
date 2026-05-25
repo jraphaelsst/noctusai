@@ -177,3 +177,43 @@ class TestProjectStatusDigest:
         proj = project_status_digest(repo)["projects"][0]
         assert proj["phase_count"] == 3
         assert proj["phases_shipped"] == 2
+
+    def test_shipped_unarchived_surfaced_with_nudge(self):
+        """A fully-shipped (✅) project still in the live tree is listed in
+        `shipped_unarchived` + `next_action` nudges the archive close-out."""
+        repo = self._mk_repo_with_projects([
+            ("active-one", (
+                "# A\n- **Status:** ⏳ executing\n## 6.\n### Phase 1 — A\n- [ ] todo\n## 11. Change log\n"
+            )),
+            ("shipped-one", (
+                "# S\n- **Status:** ✅ all done 2026-04-28\n\n"
+                "## 6.\n### Phase 1 — Baz ✅\n- [x] Done\n## 11. Change log\n"
+            )),
+        ])
+        result = project_status_digest(repo)
+        assert result["shipped_unarchived"] == ["projects/shipped-one/PROJECT.md"]
+        assert "archive" in result["next_action"].lower()
+        assert "learn-before-archive" in result["next_action"].lower()
+
+    def test_clean_closeout_when_nothing_shipped(self):
+        """No fully-shipped project ⇒ empty list + clean next_action."""
+        repo = self._mk_repo_with_projects([("active-one", (
+            "# A\n- **Status:** ⏳ executing\n## 6.\n### Phase 1 — A\n- [ ] todo\n## 11. Change log\n"
+        ))])
+        result = project_status_digest(repo)
+        assert result["shipped_unarchived"] == []
+        assert "clean" in result["next_action"].lower()
+
+    def test_demoted_shipped_not_flagged_unarchived(self):
+        """A leftmost-✅ project demoted to ⏳ (low completion) is NOT a
+        close-out candidate — only genuinely-shipped projects are flagged,
+        so partially-shipped projects (e.g. waves-done-but-fan-out-pending)
+        are never spuriously nagged."""
+        repo = self._mk_repo_with_projects([("partial", (
+            "# P\n- **Status:** Phase 1 ✅ — rest pending.\n\n"
+            "## 6.\n### Phase 1 ✅\n- [x] a\n### Phase 2\n"
+            + "".join(f"- [ ] t{i}\n" for i in range(10))
+            + "## 11. Change log\n"
+        ))])
+        result = project_status_digest(repo)
+        assert result["shipped_unarchived"] == []
