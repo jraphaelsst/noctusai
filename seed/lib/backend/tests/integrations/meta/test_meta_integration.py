@@ -26,9 +26,12 @@ from noctusai_lib.integrations.meta import (
     MetaGraphError,
     OAuthMetaCredentials,
     PostInsights,
+    TokenBundle,
     discover_app_permissions,
     exchange_code_for_token,
+    exchange_code_for_token_bundle,
     exchange_for_long_lived,
+    exchange_for_long_lived_bundle,
     get_meta_adapter,
     make_meta_router,
     parse_graph_datetime,
@@ -270,6 +273,112 @@ class TestOAuthExchange:
                 exchange_code_for_token(
                     code="c", app_id="a", app_secret="s", redirect_uri="x"
                 )
+
+
+# ─── TestOAuthExchangeBundle ──────────────────────────────────────────────
+
+
+class TestOAuthExchangeBundle:
+    """The `_bundle` variants preserve the full Graph token metadata
+    (`expires_in` / `token_type`) the string-returning fns discard;
+    the legacy string fns still return just the token (back-compat)."""
+
+    def test_code_for_token_bundle_captures_metadata(self):
+        # Short-lived code exchange MAY include token_type but commonly
+        # omits expires_in — assert both are captured when present.
+        body = {
+            "access_token": "SHORT",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            bundle = exchange_code_for_token_bundle(
+                code="c",
+                app_id="a",
+                app_secret="s",
+                redirect_uri="http://cb",
+            )
+        assert isinstance(bundle, TokenBundle)
+        assert bundle.access_token == "SHORT"
+        assert bundle.expires_in == 5184000
+        assert bundle.token_type == "bearer"
+
+    def test_code_for_token_bundle_none_safe_when_metadata_absent(self):
+        # Short-lived exchange omitting expires_in / token_type → None,
+        # never a KeyError (only access_token is required).
+        body = {"access_token": "SHORT"}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            bundle = exchange_code_for_token_bundle(
+                code="c",
+                app_id="a",
+                app_secret="s",
+                redirect_uri="http://cb",
+            )
+        assert bundle.access_token == "SHORT"
+        assert bundle.expires_in is None
+        assert bundle.token_type is None
+
+    def test_long_lived_bundle_captures_metadata(self):
+        # The long-lived response (the realistic Graph shape) carries
+        # token_type + a ~60d expires_in.
+        body = {
+            "access_token": "LONG60D",
+            "token_type": "bearer",
+            "expires_in": 5183944,
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            bundle = exchange_for_long_lived_bundle(
+                short_token="SHORT", app_id="a", app_secret="s"
+            )
+        assert bundle == TokenBundle(
+            access_token="LONG60D", expires_in=5183944, token_type="bearer"
+        )
+
+    def test_expires_in_coerced_to_int(self):
+        # Graph returns expires_in as a number; if it ever arrives as a
+        # numeric string the bundle still yields an int.
+        body = {"access_token": "LONG60D", "expires_in": "5183944"}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            bundle = exchange_for_long_lived_bundle(
+                short_token="SHORT", app_id="a", app_secret="s"
+            )
+        assert bundle.expires_in == 5183944
+        assert isinstance(bundle.expires_in, int)
+
+    def test_bundle_propagates_graph_error(self):
+        body = {"error": {"message": "bad code", "code": 100}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            with pytest.raises(MetaGraphError):
+                exchange_code_for_token_bundle(
+                    code="c", app_id="a", app_secret="s", redirect_uri="x"
+                )
+
+    def test_legacy_string_fns_still_return_just_token(self):
+        # Back-compat: the string-returning fns delegate to the bundle
+        # variants but unwrap to `.access_token` — metadata invisible.
+        code_body = {
+            "access_token": "SHORT",
+            "token_type": "bearer",
+            "expires_in": 7200,
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(code_body)):
+            tok = exchange_code_for_token(
+                code="c", app_id="a", app_secret="s", redirect_uri="http://cb"
+            )
+        assert tok == "SHORT"
+        assert isinstance(tok, str)
+
+        long_body = {
+            "access_token": "LONG60D",
+            "token_type": "bearer",
+            "expires_in": 5183944,
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(long_body)):
+            tok = exchange_for_long_lived(
+                short_token="SHORT", app_id="a", app_secret="s"
+            )
+        assert tok == "LONG60D"
+        assert isinstance(tok, str)
 
 
 # ─── TestScopeDiscovery ───────────────────────────────────────────────────

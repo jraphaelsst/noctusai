@@ -28,6 +28,8 @@ from typing import Any
 
 import httpx
 
+from noctusai_lib.integrations.meta.types import TokenBundle
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_GRAPH_VERSION = "v21.0"
@@ -265,6 +267,8 @@ def graph_post(
             http_status=resp.status_code,
         )
     return body
+
+
 def poll_media_status(
     creation_id: str,
     *,
@@ -358,9 +362,6 @@ def poll_media_status(
         sleep(poll_interval_seconds)
 
 
-# ─── OAuth token chain ────────────────────────────────────────────────────
-
-
 def exchange_code_for_token(
     *,
     code: str,
@@ -371,7 +372,81 @@ def exchange_code_for_token(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Step 2 of the token chain: authorization `code` → short-lived
-    (~2h) user access token."""
+    (~2h) user access token.
+
+    Returns only the token string (back-compat). Use
+    `exchange_code_for_token_bundle` to also capture `expires_in` /
+    `token_type`."""
+
+    return exchange_code_for_token_bundle(
+        code=code,
+        app_id=app_id,
+        app_secret=app_secret,
+        redirect_uri=redirect_uri,
+        version=version,
+        timeout=timeout,
+    ).access_token
+
+
+def exchange_for_long_lived(
+    *,
+    short_token: str,
+    app_id: str,
+    app_secret: str,
+    version: str = DEFAULT_GRAPH_VERSION,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Step 3 of the token chain: short-lived → long-lived (~60d) user
+    token via `grant_type=fb_exchange_token`. Mandatory — a 2h token
+    is unusable for any production workflow.
+
+    Returns only the token string (back-compat). Use
+    `exchange_for_long_lived_bundle` to also capture `expires_in` /
+    `token_type`."""
+
+    return exchange_for_long_lived_bundle(
+        short_token=short_token,
+        app_id=app_id,
+        app_secret=app_secret,
+        version=version,
+        timeout=timeout,
+    ).access_token
+
+
+def _token_bundle_from_body(body: dict[str, Any]) -> TokenBundle:
+    """Map a Graph `oauth/access_token` response body to a `TokenBundle`.
+
+    `access_token` is required (the error envelope is raised upstream);
+    `expires_in` / `token_type` are optional — the short-lived code
+    exchange may omit them. `expires_in` is coerced to int when present
+    (Graph returns it as a number; a string slips through as-is only if
+    Graph ever changes — defensive int())."""
+
+    expires_in = body.get("expires_in")
+    if expires_in is not None:
+        expires_in = int(expires_in)
+    return TokenBundle(
+        access_token=body["access_token"],
+        expires_in=expires_in,
+        token_type=body.get("token_type"),
+    )
+
+
+def exchange_code_for_token_bundle(
+    *,
+    code: str,
+    app_id: str,
+    app_secret: str,
+    redirect_uri: str,
+    version: str = DEFAULT_GRAPH_VERSION,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> TokenBundle:
+    """Step 2 of the token chain, full-metadata variant: authorization
+    `code` → short-lived (~2h) user access token, returned as a
+    `TokenBundle` carrying `access_token` plus the `expires_in` /
+    `token_type` Graph returns (the short-lived exchange may omit
+    `expires_in`, so it is None-safe). `exchange_code_for_token`
+    delegates to this and returns just `.access_token`."""
 
     resp = httpx.get(
         f"{GRAPH_BASE}/{version}/oauth/access_token",
@@ -385,20 +460,24 @@ def exchange_code_for_token(
     )
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
-    return body["access_token"]
+    return _token_bundle_from_body(body)
 
 
-def exchange_for_long_lived(
+def exchange_for_long_lived_bundle(
     *,
     short_token: str,
     app_id: str,
     app_secret: str,
     version: str = DEFAULT_GRAPH_VERSION,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-) -> str:
-    """Step 3 of the token chain: short-lived → long-lived (~60d) user
-    token via `grant_type=fb_exchange_token`. Mandatory — a 2h token
-    is unusable for any production workflow."""
+) -> TokenBundle:
+    """Step 3 of the token chain, full-metadata variant: short-lived →
+    long-lived (~60d) user token via `grant_type=fb_exchange_token`,
+    returned as a `TokenBundle`. The long-lived response carries
+    `expires_in` (~60d in seconds) + `token_type` — preserved here so
+    the caller can compute a refresh deadline.
+    `exchange_for_long_lived` delegates to this and returns just
+    `.access_token`."""
 
     resp = httpx.get(
         f"{GRAPH_BASE}/{version}/oauth/access_token",
@@ -412,7 +491,7 @@ def exchange_for_long_lived(
     )
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
-    return body["access_token"]
+    return _token_bundle_from_body(body)
 
 
 # ─── Scope auto-discovery ─────────────────────────────────────────────────
@@ -500,7 +579,9 @@ __all__ = [
     "app_access_token",
     "discover_app_permissions",
     "exchange_code_for_token",
+    "exchange_code_for_token_bundle",
     "exchange_for_long_lived",
+    "exchange_for_long_lived_bundle",
     "graph_get",
     "graph_paged",
     "graph_post",

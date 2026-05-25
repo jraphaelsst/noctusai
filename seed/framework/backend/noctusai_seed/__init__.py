@@ -15,7 +15,7 @@ from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config, 
 
 from noctusai_seed._version import __seed_version__
 from noctusai_seed.app import create_product_app
-from noctusai_seed.config import ProductSettings
+from noctusai_seed.config import ProductSettings, make_get_settings
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
 from noctusai_seed.apply_sqlite_migrations import apply_sqlite_migrations
@@ -35,6 +35,7 @@ __all__ = [
     # Framework bones
     "create_product_app",
     "ProductSettings",
+    "make_get_settings",
     "create_database_module",
     "create_dependencies",
     # Dev-only pre-seeded auth + SQLite backend (double-gated; hard-off

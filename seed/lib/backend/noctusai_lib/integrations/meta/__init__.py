@@ -65,8 +65,11 @@ from noctusai_lib.integrations.meta._meta_api import (
     MetaGraphError,
     discover_app_permissions,
     exchange_code_for_token,
+    exchange_code_for_token_bundle,
     exchange_for_long_lived,
-    poll_media_status, resolve_oauth_scopes,
+    exchange_for_long_lived_bundle,
+    poll_media_status,
+    resolve_oauth_scopes,
 )
 from noctusai_lib.integrations.meta.credentials import (
     MetaCredentialResolver,
@@ -94,6 +97,7 @@ from noctusai_lib.integrations.meta.types import (
     PostInsights,
     PublishedMedia,
     PublishedPost,
+    TokenBundle,
 )
 
 
@@ -166,9 +170,12 @@ __all__ = [
     "PostInsights",
     "PublishedMedia",
     "PublishedPost",
+    "TokenBundle",
     "discover_app_permissions",
     "exchange_code_for_token",
+    "exchange_code_for_token_bundle",
     "exchange_for_long_lived",
+    "exchange_for_long_lived_bundle",
     "get_meta_adapter",
     "ig_account_from_body",
     "ig_media_from_body",

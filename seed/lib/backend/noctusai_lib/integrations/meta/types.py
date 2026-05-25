@@ -33,6 +33,28 @@ from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
+class TokenBundle:
+    """The full Graph `oauth/access_token` response, metadata preserved.
+
+    The string-returning `exchange_code_for_token` /
+    `exchange_for_long_lived` helpers drop everything but the token —
+    fine for callers that only need the string, but a caller that wants
+    to compute an expiry timestamp (so it can pre-emptively refresh the
+    long-lived token before it lapses) needs `expires_in`. The `_bundle`
+    variants return this instead.
+
+    Graph's long-lived response is `{"access_token", "token_type",
+    "expires_in"}`; the short-lived code exchange may omit `expires_in`
+    (and sometimes `token_type`), so both are optional. `access_token`
+    is always present — the response is a Graph error envelope
+    (raised before construction) otherwise."""
+
+    access_token: str
+    expires_in: int | None = None
+    token_type: str | None = None
+
+
+@dataclass(frozen=True)
 class FacebookPage:
     """A Facebook Page the authenticated identity manages.
 
@@ -517,4 +539,5 @@ __all__ = [
     "PostInsights",
     "PublishedMedia",
     "PublishedPost",
+    "TokenBundle",
 ]

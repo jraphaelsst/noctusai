@@ -117,8 +117,11 @@ faked success. The Fake does NOT raise the App-Review gate (it is the
 | `META_KITCHEN_SINK_SCOPES` | The full read-only scope set |
 | `resolve_oauth_scopes` | Narrow the kitchen-sink to what the app is actually granted |
 | `discover_app_permissions` | Post-consent introspection of granted permissions |
-| `exchange_code_for_token` | OAuth code -> short-lived token |
-| `exchange_for_long_lived` | Short-lived -> 60-day long-lived token |
+| `exchange_code_for_token` | OAuth code -> short-lived token (string) |
+| `exchange_for_long_lived` | Short-lived -> 60-day long-lived token (string) |
+| `exchange_code_for_token_bundle` | As above, returns `TokenBundle` (token + `expires_in` + `token_type`) |
+| `exchange_for_long_lived_bundle` | As above, returns `TokenBundle` — use when a caller needs the ~60d refresh deadline |
+| `TokenBundle` | Frozen value object: `access_token` + optional `expires_in` / `token_type`. The string fns delegate to the bundle variants and unwrap `.access_token` (back-compat). |
 | `MetaGraphError` | Typed error — `.is_auth_error` / `.is_rate_limited` |
 
 ### Pure mappers (`meta.mappers`)

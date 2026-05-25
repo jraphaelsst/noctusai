@@ -131,3 +131,58 @@ class ProductSettings(BaseAppSettings):
                 "Set JWT_SECRET environment variable to a secure random string."
             )
         return v
+
+
+def make_get_settings(settings_instance):
+    """Factory that creates a product-specific ``get_settings`` FastAPI dependency.
+
+    Sibling of :func:`noctusai_lib.api.auth.make_get_current_user_org`: products
+    bind it once at module load with their already-constructed
+    ``ProductSettings`` (or subclass) instance, then depend on the returned
+    callable wherever a router needs config values::
+
+        # app/dependencies.py
+        from noctusai_seed import make_get_settings
+        from app.config import settings  # module-level SocialWiringSettings()
+        get_settings = make_get_settings(settings)
+
+        # a router
+        @router.get("/keys")
+        def keys(settings: SocialWiringSettings = Depends(get_settings)):
+            return {"configured": bool(settings.youtube_client_id)}
+
+    The point is the **test seam**, not runtime indirection: in production the
+    dep just returns the same singleton the module already reads. But because
+    it is a FastAPI dependency, tests override the value through the framework's
+    own mechanism instead of mutating the module global::
+
+        # honest DI override — no monkeypatch of our own symbol
+        app.dependency_overrides[get_settings] = lambda: SocialWiringSettings(
+            youtube_client_id="cid", encryption_key="",
+        )
+
+    This is the production-DI replacement for the ``settings_override`` conftest
+    fixture / direct ``monkeypatch.setattr(settings, "X", "Y")`` pattern that
+    trips ``check_no_self_monkeypatch``. The keeper cannot tell a settings-value
+    patch from a logic-guard patch; routing config through ``Depends`` removes
+    the need to patch the global at all.
+
+    Surfaced as the N>=3 recurrence formalization in
+    ``social-wiring-settings-di-rewrite`` (erp-imobiliario / core / daily-life /
+    seed all carry the same ``monkeypatch.setattr(settings, ...)`` shape).
+    Social-wiring is the first adopter.
+
+    Parameters:
+        settings_instance: The product's module-level ``ProductSettings``
+            (or subclass) instance. Returned as-is by the dependency.
+
+    Returns:
+        A zero-arg callable suitable for ``Depends(...)`` that returns
+        ``settings_instance``. Override in tests via
+        ``app.dependency_overrides[get_settings] = lambda: <other settings>``.
+    """
+
+    def get_settings():
+        return settings_instance
+
+    return get_settings

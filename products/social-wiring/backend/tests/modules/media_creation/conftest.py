@@ -50,9 +50,18 @@ def client():
         return_value=mock_sb,
     ):
         from noctusai_seed import create_product_app
+        from noctusai_lib.integrations.image_gen import FakeImageGenAdapter
 
         from app.config import settings
         from app.modules.media_creation import register
+        from app.modules.media_creation.routers.generation import (
+            get_generation_service,
+            get_post_service,
+        )
+        from app.modules.media_creation.services.generation_service import (
+            GenerationService,
+        )
+        from app.modules.media_creation.services.post_service import PostService
         from app.rate_limit import limiter
 
         reg = register()
@@ -67,8 +76,26 @@ def client():
             routers=list(reg.routers),
         )
         bind_consent_module_to_mock(mock_sb)
-        tc = TestClient(app)
-        yield AuthClient(tc, mock_sb)
+
+        # DI-test seam (KB § PATTERNS/di-test-seam.md Class-A): override the
+        # generation/post service factories so the render + LLM endpoints run
+        # offline against the mock Supabase client. The GenerationService gets
+        # an injected ``FakeImageGenAdapter`` so ``_resolve_image_gen_adapter``
+        # short-circuits before the real Supabase-backed ``resolve_credential``
+        # key provider (the "supabase_url is required" failure the patch fixes).
+        # NOT a self-monkeypatch — a real production seam swapped at the boundary.
+        _org_id = "test-org-123"
+        app.dependency_overrides[get_post_service] = lambda: PostService(
+            mock_sb, _org_id
+        )
+        app.dependency_overrides[get_generation_service] = lambda: GenerationService(
+            mock_sb, _org_id, image_gen_adapter=FakeImageGenAdapter()
+        )
+        try:
+            tc = TestClient(app)
+            yield AuthClient(tc, mock_sb)
+        finally:
+            app.dependency_overrides.clear()
 
 
 @pytest.fixture

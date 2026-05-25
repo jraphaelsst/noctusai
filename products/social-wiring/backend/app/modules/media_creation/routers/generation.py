@@ -51,13 +51,19 @@ router = APIRouter(
 )
 
 
-def _post_svc(user) -> PostService:
+def _publish_svc(user) -> PublishService:
+    return PublishService(get_admin_client(), get_org_id(user))
+
+
+def get_post_service(auth=Depends(get_current_user_org)) -> PostService:
+    """Overridable PostService factory — the DI-test seam.
+
+    Tests swap this via ``app.dependency_overrides[get_post_service]`` to
+    inject a service backed by the mock Supabase client, instead of
+    monkeypatching our own symbols (KB § PATTERNS/di-test-seam.md Class-A).
+    """
+    user, _, _ = auth
     return PostService(get_admin_client(), get_org_id(user))
-
-
-def _gen_svc(user) -> GenerationService:
-    return GenerationService(get_admin_client(), get_org_id(user))
-
 
 def get_publish_service(auth=Depends(get_current_user_org)) -> PublishService:
     """Publish-service DI seam. Overridable via ``app.dependency_overrides``
@@ -67,41 +73,64 @@ def get_publish_service(auth=Depends(get_current_user_org)) -> PublishService:
     return PublishService(get_admin_client(), get_org_id(user))
 
 
-def _require_post(user, post_id: str) -> dict:
-    post = _post_svc(user).get_post(post_id)
+def get_generation_service(auth=Depends(get_current_user_org)) -> GenerationService:
+    """Overridable GenerationService factory — the DI-test seam.
+
+    Tests swap this via ``app.dependency_overrides[get_generation_service]``
+    to inject a service backed by the mock Supabase client + an injected
+    ``FakeImageGenAdapter`` (so the render path never reaches the real
+    Supabase-backed ``resolve_credential`` key provider). Per
+    KB § PATTERNS/di-test-seam.md Class-A — a production DI seam, not a
+    self-monkeypatch.
+    """
+    user, _, _ = auth
+    return GenerationService(get_admin_client(), get_org_id(user))
+
+
+def _require_post(post_svc, post_id: str) -> dict:
+    post = post_svc.get_post(post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post não encontrado")
     return post
 
 
 @router.post("/{post_id}/generate/storyboard")
-async def generate_storyboard(post_id: str, auth=Depends(get_current_user_org)):
-    user, _, _ = auth
-    post = _require_post(user, post_id)
+async def generate_storyboard(
+    post_id: str,
+    gen_svc: GenerationService = Depends(get_generation_service),
+    post_svc: PostService = Depends(get_post_service),
+):
+    post = _require_post(post_svc, post_id)
     try:
-        data = await _gen_svc(user).generate_storyboard(post)
+        data = await gen_svc.generate_storyboard(post)
     except GenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return success_response(data)
 
 
 @router.post("/{post_id}/generate/prompts")
-async def generate_prompts(post_id: str, auth=Depends(get_current_user_org)):
-    user, _, _ = auth
-    post = _require_post(user, post_id)
+async def generate_prompts(
+    post_id: str,
+    gen_svc: GenerationService = Depends(get_generation_service),
+    post_svc: PostService = Depends(get_post_service),
+):
+    post = _require_post(post_svc, post_id)
     try:
-        data = await _gen_svc(user).generate_image_prompts(post)
+        data = await gen_svc.generate_image_prompts(post)
     except GenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return success_response(data)
 
 
 @router.post("/{post_id}/generate/copy")
-async def generate_copy(post_id: str, auth=Depends(get_current_user_org)):
-    user, _, _ = auth
-    post = _require_post(user, post_id)
+async def generate_copy(
+    post_id: str,
+    gen_svc: GenerationService = Depends(get_generation_service),
+    post_svc: PostService = Depends(get_post_service),
+):
+    post = _require_post(post_svc, post_id)
     try:
-        data = await _gen_svc(user).generate_copy(post)
+        data = await gen_svc.generate_copy(post)
     except GenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return success_response(data)
@@ -111,7 +140,8 @@ async def generate_copy(post_id: str, auth=Depends(get_current_user_org)):
 async def render_post(
     post_id: str,
     body: RenderRequest | None = None,
-    auth=Depends(get_current_user_org),
+    gen_svc: GenerationService = Depends(get_generation_service),
+    post_svc: PostService = Depends(get_post_service),
 ):
     """Render the post's slides.
 
@@ -123,13 +153,12 @@ async def render_post(
     typography / layout from the brand kit's design tokens; AI not used for
     text/layout) rasterized via the seed ``svg_render`` primitive.
     """
-    user, _, _ = auth
-    post = _require_post(user, post_id)
+    post = _require_post(post_svc, post_id)
     renderer = (body.renderer if body else "nano_banana") or "nano_banana"
     mode = (body.mode if body else "raster") or "raster"
     variant = body.variant if body else None
     try:
-        data = _gen_svc(user).render_post(
+        data = gen_svc.render_post(
             post, renderer=renderer, mode=mode, variant=variant
         )
     except GenerationError as exc:
@@ -143,6 +172,7 @@ async def publish_post(
     body: PublishRequest,
     auth=Depends(get_current_user_org),
     svc: PublishService = Depends(get_publish_service),
+    post_svc: PostService = Depends(get_post_service),
 ):
     """Publish a rendered post to Meta (IG carousel / IG single / FB photo).
 
@@ -153,7 +183,7 @@ async def publish_post(
     Review gate is still pending.
     """
     user, _, _ = auth
-    post = _require_post(user, post_id)
+    post = _require_post(post_svc, post_id)
     try:
         data = svc.publish_post(
             post,
