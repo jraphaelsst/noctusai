@@ -71,14 +71,18 @@ class TestCodeMetrics:
         # seed-standalone-dev-ergonomics work added the dev-auth wiring seam to
         # products/seed/backend/app/dependencies.py (a legitimately-shipped
         # feature, ledger slug `seed-standalone-dev-ergonomics`), pushing the
-        # demo backend to 509. Anchor + headroom, not just a moved threshold
+        # demo backend to 509. Bound raised 600→750 on 2026-05-25: the demo
+        # skeletons grew (example_router 161 + webhook_router 114 +
+        # example_service 109 — the day-one route/webhook/FE-BE skeleton the
+        # seed ships), totalling 662; still 2 demo routers, no domain drift.
+        # Anchor + headroom, not just a moved threshold
         # (feedback_hardcoded_fleet_size_literal_keeper: count guards need a
         # positive content anchor, not a bare number).
         assert seed["routers"] <= 2, (
             f"seed routers should stay ≤2 (demos only); got {seed['routers']}"
         )
-        assert seed["backend_lines"] < 600, (
-            f"seed backend should stay under 600 lines; got {seed['backend_lines']}"
+        assert seed["backend_lines"] < 750, (
+            f"seed backend should stay under 750 lines; got {seed['backend_lines']}"
         )
 
 
