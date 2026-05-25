@@ -9,14 +9,24 @@ DELETE /api/products/{id}         — Deactivate product (platform admin only)
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
 from app.schemas.products import ProductCreate, ProductUpdate
+from app.services.deployment_status import (
+    FleetProber,
+    get_deployment_status,
+    probe_fleet,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["Products"])
+
+
+def get_fleet_prober() -> FleetProber:
+    """DI seam for the deployment prober — overridden in tests (no network)."""
+    return probe_fleet
 
 
 @router.get("")
@@ -27,6 +37,31 @@ async def listar_products(authorization: Optional[str] = Header(None)):
 
     result = db.table("products").select("*").eq("ativo", True).order("nome").execute()
     return {"data": result.data or []}
+
+
+@router.get("/deployment-status")
+async def deployment_status(
+    authorization: Optional[str] = Header(None),
+    prober: FleetProber = Depends(get_fleet_prober),
+):
+    """Report which catalog products are deployed (container reachable) RIGHT NOW.
+
+    "Deployed" = the product's single container answers /api/health on the
+    shared noctus-net (internal port 8000). Environment-accurate by
+    construction — core probes whatever fleet it runs alongside (dev OR prod),
+    so a product can be deployed in dev but not prod with one catalog. Drives
+    the launcher's "dev" badge. Never raises because a product is down.
+
+    NOTE: declared BEFORE GET /{product_id} so "deployment-status" isn't
+    captured as a product id.
+    """
+    user, token = await get_current_user(authorization)
+    db = get_admin_client()
+
+    result = db.table("products").select("slug").eq("ativo", True).execute()
+    slugs = [row["slug"] for row in (result.data or []) if row.get("slug")]
+    deployed = await get_deployment_status(slugs, prober=prober)
+    return {"deployed": deployed}
 
 
 @router.get("/{product_id}")

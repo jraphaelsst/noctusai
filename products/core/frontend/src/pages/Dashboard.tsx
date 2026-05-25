@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { NotificationBell } from '../components/NotificationBell';
 import { Header, useTheme } from "@noctusai/lib/design-system";
+import { ProductIcon } from '../lib/product-icon';
 
 interface Product {
   id: string;
@@ -27,6 +28,9 @@ interface Subscription {
 export function Dashboard() {
   const { user, organization, isAdmin, loading: authLoading, logout, refresh } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
+  // slug -> is the product's container deployed (reachable) in THIS env.
+  // Undefined while loading; a slug mapped to `false` shows a "dev" badge.
+  const [deployed, setDeployed] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
@@ -39,12 +43,16 @@ export function Dashboard() {
 
     async function fetchData() {
       try {
-        const [meRes, subRes] = await Promise.all([
+        const [meRes, subRes, deployRes] = await Promise.all([
           api.get('/api/auth/me'),
           api.get('/api/subscriptions/me').catch(() => ({ data: null })),
+          // Deployment status is best-effort: a failure must never block the
+          // dashboard, it just means no "dev" badges are shown.
+          api.get('/api/products/deployment-status').catch(() => ({ deployed: {} })),
         ]);
         setProducts(meRes.products || []);
         setSubscription(subRes.data);
+        setDeployed(deployRes.deployed || {});
       } catch {
         logout();
         navigate('/login');
@@ -204,14 +212,22 @@ export function Dashboard() {
           {[...products].sort((a, b) => Number(b.has_access) - Number(a.has_access)).map(product => (
             <div
               key={product.id}
-              className={`bg-card rounded-lg border border-border shadow-sm p-6 transition-all ${
+              className={`relative bg-card rounded-lg border border-border shadow-sm p-6 transition-all ${
                 product.has_access
                   ? 'cursor-pointer hover:shadow-md hover:border-primary/30'
                   : 'opacity-60 cursor-not-allowed'
               }`}
               onClick={() => launchProduct(product)}
             >
-              <div className="text-3xl mb-3">{product.icone}</div>
+              {deployed[product.slug] === false && (
+                <span
+                  className="absolute top-3 right-3 inline-flex items-center rounded-full bg-warning-light text-warning-foreground px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                  title="Em desenvolvimento — ainda não publicado neste ambiente"
+                >
+                  dev
+                </span>
+              )}
+              <div className="mb-3"><ProductIcon name={product.icone} color={product.cor} /></div>
               <h3 className="text-lg font-semibold text-foreground mb-1">{product.nome}</h3>
               <p className="text-sm text-muted-foreground mb-4">{product.descricao}</p>
 
@@ -227,27 +243,6 @@ export function Dashboard() {
                   Solicitar acesso
                 </div>
               )}
-            </div>
-          ))}
-
-          {/* Coming soon placeholder cards */}
-          {[
-            { nome: 'ERP Construtoras', icone: '🏗️', desc: 'Gestão de obras e empreendimentos' },
-            { nome: 'CRM Vendas', icone: '📊', desc: 'Funil de vendas inteligente com IA' },
-            { nome: 'BI Analytics', icone: '📈', desc: 'Dashboards e relatórios avançados' },
-          ].map((p, i) => (
-            <div
-              key={`soon-${i}`}
-              className="bg-card rounded-lg border border-border border-dashed shadow-sm p-6 opacity-50"
-            >
-              <div className="text-3xl mb-3">{p.icone}</div>
-              <h3 className="text-lg font-semibold text-foreground mb-1">{p.nome}</h3>
-              <p className="text-sm text-muted-foreground mb-4">{p.desc}</p>
-              <div className="flex items-center">
-                <span className="inline-flex items-center rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-xs font-medium">
-                  Em breve
-                </span>
-              </div>
             </div>
           ))}
         </div>
