@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--scan-migrations", action="store_true", help="Scan SQL migration files for RLS policy / FK index / trigger / search_path patterns recurring across products. 5 known shapes probed; reports which products write each shape and how many times. RLS/trigger templates are absorption candidates for `noctusai_lib.sql.<helper>`.")
     parser.add_argument("--check-outlined", action="store_true", help="Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always functional.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
+    parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--min-count", type=int, default=None, help="Override min_count threshold for any --scan-* (default varies per scan).")
     parser.add_argument("--review", action="store_true", help="Observation-only review. Default: return issues + prompt for the in-session agent. --headless fires OpenAI gpt-4o-mini. --evaluate writes both paths side-by-side to proposals/evaluations/. NEVER modifies code.")
@@ -511,6 +512,25 @@ def main():
                         print(f"    {RED}[{key}]{RESET} {f['file']}:{f['line']} — {f['detail'][:110]}")
                 print(f"  {YELLOW}Next:{RESET} {result['next_action']}")
         sys.exit(1 if (result.get("ok", False) and result["totals"]["total"] > 0) else (2 if not result.get("ok", False) else 0))
+
+    elif args.scan_remediation_markers:
+        from tools.noctus.dev.scan_remediation_markers import scan_remediation_markers
+        from settings import REPO_ROOT
+        result = scan_remediation_markers(repo_root=REPO_ROOT)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            color = GREEN if result["exit_code"] == 0 else RED
+            print(f"  {BOLD}NOC-REMEDIATE markers:{RESET} {result['total']} total  "
+                  f"{color}({len(result['malformed'])} malformed, {len(result['on_except'])} on-except){RESET}")
+            if result["by_class"]:
+                print(f"  {BOLD}By class:{RESET} " + ", ".join(f"{c}={n}" for c, n in result["by_class"].items()))
+            if result["promote_candidates"]:
+                print(f"  {YELLOW}Promote (N≥3):{RESET} {', '.join(result['promote_candidates'])}")
+            for label, key in (("FORBIDDEN on-except", "on_except"), ("malformed", "malformed")):
+                for f in result[key][:20]:
+                    print(f"    {RED}[{label}]{RESET} {f['path']}:{f['line']} — {f['text'][:90]}")
+        sys.exit(result["exit_code"])
 
     elif args.review:
         from tools.noctus.dev.review import run_review

@@ -43,11 +43,11 @@ grep -rn "NOC-REMEDIATE" products/ seed/ mcp/            # everything
 grep -rn "NOC-REMEDIATE\[perf\]" products/ seed/ mcp/    # one class
 ```
 
-A batch session triages the sweep (`[F]`/`[R]`/`[A]`), fixes what's cheap together (shared context ⇒ cheaper than one-at-a-time), and promotes recurrences to projects. **Stage-4 candidate** (`s3 → s4`): a `noctus.dev.scan_remediation_markers` MCP tool (class histogram + age + per-file grouping) — the deterministic batch-sweep surface, the analogue of a keeper `check_*` for *deferred-remediation* shapes ([[methodology-codification-pipeline]]).
+A batch session triages the sweep (`[F]`/`[R]`/`[A]`), fixes what's cheap together (shared context ⇒ cheaper than one-at-a-time), and promotes recurrences to projects. **Stage-4 (built 2026-05-25):** `noctus.dev.scan_remediation_markers` (+ `cli.py --scan-remediation-markers`) — the deterministic batch-sweep surface: parses real `[class]` + `— <date>` age, groups by class, flags malformed (missing date) + **FORBIDDEN on-`except`** markers, surfaces any class at **N≥3** (promote to project/seed lift). Advisory query (exit 1 on defects); requires a real `[class]` so it never trips on the prose that *defines* the token (the placeholder-exclusion lesson). The analogue of a keeper `check_*` for *deferred-remediation* shapes ([[methodology-codification-pipeline]]).
 
 ---
 
 ## Composition / codification
 - Connects to [[branching]] §6 (self-improvement loop) — an in-flight bump too small/out-of-scope to fix now is left as a `NOC-REMEDIATE` marker, swept into the batch later; the in-code sibling of the `findings.md` capture surface.
 - Reconciles with: [[logging-at-except]] (never an error-suppressor) · [[accept-with-rationale]] (the durable-register sibling) · [[project-execution]] (defer-with-destination · the recurrence rule).
-- Codification: s1 emerged 2026-05-25 (user: *"agents leave greppable pattern comments on code for remediation, so we might evaluate them in batches in future moments"*) → s2 memory → s3 this doc + CLAUDE.md §1 pointer; s4 = the filed `scan_remediation_markers` tool.
+- Codification: s1 emerged 2026-05-25 (user: *"agents leave greppable pattern comments on code for remediation, so we might evaluate them in batches in future moments"*) → s2 memory → s3 this doc + CLAUDE.md §1 pointer; s4 = `scan_remediation_markers` (built 2026-05-25 via the `/codify` command — `projects/codification-backlog-drain/`).
