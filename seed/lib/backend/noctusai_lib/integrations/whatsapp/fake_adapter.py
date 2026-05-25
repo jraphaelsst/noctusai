@@ -49,6 +49,7 @@ class FakeWahaClient:
         self.me: dict[str, Any] | None = None
         self.webhook_config: dict[str, Any] | None = None
         self.restart_count = 0
+        self.start_count = 0
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -100,6 +101,14 @@ class FakeWahaClient:
             "me": self.me,
             "engine": {"engine": "FAKE"},
         }
+
+    async def start_session(self) -> dict[str, Any]:
+        self.start_count += 1
+        # Starting a fresh (unpaired) session puts it into SCAN_QR_CODE so
+        # a QR is available; an already-paired session stays WORKING.
+        if self.me is None:
+            self.session_status = "SCAN_QR_CODE"
+        return {"name": self.session, "status": self.session_status}
 
     async def restart_session(self) -> dict[str, Any]:
         self.restart_count += 1

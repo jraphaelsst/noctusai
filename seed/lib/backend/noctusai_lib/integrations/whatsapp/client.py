@@ -141,6 +141,26 @@ class WahaClient:
             response.raise_for_status()
             return _safe_json(response)
 
+    async def start_session(self) -> dict[str, Any]:
+        """POST /api/sessions/{session}/start — create/start a session by name.
+
+        Required to pair a FRESH session (the multi-session case): a session
+        must exist and reach ``STARTING`` / ``SCAN_QR_CODE`` before
+        ``get_qr`` returns anything. WAHA answers 4xx (409/422) when the
+        session already exists / is already started — that is not an error
+        for our purposes, so we fall back to the current session state
+        instead of raising.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.post(
+                f"/api/sessions/{self.session}/start",
+                headers=self._headers(json=True),
+            )
+            if response.status_code in (409, 422):
+                return await self.get_session()
+            response.raise_for_status()
+            return _safe_json(response)
+
     async def restart_session(self) -> dict[str, Any]:
         """POST /api/sessions/{session}/restart — recover a stuck session.
 

@@ -330,4 +330,5 @@ def _table_columns(table: str) -> set[str]:
         "video_cache": {"id", "org_id", "youtube_video_id", "title", "description", "thumbnail_url", "published_at", "duration", "privacy_status", "view_count", "like_count", "comment_count", "favorite_count", "tags", "category_id", "uploaded_via_app", "synced_at"},
         "notification_recipients": {"id", "org_id", "name", "email", "whatsapp_number", "is_active", "created_at", "updated_at"},
         "notification_log": {"id", "org_id", "upload_job_id", "recipient_id", "channel", "status", "error_message", "sent_at", "created_at"},
+        "whatsapp_connections": {"id", "org_id", "user_id", "label", "base_url", "session_name", "encrypted_api_key", "webhook_url", "created_at", "updated_at"},
     }.get(table, set())

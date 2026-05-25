@@ -177,3 +177,27 @@ def test_fake_satisfies_whatsapp_client_protocol() -> None:
 def test_real_satisfies_whatsapp_client_protocol() -> None:
     client = WahaClient(base_url="https://waha.test", api_key="k")
     assert isinstance(client, WhatsAppClient)
+
+
+# ---- start_session (multi-session pairing) ---------------------------------
+
+
+def test_start_session_increments_count_and_keeps_qr_state() -> None:
+    client = FakeWahaClient()
+    payload = asyncio.run(client.start_session())
+    assert client.start_count == 1
+    # A fresh (unpaired) session offers a QR after start.
+    assert payload["status"] == "SCAN_QR_CODE"
+    assert asyncio.run(client.get_qr())  # scannable
+
+
+def test_start_session_leaves_paired_session_working() -> None:
+    client = FakeWahaClient()
+    client.simulate_pair()
+    payload = asyncio.run(client.start_session())
+    assert payload["status"] == "WORKING"
+
+
+def test_real_client_exposes_start_session() -> None:
+    client = WahaClient(base_url="https://waha.test", api_key="k")
+    assert hasattr(client, "start_session")

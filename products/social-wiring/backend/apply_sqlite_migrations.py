@@ -153,6 +153,20 @@ CREATE TABLE IF NOT EXISTS waha_response_samples (
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS whatsapp_connections (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    session_name TEXT NOT NULL DEFAULT 'default',
+    encrypted_api_key TEXT NOT NULL,
+    webhook_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (org_id, user_id, label)
+);
+
 CREATE INDEX IF NOT EXISTS idx_social_wiring_invitations_org ON invitations(org_id);
 CREATE INDEX IF NOT EXISTS idx_social_wiring_invitations_token ON invitations(token);
 CREATE INDEX IF NOT EXISTS idx_social_wiring_credentials_org ON credentials(org_id);
@@ -176,6 +190,7 @@ CREATE INDEX IF NOT EXISTS idx_yt_conversation_messages_direction ON conversatio
 CREATE INDEX IF NOT EXISTS idx_yt_waha_response_samples_source ON waha_response_samples(source);
 CREATE INDEX IF NOT EXISTS idx_yt_waha_response_samples_event ON waha_response_samples(event_type);
 CREATE INDEX IF NOT EXISTS idx_yt_waha_response_samples_last_seen ON waha_response_samples(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sw_whatsapp_connections_owner ON whatsapp_connections(org_id, user_id, created_at DESC);
 
 INSERT OR IGNORE INTO status_pagina (id, nome_pagina, status) VALUES
     ('page-dashboard', 'dashboard', 'producao'),

@@ -44,6 +44,7 @@ __all__ = [
     "EncryptionNotConfigured",
     "StoredCredential",
     "build_credential_store",
+    "require_fernet",
 ]
 
 # Backwards-compatible product alias. The seed raises
@@ -72,6 +73,32 @@ class EncryptionNotConfigured(RuntimeError):
     """
 
 
+def require_fernet(key: Optional[str]) -> Fernet:
+    """Validate a Fernet key loudly and return the built :class:`Fernet`.
+
+    The single place the product's "ENCRYPTION_KEY missing/malformed →
+    refuse to write plaintext" check lives — consumed by both
+    :func:`build_credential_store` (the `credentials` table) and the
+    WhatsApp-connection store (field-level api-key encryption). A missing
+    or malformed key raises :class:`EncryptionNotConfigured`, which the
+    routers map to a 503 config-gap rather than a 500.
+    """
+    if not key:
+        raise EncryptionNotConfigured(
+            "ENCRYPTION_KEY is empty. Generate with `python -c \"from "
+            "cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\"` and set it in the "
+            "product's .env."
+        )
+    try:
+        return Fernet(key.encode("utf-8"))
+    except (ValueError, TypeError) as exc:
+        raise EncryptionNotConfigured(
+            f"ENCRYPTION_KEY is not a valid Fernet key: {exc}. "
+            "Regenerate with the snippet in .env.example."
+        ) from exc
+
+
 def build_credential_store(client, *, encryption_key: Optional[str]=None) -> CredentialStore:
     """Build the seed-backed credential store for ``client``.
 
@@ -86,20 +113,7 @@ def build_credential_store(client, *, encryption_key: Optional[str]=None) -> Cre
     # canonical runtime source so the 503-on-config-gap behavior is
     # unchanged. See KB § PATTERNS/di-test-seam.md (Class-B kwarg).
     key = encryption_key if encryption_key is not None else settings.encryption_key
-    if not key:
-        raise EncryptionNotConfigured(
-            "ENCRYPTION_KEY is empty. Generate with `python -c \"from "
-            "cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\"` and set it in the "
-            "product's .env."
-        )
-    try:
-        Fernet(key.encode("utf-8"))
-    except (ValueError, TypeError) as exc:
-        raise EncryptionNotConfigured(
-            f"ENCRYPTION_KEY is not a valid Fernet key: {exc}. "
-            "Regenerate with the snippet in .env.example."
-        ) from exc
+    require_fernet(key)
     return make_credential_store(
         client=client,
         fernet_key=key.encode("utf-8"),

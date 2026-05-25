@@ -1,0 +1,231 @@
+"""Per-user WAHA connection store — multi-session "lines" with the API key
+Fernet-encrypted at rest.
+
+Each row is one WhatsApp connection a user manages from the Conexão page: a
+WAHA server URL + session name + API key. The API key is the only secret and
+is encrypted with the SAME ``ENCRYPTION_KEY`` the ``credentials`` table uses
+(via the product ``credential_vault`` seam over the seed Fernet primitive).
+Rows are owner-scoped (``org_id`` + ``user_id``) — a user only sees their own.
+
+WHY a dedicated table and NOT the seed ``CredentialStore``: that seam is
+single-row per ``(org, provider)`` with a denormalized metadata shape. These
+are MULTIPLE rows per user with distinct ``base_url`` / ``session_name``
+columns and an editable label, so a dedicated table is the honest model. No
+fork: the ENCRYPTION primitive is still consumed from the seed
+(``cryptography.fernet`` + the shared ``ENCRYPTION_KEY``) through
+``credential_vault.require_fernet``. (Seed-lift candidate at N=2 — see the
+project findings.)
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Optional
+from uuid import UUID
+
+from cryptography.fernet import Fernet, InvalidToken
+
+from app.config import settings
+from app.services.credential_vault import (
+    CredentialStoreError,
+    require_fernet,
+)
+
+__all__ = [
+    "WhatsAppConnectionRecord",
+    "WhatsAppConnectionStore",
+    "build_whatsapp_connection_store",
+]
+
+_SCHEMA = "social_wiring"
+_TABLE = "whatsapp_connections"
+
+# Sentinel so update() can distinguish "clear webhook_url to NULL" from "leave
+# webhook_url untouched" (both differ from passing a new value).
+_UNSET: Any = object()
+
+
+@dataclass(frozen=True)
+class WhatsAppConnectionRecord:
+    """One connection line. ``api_key`` is populated ONLY when a caller
+    explicitly asks the store to decrypt it (live WAHA ops); it is ``None``
+    on the listing path so the secret never rides a list response."""
+
+    id: UUID
+    org_id: UUID
+    user_id: UUID
+    label: str
+    base_url: str
+    session_name: str
+    webhook_url: Optional[str]
+    created_at: Any
+    updated_at: Any
+    api_key: Optional[str] = None
+
+
+class WhatsAppConnectionStore:
+    """CRUD over ``social_wiring.whatsapp_connections`` with field-level
+    Fernet encryption of the API key. Backed by an admin/service-role
+    Supabase client; every query filters ``org_id`` + ``user_id`` explicitly
+    (defense in depth on top of the RLS policy)."""
+
+    def __init__(self, client: Any, *, fernet: Fernet):
+        self._client = client
+        self._fernet = fernet
+
+    # ─── helpers ──────────────────────────────────────────────────────
+    def _table(self):
+        return self._client.schema(_SCHEMA).table(_TABLE)
+
+    def _encrypt(self, api_key: str) -> str:
+        return self._fernet.encrypt(api_key.encode("utf-8")).decode("ascii")
+
+    def _decrypt(self, token: str) -> str:
+        try:
+            return self._fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+        except InvalidToken as exc:
+            raise CredentialStoreError(
+                "WhatsApp connection API key could not be decrypted "
+                "(ENCRYPTION_KEY mismatch or tampered ciphertext)."
+            ) from exc
+
+    @staticmethod
+    def _record(row: dict[str, Any], *, api_key: Optional[str] = None) -> WhatsAppConnectionRecord:
+        return WhatsAppConnectionRecord(
+            id=UUID(str(row["id"])),
+            org_id=UUID(str(row["org_id"])),
+            user_id=UUID(str(row["user_id"])),
+            label=row["label"],
+            base_url=row["base_url"],
+            session_name=row.get("session_name") or "default",
+            webhook_url=row.get("webhook_url"),
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
+            api_key=api_key,
+        )
+
+    # ─── reads ────────────────────────────────────────────────────────
+    def list_connections(self, *, org_id: UUID, user_id: UUID) -> list[WhatsAppConnectionRecord]:
+        """All of a user's lines, newest first. Never decrypts the API key."""
+        resp = (
+            self._table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+        return [self._record(r) for r in rows]
+
+    def get_connection(
+        self,
+        *,
+        connection_id: UUID,
+        org_id: UUID,
+        user_id: UUID,
+        decrypt: bool = False,
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """One line by id, owner-scoped. ``decrypt=True`` populates
+        ``record.api_key`` (only for the live-WAHA-ops path)."""
+        resp = (
+            self._table()
+            .select("*")
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        if not rows:
+            return None
+        row = rows[0]
+        api_key = self._decrypt(row["encrypted_api_key"]) if decrypt else None
+        return self._record(row, api_key=api_key)
+
+    # ─── writes ───────────────────────────────────────────────────────
+    def create_connection(
+        self,
+        *,
+        org_id: UUID,
+        user_id: UUID,
+        label: str,
+        base_url: str,
+        api_key: str,
+        session_name: str = "default",
+        webhook_url: Optional[str] = None,
+    ) -> WhatsAppConnectionRecord:
+        payload = {
+            "org_id": str(org_id),
+            "user_id": str(user_id),
+            "label": label,
+            "base_url": base_url.rstrip("/"),
+            "session_name": session_name or "default",
+            "encrypted_api_key": self._encrypt(api_key),
+            "webhook_url": webhook_url,
+        }
+        resp = self._table().insert(payload).execute()
+        rows = list(resp.data or [])
+        return self._record(rows[0] if rows else payload)
+
+    def update_connection(
+        self,
+        *,
+        connection_id: UUID,
+        org_id: UUID,
+        user_id: UUID,
+        label: Optional[str] = None,
+        base_url: Optional[str] = None,
+        session_name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        webhook_url: Any = _UNSET,
+    ) -> Optional[WhatsAppConnectionRecord]:
+        patch: dict[str, Any] = {}
+        if label is not None:
+            patch["label"] = label
+        if base_url is not None:
+            patch["base_url"] = base_url.rstrip("/")
+        if session_name is not None:
+            patch["session_name"] = session_name or "default"
+        if api_key:
+            patch["encrypted_api_key"] = self._encrypt(api_key)
+        if webhook_url is not _UNSET:
+            patch["webhook_url"] = webhook_url
+        patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        resp = (
+            self._table()
+            .update(patch)
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        return self._record(rows[0]) if rows else None
+
+    def delete_connection(self, *, connection_id: UUID, org_id: UUID, user_id: UUID) -> bool:
+        resp = (
+            self._table()
+            .delete()
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        return bool(resp.data)
+
+
+def build_whatsapp_connection_store(
+    client: Any, *, encryption_key: Optional[str] = None
+) -> WhatsAppConnectionStore:
+    """Build the connection store for ``client``.
+
+    Validates the Fernet key loudly first (missing/malformed →
+    :class:`EncryptionNotConfigured`, which routers map to a 503 config gap),
+    mirroring ``build_credential_store``. The ``encryption_key`` kwarg is the
+    DI seam (tests inject; production resolves ``settings.encryption_key``).
+    """
+    key = encryption_key if encryption_key is not None else settings.encryption_key
+    fernet = require_fernet(key)
+    return WhatsAppConnectionStore(client, fernet=fernet)
