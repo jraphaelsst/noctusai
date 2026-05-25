@@ -431,7 +431,12 @@ class TestScaffoldEmitsProductsSeedRow:
         # Idempotent + correct shape.
         assert "INSERT INTO public.products" in body
         assert "'auto-register-test'" in body
-        assert "'http://localhost:8299'" in body
+        # url_base = the HOUSE port (backend_port 8199), NOT the vestigial
+        # frontend port 8299 — the single container publishes the backend port
+        # (start.sh slug:Name:HOUSE:OLD_FRONTEND). Bit 2026-05-25 (social-wiring
+        # 8160 vs 8011): a frontend-port url_base = dead dev launcher tile.
+        assert "'http://localhost:8199'" in body
+        assert "'http://localhost:8299'" not in body
         assert "'#ff00ff'" in body
         assert "'Bell'" in body
         assert "'Coverage product.'" in body

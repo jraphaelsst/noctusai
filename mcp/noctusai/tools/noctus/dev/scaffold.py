@@ -685,7 +685,7 @@ def scaffold_product(
         description=description,
         icon=icon,
         color=color,
-        frontend_port=frontend_port,
+        backend_port=backend_port,
         products_dir=base_products_dir,
     )
 
@@ -955,10 +955,17 @@ def _emit_products_seed_row_migration(
     description: str | None,
     icon: str,
     color: str,
-    frontend_port: int,
+    backend_port: int,
     products_dir: Path,
 ) -> dict:
     """Emit a numbered migration that seeds the new product into `public.products`.
+
+    `url_base` MUST be the single-container HOUSE port — `backend_port` (the
+    FIRST port in the start.sh `slug:Name:HOUSE:OLD_FRONTEND` row, the one the
+    container publishes). The SECOND ("frontend") port is vestigial from the
+    pre-house 2-container era; using it produces a dead dev `url_base` (the
+    launcher tile → connection-refused). Bit 2026-05-25 on social-wiring (8160
+    vs 8011). In prod the `PRODUCT_URL_<SLUG>` env overrides this anyway.
 
     Lives at `products/core/backend/migrations/NNN_seed_<slug>_product.sql` where
     NNN is `max(existing) + 1`. Returns `{path, number}` on success, or
@@ -996,7 +1003,7 @@ VALUES (
     {_sql_text(slug)},
     {desc_sql},
     {_sql_text(icon)},
-    {_sql_text(f"http://localhost:{frontend_port}")},
+    {_sql_text(f"http://localhost:{backend_port}")},
     {_sql_text(color)},
     true
 )
