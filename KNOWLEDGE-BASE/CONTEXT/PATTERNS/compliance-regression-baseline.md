@@ -56,6 +56,25 @@ shape the gate exists to prevent. The regenerator and the gate import the
 same `fingerprint` / `is_env_artifact` so the fixture and the check can never
 drift apart.
 
+## Working-tree sensitivity — verify on a clean worktree before chasing
+
+`check_all_products()` walks the **filesystem** (`PRODUCTS_DIR.iterdir()`),
+**not** git's committed state. So this gate reads whatever is on disk —
+including a **peer agent's uncommitted files** on a shared/busy checkout. On a
+multi-terminal workspace that produces a **phantom regression**: the gate
+reports a NEW high/critical fingerprint that is NOT in committed `origin/dev`
+— it is a sibling's in-flight file. *(Bit 2026-05-25: an agent reported these
+2 tests "failing"; on a clean `origin/dev` worktree both were green —
+peer in-flight files on the busy primary checkout.)*
+
+**Rule:** when this gate is red on a shared/busy checkout, before chasing it
+as committed debt, **re-run it on a clean checkout of `origin/dev`** (an
+isolated `task_branch` worktree gives one) **∨** confirm `git status` shows
+no peer-uncommitted files under `products/`. The clean-worktree reading is
+authoritative. This is one instance of the general worktree-sensitivity map —
+see [[branching]] §2 (the tools that read the working tree + the safe
+protocol).
+
 ## Where it lives
 
 - Baseline fixture: `mcp/noctusai/tests/compliance_baseline.json`
