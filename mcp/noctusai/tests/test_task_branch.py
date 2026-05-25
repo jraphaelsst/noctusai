@@ -12,6 +12,7 @@ safety invariants:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -284,3 +285,136 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
         if len(cmd) > 1 and cmd[1] == "push":
             dst = cmd[3].split(":refs/heads/")[1]
             assert dst == "dev", f"push to non-dev ref {dst!r}: {cmd}"
+
+
+# ── env auto-wire (the §5a verification-env recipe) ──
+def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
+                  with_seed_nm=True):
+    """Build a fixture PRIMARY tree under `primary` (a tmp Path): seed-frontend
+    packages (+ their node_modules) and products/<slug>/frontend (+ node_modules).
+    Returns nothing — just lays out dirs for FsOps (real os) to read."""
+    for rel in ("seed/lib/frontend", "seed/framework/frontend"):
+        (primary / rel).mkdir(parents=True, exist_ok=True)
+        if with_seed_nm:
+            (primary / rel / "node_modules").mkdir(exist_ok=True)
+    for slug in slugs:
+        fe = primary / "products" / slug / "frontend"
+        fe.mkdir(parents=True, exist_ok=True)
+        if with_product_nm:
+            (fe / "node_modules").mkdir(exist_ok=True)
+
+
+def _seed_worktree_tree(wt_root):
+    """A fresh worktree mirrors the tracked tree (the seed pkgs exist) but has NO
+    node_modules anywhere (gitignored ⇒ absent) — exactly the state wire_env fixes."""
+    for rel in ("seed/lib/frontend", "seed/framework/frontend"):
+        (wt_root / rel).mkdir(parents=True, exist_ok=True)
+
+
+def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "alpha"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    links = {w["link"]: w for w in wire}
+
+    # seed node_modules mirrored in (target = PRIMARY's node_modules)
+    for rel in ("seed/lib/frontend", "seed/framework/frontend"):
+        link = str(wt_root / rel / "node_modules")
+        assert link in links and links[link]["kind"] == "node_modules"
+        assert links[link]["target"] == str(primary / rel / "node_modules")
+
+    # the product frontend node_modules + the two @noctusai re-points (to WORKTREE seed)
+    pnm = wt_root / "products" / "alpha" / "frontend" / "node_modules"
+    assert str(pnm) in links and links[str(pnm)]["kind"] == "node_modules"
+    lib_link = str(pnm / "@noctusai" / "lib")
+    seed_link = str(pnm / "@noctusai" / "seed")
+    assert links[lib_link]["kind"] == "@noctusai"
+    assert links[lib_link]["target"] == str(wt_root / "seed/lib/frontend")
+    assert links[seed_link]["target"] == str(wt_root / "seed/framework/frontend")
+    assert skipped == []
+
+
+def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
+    # primary seed dirs exist but their node_modules are ABSENT → reported, not crashed
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "beta"
+    _seed_primary(primary, slugs=("beta",), with_seed_nm=False, with_product_nm=False)
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    # nothing to mirror (no primary node_modules anywhere) → all node_modules skipped;
+    # the @noctusai re-points target the WORKTREE seed (which exists) so they still plan
+    nm_skips = [s for s in skipped if "primary node_modules absent" in s["reason"]]
+    assert len(nm_skips) == 3  # 2 seed pkgs + 1 product frontend
+    assert all(w["kind"] == "@noctusai" for w in wire)
+
+
+def test_start_wire_env_dry_run_reports_plan_without_creating(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "feat-x"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="feat-x", confirm=False,
+                        wire_env=True, primary_root=str(primary), run=fake)
+    assert res["status"] == "planned" and res["wire_env"] is True
+    would_links = {w["link"] for w in res["would_wire"]}
+    assert str(wt_root / "seed/lib/frontend/node_modules") in would_links
+    assert str(wt_root / "products/alpha/frontend/node_modules") in would_links
+    # dry-run created NOTHING on disk
+    assert not (wt_root / "seed/lib/frontend/node_modules").exists()
+    assert not (wt_root / "products/alpha/frontend/node_modules").exists()
+
+
+def test_start_wire_env_confirm_creates_symlinks(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "feat-y"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="feat-y", confirm=True,
+                        wire_env=True, primary_root=str(primary), run=fake)
+    assert res["status"] == "started" and res["wire_env"] is True
+    # symlinks now exist + point where the recipe says
+    seed_nm = wt_root / "seed/lib/frontend/node_modules"
+    assert seed_nm.is_symlink()
+    assert os.path.realpath(seed_nm) == os.path.realpath(primary / "seed/lib/frontend/node_modules")
+    lib_repoint = wt_root / "products/alpha/frontend/node_modules/@noctusai/lib"
+    assert lib_repoint.is_symlink()
+    # the @noctusai/lib re-point resolves to the WORKTREE seed (crux), not PRIMARY
+    assert os.path.realpath(lib_repoint) == os.path.realpath(wt_root / "seed/lib/frontend")
+    assert len(res["wired"]) >= 4
+
+
+def test_start_wire_env_skips_real_node_modules_never_clobbers(tmp_path):
+    # a REAL node_modules already present in the worktree must NOT be replaced/nested
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "feat-z"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    real_nm = wt_root / "seed/lib/frontend/node_modules"
+    real_nm.mkdir(parents=True)
+    sentinel = real_nm / "KEEP"
+    sentinel.write_text("real")
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="feat-z", confirm=True,
+                        wire_env=True, primary_root=str(primary), run=fake)
+    # untouched: still a real dir, sentinel intact, NOT a symlink
+    assert real_nm.is_dir() and not real_nm.is_symlink()
+    assert sentinel.read_text() == "real"
+    reasons = " ".join(s["reason"] for s in res["skipped"])
+    assert "real node_modules already present" in reasons
+
+
+def test_start_without_wire_env_is_unchanged(tmp_path):
+    # the default path stays exactly as before — no wire_env key, no plan
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    res = T.task_branch(action="start", slug="feat-x", confirm=False, run=fake)
+    assert res["status"] == "planned"
+    assert "wire_env" not in res and "would_wire" not in res

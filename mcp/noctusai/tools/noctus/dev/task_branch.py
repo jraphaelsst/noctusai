@@ -44,6 +44,7 @@ git and asserts the allowlist, the dev-only-push boundary, and the rebase-retry.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import Any, Callable
 
@@ -141,6 +142,123 @@ def _parse_worktrees(porcelain: str) -> list[dict[str, str]]:
     return blocks
 
 
+# ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
+# A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,
+# so a vite build / vitest run inside the worktree fails for want of deps. The
+# §5a recipe symlinks the PRIMARY tree's per-package node_modules INTO the
+# worktree, then re-points the `@noctusai/{lib,seed}` file:-deps at the WORKTREE's
+# own seed copies (the crux — else worktree lib edits are invisible to the build).
+# These are all gitignored paths ⇒ the symlinks never get staged (intended).
+#
+# The filesystem ops are injected (`FsOps`) so the colocated test drives the
+# planner over a tmp_path fixture tree with zero real node_modules. Planning is
+# pure (read-only); application happens ONLY under `confirm` and is best-effort —
+# every skip is REPORTED (never silent), and a real (non-symlink) node_modules
+# already in the worktree is left untouched (never nested, never clobbered).
+
+# Seed frontend packages whose node_modules we mirror in (relative to a tree root).
+_SEED_FRONTENDS = ("seed/lib/frontend", "seed/framework/frontend")
+# The two file:-deps every product frontend resolves from its node_modules, and
+# the seed package each must re-point at (so worktree lib/framework edits are seen).
+_NOCTUSAI_REPOINTS = (
+    ("@noctusai/lib", "seed/lib/frontend"),
+    ("@noctusai/seed", "seed/framework/frontend"),
+)
+
+
+class FsOps:
+    """Filesystem seam for env-wiring — real `os`/`pathlib` by default; the test
+    injects a fixture-backed instance so the planner runs over a tmp tree."""
+
+    def exists(self, p: str) -> bool:
+        return os.path.lexists(p)
+
+    def is_dir(self, p: str) -> bool:
+        return os.path.isdir(p) and not os.path.islink(p)
+
+    def is_symlink(self, p: str) -> bool:
+        return os.path.islink(p)
+
+    def list_product_frontends(self, primary_root: str) -> list[str]:
+        """slugs of products/<slug>/frontend that exist on the PRIMARY tree."""
+        products = os.path.join(primary_root, "products")
+        if not os.path.isdir(products):
+            return []
+        out = []
+        for name in sorted(os.listdir(products)):
+            if os.path.isdir(os.path.join(products, name, "frontend")):
+                out.append(name)
+        return out
+
+    def symlink(self, target: str, link: str) -> None:
+        os.symlink(target, link)
+
+
+def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[dict], list[dict]]:
+    """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink specs
+    {link, target, kind} the recipe WOULD create; `skipped` = {link, reason} for
+    anything best-effort skipped (absent primary source / a real dir already in
+    the worktree). Order is deterministic: seed node_modules, then per-product
+    node_modules + the two @noctusai re-points."""
+    wire: list[dict] = []
+    skipped: list[dict] = []
+
+    def _link_node_modules(rel_pkg: str) -> None:
+        src = os.path.join(primary_root, rel_pkg, "node_modules")
+        link = os.path.join(wt_root, rel_pkg, "node_modules")
+        if not fs.exists(src):
+            skipped.append({"link": link, "reason": f"primary node_modules absent: {src}"})
+            return
+        if fs.is_dir(link):  # a REAL node_modules already in the worktree — never clobber/nest
+            skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
+            return
+        wire.append({"link": link, "target": src, "kind": "node_modules"})
+
+    # seed packages first (the @noctusai re-points below point INTO these)
+    for rel_pkg in _SEED_FRONTENDS:
+        _link_node_modules(rel_pkg)
+
+    # every product/<slug>/frontend with a primary node_modules → mirror + re-point
+    for slug in fs.list_product_frontends(primary_root):
+        rel_fe = f"products/{slug}/frontend"
+        _link_node_modules(rel_fe)
+        nm = os.path.join(wt_root, rel_fe, "node_modules")
+        for dep, seed_rel in _NOCTUSAI_REPOINTS:
+            link = os.path.join(nm, dep)
+            target = os.path.join(wt_root, seed_rel)
+            if not fs.exists(target):
+                skipped.append({"link": link, "reason": f"worktree seed pkg absent: {target}"})
+                continue
+            wire.append({"link": link, "target": target, "kind": "@noctusai"})
+
+    return wire, skipped
+
+
+def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dict]]:
+    """`ln -sfn` semantics, best-effort: create each planned symlink; if the link
+    path is an existing symlink, replace it (force); if it is a real dir, SKIP
+    (never clobber — should already be filtered by the planner, defensive here);
+    any OS error is captured into `failed`, never raised. Returns (created, failed).
+    The @noctusai re-points need their parent node_modules to exist — created
+    first because they are ordered first in the plan."""
+    created: list[dict] = []
+    failed: list[dict] = []
+    for spec in wire:
+        link = spec["link"]
+        try:
+            if fs.is_dir(link):
+                failed.append({**spec, "reason": "real directory at link path — skipped"})
+                continue
+            if fs.is_symlink(link):
+                os.unlink(link)  # `ln -sfn`: replace an existing symlink
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            fs.symlink(spec["target"], link)
+            created.append(spec)
+        except OSError as e:
+            failed.append({**spec, "reason": f"{type(e).__name__}: {e}"})
+    return created, failed
+
+
 def task_branch(
     action: str = "status",
     slug: str | None = None,
@@ -150,12 +268,27 @@ def task_branch(
     worktrees_dir: str = ".claude/worktrees",
     branch_prefix: str = "feat/",
     max_retries: int = 5,
+    wire_env: bool = False,
+    primary_root: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
+    fs: FsOps | None = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
     `confirm`. Returns a structured plan/result; never raises on a refusal — it
-    returns it (the refusal IS the safety net)."""
+    returns it (the refusal IS the safety net).
+
+    `wire_env=True` (only meaningful on `action='start'`) auto-wires the §5a
+    verification-env recipe into the fresh worktree AFTER it exists: symlink the
+    PRIMARY tree's per-package `node_modules` into the worktree + re-point each
+    product frontend's `@noctusai/{lib,seed}` file:-deps at the WORKTREE's own
+    seed copies, so a vite build / vitest run inside the worktree sees the
+    worktree's edits. All target paths are gitignored ⇒ never staged. Honors
+    dry-run: without `confirm` it REPORTS the plan (the symlinks it WOULD create)
+    without touching the filesystem. Best-effort: missing primary node_modules /
+    a real node_modules already in the worktree are REPORTED in `skipped`, never
+    silent, never clobbered."""
     runner = run or _default_run_local
+    fsops = fs or FsOps()
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -197,7 +330,7 @@ def task_branch(
         return {**base, "status": "error", "exit_code": 1,
                 "error": f"action '{action}' requires slug=."}
 
-    # ── START ── fetch → worktree add -b feat/<slug> origin/dev
+    # ── START ── fetch → worktree add -b feat/<slug> origin/dev [→ wire_env]
     if action == "start":
         git("fetch", remote, "--quiet")
         dev = _resolve(git, f"{remote}/{dev_branch}")
@@ -205,18 +338,44 @@ def task_branch(
             return {**base, "status": "error", "exit_code": 1,
                     "error": f"cannot resolve {remote}/{dev_branch} (fetch failed?)."}
         plan = {**base, "base_sha": dev, "would_create": f"worktree {wt_path} on {branch} @ {dev[:9]}"}
+
+        # resolve absolute PRIMARY tree + worktree roots for env-wiring (lazy:
+        # only import settings when we actually need REPO_ROOT — keeps the
+        # test path, which always injects primary_root, settings-free).
+        def _roots() -> tuple[str, str]:
+            root = primary_root
+            if root is None:
+                from settings import REPO_ROOT  # lazy: avoids import cost otherwise
+                root = str(REPO_ROOT)
+            return root, os.path.join(root, worktrees_dir, slug)
+
         if not confirm:
-            return {**plan, "status": "planned", "exit_code": 0,
+            plan_extra: dict[str, Any] = {}
+            if wire_env:
+                proot, wt_root = _roots()
+                would, skipped = _plan_env_wiring(proot, wt_root, fsops)
+                plan_extra = {"wire_env": True, "would_wire": would, "skipped": skipped}
+            return {**plan, **plan_extra, "status": "planned", "exit_code": 0,
                     "message": f"will fork {branch} off {remote}/{dev_branch} ({dev[:9]}) at "
-                               f"{wt_path}. Pass confirm=True. Then work THERE + commit; "
+                               f"{wt_path}{' + auto-wire the §5a verification env' if wire_env else ''}. "
+                               "Pass confirm=True. Then work THERE + commit; "
                                "integrate with action='integrate'."}
         rc, out, err = git("worktree", "add", wt_path, "-b", branch, f"{remote}/{dev_branch}")
         if rc != 0:
             return {**plan, "status": "error", "exit_code": 1,
                     "error": f"worktree add failed: {err.strip() or out.strip()}"}
-        return {**plan, "status": "started", "exit_code": 0,
-                "message": f"created {wt_path} on {branch}. Work there (cd {wt_path}), commit on "
-                           f"{branch}, then noctus.dev.task_branch action='integrate' slug='{slug}'."}
+        wired_extra: dict[str, Any] = {}
+        if wire_env:
+            proot, wt_root = _roots()
+            would, skipped = _plan_env_wiring(proot, wt_root, fsops)
+            created, failed = _apply_env_wiring(would, fsops)
+            wired_extra = {"wire_env": True, "wired": created,
+                           "skipped": skipped + failed}
+        return {**plan, **wired_extra, "status": "started", "exit_code": 0,
+                "message": f"created {wt_path} on {branch}"
+                           f"{' + wired %d env symlink(s)' % len(wired_extra['wired']) if wire_env else ''}. "
+                           f"Work there (cd {wt_path}), commit on {branch}, then "
+                           f"noctus.dev.task_branch action='integrate' slug='{slug}'."}
 
     # ── INTEGRATE ── rebase onto origin/dev → FF-push HEAD→dev (retry on race)
     if action == "integrate":
@@ -312,7 +471,14 @@ def register(server) -> None:
             "worktree (refuses if dirty) + deletes the merged branch. Writes are "
             "DRY-RUN by default — pass confirm=True. Pushes ONLY to dev (main/"
             "prod move via noctus.dev.release); FF/rebase-only, never force/reset/"
-            "switch. status: status|planned|started|integrated|conflict|"
+            "switch. action='start' wire_env=True ALSO auto-wires the §5a "
+            "verification env into the fresh worktree (symlink the PRIMARY tree's "
+            "per-package node_modules in + re-point each product frontend's "
+            "@noctusai/{lib,seed} deps at the worktree's seed copies) so a vite "
+            "build / vitest can run THERE; all gitignored ⇒ never staged; "
+            "best-effort (missing/real-dir paths reported in skipped, never "
+            "clobbered) and dry-run-honored (reports would_wire without confirm). "
+            "status: status|planned|started|integrated|conflict|"
             "up_to_date|cleaned|partial|blocked|error."
         ),
     )
@@ -320,9 +486,10 @@ def register(server) -> None:
         action: str = "status",
         slug: str | None = None,
         confirm: bool = False,
+        wire_env: bool = False,
     ) -> dict:
-        return task_branch(action=action, slug=slug, confirm=confirm)
+        return task_branch(action=action, slug=slug, confirm=confirm, wire_env=wire_env)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_assert_push_targets_dev",
-           "_parse_worktrees", "register"]
+           "_parse_worktrees", "_plan_env_wiring", "_apply_env_wiring", "FsOps", "register"]
