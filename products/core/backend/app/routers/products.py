@@ -31,12 +31,27 @@ def get_fleet_prober() -> FleetProber:
 
 
 @router.get("")
-async def listar_products(authorization: Optional[str] = Header(None)):
-    """List all products in the marketplace."""
-    user, token = await get_current_user(authorization)
+async def listar_products(
+    authorization: Optional[str] = Header(None),
+    include_inactive: bool = False,
+):
+    """List products from the marketplace catalog (`public.products`).
+
+    Default (marketplace): only ACTIVE products. `include_inactive=true`
+    (platform-admin only) returns ALL rows — same table, same data the
+    marketplace reads — so the admin panel can see *and reactivate*
+    deactivated products instead of them vanishing after a soft-delete.
+    """
+    if include_inactive:
+        user, token = await get_current_admin(authorization)
+    else:
+        user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("products").select("*").eq("ativo", True).order("nome").execute()
+    query = db.table("products").select("*")
+    if not include_inactive:
+        query = query.eq("ativo", True)
+    result = query.order("nome").execute()
     return {"data": result.data or []}
 
 

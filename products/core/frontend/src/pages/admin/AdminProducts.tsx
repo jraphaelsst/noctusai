@@ -45,8 +45,36 @@ function statusBadgeClasses(s: string): string {
   return 'bg-muted text-muted-foreground';
 }
 
+// Deployment (prod/dev) badge — consumes the SAME /api/products/deployment-status
+// the marketplace launcher uses. `deployed` is per-slug container reachability in
+// THIS environment (live when reachable — i.e. running in prod when core runs in
+// prod; "dev" when the container isn't up here). `undefined` = still probing.
+function DeploymentBadge({ deployed }: { deployed: boolean | undefined }) {
+  if (deployed === undefined) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return deployed ? (
+    <span
+      className="inline-flex items-center rounded-full bg-success/10 text-success px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+      title="Container reachable in this environment (live / prod)"
+    >
+      live
+    </span>
+  ) : (
+    <span
+      className="inline-flex items-center rounded-full bg-warning-light text-warning-foreground px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+      title="Container not reachable in this environment — dev only"
+    >
+      dev
+    </span>
+  );
+}
+
 export function AdminProducts() {
   const [products, setProducts] = useState<Product[]>([]);
+  // slug -> container reachable in THIS env (prod/dev). Same source the
+  // marketplace launcher consumes (/api/products/deployment-status).
+  const [deployed, setDeployed] = useState<Record<string, boolean>>({});
   const [licenses, setLicenses] = useState<License[]>([]);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,12 +93,24 @@ export function AdminProducts() {
 
   async function fetchProducts() {
     try {
-      const res = await api.get('/api/products');
+      // include_inactive=true (admin-only): see ALL rows so deactivated
+      // products stay visible + reactivatable — same table the marketplace reads.
+      const res = await api.get('/api/products?include_inactive=true');
       setProducts(res.data || []);
     } catch (err) {
       console.error('Error:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchDeploymentStatus() {
+    try {
+      const res = await api.get('/api/products/deployment-status');
+      setDeployed(res.deployed || {});
+    } catch (err) {
+      // Best-effort — a probe failure just means no live/dev badges.
+      console.error('Error:', err);
     }
   }
 
@@ -105,7 +145,7 @@ export function AdminProducts() {
   }
 
   useEffect(() => {
-    Promise.all([fetchProducts(), fetchOrgs(), fetchAllLicenses()]);
+    Promise.all([fetchProducts(), fetchOrgs(), fetchAllLicenses(), fetchDeploymentStatus()]);
   }, []);
 
   function licenseCount(productId: string) {
@@ -158,6 +198,19 @@ export function AdminProducts() {
       await fetchProducts();
       if (selectedProduct?.id === id) {
         setSelectedProduct(null);
+      }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
+  async function handleReactivateProduct(id: string) {
+    try {
+      await api.patch(`/api/products/${id}`, { ativo: true });
+      await fetchProducts();
+      if (selectedProduct?.id === id) {
+        const res = await api.get(`/api/products/${id}`);
+        setSelectedProduct(res.data);
       }
     } catch (err: any) {
       alert(err.message);
@@ -392,12 +445,19 @@ export function AdminProducts() {
             >
               Editar
             </button>
-            {selectedProduct.ativo && (
+            {selectedProduct.ativo ? (
               <button
                 className="text-sm bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
                 onClick={() => handleDeactivateProduct(selectedProduct.id)}
               >
                 Desativar
+              </button>
+            ) : (
+              <button
+                className="text-sm bg-success/10 text-success rounded-md px-3 py-1.5 hover:bg-success/20 transition-colors"
+                onClick={() => handleReactivateProduct(selectedProduct.id)}
+              >
+                Ativar
               </button>
             )}
           </div>
@@ -422,6 +482,17 @@ export function AdminProducts() {
                 selectedProduct.ativo ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
               }`}>
                 {selectedProduct.ativo ? 'Ativo' : 'Inativo'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <strong className="text-foreground">Deploy:</strong>
+              <DeploymentBadge deployed={deployed[selectedProduct.slug]} />
+              <span className="text-muted-foreground text-xs">
+                {deployed[selectedProduct.slug] === undefined
+                  ? 'verificando...'
+                  : deployed[selectedProduct.slug]
+                    ? 'container ativo neste ambiente'
+                    : 'nao publicado neste ambiente (dev)'}
               </span>
             </div>
           </div>
@@ -651,6 +722,7 @@ export function AdminProducts() {
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">URL Base</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Cor</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Deploy</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Licencas</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
@@ -681,6 +753,9 @@ export function AdminProducts() {
                     {product.ativo ? 'Ativo' : 'Inativo'}
                   </span>
                 </td>
+                <td className="px-4 py-3">
+                  <DeploymentBadge deployed={deployed[product.slug]} />
+                </td>
                 <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2" onClick={e => e.stopPropagation()}>
@@ -690,12 +765,19 @@ export function AdminProducts() {
                     >
                       Editar
                     </button>
-                    {product.ativo && (
+                    {product.ativo ? (
                       <button
                         className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
                         onClick={() => handleDeactivateProduct(product.id)}
                       >
                         Desativar
+                      </button>
+                    ) : (
+                      <button
+                        className="text-xs bg-success/10 text-success rounded-md px-3 py-1.5 hover:bg-success/20 transition-colors"
+                        onClick={() => handleReactivateProduct(product.id)}
+                      >
+                        Ativar
                       </button>
                     )}
                   </div>
@@ -704,7 +786,7 @@ export function AdminProducts() {
             ))}
             {products.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                   Nenhum produto cadastrado. Crie o primeiro!
                 </td>
               </tr>

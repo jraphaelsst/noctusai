@@ -118,3 +118,42 @@ class TestCreateProduct:
             "url_base": "http://localhost:3000",
         })
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /api/products?include_inactive=true  (admin-only — the admin panel path)
+# ---------------------------------------------------------------------------
+
+class TestListProductsIncludeInactive:
+    def test_include_inactive_requires_admin(self, client):
+        """A non-admin asking for inactive rows is rejected by the admin gate."""
+        resp = client.get("/api/products?include_inactive=true")
+        assert resp.status_code == 403
+
+    def test_include_inactive_unauthenticated(self, unauth_client):
+        resp = unauth_client.get("/api/products?include_inactive=true")
+        assert resp.status_code == 401
+
+    def test_include_inactive_as_admin_returns_all_rows(self, admin_client):
+        """Admin gets ALL rows (incl. ativo=False) so deactivated products
+        stay visible + reactivatable — the admin-panel listing."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", [
+            {"id": "prod-1", "nome": "Active", "slug": "a", "ativo": True},
+            {"id": "prod-2", "nome": "Inactive", "slug": "b", "ativo": False},
+        ])
+        resp = admin_client.get("/api/products?include_inactive=true")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert len(data) == 2
+        assert any(p["ativo"] is False for p in data)
+
+    def test_default_listing_still_works_for_regular_user(self, client):
+        """Default (no param) stays the public catalog — any authed user."""
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("products", [
+            {"id": "prod-1", "nome": "Active", "slug": "a", "ativo": True},
+        ])
+        resp = client.get("/api/products")
+        assert resp.status_code == 200
+        assert len(resp.json()["data"]) == 1
