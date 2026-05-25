@@ -33,7 +33,12 @@ from app.dependencies import (
     get_current_user_org,
     get_user_client,
 )
-from app.schemas.example import ExampleCreate, ExampleListResponse, ExampleOut
+from app.schemas.example import (
+    ExampleCreate,
+    ExampleListResponse,
+    ExampleOut,
+    ExampleUpdate,
+)
 from app.services.example_service import ExampleService, ExampleServiceError
 
 logger = logging.getLogger(__name__)
@@ -82,3 +87,75 @@ async def create_example(
         logger.exception("example.create failed for org=%s", org_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return ExampleOut(**row)
+
+
+@router.get("/{example_id}", response_model=ExampleOut)
+async def get_example(
+    example_id: str,
+    auth: tuple = Depends(get_current_user_org),
+) -> ExampleOut:
+    """Fetch one ``example`` row (detail view).
+
+    TODO(new-product): replace with your domain's detail endpoint.
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    client = get_user_client(token)
+    service = ExampleService(client, org_id=org_id)
+    row = await service.get(example_id=example_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Exemplo não encontrado")
+    return ExampleOut(**row)
+
+
+@router.patch("/{example_id}", response_model=ExampleOut)
+async def update_example(
+    example_id: str,
+    payload: ExampleUpdate,
+    auth: tuple = Depends(get_current_user_org),
+) -> ExampleOut:
+    """Edit an ``example`` row in place (page-scoped CRUD — *update*).
+
+    TODO(new-product): replace with your domain's update endpoint.
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    client = get_user_client(token)
+    service = ExampleService(client, org_id=org_id)
+    data = payload.model_dump(exclude_none=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    try:
+        row = await service.update(example_id=example_id, payload=data)
+    except ExampleServiceError as exc:
+        logger.exception("example.update failed for org=%s id=%s", org_id, example_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Exemplo não encontrado")
+    return ExampleOut(**row)
+
+
+@router.delete("/{example_id}", status_code=status.HTTP_200_OK)
+async def delete_example(
+    example_id: str,
+    auth: tuple = Depends(get_current_user_org),
+) -> dict:
+    """Soft-delete an ``example`` row (page-scoped CRUD — *delete*).
+
+    Returns ``{"ok": True}`` on success; soft-delete keeps the row so an
+    include-inactive view can reactivate it.
+
+    TODO(new-product): replace with your domain's delete endpoint.
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    client = get_user_client(token)
+    service = ExampleService(client, org_id=org_id)
+    try:
+        ok = await service.delete(example_id=example_id)
+    except ExampleServiceError as exc:
+        logger.exception("example.delete failed for org=%s id=%s", org_id, example_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="Exemplo não encontrado")
+    return {"ok": True}

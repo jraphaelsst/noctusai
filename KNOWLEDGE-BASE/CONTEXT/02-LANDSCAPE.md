@@ -36,20 +36,20 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Erp Imobiliario | 60 | 54 | 67 | 68 | 128 | 1,805 |
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
-| Seed | 2 | 1 | 8 | 1 | 5 | 10 |
+| Seed | 2 | 1 | 8 | 1 | 6 | 19 |
 | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 8 | 14 | 14 | 8 | 46 | 444 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| **Total** | **173** | **179** | **258** | **142** | **423** | **5,008** |
+| **Total** | **173** | **179** | **258** | **142** | **424** | **5,017** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (10):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 307** distributed across the schemas.
+- **Tables: 308** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.

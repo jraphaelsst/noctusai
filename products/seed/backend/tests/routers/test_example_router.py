@@ -45,14 +45,14 @@ class TestExampleRouterValidation:
         assert resp.status_code == 422
 
 
-# NOTE: There are NO list/create body tests yet because
-# ``ExampleService.list`` / ``.create`` raise NotImplementedError on
-# purpose — TODO markers for the new product to fill in. Once you
-# implement those methods, replace this comment with tests that
-# (a) seed mock_sb.requests with the expected query shape,
-# (b) hit the endpoint, and
-# (c) assert response.status_code AND response.json() — the
-#     keeper detector ``check_test_status_assertion`` enforces the
-#     status_code pin (severity warning). See the YouTube Crawler
-#     ``test_videos_router.py`` / ``test_upload_router.py`` for the
-#     canonical shape (real-DB-mocked assertions, not substring checks).
+# NOTE: The full CRUD *body* logic (list/get/create/update/soft-delete)
+# is exercised at the service level in
+# ``tests/services/test_example_service.py`` — data-seeded
+# ``MockSupabaseClient`` + ``inserted_payloads``/``updated_payloads``
+# assertions, no monkeypatching. These router tests pin the canonical
+# auth + validation contract every scaffolded product inherits; the
+# service tests pin the page-scoped-CRUD behavior. Together they are the
+# product-internal-wiring reference. (Router body tests via the `client`
+# fixture would need the fixture's mock seeded with `seed.examples`
+# rows; the service-level tests cover the same logic more directly.)
+# TODO(new-product): rename `example` → your domain in both files.

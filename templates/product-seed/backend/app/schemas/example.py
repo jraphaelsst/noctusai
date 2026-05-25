@@ -23,8 +23,21 @@ class ExampleCreate(BaseModel):
     description: str | None = Field(None, max_length=2000)
 
 
+class ExampleUpdate(BaseModel):
+    """Request body for ``PATCH /api/example/{id}`` — partial update.
+
+    Every field optional; the router drops ``None`` via
+    ``model_dump(exclude_none=True)`` and 400s on an empty body. This is
+    the canonical page-scoped-CRUD *edit* shape.
+
+    TODO(new-product): rename + extend with the real domain fields.
+    """
+    title: str | None = Field(None, min_length=1, max_length=200)
+    description: str | None = Field(None, max_length=2000)
+
+
 class ExampleOut(BaseModel):
-    """Response body for list / detail / create.
+    """Response body for list / detail / create / update.
 
     TODO(new-product): rename + extend with the real domain fields.
     """
@@ -33,7 +46,8 @@ class ExampleOut(BaseModel):
     id: UUID
     org_id: UUID
     title: str
-    description: str | None
+    description: str | None = None
+    ativo: bool = True
     created_at: datetime
 
 

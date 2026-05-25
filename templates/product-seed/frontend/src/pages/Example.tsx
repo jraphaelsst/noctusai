@@ -1,60 +1,79 @@
 /**
- * Example page — placeholder for the new product to fill in.
+ * Example page — the **canonical page-scoped-CRUD reference** every
+ * scaffolded product inherits.
  *
- * This page is the **canonical frontend skeleton** every scaffolded
- * product inherits. It demonstrates:
+ * It consumes the shared `<ResourceManager/>` (`@noctusai/lib/components`)
+ * to list AND create / edit / soft-delete the `example` domain entity —
+ * all from this one page, no raw SQL. This is the frontend half of the
+ * product-internal-wiring rule's *page-scoped CRUD* mandate
+ * (KB § PATTERNS/product-internal-wiring.md): the page that lists an
+ * entity is the page that manages it.
  *
- *   - useAuthStore() for the current user / org context
- *   - The shared design language (rounded-lg, border-border, bg-card,
- *     text-foreground, text-muted-foreground) — never hand-roll Tailwind
- *     colors; always use the design-token classes so dark mode + theme
- *     overrides work out of the box.
- *   - A blank page wired to a route in App.tsx + a nav entry. The
- *     backend counterpart is `app/routers/example_router.py`.
+ * The whole CRUD shell (table + "Novo" button + create/edit modal +
+ * delete confirm + toasts + loading/empty/error states) lives in
+ * `<ResourceManager/>`; this page is just the per-entity config —
+ * `columns` (display) + `fields` (form). That is the formalization of
+ * the hand-rolled pattern (cf. core's `AdminPlans` ≈ 290 lines → this).
  *
- * TODO(new-product): rename `Example` → your domain page, replace this
- * body with real content, and (likely) call the backend via a hook
- * like `useExample()` (the canonical shape lives in
- * `products/social-wiring/frontend/src/hooks/useVideos.ts`).
+ * TODO(new-product): rename `Example` → your domain page, point
+ * `apiPath` at your endpoint, and replace the `title`/`description`
+ * columns + fields with your real ones. Backend mirror:
+ * `app/routers/example_router.py` + `app/services/example_service.py`
+ * + migration `003_examples.sql`.
  */
-import { useAuthStore } from "@noctusai/seed/infra";
-import { Boxes, Sparkles } from "lucide-react";
+import { api } from "@/lib/api";
+import { ResourceManager } from "@noctusai/lib/components";
+
+interface ExampleRow {
+  id: string;
+  org_id: string;
+  title: string;
+  description: string | null;
+  ativo: boolean;
+  created_at: string;
+}
+
+function formatDate(value: string): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("pt-BR");
+}
 
 export default function Example() {
-  const { user } = useAuthStore();
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Boxes className="h-6 w-6 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Example</h1>
-          <p className="text-sm text-muted-foreground">
-            Placeholder route — replace with your domain page.
-          </p>
-        </div>
-      </div>
-
-      {/* Empty-state card */}
-      <div className="rounded-lg border border-border border-dashed bg-card p-8 text-center space-y-3">
-        <Sparkles className="h-8 w-8 mx-auto text-primary" />
-        <h2 className="text-lg font-semibold text-foreground">
-          Nothing here yet
-        </h2>
-        <p className="text-sm text-muted-foreground max-w-md mx-auto">
-          This page is wired to <code className="rounded bg-muted px-1.5 py-0.5 text-xs">/example</code>{" "}
-          via <code className="rounded bg-muted px-1.5 py-0.5 text-xs">App.tsx</code>. The
-          backend mirror lives at <code className="rounded bg-muted px-1.5 py-0.5 text-xs">/api/example</code>.
-          Replace this card with your real UI; rename <code>Example</code> everywhere; remove the nav
-          entry if your product has a different navigation shape.
-        </p>
-        {user?.email && (
-          <p className="text-xs text-muted-foreground">
-            Logged in as <span className="font-mono">{user.email}</span>
-          </p>
-        )}
-      </div>
-    </div>
+    <ResourceManager<ExampleRow>
+      title="Exemplos"
+      api={api}
+      apiPath="/api/example"
+      singularName="Exemplo"
+      deleteLabel="Desativar"
+      columns={[
+        { key: "title", header: "Título" },
+        {
+          key: "description",
+          header: "Descrição",
+          render: (row) => row.description || "—",
+        },
+        {
+          key: "created_at",
+          header: "Criado em",
+          render: (row) => formatDate(row.created_at),
+        },
+      ]}
+      fields={[
+        {
+          name: "title",
+          label: "Título",
+          required: true,
+          placeholder: "Ex: Meu primeiro exemplo",
+        },
+        {
+          name: "description",
+          label: "Descrição",
+          type: "textarea",
+          placeholder: "Descrição opcional",
+        },
+      ]}
+    />
   );
 }
