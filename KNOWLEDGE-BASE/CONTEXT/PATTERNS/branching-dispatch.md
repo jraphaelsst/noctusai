@@ -86,10 +86,18 @@ Resolve collisions/duplicates/conflicts in a **separate reconciliation commit** 
 ### 8 · Verify ([noc] finish-the-session)
 Tests/builds green for touched code (`pytest` / `vite build`); KB sync (`--verify-kb-sync`) + symbology drift if docs changed; three-way sync for any methodology change. Report outcomes faithfully.
 
-### 9 · Clean up
+### 9 · Salvage-before-delete, THEN clean up
+A worktree delete is the worktree analogue of archiving a project ⇒ it mirrors `archive`'s learn-before-archive ([[storage-hygiene]] § 2.3). **Before removing an engineer's worktree, the architect SALVAGES it** — the merge moved the *code* to `dev`, but the worktree's *durable knowledge* (engineer `findings.md` / return-notes / bugs found / follow-ups) is lost on delete unless extracted. Run the four-leg ritual:
+1. **Extract learnings → KB/memory** (discipline leg) — any reusable pattern/gotcha/recurrence/follow-up the engineer surfaced lands in its durable home BEFORE the delete (`appended ≠ extracted`).
+2. **Record recovery pointer** — branch+SHA → the tracked `project-history/worktree-salvage.ndjson` (mechanical).
+3. **mole worktree-sweep** — storage hygiene before the delete.
+4. **Remove** the worktree + delete the merged branch.
+
+Tear down **through the tool** so legs 2–3 are mechanical and the learnings checkpoint is surfaced — **never a bare hand-typed `git worktree remove`** (it skips all three salvage legs — the 2026-05-25 architect-post-merge drift):
 ```bash
-git worktree remove ../noc-wt-<slice> && git worktree prune
-git branch -d feat/<project>-<slice>   # safe: already merged
+# preferred: the tool records the recovery pointer + surfaces the learnings checkpoint
+noctus.dev.task_branch action=cleanup slug=<project>-<slice> confirm=True
+# (equivalently: noctus.dev.mole mode=sweep scope=worktrees force=True, or cleanup_stale_worktrees)
 ```
 
 ### 10 · Land on `dev`; push `dev`. `main` is a separate, explicit deploy

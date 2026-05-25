@@ -49,6 +49,12 @@ hooks/useTemplates.ts
 
 Never inline hooks in page components, even for simple products. Products grow — extracted hooks are ready when a second page needs the same data. No refactoring needed.
 
+## `useMemo` ≠ a side-effect channel
+
+`useMemo` is for **deriving a value**, not for running effects. React may **elide / re-run** a memo computation freely (it's a perf hint, not a guarantee), so any *side effect* tucked inside it (set default selection, refresh history, fire a callback) **may not run** ∨ may run unexpectedly. Side effects belong in `useEffect` (runs on dependency change, deterministically). Bit 2026-05-25 in social-wiring `Upload.tsx` (two `useMemo`s used purely for side-effects — recipient-default-select + history-refresh — could be skipped; fixed → `useEffect`, commit `27f24b20`). Rule: if the body has no `return <derived value>` consumed in render, it's an effect — use `useEffect`.
+
+> Follow-up (open): `ts-morph` is NOT in the seed FE base devDeps (`seed/lib/frontend` · `seed/framework/frontend`) — add it so TypeScript AST edits (AST-first rule) work in product frontends without a per-product install. Surfaced by the same 2026-05-25 dispatch; see `project-history/worktree-salvage.ndjson` (`feat/sw-frontend-verify`).
+
 ## Token refresh
 
 Two complementary mechanisms:

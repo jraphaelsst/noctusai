@@ -16,11 +16,20 @@ lifecycle so it is one call, not a hand-typed ritual:
                 clean) and surfaced loudly — never auto-resolved, never left
                 half-rebased. This is KB § branching-and-merging § 10.2 Option A
                 with `dev` substituted for the integration ref.
-  • cleanup   : `git worktree remove <wt>` (refuses if dirty — no --force) →
+  • cleanup   : SALVAGE-before-delete (KB § PATTERNS/storage-hygiene.md § 2.3 —
+                the worktree analogue of archive's learn-before-archive) THEN
+                `git worktree remove <wt>` (refuses if dirty — no --force) →
                 prune → `git branch -d feat/<slug>` (refuses if unmerged — `-d`
-                not `-D`). A precise teardown of ONE named task worktree; the
-                heuristic bulk-sweep of stale agent worktrees is the sibling
-                noctus.dev.cleanup_stale_worktrees.
+                not `-D`). The salvage ritual: (1) LEARNINGS — extract durable
+                knowledge → KB/memory (surfaced as a checkpoint; discipline leg);
+                (2) RECOVERY POINTER — record branch+SHA to the tracked
+                `project-history/worktree-salvage.ndjson` (MECHANICAL here, via
+                the shared `_worktree_salvage` helper — the same leg mole-sweep /
+                cleanup_stale_worktrees already carry, so a precise teardown can
+                no longer skip it); (3) STORAGE HYGIENE — run a mole worktree-
+                sweep before the delete. A precise teardown of ONE named task
+                worktree; the heuristic bulk-sweep of stale agent worktrees is
+                the sibling noctus.dev.cleanup_stale_worktrees.
   • status    : read-only — list the active self-branch worktrees + each one's
                 ahead/behind vs origin/dev.
 
@@ -46,6 +55,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Callable
 
 # git subcommands the tool may run. `worktree` (add/remove/list/prune) + `branch`
@@ -272,6 +282,7 @@ def task_branch(
     primary_root: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
+    salvage_recorder: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
     `confirm`. Returns a structured plan/result; never raises on a refusal — it
@@ -425,7 +436,18 @@ def task_branch(
                 "error": f"could not FF-push to {dev_branch} after {max_retries} attempts "
                          "(persistent concurrent pushes). Retry integrate."}
 
-    # ── CLEANUP ── remove worktree (refuse-if-dirty) → prune → delete merged branch
+    # ── CLEANUP ── SALVAGE-before-delete → remove worktree (refuse-if-dirty) →
+    #               prune → delete merged branch.
+    # A worktree delete is the worktree analogue of archiving a project (KB §
+    # PATTERNS/storage-hygiene.md § 2.3) ⇒ it mirrors archive's learn-before-
+    # archive. THREE legs at this sanctioned single-worktree teardown — the bulk
+    # sweeps (mole / cleanup_stale_worktrees) already carry leg 2; this path was
+    # the gap (a precise teardown could silently skip salvage; a manual `git
+    # worktree remove` skips all three — that's the 2026-05-25 drift):
+    #   1 LEARNINGS  (discipline, surfaced as a checkpoint): extract durable
+    #     knowledge → KB/memory before the lossy delete.
+    #   2 RECOVERY POINTER (MECHANICAL, below): branch+SHA → the tracked ledger.
+    #   3 STORAGE HYGIENE (sequenced): a mole worktree-sweep before the delete.
     git("fetch", remote, "--quiet")
     dev = _resolve(git, f"{remote}/{dev_branch}")
     head = _resolve(git, branch)
@@ -434,24 +456,63 @@ def task_branch(
         return {**base, "status": "blocked", "exit_code": 1, "dev_sha": dev, "branch_sha": head,
                 "reason": f"{branch} has commit(s) not on {remote}/{dev_branch} — integrate first "
                           "(refusing to delete unintegrated work)."}
-    plan = {**base, "branch_merged": merged}
+    ritual = {
+        "1_extract_learnings": (
+            "BEFORE deleting, extract durable knowledge from this worktree → "
+            "KB/memory (findings.md, return-notes, bugs found, follow-ups). The "
+            "delete is LOSSY for anything not on dev or already in KB/memory "
+            "(learnings leg — discipline; mirrors archive's learn-before-archive)."),
+        "2_record_recovery_pointer": (
+            f"branch+SHA → project-history/worktree-salvage.ndjson "
+            "(MECHANICAL — recorded below; commit the ledger like ledger.ndjson)."),
+        "3_mole_sweep_before_delete": (
+            "Run noctus.dev.mole(mode='sweep', scope='worktrees') for storage "
+            "hygiene BEFORE confirming the delete."),
+        "4_remove": "git worktree remove (refuse-if-dirty) + branch -d (merged-only).",
+    }
+    plan = {**base, "branch_merged": merged, "cleanup_ritual": ritual,
+            "learnings_checkpoint": ritual["1_extract_learnings"]}
     if not confirm:
         return {**plan, "status": "planned", "exit_code": 0,
-                "message": f"will remove worktree {wt_path} (refuses if dirty) + delete merged "
-                           f"branch {branch}. Pass confirm=True."}
+                "message": (f"will SALVAGE then remove worktree {wt_path}: record the recovery "
+                            f"pointer ({branch}+SHA) to the tracked salvage ledger + surface the "
+                            f"learnings checkpoint, then remove (refuses if dirty) + delete merged "
+                            f"branch {branch}. Extract learnings + run a mole worktree-sweep first. "
+                            "Pass confirm=True.")}
+    # Leg 2 — MECHANICAL recovery pointer: record branch+SHA to the TRACKED ledger
+    # BEFORE removal (best-effort; the recorder never raises ⇒ never blocks teardown).
+    # Shared `_worktree_salvage.record_sweep` — one source of truth with the bulk
+    # sweeps (no parity drift). Injectable for tests (zero real IO).
+    salvage_ledger = None
+    if head:
+        recorder = salvage_recorder
+        root = primary_root
+        if recorder is None:
+            from tools.noctus.dev import _worktree_salvage as _wsv  # lazy import
+            recorder = _wsv.record_sweep
+        if root is None:
+            from settings import REPO_ROOT  # lazy: only when not injected
+            root = str(REPO_ROOT)
+        rec_path = recorder(Path(root), [{
+            "path": wt_path, "branch": branch, "sha": head,
+            "reason": "task_branch cleanup (learn-before-delete)"}])
+        salvage_ledger = str(rec_path) if rec_path else None
     rc, out, err = git("worktree", "remove", wt_path)
     if rc != 0:
-        return {**plan, "status": "error", "exit_code": 1,
+        return {**plan, "status": "error", "exit_code": 1, "salvage_ledger": salvage_ledger,
                 "error": f"worktree remove refused (dirty? integrate or discard first): "
                          f"{err.strip() or out.strip()}"}
     git("worktree", "prune")
     rc, out, err = git("branch", "-d", branch)
     if rc != 0:
         return {**plan, "status": "partial", "exit_code": 1, "worktree_removed": True,
+                "salvage_ledger": salvage_ledger,
                 "error": f"worktree removed but branch -d refused (unmerged?): "
                          f"{err.strip() or out.strip()}"}
-    return {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True, "branch_deleted": True,
-            "message": f"removed {wt_path} + deleted {branch}. Back on {dev_branch} baseline."}
+    return {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
+            "branch_deleted": True, "salvage_ledger": salvage_ledger,
+            "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
+                       f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."}
 
 
 def register(server) -> None:
@@ -467,8 +528,13 @@ def register(server) -> None:
             "slug= forks a worktree on feat/<slug> off origin/dev; action="
             "'integrate' slug= rebases onto origin/dev then FF-pushes to dev "
             "(retry on the concurrent-push race; a rebase conflict is aborted + "
-            "surfaced, never auto-resolved); action='cleanup' slug= removes the "
-            "worktree (refuses if dirty) + deletes the merged branch. Writes are "
+            "surfaced, never auto-resolved); action='cleanup' slug= SALVAGES "
+            "before deleting (learn-before-delete, KB § storage-hygiene § 2.3): "
+            "records the branch+SHA recovery pointer to the tracked worktree-"
+            "salvage ledger (MECHANICAL — same leg the bulk sweeps carry) + "
+            "surfaces the learnings-extraction checkpoint + sequences a mole "
+            "worktree-sweep, THEN removes the worktree (refuses if dirty) + "
+            "deletes the merged branch. Writes are "
             "DRY-RUN by default — pass confirm=True. Pushes ONLY to dev (main/"
             "prod move via noctus.dev.release); FF/rebase-only, never force/reset/"
             "switch. action='start' wire_env=True ALSO auto-wires the §5a "

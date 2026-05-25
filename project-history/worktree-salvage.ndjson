@@ -51,3 +51,4 @@
 {"ts":"2026-05-25","event":"worktree-salvage","sha":"1afbcb642ae11b5c633b5b9eb65ddd0e8b8e4eb0","branch":"worktree-agent-af4d8cc82ecca7671"}
 {"ts":"2026-05-25","event":"worktree-salvage","sha":"feb6fe400c278f695ecf7a3bae279dad869c066b","branch":"worktree-agent-afd4fa4f701649901"}
 {"ts":"2026-05-25","event":"worktree-salvage","sha":"db1e4e903ed3d038f2e579c9a5ab1bc2693532cb","branch":"worktree-agent-afd5f9f87f9677af9"}
+{"ts":"2026-05-25","event":"worktree-sweep","path":".claude/worktrees/sw-frontend-verify","branch":"feat/sw-frontend-verify","sha":"27f24b20","reason":"RETROACTIVE — engineer worktree removed via manual `git worktree remove` (pre-mechanical task_branch cleanup leg), recovery pointer recorded after-the-fact. Code merged to dev (27f24b20 useMemo→useEffect). Learnings extracted to KB frontend.md (useMemo-as-side-effect) + ts-morph seed-FE-devDep follow-up. The drift that prompted the salvage-before-delete codification."}

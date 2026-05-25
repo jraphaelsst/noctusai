@@ -4,8 +4,9 @@ Zero real git — `run` is injected (a FakeGit that scripts rev-parse / merge-ba
 / log / worktree list|add|remove|prune / rebase / push / branch -d, and
 simulates the FF push + the concurrent-push race + a rebase conflict). Covers
 status / start / integrate (planned / up_to_date / integrated / retry-on-race /
-conflict) / cleanup (planned / cleaned / blocked-unmerged), and the load-bearing
-safety invariants:
+conflict) / cleanup (planned / cleaned / blocked-unmerged + the salvage-before-
+delete recovery-pointer leg recorded BEFORE the destructive remove), and the
+load-bearing safety invariants:
   • the safe-git allowlist guard rejects an off-list subcommand;
   • the DEV-ONLY push boundary refuses a push whose dst is main/prod;
   • across a full start→integrate→cleanup the tool emits no banned token.
@@ -90,6 +91,20 @@ class FakeGit:
 def _anc_pairs(pairs):
     s = set(pairs)
     return lambda a, b: a == b or (a, b) in s
+
+
+def _capture_recorder():
+    """A fake salvage_recorder: captures (root, removed) and returns a ledger
+    path WITHOUT real IO — so cleanup tests exercise the recovery-pointer leg
+    deterministically (no settings import, no file write)."""
+    captured: list[tuple] = []
+
+    def rec(root, removed):
+        captured.append((root, removed))
+        return Path(root) / "project-history/worktree-salvage.ndjson"
+
+    rec.captured = captured
+    return rec
 
 
 _PORCELAIN = (
@@ -215,6 +230,12 @@ def test_cleanup_dry_run_plans():
     )
     res = T.task_branch(action="cleanup", slug="x", confirm=False, run=fake)
     assert res["status"] == "planned" and res["branch_merged"] is True
+    # the salvage ritual is SURFACED in the plan (learn-before-delete) — dry-run
+    # records nothing yet.
+    assert set(res["cleanup_ritual"]) == {
+        "1_extract_learnings", "2_record_recovery_pointer",
+        "3_mole_sweep_before_delete", "4_remove"}
+    assert "KB/memory" in res["learnings_checkpoint"]
 
 
 def test_cleanup_confirm_removes_worktree_and_deletes_branch():
@@ -222,11 +243,42 @@ def test_cleanup_confirm_removes_worktree_and_deletes_branch():
         refs={"origin/dev": "d0", "feat/x": "b0"},
         anc=_anc_pairs([("b0", "d0")]),
     )
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake)
+    rec = _capture_recorder()
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=rec)
     assert res["status"] == "cleaned" and res["exit_code"] == 0
     assert fake.ran("worktree remove .claude/worktrees/x")
     assert fake.ran("worktree prune")
     assert fake.ran("branch -d feat/x")
+    # MECHANICAL recovery-pointer leg fired (branch+SHA recorded to the ledger).
+    assert res["salvage_ledger"].endswith("worktree-salvage.ndjson")
+    assert len(rec.captured) == 1
+    _root, removed = rec.captured[0]
+    assert removed[0]["branch"] == "feat/x" and removed[0]["sha"] == "b0"
+
+
+def test_cleanup_records_recovery_pointer_before_removing_the_worktree():
+    """Leg 2 is recorded BEFORE the destructive `worktree remove` — so a
+    remove failure can't lose the recovery pointer."""
+    order: list[str] = []
+
+    def rec(root, removed):
+        order.append("salvage")
+        return Path(root) / "project-history/worktree-salvage.ndjson"
+
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
+                   anc=_anc_pairs([("b0", "d0")]))
+    _orig = fake.__call__
+
+    def spy(cmd, cwd=None):
+        if len(cmd) > 1 and cmd[1] == "worktree" and cmd[2] == "remove":
+            order.append("remove")
+        return _orig(cmd, cwd)
+
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=spy,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    assert order == ["salvage", "remove"]   # recovery pointer recorded first
 
 
 def test_cleanup_blocked_when_branch_unmerged():
@@ -278,7 +330,8 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
     )
     T.task_branch(action="start", slug="x", confirm=True, run=fake)
     T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
-    T.task_branch(action="cleanup", slug="x", confirm=True, run=fake)
+    T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                  primary_root="/repo", salvage_recorder=_capture_recorder())
     for cmd, _cwd in fake.calls:
         for tok in cmd:
             assert tok not in T._BANNED_TOKENS, f"banned token {tok!r} in {cmd}"

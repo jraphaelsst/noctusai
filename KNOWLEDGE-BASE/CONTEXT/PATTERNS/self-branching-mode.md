@@ -77,8 +77,13 @@ noctus.dev.task_branch action="integrate" slug="<task-slug>" confirm=True
 #   → on a rebase CONFLICT: abort (worktree restored clean) + surface loudly — never auto-resolve
 
 noctus.dev.task_branch action="cleanup" slug="<task-slug>" confirm=True
+#   → SALVAGE-before-delete (learn-before-delete, KB § storage-hygiene § 2.3): records the branch+SHA
+#     recovery pointer to the tracked worktree-salvage ledger (MECHANICAL — before the destructive remove)
+#     + surfaces the learnings-extraction checkpoint + sequences a mole worktree-sweep, THEN
 #   → git worktree remove (refuses if dirty — no --force) → prune → git branch -d feat/<slug> (merged-only)
 #   → agent idle on the dev baseline; next writing task re-fetches + re-branches
+#   ⚠️ Tear down ONLY via this tool (or mole sweep / cleanup_stale_worktrees) — a bare hand-typed
+#     `git worktree remove` skips all three salvage legs (lost learnings + lost recovery pointer).
 
 noctus.dev.task_branch action="status"   # read-only: active self-branch worktrees + ahead/behind vs origin/dev
 ```
@@ -102,6 +107,7 @@ This is **exactly [[branching-and-merging]] §10.2 Option A** with `dev` substit
 - Safe git allowlist; **no banned token** (`reset`/`checkout`/`switch`/`restore`/`clean`/`merge`/`--force`/`--force-with-lease`/`-f`/`-D`) ⇒ can't force, reset, rewrite history, or switch the primary checkout.
 - **Dev-only push boundary** — every push dst MUST be `dev`; main/prod refused structurally; `NOCTUS_ALLOW_MAIN_PUSH` never set (this tool can't reach the sacred lines).
 - `cleanup` refuses a **dirty** worktree (no `--force`) ∧ refuses an **unmerged** branch (`-d` not `-D`) ⇒ never silently drops unintegrated work.
+- `cleanup` **salvages before deleting** (learn-before-delete): records the branch+SHA recovery pointer to the tracked `project-history/worktree-salvage.ndjson` BEFORE `worktree remove` (mechanical — same leg the bulk sweeps carry) + surfaces the learnings checkpoint + sequences a mole worktree-sweep ⇒ a precise teardown can no longer silently lose the worktree's durable knowledge.
 - Rebase conflict ⇒ **abort + surface** (no silent auto-resolve, no half-rebase left behind).
 
 ---
