@@ -810,7 +810,7 @@ stays admin-only until proper consent gating lands.
 
 ## 6a. High-level adapter layer + real-estate domain (consume side)
 
-> Added 2026-05-20 by `products/social-wiring/projects/social-wiring-vista-seed-lift/`. Composes on top of §5's low-level `VistaClient` to ship a thin product-facing surface the YouTube upload pipeline (and any future real-estate-shaped consumer) uses without re-implementing the Vista REST handshake.
+> Added 2026-05-20 (the vista seed-lift; social-wiring is the first consumer). Composes on top of §5's low-level `VistaClient` to ship a thin product-facing surface the YouTube upload pipeline (and any future real-estate-shaped consumer) uses without re-implementing the Vista REST handshake.
 
 ### Adapter surface — `noctusai_lib.integrations.vista`
 

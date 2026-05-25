@@ -135,6 +135,12 @@ Package: `seed/lib/backend/noctusai_lib/integrations/youtube/`.
 `products/*` consumer yet (`youtube-crawler` is the originating N=1).
 The seed lands ahead per the user-authorized "spread it soon".
 
+### Upload / Shorts platform facts (durable; verified via a live social-wiring Drive-folder fan-out, 2026-05-21)
+
+- **Shorts max length = 180s** (since 2024-10-15 — the old 60s figure persists in third-party blogs; re-verify off [official YT Help](https://support.google.com/youtube/answer/15424877)). YT **auto-classifies** vertical ∧ ≤180s as a Short on its side — `upload_video()` is the **same call** for long-form and Shorts; the only platform-side signal a consumer adds is a `#Shorts` description tag.
+- **Content-ID gotcha**: a Short **>60s** carrying an active Content-ID claim is **globally blocked**. Audio from YT's own library is fine; uploader-supplied licensed audio is the risk.
+- **Refresh-token portability (credential insight)**: a Google refresh token is bound to **(client_id, user, scopes)**, NOT to a product. Porting a channel credential across noc products that share one OAuth client is just `decrypt(old_key) → re-encrypt(new_key) → UPSERT` into the target's `CredentialStore`; the redirect-URI registration only matters during the initial consent dance, never on the refresh path.
+
 ---
 
 ## 4. google_drive — download + read/inspect (two Protocols)
