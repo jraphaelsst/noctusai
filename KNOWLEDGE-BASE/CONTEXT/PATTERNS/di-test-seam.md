@@ -33,6 +33,31 @@ it shrinks the baseline.
 `patch.object` of *our own* symbol is never the answer; if you reach for it
 the test is asking you to wire a seam differently.
 
+## Class-A — Pydantic-settings via `Depends`
+
+The `settings_override` / `monkeypatch.setattr(settings, "X", "Y")` class. A
+product's module-level `settings` instance is read attribute-by-attribute at
+request time. Patching a field **supplies a real config value** — not
+neutering logic — but the keeper can't tell a settings-field patch from a
+guard patch, so it flags every site. The honest fix routes settings through
+DI so tests never touch the global.
+
+**Seed primitive (N≥3 — erp / core / daily-life / social-wiring all carry the
+`monkeypatch.setattr(settings, …)` shape):** `noctusai_seed.make_get_settings(
+settings_instance)` — sibling of `make_get_current_user_org`. Returns a
+zero-arg FastAPI dependency yielding the bound instance; routers
+`Depends(get_settings)`, tests override via
+`app.dependency_overrides[get_settings] = lambda: ProductSettings(field="x")`
+(+ teardown `.clear()`) — no monkeypatch of our symbol. Factory + end-to-end
+override test: `seed/framework/backend/noctusai_seed/config.py` /
+`seed/framework/backend/tests/test_config.py` (shipped 2026-05-25).
+
+**Adoption status:** social-wiring currently wires a **product-local**
+`get_settings` (`app/dependencies.py`) + a `build_credential_store(client, *,
+encryption_key=…)` kwarg seam — the Class-A landing that drained its baseline.
+Migrating those product-local seams to consume `noctusai_seed.make_get_settings`
+is the open consume-step (follow-up `seed-config-di-consume`).
+
 ## Authoritative depth
 
 Full playbook (worked before/after, the DI kwarg recipe, the
