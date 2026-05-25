@@ -2,7 +2,7 @@
 
 > Filed 2026-05-23 from the CI-rehab session. Self-contained (durable-docs rule).
 
-- **Status:** 📋 FILED — surfaced by the PF backend CI-rehab. N=6 recurrence ⇒ MUST formalize.
+- **Status:** ✅ SHIPPED 2026-05-25 — grounded against the tree (doc was stale): all 9 limiter-bearing products already import `reset_rate_limiter` EXCEPT `knowledge-extractor`, fixed this commit (P1 complete). P2 keeper `check_limiter_conftest_import` already exists + is wired into `check_all_products` (compliance.py). Success criteria met → ready to archive. *(Original filing said adconnect/dev-team/erp/seed/social-wiring were missing — all since adopted; only KE remained.)*
 - **Owner:** architect
 
 ## 1. Context & Purpose

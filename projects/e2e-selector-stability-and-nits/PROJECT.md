@@ -19,7 +19,7 @@ green by retargeting to **Portuguese text/role/label selectors** — e.g.
 `data-testid`** (verified: `grep -r data-testid seed/.../frontend/src` → none).
 **The nit:** these tests are brittle — a copy / i18n change silently breaks the
 suite (a coupling to user-visible strings, not a stable contract).
-- **P1** — KB note: document the selector-coupling tradeoff (text/role = fast-green but copy-fragile; `data-testid` = stable but needs seeding) in `KB § PATTERNS/testing.md` or boundary-contract-tests (E2E selector stability).
+- **P1** — ✅ DONE 2026-05-25 (branching-methodology dogfood): selector-coupling tradeoff documented in `KB § PATTERNS/testing.md` (test-types → **Selector stability (Playwright)**). text/role = fast-green but copy-fragile; `data-testid` = stable but needs seeding. *(P2 testid-seeding + 3c keeper str→Path nit remain — P2 is a seed-FE-propagate change; 3c is `[A]`-leaning + collides on compliance.py.)*
 - **P2** — add `data-testid` to the seed FE design-system components the E2E suites target (LoginForm, nav, key tables), then migrate the brittle text/role assertions to testids. Pilot-products-first (core + erp have E2E today). Seed FE change ⇒ goes through the seed→propagate cadence.
 
 ### 3c — keeper `str`→`Path` nit (🟡 partial recovery)
