@@ -118,7 +118,7 @@ test.describe('Dashboard', () => {
             status: 'trial',
             started_at: '2026-02-20T00:00:00Z',
             expires_at: '2026-03-20T00:00:00Z',
-            plans: { name: 'Profissional', slug: 'pro' },
+            plans: { nome: 'Profissional', slug: 'pro' },
           },
         }),
       }),
