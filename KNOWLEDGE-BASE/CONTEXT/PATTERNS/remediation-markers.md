@@ -11,7 +11,8 @@
 ```
 
 - **`NOC-REMEDIATE`** — fixed, uppercase, namespaced (distinct from the ~1.7k noisy generic `TODO`s). Greppable in every language: `# NOC-REMEDIATE` (Python) · `// NOC-REMEDIATE` (TS/TSX) · `/* NOC-REMEDIATE */`.
-- **`[<class>]`** — a short batch-filter tag. **Open/self-extending** taxonomy (a non-fitting instance ⇒ add a class, never force-fit): `perf` · `dry` · `security` · `lgpd` · `test` · `typing` · `seed` · `a11y` · `cleanup` …
+- **`[<class>]`** — a short batch-filter tag. **Open/self-extending** taxonomy (a non-fitting instance ⇒ add a class, never force-fit): `perf` · `dry` · `security` · `lgpd` · `test` · `typing` · `seed` · `a11y` · `cleanup` · **`codify`** …
+  - **`codify` is a *special* class** — it's the structured token for a **deferred codification** (a Stage-3 rule judged ripe-but-not-yet-built). Besides the advisory `scan_remediation_markers` sweep, it is read every compliance run by the `check_codification_debt` keeper (the always-on gate form of the `/codify` command's *detection* half — `[[methodology-codification-pipeline]]`). Leaving a codification deferral in free prose ("we should codify X someday") instead of a `[codify]` marker is the gap that keeper closes. Put `[codify]` markers in the rule's **durable** KB doc (never `projects/` — archived), with a real date (a placeholder/missing date ⇒ the keeper flags it `high`).
 - **`<what + why deferred>`** — one clause; enough for a batch-sweeper with zero context to act.
 - **`<date>`** — absolute (ages the backlog).
 
@@ -44,6 +45,8 @@ grep -rn "NOC-REMEDIATE\[perf\]" products/ seed/ mcp/    # one class
 ```
 
 A batch session triages the sweep (`[F]`/`[R]`/`[A]`), fixes what's cheap together (shared context ⇒ cheaper than one-at-a-time), and promotes recurrences to projects. **Stage-4 (built 2026-05-25):** `noctus.dev.scan_remediation_markers` (+ `cli.py --scan-remediation-markers`) — the deterministic batch-sweep surface: parses real `[class]` + `— <date>` age, groups by class, flags malformed (missing date) + **FORBIDDEN on-`except`** markers, surfaces any class at **N≥3** (promote to project/seed lift). Advisory query (exit 1 on defects); requires a real `[class]` so it never trips on the prose that *defines* the token (the placeholder-exclusion lesson). The analogue of a keeper `check_*` for *deferred-remediation* shapes ([[methodology-codification-pipeline]]).
+
+The `codify` class gets a second surface — the **`check_codification_debt` keeper** in the compliance gate (built 2026-05-25). It reuses the *same* parser (`markers_of_class` over the shared `_iter_markers` — one parser, two surfaces) but runs *always-on* inside `check_all_products`, so a deferred codification surfaces every gate run, not only when someone remembers to sweep. `[codify]` markers are `warning` (sanctioned, non-blocking); malformed/on-`except` are `high`; backlog ≥3 adds a "run `/codify` sweep" warning. This is the bridge from the advisory scan into the keeper gate — the `/codify` command's *detection* half mechanized.
 
 ---
 

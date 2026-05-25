@@ -29,8 +29,9 @@ The user is **right with one correction**:
 
 ## 4 · Waves
 - **Wave 1 (this project):** C1 `noctus.dev.scan_remediation_markers` (shipped) + C2 seed-integration-shape keeper (design-first — careful predicate, then ship).
+- **Wave 2 (`codify-mechanical-gate`, 2026-05-25 — shipped):** `/codify`'s own *detection* half mechanized — `check_codification_debt` keeper reads `NOC-REMEDIATE[codify]` markers every compliance run (the always-on gate form). C2 is now a **tracked durable `[codify]` marker** in `seed-fake-real-adapter.md` (no longer prose-buried "filed design-first"); the worktree-sensitivity guard likewise migrated to a marker in `branching.md`. `KB § PATTERNS/methodology-codification-pipeline.md` §4.8.
 - **Backlog (watch):** C3, C4 — promote on N≥3 (the `/codify` command re-evaluates on demand).
-- **Standing:** the `/codify` command (`.claude/commands/codify.md`) is the repeatable drain — invoke it on any rule/request to evaluate + decide + apply.
+- **Standing:** the `/codify` command (`.claude/commands/codify.md`) is the repeatable drain — invoke it on any rule/request to evaluate + decide + apply. Deferrals now leave a `[codify]` marker (gate-tracked), not prose.
 
 ## 5 · Deliverables
 - ✅ `.claude/commands/codify.md` — the repeatable evaluate→decide→apply command (default sweep = CLAUDE.md §1 + memory; KB only per-candidate).

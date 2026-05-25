@@ -4,6 +4,8 @@
 >
 > **One-line statement.** Every seed module that touches IO ships in **Protocol + Fake + Real + factory** shape. Pure-logic / pure-crypto / pure-shaping modules are exempt. Half-shipped (Protocol+Real only or Protocol+Fake only) generates consumer-side forks at the seed level.
 
+<!-- NOC-REMEDIATE[codify]: check_seed_integration_shape keeper — flag a noctusai_lib/integrations/<x>/ module missing any of Protocol/Fake/Real/factory (this rule); N=3 (absorbed-product-seed-shape-seam). DEFERRED design-first — the seed ships some deliberately Protocol-only / seed-ahead modules, so the predicate must allowlist integrations/ + exempt a documented Protocol-only marker to avoid seed-wide false-positives — 2026-05-25 -->
+
 ---
 
 ## What this pattern is

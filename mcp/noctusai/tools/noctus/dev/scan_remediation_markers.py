@@ -43,7 +43,15 @@ _DEFINING_DOCS = (
 
 
 def _is_defining_doc(path: str) -> bool:
-    return path.endswith(_DEFINING_DOCS) or "scan_remediation_markers" in path
+    # The marker-machinery's own source + test files are self-reference: their
+    # tests carry fixture markers (true/false-positive shapes) that must not
+    # count as real deferrals. Substring matches both `<tool>.py` and
+    # `tests/test_<tool>.py`.
+    return (
+        path.endswith(_DEFINING_DOCS)
+        or "scan_remediation_markers" in path
+        or "codification_debt" in path
+    )
 
 
 def _git_grep(root: Path) -> list[tuple[str, int, str]]:

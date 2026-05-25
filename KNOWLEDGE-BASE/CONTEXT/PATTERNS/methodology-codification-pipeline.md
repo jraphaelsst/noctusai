@@ -163,6 +163,17 @@ Stage 4 is in flight, not yet landed. When it does, the housekeeping rules becom
 - **Stage 3:** this entry.
 - **Stage 4:** `check_hardcoded_product_slug_set` in `compliance.py`. Flags any `seed/lib/backend/tests/` literal list/tuple/set containing ≥3 live product slugs (the recognizer corpus is derived from the live `products/` tree at scan time — the detector itself must not freeze a slug literal, or it would violate its own rule). Remediation: derive from `parse_products_registry()` (`noctusai_lib.config.cors_registry`). Opt-out: a `slug-literal-ok` / `registry-exempt` / `not-a-product-set` rationale keyword (mirrors the `check_mock_schema_validation` guardrail) for the rare legitimate slug→x fixture. Severity `warning`. W3.5 already root-fixed `test_cors_registry` (registry-derived assertion, `c9e1abb`); the detector still fires correctly on the remaining `test_per_product_cors_sentinel` frozen literal until the W4 teardown re-homes it.
 
+### 4.8 The pipeline's own *detection* half (the `/codify` mechanical gate)
+
+The pipeline is recursive — its own "is this rule ripe-but-uncodified?" decision split into a mechanical half and a judgment half.
+
+- **Stage 1 (emerges):** user — *"where could we integrate the `/codify` command to make it a mechanical gate, so the keeper ensures codifying detection?"* (the user's standing thesis: discipline → mechanical gate is cheaper, applied to `/codify` itself).
+- **Stage 2 (memory):** `feedback_codify_command.md` amended with the mechanical-gate leg.
+- **Stage 3 (KB):** this §4.8 + the `codify` class in `[[remediation-markers]]` + the `/codify` command's "detection is now mechanical" premise.
+- **Stage 4 (codified):** `check_codification_debt` in `compliance.py`. It reads every `NOC-REMEDIATE[codify]` marker each compliance run (reusing `markers_of_class` — one parser, two surfaces) and surfaces deferred codifications: well-formed = `warning` (sanctioned, non-blocking), malformed/on-`except` = `high`, backlog ≥3 = a "run `/codify` sweep" `warning`.
+
+The honest boundary: **only the *detection* half is codifiable.** "Which deferred codifications exist?" is mechanical (greppable markers). "Should this rule become a keeper / stay prose / defer?" is the judgment that stays with `/codify` (§3 criteria + §5 exclusions). The keeper *surfaces* the backlog; the command *decides* it. The gap it closes: before this, a deferred codification lived in free prose (`branching.md` "the *filed* worktree-sensitivity guard follow-up"; the C2 keeper "filed design-first") — invisible to any sweep, so it rotted. The `[codify]` marker makes the deferral a tracked, dated, gate-read token.
+
 ---
 
 ## 5. What CAN'T be codified — and why that's fine
@@ -274,6 +285,7 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | Pydantic schema silently dropping unknown fields | `check_pydantic_strict_http` | `noctus.dev.review` (post StrictHttpModel rollout) | Stage 4 keeper |
 | Per-phase learnings not logged | `phase_state_consistency` global check | `noctus.dev.review` (global mode) | Stage 4 keeper (global) |
 | Seed version stamps stale | `seed_version_propagation` global check | `noctus.dev.review` | Stage 4 keeper (global) |
+| Deferred codification buried in prose / not tracked (a Stage-3 rule judged ripe-but-unbuilt) | `check_codification_debt` (gate) + `noctus.dev.scan_remediation_markers` (sweep) | `noctus.dev.review` (global) → leave a `NOC-REMEDIATE[codify]: … — <date>` marker in the rule's durable KB doc → `/codify` to decide | Stage 4 keeper (global) — the `/codify` detection half |
 | Detector regression test missing for a `check_*` | `meta_detector_regression_test_presence` | `noctus.dev.review` | Stage 4 keeper (meta) |
 | Literal `# silent-ok` annotation present in production code (escape hatch retired 2026-04-28) | `check_no_silent_ok_comment` | `noctus.dev.review` (global mode) → replace with `logger.<level>(...)` / `raise` / surface via return value | Stage 4 keeper (global) |
 | Router uses `Depends(ProductDependencies.{get_org_id,get_user_role,get_user_client})` (422-trap shape) | `check_auth_dep_anti_pattern` | `noctus.dev.review` → migrate to `Depends(get_current_user_org)` via the `make_get_current_user_org` factory | Stage 4 keeper (per-product routers) |
