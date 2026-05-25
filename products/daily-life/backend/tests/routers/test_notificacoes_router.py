@@ -4,7 +4,7 @@ from noctusai_lib.testing import MockSupabaseResponse
 
 MOCK_NOTIFICATION = {
     "id": "notif-001",
-    "user_id": "test-user-id",
+    "user_id": "test-user-123",  # must match MockUser.id default
     "type": "system",
     "title": "Bem-vindo",
     "message": "Sua conta foi criada",

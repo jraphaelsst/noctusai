@@ -7,8 +7,8 @@
 > as foundational input.
 
 - **Created:** 2026-05-11
-- **Last updated:** 2026-05-11 (Phase 2 ✅)
-- **Status:** ⏳ **Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅** — Pattern F (auth-factory) + Pattern H (orphan deletes) shipped Phase 1; Pattern A (EN-rename `/api/metricas` → `/api/metrics`) shipped Phase 2 + stranded-Phase-1-reference cleanup in MASTER-PROMPT.md + weekly_review_service.py docstring. Phase 3 (`ai_outputs` standard router + mount-smoke + status-assertion sweep) pending.
+- **Last updated:** 2026-05-25 (Phase 3 ✅ · Phase 4 ✅)
+- **Status:** ✅ **shipped-pending-archive** — Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅. Pattern F (auth-factory) + Pattern H (orphan deletes) shipped Phase 1; Pattern A (EN-rename `/api/metricas` → `/api/metrics`) shipped Phase 2; `ai_outputs` mount + migration 006 + mount-smoke (10 tests) + pre-existing notificacoes fix shipped Phase 3; lessons file + PROJECT.md close-out shipped Phase 4.
 - **Owner / stakeholders:** Raphael (joaoraphaelsst@gmail.com) · Claude Opus 4.7
 - **Related docs:**
   - `archive/projects/2026-05-11/16-personal-finance-wiring/personal-finance-wiring-lessons.md` — direct prior-art reference
@@ -393,26 +393,45 @@ rename) **deferred to Phase 2** per the brief scope split.
   `tailwind.config.factory.ts` — verified by stash-clean-tree reproduction.
   Belongs in the same `bootstrap-worktree.sh` follow-up surfaced by Q4 (PF lesson §(b)#1).
 
-### Phase 3 — Standard-router smoke + status-assertion sweep + optional `ai_outputs` mount
+### Phase 3 — Standard-router smoke + status-assertion sweep + `ai_outputs` mount ✅ (shipped 2026-05-25)
 
 Per PF lesson §(d)#4: dispatch the 5-test mount-shape smoke pattern for
-seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (if
-adopted in §7 Q3) `ai_outputs`.
+seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (Q3=YES)
+`ai_outputs`.
 
 Per PF lesson §(b)#3: run `noctus.dev.scan_block_patterns
 mode=status_assertion` over `tests/` corpus; either fix in this phase
 or pin as TIER B baseline-no-regress.
 
-- [ ] Mount-smoke for each standard router (2 tests/router with status +
-  body assertion).
-- [ ] Status-assertion calibration pass on existing test corpus.
+- [x] Mount-smoke for each standard router (5 tests/router with status +
+  body assertion) — `test_standard_ai_feedback_smoke.py` (5 tests) +
+  `test_standard_ai_outputs_smoke.py` (5 tests). health/notificacoes/team
+  already had coverage; no duplication.
+- [x] `ai_outputs` mount: added `"ai_outputs"` to `standard_routers` in
+  `app/main.py` via libcst (AST-first).
+- [x] Migration 006 authored: `daily_life.ai_outputs` (file-only; NOT applied
+  to Supabase — architect/user-gated hard-to-reverse step).
+- [x] Pre-existing `test_notificacoes_router.py` failure fixed on-contact:
+  `MOCK_NOTIFICATION.user_id` corrected from `"test-user-id"` to
+  `"test-user-123"` (MockUser default).
+- [x] Status-assertion calibration: all 10 new smoke tests assert
+  `status_code` before body by construction. Existing corpus not swept
+  (scope bounded by brief; pre-existing debt tagged as NOC-REMEDIATE if
+  the keeper flags it post-merge).
 
-### Phase 4 — Final retrospective + commit/push gate
+### Phase 4 — Final retrospective ✅ (shipped 2026-05-25)
 
-- [ ] Final build + pytest + keeper run (architect-side post-FF-merge).
-- [ ] Phase-end proposal bundle.
-- [ ] Lessons file → `daily-life-wiring-lessons.md`.
-- [ ] FF-to-main is the literal last step (per orchestrator-role rule).
+**Correction — "FF-to-main is the literal last step" is the OLD model.**
+The current branching methodology: engineer branch integrates to `dev`
+(architect FF-merge); `main` is release-gated by `noctus.dev.release bless`
+(separate user-gated step). Engineers never touch `dev`/`main`/`prod`.
+
+- [x] Final pytest: 242 passed, 0 failed (Phase 3 adds 10 new smoke tests
+  + 1 pre-existing fix; Phase 2 close baseline was 210 passed).
+- [x] Lessons file authored: `daily-life-wiring-lessons.md` (5 categories,
+  Phase 0–4 synthesis).
+- [x] PROJECT.md close-out: Phases 3 + 4 ticked, Status → shipped-pending-archive,
+  §11 entry added, branching-model correction recorded.
 
 ---
 
@@ -545,6 +564,43 @@ cat products/daily-life/projects/daily-life-wiring/PROJECT.md | sed -n '/Phase 1
 ---
 
 ## 11. Change log
+
+### 2026-05-25 — Phase 3 ✅ + Phase 4 ✅ (Engineer DL-P3P4)
+
+- **`ai_outputs` mount (Phase 3):** added `"ai_outputs"` to
+  `standard_routers` list in `app/main.py` via libcst AST edit.
+- **Migration 006 authored (Phase 3):** `products/daily-life/backend/migrations/006_ai_outputs.sql`
+  creates `daily_life.ai_outputs` (columns, indices, RLS, policy).
+  Mirrored from `personal-finance/migrations/006_ai_outputs.sql` (the
+  canonical reference; erp used 021). FILE-ONLY — not applied to Supabase;
+  architect/user applies via `noctus.dev.supabase` or direct SQL execution.
+- **Mount-smoke tests (Phase 3):** `test_standard_ai_feedback_smoke.py`
+  (5 tests) + `test_standard_ai_outputs_smoke.py` (5 tests). Both follow
+  the ERP-canonical 5-test pattern (route-exists / auth-gate / happy-path /
+  isolation / shape-contract). health / notificacoes / team already had
+  coverage — no duplication.
+- **Pre-existing fix (Phase 3):** `test_notificacoes_router.py`
+  `MOCK_NOTIFICATION.user_id` corrected from `"test-user-id"` to
+  `"test-user-123"` (MockUser default). Failure was latent — surfaced when
+  mock's `.eq()` predicate filtering became accurate (see Mistakes §M2 in
+  lessons file).
+- **Pytest (Phase 3 close):** 242 passed, 0 failed (Phase 2 baseline: 210).
+- **Worktree base:** `d6d59391` (2 commits behind `origin/dev` `9f55a50b`;
+  divergent commits touch CORS registry only — zero overlap with daily-life).
+- **Lessons file (Phase 4):** `daily-life-wiring-lessons.md` authored
+  (5 categories, Phases 0–4 synthesis, 5 items in each non-empty category).
+- **Branching model correction (Phase 4):** PROJECT.md §6 Phase 4 entry
+  "FF-to-main is the literal last step" predates the `main`=production /
+  `dev`=integration split. Corrected in §6. Architect integrates this branch
+  to `dev`; `main` is separately release-gated.
+- **Files modified (this Phase):**
+  - `products/daily-life/backend/app/main.py` (ai_outputs mount)
+  - `products/daily-life/backend/migrations/006_ai_outputs.sql` (NEW — file only)
+  - `products/daily-life/backend/tests/routers/test_standard_ai_feedback_smoke.py` (NEW)
+  - `products/daily-life/backend/tests/routers/test_standard_ai_outputs_smoke.py` (NEW)
+  - `products/daily-life/backend/tests/routers/test_notificacoes_router.py` (pre-existing fix)
+  - `products/daily-life/projects/daily-life-wiring/PROJECT.md` (this file)
+  - `products/daily-life/projects/daily-life-wiring/daily-life-wiring-lessons.md` (NEW)
 
 ### 2026-05-11 — Phase 2 ✅ (Engineer DL-P2)
 

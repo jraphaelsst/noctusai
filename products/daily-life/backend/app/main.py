@@ -23,6 +23,6 @@ app = create_product_app(
     ],
     version="0.1.0",
     limiter=limiter,
-    standard_routers=["health", "notificacoes", "team", "ai_feedback"],
+    standard_routers=["health", "notificacoes", "team", "ai_feedback", "ai_outputs"],
     consent_features="app.services.ai_consent_features",
 )
