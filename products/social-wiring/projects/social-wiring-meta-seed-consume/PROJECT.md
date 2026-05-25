@@ -7,7 +7,7 @@
 > integration); reuse its phase structure as the template.
 
 - **Created:** 2026-05-19
-- **Status:** Filed (audit complete, ready for Phase 0)
+- **Status:** ✅ **SHIPPED** 2026-05-24 (`origin/dev` `db482e5c`) — the ~1302-LoC hand-rolled Meta fork (`_meta_api.py`/`oauth_adapter.py`/`fake_adapter.py`/`mappers.py`/`types.py`) was deleted; `app/services/meta/__init__.py` is now a zero-API-logic shim over `noctusai_lib.integrations.meta` (so the product auto-inherits the seed's video/Reels publish too); `meta_router.py` + tests migrated. Stale-status line corrected by the architect at integration (the authoring terminal lost context before updating it). 491 social-wiring tests green.
 - **Owner / stakeholders:** joaoraphaelsst · architect
 - **Related docs:** `KB § PATTERNS/absorbed-product-seed-shape-seam.md` (canonical pattern, N=3+ confirmed) · sibling `products/social-wiring/projects/social-wiring-google-seed-consume/PROJECT.md` (the template; this project mirrors its phase structure) · `KB § INTEGRATIONS/meta.md` (consume-side reference)
 - **Project slug:** `social-wiring-meta-seed-consume` — intent ≈ `wiring` (canonical `<product>-seed-wiring` shape). Location: `products/social-wiring/projects/`.
