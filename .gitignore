@@ -2,6 +2,13 @@
 # Root-anchored — `products/adconnect/` IS tracked (post-migration scaffold).
 /adconnect/
 
+# Meta App Review submission — working copy at repo root, deliberately UNTRACKED:
+# it will hold operational secrets (sandbox creds, live URL, Page/IG handles) at
+# filing time. The version-controlled placeholder template lives at
+# projects/meta-app-review-publish-scopes/SUBMISSION.md. (User decision 2026-05-24.)
+/submission.md
+/SUBMISSION.md
+
 # Dependencies
 node_modules/
 __pycache__/
