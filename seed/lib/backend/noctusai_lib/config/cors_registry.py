@@ -214,7 +214,7 @@ def derive_cors_origins(
             _add(origin)
 
     # In-scope slugs: every registered product (SSO-bridge shape) or just
-    # own_slug (single-product shape). Drives BOTH the localhost frontends
+    # own_slug (single-product shape). Drives BOTH the localhost house origins
     # and the deploy-aware prod origins below, so the two stay in lockstep.
     if include_all_frontends:
         in_scope = [entry["slug"] for entry in entries]
@@ -223,10 +223,15 @@ def derive_cors_origins(
     else:
         in_scope = []
 
-    # localhost frontends (registry order; filtered to in-scope)
+    # localhost HOUSE origins (registry order; filtered to in-scope). The
+    # single-container house model serves on the backend_port — that is what the
+    # container publishes and what the browser sends as the Origin header. The
+    # frontend_port is vestigial (pre-house 2-container era); emitting it would
+    # allow-list a DEAD localhost origin (the house-port-vs-frontend-port family,
+    # same as the url_base migration 037 + the dev-CORS-band .env.example fix).
     for entry in entries:
         if entry["slug"] in in_scope:
-            _add(f"http://localhost:{entry['frontend_port']}")
+            _add(f"http://localhost:{entry['backend_port']}")
 
     # deploy-aware prod origins. Unioned (deduped) from TWO sources so the
     # result is correct in BOTH dev and the slim prod image:

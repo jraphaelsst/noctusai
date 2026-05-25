@@ -16,8 +16,11 @@ This module pins two invariants per product so future drift fails loudly:
 
 2. **Resolution yields the expected set.** Setting the sentinel as the
    live value on :class:`BaseAppSettings` (the env-file-bypass shape)
-   resolves to ``{localhost:5173, localhost:3000, localhost:<frontend_port>}``
-   where ``<frontend_port>`` is the value pinned in ``start.sh PRODUCTS``.
+   resolves to ``{localhost:5173, localhost:3000, localhost:<house_port>}``
+   where ``<house_port>`` is the product's backend port in ``start.sh
+   PRODUCTS`` — what the single-container house model serves the SPA on
+   (the page origin the browser sends). (Pre-2026-05-25 this emitted the
+   vestigial 2-container ``frontend_port``.)
 
 CORE is excluded — it uses ``@registry:all`` (SSO-bridge shape, separate
 test at the bottom of :mod:`test_cors_registry`).
@@ -79,8 +82,9 @@ PRODUCT_SLUGS: tuple[str, ...] = _derive_product_slugs()
 
 @pytest.fixture(scope="module")
 def registry_by_slug() -> dict[str, int]:
-    """Live ``start.sh`` → ``{slug: frontend_port}`` lookup."""
-    return {entry["slug"]: entry["frontend_port"] for entry in parse_products_registry()}
+    """Live ``start.sh`` → ``{slug: house_port}`` lookup (the backend port —
+    what the single-container house model serves the SPA + API on)."""
+    return {entry["slug"]: entry["backend_port"] for entry in parse_products_registry()}
 
 
 def _import_product_settings(slug: str):
@@ -149,19 +153,23 @@ def test_class_default_is_registry_own_sentinel(slug: str) -> None:
 def test_sentinel_resolves_to_expected_origin_set(
     slug: str, registry_by_slug: dict[str, int]
 ) -> None:
-    """The sentinel resolves to ``{localhost:5173, localhost:3000, localhost:<own_frontend>}``.
+    """The sentinel resolves to ``{localhost:5173, localhost:3000, localhost:<own_house_port>}``.
 
-    Pins the post-migration shape: localhost alts (always) + this product's
-    own frontend port from ``start.sh PRODUCTS``. Backend ports are NOT
-    included — the browser never sends the backend's own port as Origin
-    for cross-origin XHR. If a future change to ``cors_registry.derive_cors_origins``
-    breaks this contract, this test fails for every product.
+    Pins the post-fix shape: localhost alts (always) + this product's own
+    HOUSE port (the backend port in ``start.sh PRODUCTS``) — what the
+    single-container house model serves the SPA on, i.e. the page origin the
+    browser actually sends. Pre-2026-05-25 this emitted the vestigial
+    2-container ``frontend_port``; ``derive_cors_origins`` now emits the house
+    port (the house-port-vs-frontend-port family — url_base migration 037, the
+    dev-CORS-band ``.env.example`` fix). If a future change to
+    ``cors_registry.derive_cors_origins`` breaks this contract, this test
+    fails for every product.
     """
     assert slug in registry_by_slug, (
         f"{slug} not in start.sh PRODUCTS — registry drift. "
         "Sentinel resolution would fall back to alts-only."
     )
-    frontend_port = registry_by_slug[slug]
+    house_port = registry_by_slug[slug]
 
     # Direct instantiation with the sentinel — bypasses .env loading because
     # an explicit kwarg wins over env_file in pydantic-settings.
@@ -169,7 +177,7 @@ def test_sentinel_resolves_to_expected_origin_set(
     resolved = set(s.cors_origins_list)
 
     expected = {f"http://localhost:{p}" for p in LOCALHOST_ALT_PORTS} | {
-        f"http://localhost:{frontend_port}",
+        f"http://localhost:{house_port}",
     }
     assert resolved == expected, (
         f"{slug}: resolved={sorted(resolved)} expected={sorted(expected)}"

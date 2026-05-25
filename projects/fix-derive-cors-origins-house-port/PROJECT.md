@@ -1,9 +1,9 @@
 # fix-derive-cors-origins-house-port — Project Document
 
 - **Created:** 2026-05-25
-- **Status:** 📋 Filed (follow-up) — deferred from the social-wiring dev-pilot SSO/CORS fix
+- **Status:** ✅ DONE (2026-05-25) — `derive_cors_origins` now emits each in-scope product's **house (backend) port** for the localhost registry origins (was the vestigial `frontend_port`). Test churn was larger than the filed "~8 asserts" — actually ~12 across both files **plus** flipping `test_per_product_cors_sentinel`, whose docstring encoded the stale 2-container rationale ("backend ports NOT included") that the house model inverts (SPA + API share the house port ⇒ the page origin the browser sends IS the house port). `seed/lib/backend/tests/config/` green (62) + the seed CORS-guard (10). **Fix-on-contact:** KE's `config.py` never adopted the `@registry:own:` sentinel (incomplete-absorption gap) — added `cors_origins = "@registry:own:knowledge-extractor"` (it was the one product failing `test_per_product_cors_sentinel`). **Surfaced, NOT fixed (separate concern):** KE's `google_oauth_redirect_uri` still points at the old `:8140` frontend port (house is `:8012`) — belongs to KE-completion, not this seed-CORS branch.
 - **Owner:** joaoraphaelsst · architect
-- **Priority:** LOW — container + prod CORS are correct; this is the unsupported NATIVE-dev path only.
+- **Priority:** LOW — container + prod CORS were already correct; this corrected the unsupported NATIVE-dev path + drained the dead-origin allow-list. The estimate-off-evidence churn-drift (filed "~8" → ~12 + a docstring-rationale flip) is itself the 2nd-dogfood B16-extension evidence.
 
 ---
 

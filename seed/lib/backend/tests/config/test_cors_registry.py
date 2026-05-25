@@ -143,12 +143,13 @@ def test_derive_all_frontends_includes_localhost_alts_and_registry(
     start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
     out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
 
-    # Localhost alts first, then registry frontends. 5173 shows up only
-    # once because the core product also pins 5173 — dedup wins.
-    assert "http://localhost:5173" in out
-    assert "http://localhost:3000" in out
-    assert "http://localhost:8080" in out  # erp-imobiliario
-    assert "http://localhost:8090" in out  # personal-finance
+    # Localhost alts first, then registry HOUSE origins (backend ports — what
+    # the single-container house model serves / the browser sends as Origin).
+    assert "http://localhost:5173" in out  # localhost alt
+    assert "http://localhost:3000" in out  # localhost alt
+    assert "http://localhost:8000" in out  # core's house port
+    assert "http://localhost:8001" in out  # erp-imobiliario house port
+    assert "http://localhost:8002" in out  # personal-finance house port
     # No duplicates.
     assert len(out) == len(set(out))
 
@@ -163,9 +164,9 @@ def test_derive_own_slug_only_includes_own_frontend(tmp_path: Path) -> None:
 
     assert "http://localhost:5173" in out  # localhost alt
     assert "http://localhost:3000" in out  # localhost alt
-    assert "http://localhost:8080" in out  # erp's frontend
-    # Other products' frontends are excluded.
-    assert "http://localhost:8090" not in out
+    assert "http://localhost:8001" in out  # erp's house port
+    # Other products' house origins are excluded.
+    assert "http://localhost:8002" not in out  # personal-finance house port
 
 
 def test_derive_unknown_own_slug_falls_back_to_alts_only(tmp_path: Path) -> None:
@@ -185,11 +186,11 @@ def test_derive_without_localhost_alts_yields_only_registry(tmp_path: Path) -> N
         include_localhost_alts=False,
         include_all_frontends=True,
     )
-    # Three registry entries: core (5173), erp (8080), pf (8090).
+    # Three registry entries' HOUSE ports: core (8000), erp (8001), pf (8002).
     assert sorted(out) == [
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "http://localhost:8090",
+        "http://localhost:8000",
+        "http://localhost:8001",
+        "http://localhost:8002",
     ]
 
 
@@ -212,13 +213,25 @@ def test_derive_missing_start_sh_and_no_alts_returns_empty(tmp_path: Path) -> No
 
 
 def test_derive_dedupes_overlapping_ports(tmp_path: Path) -> None:
-    """When a registered frontend collides with a localhost alt, no duplicate.
+    """When a registered HOUSE port collides with a localhost alt, no duplicate.
 
-    `core:5173` overlaps with the alt `5173` — must appear once.
+    A product whose backend (house) port is 3000 overlaps the alt `3000` —
+    the dedup seen-set must collapse them to a single entry. (Post house-port
+    fix the canonical fleet's house ports no longer collide with an alt, so the
+    dedup path is exercised with a purpose-built registry here.)
     """
-    start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
+    start_sh = _write_start_sh(
+        tmp_path,
+        """
+        # BEGIN_PRODUCTS_REGISTRY
+        PRODUCTS=(
+            "dup:Dup:3000:9999"
+        )
+        # END_PRODUCTS_REGISTRY
+        """,
+    )
     out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
-    assert out.count("http://localhost:5173") == 1
+    assert out.count("http://localhost:3000") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -357,14 +370,22 @@ def test_settings_registry_all_sentinel_returns_union() -> None:
 
 
 def test_settings_registry_own_slug_returns_own_plus_alts() -> None:
-    """`@registry:own:core` returns just core's frontend + localhost alts."""
+    """`@registry:own:core` returns just core's HOUSE origin + localhost alts.
+
+    Derived from the live registry (not hardcoded ports) so a fleet port
+    change can't re-stale it — mirrors `..._core_migration...` below.
+    """
     s = BaseAppSettings(cors_origins="@registry:own:core")
-    origins = s.cors_origins_list
-    assert "http://localhost:5173" in origins  # core's frontend AND localhost alt
-    assert "http://localhost:3000" in origins
-    # Other products' frontend ports MUST NOT be included.
-    # erp-imobiliario frontend = 8080 — explicit exclusion check.
-    assert "http://localhost:8080" not in origins
+    origins = set(s.cors_origins_list)
+    assert "http://localhost:5173" in origins  # localhost alt
+    assert "http://localhost:3000" in origins  # localhost alt
+    by_slug = {e["slug"]: e for e in parse_products_registry()}
+    # core's own HOUSE port (backend — what the container serves) is included...
+    assert f"http://localhost:{by_slug['core']['backend_port']}" in origins
+    # ...but no OTHER product's house port is.
+    for slug, e in by_slug.items():
+        if slug != "core":
+            assert f"http://localhost:{e['backend_port']}" not in origins, slug
 
 
 def test_settings_registry_unknown_sentinel_returns_alts() -> None:
@@ -404,7 +425,9 @@ def test_settings_core_migration_resolves_to_the_live_product_origin_set() -> No
 
     expected = {f"http://localhost:{p}" for p in LOCALHOST_ALT_PORTS}
     for entry in parse_products_registry():
-        expected.add(f"http://localhost:{entry['frontend_port']}")
+        # HOUSE port (backend) — what the single-container model serves and
+        # what `derive_cors_origins` now emits (was frontend_port pre-fix).
+        expected.add(f"http://localhost:{entry['backend_port']}")
 
     # Every live registry origin (+ localhost alts) must be allowed.
     missing = expected - resolved

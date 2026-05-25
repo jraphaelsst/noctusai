@@ -24,6 +24,14 @@ class Settings(ProductSettings):
     inherited from `BaseAppSettings` (the live KB / vector store reads them).
     """
 
+    # ── CORS ────────────────────────────────────────────────────────
+    # Adopt the cross-product registry sentinel (every noc product does) so
+    # core's SSO bridge + cross-product XHR resolve KE's house origin from the
+    # live `start.sh PRODUCTS`, not the inherited hand-enumerated base default.
+    # (fix-on-contact: KE was absorbed 2026-05-23 without this per-product
+    # default — `test_per_product_cors_sentinel` pins it for every product.)
+    cors_origins: str = "@registry:own:knowledge-extractor"
+
     # ── OpenAI ──────────────────────────────────────────────────────
     openai_api_key: str = ""
     transcribe_model: str = "gpt-4o-mini-transcribe"
@@ -36,6 +44,9 @@ class Settings(ProductSettings):
     google_api_key: str = ""
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
+    # NOC-REMEDIATE[house-port]: redirect uses the OLD frontend port :8140; the
+    # house port is :8012. NOT a clean swap — must match KE's Google Console
+    # OAuth registration, so align during KE completion (container-first KE absorb). — 2026-05-25
     google_oauth_redirect_uri: str = "http://localhost:8140/oauth/google/callback"
     google_oauth_client_secret_file: str = "secrets/client_secret.json"
     google_oauth_token_file: str = "secrets/drive_token.json"
