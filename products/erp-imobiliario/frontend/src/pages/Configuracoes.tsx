@@ -8,8 +8,14 @@ import { toast } from 'sonner';
 import { Settings, Key, Eye, EyeOff, Save, Trash2, Pencil, X, Plug, Loader2 } from 'lucide-react';
 import { supabase, api } from '@noctusai/seed/infra';
 import { createApiClient } from '@noctusai/lib/api';
+import { env } from '@noctusai/lib';
 
-const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
+// Canonical seed resolver — same-origin fallback (VITE_CORE_API_URL ‖
+// VITE_CORE_URL) + house-port dev default. Was a hand-rolled
+// `VITE_CORE_API_URL || 'http://localhost:8000'` — the same SSO-"Failed to
+// fetch" trap (a localhost:8000 default for a product that bakes only
+// VITE_CORE_URL). One source: noctusai_lib `env.CORE_API_URL` (2026-05-25).
+const CORE_API_URL = env.CORE_API_URL;
 
 // Cross-product reach: ERP frontend → core backend (`/api/settings/org`).
 // Refactored 2026-05-20 (Phase 4) from raw `fetch()` to the seed

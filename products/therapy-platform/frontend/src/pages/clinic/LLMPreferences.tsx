@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { createLLMHooks } from '@noctusai/lib';
+import { createLLMHooks, env } from '@noctusai/lib';
 import { LLMProviderSelector } from '@noctusai/lib/design-system';
 import { api } from '@noctusai/seed/infra';
 
-const CORE_URL = (import.meta.env.VITE_CORE_URL as string) || 'http://localhost:5173';
+// canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
+const CORE_URL = env.CORE_URL;
 const { useLLMProviders, useLLMModels, useLLMPreferences, useUpdateLLMPreferences } =
   createLLMHooks(api);
 

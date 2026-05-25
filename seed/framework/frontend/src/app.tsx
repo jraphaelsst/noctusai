@@ -10,7 +10,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { ErrorBoundary, createAuthProvider, SSOCallback } from "@noctusai/lib";
+import { ErrorBoundary, createAuthProvider, SSOCallback, env } from "@noctusai/lib";
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
@@ -254,17 +254,17 @@ export function createProductApp(config: ProductAppConfig) {
             <Route
               path="/sso"
               element={
-                // Core is same-origin (FE + API) in dev AND prod, so there is
-                // ONE core URL. Resolve the SSO-exchange base from
-                // VITE_CORE_API_URL, then fall back to VITE_CORE_URL (EVERY
-                // product bakes this — it is the launcher origin), then the dev
-                // single-container house port. The prior bare localhost:8000
-                // default silently broke SSO for every product that bakes only
-                // VITE_CORE_URL (the prod norm) → "Failed to fetch".
+                // Resolve core's URL through the CANONICAL seed resolver
+                // (`env.CORE_API_URL` / `env.CORE_URL`) — never hand-roll the
+                // `import.meta.env.VITE_CORE_* || localhost` fallback (the
+                // recurrence that broke SSO for every product whose bundle
+                // bakes only VITE_CORE_URL → "Failed to fetch", 2026-05-25).
+                // The getter encodes the same-origin fallback + house-port dev
+                // default once, for every consumer.
                 <SSOCallback
                   supabase={supabase}
-                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || import.meta.env.VITE_CORE_URL || "http://localhost:8000"} /* canonical-default-ok: core named service */
-                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:8000"} /* canonical-default-ok: dev single-container house port */
+                  coreApiUrl={env.CORE_API_URL}
+                  coreUrl={env.CORE_URL}
                 />
               }
             />

@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { supabase } from '@noctusai/seed/infra';
 import { LoginForm } from "@noctusai/lib/design-system";
 import { Building2 } from "lucide-react";
+import { env } from "@noctusai/lib";
 
-const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
+// canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
+const CORE_URL = env.CORE_URL;
 
 export default function Login() {
   const navigate = useNavigate();

@@ -1,9 +1,11 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { Share2 } from "lucide-react";
 import { AcceptInvitePage } from "@noctusai/lib/design-system";
+import { env } from "@noctusai/lib";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || "http://localhost:8011";
-const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
+// canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
+const CORE_URL = env.CORE_URL;
 
 export default function SeedAcceptInvite() {
   const { token } = useParams<{ token: string }>();

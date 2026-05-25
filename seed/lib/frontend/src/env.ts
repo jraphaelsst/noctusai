@@ -121,14 +121,20 @@ export const env: ProductEnv = {
   // it bites every consumer that isn't that port (the 2026-05-20 seed-
   // canonical-defaults N=3 bit; `KB § PATTERNS/seed-canonical-defaults.md`).
   get BACKEND_API_URL() { return import.meta.env.VITE_BACKEND_API_URL ?? ''; },
-  // CORE_URL / CORE_API_URL — core is a specific named service every
-  // product needs to navigate to (SSO, admin, cross-product nav). The
-  // localhost fallback IS the canonical answer for "core's URL in local
-  // dev"; a non-local deploy MUST set `VITE_CORE_URL` / `VITE_CORE_API_URL`
-  // explicitly. canonical-default-ok: core is a named service, not a
-  // consumer-#1 coincidence (see seed-canonical-defaults.md § 4).
-  get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:5173'; }, // canonical-default-ok: core named service
-  get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core named service
+  // CORE_URL / CORE_API_URL — core is a specific named service every product
+  // navigates to (SSO callback, admin, cross-product nav). Core is SAME-ORIGIN
+  // (single-container house model serves FE+API on one host), so there is ONE
+  // core URL; the dev fallback is the house port 8000 (NOT the stale pre-house
+  // vite port 5173). CORE_API_URL falls back to VITE_CORE_URL because every
+  // product bakes VITE_CORE_URL but only core/erp bake VITE_CORE_API_URL — so
+  // without this fallback every other product's /sso XHR defaulted to a bare
+  // localhost:8000 and "Failed to fetch" in prod (bit 2026-05-25). A non-local
+  // deploy sets VITE_CORE_URL (and optionally VITE_CORE_API_URL). Products MUST
+  // consume `env.CORE_URL` / `env.CORE_API_URL` — NOT hand-roll the resolution.
+  // canonical-default-ok: core is a named same-origin service (see
+  // seed-canonical-defaults.md § 4).
+  get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core named service (house port)
+  get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core same-origin
   // Read the LITERAL member expression so Vite's build-time inline
   // applies (same reason as BACKEND_API_URL above). String 'true' →
   // boolean true; anything else (incl. unset) → false. Default-OFF so a

@@ -23,7 +23,7 @@ import {
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
-  usePageStatus, filterNavByPageStatus,
+  usePageStatus, filterNavByPageStatus, env,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 import { toast } from "sonner";
@@ -130,9 +130,11 @@ const DEFAULT_ROLE_LABELS: Record<string, string> = {
   test: "Teste",
 };
 
-// canonical-default-ok: core is a named service (BackToCore nav). Non-local
-// deploys MUST set VITE_CORE_URL explicitly.
-const CORE_URL = import.meta.env.VITE_CORE_URL || "http://localhost:5173";
+// Canonical seed resolver (env.CORE_URL) — same-origin + house-port dev
+// default. Never hand-roll `VITE_CORE_URL || localhost:5173` (the stale-port
+// landmine: 5173 is the dead pre-house vite port). Non-local deploys set
+// VITE_CORE_URL; the getter encodes the fallback once for every consumer.
+const CORE_URL = env.CORE_URL;
 
 const BackToCore = (
   <a
