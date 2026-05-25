@@ -8,6 +8,20 @@
 
 ---
 
+## 0. The absolute rule — NEVER work directly on `dev` (non-negotiable, user mandate 2026-05-25)
+
+**Every agent — dispatched or inline, team or individual, "main session" or peer — works on its OWN branch off `dev`, and NEVER does work directly on the `dev` branch / primary `dev` checkout.** Working on `dev` is *prohibited*. The primary `dev` checkout is a **clean, idle integration anchor only** (a fetch/rebase target) — never a workspace for edits.
+
+- The FIRST action on ANY assigned task that will produce changes is to self-branch: `git worktree add .claude/worktrees/<slug> -b feat/<slug> origin/dev` (or `noctus.dev.task_branch action=start`), then work THERE. The `.claude/worktrees` model is proven — there is no reason to ever edit `dev` directly.
+- Binds **inline** work too: "inline" = *no dispatch*, NOT *work on dev*. A tiny inline writing task STILL branches (§1).
+- **Nobody is exempt** — dispatched engineers, agent teams, and the orchestrator/"main" session itself all branch.
+- `dev` is touched ONLY at integration, and only as a **ref** (rebase-onto-latest → FF-push from the worktree, §5b) — never by editing the `dev` checkout.
+- Reads / pure conversation may stay on `dev` (they produce no changes); the instant a task writes, it branches.
+
+**Why (the mandate's root):** work done directly on `dev` is the collision source — a peer's uncommitted work on the primary `dev` checkout makes the tree "hot," and any cross-tree tool then collides (§5b). Banning work-on-`dev` removes the precondition entirely. This makes the long-standing self-branching default a hard prohibition: no exceptions, no "just this once on dev."
+
+---
+
 ## 1. The trigger — write-vs-read (NOT size)
 
 The trigger axis is **"will this task produce committable changes?"** — *not* task size.
