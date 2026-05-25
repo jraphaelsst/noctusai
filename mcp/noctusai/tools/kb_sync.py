@@ -177,8 +177,10 @@ def verify_kb_sync() -> KBSyncResult:
             pointers.add(m.group(1))
 
     for ptr in sorted(pointers):
-        # Skip illustrative brace-alternation patterns (`{a,b}.md`).
-        if "{" in ptr:
+        # Skip illustrative placeholders (`{a,b}.md`, `**/*.md`, `<x>.md`,
+        # `X.md`) — share the same exclusion the methodology-ref check uses
+        # so section 1 and section 5 stay consistent (DRY).
+        if _is_placeholder_ref(ptr):
             continue
         if not (root / ptr).is_file():
             err.write(
@@ -247,6 +249,21 @@ def verify_kb_sync() -> KBSyncResult:
         )
         errors += 1
 
+    # ─── 5. Methodology doc-reference integrity ───────────────────────
+    # Scans CLAUDE.md + CLAUDE/**/*.md + .claude/agents/*.md + all KB
+    # docs for `KNOWLEDGE-BASE/…md` literals and `KB § …md` shorthands;
+    # excludes placeholders (<x>, X.md, **, etc.); wikilinks [[…]] are
+    # advisory only (forward-refs allowed per CLAUDE.md). Reports any
+    # ref whose target does not resolve in the KB index.
+    out.write("Checking methodology surfaces for broken KB doc refs "
+              "(KB § shorthand + literal + .claude/agents + KB→KB)...\n")
+    for gap in methodology_reference_gaps(root):
+        err.write(
+            f"  ✗ BROKEN: {gap} (methodology surface references a KB "
+            f"doc that doesn't exist — fix or add the target file)\n"
+        )
+        errors += 1
+
     # ─── 5. Summary ──────────────────────────────────────────────────
     out.write("\n")
     if errors == 0 and warnings == 0:
@@ -274,6 +291,161 @@ def verify_kb_sync() -> KBSyncResult:
         "stdout": out.getvalue(),
         "stderr": err.getvalue(),
     }
+
+
+# ════════════════════════════════════════════════════════════════════
+# methodology_reference_gaps — cross-surface KB-ref integrity gate
+# ════════════════════════════════════════════════════════════════════
+
+# Regex: literal backtick-quoted KNOWLEDGE-BASE/<path>.md
+_LIT_REF_RE = re.compile(r"`(KNOWLEDGE-BASE/[^`]+\.md)`")
+
+# Regex: shorthand `KB § <path-ending-in-.md>` (stops at .md; strips
+# any trailing " § Section" anchor that follows the .md suffix)
+_KB_SHORT_RE = re.compile(r"`KB § ([^`\n]+?\.md)")
+
+# Placeholder chars / single-uppercase-stem test — skip illustrative refs.
+# Examples:  `KB § INTEGRATIONS/<x>.md`  `KB § PATTERNS/X.md`
+#            `KNOWLEDGE-BASE/**/*.md`
+_PLACEHOLDER_CHARS = frozenset("<>{}*")
+
+def _is_placeholder_ref(ref: str) -> bool:
+    """Return True if *ref* looks like an illustrative doc example, not a
+    real pointer.  Two tests (both are OR — either alone → skip):
+
+    1. The ref string contains any of ``< > { } *``.
+    2. The basename stem (before ``.md``) is a single uppercase letter.
+
+    These match patterns like ``KB § INTEGRATIONS/<x>.md``,
+    ``KB § PATTERNS/X.md``, ``KNOWLEDGE-BASE/**/*.md``.
+    """
+    if any(c in ref for c in _PLACEHOLDER_CHARS):
+        return True
+    # e.g. "X.md" or "PATTERNS/X.md" → stem is "X" (single uppercase letter)
+    stem = ref.rstrip("/").rsplit("/", 1)[-1]
+    if stem.endswith(".md"):
+        stem = stem[:-3]
+    if re.fullmatch(r"[A-Z]", stem):
+        return True
+    return False
+
+
+def methodology_reference_gaps(root: Path) -> list[str]:
+    """Pure predicate: return sorted ``"<surface-relpath>: <bad-ref>"``
+    strings for every unresolved, non-placeholder KB reference found in
+    the methodology surfaces.
+
+    **Surfaces scanned (in-repo only):**
+      * ``CLAUDE.md``
+      * ``CLAUDE/**/*.md``
+      * ``.claude/agents/*.md``
+      * every ``KNOWLEDGE-BASE/**/*.md``
+
+    Memory files are deliberately excluded — they live outside the repo
+    and the advisory ``check_three_way_sync`` owns that surface.
+
+    **Reference forms recognised (hard/blocking):**
+      (a) literal backtick-quoted  ``KNOWLEDGE-BASE/<path>.md``
+      (b) shorthand  ``KB § <ref>`` where *<ref>* ends at the first
+          ``.md``; any trailing ``§ Section`` anchor is ignored.
+
+    **Wikilinks** (``[[…]]``) are NOT included — CLAUDE.md documents
+    these as allowed forward-refs ("worth writing later, not an error").
+
+    **Resolution** — a ref resolves if ANY of:
+      * ``KNOWLEDGE-BASE/<ref>`` is a file
+      * ``KNOWLEDGE-BASE/CONTEXT/<ref>`` is a file
+      * some KB rel-posix path equals ``<ref>`` or ends with ``/<ref>``
+      * ``<ref>``'s basename is in the KB basename set
+
+    Returns an empty list when all refs resolve (clean).
+    """
+    # Build KB index.
+    kb_dir = root / "KNOWLEDGE-BASE"
+    if not kb_dir.is_dir():
+        return []
+
+    kb_rel: list[str] = []    # relative-to-KB posix, e.g. "CONTEXT/PATTERNS/x.md"
+    kb_base: set[str] = set()  # basenames, e.g. {"x.md", "branching.md", ...}
+    for p in kb_dir.rglob("*.md"):
+        if not p.is_file():
+            continue
+        if any(part.startswith(".") for part in p.relative_to(root).parts):
+            continue
+        rel = p.relative_to(kb_dir).as_posix()
+        kb_rel.append(rel)
+        kb_base.add(p.name)
+
+    def _resolves(ref: str) -> bool:
+        """True iff ref (path after KNOWLEDGE-BASE/) resolves against the index."""
+        ref = ref.strip().lstrip("/")
+        # 1. Exact match under KNOWLEDGE-BASE/ or KNOWLEDGE-BASE/CONTEXT/
+        for cand in (ref, f"CONTEXT/{ref}"):
+            if (kb_dir / cand).is_file():
+                return True
+        # 2. Suffix match against any kb rel-posix path
+        for rel in kb_rel:
+            if rel == ref or rel.endswith("/" + ref):
+                return True
+        # 3. Basename fallback
+        return ref.split("/")[-1] in kb_base
+
+    # Collect surfaces.
+    surfaces: list[Path] = []
+    # CLAUDE.md
+    claude_md = root / "CLAUDE.md"
+    if claude_md.is_file():
+        surfaces.append(claude_md)
+    # CLAUDE/**/*.md
+    claude_dir = root / "CLAUDE"
+    if claude_dir.is_dir():
+        for p in claude_dir.rglob("*.md"):
+            if p.is_file() and not any(
+                part.startswith(".") for part in p.relative_to(root).parts
+            ):
+                surfaces.append(p)
+    # .claude/agents/*.md
+    agents_dir = root / ".claude" / "agents"
+    if agents_dir.is_dir():
+        for p in sorted(agents_dir.glob("*.md")):
+            if p.is_file():
+                surfaces.append(p)
+    # KNOWLEDGE-BASE/**/*.md
+    for p in kb_dir.rglob("*.md"):
+        if p.is_file() and not any(
+            part.startswith(".") for part in p.relative_to(root).parts
+        ):
+            surfaces.append(p)
+
+    gaps: list[str] = []
+    for surface in surfaces:
+        try:
+            text = surface.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        try:
+            rel_surface = str(surface.relative_to(root))
+        except ValueError:
+            rel_surface = surface.name
+
+        # (a) literal KNOWLEDGE-BASE/<path>.md
+        for m in _LIT_REF_RE.finditer(text):
+            raw = m.group(1)
+            ref = raw[len("KNOWLEDGE-BASE/"):]
+            if _is_placeholder_ref(ref):
+                continue
+            if not _resolves(ref):
+                gaps.append(f"{rel_surface}: `{raw}`")
+
+        # (b) shorthand KB § <ref>
+        for m in _KB_SHORT_RE.finditer(text):
+            ref = m.group(1)
+            if _is_placeholder_ref(ref):
+                continue
+            if not _resolves(ref):
+                gaps.append(f"{rel_surface}: `KB § {ref}`")
+
+    return sorted(set(gaps))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -587,4 +759,10 @@ def register(server) -> None:
         return dict(result)
 
 
-__all__ = ["KBSyncResult", "verify_kb_sync", "update_kb_counts", "register"]
+__all__ = [
+    "KBSyncResult",
+    "verify_kb_sync",
+    "update_kb_counts",
+    "methodology_reference_gaps",
+    "register",
+]

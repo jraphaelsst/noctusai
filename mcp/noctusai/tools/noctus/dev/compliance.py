@@ -3462,6 +3462,50 @@ def check_archive_staleness(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+def check_methodology_doc_refs(repo_root: Path | None = None) -> list[dict]:
+    """Detect broken KB-doc references across all methodology surfaces.
+
+    Reuses the pure predicate ``methodology_reference_gaps`` from
+    ``tools.kb_sync`` (NO copy-paste of logic — one predicate, two
+    surfaces: pre-commit + compliance gate).
+
+    Surfaces scanned: ``CLAUDE.md`` + ``CLAUDE/**/*.md`` +
+    ``.claude/agents/*.md`` + every ``KNOWLEDGE-BASE/**/*.md``.
+
+    Reference forms: (a) literal ``KNOWLEDGE-BASE/<path>.md``; (b)
+    shorthand ``KB § <ref>``. Placeholders (``<x>``, ``X.md``, ``**``)
+    excluded; wikilinks (``[[…]]``) advisory-only (forward-refs allowed
+    per CLAUDE.md).
+
+    Severity: ``high`` — a broken KB pointer in a methodology surface
+    blocks the pre-commit gate and silently misdirects agents.
+
+    Codified 2026-05-25: the original ``verify_kb_sync`` only validated
+    literal ``KNOWLEDGE-BASE/...md`` pointers in CLAUDE.md — it missed
+    the dominant ``KB §`` shorthand (214 in CLAUDE.md), all of
+    ``.claude/agents/*.md``, and KB→KB cross-refs.
+    """
+    from tools.kb_sync import methodology_reference_gaps
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for gap_str in methodology_reference_gaps(root):
+        # gap_str shape: "<surface-relpath>: `<bad-ref>`"
+        surface, _, ref = gap_str.partition(": ")
+        issues.append({
+            "product": "<methodology>",
+            "file": surface,
+            "issue": (
+                f"Broken KB doc reference {ref} in methodology surface "
+                f"`{surface}` — the target does not exist in "
+                f"KNOWLEDGE-BASE/. Fix the ref or create the missing file. "
+                f"(check_methodology_doc_refs, 2026-05-25)"
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
 def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
     """Detect entries in `.claude/dispatcher.md` `## Pending` section that
     were appended >24h ago and never moved to `## Completed`.
@@ -7638,6 +7682,10 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_section_7_placeholder_consistency())
     # Hygiene-compliance globals — `keeper-housekeeping-upgrade` Phase 1.
     all_issues.extend(check_archive_staleness())
+    # methodology doc-ref integrity gate (2026-05-25) — KB § shorthand +
+    # literal KNOWLEDGE-BASE/...md + .claude/agents + KB→KB cross-refs;
+    # placeholders excluded; wikilinks advisory-only.
+    all_issues.extend(check_methodology_doc_refs())
     all_issues.extend(check_dispatcher_staleness())
     all_issues.extend(check_branch_orphan())
     all_issues.extend(check_gitignore_drift())

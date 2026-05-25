@@ -2332,3 +2332,87 @@ class TestCheckAuthSessionMutationOnSharedClient:
         repo = self._mk("p", py, rel="backend/tests/test_auth.py")
         assert check_auth_session_mutation_on_shared_client(repo) == []
 
+
+
+# ---------------------------------------------------------------------------
+# TestMethodologyDocRefs — check_methodology_doc_refs (2026-05-25)
+#
+# Verifies the compliance keeper that surfaces broken KB-doc refs across
+# CLAUDE.md / CLAUDE/**/*.md / .claude/agents/*.md / KNOWLEDGE-BASE/**/*.md.
+# Spec:
+#   - returns `high`-severity dicts (mirrors check_archive_staleness shape)
+#   - delegates to methodology_reference_gaps (NO logic duplication)
+#   - zero issues on the real repo tree (no false positives)
+# ---------------------------------------------------------------------------
+
+
+class TestMethodologyDocRefs:
+    """Regression suite for check_methodology_doc_refs (Stage-4, 2026-05-25)."""
+
+    def _mk_simple_tree(self, root: Path) -> Path:
+        """Scaffold a minimal valid repo tree under root."""
+        kb = root / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS"
+        kb.mkdir(parents=True, exist_ok=True)
+        (kb / "existing.md").write_text("# Existing doc\n")
+        (root / "CLAUDE.md").write_text("# CLAUDE\n")
+        agents = root / ".claude" / "agents"
+        agents.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def test_returns_high_severity_for_broken_ref(self, tmp_path):
+        """A dangling KB ref → one `high`-severity dict per gap."""
+        from tools.noctus.dev.compliance import check_methodology_doc_refs
+
+        self._mk_simple_tree(tmp_path)
+        agent = tmp_path / ".claude" / "agents" / "eng.md"
+        agent.write_text("`KB § PATTERNS/ghost.md` — a broken ref.\n")
+
+        issues = check_methodology_doc_refs(repo_root=tmp_path)
+        assert len(issues) >= 1, f"Expected ≥1 issue, got: {issues}"
+        for issue in issues:
+            assert issue["severity"] == "high", f"Expected high severity: {issue}"
+            assert "ghost.md" in issue["issue"], f"Expected ghost.md in message: {issue}"
+
+    def test_calls_shared_predicate_not_duplicated(self, tmp_path):
+        """Compliance keeper reuses methodology_reference_gaps — no duplication.
+
+        Proof: monkeypatching kb_sync.methodology_reference_gaps to return a
+        known gap shows that check_methodology_doc_refs surfaces it.
+        """
+        import unittest.mock as _mock
+        from tools.noctus.dev import compliance as _comp
+
+        self._mk_simple_tree(tmp_path)
+
+        fake_gaps = [".claude/agents/eng.md: `KB § PATTERNS/fake.md`"]
+        with _mock.patch(
+            "tools.kb_sync.methodology_reference_gaps",
+            return_value=fake_gaps,
+        ):
+            issues = _comp.check_methodology_doc_refs(repo_root=tmp_path)
+
+        assert len(issues) == 1, f"Expected 1 issue via shared predicate, got: {issues}"
+        assert issues[0]["severity"] == "high"
+        assert "fake.md" in issues[0]["issue"]
+
+    def test_placeholder_refs_not_surfaced(self, tmp_path):
+        """Placeholder refs do NOT produce issues."""
+        from tools.noctus.dev.compliance import check_methodology_doc_refs
+
+        self._mk_simple_tree(tmp_path)
+        (tmp_path / "CLAUDE.md").write_text(
+            "See `KB § INTEGRATIONS/<x>.md` or `KB § PATTERNS/X.md`.\n"
+        )
+        issues = check_methodology_doc_refs(repo_root=tmp_path)
+        assert issues == [], f"Expected no issues for placeholders but got: {issues}"
+
+    def test_zero_issues_on_real_repo(self):
+        """No false positives on the live tree."""
+        from tools.noctus.dev.compliance import check_methodology_doc_refs
+
+        issues = check_methodology_doc_refs(repo_root=REPO_ROOT)
+        assert issues == [], (
+            f"check_methodology_doc_refs found {len(issues)} issue(s) on the "
+            f"real repo — must fix before committing:\n"
+            + "\n".join(f"  {i['file']}: {i['issue'][:120]}" for i in issues)
+        )
