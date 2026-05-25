@@ -22,6 +22,11 @@ connector servers.
 | `make_get_settings(cls, *, dotenv_dir, env_map)` | `_kit.settings` | Builds the process-cached `get_settings()` (env wins over co-located `.env`). |
 | `build_registry(leaf_modules)` | `_kit.registry` | `(all_handlers, all_descriptors, register_all)` from the leaf-module contract. |
 | `typed_error(e)` | `_kit.errors` | 3-key JSON error payload `{error_class, message, status}` for tool-handler internals. |
+| `confirmation_required_message(action, effect="", *, noun="write action")` | `_kit.errors` | The standard confirm-then-execute message; each connector keeps its own `ConfirmationRequiredError` subclass but builds the message here. |
+| `request_json(method, url, *, auth_header, user_agent, params, body, timeout, error_cls, empty_result, label)` | `_kit.transport` | The shared stdlib-`urllib` HTTP boundary — connectors delegate transport mechanics here (see § Shared HTTP transport seam). |
+| `normalize_base_url(raw)` | `_kit.transport` | Trim trailing slashes; connectors needing a path suffix (n8n's `/api/v1`) wrap it. |
+| `BROWSER_USER_AGENT` / `DEFAULT_USER_AGENT` | `_kit.transport` | Browser UA (clears the Cloudflare WAF on WAF-fronted hosts) / the plain default UA. |
+| `ConnectorHttpError` | `_kit.transport` | Default typed error for the seam; a connector passes its OWN `<Vendor>ApiError` as `error_cls`. |
 | `prepare_sys_path(server_file)` | `_kit.bootstrap` | Inserts `mcp/` on `sys.path` (PyPI-`mcp`-shadow trick) **then** pins the in-tree seed. |
 | `pin_in_tree_seed(start)` | `_kit.seed_pin` | Evicts stale editable-install `noctusai_lib` pins; prepends this worktree's `seed/lib/backend`. |
 | `configure_stderr_logging(name)` | `_kit.bootstrap` | stderr logging (stdout is JSON-RPC); returns the logger. |
@@ -130,6 +135,70 @@ in the tool's own result). The **server-level** catch-all inside
 behavior exactly (zero-behavior-change contract). Do not collapse the
 two; they are different surfaces with different consumers.
 
+## Shared HTTP transport seam (`_kit.transport.request_json`)
+
+### Why
+
+Five connectors (`n8n`, `waha`, `hostinger`, `cloudflare`, `supabase`)
+each hand-rolled a near-identical stdlib-`urllib` `request_json`
+(params-encode → header-build → `urlopen` → `HTTPError`/`URLError`/
+`TimeoutError`/non-JSON typing). **N=5 ⇒ formalized** here per the DRY
+recurrence rule, so a connector's `api.py` shrinks to: its own
+`<Vendor>ApiError` type + the not-configured (424) gate + base-URL
+normalizer + (rarely) response-envelope handling — and **delegates the
+urllib mechanics** to `_kit.transport.request_json`.
+
+Named `transport` (NOT `http`) on purpose: a module called `http.py`
+shadows the stdlib `http` package the moment `mcp/_kit/` lands on
+`sys.path` (urllib's `import http.client` then finds it → circular
+import).
+
+### The per-connector consume recipe (proven across 4 connectors)
+
+A connector's `api.py` `request_json` wrapper:
+
+```python
+from _kit.errors import confirmation_required_message
+from _kit.transport import request_json as _http_request_json
+# + `from _kit.transport import BROWSER_USER_AGENT` if the host is WAF-fronted
+
+def request_json(method, path, *, <creds>, base_url="", params=None, body=None, timeout=20.0):
+    if not <creds>:                       # the connector-specific 424 gate stays here
+        raise <Vendor>ApiError("... not configured ...", status=424)
+    url = f"{normalize_base_url(base_url)}{path}"   # connector's own normalizer
+    return _http_request_json(
+        method, url,
+        auth_header=("Authorization", f"Bearer {tok}"),   # or ("X-Api-Key", key) / ("X-N8N-API-KEY", key)
+        user_agent=BROWSER_USER_AGENT,    # omit (defaults) for non-WAF hosts
+        params=params, body=body, timeout=timeout,
+        error_cls=<Vendor>ApiError,       # your typed error — raised (with status) on ANY failure
+        empty_result={},                  # {} (n8n/waha/hostinger) or None (supabase) on an empty 2xx body
+        label=f"<Vendor> API {method.upper()} {path}",
+    )
+```
+
+`ConfirmationRequiredError(action[, effect])` builds its message via
+`confirmation_required_message(action, effect, noun=...)` (the connector
+keeps its own subclass so its `<Vendor>ApiError` identity + the 412
+status are preserved).
+
+**Test seam.** Tests that mock the *wrapper* patch
+`"<vendor>.api.request_json"` (zero churn). Tests that inspect the
+*Request* (headers / URL / HTTP-error typing) patch the shared boundary
+`"_kit.transport.urlopen"` — an external-boundary patch (sanctioned by
+`CLAUDE.md §1`); our own code is never patched.
+
+### The one documented exception — cloudflare
+
+`mcp/cloudflare/api.py` keeps its **own** transport (does NOT delegate).
+Its `request_envelope` extracts the Cloudflare `errors[0].code` from the
+HTTP-error body and attaches it as a typed `CloudflareApiError.cf_code`
+— a channel the seam's `error_cls(message, *, status=...)` interface
+cannot carry. Folding it in would regress `cf_code`-on-HTTPError or need
+an N=1 seam hook; accepted-with-rationale in
+`KB § PATTERNS/accept-with-rationale.md` (revisit at N=2 — a 2nd
+vendor-error-code need formalizes a seam error-body hook).
+
 ## In-tree seed pin (`_kit.seed_pin.pin_in_tree_seed`)
 
 ### Why
@@ -224,6 +293,12 @@ purge / idempotency / no-mapping name-fallback). Run:
 ```
 cd mcp && python -m pytest _kit/tests/ -q
 ```
+
+`mcp/_kit/tests/test_http.py` — the shared transport seam: auth-header
+injection, browser-vs-default UA, `None`-param dropping, `empty_result`
+on an empty 2xx body, and the typed-error mapping (`HTTPError` →
+upstream status; `URLError`/`TimeoutError`/non-JSON → 502) — patching
+`_kit.transport.urlopen`.
 
 Each connector additionally keeps its own `tests/test_smoke.py` proving
 the composition resolves (`mcp/vista/tests/` is the reference).

@@ -3,20 +3,24 @@ connector.
 
 Every `supabase.*` tool talks to the Supabase Management API
 (`https://api.supabase.com`) *through the operator's Personal Access
-Token*. `request_json` is the single HTTP boundary (stdlib `urllib` —
-zero extra deps, the same "wrap the stdlib" discipline `mcp/cloudflare` /
-`mcp/n8n` / `mcp/waha` / `mcp/hostinger` apply).
+Token*. `request_json` is the single HTTP boundary; the urllib mechanics
+are delegated to the shared `_kit.transport.request_json` seam
+(kit-connector-boilerplate-consolidation). This wrapper keeps Supabase's
+own `SupabaseApiError` type, the 424 not-configured gate, the
+canonical-base normalizer, the empty-body→`None` convention, and the
+30s default timeout (`db.query` can run a slow statement).
 
 **Test seam.** Supabase is an external service, so tests
-`unittest.mock.patch("supabase.api.request_json", ...)` (or patch
-`urllib.request.urlopen`) to feed canned payloads without a network
-call — sanctioned by CLAUDE.md §1 ("monkeypatching ... for external
-services ... is fine"). Our own code is never patched.
+`unittest.mock.patch("supabase.api.request_json", ...)` to feed canned
+payloads without a network call — sanctioned by CLAUDE.md §1
+("monkeypatching ... for external services ... is fine"). The header /
+transport tests patch the shared boundary `_kit.transport.urlopen`. Our
+own code is never patched.
 
 **No envelope.** Unlike Cloudflare (which wraps every response in
 `{success, errors, result}`), the Supabase Management API returns the
 resource JSON directly (a project object, an array of projects, a query
-result-set). `request_json` therefore just parses + returns the body;
+result-set). The shared seam therefore just parses + returns the body;
 the truth of success/failure is the HTTP status, which `urllib` raises as
 `HTTPError`. A non-2xx is surfaced as a typed `SupabaseApiError` carrying
 the upstream status (401/403/404/4xx/5xx passed through).
@@ -40,11 +44,10 @@ suffix).
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Optional
+
+from _kit.errors import confirmation_required_message
+from _kit.transport import request_json as _http_request_json
 
 # Canonical Supabase Management API base. Effectively fixed (a single
 # public API), but kept overridable via settings for testing.
@@ -85,10 +88,7 @@ class ConfirmationRequiredError(SupabaseApiError):
 
     def __init__(self, action: str, effect: str = ""):
         super().__init__(
-            f"'{action}' is a write action"
-            + (f" — {effect}" if effect else "")
-            + ". Re-call with confirm=true to perform it. NO side-effect "
-            "was performed.",
+            confirmation_required_message(action, effect),
             status=412,
         )
 
@@ -156,71 +156,24 @@ def request_json(
             "in mcp/supabase/.env (or the environment).",
             status=424,
         )
+    # Delegate the urllib mechanics to the shared seam; Supabase keeps its
+    # own canonical-base normalizer + SupabaseApiError type + the 424 gate +
+    # the empty-body→None convention (empty_result=None) + the 30s timeout.
+    # No WAF UA trick needed (api.supabase.com is not WAF-gated) — a plain
+    # descriptive UA suffices.
     url = f"{normalize_base_url(base_url)}{path}"
-    if params:
-        # Drop None-valued params so callers can pass optional filters flatly.
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url = f"{url}?{urllib.parse.urlencode(clean)}"
-
-    data: Optional[bytes] = None
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "User-Agent": _USER_AGENT,
-    }
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(
-        url, data=data, headers=headers, method=method.upper()
+    return _http_request_json(
+        method,
+        url,
+        auth_header=("Authorization", f"Bearer {access_token}"),
+        user_agent=_USER_AGENT,
+        params=params,
+        body=body,
+        timeout=timeout,
+        error_cls=SupabaseApiError,
+        empty_result=None,
+        label=f"Supabase API {method.upper()} {path}",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        # Surface the upstream body as context when parseable (the
-        # Management API returns `{"message": "..."}` on errors).
-        detail = ""
-        try:
-            body_text = e.read().decode("utf-8", errors="replace")
-            parsed = json.loads(body_text)
-            if isinstance(parsed, dict):
-                detail = str(parsed.get("message") or parsed.get("error")
-                             or body_text[:500])
-            else:
-                detail = body_text[:500]
-        except Exception:  # noqa: BLE001 — body read is best-effort context
-            detail = ""
-        raise SupabaseApiError(
-            f"Supabase API {method.upper()} {path} → HTTP {e.code}"
-            + (f": {detail}" if detail else ""),
-            status=e.code,
-        ) from e
-    except urllib.error.URLError as e:
-        raise SupabaseApiError(
-            f"Supabase host unreachable for {method.upper()} {path}: "
-            f"{e.reason}",
-            status=502,
-        ) from e
-    except TimeoutError as e:
-        raise SupabaseApiError(
-            f"Supabase API {method.upper()} {path} timed out after "
-            f"{timeout}s",
-            status=502,
-        ) from e
-
-    if not raw:
-        # 2xx with empty body (some Management endpoints answer no-body).
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise SupabaseApiError(
-            f"Supabase API {method.upper()} {path} returned non-JSON output",
-            status=502,
-        ) from e
 
 
 __all__ = [

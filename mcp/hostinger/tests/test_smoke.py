@@ -146,7 +146,9 @@ def test_request_json_sends_browser_user_agent_and_bearer():
         captured["url"] = req.full_url
         return _Resp()
 
-    with patch("hostinger.api.urllib.request.urlopen", side_effect=_fake_urlopen):
+    # urlopen now lives in the shared `_kit.transport` seam (the connector
+    # delegates its urllib mechanics there); patch it at the boundary.
+    with patch("_kit.transport.urlopen", side_effect=_fake_urlopen):
         out = api.request_json("GET", "/api/vps/v1/virtual-machines",
                                api_token="tok")
     assert out == []

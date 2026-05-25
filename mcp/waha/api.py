@@ -1,8 +1,11 @@
 """WAHA HTTP API runner — the external-service seam for this connector.
 
 Every `waha.*` tool talks to the WAHA instance *through the operator's
-`X-Api-Key`*. `request_json` is the single HTTP boundary (stdlib
-`urllib` — zero extra deps, same discipline `mcp/n8n` applies).
+`X-Api-Key`*. `request_json` is the single HTTP boundary; the urllib
+mechanics are delegated to the shared `_kit.transport.request_json` seam
+(kit-connector-boilerplate-consolidation). This wrapper keeps WAHA's own
+`WahaApiError` type, the 424 not-configured gate, the `require_auth`
+unauthenticated-`/ping` path, and the absolute-path base-URL normalizer.
 
 **Test seam.** WAHA is an external service, so tests
 `unittest.mock.patch("waha.api.request_json", ...)` to feed canned
@@ -22,11 +25,10 @@ strips a trailing slash. `/ping` is the one unauthenticated endpoint.
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Optional
+
+from _kit.errors import confirmation_required_message
+from _kit.transport import request_json as _http_request_json
 
 
 class WahaApiError(Exception):
@@ -54,11 +56,7 @@ class ConfirmationRequiredError(WahaApiError):
     """
 
     def __init__(self, action: str):
-        super().__init__(
-            f"'{action}' is a write action. Re-call with confirm=true to "
-            f"perform it. NO side-effect was performed.",
-            status=412,
-        )
+        super().__init__(confirmation_required_message(action), status=412)
 
 
 def normalize_base_url(raw: str) -> str:
@@ -92,57 +90,22 @@ def request_json(
             "WAHA_API_KEY in mcp/waha/.env (or the environment).",
             status=424,
         )
+    # Delegate the urllib mechanics to the shared seam; WAHA keeps its own
+    # absolute-path base-URL normalizer + WahaApiError type + the 424 gate
+    # above. X-Api-Key is sent whenever present (incl. /ping when the key is
+    # configured); `require_auth` only governs the 424 gate, not the header.
     url = f"{normalize_base_url(base_url)}{path}"
-    if params:
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url = f"{url}?{urllib.parse.urlencode(clean)}"
-
-    data: Optional[bytes] = None
-    headers = {"Accept": "application/json"}
-    if api_key:
-        headers["X-Api-Key"] = api_key
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(
-        url, data=data, headers=headers, method=method.upper()
+    return _http_request_json(
+        method,
+        url,
+        auth_header=("X-Api-Key", api_key) if api_key else None,
+        params=params,
+        body=body,
+        timeout=timeout,
+        error_cls=WahaApiError,
+        empty_result={},
+        label=f"WAHA API {method.upper()} {path}",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-        except Exception:  # noqa: BLE001 — body read is best-effort context
-            detail = ""
-        raise WahaApiError(
-            f"WAHA API {method.upper()} {path} → HTTP {e.code}"
-            + (f": {detail}" if detail else ""),
-            status=e.code,
-        ) from e
-    except urllib.error.URLError as e:
-        raise WahaApiError(
-            f"WAHA host unreachable for {method.upper()} {path}: {e.reason}",
-            status=502,
-        ) from e
-    except TimeoutError as e:
-        raise WahaApiError(
-            f"WAHA API {method.upper()} {path} timed out after {timeout}s",
-            status=502,
-        ) from e
-
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise WahaApiError(
-            f"WAHA API {method.upper()} {path} returned non-JSON output",
-            status=502,
-        ) from e
 
 
 __all__ = [

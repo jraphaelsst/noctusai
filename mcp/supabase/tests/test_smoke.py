@@ -168,7 +168,9 @@ def test_request_json_sends_bearer_and_plain_user_agent():
         captured["url"] = req.full_url
         return _Resp()
 
-    with patch("supabase.api.urllib.request.urlopen", side_effect=_fake_urlopen):
+    # urlopen now lives in the shared `_kit.transport` seam (the connector
+    # delegates its urllib mechanics there); patch it at the boundary.
+    with patch("_kit.transport.urlopen", side_effect=_fake_urlopen):
         out = api.request_json("GET", "/v1/projects", access_token="tok")
     assert out == [{"id": "p1", "ref": "ref123"}]
     # urllib title-cases header keys.
@@ -202,7 +204,7 @@ def test_request_json_http_error_passes_status_and_message():
         hdrs=None,
         fp=io.BytesIO(b'{"message": "Invalid access token"}'),
     )
-    with patch("supabase.api.urllib.request.urlopen", side_effect=err):
+    with patch("_kit.transport.urlopen", side_effect=err):
         with pytest.raises(api.SupabaseApiError) as ei:
             api.request_json("GET", "/v1/projects", access_token="tok")
     assert ei.value.status == 401

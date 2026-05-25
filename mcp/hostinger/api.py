@@ -2,15 +2,18 @@
 
 Every `hostinger.*` tool talks to the Hostinger Developers API
 (`https://developers.hostinger.com`) *through the operator's Bearer
-token*. `request_json` is the single HTTP boundary (stdlib `urllib` —
-zero extra deps, the same "wrap the stdlib" discipline `mcp/n8n` and
-`mcp/waha` apply).
+token*. `request_json` is the single HTTP boundary; the urllib mechanics
+are delegated to the shared `_kit.transport.request_json` seam
+(kit-connector-boilerplate-consolidation). This wrapper keeps Hostinger's
+own `HostingerApiError` type, the 424 not-configured gate, and the
+canonical-host base-URL normalizer.
 
 **Test seam.** Hostinger is an external service, so tests
 `unittest.mock.patch("hostinger.api.request_json", ...)` to feed canned
 payloads without a network call — sanctioned by CLAUDE.md §1
-("monkeypatching ... for external services ... is fine"). Our own code
-is never patched.
+("monkeypatching ... for external services ... is fine"). The header /
+transport tests patch the shared boundary `_kit.transport.urlopen`. Our
+own code is never patched.
 
 **Gated-capability honesty** (CLAUDE.md §1). No API token, an
 unreachable host, or an upstream non-2xx is a typed, never-faked
@@ -24,9 +27,9 @@ self-hosted WAHA / n8n instances, `developers.hostinger.com` sits
 behind Cloudflare, which **blocks the default `Python-urllib/x.y`
 user-agent** (returns HTTP 403 "Error 1010: browser_signature_banned"
 *before the request ever reaches the API* — it is NOT an auth failure).
-`request_json` therefore sends a browser-style `User-Agent`. Verified
-live 2026-05-21: default UA → 403/1010; browser UA → 200. Auth is
-header `Authorization: Bearer <token>`.
+`request_json` therefore passes the shared `_kit.transport.BROWSER_USER_AGENT`.
+Verified live 2026-05-21: default UA → 403/1010; browser UA → 200. Auth
+is header `Authorization: Bearer <token>`.
 
 Paths are **absolute** under the fixed host (`/api/vps/v1/...`) — like
 WAHA there is no normalizing suffix; `normalize_base_url` only strips a
@@ -34,25 +37,16 @@ trailing slash and supplies the canonical Hostinger host when unset.
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Optional
+
+from _kit.errors import confirmation_required_message
+from _kit.transport import BROWSER_USER_AGENT
+from _kit.transport import request_json as _http_request_json
 
 # Canonical Hostinger Developers API host. The base_url is effectively
 # fixed (a single public API, not a per-tenant instance) but kept
 # overridable via settings for testing / future regional hosts.
 DEFAULT_BASE_URL = "https://developers.hostinger.com"
-
-# Cloudflare in front of developers.hostinger.com bans the default
-# `Python-urllib/x.y` UA (Error 1010) before auth is even evaluated.
-# A browser-style UA is required for ANY call to succeed (verified live
-# 2026-05-21). This is a connectivity prerequisite, not impersonation.
-_BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
 
 
 class HostingerApiError(Exception):
@@ -84,10 +78,7 @@ class ConfirmationRequiredError(HostingerApiError):
 
     def __init__(self, action: str, effect: str = ""):
         super().__init__(
-            f"'{action}' is a write/power action"
-            + (f" — {effect}" if effect else "")
-            + ". Re-call with confirm=true to perform it. NO side-effect "
-            "was performed.",
+            confirmation_required_message(action, effect, noun="write/power action"),
             status=412,
         )
 
@@ -130,63 +121,23 @@ def request_json(
             "in mcp/hostinger/.env (or the environment).",
             status=424,
         )
+    # Delegate the urllib mechanics to the shared seam; Hostinger keeps its
+    # own canonical-host normalizer + HostingerApiError type + the 424 gate.
+    # The browser User-Agent is LOAD-BEARING — clears the Cloudflare WAF in
+    # front of developers.hostinger.com (verified live 2026-05-21).
     url = f"{normalize_base_url(base_url)}{path}"
-    if params:
-        # Drop None-valued params so callers can pass optional filters flatly.
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url = f"{url}?{urllib.parse.urlencode(clean)}"
-
-    data: Optional[bytes] = None
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Accept": "application/json",
-        # Load-bearing: clears the Cloudflare WAF in front of the host.
-        "User-Agent": _BROWSER_USER_AGENT,
-    }
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(
-        url, data=data, headers=headers, method=method.upper()
+    return _http_request_json(
+        method,
+        url,
+        auth_header=("Authorization", f"Bearer {api_token}"),
+        user_agent=BROWSER_USER_AGENT,
+        params=params,
+        body=body,
+        timeout=timeout,
+        error_cls=HostingerApiError,
+        empty_result={},
+        label=f"Hostinger API {method.upper()} {path}",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        # Hostinger encodes the real cause in the JSON body; surface a snippet.
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-        except Exception:  # noqa: BLE001 — body read is best-effort context
-            detail = ""
-        raise HostingerApiError(
-            f"Hostinger API {method.upper()} {path} → HTTP {e.code}"
-            + (f": {detail}" if detail else ""),
-            status=e.code,
-        ) from e
-    except urllib.error.URLError as e:
-        raise HostingerApiError(
-            f"Hostinger host unreachable for {method.upper()} {path}: "
-            f"{e.reason}",
-            status=502,
-        ) from e
-    except TimeoutError as e:
-        raise HostingerApiError(
-            f"Hostinger API {method.upper()} {path} timed out after {timeout}s",
-            status=502,
-        ) from e
-
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise HostingerApiError(
-            f"Hostinger API {method.upper()} {path} returned non-JSON output",
-            status=502,
-        ) from e
 
 
 __all__ = [
