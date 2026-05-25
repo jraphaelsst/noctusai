@@ -926,6 +926,37 @@ pytest -p no:randomly second_half ... target_test
 
 ---
 
+## Outline-corpus baseline coupling — a product-FE change can fail an mcp test
+
+`mcp/noctusai/tests/test_outline_typescript_corpus.py` snapshots the per-file
+**top-level-symbol count** of a corpus of **product `.tsx`** files into
+`mcp/noctusai/tests/fixtures/outline_corpus_baseline.json` (±5% tolerance). Its
+job is to catch **TS-outliner regressions** (if the extractor breaks, counts
+drop). Side effect: adding/removing a top-level symbol in a tracked product
+component (e.g. a new exported function/component) **drifts that baseline** →
+the corpus test fails **even though you only touched product frontend code, not
+the MCP toolkit**. The fix is not a code change — **refresh the baseline**: bump
+the file's entry in `outline_corpus_baseline.json` to the new count (surgical,
+one line), or delete the file to recapture (recaptures ALL — only when
+intentional). Bit 2026-05-25 (`AdminProducts.tsx` 6→7 from a new `DeploymentBadge`).
+
+**Session-checklist implication:** run `cd mcp/noctusai && pytest tests/` not only
+when the MCP toolkit changed but also when a **product `.tsx`** changed (CLAUDE.md
+§1 "Finish the session").
+
+**Backend (`.py`) evaluation — do we need the same?** No (today). Backend AST
+*exploration* already works: `noctus.dev.outline_python` (libcst — the AST-first
+mandate) + `noctus.dev.outline_python_benchmark` + the noc-graph all read Python
+structure. There is **no Python outline-corpus baseline test**, so a product-`.py`
+symbol-count change drifts **nothing** — no analogous friction exists. Adding one
+(`test_outline_python_corpus.py`) would only add outliner-**regression** protection
+for the Python extractor, at the cost of the same refresh-friction the TS one
+imposes; it would **not** "ease exploration" (the outline tools already do that).
+Recommendation: add a Python corpus baseline **only if** the Python outliner needs
+regression protection — not for exploration (already served).
+
+---
+
 See also:
 - `../06-AGENTS.md` — the MCP heal loop runs tests automatically
 - `../../INSTRUCTIONS/05-TESTING-EVALS.md` — eval strategy (beyond unit/integration)
