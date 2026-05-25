@@ -56,7 +56,7 @@ _BANNED_TOKENS = ("reset", "checkout", "restore", "clean", "--hard", "--force", 
 # (validation-freshness, KB § PATTERNS/containerization.md § 12b).
 _RUNTIME_PRODUCT = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
 _RUNTIME_FLEET = re.compile(
-    r"(?:^|/)(?:Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|Caddyfile|config\.yml)$|^seed/"
+    r"(?:^|/)(?:Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|config\.yml)$|^seed/"
 )
 # Auto-generated/cosmetic files that match a runtime path but are behaviourally
 # a no-op — excluded from the rebuild trigger. The pre-commit stamps

@@ -57,3 +57,16 @@ Not a per-product concern — it's a single platform deploy-infra surface. The f
 - No `mcp/` / `scripts/` reference resolves into `projects/` or `archive/` for deploy config (grep-clean).
 - `deploy_image <product>` + `noctus.vps.*` work from the durable path with the stopgap REMOVED.
 - The durable-refs gate fails a hypothetical re-archive that would orphan a deploy constant (regression test).
+
+## 7. Update 2026-05-25 — live tunnel ingress reconciled (Caddy→tunnel cutover finished)
+
+The Caddy→CF-tunnel A→B cutover (runbook `KB § GUIDES/production-deploy.md § 4`) was **completed** this session — **all 8 live hosts now resolve to proxied CNAME → `6e9ccdc5-…cfargotunnel.com`** (apex, core, erp, social, seed, n8n, waha, legacy), each verified HTTP 200 end-to-end through the CF edge. Caddy is intentionally **left running** as the rollback net until DNS-cache propagation (old A-record TTL 300) fully settles.
+
+**Consequence for THIS relocate project:** the **live deploy-local** `…/deploy/tunnel/config.yml` on the VPS was edited in-place to reconcile the ingress to the **live short hostnames** — it now differs from the archived `config.yml.template` / `ingress.yml` durable source in three ways the relocation MUST capture (do not regenerate the durable source from the stale archive snapshot — copy from the **live** VPS file):
+1. **short-name rules added** — `erp.noctusai.com → erp-imobiliario:8001`, `social.noctusai.com → social-wiring:8011` (the archive only had the full-slug `{slug}.noctusai.com` names; the live Caddy edge / DNS use the short names).
+2. **infra hosts added** — `n8n.noctusai.com → n8n:5678`, `waha.noctusai.com → waha:3000` (absent from the archived ingress entirely).
+3. **`seed.noctusai.com → seed:8004`** present (added during the seed canary).
+
+A timestamped backup of the pre-reconcile config sits next to it (`config.yml.bak.20260525-*`). When relocating, the new durable `deploy/tunnel/config.yml.template` + `ingress.yml` should be authored from the live VPS file, and the dormant full-slug rules kept (they support the `PRODUCT_URL_PATTERN={slug}.noctusai.com` future scheme — harmless, no DNS points at them yet).
+
+**Caddy retired ✅ (2026-05-25, same session):** `noctus-caddy` container + `caddy_data`/`caddy_config` volumes + the deploy-local `caddy/` dir removed; VPS ports 80/443 freed; the dead `caddy/Caddyfile` + `caddy/compose.caddy.yml` were also removed from the archived migration tree (`archive/projects/2026-05-23/01-production-deploy-migration/deploy/caddy/`). **So this relocation's `deploy/` tree must NOT include a `caddy/` subdir** — only `fleet/` + `tunnel/` (+ `services/`) graduate. The relocate itself (move `fleet`/`tunnel` out of `projects/`, fix the `DEFAULT_COMPOSE` constants in `deploy_image.py`/`vps.py`, MCP restart) is the remaining work.

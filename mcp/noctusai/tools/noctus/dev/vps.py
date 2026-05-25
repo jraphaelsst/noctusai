@@ -165,7 +165,7 @@ def stats(ssh_host: str = DEFAULT_HOST, run_remote: Callable | None = None) -> d
 def restart(container: str, confirm: bool = False, ssh_host: str = DEFAULT_HOST,
             run_remote: Callable | None = None) -> dict[str, Any]:
     """`docker restart` a container — fixes the stale single-file-bind-mount
-    case (Caddyfile/config.yml) + a generic bounce. Confirm-gated."""
+    case (config.yml) + a generic bounce. Confirm-gated."""
     if not container:
         return _err("container required")
     if not confirm:
