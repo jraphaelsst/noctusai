@@ -350,8 +350,9 @@ that pattern stays consumer-side.
   (consenting-user) — deferred to a follow-up project. The seed ships
   `FakeCalendarAdapter` + types + mappers; the real adapters need
   `googleapiclient`/`google-auth` runtime deps + a credential-repo
-  abstraction story. See `KB § INTEGRATIONS/google-calendar-real-adapters.md`
-  (forthcoming) when the follow-up lands.
+  abstraction story. See `KB § INTEGRATIONS/google.md` for the Calendar
+  consume-side + real-adapter status; a dedicated google-calendar-real-adapters
+  consume-doc is a forthcoming follow-up.
 - Phone normalization beyond `chat_id_for_phone` / `phone_from_chat_id`
   (LID-aware auth, etc.) — product-specific resolver.
 - Conversation-summary BI schema + retention policy.

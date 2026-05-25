@@ -858,7 +858,7 @@ docker compose up -d --build <slug>
 
 The rebuild repoints all three bind mounts (`/app/seed`, `/app/products/<slug>/backend`, `/app/products/<slug>/frontend`) at the canonical clone and rebakes the image from the right source. Verified on social-wiring 2026-05-20.
 
-**Prevent.** One canonical checkout per machine. Sanctioned exceptions are explicit and read-only: per-agent worktrees (`KB § PATTERNS/branching-and-merging.md`), template/sibling workspaces consuming noc read-only (`KB § PATTERNS/template-workspace.md`, with chmod -R a-w). Anything else is a second clone, and a second clone is a drift hazard.
+**Prevent.** One canonical checkout per machine. Sanctioned exceptions are explicit and read-only: per-agent worktrees (`KB § PATTERNS/branching-and-merging.md`), template/sibling workspaces consuming noc read-only (`KB § PATTERNS/seed-workspace.md`, with chmod -R a-w). Anything else is a second clone, and a second clone is a drift hazard.
 
 **Bit (2026-05-20).** Session edited `noctusai/`, shipped commit `63b98284` (SPA-fallback fix). All four product containers (core/social-wiring/erp/seed) bind-mounted `noctus-fleet/seed`. The fix was invisible to every running runtime. First-attempt surgical patch to `noctus-fleet/seed/app.py` worked but tolerated the underlying drift; the right fix was `compose up -d --build social-wiring` from `noctusai/`, which flipped all mounts atomically. User then asked to consolidate the remaining three.
 

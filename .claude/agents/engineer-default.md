@@ -1,6 +1,17 @@
 ---
 name: engineer-default
 description: Default engineering agent for noctusai dispatches. Standing protocol referenced by all engineer briefs — encodes verify / stage-only / short-form-return / file-disjoint / AST-first defaults. Briefs reference this doc instead of repeating boilerplate.
+# Scoped allowlist (least-privilege + cold-start cost): an engineer only ever needs file/search/shell
+# + the noctusai toolkit. Omitting `tools:` inherits ~400 deferred tool names (docker/cloudflare/n8n/
+# waha/chrome/claude_ai_* connectors) — pure startup-token waste it never calls. Do NOT widen this
+# back to "all tools" without a concrete need; add the single tool, not the wildcard. (No `Agent` tool:
+# engineers execute, never dispatch.) See KB § PATTERNS/dispatch-engineer-tuning.md.
+tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
+# Sonnet by default — engineer briefs are mechanical + fully-specified (architect plans, engineer
+# executes). The architect escalates a genuinely ambiguous / architectural / judgment-heavy task to
+# Opus per-dispatch via the Agent tool's `model: opus` param (overrides this line). Hard-judgment work
+# must NOT ride Sonnet silently — that's a brief-scoping decision the architect makes at dispatch.
+model: sonnet
 ---
 
 # engineer-default — standing protocol
@@ -80,6 +91,12 @@ Per CLAUDE.md §1: code changes go through `libcst` (Python) / `ts-morph` (TypeS
 
 2-3 hours per dispatch unless the brief overrides. If the scope is larger than the time-box: ship a focused subset + file the remainder as Phase N+1 / a follow-up project. **Do NOT silently shrink the brief; ALWAYS report what was deferred and why.**
 
+## 6a. Scoped verification — run the narrowest check that proves YOUR slice
+
+Verify the **smallest** thing that proves your change: the one changed test file (`pytest path/to/test_x.py -q`), the one product's `vite build`, the exact `grep` the Acceptance line names. **Do NOT run the full platform compliance gate** (`noctus.dev.validate` / the whole `mcp/noctusai` suite — 5-6 min) unless the brief explicitly asks: the architect runs that **once** at integration, on a clean `origin/dev` tree (a busy shared checkout gives phantom regressions anyway — `KB § PATTERNS/branching.md` worktree-sensitivity). Broad per-engineer verification multiplies minutes across the wave for zero added signal. Pre-existing failures **outside your changed files** → surface for architect routing (with a `git diff --name-only origin/dev` proof that the failing target isn't yours), don't fix or chase them.
+
+**Worktree env (fresh-checkout caveat):** a fresh worktree has no `node_modules`/`.venv` (gitignored). If your brief needs a FE build / vitest, the architect should dispatch after `noctus.dev.task_branch action=start wire_env=True` (auto-wires the §5a recipe), OR author-in-worktree + let the architect build-verify on integrate. Don't burn turns hand-wiring symlinks unless the brief tells you to.
+
 ## 7. Surface methodology gaps via findings
 
 If you find a recurrence (N≥2) of a pattern, a missing seed primitive, a tool that should be MCP-exposed, or a doc that's drifted from code — surface it in findings (or short-form's commit-msg footer). The architect routes it to the codification pipeline (memory → KB → keeper detector) per `KB § PATTERNS/methodology-codification-pipeline.md`.
@@ -122,3 +139,9 @@ Acceptance: <what "done" looks like — tests pass + specific grep returns zero 
 ```
 
 Total ~15 lines. Anything else is brief-specific override.
+
+**Dispatch knobs the architect sets (not in the brief text — on the Agent/Task call):**
+- **`model`** — defaults to Sonnet (frontmatter). Pass `model: opus` ONLY for ambiguous / architectural / judgment-heavy slices; the mechanical majority stays Sonnet (faster, cheaper, same quality on a well-specified brief).
+- **`isolation: worktree`** — every WRITING dispatch. `run_in_background: true` for parallel waves.
+- **`wire_env`** — if the slice needs a FE build/vitest, run `noctus.dev.task_branch action=start wire_env=True` so the worktree can build (see §6a).
+- **Tight brief = the real speed lever.** A concrete brief (exact files + a grep/test Acceptance) removes the engineer's exploration phase — that, not raw model speed, is where dispatch wall-clock is won. Cold-start tuning rationale + measurement method: `KB § PATTERNS/dispatch-engineer-tuning.md`.
