@@ -1,0 +1,53 @@
+# Remediation markers — greppable in-code deferral for batch evaluation
+
+> **What this is.** A single greppable token an agent leaves **in the code** at a spot that needs later remediation, so the whole backlog can be **swept and evaluated in batches** at a future moment — instead of each deferral living only in a project doc that gets archived. The marker IS the named destination, so a deferral stays **non-silent** (no-silent-errors) while still being deferred.
+
+---
+
+## The token
+
+```
+<comment-leader> NOC-REMEDIATE[<class>]: <what + why deferred> — <YYYY-MM-DD>
+```
+
+- **`NOC-REMEDIATE`** — fixed, uppercase, namespaced (distinct from the ~1.7k noisy generic `TODO`s). Greppable in every language: `# NOC-REMEDIATE` (Python) · `// NOC-REMEDIATE` (TS/TSX) · `/* NOC-REMEDIATE */`.
+- **`[<class>]`** — a short batch-filter tag. **Open/self-extending** taxonomy (a non-fitting instance ⇒ add a class, never force-fit): `perf` · `dry` · `security` · `lgpd` · `test` · `typing` · `seed` · `a11y` · `cleanup` …
+- **`<what + why deferred>`** — one clause; enough for a batch-sweeper with zero context to act.
+- **`<date>`** — absolute (ages the backlog).
+
+Examples:
+```python
+# NOC-REMEDIATE[dry]: 3rd copy of this date-bucket helper; lift to seed when the 4th lands — 2026-05-25
+```
+```tsx
+// NOC-REMEDIATE[perf]: re-renders on every keystroke; memoize in the next perf batch — 2026-05-25
+```
+
+---
+
+## The rules (how it reconciles with the rest of the methodology)
+
+- **It is a sanctioned, NON-silent deferral channel.** The marker satisfies *defer-with-a-named-destination* — the destination is "the next `NOC-REMEDIATE` batch sweep." A deferral with a marker is **not** a silent error.
+- **NOT a replacement for fix-on-contact.** In-scope ∧ fixable-now ⇒ **fix it** (fix-on-contact). The marker is only for genuinely **batch-able / out-of-current-scope** remediation — an improvement, not a live bug.
+- **NEVER an error-suppressor.** Never on an `except` / swallowed failure (`except: pass  # NOC-REMEDIATE` is forbidden — that is the retired `# silent-ok` shape). Every `except` still logs ∨ raises ∨ returns-error-bearing ([[logging-at-except]]). The marker tags deferred *remediation*, never a swallowed error.
+- **Pairs with triage.** A marker is the in-code form of a deferred `[R]`/`[F]` or an `[A]` ([[accept-with-rationale]]); recurrence (`N≥3` of one class) ⇒ stop marking, **promote to a real project / seed lift** (the recurrence rule).
+
+---
+
+## Batch evaluation (the payoff)
+
+Sweep the whole backlog at a chosen moment, optionally by class:
+
+```bash
+grep -rn "NOC-REMEDIATE" products/ seed/ mcp/            # everything
+grep -rn "NOC-REMEDIATE\[perf\]" products/ seed/ mcp/    # one class
+```
+
+A batch session triages the sweep (`[F]`/`[R]`/`[A]`), fixes what's cheap together (shared context ⇒ cheaper than one-at-a-time), and promotes recurrences to projects. **Stage-4 candidate** (`s3 → s4`): a `noctus.dev.scan_remediation_markers` MCP tool (class histogram + age + per-file grouping) — the deterministic batch-sweep surface, the analogue of a keeper `check_*` for *deferred-remediation* shapes ([[methodology-codification-pipeline]]).
+
+---
+
+## Composition / codification
+- Connects to [[branching]] §6 (self-improvement loop) — an in-flight bump too small/out-of-scope to fix now is left as a `NOC-REMEDIATE` marker, swept into the batch later; the in-code sibling of the `findings.md` capture surface.
+- Reconciles with: [[logging-at-except]] (never an error-suppressor) · [[accept-with-rationale]] (the durable-register sibling) · [[project-execution]] (defer-with-destination · the recurrence rule).
+- Codification: s1 emerged 2026-05-25 (user: *"agents leave greppable pattern comments on code for remediation, so we might evaluate them in batches in future moments"*) → s2 memory → s3 this doc + CLAUDE.md §1 pointer; s4 = the filed `scan_remediation_markers` tool.
