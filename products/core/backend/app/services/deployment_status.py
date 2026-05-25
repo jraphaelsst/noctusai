@@ -26,31 +26,52 @@ import asyncio
 import logging
 import time
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 # Internal address of every product container on noctus-net: the
-# single-container house model serves API + SPA on port 8000 and the compose
-# service name == the product slug.
-_INTERNAL_PORT = 8000
+# single-container house model serves API + SPA on the product's HOUSE port
+# (uvicorn `--port <house>` — e.g. 8004 for seed, 8011 for social-wiring, NOT
+# a uniform 8000). The compose service name == the product slug. The house
+# port is parsed from each product's `url_base` (always `http://localhost:
+# <house>` in the stored row; the prod tile-URL override is applied at resolve
+# time, not in the row), so the probe is correct in dev AND prod.
+_DEFAULT_PORT = 8000  # fallback only (url_base absent / portless)
 _HEALTH_PATH = "/api/health"
 _PROBE_TIMEOUT_SECONDS = 1.5
 _CACHE_TTL_SECONDS = 60.0
 
-# (slugs) -> {slug: is_deployed}. Injected so tests can supply a fake fleet
-# without reaching the network.
-FleetProber = Callable[[list[str]], Awaitable[dict[str, bool]]]
+# {slug: house_port} -> {slug: is_deployed}. Injected so tests can supply a
+# fake fleet without reaching the network.
+FleetProber = Callable[[dict[str, int]], Awaitable[dict[str, bool]]]
+
+
+def house_port_from_url_base(url_base: str | None) -> int:
+    """Extract a product container's internal HOUSE port from its url_base.
+
+    `url_base` is `http://localhost:<house>` for every product (e.g.
+    `http://localhost:8004`). Returns `_DEFAULT_PORT` when absent / portless
+    so a malformed row degrades to a (likely-failing) 8000 probe instead of
+    raising — never let the launcher 500 over a bad catalog row.
+    """
+    if not url_base:
+        return _DEFAULT_PORT
+    try:
+        return urlparse(url_base).port or _DEFAULT_PORT
+    except (ValueError, TypeError):
+        return _DEFAULT_PORT
 
 # Module-level result cache. Survives across requests within one core process;
 # `reset_cache()` clears it for deterministic tests.
 _cache: dict[str, object] = {"ts": 0.0, "data": {}}
 
 
-async def probe_one(slug: str, *, client: httpx.AsyncClient) -> bool:
-    """Return True iff ``http://<slug>:8000/api/health`` answers < 400."""
-    url = f"http://{slug}:{_INTERNAL_PORT}{_HEALTH_PATH}"
+async def probe_one(slug: str, port: int, *, client: httpx.AsyncClient) -> bool:
+    """Return True iff ``http://<slug>:<port>/api/health`` answers < 400."""
+    url = f"http://{slug}:{port}{_HEALTH_PATH}"
     try:
         resp = await client.get(url)
     except (httpx.HTTPError, OSError) as exc:
@@ -62,13 +83,16 @@ async def probe_one(slug: str, *, client: httpx.AsyncClient) -> bool:
     return resp.status_code < 400
 
 
-async def probe_fleet(slugs: list[str]) -> dict[str, bool]:
-    """Concurrently probe every slug; missing/down products map to False."""
-    if not slugs:
+async def probe_fleet(targets: dict[str, int]) -> dict[str, bool]:
+    """Concurrently probe every {slug: house_port}; missing/down → False."""
+    if not targets:
         return {}
+    items = list(targets.items())
     async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
-        results = await asyncio.gather(*(probe_one(s, client=client) for s in slugs))
-    return dict(zip(slugs, results))
+        results = await asyncio.gather(
+            *(probe_one(slug, port, client=client) for slug, port in items)
+        )
+    return {slug: ok for (slug, _port), ok in zip(items, results)}
 
 
 def reset_cache() -> None:
@@ -78,16 +102,19 @@ def reset_cache() -> None:
 
 
 async def get_deployment_status(
-    slugs: list[str], *, prober: FleetProber
+    targets: dict[str, int], *, prober: FleetProber
 ) -> dict[str, bool]:
-    """Return {slug: is_deployed}, served from a short-TTL cache when fresh."""
+    """Return {slug: is_deployed}, served from a short-TTL cache when fresh.
+
+    `targets` maps each catalog slug → its container's house port.
+    """
     now = time.monotonic()
     data = _cache["data"]
     assert isinstance(data, dict)
     fresh = (now - float(_cache["ts"])) < _CACHE_TTL_SECONDS
-    if fresh and set(slugs) <= set(data):
-        return {s: bool(data.get(s, False)) for s in slugs}
-    probed = await prober(slugs)
+    if fresh and set(targets) <= set(data):
+        return {s: bool(data.get(s, False)) for s in targets}
+    probed = await prober(targets)
     _cache["ts"] = now
     _cache["data"] = probed
     return probed
