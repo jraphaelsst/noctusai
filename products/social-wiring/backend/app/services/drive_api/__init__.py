@@ -61,6 +61,7 @@ from noctusai_lib.integrations.google_drive import (
 )
 
 from app.config import settings as default_settings
+from app.utils import has_oauth_credential
 
 if TYPE_CHECKING:
     from app.services.credential_vault import CredentialStore
@@ -126,7 +127,7 @@ def get_drive_adapter(
         and credential_store is not None
         and settings.google_oauth_client_id
         and settings.google_oauth_client_secret
-        and _has_oauth_credential(credential_store, org_id)
+        and has_oauth_credential(credential_store, org_id, CALENDAR_PROVIDER)
     ):
         logger.info("Drive adapter: OAuth (org %s)", org_id)
         resolver = CredentialStoreDriveResolver(
@@ -157,14 +158,6 @@ def get_drive_adapter(
     # 3. Fake — dev / no credentials yet
     logger.info("Drive adapter: Fake (no credentials configured)")
     return SyncDriveReader(FakeDriveReader())
-
-
-def _has_oauth_credential(store: "CredentialStore", org_id: UUID) -> bool:
-    try:
-        return store.get(str(org_id), CALENDAR_PROVIDER) is not None
-    except Exception:
-        logger.exception("OAuth credential lookup failed; skipping OAuth path")
-        return False
 
 
 def _load_service_account_credentials(sa_file: str):

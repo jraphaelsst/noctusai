@@ -44,6 +44,7 @@ from noctusai_lib.integrations.meta import get_meta_adapter as _seed_get_meta_ad
 from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
 from app.config import settings as default_settings
+from app.utils import has_oauth_credential
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def get_meta_adapter(
         and credential_store is not None
         and getattr(settings, "meta_app_id", "")
         and getattr(settings, "meta_app_secret", "")
-        and _has_oauth_credential(credential_store, org_str)
+        and has_oauth_credential(credential_store, org_str, META_PROVIDER, require_token=True)
     ):
         return _seed_get_meta_adapter(
             credential_store=credential_store,
@@ -124,15 +125,3 @@ def get_meta_adapter(
     return FakeMetaAdapter()
 
 
-def _has_oauth_credential(store, org_id: str) -> bool:
-    """True when the vault holds a usable ``(org, meta)`` OAuth row.
-
-    Matches the retired product factory's gate: a stored row with a
-    non-empty ``access_token``. Lookup failures are logged and treated
-    as not-connected (never a silent swallow)."""
-    try:
-        stored = store.get(org_id, META_PROVIDER)
-    except Exception:
-        logger.exception("Meta OAuth credential lookup failed; treating as not-connected")
-        return False
-    return bool(stored is not None and getattr(stored, "tokens", {}).get("access_token"))

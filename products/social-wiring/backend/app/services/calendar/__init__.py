@@ -61,6 +61,7 @@ from noctusai_lib.integrations.google_calendar.service_account_adapter import (
 )
 
 from app.config import settings as default_settings
+from app.utils import has_oauth_credential
 
 if TYPE_CHECKING:
     from app.services.credential_vault import CredentialStore
@@ -115,7 +116,7 @@ def get_calendar_adapter(
         and credential_store is not None
         and settings.google_oauth_client_id
         and settings.google_oauth_client_secret
-        and _has_oauth_credential(credential_store, org_id)
+        and has_oauth_credential(credential_store, org_id, CALENDAR_PROVIDER)
     ):
         logger.info(
             "Calendar adapter: GoogleCalendarOAuthAdapter (consent stored for org %s)",
@@ -151,11 +152,3 @@ def get_calendar_adapter(
 
     # 3. Fake — dev / no credentials yet
     return FakeCalendarAdapter()
-
-
-def _has_oauth_credential(store: "CredentialStore", org_id: UUID) -> bool:
-    try:
-        return store.get(str(org_id), CALENDAR_PROVIDER) is not None
-    except Exception:
-        logger.exception("OAuth credential lookup failed; skipping OAuth path")
-        return False
