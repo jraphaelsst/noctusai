@@ -57,6 +57,7 @@ def register_all(server) -> None:
     from . import scaffold_migration
     from . import scaffold_seed_adapter
     from . import scan_unified
+    from . import scan_wiring
     from . import session_review
     from . import smoke_fleet
     from . import sso_smoke
@@ -114,6 +115,7 @@ def register_all(server) -> None:
     scaffold_migration.register(server)
     scaffold_seed_adapter.register(server)
     scan_unified.register(server)
+    scan_wiring.register(server)
     session_review.register(server)
     smoke_fleet.register(server)
     sso_smoke.register(server)
