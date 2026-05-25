@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { ProductIcon } from '../../lib/product-icon';
 
 interface Product {
   id: string;
@@ -34,7 +35,10 @@ const EMPTY_PRODUCT_FORM = {
   nome: '',
   slug: '',
   descricao: '',
-  icone: '',
+  // A product must ship a real icon (icone is required + non-empty server-side).
+  // Default to the scaffolder default "Box"; pick any registered ProductIcon
+  // name (see lib/product-icon.tsx ICONS) or an emoji.
+  icone: 'Box',
   url_base: '',
   cor: '#6366f1',
 };
@@ -432,8 +436,8 @@ export function AdminProducts() {
             >
               &larr; Voltar
             </button>
-            <h1 className="text-2xl font-bold text-foreground">
-              {selectedProduct.icone && <span className="mr-2">{selectedProduct.icone}</span>}
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+              <ProductIcon name={selectedProduct.icone || 'Box'} color={selectedProduct.cor} size="sm" />
               {selectedProduct.nome}
             </h1>
             <p className="text-muted-foreground mt-1">{selectedProduct.slug}</p>
@@ -735,8 +739,10 @@ export function AdminProducts() {
                 onClick={() => selectProduct(product)}
               >
                 <td className="px-4 py-3 font-medium text-foreground">
-                  {product.icone && <span className="mr-2">{product.icone}</span>}
-                  {product.nome}
+                  <div className="flex items-center gap-2">
+                    <ProductIcon name={product.icone || 'Box'} color={product.cor} size="sm" />
+                    {product.nome}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-foreground">{product.slug}</td>
                 <td className="px-4 py-3 text-muted-foreground">{product.url_base}</td>

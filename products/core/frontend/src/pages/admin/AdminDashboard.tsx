@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { ProductIcon } from '../../lib/product-icon';
 
 interface Stats {
   totalOrgs: number;
@@ -38,12 +39,13 @@ interface ProductStats {
 }
 
 const STAT_CARDS = [
-  { key: 'totalOrgs', label: 'Organizacoes', icon: '🏢' },
-  { key: 'totalProducts', label: 'Produtos', icon: '📦' },
-  { key: 'activeLicenses', label: 'Licencas Ativas', icon: '🔓' },
-  { key: 'activeSubscriptions', label: 'Assinaturas Ativas', icon: '💳' },
-  { key: 'totalApiKeys', label: 'Chaves API', icon: '🔑' },
-  { key: 'totalPlans', label: 'Planos', icon: '📋' },
+  { key: 'totalOrgs', label: 'Organizacoes', icon: '🏢', href: '/admin/orgs' },
+  { key: 'totalProducts', label: 'Produtos', icon: '📦', href: '/admin/products' },
+  // No dedicated licenses route — licenses are managed per-product on AdminProducts.
+  { key: 'activeLicenses', label: 'Licencas Ativas', icon: '🔓', href: '/admin/products' },
+  { key: 'activeSubscriptions', label: 'Assinaturas Ativas', icon: '💳', href: '/admin/subs' },
+  { key: 'totalApiKeys', label: 'Chaves API', icon: '🔑', href: '/admin/api-keys' },
+  { key: 'totalPlans', label: 'Planos', icon: '📋', href: '/admin/plans' },
 ] as const;
 
 export function AdminDashboard() {
@@ -118,12 +120,17 @@ export function AdminDashboard() {
       <p className="text-muted-foreground mt-1">Visao geral da plataforma NoctusAI</p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-        {STAT_CARDS.map(({ key, label, icon }) => (
-          <div key={key} className="bg-card rounded-lg border border-border shadow-sm p-6">
+        {STAT_CARDS.map(({ key, label, icon, href }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => navigate(href)}
+            className="bg-card rounded-lg border border-border shadow-sm p-6 text-left cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
+          >
             <div className="text-2xl mb-2">{icon}</div>
             <div className="text-3xl font-bold text-foreground">{stats[key]}</div>
             <div className="text-sm text-muted-foreground mt-1">{label}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -161,8 +168,10 @@ export function AdminDashboard() {
                   onClick={() => navigate('/admin/products')}
                 >
                   <td className="px-4 py-3 font-medium text-foreground">
-                    <span className="mr-2">{product.icone || '📦'}</span>
-                    {product.nome}
+                    <div className="flex items-center gap-2">
+                      <ProductIcon name={product.icone || 'Box'} color={product.cor} size="sm" />
+                      {product.nome}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { ArrowLeftRight, LogOut, RefreshCw } from 'lucide-react';
+import { ProductIcon } from '../../lib/product-icon';
 
 interface Product {
   id: string;
@@ -90,7 +91,7 @@ export function AdminLogoutBehavior() {
               className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 sm:p-5 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <span className="text-xl shrink-0">{product.icone || '📦'}</span>
+                <span className="shrink-0"><ProductIcon name={product.icone || 'Box'} size="sm" /></span>
                 <div className="min-w-0">
                   <p className="font-medium text-foreground truncate">{product.nome}</p>
                   <p className="text-xs text-muted-foreground">{product.slug}</p>

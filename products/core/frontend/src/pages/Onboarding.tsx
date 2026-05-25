@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
+import { ProductIcon } from '../lib/product-icon';
 
 interface OnboardingSteps {
   company_details: boolean;
@@ -425,7 +426,7 @@ export function Onboarding() {
                       }`}
                       onClick={() => toggleProduct(product.slug)}
                     >
-                      <div className="mb-2 text-2xl">{product.icone}</div>
+                      <div className="mb-2"><ProductIcon name={product.icone || 'Box'} size="sm" /></div>
                       <h3 className="font-semibold text-foreground">{product.nome}</h3>
                       <p className="mt-1 text-xs text-muted-foreground">{product.descricao}</p>
                       <div className={`mt-3 text-xs font-medium ${
