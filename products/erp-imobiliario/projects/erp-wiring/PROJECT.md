@@ -520,7 +520,9 @@ Every `/admin/*` + corretor-tier surface — Atividades, Funil, Distribuição, 
 - [x] `vista_showcase` admin SSO gate audit + tests. (Audit: `require_role(*ALLOWED_ADMIN_ROLES)` correctly composes the seed `make_require_role` factory with `get_erp_user_role`, which calls `resolve_sso_role` FIRST. Path 2 — `noctus_role=="admin"` — was already covered by `test_platform_admin_allowed`; Path 1 — `org_role in (owner, admin)` — was the gap. Added 3 gap tests: SSO `org_role=owner`, SSO `org_role=admin`, no-role-metadata 403 negative pin.)
 - [x] Financeiro / DIMOB / Impostos / Banco LGPD audit + flags. (4 `noctus.dev.lgpd_flag` entries filed — all 4 routers share a common gap: writes audit-logged via `log_action()` but READS are NOT audit-logged AND NOT role-gated. **Improvement**: N=4 DRY recurrence — file follow-up `erp-financial-surfaces-role-gate` to formalize per-router admin/contador role-gate + read-audit-log convention.)
 
-### Phase 8 ✅ — End-to-end verification *(2026-05-25)*
+### Phase 8 ⏳ — End-to-end verification *(2026-05-25)*
+
+> ⏳ **Reverted ✅→⏳ 2026-05-25** (caddy-cutover drive-by · phase-state keeper): the "Manual browser QA per role tier" sub-task below is genuinely open (live-fleet-gated) — re-flip to ✅ when that QA runs.
 
 - [x] **Backend pytest — baseline-no-regress.** `pytest tests/ -q` → **2082 passed / 34 skipped / 0 failed** (Phase 7 close baseline was 1920 passed / 34 skipped / 33 pre-existing failed; improvement reflects fixes on `origin/dev` between 2026-05-20 and 2026-05-25 — 0 new failures, all 34 skips unchanged). Run from worktree with `PYTHONPATH="$WT/seed/lib/backend:$WT/seed/framework/backend"`.
 - [x] **Frontend build — deferred (worktree environment constraint).** `vite build` fails in worktrees via symlinked `node_modules` due to `tailwindcss-animate` PostCSS `require.resolve` breakage (surfaced Phase 5; confirmed environmental, not a code defect). Architect runs from primary tree. Last known green: Phase 4 close (5.93s) ∧ Phase 6 close (5.93s) ∧ Phase 7 confirms 0 frontend code changes in Phase 7 scope. **Acceptance: architect runs `vite build` at merge and records result in §11.**

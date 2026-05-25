@@ -395,6 +395,8 @@ rename) **deferred to Phase 2** per the brief scope split.
 
 ### Phase 3 — Standard-router smoke + status-assertion sweep + `ai_outputs` mount ✅ (shipped 2026-05-25)
 
+**Improvements:** none identified.
+
 Per PF lesson §(d)#4: dispatch the 5-test mount-shape smoke pattern for
 seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (Q3=YES)
 `ai_outputs`.
@@ -420,6 +422,8 @@ or pin as TIER B baseline-no-regress.
   the keeper flags it post-merge).
 
 ### Phase 4 — Final retrospective ✅ (shipped 2026-05-25)
+
+**Improvements:** none identified.
 
 **Correction — "FF-to-main is the literal last step" is the OLD model.**
 The current branching methodology: engineer branch integrates to `dev`
