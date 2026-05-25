@@ -3,8 +3,8 @@
 #
 # Default mode is **Docker**: SINGLE container per product (uvicorn serves
 # API + built SPA on one port) on the external `noctus-net`. Two compose
-# projects: `noctusai-products` (the fleet) + `noctusai-infra`
-# (Redis/WAHA/Postgres). The native (uvicorn + vite) path is the legacy
+# projects: `dev-noctusai-products` (the fleet) + `dev-noctusai-infra`
+# (Redis/WAHA). The native (uvicorn + vite) path is the legacy
 # hot-reload mode.  → project: containerization-single-container.
 #
 # Modes:
@@ -14,8 +14,7 @@
 #    --watch + uvicorn --reload, source bind-mounted. One shape always.)
 #   ./start.sh redis               fleet + Redis (infra project)
 #   ./start.sh waha                fleet + WAHA
-#   ./start.sh local-db            fleet + local Postgres
-#   ./start.sh full                fleet + Redis + WAHA + Postgres
+#   ./start.sh full                fleet + Redis + WAHA
 #   ./start.sh tunnel <slug>       fleet + cloudflare tunnel exposing one product
 #   ./start.sh tunnel              fleet + tunnels for ALL products
 #   ./start.sh build               rebuild images (incl. bases) then up
@@ -111,7 +110,7 @@ else
   audit_clone_alignment() {
     local offenders=()
     local containers
-    containers="$(docker ps --filter "name=noctus-" --format '{{.Names}}' 2>/dev/null || true)"
+    containers="$(docker ps --filter "name=dev-noctus-" --format '{{.Names}}' 2>/dev/null || true)"
     [[ -z "$containers" ]] && return 0
     while IFS= read -r c; do
       [[ -z "$c" ]] && continue
@@ -141,7 +140,7 @@ else
       echo "  Each offender runs code from a different tree than you edit here." >&2
       echo "  Fix per KB § PATTERNS/containerization.md § 12b.1:" >&2
       for line in "${offenders[@]}"; do
-        local slug="${line%%  *}"; slug="${slug#noctus-}"
+        local slug="${line%%  *}"; slug="${slug#dev-noctus-}"
         echo "    docker compose stop $slug && docker compose rm -f $slug && docker compose up -d --build $slug" >&2
       done
       echo "" >&2
@@ -150,8 +149,8 @@ else
   }
   audit_clone_alignment
 
-  PRODUCTS_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.yml")     # noctusai-products
-  INFRA_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.infra.yml")  # noctusai-infra
+  PRODUCTS_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.yml")     # dev-noctusai-products
+  INFRA_COMPOSE=(compose -f "$ROOT_DIR/docker-compose.infra.yml")  # dev-noctusai-infra
 
   # The shared fabric is created ONCE, outside any single compose project
   # (the two-project split makes `noctus-net` external).
@@ -215,12 +214,12 @@ else
       while :; do
         ready=0
         for s in "${wave[@]}"; do
-          st="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "noctus-$s" 2>/dev/null || echo none)"
+          st="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "dev-noctus-$s" 2>/dev/null || echo none)"
           [[ "$st" == "healthy" ]] && ready=$(( ready + 1 ))
         done
         [[ $ready -ge ${#wave[@]} ]] && { echo "[docker]   onda saudavel ($ready/${#wave[@]})"; break; }
         if [[ $SECONDS -ge $deadline ]]; then
-          echo "[docker]   ⚠ timeout da onda ($ready/${#wave[@]} saudaveis apos ${NOCTUS_BOOT_WAVE_TIMEOUT:-300}s) — prosseguindo; build lento, NAO falha (ver: docker logs noctus-<slug>)" >&2
+          echo "[docker]   ⚠ timeout da onda ($ready/${#wave[@]} saudaveis apos ${NOCTUS_BOOT_WAVE_TIMEOUT:-300}s) — prosseguindo; build lento, NAO falha (ver: docker logs dev-noctus-<slug>)" >&2
           break
         fi
         sleep 5
@@ -275,7 +274,6 @@ else
     fleet|"")      ;;
     redis)         INFRA_PROFILE="redis" ;;
     waha)          INFRA_PROFILE="waha" ;;
-    local-db|postgres) INFRA_PROFILE="postgres" ;;
     full)          INFRA_PROFILE="full" ;;
     build)         ;;
     tunnel)
@@ -293,7 +291,7 @@ else
       ;;
     *)
       echo "ERRO: modo desconhecido '$MODE'." >&2
-      echo "  Use: fleet | <slug...> | redis | waha | local-db | full | tunnel [slug] | build | native" >&2
+      echo "  Use: fleet | <slug...> | redis | waha | full | tunnel [slug] | build | native" >&2
       exit 1
       ;;
   esac
@@ -313,7 +311,7 @@ else
     docker "${PRODUCT_ARGS[@]}" build
   fi
 
-  echo "[docker] subindo noctusai-products..."
+  echo "[docker] subindo dev-noctusai-products..."
   ALL_SLUGS=()
   for entry in "${PRODUCTS[@]}"; do ALL_SLUGS+=("${entry%%:*}"); done
   staggered_up "${ALL_SLUGS[@]}"
@@ -332,15 +330,11 @@ else
         export WAHA_PLATFORM="${WAHA_PLATFORM:-linux/arm64}"
         echo "[docker] host arm64 → WAHA native ($WAHA_IMAGE, $WAHA_PLATFORM)" ;;
     esac
-    echo "[docker] subindo noctusai-infra (profile: $INFRA_PROFILE)..."
+    echo "[docker] subindo dev-noctusai-infra (profile: $INFRA_PROFILE)..."
     docker "${INFRA_COMPOSE[@]}" --profile "$INFRA_PROFILE" up -d
   fi
 
   print_fleet_urls
-  if [[ "$INFRA_PROFILE" == "postgres" || "$INFRA_PROFILE" == "full" ]]; then
-    echo "  Postgres (local) → postgresql://noctus:noctus_local@localhost:5432/noctus"
-    echo "    psql → docker exec -it noctus-postgres psql -U noctus -d noctus"
-  fi
 
   # Tunnel URL extraction — wait for cloudflared to log its public URL.
   if [[ "$MODE" == "tunnel" ]]; then
@@ -368,7 +362,7 @@ else
       echo "  URLs publicas:"
       for entry in "${PRODUCTS[@]}"; do
         IFS=':' read -r s _ _ _ <<< "$entry"
-        url=$(extract_tunnel_url "noctus-$s-tunnel" || echo "(timeout — docker logs noctus-$s-tunnel)")
+        url=$(extract_tunnel_url "dev-noctus-$s-tunnel" || echo "(timeout — docker logs dev-noctus-$s-tunnel)")
         if verify_tunnel_url "$url"; then
           printf "    ✓ %-20s → %s\n" "$s" "$url"
         else
@@ -376,7 +370,7 @@ else
         fi
       done
     else
-      url=$(extract_tunnel_url "noctus-$TUNNEL_SLUG-tunnel" || echo "(timeout)")
+      url=$(extract_tunnel_url "dev-noctus-$TUNNEL_SLUG-tunnel" || echo "(timeout)")
       echo ""
       printf "  Public URL (%s): %s\n" "$TUNNEL_SLUG" "$url"
       if verify_tunnel_url "$url"; then

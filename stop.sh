@@ -41,8 +41,8 @@ docker_pre_check() {
 # Docker modes (default + explicit)
 # ──────────────────────────────────────────────────────────────────────
 # Two compose projects (project: containerization-single-container):
-#   noctusai-products → docker-compose.yml
-#   noctusai-infra    → docker-compose.infra.yml
+#   dev-noctusai-products → docker-compose.yml
+#   dev-noctusai-infra    → docker-compose.infra.yml
 # Both reference the external `noctus-net` (created by start.sh). Stopping
 # does NOT remove the external network (other projects may share it).
 # --profile '*' is not a thing; --remove-orphans clears profile-gated
@@ -52,7 +52,7 @@ INFRA_C=(compose -f "$ROOT_DIR/docker-compose.infra.yml")
 
 # A product brought up standalone (`cd products/<slug> && docker compose
 # up`) lives in its OWN compose project (the product dir name), NOT
-# noctusai-products. Sweep those too so `./stop.sh` is symmetric.
+# dev-noctusai-products. Sweep those too so `./stop.sh` is symmetric.
 sweep_standalone_projects() {
   local f
   for f in "$ROOT_DIR"/products/*/docker-compose.yml; do
@@ -64,7 +64,7 @@ sweep_standalone_projects() {
 case "$MODE" in
   docker)
     docker_pre_check
-    echo "==> down noctusai-products + noctusai-infra + standalone (volumes preservados)"
+    echo "==> down dev-noctusai-products + dev-noctusai-infra + standalone (volumes preservados)"
     docker "${PROD_C[@]}" down --remove-orphans
     docker "${INFRA_C[@]}" down --remove-orphans
     sweep_standalone_projects
@@ -78,7 +78,7 @@ case "$MODE" in
     ;;
   volumes)
     docker_pre_check
-    echo "==> down -v noctusai-products + noctusai-infra (containers + volumes)"
+    echo "==> down -v dev-noctusai-products + dev-noctusai-infra (containers + volumes)"
     docker "${PROD_C[@]}" down -v --remove-orphans
     docker "${INFRA_C[@]}" down -v --remove-orphans
     sweep_standalone_projects

@@ -167,14 +167,13 @@ docker ps --format '{{.Image}}'   # what's actively used; protect these
 **Patterns**:
 - Anonymous (hex-named) volumes with no parent container — residue from `docker rm` of containers that had anonymous mounts (e.g. each `up --build` recreate of a product container leaves the previous anonymous FE-node_modules volume behind)
 - Named volumes from closed/absorbed projects (e.g. `whatsapp-google-scheduling_*` after the absorption into social-wiring; `chatbot-docker_*` after the chatbot-docker stack was deprecated; `bookstore_*` from an unrelated experiment)
-- Stock-image-named volumes (e.g. `postgres-data` of an old `postgres:latest` when current stack pins `postgres:16-alpine` with `noctusai-infra_postgres_data`)
+- Stock-image-named volumes (e.g. `redis-data` of an old `redis:latest` when the current stack pins `redis:7-alpine` with `dev-noctusai-infra_redis_data`). NOTE: the old `noctusai-infra_postgres_data` is one such orphan — local Postgres was removed 2026-05-25, so any leftover `*_postgres_data` from this stack is now safe to drop.
 
 **Reversibility test**: does any active compose file reference this named volume? `grep -rn "<volume-name>" docker-compose*.yml products/*/docker-compose.yml`. If no match AND no running container mounts it → orphan, safe to remove.
 
 **Protected (NEVER delete — production state, the "really important" set)**:
-- `noctusai-infra_postgres_data` — Postgres DB state (RLS data, migrations applied)
-- `noctusai-infra_redis_data` — Redis state (cache, queues, dedup keys)
-- `noctusai-infra_waha_sessions` — WAHA WhatsApp session state (linked accounts; losing this forces re-pairing every WhatsApp connection)
+- `dev-noctusai-infra_redis_data` — Redis state (cache, queues, dedup keys)
+- `dev-noctusai-infra_waha_sessions` — WAHA WhatsApp session state (linked accounts; losing this forces re-pairing every WhatsApp connection)
 - Any anonymous volume mounted by a currently-running container (typically a product FE's `node_modules` arm64 isolation volume)
 - Any named volume referenced by a compose file in the active set
 
@@ -191,8 +190,7 @@ docker ps -q | xargs -I{} docker inspect {} --format '{{range .Mounts}}{{if eq .
 
 **Anti-patterns**:
 - `docker volume prune -af` (the `-a` adds local volumes too — same as `-f` for local-driver volumes, but the flag is misleading and inconsistent across daemon versions)
-- Deleting `noctusai-infra_postgres_data` to "reset the DB" without an export — destroys all local DB state including in-flight migrations
-- Deleting `noctusai-infra_waha_sessions` — every WhatsApp number must re-pair via QR scan
+- Deleting `dev-noctusai-infra_waha_sessions` — every WhatsApp number must re-pair via QR scan
 - Pruning while a container is stopped (not running) — the named volume isn't refcounted-protected; deletion is permanent
 
 ---

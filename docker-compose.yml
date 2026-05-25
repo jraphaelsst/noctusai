@@ -1,11 +1,13 @@
-# NoctusAI — PRODUCTS orchestrator (compose project: noctusai-products).
+# NoctusAI — PRODUCTS orchestrator (compose project: dev-noctusai-products).
 #
 # Project: containerization-single-container. This is one of TWO root
-# projects (the other: docker-compose.infra.yml → noctusai-infra). The
-# split is what gives the Docker Desktop UX: `noctusai-products` is one
+# projects (the other: docker-compose.infra.yml → dev-noctusai-infra). The
+# split is what gives the Docker Desktop UX: `dev-noctusai-products` is one
 # collapsible group with a project-level on/off, and — because every
 # product is now a SINGLE container — each product is one row toggled in
-# one click. Infra (Redis/WAHA/Postgres) lives in its own group.
+# one click. Infra (Redis/WAHA) lives in its own group. The `dev-` prefix
+# marks these as the LOCAL/dev fleet (prod runs its own containers on the
+# VPS) so a local `docker ps` is never confused with production.
 #
 # `name:` pins the compose project so Docker Desktop groups deterministically.
 #
@@ -26,7 +28,7 @@
 # split means no single project owns it). Standalone/CI without start.sh:
 #   docker network create noctus-net   # one-time
 
-name: noctusai-products
+name: dev-noctusai-products
 
 include:
   # BEGIN_PRODUCTS_INCLUDE

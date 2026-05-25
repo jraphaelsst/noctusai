@@ -45,7 +45,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: noctus-therapy-platform
+    container_name: dev-noctus-therapy-platform
     image: ghcr.io/jraphaelsst/noctus-therapy-platform:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
@@ -90,7 +90,7 @@ services:
     # the start (QUIC/UDP dies behind NATs in ~5min and cannot
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: noctus-therapy-platform-tunnel
+    container_name: dev-noctus-therapy-platform-tunnel
     command: tunnel --no-autoupdate --protocol http2 --url http://therapy-platform:8003
     depends_on:
       therapy-platform:

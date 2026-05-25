@@ -19,15 +19,15 @@ into **two compose projects**:
 ```
 ┌───────────── noctus-net (external shared fabric) ──────────────┐
 │                                                                 │
-│  project noctusai-products                                      │
+│  project dev-noctusai-products                                  │
 │   ┌─core──┐ ┌─erp───┐ ┌─pf────┐ ┌─… one container per product ┐ │
 │   │ :8000 │ │ :8001 │ │ :8002 │ │  uvicorn serves API + SPA   │ │
 │   └───────┘ └───────┘ └───────┘ └─────────────────────────────┘ │
 │   (+ profile-gated <slug>-tunnel per product)                   │
 │                                                                 │
-│  project noctusai-infra  (profile-gated)                        │
-│   ┌─redis─┐ ┌─waha──┐ ┌─postgres─┐                              │
-│   └───────┘ └───────┘ └──────────┘                              │
+│  project dev-noctusai-infra  (profile-gated)                    │
+│   ┌─redis─┐ ┌─waha──┐                                           │
+│   └───────┘ └───────┘                                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -46,10 +46,10 @@ rest of the seed.
 
 **Container-first — develop INSIDE the container, not on the host (§1a).** The default loop is `./start.sh` → edit → see it live in the container. There is no separate dev environment: the SAME image has two build targets — `runtime-watch` (local: source bind-mounted, `vite build --watch` + `uvicorn --reload`) and the slim `runtime` (deploy: baked dist, node absent). You **develop in the `runtime-watch` shape and ship the `runtime` shape** — ONE container, ONE shape. *Why* not containerize-last: "works on my host" `≠` "works in the slim image" (structurally different — no `start.sh`/registry/node, baked dist, env-only config); containerize-last is the exact anti-pattern behind the platform's #1 drift class ([[dev-prod-parity]], N≥3: `infra.tsx`-localhost · CORS-empty-in-slim). Developing in the container shape surfaces a parity bug at **dev time**, not after a cutover — and the bind-mount + watch trick means **no** iteration tax (host-speed editing `∧` container-shape fidelity, not a choice). The **DB is NOT in the container** (managed Supabase, external; the container gets `SUPABASE_URL`/keys as env). **Applies at product BIRTH**: `scaffold_product` copies the canonical `products/seed/` template by construction; an **absorption** refactors the incoming product to the house model at its container gate (§12a; `KB § GUIDES/absorb-seed-workspace.md` Gate 9) BEFORE further development continues. Enforced by the **`check_product_container_shape`** keeper (an in-noc product missing the house Dockerfile/compose — freshly-absorbed-but-uncontainerized, or hand-edit drift — is flagged). → `KB § PATTERNS/dev-prod-parity.md`
 
-**Two projects = the Docker-Desktop UX.** `name: noctusai-products`
+**Two projects = the Docker-Desktop UX.** `name: dev-noctusai-products`
 groups every product under one collapsible header (project-level switch
 = whole fleet); each product is a single container = one row toggled in
-one click. `noctusai-infra` is a separate group toggled independently.
+one click. `dev-noctusai-infra` is a separate group toggled independently.
 
 **`noctus-net` is `external: true`.** The two-project split means no
 single compose project may own the shared fabric, so it is created once
@@ -62,8 +62,8 @@ the older "NOT external:true" rule that applied to the single-root design.
 
 ```
 noctusai/
-├── docker-compose.yml          ← name: noctusai-products; include:s 10 products
-├── docker-compose.infra.yml    ← name: noctusai-infra; redis/waha/postgres
+├── docker-compose.yml          ← name: dev-noctusai-products; include:s 10 products
+├── docker-compose.infra.yml    ← name: dev-noctusai-infra; redis/waha
 ├── .dockerignore               ← excludes venv, node_modules, .env, .git, dist…
 ├── start.sh / stop.sh          ← Docker-default; `native` legacy preserved
 │
@@ -277,16 +277,15 @@ but **profile-gated** — runs only when asked. Deploy builds the slim
 
 ### 3.4 — Root `docker-compose.yml` + `docker-compose.infra.yml`
 
-`docker-compose.yml` is `name: noctusai-products` and `include:`s the 10
+`docker-compose.yml` is `name: dev-noctusai-products` and `include:`s the 10
 per-product composes (one line each, between the
 `BEGIN/END_PRODUCTS_INCLUDE` sentinels — scaffolder-managed). It does
 **not** path-list anything else; one product = one container = one
 Docker-Desktop row.
 
-`docker-compose.infra.yml` is `name: noctusai-infra` and carries
-`redis` / `waha` / `postgres` under profiles (`redis` / `waha` /
-`postgres` / `full`) + the named volumes. Both files reference the
-external `noctus-net`.
+`docker-compose.infra.yml` is `name: dev-noctusai-infra` and carries
+`redis` / `waha` under profiles (`redis` / `waha` / `full`) + the named
+volumes. Both files reference the external `noctus-net`.
 
 ---
 
@@ -316,16 +315,15 @@ Docker is the default. One script, no `dev` mode.
 ./start.sh                  # whole fleet (one container per product)
 ./start.sh erp-imobiliario  # ONLY that product (subset; compose `up <svc>`)
 ./start.sh core erp         # those two
-./start.sh redis            # fleet + Redis (noctusai-infra)
+./start.sh redis            # fleet + Redis (dev-noctusai-infra)
 ./start.sh waha             # fleet + WAHA
-./start.sh local-db         # fleet + local Postgres (offline dev — §8a)
-./start.sh full             # fleet + Redis + WAHA + Postgres
+./start.sh full             # fleet + Redis + WAHA
 ./start.sh tunnel <slug>    # fleet + cloudflare tunnel for one product
 ./start.sh tunnel           # fleet + tunnels for ALL products
 ./start.sh build            # rebuild (bases --no-cache + product images) then up
 ./start.sh native           # legacy: uvicorn + vite on the host (hot-reload)
 
-./stop.sh                   # down noctusai-products + noctusai-infra + standalone
+./stop.sh                   # down dev-noctusai-products + dev-noctusai-infra + standalone
 ./stop.sh volumes           # + remove named volumes
 ./stop.sh prune             # + remove images (full clean)
 ./stop.sh native [--venv|--node|--all]
@@ -587,34 +585,32 @@ maintain.
 | `meson … Unknown compiler` / `Dependency lookup for cairo … failed` (pip, in a *product* build) | A product dep has no wheel for the build arch → source build in the **slim runtime** stage, which has no compiler (the base *builder* stage has the toolchain, but product pip runs in *runtime*). Fix via the per-slug `PIP_RUN` seam in `propagate-dockerfiles.sh` — see §3.2a. N≥2 → lift to the base builder. |
 | `Cannot find module '@rollup/rollup-linux-*'` / `vite: not found` (esp. in `runtime-watch`) | host `package-lock.json` pinned darwin optionals **or** the `./frontend` bind-mount shadowed the image `node_modules` — both fixed canonically (lockfile drop ×2 + anon `node_modules` volume), see §3.2b. If seen, the product drifted from seed — re-run `propagate-{dockerfiles,composes}.sh` |
 | Edited compose volumes (added anon volumes / changed mounts), `up -d` reports "Started" but the container behaves exactly like before — fix appears not to work | `docker compose up -d` **change-detection misses some compose-runtime edits** (anon-volume additions, mount-list re-ordering) and silently reuses existing containers; the image is new but the *mount set* is stale. **Verify**: `docker inspect <ctr> --format '{{range .Mounts}}{{.Destination}} {{end}}'` — if the added mount isn't there, the container is stale. **Fix**: `docker compose -f <file> up -d --force-recreate <svc>`. Symptoms compound viciously when a fix touches *both* the Dockerfile (image-level — auto-recreates) *and* the compose volumes (config-level — does NOT auto-recreate): the image lands, the volume doesn't, the new image runs without the new mount set, the original bug appears to recur (cost the `frontend-deps-base-consolidation` Phase 1 a full extra rebuild cycle, 2026-05-19). **Default rule:** any compose volume/mount edit ⇒ `--force-recreate` of the affected services; never trust plain `up -d` to pick it up |
-| Docker Desktop "Containers" shows fewer products than are actually up (e.g. 1 row under `noctusai-products` when 3+ ran) | **Docker Desktop is NOT the source of truth — `docker ps` is.** Two compounding causes: (1) during a *staggered* fleet boot (`staggered_up`, §6a) products come up in health-gated waves over many minutes — the missing ones genuinely don't exist *yet* (still building / not in a started wave); (2) the DD Containers view does **not** reliably live-refresh compose-project membership — it updates on its own poll, so even after containers exist the list can stay stale until you switch views/tabs or it re-polls. Always verify with `docker ps -a --filter label=com.docker.compose.project=noctusai-products` or `docker compose ls`; treat the DD list as a lagging cache, never as ground truth. A group only renders once ≥1 of its containers exists *and* DD has polled. Recurring gotcha (≥5 occurrences) — do not re-diagnose; check `docker ps` first |
+| Docker Desktop "Containers" shows fewer products than are actually up (e.g. 1 row under `dev-noctusai-products` when 3+ ran) | **Docker Desktop is NOT the source of truth — `docker ps` is.** Two compounding causes: (1) during a *staggered* fleet boot (`staggered_up`, §6a) products come up in health-gated waves over many minutes — the missing ones genuinely don't exist *yet* (still building / not in a started wave); (2) the DD Containers view does **not** reliably live-refresh compose-project membership — it updates on its own poll, so even after containers exist the list can stay stale until you switch views/tabs or it re-polls. Always verify with `docker ps -a --filter label=com.docker.compose.project=dev-noctusai-products` or `docker compose ls`; treat the DD list as a lagging cache, never as ground truth. A group only renders once ≥1 of its containers exists *and* DD has polled. Recurring gotcha (≥5 occurrences) — do not re-diagnose; check `docker ps` first |
 | Docker Desktop unstable after an app update: `failed to solve: frontend grpc server closed unexpectedly`, `#N CANCELED`, `--force-recreate` not applied (config-hash unchanged), `up -d` hung at "Creating" with 0 containers | BuildKit/daemon wedge — *not* a compose/Dockerfile bug (`docker compose config` parses fine). Recovery: kill hung `docker`/`compose` procs → `pkill -x "Docker Desktop"; pkill -f com.docker.backend; open -a "Docker Desktop"` → wait for `docker info` ready → re-run `./start.sh`. **Safe**: fleet is ephemeral-by-design (§5.1) — containers regenerate, volumes + `noctus-net` persist, no data loss |
 | Whole fleet boots `unhealthy` simultaneously from cold, load far exceeds cores, all stuck at `vite … transforming` | Not a failure — N parallel first-boot `vite build`s oversubscribe CPU (§6a). Fixed structurally: `./start.sh` routes through `staggered_up()` (core-sized waves, health-gated). If seen via raw `docker compose up -d` (bypasses start.sh), either use `./start.sh` or wait — builds complete, just slowly; it self-accelerates as each finishes |
 | Container restart-loops `ModuleNotFoundError` | product imports a pkg only in root `requirements.txt` — declare it in the product's `requirements.txt` (each image installs only its own) |
 | `exec: "uvicorn": not found` | product `requirements.txt` doesn't pin uvicorn — add `uvicorn[standard]==…` |
 | Tunnel worked then `NXDOMAIN`, container "Up" | QUIC dropout — all composes pin `--protocol http2`; if seen, `docker compose --profile tunnel-<slug> up -d --force-recreate <slug>-tunnel` for a fresh URL |
-| First build flaky (`failed to fetch oauth token`) | tethered/captive net — pre-pull bases when stable: `docker pull python:3.11-slim node:20-alpine redis:7-alpine postgres:16-alpine cloudflare/cloudflared:latest` |
+| First build flaky (`failed to fetch oauth token`) | tethered/captive net — pre-pull bases when stable: `docker pull python:3.11-slim node:20-alpine redis:7-alpine cloudflare/cloudflared:latest` |
 | Build context huge | `.dockerignore` gap — confirm it excludes `venv/ .venv/ node_modules/ .git/ .claude/ dist/` |
 | Docker-Desktop "AMD64 — image may have poor performance, or fail, if run via emulation" on `noctus-waha` (Apple Silicon) | WAHA's free image is amd64-only under `:latest`; it ships a native arm64 build as `:arm` (also `:noweb-arm`). `docker-compose.infra.yml` `waha` is arch-aware (`image: ${WAHA_IMAGE:-…:latest}` / `platform: ${WAHA_PLATFORM:-linux/amd64}`); `start.sh` exports the `:arm`/`linux/arm64` pair when `uname -m` is `arm64`/`aarch64` → native, warning gone. amd64 hosts keep defaults. General rule: a third-party amd64-only image must be wired arch-aware (env-driven image+platform, host-detected in `start.sh`), never hard-pinned `platform: linux/amd64` |
 
 ---
 
-## 8a · Local-postgres profile (offline dev)
+## 8a · Local-postgres profile — REMOVED 2026-05-25
 
-By default every backend talks to remote Supabase. For offline dev /
-isolated CI, `noctusai-infra` ships `postgres:16-alpine` under
-`profiles: [postgres, full]`; `./start.sh local-db` activates it
-alongside the fleet. Schema init runs once when the `postgres_data`
-volume is empty, from `scripts/init-local-db/` in alpha order:
-`00-extensions.sql` (pgcrypto/uuid-ossp/citext) → `00a-supabase-shims.sql`
-(roles + `auth.jwt()`/`auth.uid()` stubs + `extensions`/`storage`
-schemas + minimal `auth.users`) → `01-schemas.sql` → `02-migrations.sql`
-(last two regenerated from each product's `001_*.sql` by
-`scripts/bootstrap/build-init-local-db.sh`). Re-init: `./stop.sh volumes` then
-`./start.sh local-db`. Caveats: RLS policies evaluate FALSE under
-default Postgres settings (no `auth.jwt()` claims) — point a product at
-it via its `.env` `SUPABASE_URL`; Supabase-only features are
-best-effort shims.
+There is **no local Postgres** anymore. Both dev and prod talk to remote
+Supabase (`SUPABASE_URL`), and the dev test loop isolates via the seed
+Fake — so the profile-gated `postgres:16-alpine` container under
+`dev-noctusai-infra` only burned CPU/disk with no consumer. It was torn
+down (container + `noctusai-infra_postgres_data` volume + image) and the
+`postgres` service + `local-db`/`postgres` start.sh modes were dropped.
+
+The generated seed SQL (`scripts/init-local-db/` + the
+`scripts/bootstrap/build-init-local-db.sh` generator) is **retained for
+now but has no live consumer** — a candidate for a later cleanup if no
+local-stack need re-emerges. RLS-against-real-Supabase caveat is moot:
+RLS now always evaluates against the real project.
 
 ---
 
@@ -772,7 +768,7 @@ not consumed as-is, not wrapped, not special-cased in the fleet.
 The house model is one container per product: uvicorn serves API + the
 built SPA on one port via the seed factory `serve_spa` / `SERVE_SPA_DIR`
 seam, `FROM noctus-seed-*-base` is the named seam, two compose projects
-(`noctusai-products` / `noctusai-infra`) on the external `noctus-net`.
+(`dev-noctusai-products` / `dev-noctusai-infra`) on the external `noctus-net`.
 A product that arrives as a **2-container backend+nginx+proxy** topology
 (the shape the social-wiring sibling carried — separate uvicorn + nginx
 SPA host + a standalone single-URL proxy, per-product `<slug>-net`, a

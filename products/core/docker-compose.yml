@@ -45,7 +45,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
-    container_name: noctus-core
+    container_name: dev-noctus-core
     image: ghcr.io/jraphaelsst/noctus-core:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
@@ -99,7 +99,7 @@ services:
     # the start (QUIC/UDP dies behind NATs in ~5min and cannot
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: noctus-core-tunnel
+    container_name: dev-noctus-core-tunnel
     command: tunnel --no-autoupdate --protocol http2 --url http://core:8000
     depends_on:
       core:

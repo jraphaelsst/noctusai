@@ -46,7 +46,7 @@ services:
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: noctus-erp-imobiliario
+    container_name: dev-noctus-erp-imobiliario
     image: ghcr.io/jraphaelsst/noctus-erp-imobiliario:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
@@ -91,7 +91,7 @@ services:
     # the start (QUIC/UDP dies behind NATs in ~5min and cannot
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: noctus-erp-imobiliario-tunnel
+    container_name: dev-noctus-erp-imobiliario-tunnel
     command: tunnel --no-autoupdate --protocol http2 --url http://erp-imobiliario:8001
     depends_on:
       erp-imobiliario:

@@ -33,7 +33,7 @@ def _mk_seed(root: Path) -> Path:
         encoding="utf-8",
     )
     (seed / "docker-compose.yml").write_text(
-        "services:\n  seed:\n    container_name: noctus-seed\n"
+        "services:\n  seed:\n    container_name: dev-noctus-seed\n"
         "    image: ghcr.io/jraphaelsst/noctus-seed:latest\n"
         "    command: --url http://seed:8004\n"
         "  tunnel-seed:\n    depends_on:\n      seed:\n        condition: started\n",
@@ -87,7 +87,7 @@ def test_placeholder_mapping_exact(tmp_path, monkeypatch):
 
     compose = (tpl / "docker-compose.yml").read_text()
     assert "\n  {{PRODUCT_SLUG}}:\n" in compose
-    assert "container_name: noctus-{{PRODUCT_SLUG}}" in compose
+    assert "container_name: dev-noctus-{{PRODUCT_SLUG}}" in compose
     assert "image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}:latest" in compose
     assert "--url http://{{PRODUCT_SLUG}}:{{BACKEND_PORT}}" in compose
     assert "tunnel-{{PRODUCT_SLUG}}:" in compose

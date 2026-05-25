@@ -67,7 +67,7 @@ The commands you reach for. Each pairs with a verify step.
 ```
 ./start.sh                       # whole fleet (staggered_up; §6a)
 ./start.sh <slug> [<slug>…]      # subset (staggered if > batch size)
-./start.sh redis|waha|local-db|full  # +infra profile
+./start.sh redis|waha|full  # +infra profile
 ./start.sh tunnel [slug]         # +cloudflare quick-tunnel
 ./stop.sh                        # graceful
 ./stop.sh volumes                # +remove named volumes

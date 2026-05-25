@@ -120,8 +120,8 @@ def _apply_placeholders(text: str, filename: str, is_compose: bool, is_dockerfil
         text = text.replace("\n  seed:\n", "\n  {{PRODUCT_SLUG}}:\n")
         text = text.replace("\n      seed:\n", "\n      {{PRODUCT_SLUG}}:\n")
         text = re.sub(
-            r"container_name: noctus-seed$",
-            "container_name: noctus-{{PRODUCT_SLUG}}",
+            r"container_name: dev-noctus-seed$",
+            "container_name: dev-noctus-{{PRODUCT_SLUG}}",
             text,
             flags=re.MULTILINE,
         )

@@ -1,33 +1,46 @@
-# NoctusAI — shared INFRA (compose project: noctusai-infra).
+# NoctusAI — shared INFRA (compose project: dev-noctusai-infra).
 #
 # Project: containerization-single-container. The second of two root
-# projects (sibling: docker-compose.yml → noctusai-products). Profile-
+# projects (sibling: docker-compose.yml → dev-noctusai-products). Profile-
 # gated shared services products opt into. Separate project ⇒ its own
 # collapsible Docker Desktop group, toggled independently of the product
-# fleet.
+# fleet. The `dev-` prefix marks these as the LOCAL/dev instances — prod
+# runs its own (deploy/services/compose.services.yml on the VPS), so a
+# local `docker ps` is never confused with the production fleet.
 #
 # Usage:
 #   docker compose -f docker-compose.infra.yml --profile redis up
 #   docker compose -f docker-compose.infra.yml --profile full up
-#   ./start.sh redis | waha | local-db | full      # (Phase 5 wires these)
+#   ./start.sh redis | waha | full
+#
+# NO local Postgres: both dev and prod talk to remote Supabase (root .env
+# SUPABASE_URL), and the dev test loop isolates via the seed Fake — so a
+# local postgres container only burned resources. It was removed
+# 2026-05-25 (an unused leftover; scripts/init-local-db/ SQL is retained
+# for now but has no live consumer).
 #
 # `noctus-net` is external + created once by start.sh — every product on
-# noctusai-products joins the SAME named network, so backends reach Redis
-# here across the project boundary. Standalone:
+# dev-noctusai-products joins the SAME named network, so backends reach
+# Redis here across the project boundary. Standalone:
 #   docker network create noctus-net   # one-time
 
-name: noctusai-infra
+name: dev-noctusai-infra
 
 services:
   redis:
     image: redis:7-alpine
-    container_name: noctus-redis
+    container_name: dev-noctus-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - noctus-net
+      noctus-net:
+        # Keep `noctus-redis` resolvable after the dev- rename: products
+        # read REDIS_URL=redis://noctus-redis:6379/0 (container-name DNS).
+        # The alias preserves that link; prod redis is unchanged.
+        aliases:
+          - noctus-redis
     restart: unless-stopped
     profiles:
       - redis
@@ -45,7 +58,7 @@ services:
     # Linux x86 servers are unaffected. Override-able via env if needed.
     image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
     platform: ${WAHA_PLATFORM:-linux/amd64}
-    container_name: noctus-waha
+    container_name: dev-noctus-waha
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:-}
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
@@ -56,39 +69,17 @@ services:
     volumes:
       - waha_sessions:/app/.sessions
     networks:
-      - noctus-net
+      noctus-net:
+        # Keep `noctus-waha` / `waha` resolvable after the dev- rename so
+        # any product pointing WAHA_BASE_URL at the container/service name
+        # still connects (prod waha is unchanged).
+        aliases:
+          - noctus-waha
+          - waha
     restart: unless-stopped
     profiles:
       - waha
       - full
-
-  postgres:
-    # Local Postgres for offline dev / isolated CI. Profile-gated so the
-    # default fleet talks to remote Supabase unless a product's .env
-    # overrides SUPABASE_URL to point here. Schema init runs once when the
-    # postgres_data volume is empty (scripts/init-local-db/, alpha order).
-    image: postgres:16-alpine
-    container_name: noctus-postgres
-    environment:
-      POSTGRES_USER: noctus
-      POSTGRES_PASSWORD: noctus_local
-      POSTGRES_DB: noctus
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-local-db:/docker-entrypoint-initdb.d:ro
-    networks:
-      - noctus-net
-    profiles:
-      - postgres
-      - full
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noctus -d noctus"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 networks:
   noctus-net:
@@ -98,4 +89,3 @@ networks:
 volumes:
   redis_data:
   waha_sessions:
-  postgres_data:
