@@ -41,13 +41,33 @@ test.describe('Dashboard', () => {
     await expect(page.getByText('Solicitar acesso')).toBeVisible();
   });
 
-  test('shows "coming soon" placeholder cards', async ({ authenticatedPage: page }) => {
+  test('lists only real products — no "coming soon" phantoms', async ({ authenticatedPage: page }) => {
     await mockDashboardAPIs(page);
     await page.goto('/');
 
-    // Three placeholder cards each carry the "Em breve" badge.
-    await expect(page.getByText('Em breve')).toHaveCount(3);
-    await expect(page.getByRole('heading', { name: 'BI Analytics' })).toBeVisible();
+    // Real catalog products render (from /api/auth/me)...
+    await expect(page.getByRole('heading', { name: 'ERP Imobiliário' })).toBeVisible();
+    // ...and the old hardcoded "coming soon" placeholder cards are gone — the
+    // dashboard now reflects only products that actually exist.
+    await expect(page.getByText('Em breve')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'BI Analytics' })).toHaveCount(0);
+  });
+
+  test('shows a "dev" badge on products not deployed in this environment', async ({ authenticatedPage: page }) => {
+    await mockDashboardAPIs(page);
+    // erp-imobiliario deployed (no badge); crm-vendas not deployed (dev badge).
+    await page.route('**/api/products/deployment-status', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deployed: { 'erp-imobiliario': true, 'crm-vendas': false } }),
+      }),
+    );
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: 'ERP Imobiliário' })).toBeVisible();
+    // Exactly one tile (crm-vendas) carries the "dev" badge.
+    await expect(page.getByText('dev', { exact: true })).toHaveCount(1);
   });
 
   test('shows subscription badge', async ({ authenticatedPage: page }) => {

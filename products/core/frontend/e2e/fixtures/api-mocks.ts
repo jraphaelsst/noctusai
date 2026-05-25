@@ -16,6 +16,10 @@ import {
 
 export async function mockDashboardAPIs(page: Page) {
   await page.route('**/api/subscriptions/me', successResponse(mockSubscription));
+  // Deployment-status drives the launcher's "dev" badge. Default to
+  // "nothing probed" so dashboard tests stay off the real backend; a
+  // specific test overrides this (a route registered later wins).
+  await page.route('**/api/products/deployment-status', jsonResponse({ deployed: {} }));
 }
 
 export async function mockTeamAPIs(page: Page) {
