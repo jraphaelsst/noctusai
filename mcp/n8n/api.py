@@ -19,11 +19,10 @@ signal: tools return an `N8nApiError` envelope (status carried), and
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Optional
+
+from _kit.errors import confirmation_required_message
+from _kit.transport import request_json as _http_request_json
 
 
 class N8nApiError(Exception):
@@ -51,11 +50,7 @@ class ConfirmationRequiredError(N8nApiError):
     """
 
     def __init__(self, action: str):
-        super().__init__(
-            f"'{action}' is a write action. Re-call with confirm=true to "
-            f"perform it. NO side-effect was performed.",
-            status=412,
-        )
+        super().__init__(confirmation_required_message(action), status=412)
 
 
 def normalize_base_url(raw: str) -> str:
@@ -97,61 +92,21 @@ def request_json(
             "N8N_API_KEY in mcp/n8n/.env (or the environment).",
             status=424,
         )
-    root = normalize_base_url(base_url)
-    url = f"{root}{path}"
-    if params:
-        # Drop None-valued params so callers can pass optional filters flatly.
-        clean = {k: v for k, v in params.items() if v is not None}
-        if clean:
-            url = f"{url}?{urllib.parse.urlencode(clean)}"
-
-    data: Optional[bytes] = None
-    headers = {
-        "X-N8N-API-KEY": api_key,
-        "Accept": "application/json",
-    }
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(
-        url, data=data, headers=headers, method=method.upper()
+    # Delegate the urllib mechanics to the shared seam; n8n keeps its own
+    # /api/v1 base-URL normalization + N8nApiError type + the 424 not-configured
+    # gate above. (kit-connector-boilerplate-consolidation Wave 2 pilot.)
+    url = f"{normalize_base_url(base_url)}{path}"
+    return _http_request_json(
+        method,
+        url,
+        auth_header=("X-N8N-API-KEY", api_key),
+        params=params,
+        body=body,
+        timeout=timeout,
+        error_cls=N8nApiError,
+        empty_result={},
+        label=f"n8n API {method.upper()} {path}",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        # n8n encodes the real cause in the JSON body; surface a snippet.
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-        except Exception:  # noqa: BLE001 — body read is best-effort context
-            detail = ""
-        raise N8nApiError(
-            f"n8n API {method.upper()} {path} → HTTP {e.code}"
-            + (f": {detail}" if detail else ""),
-            status=e.code,
-        ) from e
-    except urllib.error.URLError as e:
-        raise N8nApiError(
-            f"n8n host unreachable for {method.upper()} {path}: {e.reason}",
-            status=502,
-        ) from e
-    except TimeoutError as e:
-        raise N8nApiError(
-            f"n8n API {method.upper()} {path} timed out after {timeout}s",
-            status=502,
-        ) from e
-
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise N8nApiError(
-            f"n8n API {method.upper()} {path} returned non-JSON output",
-            status=502,
-        ) from e
 
 
 __all__ = [

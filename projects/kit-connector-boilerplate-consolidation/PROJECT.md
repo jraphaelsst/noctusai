@@ -3,7 +3,7 @@
 > **Follow-up filed per the DRY recurrence rule (N=4 → MUST formalize).** Not started. Surfaced by the Hostinger-MCP build (2026-05-21).
 
 - **Created:** 2026-05-21
-- **Status:** Filed (not started) — follow-up from `production-deploy-migration`
+- **Status:** ⏳ IN PROGRESS (2026-05-25) — Wave 1 (`_kit.transport.request_json` + `BROWSER_USER_AGENT` + `confirmation_required_message`, 12 tests) SHIPPED `e1b2a363`. Wave 2 PILOT (n8n) refactored onto the base, suite green (32) — recipe proven. **Extend-wave remaining (gated, recipe proven): waha · hostinger · cloudflare · supabase.** (vista delegates to the seed `VistaClient` — N/A.)
 - **Owner:** Raphael · Claude
 - **Project slug:** `kit-connector-boilerplate-consolidation` @ `projects/` (platform-infra)
 
@@ -35,3 +35,5 @@ The recurring shape is cross-connector infrastructure ⇒ belongs in **`mcp/_kit
 | Date | Change | By |
 |---|---|---|
 | 2026-05-21 | Filed from `production-deploy-migration` after Hostinger MCP flagged N=4 connector-boilerplate recurrence (+ the browser-UA-vs-CF-WAF wrinkle worth lifting) | Claude |
+| 2026-05-25 | Wave 1 shipped: `_kit.transport.request_json` (auth_header/user_agent/error_cls/empty_result params) + `BROWSER_USER_AGENT` + `errors.confirmation_required_message` + 12 unit tests (`e1b2a363`). Module named `transport` not `http` (avoids stdlib-`http` shadow on sys.path). | Claude |
+| 2026-05-25 | Wave 2 PILOT — n8n/api.py refactored onto `_kit.transport` (kept N8nApiError + /api/v1 normalizer + 424 gate; tests patch the `request_json` wrapper ⇒ zero test churn). Suite green (32). **Recipe (proven), per remaining connector:** (1) `from _kit.transport import request_json as _http_request_json` + `from _kit.errors import confirmation_required_message`; (2) keep `<Vendor>ApiError` + the config/424 gate + any envelope handling (cloudflare); (3) request_json body → build url via the connector's normalizer, then `return _http_request_json(method, url, auth_header=(<hdr>,<val>), user_agent=BROWSER_USER_AGENT if WAF else default, params=..., body=..., timeout=..., error_cls=<Vendor>ApiError, empty_result={}/None, label=...)`; (4) ConfirmationRequiredError → `confirmation_required_message(action[, effect][, noun=...])`. ⚠ cloudflare/supabase tests patch `<conn>.api.urllib.request.urlopen` — those need re-pointing to `_kit.transport.urlopen` (n8n/waha/hostinger patch the `request_json` wrapper ⇒ no change). | Claude |
