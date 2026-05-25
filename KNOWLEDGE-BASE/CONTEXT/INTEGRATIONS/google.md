@@ -170,11 +170,24 @@ recounting long structured data).
   consent) OR OAuth `drive.readonly`; private files need OAuth. The
   Protocol is auth-agnostic; the factory routes.
 
-**Consumer status**: `youtube-crawler` is the documented N=1 download
+**Consumer status**: `youtube-crawler` is the documented N=1 *download*
 consumer (seed lifted ahead per user authorization,
-`youtube-crawler-build/` Phase 0); the read/inspect surface was
-reconciled from the social-wiring workspace `drive_api/` package — no
-in-tree `products/*` consumer yet.
+`youtube-crawler-build/` Phase 0). The **read/inspect surface** is
+consumed in-tree by **social-wiring** — `app/services/drive_api/` is a
+~188-LoC thin seam over `make_sync_drive_reader` / `FakeDriveReader`
+(OAuth → service-account → Fake) whose chatbot Drive tools call
+`adapter.reader.search` / `.get_file` (`google-seed-consume` Phase
+6a-drive, 2026-05-25).
+
+**Enriched projection (back-compat-defaulted)** — to absorb the
+chatbot's full field set without forking, the read/inspect value objects
+were widened: `DriveSearchHit` gained `parents` / `owners` / `icon_link`
+/ `is_folder` / `raw` + a `file_id` alias + a `modified_at: datetime`
+derived property; `DriveFileContent` gained `raw_mime` + `.text` with
+lazy PDF extraction (via the seed `media` seam). Defaults reproduce the
+narrow shape, so the `youtube-crawler` download consumer is provably
+unaffected; the Fake mirrors the Real projection so tests exercise the
+full set.
 
 ---
 
