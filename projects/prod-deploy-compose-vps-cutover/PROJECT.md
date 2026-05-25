@@ -3,8 +3,8 @@
 > **Zero-context handoff.** You did not see the session that produced this. Everything you need is inlined below. This is the **VPS-side tail** of `prod-deploy-compose-durable-relocate` (that project's Phase A relocated the deploy tree in the repo; this project finishes the cutover on the live VPS). Read §1 → §2 → §6 in order.
 
 - **Created:** 2026-05-25
-- **Last updated:** 2026-05-25
-- **Status:** 📋 Filed (handoff) — 🅿️ **BLOCKED until the user restarts the MCP server** (precondition, see §8). The repo-side + release + git-pull steps are DONE; only the VPS container re-point + tunnel-source reconcile + archive remain.
+- **Last updated:** 2026-05-25 (session 2 — MCP restarted; executing Path A)
+- **Status:** 🚧 In progress — Phase 0 ✅ (MCP restart verified, VPS at `18dce993`, fleet 6/6 healthy). Durable git tree reconciled (compose `seed` service + tunnel ingress) on `feat/deploy-durable-reconcile-seed-tunnel`. **Scope revised** — see §1a Session-2 findings: the stopgap feeds **4** compose projects (not 1) and `legacy/` has no durable home, so full stopgap-dir deletion is **deferred** (not achievable this pass); this pass ships the fleet rollout (Path A) + durable reconcile.
 - **Owner / stakeholders:** joaoraphaelsst · architect
 - **Related docs:** `projects/prod-deploy-compose-durable-relocate/PROJECT.md` (parent — Phase A + the original gated-tail enumeration), `KB § GUIDES/production-deploy.md` (§2a safe-pull drill, §4 tunnel cutover), `KB § PATTERNS/containerization-operations.md` (§1 source-of-truth chain, §2a `noctus.vps.*`), `KB § PATTERNS/branching-and-merging.md § 0.2` (release gates)
 - **Project slug:** `prod-deploy-compose-vps-cutover` (platform-infra → lives at `projects/`)
@@ -27,6 +27,27 @@ The whole prod deploy tree (fleet + infra + tunnel composes) used to live under 
 - The **stopgap is still load-bearing**: until the MCP server is restarted, the running `deploy_image`/`vps.*` tools still resolve the OLD `DEFAULT_COMPOSE` path (the constant change only takes effect on a fresh MCP process). So nothing breaks in the meantime.
 
 **The win:** re-point the running compose project to the durable `deploy/` path, delete the stopgap, reconcile the durable tunnel source from the live VPS file, live-probe, and archive both this project and the parent **with learnings absorbed**.
+
+---
+
+## 1a. Session-2 findings (grounded against the live VPS — these REVISE §4/§6/§9)
+
+The handoff's "remove the stopgap" premise was that the stopgap = the fleet compose. Live `docker inspect` proved it feeds **4 compose projects**:
+
+| Stopgap subdir | Compose project | Containers | Durable home in git? |
+|---|---|---|---|
+| `fleet/docker-compose.prod.yml` | `noctusai-products-prod` | core·social-wiring·erp·**seed** | ✅ `deploy/fleet/` |
+| `tunnel/` (compose+`config.yml`+creds JSON) | `noctusai-tunnel` | cloudflared | ✅ `deploy/tunnel/` (data files deploy-local) |
+| `services/` (compose+`.env.services`) | `noctus-services` | n8n·waha·postgres | ✅ `deploy/services/` (data file deploy-local) |
+| `legacy/` (`.env`) | (legacy) | legacy | ❌ **none** (blocked on archived source) |
+
+Consequences:
+1. **`seed` was running but absent from the durable `deploy/fleet/docker-compose.prod.yml`** — a deploy-local edit during the seed canary never flowed back to git. Re-pointing as-is would orphan the live seed container. ⇒ FIXED this commit (seed service added back, port-ordered 8004).
+2. **Tunnel-mount coupling** — `noctus-tunnel` bind-mounts its config from *inside* the stopgap (`projects/production-deploy-migration/deploy/tunnel/`). Deleting the stopgap before re-pointing the tunnel = all 8 hosts down on the next cloudflared recreate. The handoff marked this "optional/low-priority"; it is actually the **gating dependency** for stopgap removal.
+3. **`legacy/` has no durable home** (parent project deferred it; build context → archived `reference/one-permutas`). ⇒ **full stopgap-dir deletion is NOT achievable this pass** regardless of effort.
+4. **Migration state on prod** (`nyplttplcoyiiqjrvtiw`): **037 already applied** (all `url_base` = house ports), **038 NOT applied** (no `seed` row → seed served but no dashboard tile). ⇒ apply 038 with the core rollout.
+
+**Revised scope this pass:** Path A fleet rollout (ship 44 commits + 038) + durable git-tree reconcile (compose+tunnel). **Deferred with destination** (§4 follow-up): tunnel + services cutover off the stopgap, `legacy/` relocation, and therefore full stopgap-dir deletion.
 
 ---
 
@@ -97,11 +118,11 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 
 ## 6. Implementation phases
 
-### Phase 0 — Confirm the MCP restart precondition (gate)
-- [ ] Confirm the MCP server was restarted (the whole project is blocked on this — §8). Quick proof: the running `deploy_image`/`vps` tools must resolve the NEW path. `noctus.vps.ps` / `noctus.vps.health` should work; if a deploy op still references `projects/production-deploy-migration/...`, the restart did NOT take — STOP and tell the user.
-- [ ] `git -C /opt/noctus/noctusai log -1 --format=%h` on the VPS = `18dce993` (already true; re-verify with `noctus.vps.*` or an SSH read).
+### Phase 0 — Confirm the MCP restart precondition (gate) ✅
+- [x] MCP restart confirmed — `noctus.vps.ps`/`health` respond; `DEFAULT_COMPOSE` now resolves to `deploy/fleet/docker-compose.prod.yml` in both `deploy_image.py:50` + `vps.py:25`. Fleet 6/6 healthy.
+- [x] VPS git HEAD = `18dce993` (`deploy_pull target=origin/prod` → `up_to_date`, deploy-local files preserved).
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
+**Improvements:** The handoff's Phase 0 step 2 told the agent to read `com.docker.compose.project.config_files` via `noctus.vps.inspect`, but that tool only returns image/state/health/ports — not labels. Had to fall back to a read-only SSH `docker inspect --format`. **Destination:** filed as a tool-gap follow-up in §7 (add a labels/compose-association field to `noctus.vps.inspect`) — a real bystander MCP-improvement, surfaced not silently worked-around.
 
 ### Phase 1 — Re-point the compose project to `deploy/` (+ optional 44-commit rollout)
 - [ ] Decide Path A vs Path B (§4 ⚠). If A: confirm GHCR has `18dce993` images + apply core migrations `037`/`038` to prod Supabase.
@@ -134,9 +155,14 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 
 ## 7. Open questions
 
-1. **Path A or Path B for the re-point?** (§4 ⚠) — decided at Phase 1 by the architect/user. Recommendation: **Path A** if GHCR has `18dce993` images, because the 44 commits include real live-product fixes (core SSO/URL routing) that should ship anyway, and deploy_image re-points + rolls out + health-checks atomically in one move.
-2. **Does GHCR have images built from `18dce993`?** — discover at Phase 1 via `noctus.vps.images` / the `build-and-push.yml` Actions run. If not, trigger/await the build before Path A.
-3. **Should the running cloudflared be re-pointed at the durable `deploy/tunnel/config.yml` (Phase 3 optional step)?** — architect's call; the deploy-local config works, this just removes the last stopgap. Low priority.
+1. ✅ **Path A or Path B?** — **DECIDED Path A** by the user (session 2). Ship the 44 commits + 038 via `deploy_image`.
+2. ✅ **Does GHCR have `18dce993` images?** — **YES**, build run `26407749239` (`feat(deploy): relocate prod deploy tree`) completed success 15:22Z 2026-05-25 (triggered by the `bless` push to `main`, which carries the `products/**` paths). Path A precondition met.
+3. **Re-point cloudflared at a durable `config.yml`?** — REQUIRED (not optional) to remove the stopgap, because `noctus-tunnel` mounts its config from inside the stopgap (§1a finding 2). **Deferred** this pass with destination below.
+
+**Deferred follow-ups (named destinations — surfaced, not dropped):**
+4. **Tunnel + services cutover off the stopgap** — relocate the deploy-local data files (`tunnel/config.yml` + creds JSON → `deploy/tunnel/`; `services/.env.services` → `deploy/services/`) on the VPS, re-point the `noctusai-tunnel` + `noctus-services` compose projects, recreate, verify. Higher risk (tunnel = SPOF for all 8 hosts). → its own follow-up project.
+5. **`legacy/` relocation** — no durable home; build context → archived `reference/one-permutas`. Blocked on relocating that source. → carried by the parent `prod-deploy-compose-durable-relocate` (was already its deferred item).
+6. **Tool gap — `noctus.vps.inspect` should expose compose labels** (`com.docker.compose.project[.config_files]`) so the Phase-1 association check doesn't need a raw SSH fallback. → small `noctus.dev`/`noctus.vps` MCP follow-up.
 
 ---
 
@@ -148,13 +174,15 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 
 ---
 
-## 9. Success criteria
+## 9. Success criteria (REVISED per §1a — full stopgap deletion split out)
 
-- The running `noctusai-products-prod` containers are associated with `deploy/fleet/docker-compose.prod.yml` (verified via `noctus.vps.inspect` → `config_files`), with the §2 stopgap **removed**.
-- `noctus.dev.deploy_image <product>` + `noctus.vps.*` operate from the durable path with no stopgap present.
-- Durable `deploy/tunnel/config.yml.template` + `ingress.yml` match the live ingress (3 diffs captured).
+**This pass (Path A fleet rollout + reconcile):**
+- The `noctusai-products-prod` containers (incl. `seed`) are associated with `deploy/fleet/docker-compose.prod.yml` (verified via compose label).
+- The 4 product containers run the `18dce993` images (44 commits shipped); `noctus.vps.health` green; migration 038 applied (seed dashboard tile live).
+- Durable `deploy/fleet/docker-compose.prod.yml` carries the `seed` service; `deploy/tunnel/config.yml.template` + `ingress.yml` match the live ingress (seed + erp/social short-names + n8n/waha infra captured).
 - All 8 tunnel hosts return 200 end-to-end.
-- Both this project and `prod-deploy-compose-durable-relocate` archived with learnings absorbed; durable-refs gate green; grep-clean (`git grep -n "production-deploy-migration/deploy" -- mcp/ scripts/` returns only historical-narrative refs in `archive.py`/`build-and-push.sh`, no live config refs).
+
+**Deferred (NOT this pass — §7 items 4–6):** full stopgap-dir deletion (blocked on `legacy/` + tunnel/services cutover); archiving both projects (gated on the stopgap actually being gone). This project stays **open** with the §7 follow-ups; do NOT archive on a false "done."
 
 ---
 
@@ -173,3 +201,4 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 | Date | Change | By |
 |---|---|---|
 | 2026-05-25 | Filed as the VPS-side handoff of `prod-deploy-compose-durable-relocate` after this session shipped Phase A + ran bless/promote/deploy_pull (steps 1–2 of the parent gated tail). Blocked on the user's MCP restart. | claude-opus-4-7 · architect |
+| 2026-05-25 (s2) | MCP restart verified (Phase 0 ✅). Path A chosen by user. §1a findings added (stopgap feeds 4 compose projects; `legacy/` no durable home; tunnel-mount coupling; 037 applied/038 not). Durable git tree reconciled: `seed` service re-added to `deploy/fleet/docker-compose.prod.yml`, `seed`+short-names+infra hosts reconciled into `deploy/tunnel/{ingress.yml,config.yml.template}`. Scope revised: full stopgap deletion deferred (§7 4–6). Branch `feat/deploy-durable-reconcile-seed-tunnel`. | claude-opus-4-7 · architect |

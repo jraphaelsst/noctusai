@@ -44,7 +44,10 @@ routes:
   - hostname: therapy-platform.noctusai.com
     service:  http://therapy-platform:8003
 
-  # (seed.noctusai.com intentionally omitted — `seed` is the template, not deployed)
+  # seed is a FIRST-CLASS deployed product + canary (migration 038).
+  - hostname: seed.noctusai.com
+    service:  http://seed:8004
+
   - hostname: daily-life.noctusai.com
     service:  http://daily-life:8005
 
@@ -56,6 +59,20 @@ routes:
 
   - hostname: social-wiring.noctusai.com
     service:  http://social-wiring:8011
+
+  # ── Short-name aliases (live edge convenience hosts) ─────────────────
+  # Shorter public hostnames pointing at the SAME containers as the
+  # full-slug subdomains above — kept alongside, not replacing, them.
+  - hostname: erp.noctusai.com
+    service:  http://erp-imobiliario:8001
+  - hostname: social.noctusai.com
+    service:  http://social-wiring:8011
+
+  # ── Self-hosted infra (NOT registry products; noctus-services project) ─
+  - hostname: n8n.noctusai.com
+    service:  http://n8n:5678
+  - hostname: waha.noctusai.com
+    service:  http://waha:3000
 
   # ── Legacy standalone container (NOT a registry product) ─────────────
   - hostname: legacy.noctusai.com

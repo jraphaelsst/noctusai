@@ -104,6 +104,24 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── seed 8004 — canonical living reference / canary (seed.noctusai.com) ─
+  # `products/seed/` is a FIRST-CLASS running product + canary (migration
+  # 038 re-adds its dashboard row). Reconciled back into this durable file
+  # from the live VPS stopgap, where it had been added as a deploy-local
+  # edit during the seed canary (2026-05-25).
+  seed:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-seed:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-seed
+    expose:
+      - "8004"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8004/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # ── daily-life 8005 ────────────────────────────────────────────────
   daily-life:
     <<: *prod-defaults

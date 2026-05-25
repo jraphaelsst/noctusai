@@ -27,7 +27,7 @@ credentials-file: <PATH>      # e.g. /etc/cloudflared/<TUNNEL_ID>.json
 protocol: http2
 no-autoupdate: true
 
-# ── ingress (generated from ingress.yml, snapshot 2026-05-21) ──────────
+# ── ingress (generated from ingress.yml, snapshot 2026-05-25) ──────────
 # Order matters: cloudflared matches top-to-bottom; the final catch-all
 # MUST be last. The service target is the in-network name on noctus-net
 # (== compose service == noctus-<slug> container), reached by name because
@@ -46,7 +46,8 @@ ingress:
     service: http://personal-finance:8002
   - hostname: therapy-platform.noctusai.com
     service: http://therapy-platform:8003
-  # (seed omitted — template, not deployed)
+  - hostname: seed.noctusai.com
+    service: http://seed:8004
   - hostname: daily-life.noctusai.com
     service: http://daily-life:8005
   - hostname: adconnect.noctusai.com
@@ -55,6 +56,18 @@ ingress:
     service: http://dev-team:8009
   - hostname: social-wiring.noctusai.com
     service: http://social-wiring:8011
+
+  # short-name aliases (live edge convenience hosts)
+  - hostname: erp.noctusai.com
+    service: http://erp-imobiliario:8001
+  - hostname: social.noctusai.com
+    service: http://social-wiring:8011
+
+  # self-hosted infra (noctus-services project — NOT registry products)
+  - hostname: n8n.noctusai.com
+    service: http://n8n:5678
+  - hostname: waha.noctusai.com
+    service: http://waha:3000
 
   # legacy standalone container on :5000 (must be attached to noctus-net)
   - hostname: legacy.noctusai.com
