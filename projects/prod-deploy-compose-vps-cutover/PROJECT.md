@@ -4,7 +4,7 @@
 
 - **Created:** 2026-05-25
 - **Last updated:** 2026-05-25 (session 2 — MCP restarted; executing Path A)
-- **Status:** 🚧 In progress — Phase 0 ✅ (MCP restart verified, VPS at `18dce993`, fleet 6/6 healthy). Durable git tree reconciled (compose `seed` service + tunnel ingress) on `feat/deploy-durable-reconcile-seed-tunnel`. **Scope revised** — see §1a Session-2 findings: the stopgap feeds **4** compose projects (not 1) and `legacy/` has no durable home, so full stopgap-dir deletion is **deferred** (not achievable this pass); this pass ships the fleet rollout (Path A) + durable reconcile.
+- **Status:** 🚧 OPEN (Phase 1 ✅, fleet shipped) — Phases 0 ✅ + 1 ✅ done: durable tree reconciled (`998e7b6e`, blessed+promoted+deploy_pull'd to prod/VPS), all 4 products re-pointed to `deploy/fleet/` on the `18dce993` images (44 commits live), migration 038 applied, 8 hosts probed 200/401-ok. **Remaining (deferred, §7 4–6):** tunnel+services cutover off the stopgap, `legacy/` relocation, full stopgap-dir deletion, then archive both projects. Project stays OPEN — do NOT archive (success criteria §9 not fully met).
 - **Owner / stakeholders:** joaoraphaelsst · architect
 - **Related docs:** `projects/prod-deploy-compose-durable-relocate/PROJECT.md` (parent — Phase A + the original gated-tail enumeration), `KB § GUIDES/production-deploy.md` (§2a safe-pull drill, §4 tunnel cutover), `KB § PATTERNS/containerization-operations.md` (§1 source-of-truth chain, §2a `noctus.vps.*`), `KB § PATTERNS/branching-and-merging.md § 0.2` (release gates)
 - **Project slug:** `prod-deploy-compose-vps-cutover` (platform-infra → lives at `projects/`)
@@ -124,12 +124,12 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 
 **Improvements:** The handoff's Phase 0 step 2 told the agent to read `com.docker.compose.project.config_files` via `noctus.vps.inspect`, but that tool only returns image/state/health/ports — not labels. Had to fall back to a read-only SSH `docker inspect --format`. **Destination:** filed as a tool-gap follow-up in §7 (add a labels/compose-association field to `noctus.vps.inspect`) — a real bystander MCP-improvement, surfaced not silently worked-around.
 
-### Phase 1 — Re-point the compose project to `deploy/` (+ optional 44-commit rollout)
-- [ ] Decide Path A vs Path B (§4 ⚠). If A: confirm GHCR has `18dce993` images + apply core migrations `037`/`038` to prod Supabase.
-- [ ] Execute per live product (`core`, `social-wiring`, `erp-imobiliario`): Path A `noctus.dev.deploy_image <product> confirm=True` (dry-run first) **or** Path B `noctus.vps.recreate <product> confirm=True`.
-- [ ] Verify each container is now associated with `deploy/fleet/docker-compose.prod.yml`: `noctus.vps.inspect <container>` → `com.docker.compose.project.config_files` should point at the new path; `noctus.vps.health` green.
+### Phase 1 — Re-point the compose project to `deploy/` (+ 44-commit rollout) ✅
+- [x] **Path A** (user-chosen). GHCR `18dce993` images confirmed (build `26407749239`). Migration 037 already on prod; **038 applied** this session (seed dashboard tile; `PRODUCT_URL_SEED` already set → tile links to https://seed.noctusai.com).
+- [x] `noctus.dev.deploy_image <p> confirm=True` for ALL FOUR (`core`→`891537d2`, `social-wiring`→`229eff55`, `erp-imobiliario`→`34d9f48a`, `seed`→`b162088c`) — each snapshot→pull→up→health-probe→healthy (no rollback fired). Re-point includes `seed` because the durable compose now carries it (998e7b6e).
+- [x] All four containers verified on `deploy/fleet/docker-compose.prod.yml`; `noctus.vps.health` 6/6 healthy; 8 tunnel hosts live (waha=401 is its own API-key gate, correctly routed).
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
+**Improvements:** (1) `noctus.vps.inspect` lacks compose labels — used a raw SSH `docker inspect` fallback to verify `config_files`; filed §7 item 6. (2) **Methodology improvement spotted** — `build-and-push.yml` triggers on `main` pushes but NOT on the `prod` promote; the `bless` push to `main` is what actually built the images. A reader could assume "promote → images built." Worth a one-line note in the release/deploy docs that *images are built at bless (main), not promote (prod)* so Path-A pre-checks look at the bless build, not the promote. → noted here as a doc-clarity follow-up (KB § GUIDES/production-deploy.md), to absorb at archive time.
 
 ### Phase 2 — Remove the stopgap
 - [ ] Only after Phase 1 verified green: delete the deploy-local stopgap dir `/opt/noctus/noctusai/projects/production-deploy-migration/deploy/` (and the now-empty parent if nothing else lives there — `ls` first; the `.env.bak*` files are elsewhere at repo root, don't touch those).
@@ -202,3 +202,4 @@ The 8 hosts: `noctusai.com` (apex/core), `core`, `erp`, `social`, `seed`, `n8n`,
 |---|---|---|
 | 2026-05-25 | Filed as the VPS-side handoff of `prod-deploy-compose-durable-relocate` after this session shipped Phase A + ran bless/promote/deploy_pull (steps 1–2 of the parent gated tail). Blocked on the user's MCP restart. | claude-opus-4-7 · architect |
 | 2026-05-25 (s2) | MCP restart verified (Phase 0 ✅). Path A chosen by user. §1a findings added (stopgap feeds 4 compose projects; `legacy/` no durable home; tunnel-mount coupling; 037 applied/038 not). Durable git tree reconciled: `seed` service re-added to `deploy/fleet/docker-compose.prod.yml`, `seed`+short-names+infra hosts reconciled into `deploy/tunnel/{ingress.yml,config.yml.template}`. Scope revised: full stopgap deletion deferred (§7 4–6). Branch `feat/deploy-durable-reconcile-seed-tunnel`. | claude-opus-4-7 · architect |
+| 2026-05-25 (s2) | **Phase 1 ✅** — bless `main`→`998e7b6e` + promote `prod`→`998e7b6e` (prod-backup=`18dce993`) + deploy_pull to VPS; migration 038 applied to prod; `deploy_image` re-pointed + shipped all 4 products (core/social-wiring/erp/seed) onto `18dce993` images on `deploy/fleet/`; 6/6 healthy; 8 hosts live-probed. Fleet de-stopgapped. | claude-opus-4-7 · architect |
