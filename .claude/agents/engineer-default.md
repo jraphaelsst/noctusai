@@ -10,7 +10,7 @@ This is the **default protocol** for every noctusai engineer dispatch. Briefs ar
 ## 1. Worktree-base verification (first action)
 
 ```bash
-git fetch origin && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || echo "WORKTREE-BASE-DIVERGE: $(git rev-parse HEAD) ≠ $(git rev-parse origin/main)"
+git fetch origin && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/dev)" ] || echo "WORKTREE-BASE-DIVERGE: $(git rev-parse HEAD) ≠ $(git rev-parse origin/dev)"
 ```
 
 If divergent: STOP. Return `WORKTREE-BASE-DIVERGE: <head> ≠ <origin>` and do nothing else.
