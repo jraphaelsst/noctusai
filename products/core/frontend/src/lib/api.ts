@@ -3,7 +3,14 @@
  */
 import { createApiClient } from '@noctusai/lib/api';
 
-const API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:8000';
+// core's API is SAME-ORIGIN (single-container house model serves FE + API on
+// one host). Default to window.location.origin so core is deploy-host-agnostic
+// — no baked URL needed for its own backend. VITE_CORE_API_URL stays as an
+// explicit override for the rare split-origin core. (The cross-product "reach
+// core" URL is VITE_CORE_URL, used by OTHER products' SSO/nav — not this.)
+const API_URL =
+  import.meta.env.VITE_CORE_API_URL ||
+  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000');
 
 function getToken(): string | null {
   return localStorage.getItem('noctus_token');
