@@ -17,6 +17,7 @@
     "  - 'Seed drift:'  seed-version stamp lag (pre-commit HEAD vs post-commit SHA)",
     "  - 'Archive entry' archive-staleness (date-relative)",
     "  - 'Dispatcher'    dispatcher-staleness (date-relative)",
+    "  - '_version_static.py' (substring) seed-version stamp ABSENT in a fresh worktree (gitignored, written by the stamp-seed-version hook)",
     "",
     "HOW TO REFRESH (deterministic, regenerable — run from repo root):",
     "  mcp/noctusai/.venv/bin/python mcp/noctusai/tests/refresh_compliance_baseline.py",

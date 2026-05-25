@@ -61,12 +61,17 @@ page that owns it.) Because every product has its own pages, **every product
 inherits this mandate** — it propagates with the rule.
 
 **Automated mechanism:** the static legs (2, 4, 5) ship on **two surfaces from
-one predicate** (DRY): the `noctus.dev.scan_wiring <product>` MCP tool (on-demand,
-per-product report) AND — codified as **Stage-4 keeper detectors** (regulatory:
-compliance gate + pre-commit) — `check_fe_route_missing` (leg 2 — FE-endpoint →
-backend-route existence, severity `high`) + `check_name_on_nome_select` (leg 5 —
-the `name`-on-`nome` 500 lint, severity `high`) + `check_promise_all_shared_catch`
-(leg 4 — the shared-catch all-zeros anti-pattern, severity `warning`). Both the
+one predicate** (DRY): the `noctus.dev.scan_wiring <product>` MCP tool **and the
+`cli.py --scan-wiring <product>` flag** (on-demand, per-product report; `--json`
++ `--worktree-path`-aware, exit `0` clean / `1` findings / `2` typed-error) AND —
+codified as **Stage-4 keeper detectors** (regulatory: compliance gate +
+pre-commit) — `check_fe_route_missing` (leg 2 — FE-endpoint → backend-route
+existence, severity `high`) + `check_name_on_nome_select` (leg 5 — the
+`name`-on-`nome` 500 lint, severity `high`) + `check_promise_all_shared_catch`
+(leg 4 — the shared-catch all-zeros anti-pattern, severity `warning`; **precision:
+flags ONLY a *pure* shared-catch — every `api.*` element under the `Promise.all`
+is bare; a mixed shape (one primary call + sibling calls each `.catch()`-guarded)
+is the legitimate one-primary-plus-degrading-aux pattern, NOT flagged**). Both the
 tool and the keepers import the SAME three pure leg analyzers from
 `mcp/noctusai/tools/noctus/dev/scan_wiring.py` (`analyze_missing_routes` /
 `analyze_name_on_nome` / `analyze_promise_all_shared_catch`) — one predicate, two

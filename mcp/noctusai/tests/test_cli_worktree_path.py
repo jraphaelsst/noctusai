@@ -17,6 +17,7 @@ PATTERNS/project-execution.md § The methodology evolves rule.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -136,3 +137,72 @@ def test_default_behavior_unchanged_when_arg_absent():
     """
     proc = _run_cli("--help")
     assert "worktree override:" not in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# `--scan-wiring <product>` — the MCP-first tool+flag+test convention.
+# The `noctus.dev.scan_wiring` MCP tool existed + was registered but had no
+# `cli.py` flag (an engineer had to call the pure fn in a long session because
+# the tool wasn't reachable). This wires the flag so it mirrors `--scan-*`.
+# ---------------------------------------------------------------------------
+
+def _make_wiring_worktree(tmp: Path) -> Path:
+    """Build a fake worktree at `tmp/wt` with a product whose FE hits a route
+    with NO backend match (the 404 / missing-route class — Leg A)."""
+    wt = tmp / "wt"
+    be = wt / "products" / "fake_product" / "backend" / "app"
+    fe = wt / "products" / "fake_product" / "frontend" / "src" / "pages"
+    be.mkdir(parents=True)
+    fe.mkdir(parents=True)
+    (be / "main.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+    )
+    (fe / "Page.tsx").write_text(
+        "const x = await api.get('/api/does-not-exist');\n"
+    )
+    return wt
+
+
+def test_arg_help_advertises_scan_wiring():
+    """`--help` documents `--scan-wiring` so engineers can discover it."""
+    proc = _run_cli("--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "--scan-wiring" in proc.stdout
+
+
+def test_scan_wiring_json_runs_against_worktree():
+    """`--scan-wiring fake_product --worktree-path <wt> --json` scans the
+    worktree's product tree and emits valid JSON for that product."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wt = _make_wiring_worktree(Path(tmpdir))
+        proc = _run_cli(
+            "--scan-wiring", "fake_product",
+            "--worktree-path", str(wt),
+            "--json",
+        )
+        combined = proc.stdout + proc.stderr
+        assert "worktree override:" in combined, combined
+        # The JSON dump is the last `{...}` block in stdout (after the banner).
+        start = proc.stdout.index("{", proc.stdout.index('"ok"') - 200)
+        payload = json.loads(proc.stdout[start:])
+        assert payload["ok"] is True, payload
+        assert payload["product"] == "fake_product"
+        # The bogus FE call surfaces as a missing-route finding (Leg A).
+        assert payload["totals"]["missing_routes"] >= 1, payload
+        # Findings present ⇒ exit code 1 (clean would be 0).
+        assert proc.returncode == 1, (proc.returncode, combined)
+
+
+def test_scan_wiring_unknown_product_typed_error():
+    """An unknown product slug returns the honest typed error (exit 2)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wt = _make_wiring_worktree(Path(tmpdir))
+        proc = _run_cli(
+            "--scan-wiring", "nope_not_here",
+            "--worktree-path", str(wt),
+            "--json",
+        )
+        payload = json.loads(proc.stdout[proc.stdout.index("{", proc.stdout.index('"ok"') - 200):])
+        assert payload["ok"] is False
+        assert "does not exist" in payload["error"]
+        assert proc.returncode == 2, proc.returncode

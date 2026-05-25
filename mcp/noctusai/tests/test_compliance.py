@@ -62,6 +62,55 @@ def _load_baseline_fingerprints() -> set[str]:
     return set(data["fingerprints"])
 
 
+class TestEnvArtifactExclusion:
+    """`is_env_artifact` excludes non-deterministic / worktree-specific issue
+    classes from BOTH the committed baseline and the live regression gate, so
+    the gate cannot flap on stamp-lag / wall-clock / fresh-worktree state.
+    Per `KB § PATTERNS/compliance-regression-baseline.md`.
+    """
+
+    def test_seed_drift_prefix_excluded(self):
+        assert is_env_artifact(
+            "Seed drift: installed `noctusai_seed.__seed_version__` is 'abc' but …"
+        )
+
+    def test_archive_and_dispatcher_prefixes_excluded(self):
+        assert is_env_artifact("Archive entry `projects/x` is 99 days old …")
+        assert is_env_artifact("Dispatcher pending entry `…` is stale …")
+
+    def test_seed_version_stamp_absent_excluded(self):
+        """The gitignored `_version_static.py` stamp is ABSENT in a fresh
+        worktree ⇒ a worktree-scoped scan flags it as a false `critical`. It is
+        an environment artifact (where the scan ran), NOT a code regression, so
+        it must be excluded — even though the package name (not a prefix)
+        LEADS the issue text (substring class, added 2026-05-25)."""
+        absent = (
+            "`noctusai_seed` has no `_version_static.py` stamp AND is not "
+            "installed in this venv. Run `python mcp/noctusai/cli.py "
+            "--stamp-seed-version` to write the stamp, or `pip install -e …`."
+        )
+        assert is_env_artifact(absent), absent
+        # The lib sibling variant is equally excluded.
+        assert is_env_artifact(
+            "`noctusai_lib` has no `_version_static.py` stamp AND is not installed …"
+        )
+
+    def test_normal_high_critical_issue_not_excluded(self):
+        """A real wiring/code issue is NOT treated as an env artifact (the
+        exclusion is narrow — it must not swallow genuine regressions)."""
+        real = (
+            "FE calls `api.get('/api/subscriptions')` but no backend route "
+            "matches (method=GET, normalized=/api/subscriptions)."
+        )
+        assert not is_env_artifact(real), real
+
+    def test_seed_stamp_not_in_committed_baseline(self):
+        """Belt-and-suspenders: no `_version_static.py` fingerprint leaked into
+        the committed baseline (it is excluded, so it must never be pinned)."""
+        for fp in _load_baseline_fingerprints():
+            assert "_version_static.py" not in fp, fp
+
+
 class TestSeedCompliance:
     def test_seed_product_is_compliant(self):
         issues = check_seed_compliance(PRODUCTS_DIR / "seed")

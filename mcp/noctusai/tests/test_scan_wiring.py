@@ -208,7 +208,7 @@ class TestLegCPromiseAllSharedCatch:
         assert "all-zeros" in f["detail"] or "degrade" in f["detail"]
 
     def test_per_element_catch_not_flagged(self, tmp_path: Path):
-        # CORRECT shape: each fetch has its own `.catch(() => fallback)`.
+        # CORRECT shape (c): EVERY fetch has its own `.catch(() => fallback)`.
         repo = _mk_product(tmp_path, "core", {
             "frontend/src/pages/Dashboard.tsx": (
                 "async function load() {\n"
@@ -219,6 +219,28 @@ class TestLegCPromiseAllSharedCatch:
                 "    ]);\n"
                 "  } catch (e) {\n"
                 "    notify(e);\n"
+                "  }\n"
+                "}\n"
+            ),
+        })
+        result = scan_wiring("core", repo_root=repo)
+        assert result["shared_catch_promise_all"] == [], result["shared_catch_promise_all"]
+
+    def test_mixed_one_primary_plus_degrading_aux_not_flagged(self, tmp_path: Path):
+        # Leg-4 precision (b): ONE deliberate primary (drives auth/error/logout)
+        # + degrading aux already guarded by `.catch()`. Because ≥1 element has
+        # a per-element `.catch()`, this is NOT the all-zeros bug → NOT flagged.
+        repo = _mk_product(tmp_path, "core", {
+            "frontend/src/pages/Dashboard.tsx": (
+                "async function load() {\n"
+                "  try {\n"
+                "    const [me, stats, orgs] = await Promise.all([\n"
+                "      api.get('/api/me'),\n"  # primary — its failure SHOULD propagate
+                "      api.get('/api/stats').catch(() => ({})),\n"  # aux, degrades
+                "      api.get('/api/orgs').catch(() => []),\n"  # aux, degrades
+                "    ]);\n"
+                "  } catch (e) {\n"
+                "    logoutAndRedirect();\n"
                 "  }\n"
                 "}\n"
             ),

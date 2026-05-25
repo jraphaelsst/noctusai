@@ -26,9 +26,12 @@ exact 500 that zeroed the core admin dashboard.
 
 **Leg C — `Promise.all` shared-catch** (the fast-fail aggregation
 anti-pattern). A `Promise.all([ api.get(...), api.get(...) ])` whose
-elements lack a per-element `.catch(...)`, inside a single shared
-`try { ... } catch`, turns ONE failure into all-zeros. FLAGGED. A
-`Promise.all` whose elements each have `.catch(() => fallback)` degrades
+elements ALL lack a per-element `.catch(...)`, inside a single shared
+`try { ... } catch`, turns ONE failure into all-zeros. FLAGGED. We flag
+ONLY the PURE shared-catch shape — if ≥1 element already has its own
+`.catch(() => fallback)` the array is a deliberate "primary + degrading
+aux" pattern, NOT the all-zeros bug, so it is NOT flagged (leg-4
+precision). A `Promise.all` whose elements each have `.catch()` degrades
 independently and is CORRECT — not flagged.
 
 Provenance: born 2026-05-25 from the core admin-panel wiring session (the
@@ -470,14 +473,17 @@ def _scan_promise_all_shared_catch(fe_root: Path, repo_root: Path) -> list[Wirin
 
     Heuristic (line-aware, brace-balanced):
       1. Find `Promise.all([`. Capture the bracket-balanced array body.
-      2. If ANY array element calls `api.<method>(...)` WITHOUT a chained
-         `.catch(` of its own → "bare fetch". A Promise.all whose every
-         element has `.catch()` degrades independently → CORRECT, skip.
+      2. Flag ONLY the PURE shared-catch shape — i.e. NONE of the array
+         elements has a per-element `.catch(`. That is the real
+         one-failure-zeros-everything bug. If ≥1 element already has its own
+         `.catch()`, the shape is "one deliberate primary (drives auth/error/
+         logout) + degrading aux" — NOT the all-zeros bug — so it is NOT
+         flagged (leg-4 precision, 2026-05-25).
       3. Confirm the call is inside a `try {` whose nearest enclosing
-         `catch` is shared (no per-element catch). We approximate "inside a
-         shared try/catch" by checking that a `try {` opened earlier in the
-         function body precedes the Promise.all on a prior or same line and a
-         `catch` follows the Promise.all — the all-zeros bug shape.
+         `catch` is shared. We approximate "inside a shared try/catch" by
+         checking that a `try {` opened earlier in the function body precedes
+         the Promise.all on a prior or same line and a `catch` follows the
+         Promise.all — the all-zeros bug shape.
     """
     findings: list[WiringFinding] = []
     src = fe_root / "src"
@@ -508,13 +514,16 @@ def _scan_promise_all_in_text(content: str, rel: str) -> list[WiringFinding]:
         body, end_idx = _balanced_slice(content, open_bracket, "[", "]")
         if body is None:
             continue
-        if not _has_bare_fetch(body):
+        # Flag ONLY the PURE shared-catch shape (no element has its own
+        # `.catch()`). A mixed shape — ≥1 element guarded by `.catch()` — is a
+        # deliberate primary + degrading-aux pattern, NOT the all-zeros bug.
+        if not _is_pure_shared_catch(body):
             continue
         # Determine the line number of the Promise.all.
         lineno = content.count("\n", 0, m.start()) + 1
         # Shared-catch check: a `try {` precedes this Promise.all in the
         # enclosing scope AND there's NO per-element `.catch` (already
-        # ensured by _has_bare_fetch). We look backward for the nearest
+        # ensured by _is_pure_shared_catch). We look backward for the nearest
         # unmatched `try {` and forward for a `catch`.
         if _under_shared_try_catch(content, m.start(), end_idx):
             findings.append(WiringFinding(
@@ -572,23 +581,35 @@ def _balanced_slice(text: str, open_idx: int, open_ch: str, close_ch: str) -> tu
 _API_CALL_IN_BODY_RE = re.compile(r"\bapi\.(" + "|".join(_HTTP_METHODS) + r")\s*\(")
 
 
-def _has_bare_fetch(body: str) -> bool:
-    """True if any `api.<method>(...)` in the array lacks a chained `.catch(`."""
+def _is_pure_shared_catch(body: str) -> bool:
+    """True for the PURE shared-catch shape — ≥1 `api.<method>(...)` call AND
+    NONE of them has a per-element `.catch(`.
+
+    Leg-4 precision (2026-05-25): the all-zeros bug is the array where EVERY
+    element is bare (one failure zeros every result). A MIXED array — at least
+    one element already guarded by its own `.catch(() => fallback)` — is a
+    deliberate "primary drives auth/error/logout + aux degrades" pattern, NOT
+    the bug, so we do NOT flag it. We flag only when zero elements are guarded.
+    """
     saw_api = False
     for m in _API_CALL_IN_BODY_RE.finditer(body):
         saw_api = True
         call_open = m.end() - 1
         _inner, after = _balanced_slice(body, call_open, "(", ")")
         if after <= call_open:
-            # unbalanced — treat conservatively as bare (likely a real fetch)
-            return True
+            # unbalanced — treat conservatively as bare (likely a real fetch);
+            # keep scanning so a later guarded element can still spare the array.
+            continue
         # Look at what immediately follows the call (allow chained `.then`/
         # whitespace). If a `.catch(` appears before the next element boundary
-        # (a top-level comma or end of body), this element is protected.
+        # (a top-level comma or end of body), this element is protected — so
+        # the array is NOT a pure shared-catch and must not be flagged.
         tail = body[after:]
-        if not _element_has_catch(tail):
-            return True
-    return saw_api and False  # all api calls were protected → not bare
+        if _element_has_catch(tail):
+            return False
+    # Reached here ⇒ every api call was bare (no per-element catch). Flag only
+    # if there was at least one api call (an array with none is not our shape).
+    return saw_api
 
 
 def _element_has_catch(tail: str) -> bool:
@@ -719,10 +740,14 @@ def analyze_promise_all_shared_catch(
 ) -> list[WiringFinding]:
     """Leg C — `Promise.all([bare fetches])` under one shared try/catch.
 
-    Pure predicate: flag a `Promise.all` of bare `api.*` fetches (no per-element
-    `.catch`) inside a single shared `try { ... } catch` — one failure zeros
-    every result (the all-zeros dashboard bug). Per-element `.catch()` degrades
-    independently and is CORRECT (not flagged).
+    Pure predicate: flag a `Promise.all` whose array elements are ALL bare
+    `api.*` fetches (NONE has a per-element `.catch`) inside a single shared
+    `try { ... } catch` — one failure zeros every result (the all-zeros
+    dashboard bug). Leg-4 precision (2026-05-25): a MIXED array — ≥1 element
+    already guarded by its own `.catch(() => fallback)` — is a deliberate
+    "primary + degrading aux" pattern, NOT the bug, so it is NOT flagged.
+    Per-element `.catch()` on every element degrades independently and is
+    CORRECT (not flagged).
     """
     if not fe_root.exists():
         return []

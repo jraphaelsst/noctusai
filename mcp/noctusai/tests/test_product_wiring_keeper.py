@@ -171,8 +171,25 @@ class TestCheckPromiseAllSharedCatch:
         "  }\n"
         "}\n"
     )
+    # Leg-4 precision: ONE deliberate primary (failure SHOULD propagate to the
+    # shared catch → logout) + degrading aux already guarded. Mixed ⇒ NOT the
+    # all-zeros bug ⇒ NOT flagged.
+    _MIXED_PRIMARY_PLUS_AUX = (
+        "async function load() {\n"
+        "  try {\n"
+        "    const [me, stats, orgs] = await Promise.all([\n"
+        "      api.get('/api/me'),\n"
+        "      api.get('/api/stats').catch(() => ({})),\n"
+        "      api.get('/api/orgs').catch(() => []),\n"
+        "    ]);\n"
+        "  } catch (e) {\n"
+        "    logoutAndRedirect();\n"
+        "  }\n"
+        "}\n"
+    )
 
     def test_shared_catch_flagged_warning(self, tmp_path: Path) -> None:
+        # Pure shared-catch (every element bare) → FLAG.
         product = _mk_file(
             tmp_path, "core", "frontend/src/pages/Dashboard.tsx", self._SHARED_CATCH
         )
@@ -184,9 +201,19 @@ class TestCheckPromiseAllSharedCatch:
         assert issues[0]["file"].endswith("Dashboard.tsx")
 
     def test_per_element_catch_not_flagged(self, tmp_path: Path) -> None:
+        # All elements guarded → NOT flagged.
         product = _mk_file(
             tmp_path, "core", "frontend/src/pages/Dashboard.tsx",
             self._PER_ELEMENT_CATCH,
+        )
+        assert check_promise_all_shared_catch(product) == []
+
+    def test_mixed_primary_plus_aux_not_flagged(self, tmp_path: Path) -> None:
+        # Leg-4 precision: ≥1 element guarded → deliberate primary+aux, NOT the
+        # all-zeros bug → NOT flagged (the keeper must agree with the analyzer).
+        product = _mk_file(
+            tmp_path, "core", "frontend/src/pages/Dashboard.tsx",
+            self._MIXED_PRIMARY_PLUS_AUX,
         )
         assert check_promise_all_shared_catch(product) == []
 

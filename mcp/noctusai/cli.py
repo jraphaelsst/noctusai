@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--scan-migrations", action="store_true", help="Scan SQL migration files for RLS policy / FK index / trigger / search_path patterns recurring across products. 5 known shapes probed; reports which products write each shape and how many times. RLS/trigger templates are absorption candidates for `noctusai_lib.sql.<helper>`.")
     parser.add_argument("--check-outlined", action="store_true", help="Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always functional.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
+    parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--min-count", type=int, default=None, help="Override min_count threshold for any --scan-* (default varies per scan).")
     parser.add_argument("--review", action="store_true", help="Observation-only review. Default: return issues + prompt for the in-session agent. --headless fires OpenAI gpt-4o-mini. --evaluate writes both paths side-by-side to proposals/evaluations/. NEVER modifies code.")
     parser.add_argument("--headless", action="store_true", help="With --review: author proposals via OpenAI (no in-session agent required).")
@@ -482,6 +483,34 @@ def main():
                     while sugg:
                         print(f"      → {sugg[:96]}")
                         sugg = sugg[96:]
+
+    elif args.scan_wiring:
+        from tools.noctus.dev.scan_wiring import scan_wiring
+        # Honour the line-170 worktree override: scan_wiring defaults to
+        # `REPO_ROOT` when `repo_root=None`, and that import-time snapshot
+        # predates the rebind — so pass the (possibly overridden) value.
+        from settings import REPO_ROOT
+        result = scan_wiring(args.scan_wiring, repo_root=REPO_ROOT)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if not result.get("ok", False):
+                print(f"  {RED}✗ {result.get('error', 'scan failed')}{RESET}")
+            else:
+                t = result["totals"]
+                color = GREEN if t["total"] == 0 else RED
+                print(f"  {BOLD}Wiring scan ({result['product']}):{RESET} {color}{t['total']} finding(s){RESET}  "
+                      f"(routes: {t['missing_routes']}, name-on-nome: {t['name_on_nome']}, "
+                      f"shared-catch: {t['shared_catch_promise_all']})")
+                print(f"  {BOLD}Diagnostics:{RESET} {result['fe_calls_found']} FE api-calls, "
+                      f"{result['backend_routes_found']} backend routes")
+                for leg, key in (("Leg A — missing routes", "missing_routes"),
+                                 ("Leg B — name-on-nome", "name_on_nome"),
+                                 ("Leg C — shared-catch Promise.all", "shared_catch_promise_all")):
+                    for f in result[key][:20]:
+                        print(f"    {RED}[{key}]{RESET} {f['file']}:{f['line']} — {f['detail'][:110]}")
+                print(f"  {YELLOW}Next:{RESET} {result['next_action']}")
+        sys.exit(1 if (result.get("ok", False) and result["totals"]["total"] > 0) else (2 if not result.get("ok", False) else 0))
 
     elif args.review:
         from tools.noctus.dev.review import run_review

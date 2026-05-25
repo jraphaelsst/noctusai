@@ -41,12 +41,32 @@ BASELINE_PATH = _TESTS_DIR / "compliance_baseline.json"
 # Non-deterministic / environment-artifact issue classes — excluded from BOTH
 # the committed baseline and the live comparison so the regression gate cannot
 # flap on stamp-lag / wall-clock. Per PROJECT.md §3a P4.
+#
+# Prefix classes (matched in the issue text's leading ~40 chars):
+#   "Seed drift:"  — seed-version stamp lag (pre-commit HEAD vs post-commit SHA)
+#   "Archive entry" — archive-staleness (date-relative)
+#   "Dispatcher"    — dispatcher-staleness (date-relative)
 ENV_ARTIFACT_PREFIXES = ("Seed drift:", "Archive entry", "Dispatcher")
+
+# Substring classes (matched ANYWHERE in the issue text — the discriminating
+# token does NOT lead the message). The seed-version stamp
+# `noctusai_{seed,lib}/_version_static.py` is gitignored (written by the
+# `stamp-seed-version` hook) and therefore ABSENT in a fresh worktree — a
+# worktree-scoped compliance scan would then flag its absence as a false
+# `critical` ("`noctusai_seed` has no `_version_static.py` stamp …"). That is
+# an environment artifact of WHERE the scan ran, not a code regression, so it
+# is excluded both sides of the gate (added 2026-05-25, sibling of the
+# "Seed drift:" prefix which covers the stamp-LAG variant).
+ENV_ARTIFACT_SUBSTRINGS = ("_version_static.py",)
 
 
 def is_env_artifact(issue_text: str) -> bool:
     head = issue_text.lstrip()[:40]
-    return any(p in head for p in ENV_ARTIFACT_PREFIXES)
+    if any(p in head for p in ENV_ARTIFACT_PREFIXES):
+        return True
+    if any(s in issue_text for s in ENV_ARTIFACT_SUBSTRINGS):
+        return True
+    return False
 
 
 def fingerprint(issue: dict) -> str:
