@@ -30,6 +30,12 @@ export interface SidebarProps {
   brandIcon: React.ElementType;
   brandTitle: string;
   brandSubtitle: string;
+  /**
+   * When set, the brand (icon + title) becomes a navigable link to this
+   * route — e.g. back to the dashboard. Omitted ⇒ the brand renders as a
+   * plain, non-interactive header (backward-compatible default).
+   */
+  brandHref?: string;
   navGroups: NavGroup[];
   standaloneItems?: NavItem[];
   footerContent?: React.ReactNode;
@@ -44,6 +50,7 @@ export function Sidebar({
   brandIcon: BrandIcon,
   brandTitle,
   brandSubtitle,
+  brandHref,
   navGroups,
   standaloneItems = [],
   footerContent,
@@ -87,16 +94,33 @@ export function Sidebar({
   return (
     <div className="w-full h-full bg-sidebar text-sidebar-foreground flex flex-col">
       <div className="p-4 sm:p-5 flex-1">
-        {/* Brand */}
-        <div className="flex items-center gap-2 mb-5">
-          <BrandIcon className="h-8 w-8 text-sidebar-primary-foreground" />
-          <div>
-            <h1 className="text-xl font-bold text-sidebar-primary-foreground">{brandTitle}</h1>
-            <p className="text-[10px] text-sidebar-foreground/60 uppercase tracking-wider">
-              {brandSubtitle}
-            </p>
+        {/* Brand — a link back to brandHref when provided, else a plain header */}
+        {brandHref ? (
+          <NavLink
+            to={brandHref}
+            onClick={onNavigate}
+            aria-label={`${brandTitle} — início`}
+            className="flex items-center gap-2 mb-5 rounded-md transition-opacity hover:opacity-80"
+          >
+            <BrandIcon className="h-8 w-8 text-sidebar-primary-foreground" />
+            <div>
+              <h1 className="text-xl font-bold text-sidebar-primary-foreground">{brandTitle}</h1>
+              <p className="text-[10px] text-sidebar-foreground/60 uppercase tracking-wider">
+                {brandSubtitle}
+              </p>
+            </div>
+          </NavLink>
+        ) : (
+          <div className="flex items-center gap-2 mb-5">
+            <BrandIcon className="h-8 w-8 text-sidebar-primary-foreground" />
+            <div>
+              <h1 className="text-xl font-bold text-sidebar-primary-foreground">{brandTitle}</h1>
+              <p className="text-[10px] text-sidebar-foreground/60 uppercase tracking-wider">
+                {brandSubtitle}
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Navigation */}
         <nav className="space-y-1">

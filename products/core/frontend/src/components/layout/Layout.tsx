@@ -10,7 +10,6 @@ import {
   Webhook,
   BarChart3,
   Settings,
-  ArrowLeft,
   Zap,
   Users,
   LogOut,
@@ -22,7 +21,7 @@ import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
 import { NotificationBell } from '../NotificationBell';
 import { AppShell, Sidebar, Header, useTheme } from '@noctusai/lib/design-system';
-import type { NavGroup, NavItem } from '@noctusai/lib/design-system';
+import type { NavGroup } from '@noctusai/lib/design-system';
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -49,10 +48,6 @@ const NAV_GROUPS: NavGroup[] = [
       { name: 'Configuracoes', href: '/admin/settings', icon: Settings },
     ],
   },
-];
-
-const FOOTER_NAV: NavItem[] = [
-  { name: 'Voltar ao Painel', href: '/', icon: ArrowLeft },
 ];
 
 export function Layout({ children }: { children?: React.ReactNode }) {
@@ -94,8 +89,8 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           brandIcon={Zap}
           brandTitle="NoctusAI"
           brandSubtitle="Admin"
+          brandHref="/"
           navGroups={NAV_GROUPS}
-          standaloneItems={FOOTER_NAV}
         />
       }
       header={({ onMenuToggle }) => (
