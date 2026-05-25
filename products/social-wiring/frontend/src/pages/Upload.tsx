@@ -14,7 +14,7 @@
  * Rendered inside the YouTube page (and architected so Upload + Vídeos fuse
  * cleanly later).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -460,7 +460,7 @@ function DriveUploadTab({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const { uploadFromDrive, pending } = useUploadMutations();
 
-  useMemo(() => {
+  useEffect(() => {
     if (recipients.length === 0) return;
     setSelected((prev) => {
       if (prev.size > 0) return prev;
@@ -562,7 +562,7 @@ function HistoryRow({ job }: { job: UploadJob }) {
 function HistoryCard({ activeJobId }: { activeJobId: string | null }) {
   const { data, loading, refresh } = useUploadHistory(25);
   const { job: active } = useUploadStatus(activeJobId);
-  useMemo(() => {
+  useEffect(() => {
     if (active && isTerminal(active.status)) {
       void refresh();
     }
