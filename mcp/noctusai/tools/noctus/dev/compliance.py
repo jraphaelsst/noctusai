@@ -1127,6 +1127,13 @@ _IMPROVEMENTS_BLOCK_RE = re.compile(r'\*\*Improvements\b[^*]*\*\*', re.MULTILINE
 _NON_SHIPPED_ICONS = {"⏳", "❌", "🅿️"}
 _SHIPPED_ICON = "✅"
 
+# Greppable sentinel that `templates/PROJECT-TEMPLATE.md` ships INSIDE every
+# phase's `**Improvements:**` block, so agents can never silently SKIP the
+# (obligatory) block. Rule 5 fails a `✅` phase whose block still carries it —
+# forcing a real fill ("none identified." counts; the placeholder does not).
+# Find unfilled blocks with `grep -rn NOC-FILL-IMPROVEMENTS`.
+_IMPROVEMENTS_PLACEHOLDER = "NOC-FILL-IMPROVEMENTS"
+
 
 def _icon_in_line(line: str) -> str | None:
     """Return the first phase-status icon found in a line, or None."""
@@ -1346,6 +1353,26 @@ def check_phase_state_consistency(repo_root: Path | None = None) -> list[dict]:
                         f"`✅` but lacks an `**Improvements:**` block. Add the block (or "
                         f"`**Improvements:** none identified.`) before flipping `✅` per the "
                         f"5-point self-check."
+                    ),
+                    "severity": "high",
+                })
+
+            # Rule 5: header has ✅ AND an Improvements block, but the block
+            # still carries the template's unfilled placeholder — i.e. the
+            # obligatory block shipped but was never actually filled. A real
+            # fill is required ("none identified." counts; the placeholder does
+            # not). Greppable: `grep -rn NOC-FILL-IMPROVEMENTS`.
+            if header_has_check and has_improvements and _IMPROVEMENTS_PLACEHOLDER in body:
+                issues.append({
+                    "product": product_label,
+                    "file": rel_str,
+                    "issue": (
+                        f"Phase {phase_num} of `{rel_str}` (line {header_ln}) header carries "
+                        f"`✅` but its `**Improvements:**` block still contains the unfilled "
+                        f"template placeholder (`{_IMPROVEMENTS_PLACEHOLDER}`). FILL it — list the "
+                        f"methodology improvements spotted this phase, or write "
+                        f"`**Improvements:** none identified.` — before flipping `✅`. The block is "
+                        f"obligatory AND must not remain the default placeholder."
                     ),
                     "severity": "high",
                 })

@@ -161,17 +161,25 @@ If you genuinely found nothing worth flagging, write a one-line block saying so:
 
 `improvements.md` is the project's **retrospective knowledge base** — when a future iteration reworks any phase, the improvement notes gathered during the original build are the first thing to read. The **phase proposal** in the project's `proposals/` folder (at whichever of the two locations the project lives) is the platform-wide triage queue for the same content, reorganized around execution. Running both tools is **mandatory** — skipping either orphans the signal.
 
+> **OBLIGATORY — every phase ships an `**Improvements:**` block, and it MUST be filled.** Each phase below is scaffolded with the block pre-seeded with the greppable placeholder `NOC-FILL-IMPROVEMENTS`. Before you flip a phase to `✅`, **replace** that placeholder with the real content (the improvements spotted this phase, or the literal `**Improvements:** none identified.` when there genuinely were none). The block is *never optional* and **must not remain the placeholder** — `check_phase_state_consistency` Rule 5 fails a `✅` phase whose block still contains `NOC-FILL-IMPROVEMENTS` (find unfilled blocks anytime with `grep -rn NOC-FILL-IMPROVEMENTS`). "None identified" is a real, valid fill; the placeholder is not.
+
 ### Phase 1 — {{Phase name, e.g. "Foundation (migration + core models)"}}
 - [ ] {{task}}
 - [ ] {{task}}
 
+**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
+
 ### Phase 2 — {{Phase name}}
 - [ ] {{task}}
+
+**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
 
 ### Phase 3 — {{Phase name}}
 - [ ] {{task}}
 
-*(Add phases as needed. Add the status icon to the phase header when state changes.)*
+**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
+
+*(Add phases as needed — each new phase carries the same pre-seeded `**Improvements:**` placeholder. Add the status icon to the phase header when state changes.)*
 
 ---
 

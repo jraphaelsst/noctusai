@@ -464,6 +464,40 @@ class TestPhaseStateConsistency:
         issues = check_phase_state_consistency(repo)
         assert any("lacks an `**Improvements:**` block" in i["issue"] for i in issues), issues
 
+    def test_header_flipped_but_improvements_block_unfilled_placeholder(self):
+        """Rule 5: header has ✅ AND an `**Improvements:**` block, but the block
+        still carries the template's unfilled `NOC-FILL-IMPROVEMENTS` placeholder —
+        i.e. the obligatory block shipped but was never filled."""
+        content = (
+            "# Test\n\n"
+            "## 6. Implementation phases\n\n"
+            "### Phase 1 — Foo ✅\n"
+            "- [x] Did it\n\n"
+            "**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase "
+            "flips ✅: replace with the improvements spotted, or \"none identified.\"_\n\n"
+            "## 11. Change log\n\n"
+        )
+        repo = self._mk_repo(content)
+        issues = check_phase_state_consistency(repo)
+        assert any("unfilled" in i["issue"] and "placeholder" in i["issue"] for i in issues), issues
+        assert all(i["severity"] == "high" for i in issues if "placeholder" in i["issue"])
+
+    def test_improvements_block_filled_none_identified_is_clean(self):
+        """A ✅ phase whose Improvements block is filled with the sanctioned
+        `none identified.` (NOT the placeholder) is clean under Rule 5."""
+        content = (
+            "# Test\n\n"
+            "## 6. Implementation phases\n\n"
+            "### Phase 1 — Foo ✅\n"
+            "- [x] Did it\n\n"
+            "**Improvements:** none identified.\n\n"
+            "## 11. Change log\n\n"
+            "| 2026-05-25 | Phase 1 ✅ shipped | agent |\n"
+        )
+        repo = self._mk_repo(content)
+        issues = check_phase_state_consistency(repo)
+        assert not any("placeholder" in i["issue"] for i in issues), issues
+
     def test_partial_or_blocked_icons_legitimate(self):
         """Phases marked ⏳, ❌, or 🅿️ are legitimate non-shipped states; not flagged."""
         content = (

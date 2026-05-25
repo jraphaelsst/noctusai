@@ -268,7 +268,7 @@ No step in this workflow is optional.
 
 1. **§6 phase header** — does it carry the `✅` icon? (Or `⏳` if partial; never blank-after-shipped.)
 2. **§6 sub-tasks** — are all `- [ ]` flipped to `- [x]`? (Verify ALL of them — a single un-ticked checkbox lies.)
-3. **§6 `**Improvements:**` block** — is it filled in (or `none identified.`)? Empty placeholder text means the synthesis step was skipped.
+3. **§6 `**Improvements:**` block** — **OBLIGATORY and must be FILLED.** Every phase ships the block (the template pre-seeds each phase with the greppable `NOC-FILL-IMPROVEMENTS` placeholder so it can't be silently skipped). Before `✅`, **replace the placeholder** with real content — the improvements spotted this phase, or the literal `**Improvements:** none identified.` when there genuinely were none. The block being *present but still the placeholder* means the synthesis step was skipped — that is a fail, not a pass. "None identified" is a valid fill; the placeholder is not. (`grep -rn NOC-FILL-IMPROVEMENTS` finds every unfilled block.)
 4. **§11 entry** — does it exist + name what shipped + what verification ran?
 5. **`improvements.md` regenerated** — did `noctus.dev.improvements` run after the tick?
 
@@ -277,7 +277,7 @@ No step in this workflow is optional.
 **Anti-pattern (the slip):** "I'll update §11 first because that's where the rich narrative lives, then I'll come back and flip the checkboxes" — and forgetting the second half. **Do it in order: tick first, narrate second.** The narrative is allowed to be terser than the live state; the live state is NEVER allowed to lag the narrative.
 
 **Enforcement (live since 2026-04-28):**
-- `check_phase_state_consistency` ships in `mcp/noctusai/tools/compliance.py` — walks every `PROJECT.md` across `projects/`, `products/*/projects/`, `core/projects/`. Flags four drift classes: (1) §11 says shipped but §6 header lacks `✅`, (2) header has `✅` but sub-tasks remain `- [ ]`, (3) header has `✅` but no `**Improvements:**` block, (4) §11 says shipped but §6 has both unflipped header AND unticked sub-tasks (the dashboard-lying case). Severity `high`. `⏳`/`❌`/`🅿️` icons recognized as legitimate non-shipped states; not flagged.
+- `check_phase_state_consistency` ships in `mcp/noctusai/tools/compliance.py` — walks every `PROJECT.md` across `projects/`, `products/*/projects/`, `core/projects/`. Flags five drift classes: (1) §11 says shipped but §6 header lacks `✅`, (2) header has `✅` but sub-tasks remain `- [ ]`, (3) header has `✅` but no `**Improvements:**` block, (4) §11 says shipped but §6 has both unflipped header AND unticked sub-tasks (the dashboard-lying case), (5) header has `✅` AND an Improvements block but the block still contains the template's unfilled `NOC-FILL-IMPROVEMENTS` placeholder — the obligatory block shipped but was never actually filled (codified 2026-05-25 after the missing-Improvements-block slip recurred N≥3; the template now pre-seeds the placeholder so absence becomes *unfilled-placeholder*, which Rule 5 catches). Severity `high`. `⏳`/`❌`/`🅿️` icons recognized as legitimate non-shipped states; not flagged.
 - Wired into `check_all_products()` so every `python mcp/noctusai/cli.py --validate` run picks it up automatically.
 - Exposed as `python mcp/noctusai/cli.py --check-phase-state` for direct invocation; exits `1` on any high-severity issue.
 - Pre-commit hook `scripts/hooks/pre-commit § 5` runs the detector ONLY when `**/PROJECT.md` is in the staged set (perf — zero overhead on commits that don't touch project docs). Blocks the commit on drift.
