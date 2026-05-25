@@ -52,11 +52,12 @@ zero-arg FastAPI dependency yielding the bound instance; routers
 override test: `seed/framework/backend/noctusai_seed/config.py` /
 `seed/framework/backend/tests/test_config.py` (shipped 2026-05-25).
 
-**Adoption status:** social-wiring currently wires a **product-local**
-`get_settings` (`app/dependencies.py`) + a `build_credential_store(client, *,
-encryption_key=…)` kwarg seam — the Class-A landing that drained its baseline.
-Migrating those product-local seams to consume `noctusai_seed.make_get_settings`
-is the open consume-step (follow-up `seed-config-di-consume`).
+**Adoption status:** social-wiring **consumes the seed factory** —
+`app/dependencies.py` is `get_settings = make_get_settings(settings)` (2026-05-25,
+first adopter). `build_credential_store(client, *, encryption_key=…)` stays a
+product-local config-value kwarg seam (a different injection — not the settings
+dep). erp / core / daily-life carry the same `monkeypatch.setattr(settings, …)`
+shape and adopt in a later pilot-gated wave (`seed-config-di-consume` fleet rollout).
 
 ## Authoritative depth
 

@@ -45,24 +45,22 @@ from noctusai_lib.api.auth.session import (
     FakeSessionStore,
     make_get_auth_context,
 )
+from noctusai_seed import make_get_settings
+
 from app.config import settings
 from app.sqlite_client import SQLiteClient
 
 _logger = _logging.getLogger(__name__)
 
 
-def get_settings() -> "SocialWiringSettings":
-    """FastAPI dependency returning the product settings singleton.
-
-    The honest DI seam for config-value access: routers depend on
-    ``Depends(get_settings)`` and read ``cfg.X`` off the returned object;
-    tests override via ``app.dependency_overrides[get_settings]`` (see the
-    ``override_settings`` conftest fixture) instead of
-    ``monkeypatch.setattr(settings, "X", ...)`` — which trips
-    ``check_no_self_monkeypatch``. Per ``KB § PATTERNS/di-test-seam.md``
-    (Class-A — Pydantic-settings-via-Depends).
-    """
-    return settings
+# FastAPI dependency returning the product settings singleton — the honest
+# Class-A DI seam: routers ``Depends(get_settings)`` read ``cfg.X``; tests
+# override via ``app.dependency_overrides[get_settings]`` instead of
+# ``monkeypatch.setattr(settings, "X", ...)`` (which trips
+# ``check_no_self_monkeypatch``). Consumes the seed factory
+# ``noctusai_seed.make_get_settings`` — the N>=3 settings-DI formalization —
+# rather than a product-local def. Per ``KB § PATTERNS/di-test-seam.md`` Class-A.
+get_settings = make_get_settings(settings)
 
 
 _sqlite_client = SQLiteClient(settings.sqlite_path)
