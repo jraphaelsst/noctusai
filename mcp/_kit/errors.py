@@ -29,4 +29,23 @@ def typed_error(e: Exception) -> dict:
     }
 
 
-__all__ = ["typed_error"]
+def confirmation_required_message(
+    action: str, effect: str = "", *, noun: str = "write action"
+) -> str:
+    """The standard confirm-then-execute message (was hand-copied across
+    n8n/waha/hostinger/cloudflare/supabase `ConfirmationRequiredError`s).
+
+    Each connector keeps its OWN `ConfirmationRequiredError` subclass (so its
+    `<Vendor>ApiError` type identity + the 412 status are preserved) but builds
+    the message here — de-duping the only part that was actually identical.
+    `noun` carries the lone wording variation (hostinger: "write/power action").
+    """
+    return (
+        f"'{action}' is a {noun}"
+        + (f" — {effect}" if effect else "")
+        + ". Re-call with confirm=true to perform it. NO side-effect "
+        "was performed."
+    )
+
+
+__all__ = ["typed_error", "confirmation_required_message"]

@@ -21,7 +21,14 @@ from .bootstrap import (
     prepare_sys_path,
     run_stdio_server,
 )
-from .errors import typed_error
+from .errors import confirmation_required_message, typed_error
+from .transport import (
+    BROWSER_USER_AGENT,
+    DEFAULT_USER_AGENT,
+    ConnectorHttpError,
+    normalize_base_url,
+    request_json,
+)
 from .registry import build_registry
 from .seed_pin import pin_in_tree_seed
 from .settings import ConnectorSettings, make_get_settings
@@ -31,6 +38,12 @@ __all__ = [
     "make_get_settings",
     "build_registry",
     "typed_error",
+    "confirmation_required_message",
+    "request_json",
+    "normalize_base_url",
+    "ConnectorHttpError",
+    "BROWSER_USER_AGENT",
+    "DEFAULT_USER_AGENT",
     "prepare_sys_path",
     "pin_in_tree_seed",
     "configure_stderr_logging",
