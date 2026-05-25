@@ -1,7 +1,7 @@
 # prod-deploy-compose-durable-relocate — Project Document
 
 - **Created:** 2026-05-25
-- **Status:** 📋 Filed (follow-up) — surfaced during the 2026-05-25 full-fleet prod deploy
+- **Status:** ⏳ Phase A SHIPPED (`18dce993`) + release/deploy_pull DONE (steps 1–2) — VPS-side tail (steps 3–6) handed off to `projects/prod-deploy-compose-vps-cutover/`
 - **Owner:** joaoraphaelsst · architect
 - **Priority:** HIGH — a deploy-local stopgap is currently load-bearing on the live VPS.
 
@@ -85,10 +85,12 @@ A timestamped backup of the pre-reconcile config sits next to it (`config.yml.ba
 - **Item 3 unnecessary as written.** The durable-refs gate already `git grep`s **all** tracked files (only `projects/`+`archive/`+`project-history/` excluded) → it ALREADY scans `.py` constants. The gap that let the original archive through was **temporal** (the gate postdated it), not a scanning-scope limit. So "extend the gate" = a no-op; the right artifact is the regression test above (done).
 - **`legacy/` deferred (rationale, named destination = this project):** its `compose.legacy.yml` build context points at `../../reference/one-permutas` (an archived source dir); relocating it cleanly needs that source relocated too (can't point `deploy/` into `archive/`). Out of the tooling-fix scope; tracked here.
 
-**Gated tail — REMAINING (needs user consent + an MCP restart; NOT yet done):**
-1. Release: `noctus.dev.release bless` (`dev`→`main`) → `promote` (`main`→`prod`) — user-gated.
-2. `noctus.dev.deploy_pull confirm=True` → the VPS gets `deploy/`.
-3. **MCP server restart (USER action)** — so the running `deploy_image`/`vps` tools load the new `DEFAULT_COMPOSE`.
-4. Re-point the running compose projects on the VPS to `deploy/fleet/docker-compose.prod.yml` (per-product `up -d --force-recreate`; project name `noctusai-products-prod` is stable → containers migrate cleanly), then **remove the §2 deploy-local stopgap** at the old `projects/…` path.
-5. Reconcile the durable `deploy/tunnel/config.yml.template` + `ingress.yml` from the **live** VPS `config.yml` (§7) — author from the live file, not the stale snapshot.
-6. Live-probe the fleet, then **archive this project with learnings absorbed** (learn-before-archive gate).
+**Gated tail — steps 1–2 DONE (2026-05-25), steps 3–6 HANDED OFF:**
+1. ✅ Release: `noctus.dev.release bless` (`dev`→`main`, 13 commits) → `promote` (`main`→`prod`, 44 commits) — `prod` now `18dce993`; `prod-backup` = previous prod `c3c22eee` (rollback pointer).
+2. ✅ `noctus.dev.deploy_pull confirm=True` — VPS git fast-forwarded to `18dce993` (`deploy/` now physically on the VPS); stopgap + `.env`/creds preserved; pre-pull backup tag `backup/predeploy-20260525-152343` + tar `/opt/noctus/backups/20260525-152343.tgz`. Running containers UNCHANGED (deploy_pull ≠ rollout); the §2 stopgap stays load-bearing until the MCP restart.
+3. 🅿️ **MCP server restart (USER action)** — so the running `deploy_image`/`vps` tools load the new `DEFAULT_COMPOSE`.
+4. Re-point the running compose project on the VPS to `deploy/fleet/docker-compose.prod.yml`, then **remove the §2 deploy-local stopgap**.
+5. Reconcile the durable `deploy/tunnel/config.yml.template` + `ingress.yml` from the **live** VPS `config.yml` (§7).
+6. Live-probe the fleet, then **archive this project (+ the follow-up) with learnings absorbed** (learn-before-archive gate).
+
+> **Steps 3–6 are now their own handoff project: `projects/prod-deploy-compose-vps-cutover/PROJECT.md`** (filed 2026-05-25; zero-context brief; 🅿️ blocked until the user restarts the MCP). A fresh-session agent picks it up after the restart. That project also carries the **44-commit rollout coordination note** (the promote shipped live-product fixes the 3 deployed products don't yet run — decide re-point-only vs re-point-and-ship at its Phase 1).
