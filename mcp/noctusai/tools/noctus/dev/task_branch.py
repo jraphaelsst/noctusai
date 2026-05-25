@@ -152,6 +152,22 @@ def _parse_worktrees(porcelain: str) -> list[dict[str, str]]:
     return blocks
 
 
+def _branch_for_path(porcelain: str, wt_path: str) -> str | None:
+    """Resolve the ACTUAL branch checked out at `wt_path` from `git worktree list
+    --porcelain`, keyed by the dir (the stable identity). Robust to a reused /
+    renamed worktree whose branch ≠ feat/<slug> — without this the cleanup slug→
+    branch assumption resolves a nonexistent branch, so the recovery-pointer leg
+    silently no-ops and `branch -d` fails (the 2026-05-25 dogfood gap). Returns the
+    short branch name (refs/heads/ stripped) or None (detached HEAD / not found)."""
+    base = os.path.basename(wt_path.rstrip("/"))
+    for wt in _parse_worktrees(porcelain):
+        p = wt.get("path", "")
+        if p == wt_path or p.endswith("/" + wt_path) or os.path.basename(p.rstrip("/")) == base:
+            br = wt.get("branch", "")
+            return br[len("refs/heads/"):] if br.startswith("refs/heads/") else None
+    return None
+
+
 # ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
 # A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,
 # so a vite build / vitest run inside the worktree fails for want of deps. The
@@ -449,6 +465,16 @@ def task_branch(
     #   2 RECOVERY POINTER (MECHANICAL, below): branch+SHA → the tracked ledger.
     #   3 STORAGE HYGIENE (sequenced): a mole worktree-sweep before the delete.
     git("fetch", remote, "--quiet")
+    # Resolve the worktree's ACTUAL branch from the worktree list (the dir is the
+    # stable key) — robust to a reused/renamed worktree whose branch ≠ feat/<slug>.
+    # Without this the slug→branch assumption resolves a nonexistent branch, so the
+    # recovery-pointer leg silently no-ops + branch -d fails (2026-05-25 dogfood
+    # gap, fixed on contact).
+    rc_wl, wl_out, _wl = git("worktree", "list", "--porcelain")
+    actual = _branch_for_path(wl_out if rc_wl == 0 else "", wt_path)
+    if actual and actual != branch:
+        branch = actual
+        base["branch"] = branch
     dev = _resolve(git, f"{remote}/{dev_branch}")
     head = _resolve(git, branch)
     merged = bool(dev and head and _is_ancestor(git, head, dev))
@@ -558,4 +584,5 @@ def register(server) -> None:
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_assert_push_targets_dev",
-           "_parse_worktrees", "_plan_env_wiring", "_apply_env_wiring", "FsOps", "register"]
+           "_parse_worktrees", "_branch_for_path", "_plan_env_wiring", "_apply_env_wiring",
+           "FsOps", "register"]

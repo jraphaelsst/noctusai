@@ -281,6 +281,51 @@ def test_cleanup_records_recovery_pointer_before_removing_the_worktree():
     assert order == ["salvage", "remove"]   # recovery pointer recorded first
 
 
+def test_cleanup_resolves_actual_branch_for_reused_worktree_dir():
+    """A reused/renamed worktree whose dir (`sw-waha-youtube`) ≠ feat/<slug>
+    (`feat/salvage-before-delete`): cleanup must resolve the ACTUAL branch from the
+    worktree list (keyed by dir) so the recovery-pointer leg records the real
+    branch — not silently no-op on a nonexistent feat/<slug>, leaving the real
+    branch dangling. The 2026-05-25 dogfood regression."""
+    porcelain = (
+        "worktree /repo\nHEAD m0\nbranch refs/heads/dev\n\n"
+        "worktree /repo/.claude/worktrees/sw-waha-youtube\n"
+        "HEAD b0\nbranch refs/heads/feat/salvage-before-delete\n"
+    )
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/salvage-before-delete": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+        porcelain=porcelain,
+    )
+    rec = _capture_recorder()
+    res = T.task_branch(action="cleanup", slug="sw-waha-youtube", confirm=True,
+                        run=fake, primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    # the ACTUAL branch (not feat/sw-waha-youtube) was resolved, recorded + deleted
+    assert res["branch"] == "feat/salvage-before-delete"
+    assert fake.ran("branch -d feat/salvage-before-delete")
+    _root, removed = rec.captured[0]
+    assert removed[0]["branch"] == "feat/salvage-before-delete"
+    assert removed[0]["sha"] == "b0"
+    # the worktree dir (the stable key) is still removed by its path
+    assert fake.ran("worktree remove .claude/worktrees/sw-waha-youtube")
+
+
+def test_branch_for_path_keys_on_dir_not_slug():
+    """Unit: _branch_for_path matches by dir path/basename, returns the real
+    branch; None for a detached or absent worktree."""
+    porcelain = (
+        "worktree /repo/.claude/worktrees/sw-waha-youtube\n"
+        "HEAD b0\nbranch refs/heads/feat/salvage-before-delete\n"
+    )
+    assert T._branch_for_path(porcelain, ".claude/worktrees/sw-waha-youtube") == \
+        "feat/salvage-before-delete"
+    assert T._branch_for_path(porcelain, ".claude/worktrees/absent") is None
+    # detached HEAD (no branch line) → None
+    assert T._branch_for_path("worktree /repo/.claude/worktrees/x\nHEAD b0\n",
+                              ".claude/worktrees/x") is None
+
+
 def test_cleanup_blocked_when_branch_unmerged():
     fake = FakeGit(
         refs={"origin/dev": "d0", "feat/x": "b0"},
