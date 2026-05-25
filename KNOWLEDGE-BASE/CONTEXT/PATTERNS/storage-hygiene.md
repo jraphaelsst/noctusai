@@ -103,7 +103,19 @@ This matches the **keeper observation-only contract**: detect + report + recomme
 
 **Shared-stash false positive (THE-P11 fix, 2026-05-12).** Linked worktrees share `refs/stash` with the main repo — `git stash list` inside an engineer worktree reports the SAME stashes that exist in main. The naive `wc -l` count credited each linked worktree with N "stashes" (where N was usually 10, the main repo's stash count from accumulated parallel-agent rescue captures). Mole's `STALE_DIRTY` guard then refused to sweep, on the (false) assumption that those stashes were recoverable WIP unique to the worktree. The fix subtracts main's stash commit-hash set from each worktree's set; only stashes UNIQUE to the worktree count as recovery-required WIP. Effect on the 2026-05-12 incident: 65 surviving worktrees had `unique_stash_count == 0` → would have classified as STALE (sweepable), not STALE_DIRTY.
 
+#### Learn/extract-before-delete — the worktree analogue of `archive`'s learn-before-archive (2026-05-25)
+
+**A worktree being deleted is the worktree analogue of a project being archived** — and it suffers the **identical drift**: important content lost on removal. Project-archiving fixed this with an **extraction step** (`noctus.dev.archive` = *learn-before-archive, never deletion*: extract learnings → KB/memory, record provenance in the **tracked** `project-history/ledger.ndjson`, refuse if a tracked surface still points in). Worktree salvage MUST mirror it. We re-hit the drift 2026-05-25: a manual salvage dumped recovery to `~/noctus-worktree-salvage-<date>/` (out-of-repo) — a **transient net, NOT a durable home** (it gets deleted/forgotten exactly like a pre-extraction archive).
+
+Before removing a worktree/branch carrying **unique committed work OR uncommitted diffs** (the merged-clean majority needs none — their content is already on `dev`), run the extraction, the three legs mirroring `archive`:
+1. **Learnings → codification pipeline.** Any reusable knowledge in the work (a pattern, fix, gotcha, recurrence) lands in its durable home (KB / memory / `findings.md`, s1→s4) BEFORE the worktree is gone — same contract as learn-before-archive. *Appended ≠ extracted*: a transient `.diff` is recovery, not a learning.
+2. **Recovery record → a TRACKED ledger.** The deleted worktree/branch SHAs + one-line provenance land in a **repo-tracked** salvage record so recovery survives the salvage-dir's deletion — the worktree analogue of `project-history/ledger.ndjson` (target: `project-history/worktree-salvage.ndjson`). Out-of-repo `.diff` patches stay a *transient convenience*, never the sole record.
+3. **Durable-refs gate.** Do not delete a worktree/branch whose unique work a tracked surface still depends on (mirror `archive`'s refuse-if-referenced gate).
+
+Merged-clean sweep is extraction-no-op (content already on `dev`) — the step fires only on unique/uncommitted removals. **Status:** methodology now; folding the `archive`-style extraction + tracked-ledger directly into `mole sweep` / `cleanup_stale_worktrees` (so the gate is mechanical, not discipline) is the filed follow-up. Sibling: `KB § PATTERNS/project-execution.md` (learn-before-archive) · `01-PHILOSOPHY.md § Durable docs are self-contained`.
+
 **Anti-patterns**:
+- **Salvaging only to an out-of-repo dir** (`~/…-salvage-*/`) and calling it done — that's the transient net, not the durable extraction; learnings + a tracked recovery record must land first (the 2026-05-25 re-drift).
 - Removing a worktree whose branch has UNMERGED commits — loses the engineer's work
 - Removing the main worktree (the repo root itself)
 - Removing sibling workspaces (paths NOT under `.claude/worktrees/agent-*/`) — those are user-managed seed workspaces
