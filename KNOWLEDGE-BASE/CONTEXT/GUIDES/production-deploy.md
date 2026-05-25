@@ -203,6 +203,17 @@ Ingress is a single source of truth (`deploy/tunnel/ingress.yml`) → remap a sl
 
 Real subdomains chosen in A are the **final URLs**. When the domain reaches Cloudflare: bring up the tunnel (B), create the CNAMEs, verify, then stop Caddy. The `<slug>.<domain>` URLs never change — only the plumbing.
 
+#### A → B per-host cutover — the CANARY-FIRST runbook (proven 2026-05-25 on `seed`)
+
+The live edge was Caddy (Option A, all subdomains **grey-cloud A → VPS:443**); the zone is on CF, so we cut each host over to the tunnel one at a time, **lowest-stakes first** (`seed`, the reference/canary), money hosts (apex/core/erp/social) last — `[[feedback_canary_first_infra_migration]]`. **Keep Caddy running until every host is verified on the tunnel** — that IS the rollback (flip the record back to grey). Per host:
+
+1. **Ingress rule** — the tunnel `config.yml` must serve the *exact live hostname* (the Caddy host set uses SHORT names — `erp.noctusai.com`, `social.noctusai.com` — NOT the full-slug names the old ingress snapshot had; reconcile to the live names). Add `- hostname: <host>` / `service: http://<container>:<houseport>` (container == compose service name on `noctus-net`; houseport == the product's uvicorn port). Then `docker restart noctus-tunnel` (single-file bind-mount → restart, not reload — stale-inode §6).
+2. **DNS flip** — change the host's record from grey `A → <vps-ip>` to **proxied `CNAME → <tunnel-id>.cfargotunnel.com`** (orange). Via the CF API (token in `mcp/cloudflare/.env`): `GET zones?name=<zone>` → zone_id; `GET zones/<zid>/dns_records?name=<host>` → record_id; `PUT …/dns_records/<rid>` `{"type":"CNAME","name":"<host>","content":"<tunnel-id>.cfargotunnel.com","proxied":true,"ttl":1}`. (Or the CF panel; or `cloudflared tunnel route dns` if a `cert.pem` exists — it did NOT on this VPS.)
+3. **Verify** — `dig +short <host>` shows CF IPs (`104.x`/`172.67.x`), not the VPS IP; `curl https://<host>/api/health` → 200 (CF edge → tunnel → container, **zero VPS ports**). Retry a few times for propagation (CF-proxied is seconds).
+4. **Cross-product caveat** — a product's SSO + dashboard tile additionally need `core` to know its origin: `PRODUCT_URL_<SLUG>` in the VPS `.env` (CORS `@registry:all` + nav) + `--force-recreate core`. The *tunnel serving the app* is independent of this; SSO/tile are the follow-on.
+
+**After ALL hosts are on the tunnel + verified:** stop `noctus-caddy`, close VPS ports 80/443, and **relocate the deploy configs** (`tunnel/config.yml`, `caddy/Caddyfile`, `docker-compose.prod.yml`) out of `projects/<deploy-project>/` to a durable home — the Caddyfile host-source went MISSING under `projects/` (container ran a stale inode), the exact `[[durable-config-not-anchored-to-projects]]` fragility. The tunnel is a single egress dependency (watch `cloudflared` logs for `:7844` flap before trusting money hosts on it).
+
 ## 5 · Decommissioning a prior PaaS (e.g. Coolify) — preserve stateful data
 
 If the box ran a PaaS managing stateful services (n8n/waha/postgres/redis), migrate them to **raw compose reusing the EXISTING named volumes** before removing the PaaS:
