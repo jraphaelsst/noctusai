@@ -60,12 +60,27 @@ seed data remain code; *operational, page-related data management* belongs on th
 page that owns it.) Because every product has its own pages, **every product
 inherits this mandate** — it propagates with the rule.
 
-**Automated mechanism:** `noctus.dev.scan_wiring <product>` (the static legs — 2,
-4, 5) — FE-endpoint → backend-route existence + the `name`-on-`nome` lint +
-the shared-catch anti-pattern. The runtime leg (3) is a live probe (auth-gated;
-see the admin-probe pattern in the trigger session). Until the tool ships, the
-checklist is the manual procedure (it found 3 prod 500s this session that
-route-existence checks all passed).
+**Automated mechanism:** the static legs (2, 4, 5) ship on **two surfaces from
+one predicate** (DRY): the `noctus.dev.scan_wiring <product>` MCP tool (on-demand,
+per-product report) AND — codified as **Stage-4 keeper detectors** (regulatory:
+compliance gate + pre-commit) — `check_fe_route_missing` (leg 2 — FE-endpoint →
+backend-route existence, severity `high`) + `check_name_on_nome_select` (leg 5 —
+the `name`-on-`nome` 500 lint, severity `high`) + `check_promise_all_shared_catch`
+(leg 4 — the shared-catch all-zeros anti-pattern, severity `warning`). Both the
+tool and the keepers import the SAME three pure leg analyzers from
+`mcp/noctusai/tools/noctus/dev/scan_wiring.py` (`analyze_missing_routes` /
+`analyze_name_on_nome` / `analyze_promise_all_shared_catch`) — one predicate, two
+surfaces, no copy-paste. The keepers are wired into `check_all_products()` +
+`review.py::_detect()` with colocated `tests/test_product_wiring_keeper.py`
+regression tests (true-positive + false-positive shapes pinned). The 32
+pre-existing leg-2 findings the keeper surfaced (adconnect / erp-imobiliario /
+therapy-platform FE calls with no matching backend route) were absorbed into the
+high/critical regression baseline (`tests/compliance_baseline.json`, grow-only
+with cited triage — genuine pre-existing wiring debt, not a regression to
+silence; leg-4 `warning` findings never enter the baseline by severity). The
+runtime leg (3) + the page-scoped-CRUD leg (7) are NOT deterministic and STAY
+advisory: leg 3 is a live auth-gated endpoint probe (see the admin-probe pattern
+in the trigger session); leg 7 needs judgment (the read-only/derived carve-out).
 
 ## 3 · When it fires
 

@@ -648,6 +648,88 @@ def _under_shared_try_catch(content: str, promise_start: int, promise_end: int) 
 
 
 # ---------------------------------------------------------------------------
+# Per-leg pure analyzers — the SHARED predicates.
+#
+# These three functions are the single source of truth for the static legs.
+# BOTH surfaces consume them:
+#   1. `scan_wiring()` (this module → the `noctus.dev.scan_wiring` MCP tool).
+#   2. The keeper detectors `check_fe_route_missing` / `check_name_on_nome_select`
+#      / `check_promise_all_shared_catch` in `tools/noctus/dev/compliance.py`
+#      (the regulatory Stage-4 layer — compliance gate + pre-commit).
+# One predicate, two surfaces — no copy-paste (DRY). Each returns the raw
+# `WiringFinding` list; the keeper adapts those into the keeper dict shape.
+# ---------------------------------------------------------------------------
+
+def analyze_missing_routes(
+    fe_root: Path,
+    be_root: Path,
+    repo_root: Path,
+) -> list[WiringFinding]:
+    """Leg A — FE `api.<method>('<path>')` calls with no matching backend route.
+
+    Pure predicate: extract every literal FE api-call + the registered backend
+    routes (decorator path + APIRouter/include_router prefix + seed-framework
+    routers), then flag each FE call whose (method, normalized-path) matches no
+    route. Route-exists ≠ wired — this is the 404/route-missing class.
+    """
+    if not fe_root.exists():
+        return []
+    fe_calls = _extract_fe_calls(fe_root, repo_root)
+    be_scan = _scan_backend_routes(be_root, repo_root=repo_root) if be_root.exists() else _BeRouteScan()
+    missing: list[WiringFinding] = []
+    for call in fe_calls:
+        if not _route_matches(call.method, call.norm_path, be_scan.routes):
+            missing.append(WiringFinding(
+                file=call.file,
+                line=call.line,
+                detail=(
+                    f"FE calls `api.{call.method}('{call.raw_path}')` but no "
+                    f"backend route matches (method={call.method.upper()}, "
+                    f"normalized={call.norm_path}). Route-exists ≠ wired — this "
+                    f"is a 404/route-missing class."
+                ),
+            ))
+    return missing
+
+
+def analyze_name_on_nome(
+    be_root: Path,
+    fe_root: Path,
+    repo_root: Path,
+) -> list[WiringFinding]:
+    """Leg B — PostgREST selecting `name` on a `nome`-table (the 500 class).
+
+    Pure predicate: scan backend `.py` + FE `.ts/.tsx` for a select/embed of
+    `(plans|products|organizations)(...name...)`. The platform schema is
+    Portuguese — those tables use `nome`, so selecting `name` is the recurring
+    500 (it zeroed the core admin dashboard).
+    """
+    return _scan_name_on_nome(
+        roots=[
+            (be_root, (_BE_EXT,)),
+            (fe_root, _FE_EXTS),
+        ],
+        repo_root=repo_root,
+    )
+
+
+def analyze_promise_all_shared_catch(
+    fe_root: Path,
+    repo_root: Path,
+) -> list[WiringFinding]:
+    """Leg C — `Promise.all([bare fetches])` under one shared try/catch.
+
+    Pure predicate: flag a `Promise.all` of bare `api.*` fetches (no per-element
+    `.catch`) inside a single shared `try { ... } catch` — one failure zeros
+    every result (the all-zeros dashboard bug). Per-element `.catch()` degrades
+    independently and is CORRECT (not flagged).
+    """
+    if not fe_root.exists():
+        return []
+    return _scan_promise_all_shared_catch(fe_root, repo_root)
+
+
+# ---------------------------------------------------------------------------
 # The scan (pure function — testable with a tmp_path mini-product tree)
 # ---------------------------------------------------------------------------
 
@@ -682,34 +764,19 @@ def scan_wiring(
     fe_root = product_dir / "frontend"
     be_root = product_dir / "backend"
 
-    # --- Leg A: FE calls → backend routes ---
+    # All three legs delegate to the SHARED per-leg analyzers (the predicates
+    # the keeper detectors also consume — single source of truth, no dup).
+    # Leg A diagnostics (fe_calls_found / backend_routes_found) are recomputed
+    # here cheaply for the tool's report; the keeper doesn't need them.
     fe_calls = _extract_fe_calls(fe_root, root) if fe_root.exists() else []
     be_scan = _scan_backend_routes(be_root, repo_root=root) if be_root.exists() else _BeRouteScan()
-    missing: list[WiringFinding] = []
-    for call in fe_calls:
-        if not _route_matches(call.method, call.norm_path, be_scan.routes):
-            missing.append(WiringFinding(
-                file=call.file,
-                line=call.line,
-                detail=(
-                    f"FE calls `api.{call.method}('{call.raw_path}')` but no "
-                    f"backend route matches (method={call.method.upper()}, "
-                    f"normalized={call.norm_path}). Route-exists ≠ wired — this "
-                    f"is a 404/route-missing class."
-                ),
-            ))
 
+    # --- Leg A: FE calls → backend routes ---
+    missing = analyze_missing_routes(fe_root, be_root, root)
     # --- Leg B: name-on-nome lint (backend .py + FE .ts/.tsx) ---
-    name_on_nome = _scan_name_on_nome(
-        roots=[
-            (be_root, (_BE_EXT,)),
-            (fe_root, _FE_EXTS),
-        ],
-        repo_root=root,
-    )
-
+    name_on_nome = analyze_name_on_nome(be_root, fe_root, root)
     # --- Leg C: Promise.all shared-catch (FE only) ---
-    shared_catch = _scan_promise_all_shared_catch(fe_root, root) if fe_root.exists() else []
+    shared_catch = analyze_promise_all_shared_catch(fe_root, root)
 
     totals = {
         "missing_routes": len(missing),
@@ -790,6 +857,11 @@ def register(server) -> None:
 
 __all__ = [
     "scan_wiring",
+    # Shared per-leg analyzers — consumed by BOTH this tool and the keeper
+    # detectors in compliance.py (one predicate, two surfaces — DRY).
+    "analyze_missing_routes",
+    "analyze_name_on_nome",
+    "analyze_promise_all_shared_catch",
     "ScanWiringInput",
     "ScanWiringOutput",
     "WiringFinding",

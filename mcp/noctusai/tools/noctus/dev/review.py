@@ -77,6 +77,9 @@ def _detect(
         check_path_references,
         check_standard_routers_audit,
         check_frontend_entrypoint,
+        check_fe_route_missing,
+        check_name_on_nome_select,
+        check_promise_all_shared_catch,
         check_config_extends_product_settings,
         check_frontend_config_paths,
         check_out_of_contract_trees,
@@ -100,6 +103,9 @@ def _detect(
         issues.extend(check_path_references(product_path))
         issues.extend(check_standard_routers_audit(product_path))
         issues.extend(check_frontend_entrypoint(product_path))
+        issues.extend(check_fe_route_missing(product_path))
+        issues.extend(check_name_on_nome_select(product_path))
+        issues.extend(check_promise_all_shared_catch(product_path))
         issues.extend(check_config_extends_product_settings(product_path))
         issues.extend(check_frontend_config_paths(product_path))
         issues.extend(check_test_status_assertion(product_path))

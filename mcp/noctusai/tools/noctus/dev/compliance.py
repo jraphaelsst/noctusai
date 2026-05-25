@@ -527,6 +527,133 @@ def check_handrolled_core_url(product_path: Path) -> list[dict]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Product-internal-wiring — the STATIC legs (KB § PATTERNS/product-internal-wiring.md
+# legs 2/4/5), codified as Stage-4 keeper detectors. Each reuses the EXACT
+# shared predicate already shipped in `tools/noctus/dev/scan_wiring.py`
+# (`analyze_missing_routes` / `analyze_name_on_nome` /
+# `analyze_promise_all_shared_catch`) — one predicate, two surfaces (the
+# `noctus.dev.scan_wiring` MCP tool + these keepers), no copy-paste (DRY).
+#
+# The runtime leg (3 — live auth-gated endpoint probe) + the page-scoped-CRUD
+# leg (7 — needs judgment) are NOT deterministic and STAY advisory; they are
+# deliberately NOT codified here.
+#
+# Severities follow the failure class: a missing route is a 404 / wrong-route
+# (high), a `name`-on-`nome` select is the recurring 500 class (high), a
+# shared-catch `Promise.all` is degraded UX / all-zeros (warning — not a hard
+# failure, so it does not enter the high/critical regression baseline).
+# ---------------------------------------------------------------------------
+
+
+def _wiring_repo_root(product_path: Path) -> Path:
+    """Resolve the repo root for the shared scan_wiring predicates.
+
+    The real tree is `<repo>/products/<slug>` so `parent.parent` is the repo
+    root (where the seed-framework routers live, needed by Leg A). Test
+    fixtures mirror the sibling-keeper layout (`tmp_path/<slug>`, no `products/`
+    layer) — there `parent.parent` simply has no `seed/` glob match, which is
+    correct (the fixture supplies its own backend routes).
+    """
+    parent = product_path.parent
+    if parent.name == "products":
+        return parent.parent
+    return parent
+
+
+def check_fe_route_missing(product_path: Path) -> list[dict]:
+    """Leg A — FE `api.<method>('<path>')` calls with no matching backend route.
+
+    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    leg 2): every FE backend call must hit a real registered route. A FE call
+    whose (method, normalized-path) matches no `@router.<method>` decorator +
+    mount prefix (product routers + seed-framework standard routers) is the
+    404/route-missing class — **route-exists ≠ wired**. Dynamic segments
+    (`${id}` / `{id}` / `:id`) normalize on both sides.
+
+    Reuses `scan_wiring.analyze_missing_routes` (the shared predicate the
+    `noctus.dev.scan_wiring` tool also calls — one source of truth). Severity
+    `high` (a 404 breaks the surface).
+    """
+    from tools.noctus.dev.scan_wiring import analyze_missing_routes
+
+    fe_root = product_path / "frontend"
+    be_root = product_path / "backend"
+    if not fe_root.is_dir():
+        return []  # backend-only product (no FE surfaces to wire)
+    repo_root = _wiring_repo_root(product_path)
+    name = product_path.name
+    return [
+        {
+            "product": name,
+            "file": f.file,
+            "issue": f"line {f.line}: {f.detail}",
+            "severity": "high",
+        }
+        for f in analyze_missing_routes(fe_root, be_root, repo_root)
+    ]
+
+
+def check_name_on_nome_select(product_path: Path) -> list[dict]:
+    """Leg B — PostgREST selecting `name` on a `nome`-table (the 500 class).
+
+    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    leg 5): the platform schema is Portuguese — `plans` / `products` /
+    `organizations` carry `nome`, NOT `name`. A `.select("plans(name)")` /
+    `plans!inner(name)` is the recurring 500 that zeroed the core admin
+    dashboard. Scans backend `.py` + FE `.ts/.tsx`.
+
+    Reuses `scan_wiring.analyze_name_on_nome` (the shared predicate). Severity
+    `high` (a 500 breaks the surface).
+    """
+    from tools.noctus.dev.scan_wiring import analyze_name_on_nome
+
+    fe_root = product_path / "frontend"
+    be_root = product_path / "backend"
+    repo_root = _wiring_repo_root(product_path)
+    name = product_path.name
+    return [
+        {
+            "product": name,
+            "file": f.file,
+            "issue": f"line {f.line}: {f.detail}",
+            "severity": "high",
+        }
+        for f in analyze_name_on_nome(be_root, fe_root, repo_root)
+    ]
+
+
+def check_promise_all_shared_catch(product_path: Path) -> list[dict]:
+    """Leg C — `Promise.all([bare fetches])` under one shared try/catch.
+
+    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    leg 4): a surface fetching N endpoints under one shared `try { ... } catch`
+    turns ONE failure into all-zeros (the all-zeros dashboard bug). Per-element
+    `.catch(() => fallback)` degrades independently and is CORRECT (not
+    flagged).
+
+    Reuses `scan_wiring.analyze_promise_all_shared_catch` (the shared
+    predicate). Severity `warning` — degraded UX, not a hard failure, so it
+    does NOT enter the high/critical regression baseline.
+    """
+    from tools.noctus.dev.scan_wiring import analyze_promise_all_shared_catch
+
+    fe_root = product_path / "frontend"
+    if not fe_root.is_dir():
+        return []  # backend-only product
+    repo_root = _wiring_repo_root(product_path)
+    name = product_path.name
+    return [
+        {
+            "product": name,
+            "file": f.file,
+            "issue": f"line {f.line}: {f.detail}",
+            "severity": "warning",
+        }
+        for f in analyze_promise_all_shared_catch(fe_root, repo_root)
+    ]
+
+
 def check_out_of_contract_trees(repo_root: Path | None = None) -> list[dict]:
     """Detect product-shaped directories living outside `products/*/`.
 
@@ -7479,6 +7606,11 @@ def check_all_products() -> tuple[int, list]:
             + check_standard_routers_audit(d)
             + check_frontend_entrypoint(d)
             + check_handrolled_core_url(d)
+            # product-internal-wiring static legs (Stage-4) — reuse the shared
+            # scan_wiring predicates (one predicate, two surfaces — DRY).
+            + check_fe_route_missing(d)
+            + check_name_on_nome_select(d)
+            + check_promise_all_shared_catch(d)
             + check_config_extends_product_settings(d)
             + check_frontend_config_paths(d)
             + check_mock_schema_validation(d)
