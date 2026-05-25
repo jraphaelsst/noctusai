@@ -8,7 +8,7 @@ import { Header, useTheme } from "@noctusai/lib/design-system";
 
 interface BillingPlan {
   id: string;
-  name: string;
+  nome: string;
   slug: string;
   price_monthly: number;
   price_yearly: number;
@@ -200,7 +200,7 @@ export function BillingSettings() {
             <div>
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-semibold text-foreground">
-                  {billing?.plan?.name || 'Sem plano'}
+                  {billing?.plan?.nome || 'Sem plano'}
                 </h3>
                 {billing?.subscription && (
                   <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusBadgeClasses(billing.subscription.status)}`}>

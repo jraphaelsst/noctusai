@@ -22,7 +22,7 @@ interface Subscription {
   status: string;
   started_at?: string;
   expires_at?: string | null;
-  plans?: { name: string; slug: string };
+  plans?: { nome: string; slug: string };
 }
 
 export function Dashboard() {
@@ -201,7 +201,7 @@ export function Dashboard() {
                   ? 'bg-success-light text-success-foreground'
                   : 'bg-muted text-muted-foreground'
               }`}>
-                {subscription.plans?.name || subscription.status}
+                {subscription.plans?.nome || subscription.status}
               </span>
             )}
           </p>

@@ -9,13 +9,13 @@ interface Subscription {
   started_at: string;
   expires_at: string | null;
   organizations?: { id: string; nome: string };
-  plans?: { id: string; name: string; slug: string };
+  plans?: { id: string; nome: string; slug: string };
   created_at: string;
 }
 
 interface Plan {
   id: string;
-  name: string;
+  nome: string;
   slug: string;
 }
 
@@ -121,7 +121,7 @@ export function AdminSubscriptions() {
             {subs.map(sub => (
               <tr key={sub.id} className="hover:bg-muted/50 transition-colors">
                 <td className="px-4 py-3 font-medium text-foreground">{sub.organizations?.nome || sub.org_id}</td>
-                <td className="px-4 py-3 text-foreground">{sub.plans?.name || sub.plan_id}</td>
+                <td className="px-4 py-3 text-foreground">{sub.plans?.nome || sub.plan_id}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${statusBadgeClasses(sub.status)}`}>
                     {sub.status}
@@ -179,7 +179,7 @@ export function AdminSubscriptions() {
                   className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="">Selecione...</option>
-                  {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {plans.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
                 </select>
               </div>
               <div>

@@ -87,7 +87,7 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
     twelve_months_ago = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
 
     subs_result = db.table("subscriptions").select(
-        "id, org_id, plan_id, status, started_at, canceled_at, created_at, plans(id, name, price_monthly)"
+        "id, org_id, plan_id, status, started_at, canceled_at, created_at, plans(id, nome, price_monthly)"
     ).gte("created_at", twelve_months_ago).order("created_at", desc=True).execute()
 
     subs = subs_result.data or []
@@ -158,7 +158,7 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
 
     # Get subscriptions with plan info
     subs_result = db.table("subscriptions").select(
-        "id, org_id, status, started_at, plans(name, slug)"
+        "id, org_id, status, started_at, plans(nome, slug)"
     ).execute()
     subs = subs_result.data or []
     sub_map: dict = {}
@@ -177,7 +177,7 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
         if sub:
             sub_status = sub.get("status", "none")
             if sub.get("plans") and isinstance(sub["plans"], dict):
-                plan_name = sub["plans"].get("name", "Desconhecido")
+                plan_name = sub["plans"].get("nome", "Desconhecido")
 
         tenants.append({
             "org_id": org_id,

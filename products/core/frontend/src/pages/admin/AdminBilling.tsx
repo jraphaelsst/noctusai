@@ -13,7 +13,7 @@ interface Subscription {
   stripe_customer_id: string | null;
   metadata: Record<string, any>;
   organizations?: { id: string; nome: string; slug: string };
-  plans?: { id: string; name: string; slug: string; price_monthly: number; price_yearly: number };
+  plans?: { id: string; nome: string; slug: string; price_monthly: number; price_yearly: number };
   created_at: string;
 }
 
@@ -74,7 +74,7 @@ export function AdminBilling() {
     const term = search.toLowerCase();
     return (
       (sub.organizations?.nome || '').toLowerCase().includes(term) ||
-      (sub.plans?.name || '').toLowerCase().includes(term) ||
+      (sub.plans?.nome || '').toLowerCase().includes(term) ||
       sub.status.toLowerCase().includes(term) ||
       (sub.stripe_subscription_id || '').toLowerCase().includes(term)
     );
@@ -155,7 +155,7 @@ export function AdminBilling() {
                   <td className="px-4 py-3 font-medium text-foreground">
                     {sub.organizations?.nome || sub.org_id}
                   </td>
-                  <td className="px-4 py-3 text-foreground">{sub.plans?.name || sub.plan_id}</td>
+                  <td className="px-4 py-3 text-foreground">{sub.plans?.nome || sub.plan_id}</td>
                   <td className="px-4 py-3 text-foreground">{formatCurrency(sub.plans?.price_monthly || 0)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${statusBadgeClasses(sub.status)}`}>

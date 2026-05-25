@@ -51,7 +51,7 @@ async def listar_subscriptions(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     result = db.table("subscriptions").select(
-        "*, organizations(id, nome, slug), plans(id, name, slug)"
+        "*, organizations(id, nome, slug), plans(id, nome, slug)"
     ).order("created_at", desc=True).execute()
     return {"data": result.data or []}
 

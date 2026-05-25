@@ -58,13 +58,16 @@ export function AdminDashboard() {
   useEffect(() => {
     async function fetchStats() {
       try {
+        // Per-endpoint catch: one failing endpoint must NOT zero the whole
+        // dashboard — each stat degrades independently (empty) instead.
+        const empty = { data: [] };
         const [orgs, subs, keys, plans, products, licenses] = await Promise.all([
-          api.get('/api/organizations'),
-          api.get('/api/subscriptions'),
-          api.get('/api/admin/api-keys'),
-          api.get('/api/plans'),
-          api.get('/api/products'),
-          api.get('/api/licenses/all'),
+          api.get('/api/organizations').catch(() => empty),
+          api.get('/api/subscriptions').catch(() => empty),
+          api.get('/api/admin/api-keys').catch(() => empty),
+          api.get('/api/plans').catch(() => empty),
+          api.get('/api/products').catch(() => empty),
+          api.get('/api/licenses/all').catch(() => empty),
         ]);
 
         const productList: Product[] = products.data || [];

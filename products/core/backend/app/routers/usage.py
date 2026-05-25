@@ -24,7 +24,7 @@ async def get_all_usage(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     result = db.table("product_usage").select(
-        "*, products(name, slug), organizations(name)"
+        "*, products(nome, slug), organizations(nome)"
     ).order("recorded_at", desc=True).limit(100).execute()
 
     return {"data": result.data or []}
@@ -37,7 +37,7 @@ async def get_org_usage(org_id: str, authorization: Optional[str] = Header(None)
     db = get_admin_client()
 
     result = db.table("product_usage").select(
-        "*, products(name, slug)"
+        "*, products(nome, slug)"
     ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute()
 
     return {"data": result.data or []}
@@ -51,7 +51,7 @@ async def get_my_usage(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     result = db.table("product_usage").select(
-        "*, products(name, slug)"
+        "*, products(nome, slug)"
     ).eq("org_id", org_id).order("recorded_at", desc=True).limit(50).execute()
 
     return {"data": result.data or []}
