@@ -254,13 +254,17 @@ export function createProductApp(config: ProductAppConfig) {
             <Route
               path="/sso"
               element={
-                // canonical-default-ok: core is a named service every
-                // product needs at a fixed URL (SSO callback). Non-local
-                // deploys MUST set VITE_CORE_URL / VITE_CORE_API_URL.
+                // Core is same-origin (FE + API) in dev AND prod, so there is
+                // ONE core URL. Resolve the SSO-exchange base from
+                // VITE_CORE_API_URL, then fall back to VITE_CORE_URL (EVERY
+                // product bakes this — it is the launcher origin), then the dev
+                // single-container house port. The prior bare localhost:8000
+                // default silently broke SSO for every product that bakes only
+                // VITE_CORE_URL (the prod norm) → "Failed to fetch".
                 <SSOCallback
                   supabase={supabase}
-                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || "http://localhost:8000"} /* canonical-default-ok: core named service */
-                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:5173"} /* canonical-default-ok: core named service */
+                  coreApiUrl={import.meta.env.VITE_CORE_API_URL || import.meta.env.VITE_CORE_URL || "http://localhost:8000"} /* canonical-default-ok: core named service */
+                  coreUrl={import.meta.env.VITE_CORE_URL || "http://localhost:8000"} /* canonical-default-ok: dev single-container house port */
                 />
               }
             />

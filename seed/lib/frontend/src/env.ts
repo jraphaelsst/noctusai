@@ -75,9 +75,9 @@ export const ENV_VARS: Record<keyof ProductEnv, { viteKey: string; description: 
   },
   CORE_URL: {
     viteKey: 'VITE_CORE_URL',
-    description: 'Core platform frontend URL (SSO redirect, navigation)',
+    description: 'Core platform URL (SSO redirect, navigation) — core is same-origin FE+API',
     required: false,
-    defaultDev: 'http://localhost:5173',
+    defaultDev: 'http://localhost:8000',
   },
   CORE_API_URL: {
     viteKey: 'VITE_CORE_API_URL',
