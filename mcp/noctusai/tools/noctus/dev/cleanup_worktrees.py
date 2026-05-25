@@ -52,6 +52,7 @@ from pathlib import Path
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 from tools.noctus.dev import _worktree_staleness as wts
+from tools.noctus.dev import _worktree_salvage as wsv
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,8 @@ def cleanup_stale_worktrees(
             "locked_skipped": [],
             "dry_run": not force,
             "status": "nothing",
+            "salvage_ledger": None,
+            "salvaged": 0,
         }
 
     # Refresh dev's tip (best-effort, read-only). Engineer worktrees integrate
@@ -288,6 +291,8 @@ def cleanup_stale_worktrees(
             "locked_skipped": [],
             "dry_run": not force,
             "status": "nothing",
+            "salvage_ledger": None,
+            "salvaged": 0,
         }
 
     if not force:
@@ -302,14 +307,33 @@ def cleanup_stale_worktrees(
             "locked_skipped": [],
             "dry_run": True,
             "status": "dry_run",
+            "salvage_ledger": None,
+            "salvaged": 0,
         }
+
+    # Recovery metadata (branch + SHA) captured BEFORE removal — the mechanical
+    # "recovery record → tracked ledger" leg of learn/extract-before-delete
+    # (KB § PATTERNS/storage-hygiene.md § 2.3). Stale = merged-to-dev, so this is
+    # the recovery pointer + provenance, not a diff-salvage (no dirty in `stale`).
+    branch_of = {e[0]: e[1] for e in _registered_worktrees(root)}
+    recovery = {
+        wt: {
+            "path": wt,
+            "branch": branch_of.get(wt),
+            "sha": wsv.branch_sha(root, branch_of.get(wt)),
+            "reason": "merged-to-dev",
+        }
+        for wt in stale
+    }
 
     removed = 0
     failed = 0
     locked_skipped: list[str] = []
+    removed_records: list[dict] = []
     for wt in stale:
         if _git(root, "worktree", "remove", "--force", wt).returncode == 0:
             removed += 1
+            removed_records.append(recovery[wt])
             continue
         # git refused. Distinguish locked/active (NEVER rm -rf — THE-P10)
         # from true orphan (git doesn't know about it — safe rmtree).
@@ -322,6 +346,7 @@ def cleanup_stale_worktrees(
                 if Path(wt).exists():
                     shutil.rmtree(wt)
                 removed += 1
+                removed_records.append(recovery[wt])
             except OSError as exc:
                 logger.warning(
                     "cleanup_stale_worktrees: failed to rmtree orphan %s (%s)",
@@ -330,6 +355,9 @@ def cleanup_stale_worktrees(
                 failed += 1
 
     _git(root, "worktree", "prune")
+    # Extract-before-delete: write recovery pointers to the tracked ledger
+    # (caller commits it, like ledger.ndjson).
+    salvage_ledger = wsv.record_sweep(root, removed_records)
 
     logger.info(
         "cleanup_stale_worktrees: %d removed, %d failed, %d locked-skipped",
@@ -346,6 +374,8 @@ def cleanup_stale_worktrees(
         "locked_skipped": locked_skipped,
         "dry_run": False,
         "status": "removed",
+        "salvage_ledger": str(salvage_ledger) if salvage_ledger else None,
+        "salvaged": len(removed_records),
     }
 
 

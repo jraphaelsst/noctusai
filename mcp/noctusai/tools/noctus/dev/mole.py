@@ -52,6 +52,7 @@ from typing import Any, Literal
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 from tools.noctus.dev import _worktree_staleness as wts
+from tools.noctus.dev import _worktree_salvage as wsv
 
 # ── Severity thresholds (mirror disk-usage-monitor.sh exit-code semantics) ──
 ARTIFACT_WARNING_MB = 2048    # 2 GB
@@ -504,10 +505,19 @@ def _sweep_worktrees(
 
     removed = 0
     failed = 0
+    # Extract-before-delete: collect recovery pointers (branch + SHA) for each
+    # removed worktree → tracked ledger (KB § PATTERNS/storage-hygiene.md § 2.3).
+    removed_records: list[dict] = []
     for cat, path, _branch, _reason in target:
         if cat in ("STALE", "PHANTOM"):
             if _git(root, "worktree", "remove", "--force", path).returncode == 0:
                 removed += 1
+                removed_records.append({
+                    "path": path,
+                    "branch": _branch or None,
+                    "sha": wsv.branch_sha(root, _branch or None),
+                    "reason": _reason or "merged-to-dev",
+                })
             else:
                 # Lock raced between classify and act — do NOT rm -rf
                 # (KB § PATTERNS/storage-hygiene.md §2.3 — THE-P10 incident).
@@ -520,9 +530,18 @@ def _sweep_worktrees(
             try:
                 shutil.rmtree(path)
                 removed += 1
+                removed_records.append({
+                    "path": path,
+                    "branch": _branch or None,
+                    "sha": wsv.branch_sha(root, _branch or None),
+                    "reason": _reason or "orphan",
+                })
             except OSError:
                 failed += 1
     _git(root, "worktree", "prune")
+    ledger = wsv.record_sweep(root, removed_records)
+    if ledger:
+        notes.append(f"recorded {len(removed_records)} recovery pointer(s) → {ledger}")
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_lines.append(
         f"{ts} worktrees: removed={removed} failed={failed} "
