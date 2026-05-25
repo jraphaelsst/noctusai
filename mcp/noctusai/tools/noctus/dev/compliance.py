@@ -3506,6 +3506,79 @@ def check_methodology_doc_refs(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+def check_codification_debt(repo_root: Path | None = None) -> list[dict]:
+    """Surface deferred codifications (``NOC-REMEDIATE[codify]`` markers) in the gate.
+
+    The **mechanical, always-on half of the ``/codify`` command** (the DECISION
+    — apply / defer / stays-prose — stays with ``/codify``; *detection* is now
+    codified). A codification evaluated as ripe-but-deferred (N<3, or
+    design-first) leaves a structured ``NOC-REMEDIATE[codify]: <rule> — <date>``
+    marker instead of burying the deferral in free prose where no sweep can see
+    it (the gap this keeper closes: ``branching.md`` "the *filed* worktree-
+    sensitivity guard follow-up" + the C2 "filed design-first" keeper were both
+    invisible to any mechanical sweep). Every compliance run now reads those
+    markers so a deferred codification can never go silent:
+
+      - well-formed ``[codify]`` marker → ``warning`` (a sanctioned deferral —
+        surfaced + baseline-trackable, never blocks; defer-with-destination is
+        legitimate per the remediation-marker contract);
+      - malformed (missing ``— <YYYY-MM-DD>``) or on an ``except`` line →
+        ``high`` (a real defect; mirrors ``scan_remediation_markers`` exit 1);
+      - codify backlog ≥3 → one extra ``warning`` ("run ``/codify`` sweep").
+
+    Reuses ``markers_of_class`` — one parser, two surfaces
+    (KB § PATTERNS/methodology-codification-pipeline.md +
+    KB § PATTERNS/remediation-markers.md). Codified 2026-05-25 via ``/codify``.
+    """
+    from tools.noctus.dev.scan_remediation_markers import markers_of_class
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    markers = markers_of_class(root, "codify")
+    for m in markers:
+        loc = f"{m['path']}:{m['line']}"
+        if m["on_except"] or not m["date"]:
+            reason = (
+                "on an `except` line (a marker must never suppress an error)"
+                if m["on_except"] else "missing the `— <YYYY-MM-DD>` date"
+            )
+            issues.append({
+                "product": "<methodology>",
+                "file": m["path"],
+                "issue": (
+                    f"Malformed/forbidden NOC-REMEDIATE[codify] marker at {loc}: "
+                    f"{reason}. Fix the marker or build the keeper. "
+                    f"(check_codification_debt, 2026-05-25)"
+                ),
+                "severity": "high",
+            })
+        else:
+            age = f"{m['age_days']}d" if m["age_days"] is not None else "?"
+            issues.append({
+                "product": "<methodology>",
+                "file": m["path"],
+                "issue": (
+                    f"Deferred codification pending at {loc} ({age}): {m['text']}. "
+                    f"Evaluate via /codify — build the keeper when ripe (N≥3 + "
+                    f"deterministic + clear remediation) or accept-with-rationale. "
+                    f"(check_codification_debt, 2026-05-25)"
+                ),
+                "severity": "warning",
+            })
+    if len(markers) >= 3:
+        issues.append({
+            "product": "<methodology>",
+            "file": "<codify-backlog>",
+            "issue": (
+                f"{len(markers)} deferred codifications pending "
+                f"(NOC-REMEDIATE[codify]) — run `/codify sweep` to drain the "
+                f"backlog. (check_codification_debt, 2026-05-25)"
+            ),
+            "severity": "warning",
+        })
+    return issues
+
+
 def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
     """Detect entries in `.claude/dispatcher.md` `## Pending` section that
     were appended >24h ago and never moved to `## Completed`.
@@ -7686,6 +7759,10 @@ def check_all_products() -> tuple[int, list]:
     # literal KNOWLEDGE-BASE/...md + .claude/agents + KB→KB cross-refs;
     # placeholders excluded; wikilinks advisory-only.
     all_issues.extend(check_methodology_doc_refs())
+    # deferred-codification visibility — the always-on gate form of /codify;
+    # reads NOC-REMEDIATE[codify] markers so a deferred codification can't go
+    # silent in prose (KB § PATTERNS/methodology-codification-pipeline.md).
+    all_issues.extend(check_codification_debt())
     all_issues.extend(check_dispatcher_staleness())
     all_issues.extend(check_branch_orphan())
     all_issues.extend(check_gitignore_drift())

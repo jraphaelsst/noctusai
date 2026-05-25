@@ -31,6 +31,20 @@ _MARKER_RE = re.compile(r"NOC-REMEDIATE\[(?P<cls>[^\]<>\s][^\]<>]*)\]\s*:?\s*(?P
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 _EXCEPT_RE = re.compile(r"^\s*except\b")  # the line's CODE is an except clause (precise)
 
+# Docs that DEFINE the marker convention are self-reference — never scanned
+# (the placeholder-exclusion lesson: a scanner must not trip on the docs that
+# spell out its own token, even when they show a concrete ``[codify]`` example).
+_DEFINING_DOCS = (
+    "remediation-markers.md",                # the token definition
+    "methodology-codification-pipeline.md",  # the pipeline meta-doc
+    "codify.md",                             # the /codify command
+    "dev/compliance.py",                     # the check_codification_debt keeper (handles [codify])
+)
+
+
+def _is_defining_doc(path: str) -> bool:
+    return path.endswith(_DEFINING_DOCS) or "scan_remediation_markers" in path
+
 
 def _git_grep(root: Path) -> list[tuple[str, int, str]]:
     """(path, lineno, content) for every NOC-REMEDIATE occurrence in tracked files."""
@@ -49,26 +63,26 @@ def _git_grep(root: Path) -> list[tuple[str, int, str]]:
     return out
 
 
-def scan_remediation_markers(
-    repo_root: Path | None = None, worktree_path: str | None = None
-) -> dict:
-    """Sweep + triage NOC-REMEDIATE markers. See module docstring."""
+def _resolve_root(repo_root: Path | None, worktree_path: str | None) -> Path:
     if repo_root is not None:
-        root = Path(repo_root)
-    elif worktree_path:
-        root = Path(resolve_caller_root(worktree_path))
-    else:
-        root = REPO_ROOT
+        return Path(repo_root)
+    if worktree_path:
+        return Path(resolve_caller_root(worktree_path))
+    return REPO_ROOT
+
+
+def _iter_markers(root: Path) -> list[dict]:
+    """Parsed record for every well-formed NOC-REMEDIATE marker (real ``[class]``).
+
+    One parser, two surfaces: ``scan_remediation_markers`` (all classes,
+    advisory CLI/MCP) + ``markers_of_class`` / the ``check_codification_debt``
+    keeper (one class, in the compliance gate). Each record carries the
+    ``on_except`` flag so both surfaces classify defects identically.
+    """
     today = date.today()
-
-    markers: list[dict] = []
-    malformed: list[dict] = []
-    on_except: list[dict] = []
-    by_class: dict[str, int] = {}
-
+    out: list[dict] = []
     for path, lineno, content in _git_grep(root):
-        # Skip the doc that DEFINES the token + this scanner (self-reference).
-        if path.endswith("remediation-markers.md") or "scan_remediation_markers" in path:
+        if _is_defining_doc(path):
             continue
         m = _MARKER_RE.search(content)
         if not m:
@@ -83,16 +97,25 @@ def scan_remediation_markers(
                 age_days = (today - datetime.strptime(marker_date, "%Y-%m-%d").date()).days
             except ValueError:
                 marker_date = None
-        rec = {
+        out.append({
             "path": path, "line": lineno, "class": cls,
             "date": marker_date, "age_days": age_days, "text": text[:120],
-        }
-        markers.append(rec)
-        if _EXCEPT_RE.match(content):   # FORBIDDEN — marker on an `except` (suppresses an error)
-            on_except.append(rec)
-        if not marker_date:            # malformed — a real marker missing its — <date>
-            malformed.append(rec)
-        by_class[cls] = by_class.get(cls, 0) + 1
+            "on_except": bool(_EXCEPT_RE.match(content)),  # FORBIDDEN — suppresses an error
+        })
+    return out
+
+
+def scan_remediation_markers(
+    repo_root: Path | None = None, worktree_path: str | None = None
+) -> dict:
+    """Sweep + triage NOC-REMEDIATE markers. See module docstring."""
+    root = _resolve_root(repo_root, worktree_path)
+    markers = _iter_markers(root)
+    malformed = [m for m in markers if not m["date"]]
+    on_except = [m for m in markers if m["on_except"]]
+    by_class: dict[str, int] = {}
+    for m in markers:
+        by_class[m["class"]] = by_class.get(m["class"], 0) + 1
 
     promote = sorted(c for c, n in by_class.items() if n >= 3)
     defects = len(malformed) + len(on_except)
@@ -112,6 +135,20 @@ def scan_remediation_markers(
     }
 
 
+def markers_of_class(
+    repo_root: Path | None = None, cls: str = "", worktree_path: str | None = None
+) -> list[dict]:
+    """Marker records for ONE class (e.g. ``"codify"``), or all if ``cls`` is empty.
+
+    Shares ``_iter_markers`` with ``scan_remediation_markers`` — one parser,
+    two surfaces. Backs the ``check_codification_debt`` keeper
+    (KB § PATTERNS/methodology-codification-pipeline.md) — the always-on
+    compliance-gate form of the ``/codify`` command's *detection* half.
+    """
+    root = _resolve_root(repo_root, worktree_path)
+    return [m for m in _iter_markers(root) if not cls or m["class"] == cls]
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.scan_remediation_markers",
@@ -129,4 +166,4 @@ def register(server) -> None:
         return scan_remediation_markers(worktree_path=worktree_path)
 
 
-__all__ = ["scan_remediation_markers", "register"]
+__all__ = ["scan_remediation_markers", "markers_of_class", "register"]
