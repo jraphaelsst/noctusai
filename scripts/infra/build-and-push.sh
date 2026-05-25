@@ -60,7 +60,7 @@ REGISTRY="ghcr.io/jraphaelsst"
 TAG="${NOCTUS_IMAGE_TAG:-latest}"
 PUSH=1
 BUILD_BASE=1
-ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring)
+ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring seed)
 REQUESTED=()   # optional subset of product slugs to build/push (default: all)
 for arg in "$@"; do
   case "$arg" in
@@ -143,7 +143,7 @@ if want erp-imobiliario; then
     --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
 fi
 
-for slug in personal-finance therapy-platform daily-life adconnect dev-team social-wiring; do
+for slug in personal-finance therapy-platform daily-life adconnect dev-team social-wiring seed; do
   want "$slug" || continue
   build_product "$slug" \
     "${COMMON_VITE_ARGS[@]}" \
