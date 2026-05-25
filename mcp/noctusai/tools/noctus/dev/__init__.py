@@ -59,6 +59,7 @@ def register_all(server) -> None:
     from . import scan_unified
     from . import session_review
     from . import smoke_fleet
+    from . import sso_smoke
     from . import stamp_seed_version
     from . import status
     from . import supabase_advisors
@@ -115,6 +116,7 @@ def register_all(server) -> None:
     scan_unified.register(server)
     session_review.register(server)
     smoke_fleet.register(server)
+    sso_smoke.register(server)
     stamp_seed_version.register(server)
     status.register(server)
     supabase_advisors.register(server)

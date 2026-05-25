@@ -51,7 +51,7 @@
   "products/core/frontend/src/pages/admin/AdminLogoutBehavior.tsx": 2,
   "products/core/frontend/src/pages/admin/AdminOrganizations.tsx": 2,
   "products/core/frontend/src/pages/admin/AdminPlans.tsx": 3,
-  "products/core/frontend/src/pages/admin/AdminProducts.tsx": 6,
+  "products/core/frontend/src/pages/admin/AdminProducts.tsx": 7,
   "products/core/frontend/src/pages/admin/AdminSettings.tsx": 3,
   "products/core/frontend/src/pages/admin/AdminSubscriptions.tsx": 5,
   "products/core/frontend/src/pages/admin/AdminTemplates.tsx": 4,

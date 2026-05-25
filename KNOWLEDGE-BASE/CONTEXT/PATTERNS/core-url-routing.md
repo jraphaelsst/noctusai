@@ -109,3 +109,18 @@ in prod) + nav (`localhost:5173` → dead link). Fix = correct getters + drive e
 consumer to them (all products, pilots + non-pilots) + the keeper. Siblings:
 [[feedback_sso_core_url_seed_resolution]] · [[feedback_product_url_base_house_port]] ·
 `boundary-contract-tests.md` B1.
+
+## 8 · Verifying the live chain (dynamic e2e)
+
+The keeper (`check_handrolled_core_url`) + by-construction seed guarantee SSO
+**statically**. To verify a **LIVE deployed** core's SSO end-to-end, run
+`noctus.dev.sso_smoke` — it drives the full chain a product's `SSOCallback`
+uses: Supabase magic-link login → `POST /api/sso/token` (license-checked) →
+`POST /api/sso/session` → `GET /api/auth/me`. `status='pass'|'fail'|
+'not_configured'` (honest — no creds ⇒ `not_configured`, never a faked pass).
+Needs Supabase creds + `NOCTUS_SSO_SMOKE_EMAIL` (a test account whose org holds
+a non-expired license for the probed product). **Two gotchas it encodes:**
+(1) core sits behind Cloudflare — a non-browser `User-Agent` is **WAF-banned
+(error 1010)**, so every programmatic core caller MUST send a browser UA (same
+rule as the Hostinger MCP); (2) the SSO license check enforces **expiry**
+(`fim`), so an expired-license org correctly 403s at `/api/sso/token`.
