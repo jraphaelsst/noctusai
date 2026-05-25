@@ -171,7 +171,7 @@ export const mockAdminSubscriptions = [
     status: 'active',
     started_at: '2025-01-01T00:00:00Z',
     organizations: { nome: 'Imobiliária Centro Sul' },
-    plans: { name: 'Profissional' },
+    plans: { nome: 'Profissional' },
   },
 ];
 
