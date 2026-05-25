@@ -48,3 +48,17 @@ CREATE POLICY "whatsapp_connections_service_role" ON social_wiring.whatsapp_conn
 
 CREATE INDEX IF NOT EXISTS idx_sw_whatsapp_connections_owner
     ON social_wiring.whatsapp_connections(org_id, user_id, created_at DESC);
+
+
+-- ── Nav: consolidate Agente/Vídeos/Upload under one "YouTube" page ──────────
+-- The nav gates items by status_pagina (unlisted route ⇒ hidden). The new
+-- `youtube` page replaces the separate `upload`+`videos` items, so seed its
+-- row (idempotent; the legacy upload/videos rows are left untouched/harmless).
+-- The rest of the live nav set is re-asserted in case an existing DB drifted.
+INSERT INTO social_wiring.status_pagina (nome_pagina, status) VALUES
+    ('youtube', 'producao'),
+    ('media_creation', 'producao'),
+    ('email_marketing', 'producao'),
+    ('conexao', 'producao'),
+    ('monitor', 'producao')
+ON CONFLICT (nome_pagina) DO NOTHING;

@@ -1,14 +1,13 @@
 /**
- * Videos page — browse the connected channel's full catalog.
+ * Vídeos panel — browse the connected channel's catalog, discriminated into
+ * **Vídeos** (YouTube long-form) and **Shorts** sub-tabs.
  *
- * Default view: card grid. Toggle to a compact table for power users.
- * The "Sync" button hits POST /api/videos/sync; the cache refreshes
- * via the hook's onComplete callback.
+ * `video_cache` carries no explicit Shorts flag, so the split uses a duration
+ * heuristic (`isShort` ≤ 60s — see useVideos). Default view: card grid; toggle
+ * to a compact table. "Sincronizar" hits POST /api/videos/sync.
  *
- * Filters in Phase 3 (light): app-uploaded toggle + free-text title
- * search (client-side; small N because cache is bounded by channel
- * size). Date-range and privacy-status filters deferred to a later
- * iteration once we see how the page is actually used.
+ * Container-free panel rendered inside the YouTube page (architected so
+ * Upload + Vídeos fuse cleanly later).
  */
 import { useMemo, useState } from "react";
 import {
@@ -18,8 +17,10 @@ import {
   Heart,
   Loader2,
   MessageCircle,
+  PlaySquare,
   RefreshCw,
   Search,
+  Smartphone,
   Sparkles,
   Table as TableIcon,
 } from "lucide-react";
@@ -30,11 +31,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { VideoCard } from "@/components/VideoCard";
 import {
   formatCount,
   formatDuration,
+  isShort,
   useVideos,
   useVideoSync,
   youtubeUrl,
@@ -42,6 +45,7 @@ import {
 } from "@/hooks/useVideos";
 
 type ViewMode = "grid" | "table";
+type FormatTab = "videos" | "shorts";
 
 function VideoTableRow({ video }: { video: Video }) {
   return (
@@ -103,32 +107,74 @@ function VideoTableRow({ video }: { video: Video }) {
   );
 }
 
-export default function VideosPage() {
+function VideoGridOrTable({
+  items,
+  viewMode,
+  empty,
+}: {
+  items: Video[];
+  viewMode: ViewMode;
+  empty: string;
+}) {
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-2 p-12 text-center text-sm text-muted-foreground">
+          <Sparkles className="h-8 w-8" />
+          {empty}
+        </CardContent>
+      </Card>
+    );
+  }
+  if (viewMode === "grid") {
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {items.map((v) => (
+          <VideoCard key={v.id} video={v} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <Card>
+      <CardContent className="p-2">
+        {items.map((v) => (
+          <VideoTableRow key={v.id} video={v} />
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function VideosPanel() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [search, setSearch] = useState("");
   const [appOnly, setAppOnly] = useState(false);
+  const [tab, setTab] = useState<FormatTab>("videos");
 
   const { items, totalKnown, loading, loadingMore, hasMore, refresh, loadMore, error } =
     useVideos({ uploadedViaApp: appOnly || undefined });
 
   const { sync, pending: syncing } = useVideoSync(refresh);
 
-  const filtered = useMemo(() => {
+  // Search-filtered, then split into long-form (Vídeos) vs Shorts.
+  const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter((v) => (v.title ?? "").toLowerCase().includes(q));
   }, [items, search]);
 
+  const shorts = useMemo(() => searched.filter((v) => isShort(v)), [searched]);
+  const longform = useMemo(() => searched.filter((v) => !isShort(v)), [searched]);
+
   return (
-    <div className="container max-w-7xl space-y-6 py-6">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Videos do canal</h1>
+          <h2 className="text-lg font-semibold">Vídeos do canal</h2>
           <p className="text-sm text-muted-foreground">
-            {totalKnown} videos no cache.{" "}
-            <span className="text-xs">
-              Use Sincronizar para atualizar com o YouTube.
-            </span>
+            {totalKnown} vídeos no cache.{" "}
+            <span className="text-xs">Use Sincronizar para atualizar com o YouTube.</span>
           </p>
         </div>
         <Button onClick={() => sync()} disabled={syncing}>
@@ -152,18 +198,12 @@ export default function VideosPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-
           <div className="flex items-center gap-2">
-            <Switch
-              id="app-only"
-              checked={appOnly}
-              onCheckedChange={setAppOnly}
-            />
+            <Switch id="app-only" checked={appOnly} onCheckedChange={setAppOnly} />
             <Label htmlFor="app-only" className="cursor-pointer">
               Apenas enviados pelo app
             </Label>
           </div>
-
           <div className="ml-auto flex rounded-md border">
             <Button
               variant={viewMode === "grid" ? "default" : "ghost"}
@@ -195,38 +235,46 @@ export default function VideosPage() {
         <Card>
           <CardContent className="p-6 text-sm text-destructive">{error}</CardContent>
         </Card>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 p-12 text-center text-sm text-muted-foreground">
-            <Sparkles className="h-8 w-8" />
-            {items.length === 0
-              ? "Nenhum video no cache. Clique em Sincronizar para buscar do YouTube."
-              : "Nenhum video bate com os filtros atuais."}
-          </CardContent>
-        </Card>
-      ) : viewMode === "grid" ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((v) => (
-            <VideoCard key={v.id} video={v} />
-          ))}
-        </div>
       ) : (
-        <Card>
-          <CardContent className="p-2">
-            {filtered.map((v) => (
-              <VideoTableRow key={v.id} video={v} />
-            ))}
-          </CardContent>
-        </Card>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as FormatTab)}>
+          <TabsList>
+            <TabsTrigger value="videos">
+              <PlaySquare className="mr-2 h-4 w-4" />
+              Vídeos ({longform.length})
+            </TabsTrigger>
+            <TabsTrigger value="shorts">
+              <Smartphone className="mr-2 h-4 w-4" />
+              Shorts ({shorts.length})
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="videos" className="mt-4">
+            <VideoGridOrTable
+              items={longform}
+              viewMode={viewMode}
+              empty={
+                items.length === 0
+                  ? "Nenhum vídeo no cache. Clique em Sincronizar para buscar do YouTube."
+                  : "Nenhum vídeo longo bate com os filtros atuais."
+              }
+            />
+          </TabsContent>
+          <TabsContent value="shorts" className="mt-4">
+            <VideoGridOrTable
+              items={shorts}
+              viewMode={viewMode}
+              empty={
+                items.length === 0
+                  ? "Nenhum vídeo no cache. Clique em Sincronizar para buscar do YouTube."
+                  : "Nenhum Short (≤ 60s) bate com os filtros atuais."
+              }
+            />
+          </TabsContent>
+        </Tabs>
       )}
 
       {hasMore && !search && (
         <div className="flex justify-center">
-          <Button
-            variant="outline"
-            onClick={loadMore}
-            disabled={loadingMore}
-          >
+          <Button variant="outline" onClick={loadMore} disabled={loadingMore}>
             {loadingMore && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Carregar mais
           </Button>

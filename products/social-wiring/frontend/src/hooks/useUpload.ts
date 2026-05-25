@@ -117,7 +117,41 @@ export function useUploadMutations() {
     [],
   );
 
-  return { uploadFile, uploadFromDrive, pending };
+  // Simplified path: just the file + the CRM code. The backend resolves
+  // title/description/tags from the code and triggers the rest.
+  const uploadFromCode = useCallback(
+    async (
+      file: File,
+      productCode: string,
+      privacyStatus: PrivacyStatus = "private",
+    ): Promise<UploadJobCreated> => {
+      setPending(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("product_code", productCode);
+        formData.append("privacy_status", privacyStatus);
+
+        const headers = await getAuthHeader();
+        const response = await fetch(apiUrl("/api/videos/upload/from-code"), {
+          method: "POST",
+          headers, // do NOT set content-type — browser sets the multipart boundary
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(`[${response.status}] ${detail}`);
+        }
+        return (await response.json()) as UploadJobCreated;
+      } finally {
+        setPending(false);
+      }
+    },
+    [],
+  );
+
+  return { uploadFile, uploadFromDrive, uploadFromCode, pending };
 }
 
 // ─── Status polling ────────────────────────────────────────────────────

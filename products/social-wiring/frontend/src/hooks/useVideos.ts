@@ -74,6 +74,30 @@ export function formatCount(n: number): string {
   return String(n);
 }
 
+/** Parse an ISO-8601 duration ("PT1M30S") to whole seconds. 0 on failure. */
+export function durationSeconds(iso?: string | null): number {
+  if (!iso) return 0;
+  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 0;
+  const [, h, m, s] = match;
+  return (
+    parseInt(h ?? "0", 10) * 3600 +
+    parseInt(m ?? "0", 10) * 60 +
+    parseInt(s ?? "0", 10)
+  );
+}
+
+/**
+ * Heuristic Shorts classifier for the catalog. `video_cache` carries no
+ * explicit Shorts flag (only `duration`), so we treat clips ≤ 60s as Shorts
+ * — the discriminator most operators expect. v1: when the upload pipeline
+ * starts carrying `target_format` into the cache, switch to that flag.
+ */
+export function isShort(video: Pick<Video, "duration">): boolean {
+  const secs = durationSeconds(video.duration);
+  return secs > 0 && secs <= 60;
+}
+
 // ─── List hook ─────────────────────────────────────────────────────────
 interface UseVideosOptions {
   pageSize?: number;

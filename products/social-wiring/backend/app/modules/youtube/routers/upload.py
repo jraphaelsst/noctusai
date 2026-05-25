@@ -375,6 +375,82 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> UploadJobCreated:
     return UploadJobCreated(job_id=queued.job_id, status=queued.status)
 
 
+# ─── POST /upload/from-code — browser file + product code only ─────────
+@router.post(
+    "/from-code",
+    response_model=UploadJobCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_video_from_code(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    product_code: str = Form(..., description="CRM property code, e.g. ONE0000"),
+    privacy_status: str = Form("private"),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> UploadJobCreated:
+    """Simplified browser upload: just the video file + a property code.
+
+    The system "triggers the rest of the procedure" — title / description /
+    tags are resolved server-side from the CRM via the same path the chatbot
+    intake + drive-folder fan-out use (``_resolve_metadata_from_product_code``)
+    — so the operator never types metadata. Same staging + background-job
+    contract as ``upload_video``; returns 202 + a job_id the UI polls.
+
+    HTTP error map (from the resolver): 422 bad code · 503 CRM not configured ·
+    404 no property for code · 502 CRM error.
+    """
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="upload missing filename",
+        )
+
+    # Resolve title/description/tags from the code BEFORE staging, so a bad
+    # code fails fast without writing the file to disk.
+    metadata = await _resolve_metadata_from_product_code(
+        product_code=product_code,
+        privacy_status=privacy_status,
+        cfg=cfg,
+    )
+
+    service = _build_upload_service(token, cfg)
+
+    try:
+        with stage_browser_upload(
+            upload_dir=_UPLOAD_DIR,
+            file_name=file.filename,
+            upload_stream=file.file,
+        ) as staging_path:
+            file_size = staging_path.stat().st_size
+            try:
+                queued = service.queue_browser_upload(
+                    org_id=org_id,
+                    created_by=_user_id(user),
+                    metadata=metadata,
+                    file_name=file.filename,
+                    file_size_bytes=file_size,
+                    local_path=staging_path,
+                )
+            except UploadServiceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            rename_for_job(staging_path, queued.job_id, file.filename)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            detail=f"failed to write upload to disk: {exc}",
+        ) from exc
+
+    background.add_task(service.run_upload_job, job_id=queued.job_id)
+    return UploadJobCreated(job_id=queued.job_id, status=queued.status)
+
+
 # ─── POST /upload-from-drive — Google Drive link ───────────────────────
 @router.post(
     "-from-drive",

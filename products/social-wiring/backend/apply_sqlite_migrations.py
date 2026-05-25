@@ -196,8 +196,11 @@ INSERT OR IGNORE INTO status_pagina (id, nome_pagina, status) VALUES
     ('page-dashboard', 'dashboard', 'producao'),
     ('page-equipe', 'equipe', 'producao'),
     ('page-configuracoes', 'configuracoes', 'producao'),
-    ('page-upload', 'upload', 'producao'),
-    ('page-videos', 'videos', 'producao');
+    ('page-media-creation', 'media_creation', 'producao'),
+    ('page-email-marketing', 'email_marketing', 'producao'),
+    ('page-youtube', 'youtube', 'producao'),
+    ('page-conexao', 'conexao', 'producao'),
+    ('page-monitor', 'monitor', 'producao');
 """
 
 

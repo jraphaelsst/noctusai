@@ -1,19 +1,27 @@
 /**
- * Upload page — submit a video to YouTube via either:
- *   1. Browser file upload (drag-and-drop or picker)
- *   2. Google Drive shared link
+ * Upload panel — YouTube → Upload. Three sub-tabs:
  *
- * Form state is local (no react-hook-form needed for this size). On
- * submit, kicks off the upload, switches to a progress view that polls
- * /status, then shows success + the YouTube link. Below the form, a
- * history table lists recent jobs.
+ *   Chat        (default) the Agente: code + video, agent does the rest.
+ *   Computador  simplified browser upload: ONLY the file + the code (ONE0000);
+ *               the system resolves metadata from the CRM and runs the rest.
+ *   Google Drive  link/folder upload with the full metadata form.
+ *
+ * Once a job starts, a live STEPPER tracks the pipeline step-by-step
+ * (queued → [baixando] → enviando → processando → validado) with a progress
+ * bar; 100% = the uploaded video validated (published on YouTube). The flow
+ * itself is unchanged — we already had the upload pipeline.
+ *
+ * Rendered inside the YouTube page (and architected so Upload + Vídeos fuse
+ * cleanly later).
  */
 import { useMemo, useState } from "react";
 import {
   CheckCircle2,
+  Circle,
   CircleAlert,
   ExternalLink,
   Loader2,
+  MessageCircle,
   Send,
   UploadCloud,
   Link as LinkIcon,
@@ -37,6 +45,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
+import ChatPanel from "@/components/ChatPanel";
 import { UploadZone } from "@/components/UploadZone";
 import {
   isTerminal,
@@ -68,6 +77,11 @@ const STATUS_LABELS: Record<UploadJobStatus, string> = {
   failed: "Falhou",
 };
 
+function youtubeUrl(videoId: string | null | undefined): string | null {
+  if (!videoId) return null;
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
 function StatusBadge({ status }: { status: UploadJobStatus }) {
   const variant = status === "failed"
     ? "destructive"
@@ -77,12 +91,137 @@ function StatusBadge({ status }: { status: UploadJobStatus }) {
   return <Badge variant={variant}>{STATUS_LABELS[status]}</Badge>;
 }
 
-function youtubeUrl(videoId: string | null | undefined): string | null {
-  if (!videoId) return null;
-  return `https://www.youtube.com/watch?v=${videoId}`;
+// ─── Live step tracker ─────────────────────────────────────────────────
+// Ordinal position of each status in the pipeline (notified == published == 4,
+// i.e. 100% / validated). The stepper marks each step done / active / pending
+// from this ordinal.
+const STATUS_ORDER: Record<UploadJobStatus, number> = {
+  queued: 0,
+  downloading: 1,
+  uploading: 2,
+  processing: 3,
+  published: 4,
+  notified: 4,
+  failed: -1,
+};
+
+interface StepDef {
+  key: string;
+  label: string;
+  ord: number;
+  driveOnly?: boolean;
 }
 
-// ─── Recipient picker (shared between tabs) ────────────────────────────
+const STEP_DEFS: StepDef[] = [
+  { key: "queued", label: "Na fila", ord: 0 },
+  { key: "downloading", label: "Baixando", ord: 1, driveOnly: true },
+  { key: "uploading", label: "Enviando", ord: 2 },
+  { key: "processing", label: "Processando", ord: 3 },
+  { key: "published", label: "Validado", ord: 4 },
+];
+
+function Stepper({ job }: { job: UploadJob }) {
+  const steps = STEP_DEFS.filter((s) => !s.driveOnly || job.source_type === "gdrive");
+  const curr = STATUS_ORDER[job.status];
+  const done100 = job.status === "published" || job.status === "notified";
+  const failed = job.status === "failed";
+
+  return (
+    <ol className="space-y-2">
+      {steps.map((step) => {
+        const isDone = !failed && (curr > step.ord || (done100 && curr >= step.ord));
+        const isActive = !failed && !done100 && curr === step.ord;
+        return (
+          <li key={step.key} className="flex items-center gap-2 text-sm">
+            {isDone ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            ) : isActive ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : failed ? (
+              <CircleAlert className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <Circle className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className={isActive ? "font-medium" : isDone ? "" : "text-muted-foreground"}>
+              {step.label}
+              {step.key === "published" && " (100%)"}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ─── In-flight progress card (stepper + bar) ───────────────────────────
+function ProgressCard({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+  const { job } = useUploadStatus(jobId);
+
+  if (!job) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-3 p-6">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Iniciando envio...</span>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const url = youtubeUrl(job.youtube_video_id);
+  const failed = job.status === "failed";
+  const done = isTerminal(job.status);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            {failed ? (
+              <CircleAlert className="h-5 w-5 text-destructive" />
+            ) : done ? (
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            ) : (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            )}
+            {job.title}
+          </CardTitle>
+          <StatusBadge status={job.status} />
+        </div>
+        <CardDescription>{job.file_name}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Progress value={job.progress_percent} />
+        <div className="text-xs text-muted-foreground">
+          {job.progress_percent}% — {STATUS_LABELS[job.status]}
+        </div>
+        <Stepper job={job} />
+        {failed && job.error_message && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+            {job.error_message}
+          </div>
+        )}
+        {url && (
+          <div className="flex items-center gap-2">
+            <Button asChild variant="default" size="sm">
+              <a href={url} target="_blank" rel="noreferrer">
+                Ver no YouTube
+                <ExternalLink className="ml-1 h-3 w-3" />
+              </a>
+            </Button>
+          </div>
+        )}
+        {done && (
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Novo envio
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Recipient picker (Drive tab) ──────────────────────────────────────
 function RecipientPicker({
   recipients,
   selected,
@@ -146,11 +285,11 @@ function RecipientPicker({
   );
 }
 
-// ─── Metadata form (shared between tabs) ───────────────────────────────
+// ─── Metadata form (Drive tab) ─────────────────────────────────────────
 interface FormState {
   title: string;
   description: string;
-  tagsInput: string; // comma-separated for the input
+  tagsInput: string;
   privacy: PrivacyStatus;
   productCode: string;
 }
@@ -163,10 +302,7 @@ function formToMetadata(form: FormState, recipientIds: string[]): UploadMetadata
   return {
     title: form.title.trim(),
     description: form.description.trim(),
-    tags: form.tagsInput
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean),
+    tags: form.tagsInput.split(",").map((t) => t.trim()).filter(Boolean),
     privacy_status: form.privacy,
     category_id: "22",
     notify_recipients: recipientIds,
@@ -262,104 +398,18 @@ function MetadataFields({
   );
 }
 
-// ─── In-flight progress card ───────────────────────────────────────────
-function ProgressCard({ jobId, onClose }: { jobId: string; onClose: () => void }) {
-  const { job } = useUploadStatus(jobId);
-
-  if (!job) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-3 p-6">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="text-sm">Iniciando envio...</span>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const url = youtubeUrl(job.youtube_video_id);
-  const failed = job.status === "failed";
-  const done = isTerminal(job.status);
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            {failed ? (
-              <CircleAlert className="h-5 w-5 text-destructive" />
-            ) : done ? (
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-            ) : (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            )}
-            {job.title}
-          </CardTitle>
-          <StatusBadge status={job.status} />
-        </div>
-        <CardDescription>{job.file_name}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <Progress value={job.progress_percent} />
-        <div className="text-xs text-muted-foreground">
-          {job.progress_percent}% — {STATUS_LABELS[job.status]}
-        </div>
-        {failed && job.error_message && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-            {job.error_message}
-          </div>
-        )}
-        {url && (
-          <div className="flex items-center gap-2">
-            <Button asChild variant="default" size="sm">
-              <a href={url} target="_blank" rel="noreferrer">
-                Ver no YouTube
-                <ExternalLink className="ml-1 h-3 w-3" />
-              </a>
-            </Button>
-          </div>
-        )}
-        {done && (
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Novo envio
-          </Button>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Browser tab ───────────────────────────────────────────────────────
-function BrowserUploadTab({
-  recipients,
-  recipientsLoading,
-  onJobStarted,
-}: {
-  recipients: Recipient[];
-  recipientsLoading: boolean;
-  onJobStarted: (jobId: string) => void;
-}) {
+// ─── Computador tab — file + code only ─────────────────────────────────
+function ComputerUploadTab({ onJobStarted }: { onJobStarted: (jobId: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm());
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const { uploadFile, pending } = useUploadMutations();
+  const [productCode, setProductCode] = useState("");
+  const { uploadFromCode, pending } = useUploadMutations();
 
-  // Pre-select all active recipients on first load.
-  useMemo(() => {
-    if (recipients.length === 0) return;
-    setSelected((prev) => {
-      if (prev.size > 0) return prev;
-      return new Set(recipients.filter((r) => r.is_active).map((r) => r.id));
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recipients]);
-
-  const canSubmit = !!file && form.title.trim().length > 0 && !pending;
+  const canSubmit = !!file && productCode.trim().length > 0 && !pending;
 
   const submit = async () => {
     if (!file) return;
     try {
-      const created = await uploadFile(file, formToMetadata(form, [...selected]));
+      const created = await uploadFromCode(file, productCode.trim());
       toast.success("Envio iniciado");
       onJobStarted(created.job_id);
     } catch (err: any) {
@@ -370,16 +420,20 @@ function BrowserUploadTab({
   return (
     <div className="space-y-4">
       <UploadZone file={file} onFileChange={setFile} disabled={pending} />
-      <Separator />
-      <MetadataFields form={form} setForm={setForm} disabled={pending} />
       <div className="grid gap-2">
-        <Label>Notificar destinatarios</Label>
-        <RecipientPicker
-          recipients={recipients}
-          selected={selected}
-          onChange={setSelected}
-          loading={recipientsLoading}
+        <Label htmlFor="computer-code">Código do Imóvel *</Label>
+        <Input
+          id="computer-code"
+          value={productCode}
+          onChange={(e) => setProductCode(e.target.value.toUpperCase())}
+          maxLength={20}
+          placeholder="ONE0000"
+          disabled={pending}
         />
+        <p className="text-xs text-muted-foreground">
+          Só o arquivo e o código. O sistema busca título, descrição e tags no
+          CRM e dispara todo o resto automaticamente.
+        </p>
       </div>
       <div className="flex justify-end">
         <Button onClick={submit} disabled={!canSubmit}>
@@ -391,7 +445,7 @@ function BrowserUploadTab({
   );
 }
 
-// ─── Drive tab ─────────────────────────────────────────────────────────
+// ─── Drive tab — full form ─────────────────────────────────────────────
 function DriveUploadTab({
   recipients,
   recipientsLoading,
@@ -507,9 +561,6 @@ function HistoryRow({ job }: { job: UploadJob }) {
 
 function HistoryCard({ activeJobId }: { activeJobId: string | null }) {
   const { data, loading, refresh } = useUploadHistory(25);
-
-  // Refresh when an in-flight job terminates so the row appears "fresh".
-  // Cheap correctness over WS-based push (which would require backend changes).
   const { job: active } = useUploadStatus(activeJobId);
   useMemo(() => {
     if (active && isTerminal(active.status)) {
@@ -545,20 +596,13 @@ function HistoryCard({ activeJobId }: { activeJobId: string | null }) {
   );
 }
 
-// ─── Page shell ────────────────────────────────────────────────────────
-export default function UploadPage() {
+// ─── Panel ─────────────────────────────────────────────────────────────
+export default function UploadPanel() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const { data: recipients, loading: recipientsLoading } = useRecipients();
 
   return (
-    <div className="container max-w-5xl space-y-6 py-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Enviar video</h1>
-        <p className="text-sm text-muted-foreground">
-          Envie um arquivo do seu computador ou um link do Google Drive.
-        </p>
-      </div>
-
+    <div className="space-y-6">
       {activeJobId && (
         <ProgressCard jobId={activeJobId} onClose={() => setActiveJobId(null)} />
       )}
@@ -566,9 +610,13 @@ export default function UploadPage() {
       {!activeJobId && (
         <Card>
           <CardContent className="pt-6">
-            <Tabs defaultValue="browser">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="browser">
+            <Tabs defaultValue="chat">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="chat">
+                  <MessageCircle className="mr-2 h-4 w-4" />
+                  Chat
+                </TabsTrigger>
+                <TabsTrigger value="computer">
                   <UploadCloud className="mr-2 h-4 w-4" />
                   Computador
                 </TabsTrigger>
@@ -577,12 +625,11 @@ export default function UploadPage() {
                   Google Drive
                 </TabsTrigger>
               </TabsList>
-              <TabsContent value="browser" className="mt-6">
-                <BrowserUploadTab
-                  recipients={recipients}
-                  recipientsLoading={recipientsLoading}
-                  onJobStarted={setActiveJobId}
-                />
+              <TabsContent value="chat" className="mt-6">
+                <ChatPanel />
+              </TabsContent>
+              <TabsContent value="computer" className="mt-6">
+                <ComputerUploadTab onJobStarted={setActiveJobId} />
               </TabsContent>
               <TabsContent value="drive" className="mt-6">
                 <DriveUploadTab

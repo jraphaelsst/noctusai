@@ -5,11 +5,14 @@
  * call). Structure comes from createProductApp + createProductLayout.
  * This file only defines pages and nav — zero boilerplate.
  *
- * Nav mirrors the live-validated CMS source (ported in Wave 2.4):
- *   Principal     · Dashboard / Agente / Vídeos / Upload
+ * Nav:
+ *   Principal     · Dashboard / Criação de mídia / Email Marketing / YouTube
  *   WhatsApp      · Conexão / Monitor
  *   Configuração  · Configurações / Equipe
- * pt-BR copy preserved verbatim from the validated workspace.
+ *
+ * The former "Agente" / "Vídeos" / "Upload" entries are consolidated under
+ * ONE "YouTube" page (Vídeos + Upload tabs; Agente is now Upload→Chat). The
+ * `/chat` route stays public for direct access. pt-BR copy preserved.
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
@@ -21,15 +24,13 @@ import {
   Users,
   Home,
   Mail,
-  MessageCircle,
-  PlaySquare,
   Settings as SettingsIcon,
   Settings2,
   Smartphone,
   Activity,
-  Upload as UploadIcon,
   Share2,
   Wand2,
+  Youtube,
 } from "lucide-react";
 
 // Pages
@@ -41,8 +42,7 @@ const Chat = lazy(() => import("@/pages/Chat"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const Settings = lazy(() => import("@/pages/Settings"));
-const Upload = lazy(() => import("@/pages/Upload"));
-const Videos = lazy(() => import("@/pages/Videos"));
+const YouTube = lazy(() => import("@/pages/YouTube"));
 const Conexao = lazy(() => import("@/pages/Conexao"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
 const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
@@ -58,11 +58,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Agente", href: "/chat", icon: MessageCircle, route: "chat" },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Email Marketing", href: "/email-marketing", icon: Mail, route: "email_marketing" },
-      { name: "Vídeos", href: "/videos", icon: PlaySquare, route: "videos" },
-      { name: "Upload", href: "/upload", icon: UploadIcon, route: "upload" },
+      { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
     ],
   },
   {
@@ -95,11 +93,9 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Agente", href: "/chat", icon: MessageCircle },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Email Marketing", href: "/email-marketing", icon: Mail },
-      { name: "Vídeos", href: "/videos", icon: PlaySquare },
-      { name: "Upload", href: "/upload", icon: UploadIcon },
+      { name: "YouTube", href: "/youtube", icon: Youtube },
     ],
   },
   {
@@ -138,8 +134,7 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/media-creation", component: MediaCreation },
     { path: "/email-marketing", component: EmailMarketing },
-    { path: "/videos", component: Videos },
-    { path: "/upload", component: Upload },
+    { path: "/youtube", component: YouTube },
     { path: "/conexao", component: Conexao },
     { path: "/monitor", component: Monitor },
     { path: "/equipe", component: Equipe },
@@ -147,8 +142,7 @@ export default createProductApp({
   ],
   // /chat is public — the backend chat router is unauthenticated by
   // current product direction, so the frontend route matches that
-  // posture. When real auth lands on /api/chat/*, move /chat back
-  // into the `routes` array.
+  // posture. The same panel renders as YouTube → Upload → Chat.
   publicRoutes: [
     { path: "/chat", component: Chat },
   ],

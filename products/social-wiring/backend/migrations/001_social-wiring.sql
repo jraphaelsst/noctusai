@@ -1089,12 +1089,19 @@ CREATE INDEX IF NOT EXISTS ix_sw_mc_posts_published_at
 -- Seed pages (status_pagina) — consolidated from reference 001–004
 -- ============================================================================
 
+-- Seed = the live nav route set (App.tsx). Pages absent here are HIDDEN once
+-- status_pagina has rows (filterNavByPageStatus: unlisted ⇒ hidden), so this
+-- list must track the nav. `youtube` consolidates the former `upload`+`videos`
+-- (kept below as harmless legacy rows for existing DBs).
 INSERT INTO social_wiring.status_pagina (nome_pagina, status) VALUES
     ('dashboard', 'producao'),
     ('equipe', 'producao'),
     ('configuracoes', 'producao'),
-    ('upload', 'producao'),
-    ('videos', 'producao')
+    ('media_creation', 'producao'),
+    ('email_marketing', 'producao'),
+    ('youtube', 'producao'),
+    ('conexao', 'producao'),
+    ('monitor', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────

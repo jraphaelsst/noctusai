@@ -198,3 +198,40 @@ class TestRetryEndpoint:
         )
         assert resp.status_code == 409
         assert "failed" in resp.text.lower()
+
+
+class TestUploadFromCodeValidation:
+    """POST /api/videos/upload/from-code — the simplified "file + code only"
+    browser upload. Server resolves metadata from the CRM, so the boundary
+    cases are: bad code format (422) + CRM-not-configured (503). Both fail
+    BEFORE the file is staged, so no service/pipeline mock is needed."""
+
+    _FILE = {"file": ("v.mp4", b"data", "video/mp4")}
+
+    def test_requires_auth(self, client):
+        resp = client.raw().post(
+            "/api/videos/upload/from-code",
+            files=self._FILE,
+            data={"product_code": "ONE0000"},
+        )
+        assert resp.status_code in (401, 403)
+
+    def test_invalid_code_returns_422(self, client, override_settings):
+        override_settings(**_COMPLETE_CREDS, crm_base_url="http://crm", crm_api_key="k")
+        resp = client.post(
+            "/api/videos/upload/from-code",
+            files=self._FILE,
+            data={"product_code": "BADCODE"},
+        )
+        assert resp.status_code == 422
+        assert "product_code" in resp.text.lower()
+
+    def test_crm_not_configured_returns_503(self, client, override_settings):
+        # Valid code passes format check, then the empty CRM config trips 503.
+        override_settings(**_COMPLETE_CREDS, crm_base_url="", crm_api_key="")
+        resp = client.post(
+            "/api/videos/upload/from-code",
+            files=self._FILE,
+            data={"product_code": "ONE0000"},
+        )
+        assert resp.status_code == 503
