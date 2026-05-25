@@ -29,6 +29,7 @@ KNOWLEDGE-BASE/
 │   │   ├── environment.md
 │   │   ├── notifications.md
 │   │   ├── shared-library-conventions.md
+│   │   ├── product-internal-wiring.md  ← every UI surface shows REAL data by construction (route-exists ≠ wired); the 6-step wiring audit + noctus.dev.scan_wiring mechanism; born from the core admin all-zeros dashboard (plans.name/nome 500, 2026-05-25)
 │   │   ├── project-execution.md
 │   │   ├── proposals-and-improvements.md  ← two-system protocol (improvements per-project, ONE bundled proposal per phase)
 │   │   ├── lgpd.md
