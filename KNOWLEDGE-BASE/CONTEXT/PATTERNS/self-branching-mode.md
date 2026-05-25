@@ -124,8 +124,24 @@ MCP-toolkit tests: `"$PRIMARY/mcp/noctusai/.venv/bin/python" -m pytest tests/ -q
 
 ---
 
+## 5b. Cross-tree hazards under LIVE peers — the worktree isolates Edits, not the tooling
+
+A worktree perfectly isolates your **Edits**. It does NOT, by itself, isolate **tooling** or the **shared `dev` ref**. Two hazards bit us 2026-05-25 (`social-wiring-waha-youtube`) *even though the worktree was correct* — so "I branched but still collided with the peer" is a real, recurring failure, and here is its anatomy:
+
+**(a) MCP-fixed-CWD crossing.** `noctus.dev.*` MCP tools run from the **PRIMARY checkout's CWD**, not your worktree ([[feedback_harness_cwd_resets_to_primary]] / MCP-fixed-CWD). A git-**mutating** MCP tool — `task_branch action='integrate'` — therefore operates partly on the **primary tree**; if a peer has uncommitted work there, its rebase **leaks the peer's uncommitted files into your worktree** and aborts with an empty `conflicted_files`. → **Rule:** under a live peer, do git **mutations** worktree-explicitly — integrate with a direct ref-only push: `git -C <wt> fetch origin && git -C <wt> rebase origin/dev && git -C <wt> push origin HEAD:dev` (NOT the MCP `integrate` wrapper). `task_branch` **`start`** is safe (it only `git worktree add`s a fresh checkout); **`integrate`** is the CWD-crossing one — prefer the manual ref-only push until the tool is made `git -C`-aware. Reads/scans are fine **only with** `worktree_path=` (e.g. `scan_wiring`).
+
+**(b) Peer-on-primary makes the primary tree "hot".** The collision needs TWO conditions: a peer with uncommitted work in the primary checkout AND a tool that crosses into it. Remove the first: **everyone worktrees — nobody parks WRITES on the primary `dev` checkout.** The primary stays clean/idle as the integration anchor; *every* agent (including the one that "feels like the main session") works in its own `.claude/worktrees/<slug>`. A peer editing the primary tree directly is the §9a sin wearing a different hat.
+
+**(c) `dev` integration is a shared-ref RACE.** With N active agents `origin/dev` moves under you (it moved 3× in one session: 5755947a→01ea5bf0→8060cbf4→4c629672). Integrate is therefore *always* fetch→rebase-onto-latest→FF-push, **retry on non-FF** — never `--force`. A clean rebase (no file overlap) is the norm; a true conflict is abort+surface.
+
+> **"Can two agents branch in parallel in the same workspace?"** — **YES**, that is exactly what worktrees are for (§2 physics): each gets its own working dir + `HEAD` off `origin/dev`, sharing one `.git`. The thing that *cannot* coexist is plain `git checkout` of two branches in ONE directory (single `HEAD`). So the recurring collision was **never the worktree concept** — it was (a)+(b): tooling crossing into a peer-occupied primary tree. The fix is process + tooling discipline, not a different branching model.
+
+---
+
 ## 6. Anti-patterns
 
+- **Integrating via the MCP `task_branch integrate` while a peer occupies the primary tree.** It runs from the primary CWD and leaks the peer's uncommitted files into your worktree (§5b a). Use the ref-only `git -C <wt> push origin HEAD:dev`.
+- **A peer parking WRITES on the primary `dev` checkout.** Makes the primary "hot" so every cross-tree tool collides; everyone worktrees, primary stays the clean integration anchor (§5b b).
 - **Sharing one checkout + independent `git switch`.** The cardinal §9a sin; self-branching exists to make avoiding it automatic. A peer NEVER switches the primary checkout's branch.
 - **Branching for a read.** Empty worktrees for "explain this function" — the trigger is write-vs-read; reads stay on `dev`.
 - **Reusing "inline" for this mode.** `inline` = no-dispatch (size). This = self-isolate (write-vs-read). Distinct axes (§1).
