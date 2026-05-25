@@ -30,6 +30,7 @@ KNOWLEDGE-BASE/
 │   │   ├── notifications.md
 │   │   ├── shared-library-conventions.md
 │   │   ├── product-internal-wiring.md  ← every UI surface shows REAL data by construction (route-exists ≠ wired); the 6-step wiring audit + noctus.dev.scan_wiring mechanism; born from the core admin all-zeros dashboard (plans.name/nome 500, 2026-05-25)
+│   │   ├── product-icon-registry.md  ← a product always ships a REAL icon: icone must render as an actual icon (registered ProductIcon ICONS name OR emoji), never a bare name shown as TEXT (the "Sprout" bug, 2026-05-25); ICONS = single allowlist; rule enforced at 4 layers — render via <ProductIcon> never inline {product.icone}; ProductIcon Box-fallback for empty/unregistered; create-API required+non-empty (ProductCreate.icone Field min_length=1); migration-gate keeper check_product_icon_registered folds core product-catalog migrations (INSERT/UPDATE set, DELETE remove, last-write-wins → live catalog only) + flags empty/unregistered ASCII; sibling of product-internal-wiring
 │   │   ├── project-execution.md
 │   │   ├── proposals-and-improvements.md  ← two-system protocol (improvements per-project, ONE bundled proposal per phase)
 │   │   ├── lgpd.md

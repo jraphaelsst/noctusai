@@ -60,6 +60,7 @@ class TestStrictHttpUnknownFieldRejectedW3B:
             json={
                 "nome": "Erp Imobiliario",
                 "slug": "erp-imobi",
+                "icone": "Building2",
                 "url_base": "https://erp.noctus.ai",
                 "definitely_not_a_field": "trojan",
             },

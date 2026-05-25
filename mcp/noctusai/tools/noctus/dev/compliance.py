@@ -7057,6 +7057,165 @@ def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_product_icon_registered` — every product ships a REAL icon.
+# A product's `icone` (core `public.products`) must render as an actual icon,
+# never as the bare text of an icon name. `ProductIcon`
+# (core/frontend/src/lib/product-icon.tsx) renders a value that is a key in its
+# `ICONS` registry as an SVG, and any other ASCII value as raw TEXT — so a
+# lucide name NOT in the registry shows up literally (the "Sprout" bug,
+# 2026-05-25). Emoji values (non-ASCII) render verbatim and are allowed.
+# This keeper folds the core product-catalog migrations into the final live
+# catalog and flags any product whose icone is EMPTY or an unregistered ASCII
+# name. See KB § PATTERNS/testing.md § Regression-test-the-detector and
+# CLAUDE/frontend.md (product icons).
+# ---------------------------------------------------------------------------
+
+
+def _product_icon_registry(repo_root: Path) -> set[str]:
+    """Parse the frontend `ICONS` registry → the set of registered icon names.
+
+    Source of truth: ``products/core/frontend/src/lib/product-icon.tsx``. The
+    registry is the allowlist of values that render as an actual SVG icon. An
+    empty set (file missing / unparseable) disables the check (degrade, never
+    crash) — logged so the gap is not silent.
+    """
+    f = repo_root / "products" / "core" / "frontend" / "src" / "lib" / "product-icon.tsx"
+    try:
+        content = f.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("compliance: cannot read ProductIcon registry %s (%s)", f, exc)
+        return set()
+    m = re.search(r"const\s+ICONS\b[^=]*=\s*\{(.*?)\n\}", content, re.DOTALL)
+    if not m:
+        logger.warning("compliance: cannot locate ICONS object in %s", f)
+        return set()
+    return set(re.findall(r"^\s*([A-Za-z][A-Za-z0-9]*)\s*[:,]", m.group(1), re.MULTILINE))
+
+
+def _migration_number(name: str) -> int:
+    try:
+        return int(name.split("_", 1)[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _fold_product_catalog(migrations_dir: Path) -> dict[str, tuple[str, str, int]]:
+    """Fold the core product-catalog migrations → ``{slug: (icone, file, line)}``.
+
+    Applies INSERT/UPDATE (set icone) and DELETE (remove slug) in migration
+    order (number, then in-file position), last-write-wins. Mirrors how the
+    live ``public.products`` table is built from the immutable migration chain,
+    so retired products (deleted by a later forward migration) and
+    delete-then-re-add (`seed` → 036 delete, 038 re-add) resolve correctly.
+
+    Parsing is anchor-based — no statement/paren/semicolon parsing (product
+    `descricao` text contains both ``;`` and ``()``):
+      * icone — the quoted token immediately preceding the row's
+        ``'http(s)://...'`` url_base (only product rows carry a url_base).
+      * slug  — the nearest preceding kebab-case quoted token (the only
+        all-lowercase quoted value in a product row).
+    """
+    ops: list[tuple[tuple[int, int], str, str, str | None, str, int]] = []
+    if not migrations_dir.is_dir():
+        return {}
+    for sql in sorted(migrations_dir.glob("*.sql")):
+        num = _migration_number(sql.name)
+        try:
+            content = sql.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        slug_matches = list(re.finditer(r"'([a-z0-9]+(?:-[a-z0-9]+)*)'", content))
+        # INSERT rows — pair icone (url_base anchor) with its row's slug.
+        for im in re.finditer(r"'([^']*)'\s*,\s*'https?://", content):
+            slug = None
+            for sm in slug_matches:
+                if sm.start() < im.start():
+                    slug = sm.group(1)
+                else:
+                    break
+            if slug:
+                lineno = content.count("\n", 0, im.start()) + 1
+                ops.append(((num, im.start()), "set", slug, im.group(1), sql.name, lineno))
+        # UPDATE ... SET icone = '...' WHERE slug = '...'
+        for um in re.finditer(
+            r"SET\s+icone\s*=\s*'([^']*)'.*?slug\s*=\s*'([a-z0-9-]+)'",
+            content, re.IGNORECASE | re.DOTALL,
+        ):
+            lineno = content.count("\n", 0, um.start()) + 1
+            ops.append(((num, um.start()), "set", um.group(2), um.group(1), sql.name, lineno))
+        # DELETE FROM products WHERE slug IN (...) | slug = '...'
+        for dm in re.finditer(
+            r"DELETE\s+FROM\s+(?:public\.)?products\s+WHERE\s+slug\s+IN\s*\(([^)]*)\)",
+            content, re.IGNORECASE | re.DOTALL,
+        ):
+            for s in re.findall(r"'([a-z0-9-]+)'", dm.group(1)):
+                ops.append(((num, dm.start()), "del", s, None, sql.name, 0))
+        for dm in re.finditer(
+            r"DELETE\s+FROM\s+(?:public\.)?products\s+WHERE\s+slug\s*=\s*'([a-z0-9-]+)'",
+            content, re.IGNORECASE,
+        ):
+            ops.append(((num, dm.start()), "del", dm.group(1), None, sql.name, 0))
+
+    ops.sort(key=lambda o: o[0])
+    catalog: dict[str, tuple[str, str, int]] = {}
+    for _, kind, slug, icone, fn, lineno in ops:
+        if kind == "set":
+            catalog[slug] = (icone or "", fn, lineno)
+        else:
+            catalog.pop(slug, None)
+    return catalog
+
+
+def check_product_icon_registered(repo_root: Path | None = None) -> list[dict]:
+    """Flag a product whose `icone` is empty or not a renderable icon.
+
+    Every product MUST ship a real icon — a value `ProductIcon` renders as an
+    SVG (a name in its `ICONS` registry) or an emoji (non-ASCII, rendered
+    verbatim). An empty icone, or an ASCII name absent from the registry,
+    renders as bare TEXT on the dashboard / admin panel (the "Sprout" bug). The
+    remediation is loud: add the lucide name to `ICONS` in
+    `core/frontend/src/lib/product-icon.tsx`, or seed a registered name.
+    """
+    base = repo_root if repo_root is not None else REPO_ROOT
+    registry = _product_icon_registry(base)
+    if not registry:
+        return []  # registry unreadable — degrade (already logged)
+
+    catalog = _fold_product_catalog(base / "products" / "core" / "backend" / "migrations")
+    issues: list[dict] = []
+    for slug, (icone, fn, lineno) in sorted(catalog.items()):
+        rel = f"backend/migrations/{fn}"
+        if icone == "":
+            issues.append({
+                "product": "core",
+                "file": rel,
+                "issue": (
+                    f"Product '{slug}' is seeded with an EMPTY icone (line {lineno}). "
+                    "Every product must ship a real icon — a registered ProductIcon "
+                    "name (see core/frontend/src/lib/product-icon.tsx ICONS) or an "
+                    "emoji. An empty icone renders as nothing on the dashboard."
+                ),
+                "severity": "high",
+            })
+        elif any(ord(c) > 127 for c in icone):
+            continue  # emoji — renders verbatim, allowed
+        elif icone not in registry:
+            issues.append({
+                "product": "core",
+                "file": rel,
+                "issue": (
+                    f"Product '{slug}' icone '{icone}' (line {lineno}) is not a "
+                    "registered ProductIcon — it renders as raw TEXT, not an icon "
+                    "(the 'Sprout' bug, 2026-05-25). Add '" + icone + "' to ICONS in "
+                    "core/frontend/src/lib/product-icon.tsx (import it from "
+                    "lucide-react), or seed a name already in the registry."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
 # documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
@@ -7406,6 +7565,10 @@ def check_all_products() -> tuple[int, list]:
     # fixture into tests/conftest.py, else the in-memory slowapi limiter
     # leaks bucket state across tests → order-dependent 429 flake (N=6).
     all_issues.extend(check_limiter_conftest_import())
+    # product-icon-registry coupling (2026-05-25) — every product ships a REAL
+    # icon: an `icone` that ProductIcon renders as an SVG (registered name) or
+    # an emoji, never a bare lucide name that shows as text (the "Sprout" bug).
+    all_issues.extend(check_product_icon_registered())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100

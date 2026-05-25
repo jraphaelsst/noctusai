@@ -91,6 +91,7 @@ class TestCreateProduct:
         resp = admin_client.post("/api/products", json={
             "nome": "New Product",
             "slug": "new-prod",
+            "icone": "Box",  # required + non-empty (product-icon rule)
             "url_base": "http://localhost:3000",
         })
         assert resp.status_code == 200
@@ -101,6 +102,7 @@ class TestCreateProduct:
         resp = client.post("/api/products", json={
             "nome": "New Product",
             "slug": "new-prod",
+            "icone": "Box",
             "url_base": "http://localhost:3000",
         })
         assert resp.status_code == 403
@@ -111,10 +113,29 @@ class TestCreateProduct:
         })
         assert resp.status_code == 422
 
+    def test_create_product_rejects_empty_icone(self, admin_client):
+        # A product must ship a real icon — icone is required + non-empty.
+        resp = admin_client.post("/api/products", json={
+            "nome": "No Icon",
+            "slug": "no-icon",
+            "icone": "",
+            "url_base": "http://localhost:3000",
+        })
+        assert resp.status_code == 422
+
+    def test_create_product_rejects_missing_icone(self, admin_client):
+        resp = admin_client.post("/api/products", json={
+            "nome": "No Icon",
+            "slug": "no-icon",
+            "url_base": "http://localhost:3000",
+        })
+        assert resp.status_code == 422
+
     def test_create_product_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/products", json={
             "nome": "Test",
             "slug": "test",
+            "icone": "Box",
             "url_base": "http://localhost:3000",
         })
         assert resp.status_code == 401
