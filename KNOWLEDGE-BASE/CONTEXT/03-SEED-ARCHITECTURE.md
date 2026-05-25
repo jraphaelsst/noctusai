@@ -162,7 +162,7 @@ This preserves DRY across model families and across future agents.
 ## Backend Framework API (`noctusai_seed`)
 
 ### `create_product_app(name, schema, settings, routers, *, standard_routers=(...), ...)`
-Creates a fully configured FastAPI app. Includes: logging, database clients, auth dependencies, CORS, Sentry, exception handlers, middleware, rate limiting. Products opt into the bundled standard routers via `standard_routers=[...]` — valid names are the keys of `noctusai_seed.routers._STANDARD_ROUTERS`: `"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`. Pass `[]` to opt out entirely. See § Standard routers below for the full per-router contract.
+Creates a fully configured FastAPI app. Includes: logging, database clients, auth dependencies, CORS, Sentry, exception handlers, middleware, rate limiting. Products opt into the bundled standard routers via `standard_routers=[...]` — valid names are the keys of `noctusai_seed.routers._STANDARD_ROUTERS`: `"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`. Pass `[]` to opt out entirely. See § Standard routers below for the full per-router contract.
 
 ### `ProductSettings`
 Base Pydantic settings class. Provides: jwt_secret (with production safety check), core_api_url, cors_origins. Products extend with domain fields.
@@ -174,11 +174,11 @@ Returns a DatabaseModule with: `get_client(token)` (user-authenticated), `get_ad
 Returns ProductDependencies with: `get_current_user()`, `get_user_role()`, `get_org_id()`, `get_user_client()`, `get_admin_client()`, `get_core_client()`.
 
 ### `build_standard_routers(deps, settings, product_name, version, names)`
-Returns only the named subset of standard routers. `names` is a sequence of strings drawn from the `_STANDARD_ROUTERS` registry keys (`"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`). Unknown names raise `ValueError` naming every invalid key and listing the valid set. Order is preserved. `create_product_app()` calls this internally based on the `standard_routers=[...]` kwarg — products don't invoke it directly.
+Returns only the named subset of standard routers. `names` is a sequence of strings drawn from the `_STANDARD_ROUTERS` registry keys (`"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`). Unknown names raise `ValueError` naming every invalid key and listing the valid set. Order is preserved. `create_product_app()` calls this internally based on the `standard_routers=[...]` kwarg — products don't invoke it directly.
 
 ### Standard routers
 
-The seven bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(standard_routers=[...])` time. Each opt-in is by registry key; unknown keys raise `ValueError`. Adding a new entry requires (a) registry, (b) `tests/test_build_standard_routers.py::test_registry_keys_match_documented_set` update, (c) this table — drift between any two breaks the test.
+The eight bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(standard_routers=[...])` time. Each opt-in is by registry key; unknown keys raise `ValueError`. Adding a new entry requires (a) registry, (b) `tests/test_build_standard_routers.py::test_registry_keys_match_documented_set` update, (c) this table — drift between any two breaks the test.
 
 | Key | Endpoints | Auth | Backing storage / data source |
 |---|---|---|---|
@@ -189,6 +189,9 @@ The seven bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(st
 | `ai_outputs` | GET `/api/ai/outputs?ref_type=&ref_id=` | `deps.get_current_user` (user-token client; RLS scopes per-org) | `<schema>.ai_outputs` |
 | `ai_feedback` | POST `/api/ai/feedback`, GET `/api/ai/feedback?output_ref=` | `deps.get_current_user` (user-token client; RLS scopes per-user) | `<schema>.ai_feedback` |
 | `scheduler` | GET `/api/scheduler/jobs`, GET `/api/scheduler/jobs/{job_id}` | `deps.get_current_user` (platform-level — no per-org filter; scheduler state is infrastructure, not user data) | `noctusai_lib.api.scheduler.scheduler` (APScheduler `AsyncIOScheduler` singleton — read-only view of `get_jobs()`) |
+| `whatsapp_admin` | GET `/api/whatsapp/connection`, GET `/qr`, POST `/restart`, POST `/logout`, POST `/webhook` | `deps.get_current_user` | WAHA HTTP API via `noctusai_lib.integrations.whatsapp.get_whatsapp_client` (no DB — live WAHA session state; `FakeWahaClient` when `waha_base_url` unset) |
+
+**`whatsapp_admin`**: WAHA connection-admin surface for products running a WhatsApp chatbot — session status (`ConnectionStatusDTO`), QR pairing (`QrDTO`, always 200 so a polling UI has one contract; `WahaSessionNotReady` → `scannable:false`), restart/logout lifecycle, and webhook wiring. Client resolved via `get_whatsapp_client(base_url, api_key, session)` from `settings.waha_*` (getattr — a product opting in without the attrs fails loudly at request time, not import). Real ↔ Fake parity per `KB § PATTERNS/seed-fake-real-adapter.md`.
 
 **`scheduler`**: read-only DTO surface (`SchedulerJobDTO` — `id`, `next_run_time`, `trigger_kind`, `trigger_args`) over the seed-lib's scheduler primitive. Trigger serialization is type-aware: `CronTrigger` emits non-wildcard fields by name (`{"hour": "6", "minute": "0"}`); `IntervalTrigger` emits `{"seconds": <total>}`; `DateTrigger` emits `{"run_date": "<ISO>"}`; unknown trigger subclasses fall through to class-name + empty args. Pre-start jobs (added before `start_scheduler()`) emit `next_run_time: null` — APScheduler only populates that slot once the scheduler is running. Write paths (cancel-job, trigger-now) and `ultima_execucao` persistence (would require a `scheduler_runs` table) are deferred until a second consumer surfaces. Filed from `seed-scheduler-standard-router` project after Engineer AA's PF Phase 5 close (commit `378cdf5`) flagged N=3 forecast (PF Recorrentes + mailing campaigns + therapy scheduled jobs).
 
@@ -494,7 +497,7 @@ Any product customization MUST flow through one of these seams. Any customizatio
 | Seam | Purpose | Used by |
 |---|---|---|
 | `routers=[...]` | Product-specific domain routers. Always used. | Every product. |
-| `standard_routers=[...]` | Opt into bundled seed routers (`health`, `notificacoes`, `team`, `llm`, `ai_outputs`, `ai_feedback`, `scheduler`). | Every product (core: `["health"]`; therapy: `["health","notificacoes","llm"]`; etc.). |
+| `standard_routers=[...]` | Opt into bundled seed routers (`health`, `notificacoes`, `team`, `llm`, `ai_outputs`, `ai_feedback`, `scheduler`, `whatsapp_admin`). | Every product (core: `["health"]`; therapy: `["health","notificacoes","llm"]`; etc.). |
 | `limiter=` | Custom rate-limiter instance from `create_limiter(redis_url=...)`. | Every product. |
 | `lifespan_startup=` / `lifespan_shutdown=` | Async callables for scheduler start/stop, recovery tasks. | mailing, personal-finance, erp (schedulers). |
 | `llm_config=` | Override the default `LLMConfig` via `default_llm_config(**overrides)`. | Any product needing a non-default chat model, cache-off for sensitive content, etc. |

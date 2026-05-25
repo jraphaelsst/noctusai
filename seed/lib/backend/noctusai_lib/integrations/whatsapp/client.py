@@ -20,6 +20,40 @@ from noctusai_lib.integrations.whatsapp.mappers import (
 )
 
 
+class WahaSessionNotReady(RuntimeError):
+    """Raised by ``get_qr`` when the session is not in ``SCAN_QR_CODE``.
+
+    WAHA returns ``422`` with a structured body
+    (``{"status": "WORKING", "expected": ["SCAN_QR_CODE"]}``) when a QR is
+    requested for an already-paired (or starting) session. That is an
+    expected control-flow signal — not an HTTP failure — so the admin
+    router translates it into "no QR needed, session is <status>" rather
+    than a 500.
+    """
+
+    def __init__(self, status: str | None, detail: str = ""):
+        self.status = status
+        super().__init__(detail or f"session not scannable (status={status})")
+
+
+def _safe_json(response: httpx.Response) -> dict[str, Any]:
+    """Parse WAHA's response body to a dict, tolerating empty bodies.
+
+    Some WAHA engines / session-admin paths return 2xx with no body (or a
+    non-JSON payload). The HTTP status was already validated via
+    ``raise_for_status``, so returning ``{}`` lets the caller treat the
+    call as successful instead of raising a JSONDecodeError.
+    """
+    body = response.content
+    if not body or not body.strip():
+        return {}
+    try:
+        parsed = response.json()
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {"raw": parsed}
+
+
 class WahaClient:
     """WAHA HTTP client with both sync and async send paths.
 
@@ -88,6 +122,99 @@ class WahaClient:
             )
             response.raise_for_status()
             return response.json()
+
+    # ------------------------------------------------------------------
+    # Session admin — connection lifecycle, QR pairing, webhook wiring.
+    #
+    # Async-only by design: every caller is a FastAPI handler already on
+    # an event loop. Unlike send_text (called from sync worker paths too),
+    # session admin is never invoked off-loop, so no sync siblings.
+    # ------------------------------------------------------------------
+
+    async def get_session(self) -> dict[str, Any]:
+        """GET /api/sessions/{session} — status, me, engine."""
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.get(
+                f"/api/sessions/{self.session}",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return _safe_json(response)
+
+    async def restart_session(self) -> dict[str, Any]:
+        """POST /api/sessions/{session}/restart — recover a stuck session.
+
+        Triggers a fresh QR when the session is unpaired; preserves the
+        paired account when credentials are still valid on disk.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.post(
+                f"/api/sessions/{self.session}/restart",
+                headers=self._headers(json=True),
+            )
+            response.raise_for_status()
+            return _safe_json(response)
+
+    async def logout_session(self) -> dict[str, Any]:
+        """POST /api/sessions/{session}/logout — unpair the account."""
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.post(
+                f"/api/sessions/{self.session}/logout",
+                headers=self._headers(json=True),
+            )
+            response.raise_for_status()
+            return _safe_json(response)
+
+    async def get_qr(self) -> bytes:
+        """GET /api/{session}/auth/qr?format=image — PNG bytes to scan.
+
+        Raises ``WahaSessionNotReady`` when WAHA answers 422 because the
+        session is not in ``SCAN_QR_CODE`` (already paired / starting).
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.get(
+                f"/api/{self.session}/auth/qr",
+                params={"format": "image"},
+                headers=self._headers(),
+            )
+            if response.status_code == 422:
+                body = _safe_json(response)
+                raise WahaSessionNotReady(
+                    status=body.get("status"),
+                    detail=str(body.get("error") or "session not scannable"),
+                )
+            response.raise_for_status()
+            return response.content
+
+    async def set_webhook(
+        self, url: str, events: list[str]
+    ) -> dict[str, Any]:
+        """PUT /api/sessions/{session} — wire the inbound webhook.
+
+        WAHA restarts the session on a config change; the paired account
+        survives (credentials persist on the WAHA volume).
+        """
+        payload = {
+            "config": {
+                "webhooks": [
+                    {
+                        "url": url,
+                        "events": events,
+                        "hmac": None,
+                        "retries": None,
+                        "customHeaders": None,
+                    }
+                ]
+            }
+        }
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.put(
+                f"/api/sessions/{self.session}",
+                json=payload,
+                headers=self._headers(json=True),
+            )
+            response.raise_for_status()
+            return _safe_json(response)
 
     async def download_media(self, url: str) -> bytes:
         resolved = self._resolve_media_url(url)

@@ -13,8 +13,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from noctusai_lib.integrations.whatsapp.client import WahaSessionNotReady
 from noctusai_lib.integrations.whatsapp.types import (
     WhatsAppInboundMessage,
+)
+
+# 1x1 transparent PNG — deterministic stand-in for a real QR image so
+# frontend/route tests can assert "bytes were served" without a browser.
+_FAKE_QR_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+    b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
 
@@ -34,6 +43,12 @@ class FakeWahaClient:
         self.sent_messages: list[dict[str, Any]] = []
         self.inbound_queue: list[WhatsAppInboundMessage] = []
         self.media_bytes: dict[str, bytes] = {}
+        # Session-admin state machine. Unpaired by default — mirrors a
+        # fresh WAHA container before any QR scan.
+        self.session_status: str = "SCAN_QR_CODE"
+        self.me: dict[str, Any] | None = None
+        self.webhook_config: dict[str, Any] | None = None
+        self.restart_count = 0
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -73,6 +88,54 @@ class FakeWahaClient:
                 "Call client.media_bytes[url] = b'...' before downloading."
             )
         return self.media_bytes[url]
+
+    # ------------------------------------------------------------------
+    # Session admin — mirrors WahaClient session lifecycle / QR / webhook
+    # ------------------------------------------------------------------
+
+    async def get_session(self) -> dict[str, Any]:
+        return {
+            "name": self.session,
+            "status": self.session_status,
+            "me": self.me,
+            "engine": {"engine": "FAKE"},
+        }
+
+    async def restart_session(self) -> dict[str, Any]:
+        self.restart_count += 1
+        # A restart drops an unpaired session back to QR; a paired one
+        # (credentials would persist on a real WAHA volume) comes back up.
+        if self.me is None:
+            self.session_status = "SCAN_QR_CODE"
+        else:
+            self.session_status = "WORKING"
+        return {"name": self.session, "status": self.session_status}
+
+    async def logout_session(self) -> dict[str, Any]:
+        self.me = None
+        self.session_status = "SCAN_QR_CODE"
+        return {"name": self.session, "status": self.session_status}
+
+    async def get_qr(self) -> bytes:
+        if self.session_status != "SCAN_QR_CODE":
+            raise WahaSessionNotReady(status=self.session_status)
+        return _FAKE_QR_PNG
+
+    async def set_webhook(self, url: str, events: list[str]) -> dict[str, Any]:
+        self.webhook_config = {"url": url, "events": list(events)}
+        # Real WAHA restarts on config change; mirror the status churn.
+        return {
+            "name": self.session,
+            "status": self.session_status,
+            "config": {"webhooks": [self.webhook_config]},
+        }
+
+    def simulate_pair(
+        self, *, phone: str = "5511999999999", push_name: str = "Fake"
+    ) -> None:
+        """Test helper: flip the fake to a paired/WORKING session."""
+        self.me = {"id": f"{phone}@c.us", "pushName": push_name}
+        self.session_status = "WORKING"
 
     # ------------------------------------------------------------------
     # Bi-directional — test-driving inbound messages

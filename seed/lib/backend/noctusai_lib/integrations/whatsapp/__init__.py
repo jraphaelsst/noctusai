@@ -40,7 +40,10 @@ Public surface:
 See `KB § PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.
 """
 
-from noctusai_lib.integrations.whatsapp.client import WahaClient
+from noctusai_lib.integrations.whatsapp.client import (
+    WahaClient,
+    WahaSessionNotReady,
+)
 from noctusai_lib.integrations.whatsapp.dedup import (
     InMemoryWebhookDedup,
     RedisWebhookDedup,
@@ -176,6 +179,7 @@ __all__ = [
     "SetnxRedis",
     "WahaClient",
     "WahaIgnoredEvent",
+    "WahaSessionNotReady",
     "WahaInboundMessage",
     "WahaMedia",
     "WahaPayloadError",
