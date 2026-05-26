@@ -23,6 +23,7 @@ def register_all(server) -> None:
     from . import catalog
     from . import check_framework_deps
     from . import cleanup_worktrees
+    from . import codification_radar
     from . import compliance
     from . import context
     from . import cost_evaluation
@@ -74,6 +75,7 @@ def register_all(server) -> None:
     from . import task_branch
     from . import testing
     from . import three_way_sync
+    from . import vector_calibration
     from . import vector_costs
     from . import vectorize
     from . import vps
@@ -89,6 +91,7 @@ def register_all(server) -> None:
     catalog.register(server)
     check_framework_deps.register(server)
     cleanup_worktrees.register(server)
+    codification_radar.register(server)
     compliance.register(server)
     context.register(server)
     cost_evaluation.register(server)
@@ -140,6 +143,7 @@ def register_all(server) -> None:
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
+    vector_calibration.register(server)
     vector_costs.register(server)
     vectorize.register(server)
     vps.register(server)
