@@ -19,6 +19,7 @@ version: 1.0.0
 ## Guardrails
 
 - **Cross-tree hazard:** `noctus.dev.*` MCP tools run from the PRIMARY CWD ⇒ `task_branch integrate` can leak a peer's uncommitted files into your worktree. Integrate worktree-explicitly (step 3), not via MCP, whenever a peer is active.
+- **REPO_ROOT cross-tree resolution (fixed 2026-05-26, N=3 codified):** `cli.py` / direct python imports invoked from inside a worktree now auto-resolve `REPO_ROOT` to the worktree (via `workspace._detect_worktree_root` — boundary detection on `.claude/worktrees/<slug>/`). Explicit lever for edge cases: `NOCTUSAI_HOME=$PWD python mcp/noctusai/cli.py ...`. Verify the keeper's view matches the worktree before relying on it; if it doesn't, that's a regression on the workspace resolver — surface to the tech-lead.
 - Never `git switch`/`reset` the shared `HEAD` under a peer (the §9a 2-day-chaos sin).
 - "Inline" (no dispatch) ≠ work-on-`dev` — you still branch. The inline cutoff is size-only and orthogonal.
 - A worktree is **invisible to the running env** — unit-green there ≠ live works. Integrate + live-probe before calling a UI feature done.

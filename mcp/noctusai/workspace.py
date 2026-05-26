@@ -28,6 +28,7 @@ design + bootstrap recipe + read-only rule.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -78,11 +79,25 @@ def find_workspace_marker(start: Path | None = None) -> Path | None:
 
     Returns the marker's containing directory, or ``None`` if not found
     by the filesystem root.
+
+    **Worktree boundary detection** (codified 2026-05-26 after N=3 cross-tree
+    drift recurrence): if the walk crosses a `.../.claude/worktrees/<slug>/`
+    boundary, STOP at the worktree's own root — the worktree is its own
+    working tree and references must resolve there, not at the PRIMARY
+    checkout above it. The worktree shares the primary's marker via git's
+    worktree mechanism but lives under its own root. Sibling: the
+    `NOCTUSAI_HOME` env override in `get_workspace_context` (explicit lever).
     """
     cur = (start or Path.cwd()).resolve()
     while True:
         candidate = cur / MARKER_FILENAME
         if candidate.is_file():
+            return cur
+        # Worktree boundary: if our parent is `.claude/worktrees`, `cur`
+        # IS the worktree root (its own working tree). Stop here so cli.py
+        # / direct imports invoked from inside a worktree resolve to the
+        # worktree, not the primary checkout above.
+        if cur.parent.name == "worktrees" and cur.parent.parent.name == ".claude":
             return cur
         if cur.parent == cur:  # filesystem root
             return None
@@ -98,11 +113,71 @@ def _fallback_noc_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _detect_worktree_root(start: Path) -> Path | None:
+    """Return the git-worktree root if `start` lives inside a
+    `.../<primary>/.claude/worktrees/<slug>/` tree, else None.
+
+    Codified 2026-05-26 after N=3 cross-tree drift: the primary's
+    ``.noctusai-workspace`` marker is committed, so worktrees inherit
+    a marker that points ``noctusai_home`` BACK to the primary checkout.
+    That breaks cli.py / direct-import verification (REPO_ROOT == PRIMARY
+    even when running from the worktree). Detection-based override:
+    when cwd is inside a worktree subtree, the worktree's own root IS
+    the workspace root. Sibling lever: ``NOCTUSAI_HOME`` env var.
+    """
+    cur = start.resolve()
+    while cur.parent != cur:
+        if cur.parent.name == "worktrees" and cur.parent.parent.name == ".claude":
+            return cur
+        cur = cur.parent
+    return None
+
+
 def get_workspace_context(start: Path | None = None) -> WorkspaceContext:
     """Resolve the current workspace's full context.
 
-    Marker-driven when present; file-relative fallback otherwise.
+    Resolution priority (codified 2026-05-26 after N=3 cross-tree drift):
+      (1) ``NOCTUSAI_HOME`` env var — explicit lever; bypass marker walk.
+      (2) Worktree boundary detection in ``find_workspace_marker`` —
+          stops the walk at `.claude/worktrees/<slug>/` (the worktree's
+          own root).
+      (3) `.noctusai-workspace` marker walk — original behavior.
+      (4) File-relative fallback (`mcp/noctusai/workspace.py` parents[2]).
     """
+    # (1) NOCTUSAI_HOME env override — highest priority. Lets cli.py /
+    # direct imports run from anywhere and resolve to an explicit home
+    # (mirrors the PYTHONHOME / VIRTUAL_ENV / GIT_DIR family of overrides).
+    env_home = os.environ.get("NOCTUSAI_HOME")
+    if env_home:
+        home = Path(env_home).expanduser().resolve()
+        if home.is_dir():
+            return WorkspaceContext(
+                kind="primary",
+                name=home.name,
+                root=home,
+                noctusai_home=home,
+                marker_present=False,
+                extra={"resolved_via": "NOCTUSAI_HOME"},
+            )
+        logger.warning(
+            "NOCTUSAI_HOME=%s does not point to a directory — falling "
+            "through to marker discovery", env_home,
+        )
+    # (2) Worktree-boundary auto-detect — if cwd is inside
+    # `.../<primary>/.claude/worktrees/<slug>/`, that worktree's own root IS
+    # the workspace root (overrides the committed marker's PRIMARY-pointing
+    # noctusai_home). N=3 codification, 2026-05-26.
+    cwd = (start or Path.cwd()).resolve()
+    wt_root = _detect_worktree_root(cwd)
+    if wt_root is not None:
+        return WorkspaceContext(
+            kind="primary",
+            name=wt_root.name,
+            root=wt_root,
+            noctusai_home=wt_root,
+            marker_present=(wt_root / MARKER_FILENAME).is_file(),
+            extra={"resolved_via": "worktree-boundary"},
+        )
     marker_dir = find_workspace_marker(start)
     if marker_dir is None:
         # No marker anywhere — fall back to file-relative noc root,
