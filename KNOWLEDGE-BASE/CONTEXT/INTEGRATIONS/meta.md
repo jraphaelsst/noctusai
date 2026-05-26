@@ -218,7 +218,7 @@ Notes:
 `.is_auth_error` (re-consent / token-refresh path) vs
 `.is_rate_limited` (back-off path). It is raised at request time, not
 import time — the router stays import-safe (FastAPI dep-factory
-pattern, `CONTEXT/PATTERNS/backend.md`).
+pattern, `CONTEXT/PATTERNS/backend/backend.md`).
 
 ---
 

@@ -1,7 +1,7 @@
 # 04 — Therapy Platform Frontend
 
 > Path: `products/therapy-platform/frontend/src/` · Port: 8095 · 50+ pages · 30 hooks · Auth: Direct Supabase Auth
-> Standard frontend patterns: see `../PATTERNS/frontend.md`.
+> Standard frontend patterns: see `../PATTERNS/frontend/frontend.md`.
 > Vite build: 596 KB main bundle (post-wiring close 2026-05-11).
 
 ## Architecture: Role-Based Routing

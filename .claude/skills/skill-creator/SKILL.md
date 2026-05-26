@@ -23,7 +23,7 @@ A skill = `.claude/skills/<name>/SKILL.md`: frontmatter (`name` + `description`,
 2. **Vet the LICENSE first.** MIT/Apache/BSD → copy faithfully. Source-available-but-restricted (e.g. Anthropic document skills) or unclear → DO NOT copy; author an in-home equivalent from the public format knowledge + surface the license reason.
 3. **Copy in-home** under `.claude/skills/<name>/` — NEVER `/plugin install`, never wire to a marketplace, never add a runtime dependency. Strip external coupling (plugin-root paths, vendor MCP assumptions).
 4. **Adapt to noc** — rename to convention, point `## Depth` at our KB, add a provenance line (source URL + license + date).
-5. **Record provenance** in `KB § PATTERNS/accept-with-rationale.md` (vendored-skill register) so the copy's origin survives.
+5. **Record provenance** in `KB § PATTERNS/common/accept-with-rationale.md` (vendored-skill register) so the copy's origin survives.
 
 ## Depth
 Format spec: `anthropics/skills/spec` · noc home for this practice: `KB § PATTERNS/` (the skill being authored points to its own depth doc).

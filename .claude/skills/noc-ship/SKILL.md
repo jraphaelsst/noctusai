@@ -22,4 +22,4 @@ version: 1.0.0
 - Prod services sit behind the CF tunnel ⇒ any programmatic caller needs a browser User-Agent (1010 WAF). SSO verify: `noctus.dev.sso_smoke`.
 
 ## Depth
-`KB § PATTERNS/branching-and-merging.md §0.2` · `KB § GUIDES/production-deploy.md` (+ §2a safe pull) · `KB § PATTERNS/dev-prod-parity.md`.
+`KB § PATTERNS/architect/branching-and-merging.md §0.2` · `KB § GUIDES/production-deploy.md` (+ §2a safe pull) · `KB § PATTERNS/devops/dev-prod-parity.md`.

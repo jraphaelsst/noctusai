@@ -1,8 +1,8 @@
 """Regression tests for `check_claude_md_router`.
 
-Per `KB § PATTERNS/testing.md § Regression-test-the-detector` — the colocated
+Per `KB § PATTERNS/compliance/testing.md § Regression-test-the-detector` — the colocated
 suite the meta-detector `check_detector_has_regression_test` requires.
-Enforces the v4.0 CLAUDE.md router pattern (KB § PATTERNS/claude-md-router-discipline.md):
+Enforces the v4.0 CLAUDE.md router pattern (KB § PATTERNS/common/claude-md-router-discipline.md):
 §1 rules are one-line (rule + `→` pointer, no inlined bodies); whole file under budget.
 """
 import sys

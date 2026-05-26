@@ -52,7 +52,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 - **Tables: 309** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
-- **RLS enabled on every table** — see `PATTERNS/database-rls.md` for the canonical rules.
+- **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.
 
 ## External Services
 

@@ -1,7 +1,7 @@
 # 02 — ERP Backend Context
 
 > Path: `products/erp-imobiliario/backend/app/` · Port: 8001 · 48 routers · 41 services · 100 test files · 1,506 test fns
-> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see `../PATTERNS/backend.md`.
+> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see `../PATTERNS/backend/backend.md`.
 
 ## Overview
 

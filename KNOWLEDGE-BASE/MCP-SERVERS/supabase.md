@@ -47,7 +47,7 @@ Rule of thumb: **CLI = your hands-on local-dev driver; this MCP = the lever the 
   pure read (leading keyword ∈ {SELECT, EXPLAIN, SHOW, WITH, TABLE,
   VALUES}, after stripping leading comments) runs **free**; ANYTHING
   else (INSERT/UPDATE/DELETE/DDL/CALL/TRUNCATE/...) ⇒ WRITE,
-  confirm-then-execute (`KB § PATTERNS/llm-bot-security.md`): `confirm` ≠
+  confirm-then-execute (`KB § PATTERNS/security/llm-bot-security.md`): `confirm` ≠
   true ⇒ typed error `status 412`, ¬ side-effect. The verdict is also
   passed to Supabase as the endpoint's `read_only` flag (server-side
   double-guard on reads).

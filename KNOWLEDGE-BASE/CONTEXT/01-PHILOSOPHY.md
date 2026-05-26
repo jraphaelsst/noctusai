@@ -35,7 +35,7 @@ This is the #1 engineering rule. It is not optional, not debatable, not a sugges
 
 A product that doesn't call `create_product_app()` / `createProductApp()` is a **violation** of this rule, not a grandfathered exception. If an audit (see `CONTEXT/03-SEED-ARCHITECTURE.md § Compliance check`) finds a product that bypasses the framework — instantiates `FastAPI()` directly, reinvents layout, or reimplements any of the seed's capabilities — the remediation is a focused project:
 
-- Slug: `<product>-seed-wiring` (subject=product, intent=`wiring` per `PATTERNS/project-execution.md §8`).
+- Slug: `<product>-seed-wiring` (subject=product, intent=`wiring` per `PATTERNS/architect/project-execution.md §8`).
 - Location: `products/<product>/projects/<product>-seed-wiring/`.
 - Scope: rewrite `main.py` / `main.tsx` / `App.tsx` around the seed factories, thread existing routers through, verify the test baseline stays green, ship behind the product's existing deploy.
 
@@ -47,7 +47,7 @@ Do **not** paper over the gap by duplicating what the seed provides. Do **not** 
 
 After modifying code, run `python mcp/noctusai/cli.py --review` on the affected product. The review pass:
 1. Detects seed-compliance issues deterministically (`check_seed_compliance`, `check_path_references`).
-2. Asks an LLM (OpenAI, via `OPENAI_API_KEY`) to author one proposal per issue. Keeper-originated proposals land in `products/<product>/proposals/` (scoped to the product the detector flagged); project-scoped proposals land inside the project's own `proposals/` folder — at either `projects/<slug>/proposals/` or `products/<product>/projects/<slug>/proposals/` depending on where the project lives (see `PATTERNS/project-execution.md §1`). Callers pass `project=<slug>` or `product=<slug>` — the MCP tool resolves the location.
+2. Asks an LLM (OpenAI, via `OPENAI_API_KEY`) to author one proposal per issue. Keeper-originated proposals land in `products/<product>/proposals/` (scoped to the product the detector flagged); project-scoped proposals land inside the project's own `proposals/` folder — at either `projects/<slug>/proposals/` or `products/<product>/projects/<slug>/proposals/` depending on where the project lives (see `PATTERNS/architect/project-execution.md §1`). Callers pass `project=<slug>` or `product=<slug>` — the MCP tool resolves the location.
 3. Falls back to a skeleton proposal (just the raw detector output) when the LLM is unavailable — so nothing is silently dropped.
 4. Returns a report: `issues_found`, `proposals_created`, `llm_enriched` vs `llm_fallbacks`, and the `final_score`.
 
@@ -215,7 +215,7 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 - Before quoting a session-size or "this is quick" → actually trace the caller / the dependents. If the change would cascade into multiple files across products, the work is bigger than a session.
 - If you catch yourself writing "this should be straightforward" or "I think this is small" — stop. Those are feelings, not estimates. Open the file.
 - When a user asks "is this big?" — answer with what you have already confirmed by reading code, not what the file names suggest.
-- If you have already offered a shallow estimate and then discover the real scope — stop, tell the user immediately, recommend re-scoping as a proper project (see `PATTERNS/project-execution.md §1`). Do not silently continue and course-correct inside the same execution.
+- If you have already offered a shallow estimate and then discover the real scope — stop, tell the user immediately, recommend re-scoping as a proper project (see `PATTERNS/architect/project-execution.md §1`). Do not silently continue and course-correct inside the same execution.
 
 **Interaction with other rules:**
 
@@ -254,10 +254,10 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 
 **Exceptions (narrow, and never silent):**
 - The fix is genuinely **out of safe scope** — hard-to-reverse, security-sensitive, or needs a decision you cannot make. Then surface *with a recommendation and an explicit named destination*, and say plainly "not fixed because <reason>" (this is the `§ No silent errors` named-destination clause, not a free pass).
-- Fixing it would **balloon into a separate project** (cross-cutting, multi-product, design-level). Then it IS a project — filed via `PATTERNS/project-execution.md §1`, not silently dropped, not a vague "follow-up." A filed project is a fix-in-motion; a mention in prose is not.
+- Fixing it would **balloon into a separate project** (cross-cutting, multi-product, design-level). Then it IS a project — filed via `PATTERNS/architect/project-execution.md §1`, not silently dropped, not a vague "follow-up." A filed project is a fix-in-motion; a mention in prose is not.
 - Default, whenever neither exception holds: **fix on contact.**
 
-**Concrete instance (2026-05-17 — this rule was made explicit from it):** finishing the session's consolidation, 14 pre-existing `mcp/noctusai` test failures surfaced. Baseline-verified as 100% pre-existing (fail identically on `origin/main`). The wrong move — and the one this rule forbids — was "they're pre-existing, not regressions from this work, so note them and commit." The right move: fix them (stale deleted-`mailing` test references → scrub per `PATTERNS/seed-absorption.md` teardown discipline; drifted threshold → recalibrate to the legitimately-shipped new floor; dep mismatches → reconcile), then surface problem-and-solution.
+**Concrete instance (2026-05-17 — this rule was made explicit from it):** finishing the session's consolidation, 14 pre-existing `mcp/noctusai` test failures surfaced. Baseline-verified as 100% pre-existing (fail identically on `origin/main`). The wrong move — and the one this rule forbids — was "they're pre-existing, not regressions from this work, so note them and commit." The right move: fix them (stale deleted-`mailing` test references → scrub per `PATTERNS/architect/seed-absorption.md` teardown discipline; drifted threshold → recalibrate to the legitimately-shipped new floor; dep mismatches → reconcile), then surface problem-and-solution.
 
 **Interaction with other rules:** the active-completion teeth of `§ No silent errors` (a named destination is the *floor*, an applied fix is the *target*) and of `§ DRY — recurrence` / the hygiene trio (the bump is the contact event). Pairs with `§ Codebase is source of truth` — verify-it's-pre-existing is step 1, fix-it-anyway is step 2; the first without the second is just a better-documented stop. Aligns with the user's standing "no follow-ups; implement in one go" default for in-scope debt.
 
@@ -306,7 +306,7 @@ The safety-nets rule above is **reactive**: a net fires → capture → evolve. 
 
 **The principle.** Any surfaced pattern is a codification opportunity — and "pattern" is read at its widest: a failure mode, a recurrence, a friction point, a new collision shape, *and a success worth reproducing* (a "swiss-watch" sequence that worked is as much a learning as a slip that didn't). The default response to any of them is **learn → absorb into the methodology** (route through the codification pipeline s1→s4: emerge → memory → KB+CLAUDE → keeper where deterministic). Leaving a surfaced pattern uncodified is the silent-error shape one level up — same family as deferring an applicable fix.
 
-**Why this is a global mindset, not a branching rule.** It was extrapolated *from* the 2026-05-18 collision-class branching work (`KB § PATTERNS/branching-and-merging.md § 21`) but the lesson is not about branching — it is the meta-lesson that the act of *noticing a reusable shape and folding it back in* is itself the highest-leverage move, in **every** domain (code, tooling, docs, process, dispatch, merge). The branching taxonomy is just the worked example; the posture applies everywhere.
+**Why this is a global mindset, not a branching rule.** It was extrapolated *from* the 2026-05-18 collision-class branching work (`KB § PATTERNS/architect/branching-and-merging.md § 21`) but the lesson is not about branching — it is the meta-lesson that the act of *noticing a reusable shape and folding it back in* is itself the highest-leverage move, in **every** domain (code, tooling, docs, process, dispatch, merge). The branching taxonomy is just the worked example; the posture applies everywhere.
 
 **Standing duties (every turn, not on-demand).**
 - Treat each session as a methodology-mining pass: surfaced shapes get named + routed, not silently consumed.
@@ -324,7 +324,7 @@ The loudness is the point: the user opted into seeing the methodology train itse
 **Surface-partition under concurrency (refinement 2026-05-24).** Obligation #2 (implement-before-ship) is **partitioned by the surface the improvement touches** — because a literal "every running agent applies every improvement immediately" turns the **shared cross-cutting surfaces into a collision *amplifier*** under multi-agent concurrency. `CLAUDE.md`, KB, `MEMORY`, keepers (`compliance.py`), `seed/` are **global**: the instant each of two otherwise file-disjoint tasks (even on *different products*) spots an improvement, both edit these same files — the improvement contract *manufactures* a shared-surface overlap on **every** task, defeating file-disjoint dispatch. (This is the cause of the "we keep colliding no matter what" pattern; protecting branches *at dispatch* treats the symptom — the disjoint-slice assumption is already violated upstream by the improvement rule.) The fix keeps capture same-session but moves **application** out of the parallel zone:
 - **In-slice** improvement (the task's own product/feature files) → the running agent **applies** it in-flight, exactly as before.
 - **Cross-cutting** improvement (`CLAUDE.md` / KB / `MEMORY` / keepers / `seed/`) → the running agent **SURFACES** it loudly (obligation #1 unchanged, returns it in findings) but **does NOT apply** it; the **integration owner** (the architect, or a peer-as-its-own-architect on its single serial task) **applies it serially at the merge boundary, same session**. Still zero silent-error (surfaced ∧ applied same session) — just **serialized, not parallel**.
-- **Solo / single-terminal:** owner == running agent ⇒ no-op (full in-flight apply, unchanged). Concurrency is the *only* case this changes. Cross-cutting/global surfaces are therefore **serialization points by construction** — never part of a concurrent engineer's file slice. → [[branching-and-merging]] §9b (self-branching) + `KB § PATTERNS/branching-dispatch.md` (decompose: shared surfaces are architect-owned).
+- **Solo / single-terminal:** owner == running agent ⇒ no-op (full in-flight apply, unchanged). Concurrency is the *only* case this changes. Cross-cutting/global surfaces are therefore **serialization points by construction** — never part of a concurrent engineer's file slice. → [[branching-and-merging]] §9b (self-branching) + `KB § PATTERNS/architect/branching-dispatch.md` (decompose: shared surfaces are architect-owned).
 
 **Anti-patterns.** "Noted, moving on" without a destination. A **concurrent engineer editing a global surface** (`CLAUDE.md`/KB/`MEMORY`/keeper/`seed/`) to apply a spotted improvement instead of surfacing it for the owner — the collision amplifier in action. Shipping a closed taxonomy. Codifying only failures (success-blindness). Treating methodology as fixed between explicit "refine the methodology" requests — the watching is continuous, not prompted. **Silent improvement** — folding a spotted hardening in without the loud in-the-moment announce (correct-but-invisible still breaks the training contract).
 
@@ -347,9 +347,9 @@ The loudness is the point: the user opted into seeing the methodology train itse
 **Why this is foundational, not just tactical:**
 
 1. **Wall-clock leverage compounds.** N independent chunks dispatched in one `Task` tool-use turn finish in roughly 1×T (worst-case slowest chunk), not N×T. Across a session with many projects, the gap is hours, not minutes.
-2. **Different vantage points are structural** (per `KB § PATTERNS/branching-and-merging.md § 12 Orchestrator role`). Each subagent has its own narrow context; the orchestrator collates at merge time. Parallelism multiplies this benefit — N subagents each contributing a fresh narrow vantage point converge at orchestrator-merge.
+2. **Different vantage points are structural** (per `KB § PATTERNS/architect/branching-and-merging.md § 12 Orchestrator role`). Each subagent has its own narrow context; the orchestrator collates at merge time. Parallelism multiplies this benefit — N subagents each contributing a fresh narrow vantage point converge at orchestrator-merge.
 3. **Branches isolate failure.** One chunk failing doesn't poison sister chunks. Serial execution means a mid-stream failure blocks everything downstream; parallel means each chunk's failure is local.
-4. **The merging methodology already handles convergence** (per `KB § PATTERNS/branching-and-merging.md § 10`). Branches queue at merge time per § 10.3 multi-branch convergence; same-line conflicts resolve per § 10.4. Parallelism doesn't introduce new failure modes — it reuses the merge methodology already shipped.
+4. **The merging methodology already handles convergence** (per `KB § PATTERNS/architect/branching-and-merging.md § 10`). Branches queue at merge time per § 10.3 multi-branch convergence; same-line conflicts resolve per § 10.4. Parallelism doesn't introduce new failure modes — it reuses the merge methodology already shipped.
 
 **Chunk identification (the orchestrator's first move):**
 
@@ -363,7 +363,7 @@ Before any work starts, the orchestrator asks:
 The output of chunk identification is one of:
 
 - **Parallel dispatch:** N independent chunks, branched + dispatched in a single `Task` tool-use turn.
-- **Master-tree parallel batches:** N≥2 same-shape children sharing methodology; orchestrator runs the batches per `KB § PATTERNS/master-tree-parallel-batches.md`.
+- **Master-tree parallel batches:** N≥2 same-shape children sharing methodology; orchestrator runs the batches per `KB § PATTERNS/architect/master-tree-parallel-batches.md`.
 - **Serial:** dependencies make parallel infeasible; sequential is correct.
 - **Orchestrator-direct:** chunks are too small for delegation overhead; do directly.
 
@@ -382,7 +382,7 @@ The output of chunk identification is one of:
 
 User directive 2026-05-04: *"the orchestrator is really the orchestrator. he plans like an architect, then dispatches for engineers or teams of engineers to build. ... the idea of doing this is to have you here more with me while other agents do the heavy lifting, so we can discuss more ideas more often."*
 
-The methodology already structurally separates orchestrator from working agents (per `KB § PATTERNS/branching-and-merging.md § 12`). This sub-section names the roles explicitly so the language reinforces the architectural pattern:
+The methodology already structurally separates orchestrator from working agents (per `KB § PATTERNS/architect/branching-and-merging.md § 12`). This sub-section names the roles explicitly so the language reinforces the architectural pattern:
 
 - **The Architect** — that's the orchestrator. The CLI agent in the user's session-spanning conversation. Holds broad context. **Plans + dispatches + evaluates + stays available for user-facing ideation.** Does NOT write the code-level edits inside the dispatched chunks (carve-out: when work is too small for delegation, the architect implements directly in orchestrator-direct mode + still does the architect-style review pass via mode-switching).
 - **The Engineer / Team of engineers** — that's the subagent (or multiple subagents working in parallel). Holds narrow task context (their brief). **Builds the chunk the architect defined.** Reports back: shipped commits + findings + lessons + open follow-ups.
@@ -405,8 +405,8 @@ The methodology already structurally separates orchestrator from working agents 
 
 **Architect's responsibilities — full list:**
 
-1. **Plan + chunk** the work (file-overlap analysis + dependency analysis). **Phase-state verification before dispatch** (per `KB § PATTERNS/branching-and-merging.md § 14.1`) — grep `- \[x\]` in target project's §6 + tail §11 change log; status header narrative is NOT sufficient.
-2. **Set up worktrees** per `KB § PATTERNS/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ engineers concurrent).
+1. **Plan + chunk** the work (file-overlap analysis + dependency analysis). **Phase-state verification before dispatch** (per `KB § PATTERNS/architect/branching-and-merging.md § 14.1`) — grep `- \[x\]` in target project's §6 + tail §11 change log; status header narrative is NOT sufficient.
+2. **Set up worktrees** per `KB § PATTERNS/architect/branching-and-merging.md § 16` for parallel dispatch (mandatory when 2+ engineers concurrent).
 3. **Dispatch engineers** (subagents) in single `Task` tool-use turn with focused briefs (each brief includes the verified phase-state context from step 1). Single engineer when chunks are small / serial; team of engineers when work parallelizes cleanly.
 4. **Stay available for the user.** The user-facing conversation continues while engineers work; the architect is the one the user thinks-with. Don't get tunnel-vision into implementation; keep cycles for ideation + methodology refinement + judgment calls.
 5. **Evaluate engineer findings locally + apply immediately when applicable; maintain findings.md.** As each engineer reports back, architect evaluates each finding against per-case decisions:
@@ -417,9 +417,9 @@ The methodology already structurally separates orchestrator from working agents 
    - **Interesting finding worth user attention** → surface (selectively, not exhaustively).
    - **Routine sub-task completion** → bundle into retrospective summary; no per-finding surface.
 
-   **The default for actionable findings is IMMEDIATE IMPLEMENTATION when applicable** — don't defer fixes that could be applied now. Deferring an applicable fix is the same shape as silent-error: the finding becomes debt instead of a closed loop. (Companion to `Auto-improvement at phase close — apply, don't ask` per `KB § PATTERNS/proposals-and-improvements.md § 4d`.)
+   **The default for actionable findings is IMMEDIATE IMPLEMENTATION when applicable** — don't defer fixes that could be applied now. Deferring an applicable fix is the same shape as silent-error: the finding becomes debt instead of a closed loop. (Companion to `Auto-improvement at phase close — apply, don't ask` per `KB § PATTERNS/common/proposals-and-improvements.md § 4d`.)
 
-   All finding evaluations + applied fixes get appended to `findings.md` for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/branching-and-merging.md § 17`).
+   All finding evaluations + applied fixes get appended to `findings.md` for the orchestration (per `Knowledge tracking — durable findings file` principle below + `KB § PATTERNS/architect/branching-and-merging.md § 17`).
 6. **Aggregate + merge** engineer branches at orchestrator-merge time (per § 12 of branching-and-merging).
 7. **Close the orchestration** — synthesize findings.md into the durable knowledge artifact; archive the project per § 11.2.
 
@@ -436,13 +436,13 @@ The methodology already structurally separates orchestrator from working agents 
 
 **Companion rules:**
 
-- `KB § PATTERNS/branching-and-merging.md § 11 Branch-per-project workflow` — the per-project branching mechanic this principle elevates.
-- `KB § PATTERNS/branching-and-merging.md § 12 Orchestrator vs working-agent role split` — the orchestrator role this principle defines as default-parallel.
-- `KB § PATTERNS/branching-and-merging.md § 13 Branch-creation triggers` — user-phrase triggers ("branch this") are explicit; this principle adds an implicit trigger (orchestrator's default mental model).
-- `KB § PATTERNS/master-tree-parallel-batches.md` — when N≥2 same-shape children, this is the parallel-batches pattern.
-- `KB § PATTERNS/branching-and-merging.md § 14 Pre-work fetch protocol` — collision detection BEFORE editing; what enables clean parallel chunks.
-- `KB § PATTERNS/branching-and-merging.md § 16 Git worktree for true parallel agents` — single-worktree contention is the practical constraint; `git worktree add` is the resolution.
-- `KB § PATTERNS/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestrator maintains findings.md aggregating subagent slips / errors / lessons / surprises.
+- `KB § PATTERNS/architect/branching-and-merging.md § 11 Branch-per-project workflow` — the per-project branching mechanic this principle elevates.
+- `KB § PATTERNS/architect/branching-and-merging.md § 12 Orchestrator vs working-agent role split` — the orchestrator role this principle defines as default-parallel.
+- `KB § PATTERNS/architect/branching-and-merging.md § 13 Branch-creation triggers` — user-phrase triggers ("branch this") are explicit; this principle adds an implicit trigger (orchestrator's default mental model).
+- `KB § PATTERNS/architect/master-tree-parallel-batches.md` — when N≥2 same-shape children, this is the parallel-batches pattern.
+- `KB § PATTERNS/architect/branching-and-merging.md § 14 Pre-work fetch protocol` — collision detection BEFORE editing; what enables clean parallel chunks.
+- `KB § PATTERNS/architect/branching-and-merging.md § 16 Git worktree for true parallel agents` — single-worktree contention is the practical constraint; `git worktree add` is the resolution.
+- `KB § PATTERNS/architect/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestrator maintains findings.md aggregating subagent slips / errors / lessons / surprises.
 
 ---
 
@@ -474,7 +474,7 @@ User directive 2026-05-04, verbatim:
 | Non-trivial project (multi-phase) | **Yes — default-on** |
 | Multi-step feature | **Yes — default-on** |
 | Master-tree orchestration | **Yes** (alongside existing live-patterns-log.md + absorption catalog) |
-| Orchestrator dispatch of 2+ subagents | **Yes** (per `KB § PATTERNS/branching-and-merging.md § 17`) |
+| Orchestrator dispatch of 2+ subagents | **Yes** (per `KB § PATTERNS/architect/branching-and-merging.md § 17`) |
 | Trivial direct fix (typo, broken link) | Skip |
 | Solo orchestrator-direct work, fully predictable | Optional (skip if no surprises; log absence to `phase_learnings` so silence is explicit) |
 
@@ -502,7 +502,7 @@ User directive 2026-05-04, verbatim:
 
 - `Safety nets capture failures; failures become learnings; methodology evolves` — durable findings → recurrence rule firing → methodology amendment. The findings.md is the input to that loop.
 - `§ 2.11 Phase enrichment loop` — atomic per-phase learnings; findings.md is the broader meta-record.
-- `KB § PATTERNS/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestration-specific specialization.
+- `KB § PATTERNS/architect/branching-and-merging.md § 17 Knowledge tracking during orchestration` — orchestration-specific specialization.
 
 ---
 
@@ -561,7 +561,7 @@ User direction (absorbed into NoctusAI on 2026-05-03 from the methodology lab): 
 
 **Companion to** the seed-first rule (every code edit in this repo runs against framework code that products import — a regex slip-up cascades) and no-quick-fixes (a sed-driven "fix" that hits the wrong substring is the textbook quick-fix that creates future work).
 
-**Toolchain reference + concrete recipes** (rename-in-scope, find-callers, find-pattern, apply-codemod): `PATTERNS/ast.md`.
+**Toolchain reference + concrete recipes** (rename-in-scope, find-callers, find-pattern, apply-codemod): `PATTERNS/common/ast.md`.
 
 The MCP toolkit at `mcp/noctusai/` already ships AST-based tools (`outline_python.py`, `outline_typescript.py`); future repo-wide rename / codemod tools land via `projects/mcp-server-expansion/`.
 
@@ -587,7 +587,7 @@ User direction (established 2026-05-03 in the absorption-evaluation session): *"
 
 **Companion to** AST-first (both establish a default surface for a class of work) and Seed-first (the MCP becomes the platform's agent-exposable surface, just as `seed/` is the platform's framework surface).
 
-**Operational reference (forthcoming):** `KB § PATTERNS/mcp-tool-conventions.md` lands via `projects/mcp-server-expansion/` Phase 6.
+**Operational reference (forthcoming):** `KB § PATTERNS/architect/mcp-tool-conventions.md` lands via `projects/mcp-server-expansion/` Phase 6.
 
 ---
 
@@ -597,7 +597,7 @@ Both default-surface rules above (`MCP-first`, `AST-first`) describe what to do 
 
 User direction (established 2026-05-03 during the FastMCP-switch session): *"add to claude.md a point for specifically flagging mcp-first opportunities, as well as possible ast-first also … we actively search for improvements ops for our projects, why wouldn't we do the same for the great connector and tooler we have?"*
 
-**Why this is its own rule (not a footnote on the others):** the existing project-execution methodology already encodes active opportunity-spotting (`KB § PATTERNS/project-execution.md § Active robustness review during execution` — eyes open while editing, capture in the live `**Improvements:**` block). The platform's two default surfaces — MCP for agent-exposable capabilities, AST for code edits — deserve the same active lens. Without an explicit rule, "I'll just write a quick helper" / "I'll just sed-edit the file" wins by default and the surface erodes one shortcut at a time.
+**Why this is its own rule (not a footnote on the others):** the existing project-execution methodology already encodes active opportunity-spotting (`KB § PATTERNS/architect/project-execution.md § Active robustness review during execution` — eyes open while editing, capture in the live `**Improvements:**` block). The platform's two default surfaces — MCP for agent-exposable capabilities, AST for code edits — deserve the same active lens. Without an explicit rule, "I'll just write a quick helper" / "I'll just sed-edit the file" wins by default and the surface erodes one shortcut at a time.
 
 **The rule:**
 
@@ -617,7 +617,7 @@ User direction (established 2026-05-03 during the FastMCP-switch session): *"add
 
 **Companion to** Active robustness review during execution (same active-search behavior, applied to a different opportunity class), No silent errors (silent skipping is the same shape of slip), the recurrence rule (flagged candidates feed N=2 triage and N=3 formalization).
 
-**Operational reference:** `KB § PATTERNS/mcp-tool-conventions.md § 0. The MCP server is a living organism` + `KB § PATTERNS/ast.md`.
+**Operational reference:** `KB § PATTERNS/architect/mcp-tool-conventions.md § 0. The MCP server is a living organism` + `KB § PATTERNS/common/ast.md`.
 
 ---
 
@@ -659,13 +659,13 @@ Every new `*-PROJECT.md` begins by copying `templates/PROJECT-TEMPLATE.md`. The 
 The flow is **capture-then-synthesize**, not capture-per-step:
 
 1. **During step implementation — capture.** As each sub-task is built, drop short specific bullets into the phase's `**Improvements:**` block — free-form, frictionless, no ceremony. These are step-individual-related observations, captured while the context is fresh.
-2. **End of phase, BEFORE flipping the header to `✅` — synthesize.** The in-session agent reads the entire accumulated block, considers the **whole project context** (not just this phase), and files **ONE proposal per phase** that bundles the improvements as independently-executable items. The proposal is filed via `noctus.dev.file_proposal(project="<project-slug>", ...)` and lands inside the project's own `proposals/` folder — at `projects/<slug>/proposals/` for root-level projects, or `products/<product>/projects/<slug>/proposals/` for product-scoped projects. The MCP tool resolves the slug automatically; callers pass only the slug. See `PATTERNS/project-execution.md §1` for the two-location rule.
+2. **End of phase, BEFORE flipping the header to `✅` — synthesize.** The in-session agent reads the entire accumulated block, considers the **whole project context** (not just this phase), and files **ONE proposal per phase** that bundles the improvements as independently-executable items. The proposal is filed via `noctus.dev.file_proposal(project="<project-slug>", ...)` and lands inside the project's own `proposals/` folder — at `projects/<slug>/proposals/` for root-level projects, or `products/<product>/projects/<slug>/proposals/` for product-scoped projects. The MCP tool resolves the slug automatically; callers pass only the slug. See `PATTERNS/architect/project-execution.md §1` for the two-location rule.
 
 **Not one proposal per improvement — ONE bundled proposal for the phase.** Each bundled improvement retains individual execution (the reviewer schedules them separately) but the proposal is a single coherent context-transfer vehicle: the agent who *lived the phase* captures situational awareness once, and all the bundled items inherit it.
 
 Each phase proposal carries `Origin: project:<project-slug>:phase-<N>` with filled-in `Context`, `Situation`, `Proposed Solution` (with `§3.2 Application instructions` as the bundled-improvement list — each with its own linkage + steps + risks + independence note), `Effects`, and aggregated acceptance criteria.
 
-`improvements.md` (next to the project file, regenerated by `noctus.dev.improvements`) remains the narrative retrospective. Proposals in the project's `proposals/` folder (at whichever of the two locations the project lives — see `PATTERNS/project-execution.md §1`) are the triage queue. The two systems cooperate — see `PATTERNS/proposals-and-improvements.md` for the full protocol, the promote boundary, and the bundling mechanics.
+`improvements.md` (next to the project file, regenerated by `noctus.dev.improvements`) remains the narrative retrospective. Proposals in the project's `proposals/` folder (at whichever of the two locations the project lives — see `PATTERNS/architect/project-execution.md §1`) are the triage queue. The two systems cooperate — see `PATTERNS/common/proposals-and-improvements.md` for the full protocol, the promote boundary, and the bundling mechanics.
 
 ---
 
@@ -739,7 +739,7 @@ Every commit that changes behavior updates the relevant docs:
 
 **Exempt:** tiny typo-only fixes (single layer, no rule change).
 
-Project-scoped proposals live inside the project's own `proposals/` folder — either `projects/<slug>/proposals/` (root, for cross-product/platform work) or `products/<product>/projects/<slug>/proposals/` (product-scoped). See `PATTERNS/project-execution.md §1` for the rule. Keeper / LGPD / evaluation proposals live in `products/<product>/proposals/` (scoped to the product the detector flagged).
+Project-scoped proposals live inside the project's own `proposals/` folder — either `projects/<slug>/proposals/` (root, for cross-product/platform work) or `products/<product>/projects/<slug>/proposals/` (product-scoped). See `PATTERNS/architect/project-execution.md §1` for the rule. Keeper / LGPD / evaluation proposals live in `products/<product>/proposals/` (scoped to the product the detector flagged).
 
 ### The KB-first ordering rule
 
@@ -779,7 +779,7 @@ When you apply DDL via the Supabase MCP (`apply_migration` or `execute_sql`), th
 - A commit that modifies the DB schema but doesn't touch `migrations/`.
 - A migration file whose content doesn't match what's running on the DB (drift).
 
-See `PATTERNS/database-rls.md → MCP + file sync` for the operational recipe.
+See `PATTERNS/backend/database-rls.md → MCP + file sync` for the operational recipe.
 
 ---
 
@@ -804,7 +804,7 @@ When a task needs Supabase access — apply a migration, audit a schema, verify 
 
 ### The three layers
 
-- **`CLAUDE.md`** (auto-loaded, always) — universal behavioral rules + pointers. Kept lean. Every §1 bullet ≤80 words (per § 2.8 in `KB § PATTERNS/project-execution.md`).
+- **`CLAUDE.md`** (auto-loaded, always) — universal behavioral rules + pointers. Kept lean. Every §1 bullet ≤80 words (per § 2.8 in `KB § PATTERNS/architect/project-execution.md`).
 - **`CLAUDE/<topic>.md`** (auto-loaded NO — read by agent when working on the topic) — topical behavioral rules: `CLAUDE/backend.md`, `CLAUDE/frontend.md`, `CLAUDE/projects.md`, `CLAUDE/platform.md`. Each is a sibling-of-CLAUDE.md routing extension, NOT depth.
 - **`KNOWLEDGE-BASE/`** (on-demand) — heavyweight depth, examples, slip-history, audit trails, principle-level reasoning. Pointed-to from CLAUDE.md and the topical files.
 
@@ -845,7 +845,7 @@ Bundled Claude Code skills used in this repo:
 - **`schedule`** — background routines (CronCreate-based).
 - **`security-review`** — occasional security passes.
 - **`codify`** — Stage-4 codification driver (discipline → mechanical gate; drains the methodology-codification-pipeline). On-list since 2026-05-25.
-- **`noc-*` workspace skills** (`.claude/skills/`) — the repo-native PROCEDURE layer authored by the `harness-agents-skills` refactor (2026-05-25): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` + the `skill-creator` meta-skill. They re-home the old `CLAUDE.md` §3 routing procedures OFF the always-on budget (`KB § PATTERNS/claude-md-router-discipline.md`) and auto-trigger on their phrases. ON-list by construction — they ARE the workspace.
+- **`noc-*` workspace skills** (`.claude/skills/`) — the repo-native PROCEDURE layer authored by the `harness-agents-skills` refactor (2026-05-25): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` + the `skill-creator` meta-skill. They re-home the old `CLAUDE.md` §3 routing procedures OFF the always-on budget (`KB § PATTERNS/common/claude-md-router-discipline.md`) and auto-trigger on their phrases. ON-list by construction — they ARE the workspace.
 
 **Off-list (policy)**: `keybindings-help`, `simplify`, `fewer-permission-prompts`, `claude-api`, `init`, `review`. Bundled skills can't be CLI-disabled, but the policy reduces accidental invocation. (`init` and `review` overlap with repo-native tooling — `CLAUDE.md` already exists; the MCP keeper performs reviews.) `claude-api` is for building Anthropic SDK apps directly; this repo's LLM access goes through `noctusai_lib.llm` so the skill rarely applies.
 
@@ -862,8 +862,8 @@ The `CLAUDE.md`-vs-`KB` split was already a methodology rule. This expanded vers
 
 ### Cross-references
 
-- `KB § PATTERNS/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline` — the ≤80-word rule + measurement discipline.
-- `KB § PATTERNS/agent-reading-discipline.md § Narrow-read first` — same per-turn-cost framing applied to file reads.
+- `KB § PATTERNS/architect/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline` — the ≤80-word rule + measurement discipline.
+- `KB § PATTERNS/common/agent-reading-discipline.md § Narrow-read first` — same per-turn-cost framing applied to file reads.
 - This file § Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory.
 
 ---

@@ -1,6 +1,6 @@
 """Regression tests for `agent_context_cache` + `check_agent_context_cache_freshness`.
 
-KB § PATTERNS/agent-context-architecture.md. Phase B (2026-05-26).
+KB § PATTERNS/common/agent-context-architecture.md. Phase B (2026-05-26).
 """
 import os
 import sys
@@ -44,11 +44,11 @@ def _write_kb(root: Path, rel: str, body: str) -> Path:
 
 class TestRefreshAndLookup:
     def test_refresh_populates_clean_state(self, tmp_repo):
-        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend.md",
+        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend/backend.md",
             "# Backend\n\nIntro paragraph.\n\n## Section A\nLine A1\n## Section B\nLine B1\n")
         _write_agent(tmp_repo, "backend-engineer",
-            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "Apply engineer-default. → KB § PATTERNS/backend.md")
+            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "Apply engineer-default. → KB § PATTERNS/backend/backend.md")
         r = acc.refresh(force=True)
         assert r["ok"] is True
         assert r["status"] == "rebuilt"
@@ -56,10 +56,10 @@ class TestRefreshAndLookup:
         assert r["rows_written"] >= 3  # frontmatter + body + 1 owned-kb-extract
 
     def test_idempotent_short_circuit(self, tmp_repo):
-        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend.md", "# B\n\nIntro\n")
+        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend/backend.md", "# B\n\nIntro\n")
         _write_agent(tmp_repo, "backend-engineer",
-            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "→ KB § PATTERNS/backend.md")
+            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "→ KB § PATTERNS/backend/backend.md")
         acc.refresh(force=True)
         r2 = acc.refresh()  # no changes since
         assert r2["status"] == "in-sync"
@@ -67,20 +67,20 @@ class TestRefreshAndLookup:
         assert r2["refreshed"] == []
 
     def test_lookup_returns_bundle(self, tmp_repo):
-        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend.md",
+        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend/backend.md",
             "# Backend\n\nThe spine.\n\n## DI seam\nDep injection details.\n")
         _write_agent(tmp_repo, "backend-engineer",
-            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "→ KB § PATTERNS/backend.md")
+            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "→ KB § PATTERNS/backend/backend.md")
         acc.refresh(force=True)
         b = acc.lookup("backend-engineer")
         assert b["ok"] is True
         assert b["agent_name"] == "backend-engineer"
         assert "owns_kb:" in b["frontmatter"]
         assert "engineer-default" not in b["frontmatter"]  # belongs to body
-        assert "KB § PATTERNS/backend.md" in b["body"]
+        assert "KB § PATTERNS/backend/backend.md" in b["body"]
         assert len(b["owned_kb"]) == 1
-        assert b["owned_kb"][0]["path"] == "CONTEXT/PATTERNS/backend.md"
+        assert b["owned_kb"][0]["path"] == "CONTEXT/PATTERNS/backend/backend.md"
         assert "# Backend" in b["owned_kb"][0]["extract"]
         assert "DI seam" in b["owned_kb"][0]["extract"]
 
@@ -90,15 +90,15 @@ class TestRefreshAndLookup:
         assert "not found" in b["error"]
 
     def test_lazy_rebuild_on_sha_mismatch(self, tmp_repo):
-        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend.md", "# B\n\nIntro\n")
+        _write_kb(tmp_repo, "CONTEXT/PATTERNS/backend/backend.md", "# B\n\nIntro\n")
         _write_agent(tmp_repo, "backend-engineer",
-            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "→ KB § PATTERNS/backend.md")
+            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "→ KB § PATTERNS/backend/backend.md")
         acc.refresh(force=True)
         # Mutate the agent body — the bundle_sha will drift.
         _write_agent(tmp_repo, "backend-engineer",
-            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "→ KB § PATTERNS/backend.md\n\nNEW LINE that wasn't there before.")
+            "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "→ KB § PATTERNS/backend/backend.md\n\nNEW LINE that wasn't there before.")
         b = acc.lookup("backend-engineer")
         assert b["ok"] is True
         assert "NEW LINE" in b["body"]  # rebuild fired on mismatch

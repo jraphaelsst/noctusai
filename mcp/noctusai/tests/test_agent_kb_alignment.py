@@ -1,6 +1,6 @@
 """Regression tests for `check_agent_kb_alignment` — the agent-context-architecture gate.
 
-KB § PATTERNS/agent-context-architecture.md. The keeper enforces that every
+KB § PATTERNS/common/agent-context-architecture.md. The keeper enforces that every
 agent's frontmatter `owns_kb:` declares full-domain ownership AND every declared
 path exists ∧ is body-referenced ∧ is exclusively claimed.
 """
@@ -71,25 +71,30 @@ class TestAgentKbAlignment:
         assert any("does NOT exist" in i["issue"] for i in issues)
 
     def test_declared_path_without_body_pointer_flagged(self, tmp_path):
-        _write_kb(tmp_path, "CONTEXT/PATTERNS/backend.md")
+        _write_kb(tmp_path, "CONTEXT/PATTERNS/backend/backend.md")
         _write_agent(
             tmp_path, "backend-engineer",
-            "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
+            "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
             "Body with no KB pointer at all.",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
         assert any("no" in i["issue"] and "pointer" in i["issue"] for i in issues)
 
     def test_declared_path_with_short_form_pointer_passes(self, tmp_path):
-        # `KB § PATTERNS/backend.md` is the canonical short form (CONTEXT/ stripped).
-        _write_kb(tmp_path, "CONTEXT/PATTERNS/backend.md")
+        # Post-reorg shape: owns_kb references the subfolder path; body uses
+        # the canonical `KB § <short>` form (CONTEXT/ stripped).
+        _write_kb(tmp_path, "CONTEXT/PATTERNS/backend/backend.md")
         _write_agent(
             tmp_path, "backend-engineer",
-            "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/backend.md",
-            "Apply the engineer-default protocol. → KB § PATTERNS/backend.md",
+            "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
+            "Apply the engineer-default protocol. → KB § PATTERNS/backend/backend.md",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
-        assert all("no" not in i["issue"] or "pointer" not in i["issue"] for i in issues)
+        # No "missing body pointer" issue — the body explicitly mentions the path.
+        assert not any(
+            "declares" in i["issue"] and "no" in i["issue"] and "pointer" in i["issue"]
+            for i in issues
+        )
 
     def test_double_claim_flagged(self, tmp_path):
         _write_kb(tmp_path, "CONTEXT/PATTERNS/shared.md")

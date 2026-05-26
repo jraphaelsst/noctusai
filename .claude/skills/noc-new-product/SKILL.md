@@ -23,4 +23,4 @@ version: 1.0.0
 - "Sandbox / isolated / testing-ground" instead → `noctus.dev.create_testing_ground`, not this.
 
 ## Depth
-`KB § GUIDES/new-product.md` · `KB § CONTEXT/03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/core-url-routing.md`.
+`KB § GUIDES/new-product.md` · `KB § CONTEXT/03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/frontend/core-url-routing.md`.

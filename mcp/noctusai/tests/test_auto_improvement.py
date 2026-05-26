@@ -1,7 +1,7 @@
 """Regression tests for the scoped-auto-improvement ledger + cache +
 `check_auto_improvement_cache_freshness` keeper.
 
-KB § PATTERNS/scoped-auto-improvement.md. Phase B (2026-05-26).
+KB § PATTERNS/common/scoped-auto-improvement.md. Phase B (2026-05-26).
 """
 import json
 import sys

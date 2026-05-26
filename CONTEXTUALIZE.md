@@ -21,27 +21,27 @@
 
 ## 2 · Universal patterns to recognize before editing anything
 
-- **Agent-context architecture** — `.claude/agents/<name>.md` are lean L1 INDEX over KB depth; frontmatter `owns_kb:` declares full-domain territory. → `KB § PATTERNS/agent-context-architecture.md`
-- **Drift-fix-on-contact + scoped auto-improvement** — drift = PAUSE → resolve → surface-if-blocked → DOC → continue. Tech-lead RESOLVES; engineers SURFACE in `drift-found:` / `scoped-improvement:` lines (two-leg footer mandatory every dispatch). → `KB § PATTERNS/drift-fix-on-contact.md` · `KB § PATTERNS/scoped-auto-improvement.md`
-- **Cache family — consult-before-editing** — three keeper-mirror caches (keeper-pattern + agent-context + auto-improvement). Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/keeper-pattern-cache.md` · `KB § PATTERNS/keeper-check-before-docing.md`
-- **Self-branching mode** — 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/self-branching-mode.md` · skill `noc-self-branch`
-- **AST-first** — code edits via `libcst` / `ts-morph` / `tree-sitter` — never regex/sed on source. → `KB § PATTERNS/ast.md`
-- **DRY — the recurrence rule** — N=2 → triage; N=3+ MUST formalize; the 4th instance is forbidden. → `KB § PATTERNS/project-execution.md`
-- **Triage at decision time — accept-with-rationale** — every divergence lands on `[F]/[R]/[A]` with paperwork (catalog survives folder deletion). → `KB § PATTERNS/accept-with-rationale.md`
-- **Methodology codification pipeline** — s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector. → `KB § PATTERNS/methodology-codification-pipeline.md`
-- **Three-way sync + symbol-first + lossless doc-refactor** — rule changes live in KB↔CLAUDE.md↔memory same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. → `KB § PATTERNS/claude-md-router-discipline.md` · `KB § PATTERNS/doc-symbology.md` · `KB § PATTERNS/lossless-doc-refactor.md`
-- **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/persistent-files-absorption.md` · `KB § PATTERNS/storage-hygiene.md`
-- **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/remediation-markers.md`
+- **Agent-context architecture** — `.claude/agents/<name>.md` are lean L1 INDEX over KB depth; frontmatter `owns_kb:` declares full-domain territory. → `KB § PATTERNS/common/agent-context-architecture.md`
+- **Drift-fix-on-contact + scoped auto-improvement** — drift = PAUSE → resolve → surface-if-blocked → DOC → continue. Tech-lead RESOLVES; engineers SURFACE in `drift-found:` / `scoped-improvement:` lines (two-leg footer mandatory every dispatch). → `KB § PATTERNS/common/drift-fix-on-contact.md` · `KB § PATTERNS/common/scoped-auto-improvement.md`
+- **Cache family — consult-before-editing** — three keeper-mirror caches (keeper-pattern + agent-context + auto-improvement). Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md`
+- **Self-branching mode** — 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/common/self-branching-mode.md` · skill `noc-self-branch`
+- **AST-first** — code edits via `libcst` / `ts-morph` / `tree-sitter` — never regex/sed on source. → `KB § PATTERNS/common/ast.md`
+- **DRY — the recurrence rule** — N=2 → triage; N=3+ MUST formalize; the 4th instance is forbidden. → `KB § PATTERNS/architect/project-execution.md`
+- **Triage at decision time — accept-with-rationale** — every divergence lands on `[F]/[R]/[A]` with paperwork (catalog survives folder deletion). → `KB § PATTERNS/common/accept-with-rationale.md`
+- **Methodology codification pipeline** — s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector. → `KB § PATTERNS/common/methodology-codification-pipeline.md`
+- **Three-way sync + symbol-first + lossless doc-refactor** — rule changes live in KB↔CLAUDE.md↔memory same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. → `KB § PATTERNS/common/claude-md-router-discipline.md` · `KB § PATTERNS/common/doc-symbology.md` · `KB § PATTERNS/common/lossless-doc-refactor.md`
+- **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/storage-hygiene.md`
+- **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/common/remediation-markers.md`
 
 ## 3 · Domain map (high-traffic patterns by area — first stop when working in that domain)
 
-- **Backend** (FastAPI / Pydantic / RLS / migrations) → `KB § PATTERNS/backend.md` · `database-rls.md` · `pydantic-strict-http.md` · `di-test-seam.md` · `logging.md` · `seed-fake-real-adapter.md`. Specialist agent: `backend-engineer`.
-- **Frontend** (React / TanStack Query / vite / seed factories) → `KB § PATTERNS/frontend.md` · `core-url-routing.md` · `product-internal-wiring.md` · `product-icon-registry.md`. Specialist agent: `frontend-engineer`.
-- **DevOps / containers / deploy** → `KB § PATTERNS/containerization.md` · `container-sanitization.md` · `base-image-dep-freshness.md` · `dev-prod-parity.md` · `deploy-config-contract.md` · `KB § GUIDES/production-deploy.md`. Specialist agent: `devops-engineer`.
-- **Security / LGPD / webhook signatures** → `KB § PATTERNS/webhook-signatures.md` · `lgpd.md` · `llm-bot-security.md`. Specialist agent: `security` (advisor).
-- **Compliance / testing / regression baseline** → `KB § PATTERNS/compliance-regression-baseline.md` · `testing.md`. Specialist agent: `compliance-reviewer` (advisor).
+- **Backend** (FastAPI / Pydantic / RLS / migrations) → `KB § PATTERNS/backend/backend.md` · `database-rls.md` · `pydantic-strict-http.md` · `di-test-seam.md` · `logging.md` · `seed-fake-real-adapter.md`. Specialist agent: `backend-engineer`.
+- **Frontend** (React / TanStack Query / vite / seed factories) → `KB § PATTERNS/frontend/frontend.md` · `core-url-routing.md` · `product-internal-wiring.md` · `product-icon-registry.md`. Specialist agent: `frontend-engineer`.
+- **DevOps / containers / deploy** → `KB § PATTERNS/devops/containerization.md` · `container-sanitization.md` · `base-image-dep-freshness.md` · `dev-prod-parity.md` · `deploy-config-contract.md` · `KB § GUIDES/production-deploy.md`. Specialist agent: `devops-engineer`.
+- **Security / LGPD / webhook signatures** → `KB § PATTERNS/security/webhook-signatures.md` · `lgpd.md` · `llm-bot-security.md`. Specialist agent: `security` (advisor).
+- **Compliance / testing / regression baseline** → `KB § PATTERNS/compliance/compliance-regression-baseline.md` · `testing.md`. Specialist agent: `compliance-reviewer` (advisor).
 - **Integrations** (Google / Meta / WhatsApp / OAuth / image-gen) → `KB § INTEGRATIONS/*.md`.
-- **Branching / dispatch / parallel waves** → `KB § PATTERNS/branching.md` · `branching-and-merging.md` (§18/§21 collision-class) · `branching-dispatch.md` · `dispatch-engineer-tuning.md` · `parallelization-first-orchestration.md`. Specialist agent: `architect`.
+- **Branching / dispatch / parallel waves** → `KB § PATTERNS/common/branching.md` · `branching-and-merging.md` (§18/§21 collision-class) · `branching-dispatch.md` · `dispatch-engineer-tuning.md` · `parallelization-first-orchestration.md`. Specialist agent: `architect`.
 
 ## 4 · Specialist agents + procedure skills
 
@@ -54,7 +54,7 @@
 |---|---|
 | Create / scaffold / absorb a product · deploy/ship · branch/dispatch · self-branch · wiring audit · container debug · cleanup | matching `noc-*` skill (auto-triggers) |
 | Dispatched as engineer | `.claude/agents/engineer-default.md` (standing protocol) |
-| Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/project-execution.md` |
+| Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/architect/project-execution.md` |
 | Trigger phrases the user might say | `CLAUDE.md` §3 routing table |
 
 ## 6 · You're contextualized

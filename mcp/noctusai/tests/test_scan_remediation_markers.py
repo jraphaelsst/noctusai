@@ -1,4 +1,4 @@
-"""Tests for noctus.dev.scan_remediation_markers (KB § PATTERNS/remediation-markers.md).
+"""Tests for noctus.dev.scan_remediation_markers (KB § PATTERNS/common/remediation-markers.md).
 
 Real git repos + real `git grep` (no monkey-patch of our own code) so the
 parse/classify/group predicates exercise the actual plumbing.

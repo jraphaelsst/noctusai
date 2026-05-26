@@ -479,7 +479,7 @@ class TestCheckProductSourceBuildDepPipSeam:
     """A product whose backend requirements pull a source-only (no
     arm64-wheel) dep MUST have a per-slug PIP_RUN seam in
     propagate-dockerfiles.sh — Stage-4 codification of
-    KB § PATTERNS/containerization.md §3.2a.
+    KB § PATTERNS/devops/containerization.md §3.2a.
     """
 
     def _scaffold(

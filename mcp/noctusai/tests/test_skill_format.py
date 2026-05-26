@@ -1,7 +1,7 @@
 """Regression tests for `check_skill_format` (harness-layer format keeper).
 
 Sibling of TestClaudeMdRouter / TestMemoryMdIndex / TestAgentFormat /
-TestAgentArchetypeContract. Per `KB § PATTERNS/testing.md § Regression-test-
+TestAgentArchetypeContract. Per `KB § PATTERNS/compliance/testing.md § Regression-test-
 the-detector` — the colocated suite the meta-detector requires.
 """
 import sys

@@ -11,7 +11,7 @@
 >
 > **LGPD contract** (non-negotiable): clinical free text never lands in a
 > response cache. Every Therapy `chat_completion` call passes `cache=False`
-> — see `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md` + `LGPD-WARNINGS.md`.
+> — see `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md` + `LGPD-WARNINGS.md`.
 >
 > ERP: `products/erp-imobiliario/backend/app/` · defaults: gpt-4o-mini + text-embedding-3-small
 > Therapy: `products/therapy-platform/backend/app/` · defaults: gpt-4o (override) + Whisper

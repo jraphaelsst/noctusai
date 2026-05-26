@@ -1,8 +1,8 @@
 """Regression tests for `check_memory_md_index` (sibling of TestClaudeMdRouter).
 
-Per KB § PATTERNS/testing.md § Regression-test-the-detector. The colocated suite
+Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector. The colocated suite
 the meta-detector `check_detector_has_regression_test` requires. Enforces the
-v4.0 MEMORY-trim pattern (sibling of `KB § PATTERNS/claude-md-router-discipline.md`):
+v4.0 MEMORY-trim pattern (sibling of `KB § PATTERNS/common/claude-md-router-discipline.md`):
 entry lines stay tight; whole-file under budget.
 
 The keeper's DI seam (`home` parameter) lets us isolate the test from the real

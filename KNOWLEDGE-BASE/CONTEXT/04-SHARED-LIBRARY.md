@@ -104,7 +104,7 @@ Top-level seed-lib layer for cross-product security primitives. Today it ships `
 | `verify_svix_signature(*, svix_id, svix_timestamp, body, signature_header, secret, enforce_replay_window=False, max_age_seconds=300)` | Verify Svix-protocol headers (Resend etc.). Multi-version header rotation supported. |
 | `webhook_endpoint(*, secret_env, signature_header, ...)` | FastAPI dependency factory — verifies before the handler runs, returns the raw body bytes (Phase 2 deliverable). |
 
-**Adopters:** ERP (`assinaturas`, `meta_api`, `whatsapp_webhook`) and Mailing (`webhooks/resend`). Stripe SDK is the documented carve-out — it ships its own verifier; don't wrap it. → `KB § PATTERNS/webhook-signatures.md` for the four-shape catalog + universal rules.
+**Adopters:** ERP (`assinaturas`, `meta_api`, `whatsapp_webhook`) and Mailing (`webhooks/resend`). Stripe SDK is the documented carve-out — it ships its own verifier; don't wrap it. → `KB § PATTERNS/security/webhook-signatures.md` for the four-shape catalog + universal rules.
 
 ### `llm/` — Multi-Provider LLM Client
 
@@ -152,7 +152,7 @@ Every product accesses LLMs exclusively through this package. No product code im
 - `estimate_cost_usd(provider, model, prompt_tokens, completion_tokens)` — catalog-driven from `ModelEntry.cost_per_1m_input_tokens` / `cost_per_1m_output_tokens`.
 - Opt-in per product via `LLM_USAGE_TRACKING=1`; framework auto-wires a `SupabaseUsageSink` to the product schema's `llm_usage` table.
 - Endpoints: per-product `GET /api/llm/usage` (RLS-scoped, shared router) + Core `GET /api/admin/llm-usage` (platform admin, all schemas).
-- **LGPD**: `UsageEvent` stores counts + provider/model + org_id only — never prompt text. See `PATTERNS/llm-usage.md`.
+- **LGPD**: `UsageEvent` stores counts + provider/model + org_id only — never prompt text. See `PATTERNS/backend/llm-usage.md`.
 
 **Credential contract** (`key_provider` callable): `(provider: str, org_id: Optional[str] = None) -> Optional[str]`. Default implementation routes through `resolve_credential(f"{provider}_api_key", org_id)`.
 
@@ -166,7 +166,7 @@ Every product accesses LLMs exclusively through this package. No product code im
 | `MockQueryBuilder` | For `.insert()` / `.upsert()` |
 | `MockUser` | Parameterized: `MockUser(role="therapist", org_id="x", clinic_id="y")` |
 | `AuthClient` | Wraps TestClient with Bearer auth. `.mock_supabase` property, `.raw()` for unauth |
-| `bind_consent_module_to_mock(mock_sb)` | **Per-fixture rewire of the X6 consent module's FastAPI deps to a mock supabase.** Solves the boot-order trap where `TestClient` caches the app + `configure_consent_module(...)` captures the FIRST fixture's `mock_sb` reference permanently. Idempotent. Required in every product's `client` fixture — see `KB § PATTERNS/testing.md § Consent-guard product conftest pattern` for the full rationale + canonical conftest shape. Default in `templates/product-seed/backend/tests/conftest.py` since 2026-04-27. |
+| `bind_consent_module_to_mock(mock_sb)` | **Per-fixture rewire of the X6 consent module's FastAPI deps to a mock supabase.** Solves the boot-order trap where `TestClient` caches the app + `configure_consent_module(...)` captures the FIRST fixture's `mock_sb` reference permanently. Idempotent. Required in every product's `client` fixture — see `KB § PATTERNS/compliance/testing.md § Consent-guard product conftest pattern` for the full rationale + canonical conftest shape. Default in `templates/product-seed/backend/tests/conftest.py` since 2026-04-27. |
 
 ### `integrations/supabase_identity.py` — Bulk auth.users → display-name + email resolver
 
@@ -345,7 +345,7 @@ Lifted 2026-05-03 by `projects/metas-domain-seed-absorption/` per N=3 MUST-FORMA
 | `count_business_days(start, end)` + `working_days_*_in_*` family | Mon-Fri counts, inclusive; helpers shared with `period_bounds`. |
 | `next_status(current, *, percent_complete, period_remaining_pct?)` | State-machine transition. Sticky terminals (COMPLETED / ABANDONED). |
 | `can_transition`, `from_pt_string`, `to_pt_string` | Guard rail + PT-BR ↔ enum mapping (legacy: `ativa/concluida/no_prazo/atrasada`). |
-| `GoalRepository`, `InMemoryGoalRepository` | Optional Protocol seam for consumers that want to inject persistence (per `KB § PATTERNS/seed-lib-layout.md § Consumer-injection seams`). InMemory implementation for tests / demos. |
+| `GoalRepository`, `InMemoryGoalRepository` | Optional Protocol seam for consumers that want to inject persistence (per `KB § PATTERNS/architect/seed-lib-layout.md § Consumer-injection seams`). InMemory implementation for tests / demos. |
 
 ```python
 from noctusai_lib.domain.metas import (
@@ -363,7 +363,7 @@ target_today = proportional_target(monthly_target=300, kind=PeriodKind.DAILY, re
 
 **Adopters (target):** PF metas/orcamentos services, ERP metas service, Daily Life goals service. Wiring is a follow-up cycle — three per-product wiring projects refactor each service to consume the seed without changing the product's persistence shape. Tests: 111 cases under `seed/lib/backend/tests/domain/metas/`.
 
-See `KB § PATTERNS/metas-seed.md` for the wiring recipe + status mapping table.
+See `KB § PATTERNS/backend/metas-seed.md` for the wiring recipe + status mapping table.
 
 ### `ai/` — Per-entity AI-output storage (P1 pattern)
 
@@ -406,7 +406,7 @@ ALTER TABLE <schema>.ai_outputs ENABLE ROW LEVEL SECURITY;
 
 ### `ai/consent.py` — Per-feature AI consent (X6 / LGPD)
 
-Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI features that consume personal data. Backed by Core migration `012_ai_consent.sql` + `/api/me/consents` endpoints. Full LGPD pattern lives at `KB § PATTERNS/lgpd.md § 9`.
+Shipped 2026-04-26 by ai-expansion Phase 19. Platform-wide opt-in/opt-out for AI features that consume personal data. Backed by Core migration `012_ai_consent.sql` + `/api/me/consents` endpoints. Full LGPD pattern lives at `KB § PATTERNS/security/lgpd.md § 9`.
 
 | Symbol | Purpose |
 |---|---|

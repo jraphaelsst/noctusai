@@ -20,4 +20,4 @@ Keeper = regulatory (blocks commits). Hound/mole = curatorial (surfaces what to 
 - Remediation markers `NOC-REMEDIATE[<class>]: … — <date>` are the sanctioned non-silent deferral; batch via `noctus.dev.scan_remediation_markers`.
 
 ## Depth
-`KB § PATTERNS/seed-absorption.md` (hound) · `KB § PATTERNS/storage-hygiene.md` (mole) · `KB § 06-AGENTS.md` (sextet/trio).
+`KB § PATTERNS/architect/seed-absorption.md` (hound) · `KB § PATTERNS/common/storage-hygiene.md` (mole) · `KB § 06-AGENTS.md` (sextet/trio).

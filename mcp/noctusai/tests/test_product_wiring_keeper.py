@@ -2,12 +2,12 @@
 
 The three detectors (`check_fe_route_missing` / `check_name_on_nome_select` /
 `check_promise_all_shared_catch`) codify the STATIC legs of the
-product-internal-wiring audit (`KB § PATTERNS/product-internal-wiring.md`
+product-internal-wiring audit (`KB § PATTERNS/frontend/product-internal-wiring.md`
 legs 2/4/5) as Stage-4 keeper detectors. Each reuses the EXACT shared predicate
 already shipped in `tools/noctus/dev/scan_wiring.py` (one predicate, two
 surfaces — the `noctus.dev.scan_wiring` MCP tool + these keepers).
 
-Per `KB § PATTERNS/testing.md § Regression-test-the-detector`, each detector
+Per `KB § PATTERNS/compliance/testing.md § Regression-test-the-detector`, each detector
 pins its true-positive (fires) + false-positive (silent) shapes. All tests use
 `tmp_path` — no dependency on the live `products/` tree (mirrors the sibling
 `test_handrolled_core_url.py` fixture style: `tmp_path/<slug>/...`, no

@@ -19,12 +19,12 @@ ADDING A NEW DETECTOR — read this first.
    surface the findings. (Knowledge contributed by
    `keeper-test-status-assertion` Phase 1 retro, 2026-05-06.)
 3. Ship a colocated `Test<CamelCase>` regression suite in
-   `mcp/noctusai/tests/` per `KB § PATTERNS/testing.md
+   `mcp/noctusai/tests/` per `KB § PATTERNS/compliance/testing.md
    § Regression-test-the-detector`.
 ──────────────────────────────────────────────────────────────────────
 """
 # accept-with-rationale: "MCP detectors keep raw `import ast`" in
-# KB § PATTERNS/accept-with-rationale.md — compliance walks
+# KB § PATTERNS/common/accept-with-rationale.md — compliance walks
 # create_product_app(...) Call.keywords + List literals + monkeypatch
 # Call.args[0/1] Constants + ImportFrom mapping; all node-level
 # surfaces outline_python deliberately omits. Migration evaluated
@@ -483,7 +483,7 @@ def check_handrolled_core_url(product_path: Path) -> list[dict]:
     `localhost:8000` default broke `/sso` ("Failed to fetch") for every product
     whose bundle bakes only VITE_CORE_URL; a stale `localhost:5173` default (the
     dead pre-house vite port) broke cross-product nav. See
-    `KB § PATTERNS/core-url-routing.md` + `KB § PATTERNS/boundary-contract-tests.md` B1.
+    `KB § PATTERNS/frontend/core-url-routing.md` + `KB § PATTERNS/backend/boundary-contract-tests.md` B1.
 
     Carve-out: `core/frontend/src/lib/api.ts` — core is same-origin to ITSELF,
     so its api client legitimately reads VITE_CORE_API_URL with a
@@ -530,7 +530,7 @@ def check_handrolled_core_url(product_path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Product-internal-wiring — the STATIC legs (KB § PATTERNS/product-internal-wiring.md
+# Product-internal-wiring — the STATIC legs (KB § PATTERNS/frontend/product-internal-wiring.md
 # legs 2/4/5), codified as Stage-4 keeper detectors. Each reuses the EXACT
 # shared predicate already shipped in `tools/noctus/dev/scan_wiring.py`
 # (`analyze_missing_routes` / `analyze_name_on_nome` /
@@ -566,7 +566,7 @@ def _wiring_repo_root(product_path: Path) -> Path:
 def check_fe_route_missing(product_path: Path) -> list[dict]:
     """Leg A — FE `api.<method>('<path>')` calls with no matching backend route.
 
-    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    Product-internal-wiring rule (`KB § PATTERNS/frontend/product-internal-wiring.md`
     leg 2): every FE backend call must hit a real registered route. A FE call
     whose (method, normalized-path) matches no `@router.<method>` decorator +
     mount prefix (product routers + seed-framework standard routers) is the
@@ -599,7 +599,7 @@ def check_fe_route_missing(product_path: Path) -> list[dict]:
 def check_name_on_nome_select(product_path: Path) -> list[dict]:
     """Leg B — PostgREST selecting `name` on a `nome`-table (the 500 class).
 
-    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    Product-internal-wiring rule (`KB § PATTERNS/frontend/product-internal-wiring.md`
     leg 5): the platform schema is Portuguese — `plans` / `products` /
     `organizations` carry `nome`, NOT `name`. A `.select("plans(name)")` /
     `plans!inner(name)` is the recurring 500 that zeroed the core admin
@@ -628,7 +628,7 @@ def check_name_on_nome_select(product_path: Path) -> list[dict]:
 def check_promise_all_shared_catch(product_path: Path) -> list[dict]:
     """Leg C — `Promise.all([bare fetches])` under one shared try/catch.
 
-    Product-internal-wiring rule (`KB § PATTERNS/product-internal-wiring.md`
+    Product-internal-wiring rule (`KB § PATTERNS/frontend/product-internal-wiring.md`
     leg 4): a surface fetching N endpoints under one shared `try { ... } catch`
     turns ONE failure into all-zeros (the all-zeros dashboard bug). Per-element
     `.catch(() => fallback)` degrades independently and is CORRECT (not
@@ -1220,7 +1220,7 @@ def check_ai_feature_completeness(product_path: Path) -> list[dict]:
 def _find_all_project_md(repo_root: Path) -> list[Path]:
     """Find every PROJECT.md across the repo's three valid locations.
 
-    Per `KB § PATTERNS/project-execution.md §1` (the three-location project
+    Per `KB § PATTERNS/architect/project-execution.md §1` (the three-location project
     rule): root `projects/<slug>/`, `products/<product>/projects/<slug>/`,
     and `core/projects/<slug>/`. Returns sorted paths so iteration is
     deterministic across runs.
@@ -1389,7 +1389,7 @@ def check_phase_state_consistency(repo_root: Path | None = None) -> list[dict]:
     in their pre-close state. The user reads §6 as a real-time dashboard;
     the mismatch is functionally a lie about progress.
 
-    Detection rules (per `KB § PATTERNS/project-execution.md § 2 Self-check
+    Detection rules (per `KB § PATTERNS/architect/project-execution.md § 2 Self-check
     before claiming a phase is done`):
 
     1. Phase header lacks ✅ icon BUT §11 says "Phase N shipped" → drift.
@@ -1621,7 +1621,7 @@ _SELF_PATCH_OK_COMMENT_RE = re.compile(r"#\s*self-patch-ok\b", re.IGNORECASE)
 
 # Severity ratchet: products that have reached 0 self-monkeypatches get the
 # detector at severity `high` so new violations block CI; the rest stay at
-# `warning` while their historical debt drains. Per `KB § PATTERNS/testing.md
+# `warning` while their historical debt drains. Per `KB § PATTERNS/compliance/testing.md
 # § Severity ratchet`. When this set covers every product, the per-product
 # carve-out is dropped and the detector goes `high` repo-wide.
 _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
@@ -1817,7 +1817,7 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
                 # Severity ratchets to `high` once a product reaches 0; until
                 # then, `warning` so historical debt doesn't tank score. See
                 # `_NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS` above + `KB §
-                # PATTERNS/testing.md § Severity ratchet`.
+                # PATTERNS/compliance/testing.md § Severity ratchet`.
                 "severity": severity,
             })
     return issues
@@ -2146,7 +2146,7 @@ def check_clean_folder_violations(repo_root: Path | None = None) -> list[dict]:
 # YouTube Crawler Phase 1 "false-green" slip where a substring-on-`.text`
 # assertion matched the wrong of two error entries (broken `Depends(get_org_id)`
 # chain) and the test went green even though the endpoint was unusable.
-# Project: keeper-test-status-assertion. Per KB § PATTERNS/testing.md
+# Project: keeper-test-status-assertion. Per KB § PATTERNS/compliance/testing.md
 # § Status-code-assertion rule.
 # ---------------------------------------------------------------------------
 
@@ -2355,7 +2355,7 @@ def check_test_status_assertion(product_path: Path) -> list[dict]:
     response-variable identity — both assertions must merely exist in the
     same method body.
 
-    Per KB § PATTERNS/testing.md § Status-code-assertion rule.
+    Per KB § PATTERNS/compliance/testing.md § Status-code-assertion rule.
     """
     issues: list[dict] = []
     name = product_path.name
@@ -2411,7 +2411,7 @@ def check_test_status_assertion(product_path: Path) -> list[dict]:
                         f"without a sibling `assert <resp>.status_code == "
                         f"...` in the same method. Body-only assertions can "
                         f"go green for the wrong reason — see KB § "
-                        f"PATTERNS/testing.md § Status-code-assertion rule "
+                        f"PATTERNS/compliance/testing.md § Status-code-assertion rule "
                         f"(YouTube Crawler Phase 1 false-green case study)."
                     ),
                     "severity": "warning",
@@ -2427,7 +2427,7 @@ def check_test_status_assertion(product_path: Path) -> list[dict]:
 # bypass — are the same shape (real DB fails, tests pass). All three are
 # AST-driven, observation-only, deterministic.
 #
-# Per KB § PATTERNS/testing.md § Production-correctness keeper detectors.
+# Per KB § PATTERNS/compliance/testing.md § Production-correctness keeper detectors.
 # ---------------------------------------------------------------------------
 
 
@@ -2741,7 +2741,7 @@ def check_unknown_table_references(product_path: Path) -> list[dict]:
                     f"a table not declared by any `CREATE TABLE` in "
                     f"`products/{name}/backend/migrations/*.sql`. "
                     f"MockSupabase WARN+skip masks this — production fails. "
-                    f"See KB § PATTERNS/testing.md § Production-correctness "
+                    f"See KB § PATTERNS/compliance/testing.md § Production-correctness "
                     f"keeper detectors."
                 ),
                 "severity": "warning",
@@ -3011,7 +3011,7 @@ def check_rls_policy_self_reference(product_path: Path) -> list[dict]:
                 f"at evaluation (broke prod on equipe_membros/026 + "
                 f"noctus_users/035). Resolve the scope via a SECURITY DEFINER "
                 f"(BYPASSRLS) helper instead of self-querying — see "
-                f"`KB § PATTERNS/database-rls.md` (RLS self-reference)."
+                f"`KB § PATTERNS/backend/database-rls.md` (RLS self-reference)."
             ),
             "severity": "error",
         })
@@ -3169,7 +3169,7 @@ def check_admin_endpoint_service_role_bypass(product_path: Path) -> list[dict]:
                     f"<schema>.{table_name}` in "
                     f"`products/{name}/backend/migrations/*.sql`. "
                     f"Admin bypass will silently fail. See KB § "
-                    f"PATTERNS/testing.md § Production-correctness keeper "
+                    f"PATTERNS/compliance/testing.md § Production-correctness keeper "
                     f"detectors."
                 ),
                 "severity": "warning",
@@ -3268,7 +3268,7 @@ def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
     Severity: high — app fails to boot, no graceful degradation.
 
     N=3 recurrence formalization, 2026-05-11. Per CLAUDE.md "DRY — the
-    recurrence rule" + KB § PATTERNS/testing.md § Regression-test-the-detector.
+    recurrence rule" + KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
     """
     issues: list[dict] = []
     if not product_path.exists():
@@ -3373,7 +3373,7 @@ _DISPATCHER_PENDING_RE = re.compile(
 
 # Paths that should be in .gitignore — transient coordination artifacts,
 # log files, and `.claude/dispatcher.md` (the unified two-session
-# coordination file, see KB § PATTERNS/two-session-architect-operator.md).
+# coordination file, see KB § PATTERNS/architect/two-session-architect-operator.md).
 # Extend when new transient surfaces land; the detector flags missing
 # entries, not extra entries.
 _EXPECTED_GITIGNORE_PATHS: tuple[str, ...] = (
@@ -3529,8 +3529,8 @@ def check_codification_debt(repo_root: Path | None = None) -> list[dict]:
       - codify backlog ≥3 → one extra ``warning`` ("run ``/codify`` sweep").
 
     Reuses ``markers_of_class`` — one parser, two surfaces
-    (KB § PATTERNS/methodology-codification-pipeline.md +
-    KB § PATTERNS/remediation-markers.md). Codified 2026-05-25 via ``/codify``.
+    (KB § PATTERNS/common/methodology-codification-pipeline.md +
+    KB § PATTERNS/common/remediation-markers.md). Codified 2026-05-25 via ``/codify``.
     """
     from tools.noctus.dev.scan_remediation_markers import markers_of_class
 
@@ -3585,7 +3585,7 @@ def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
     """Detect entries in `.claude/dispatcher.md` `## Pending` section that
     were appended >24h ago and never moved to `## Completed`.
 
-    Why: per `KB § PATTERNS/two-session-architect-operator.md`, the
+    Why: per `KB § PATTERNS/architect/two-session-architect-operator.md`, the
     inbox is a coordination channel — entries that sit there past 24h
     indicate the operator session is offline or the entry got missed.
     The keeper surfaces accumulation so the architect notices.
@@ -3644,7 +3644,7 @@ def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
                 f"split expects pending entries to drain within 24h. Either "
                 f"resume operator session and consume the entry, or move it "
                 f"to `## Completed` with a `❌ stale` marker. Per "
-                f"`KB § PATTERNS/two-session-architect-operator.md`."
+                f"`KB § PATTERNS/architect/two-session-architect-operator.md`."
             ),
             "severity": severity,
         })
@@ -4102,7 +4102,7 @@ def check_auth_dep_anti_pattern(repo_root: Path | None = None) -> list[dict]:
                     f"shape (positional args become query params). Use "
                     f"`Depends(get_current_user_org)` from the "
                     f"`make_get_current_user_org` factory instead. Per "
-                    f"`feedback_auth_factory_pattern` + `KB § PATTERNS/backend.md "
+                    f"`feedback_auth_factory_pattern` + `KB § PATTERNS/backend/backend.md "
                     f"§ Auth — canonical pattern`. Imperative use of "
                     f"`ProductDependencies.{attr}(...)` (without `Depends`) "
                     f"is fine."
@@ -4482,7 +4482,7 @@ def check_pipefail_grep_q(repo_root: Path | None = None) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # `check_new_script_lacks_mcp_analog` — enforces the MCP-first-scripts rule
-# (`KB § PATTERNS/mcp-first-scripts.md`): every top-level `scripts/*.sh` /
+# (`KB § PATTERNS/architect/mcp-first-scripts.md`): every top-level `scripts/*.sh` /
 # `scripts/*.py` MUST have a row in the classification manifest (§3 of that
 # doc). A file on disk with no manifest row = an undecided new script that
 # skipped the absorb-or-carve-out decision — the exact slip the rule
@@ -4490,14 +4490,14 @@ def check_pipefail_grep_q(repo_root: Path | None = None) -> list[dict]:
 # disposition fidelity (disposition stays human-curated).
 # ---------------------------------------------------------------------------
 
-_MCP_FIRST_SCRIPTS_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/mcp-first-scripts.md"
+_MCP_FIRST_SCRIPTS_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/mcp-first-scripts.md"
 # First backticked cell of a markdown table row: `| \`name.sh\` | ... |`.
 _MANIFEST_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.MULTILINE)
 
 
 def check_new_script_lacks_mcp_analog(repo_root: Path | None = None) -> list[dict]:
     """Flag a top-level `scripts/*.sh|*.py` with no classification-manifest
-    row in `KB § PATTERNS/mcp-first-scripts.md` §3.
+    row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 
     Rule: a new automation script IS an agent-exposable capability → it
     defaults to a `noctus.dev.*` MCP tool, OR it is one of three named
@@ -4566,7 +4566,7 @@ def check_new_script_lacks_mcp_analog(repo_root: Path | None = None) -> list[dic
                 f"`Test*`), NOT a `scripts/` one-off. If it must stay shell "
                 f"it is one of three named carve-outs (git-hook entry / "
                 f"pre-venv bootstrap / thin docker-orchestration) — add the "
-                f"manifest row AND a `KB § PATTERNS/accept-with-rationale.md` "
+                f"manifest row AND a `KB § PATTERNS/common/accept-with-rationale.md` "
                 f"entry. An undecided script is the slip this rule prevents."
             ),
             "severity": "warning",
@@ -4601,7 +4601,7 @@ _DOC_TOOL_REF_RE = re.compile(
 # doc-code coherence rule. The list is intentionally small — adding to it
 # is part of formalizing new doc surfaces, not a flag-the-world default.
 _DOC_TOOL_REF_SCOPE: tuple[str, ...] = (
-    "KNOWLEDGE-BASE/CONTEXT/PATTERNS/methodology-codification-pipeline.md",
+    "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
 )
 
 
@@ -4612,7 +4612,7 @@ def check_doc_tool_reference_drift(repo_root: Path | None = None) -> list[dict]:
     Why: the doc-code coherence rule (`feedback_doc_code_coherence_rule`)
     requires KB pattern docs + Situation→Tool maps to stay in lockstep
     with tool-code. The most-stale-prone surface is the Situation→Tool
-    map in `KB § PATTERNS/methodology-codification-pipeline.md § 8` —
+    map in `KB § PATTERNS/common/methodology-codification-pipeline.md § 8` —
     that's the initial calibration scope. Add to `_DOC_TOOL_REF_SCOPE`
     as additional doc surfaces become stale-prone.
 
@@ -5437,7 +5437,7 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 # ---------------------------------------------------------------------------
 # `check_doc_symbology_drift` — Stage-4 codification of the symbol-first
 # authoring methodology (`feedback_doc_symbology` / `feedback_symbol_first_
-# authoring`, KB § CONTEXT/PATTERNS/doc-symbology.md). N=3 drift signal
+# authoring`, KB § CONTEXT/PATTERNS/common/doc-symbology.md). N=3 drift signal
 # (user 2026-05-12 "make sure future docs follow the symbology pattern")
 # flips the memory "Held at Stage 3" gate.
 #
@@ -5490,7 +5490,7 @@ _SYMBOLOGY_DOC_GLOBS: tuple[str, ...] = (
 )
 
 # The KB doc the glossary is parsed from (single source of truth).
-_SYMBOLOGY_GLOSSARY_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/doc-symbology.md"
+_SYMBOLOGY_GLOSSARY_DOC = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/doc-symbology.md"
 
 # A markdown table row in the glossary §1: `| <symbol> | <meaning> | … |`.
 # We take the FIRST cell. Header / separator rows are skipped (they hold
@@ -5634,7 +5634,7 @@ def check_product_source_build_dep_pip_seam(
     product pip-installs run in the slim runtime (the base *builder*
     stage has the toolchain; products ``FROM …AS runtime``).
 
-    Stage-4 codification of ``KB § PATTERNS/containerization.md §3.2a``
+    Stage-4 codification of ``KB § PATTERNS/devops/containerization.md §3.2a``
     (that section is the remediation; this detector is the "extra layer
     of checking" ensuring every product follows it). Deterministic:
     reads each product's ``requirements.txt`` + the ``PIP_RUN = { … }``
@@ -5701,7 +5701,7 @@ def check_product_source_build_dep_pip_seam(
                 f"abort in the slim runtime stage (`meson … Unknown "
                 f"compiler`). Add a per-slug PIP_RUN entry (install+purge "
                 f"the toolchain in the SAME layer) per "
-                f"KB § PATTERNS/containerization.md §3.2a; if a 2nd "
+                f"KB § PATTERNS/devops/containerization.md §3.2a; if a 2nd "
                 f"product needs a source build, lift the toolchain into "
                 f"the seed backend base builder instead."
             ),
@@ -5733,7 +5733,7 @@ def check_doc_symbology_drift(repo_root: Path | None = None) -> list[dict]:
     parse-surface warning (the §8 dependency contract), not drift noise.
 
     Per `feedback_doc_symbology` / `feedback_symbol_first_authoring`,
-    KB § CONTEXT/PATTERNS/doc-symbology.md. Severity: `warning`.
+    KB § CONTEXT/PATTERNS/common/doc-symbology.md. Severity: `warning`.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -5968,7 +5968,7 @@ def check_dockerfile_vite_supabase_args(
     clean; this guards future hand-edits / out-of-propagation products.
 
     Per the containerization single-container pattern
-    (KB § CONTEXT/PATTERNS/containerization.md). Severity: `error`.
+    (KB § CONTEXT/PATTERNS/devops/containerization.md). Severity: `error`.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -6082,7 +6082,7 @@ def check_dockerfile_vite_supabase_args(
 
 # House single-container model markers — the canonical shape every in-noc
 # product mirrors (products/seed/backend/Dockerfile + docker-compose.yml).
-# See KB § PATTERNS/containerization.md § 1a Container-first.
+# See KB § PATTERNS/devops/containerization.md § 1a Container-first.
 # Universal markers — required of every in-noc product Dockerfile.
 _HOUSE_DOCKERFILE_MARKERS: tuple[tuple[str, str], ...] = (
     (
@@ -6112,7 +6112,7 @@ _HOUSE_SPA_MARKERS: tuple[tuple[str, str], ...] = (
 def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
     """Every in-noc product conforms to the house SINGLE-container model.
 
-    Container-first (KB § PATTERNS/containerization.md § 1a): a product is
+    Container-first (KB § PATTERNS/devops/containerization.md § 1a): a product is
     developed INSIDE its container via the `runtime-watch` target and ships
     the slim `runtime` target — ONE container, ONE shape. This detector flags
     an in-noc `products/<slug>/` missing the house shape:
@@ -6141,7 +6141,7 @@ def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
     fix = (
         "run `noctus.dev.propagate` (re-renders the house Dockerfile/compose "
         "from products/seed) or containerize the product to the house model "
-        "(KB § PATTERNS/containerization.md § 1a)"
+        "(KB § PATTERNS/devops/containerization.md § 1a)"
     )
 
     for prod_dir in sorted(products_dir.iterdir()):
@@ -6164,7 +6164,7 @@ def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
                 "issue": (
                     f"In-noc product `{slug}` has no `{df_rel}` — it is not "
                     f"containerized to the house single-container model "
-                    f"(container-first; KB § PATTERNS/containerization.md § 1a). "
+                    f"(container-first; KB § PATTERNS/devops/containerization.md § 1a). "
                     f"A freshly-absorbed product must add the thin house "
                     f"Dockerfile (`FROM noctus-seed-*-base`) before it can be "
                     f"developed inside its container. Remediation: {fix}."
@@ -6259,12 +6259,12 @@ def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
 #   1. `seed/framework/frontend/src/infra.tsx` `|| "http://localhost:8000"`
 #      (core's port literal — every non-core product FE pointed at core →
 #      CORS preflight kills the fetch → opaque `Servidor indisponivel`).
-#   2. `KB § PATTERNS/pydantic-strict-http.md` silent-drop sibling shape
+#   2. `KB § PATTERNS/backend/pydantic-strict-http.md` silent-drop sibling shape
 #      (loose hook + strict default — same coincidence-pattern class).
 #   3. `seed/framework/frontend/vite.config.factory.ts` `|| 8000` fallback
 #      for unmapped FE ports (same root: core's backend port literal).
 #
-# Per `KB § PATTERNS/seed-canonical-defaults.md` + memory
+# Per `KB § PATTERNS/architect/seed-canonical-defaults.md` + memory
 # `feedback_seed_defaults_canonical_not_one_consumer.md` (status flipped
 # 2026-05-20 evening: `[A]` accept → `[F]` formalize).
 #
@@ -6508,7 +6508,7 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
         fallback to a port-resolution chain. Same class: the literal is
         consumer-#1's port, every other consumer silently misroutes.
 
-    Per `KB § PATTERNS/seed-canonical-defaults.md` + memory
+    Per `KB § PATTERNS/architect/seed-canonical-defaults.md` + memory
     `feedback_seed_defaults_canonical_not_one_consumer.md`. N=3 evidence
     (2026-05-20) — see module docstring above this detector for the
     enumerated cases.
@@ -6596,7 +6596,7 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
                             f"canonical answer is known at seed-level), "
                             f"never a literal that pretends to know one "
                             f"consumer's port. Per "
-                            f"`KB § PATTERNS/seed-canonical-defaults.md`. "
+                            f"`KB § PATTERNS/architect/seed-canonical-defaults.md`. "
                             f"Escape hatch: add `canonical-default-ok` to "
                             f"a same-line or preceding-line comment."
                         ),
@@ -6620,7 +6620,7 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
                             f"`parse_products_registry()` and `throw` on "
                             f"unmapped (loud build failure), never `|| "
                             f"<port-literal>` (silent misroute at runtime). "
-                            f"Per `KB § PATTERNS/seed-canonical-defaults.md`. "
+                            f"Per `KB § PATTERNS/architect/seed-canonical-defaults.md`. "
                             f"Escape hatch: add `canonical-default-ok` to "
                             f"a same-line or preceding-line comment."
                         ),
@@ -6637,7 +6637,7 @@ def check_seed_canonical_default(repo_root: Path | None = None) -> list[dict]:
 # serves the dev answer in prod (the slim deploy image ships NO `start.sh` ->
 # the derivation collapses to empty / a localhost default).
 #
-# This is the executable form of `KB section PATTERNS/dev-prod-parity.md` 2 (the
+# This is the executable form of `KB section PATTERNS/devops/dev-prod-parity.md` 2 (the
 # dev<->prod difference checklist) — the same class bit >=3x in the
 # 2026-05-22 cutover (nav SSO'd to localhost, CORS collapsed to localhost in the
 # slim image, `infra.tsx` localhost default). The cure shape lives one file over
@@ -6688,7 +6688,7 @@ def check_derives_from_dev_only_artifact(repo_root: Path | None = None) -> list[
     """Flag seed functions that derive a runtime value from a dev-only artifact.
 
     PROACTIVE keeper (N=1, user-directed -- `projects/seed-deploy-config-contract`).
-    The executable form of `KB section PATTERNS/dev-prod-parity.md` 2: seed code
+    The executable form of `KB section PATTERNS/devops/dev-prod-parity.md` 2: seed code
     in `seed/{lib,framework}/**/*.py` that derives a value from the dev-only
     `start.sh PRODUCTS` registry (``parse_products_registry(``) or a
     ``scripts/``/``start.sh`` file -- WITHOUT any env fallback (``os.environ`` /
@@ -6795,7 +6795,7 @@ def check_derives_from_dev_only_artifact(repo_root: Path | None = None) -> list[
                         f"derivation with an env seam (see "
                         f"`noctusai_lib.config.cors_registry.derive_cors_origins`, "
                         f"which derives from the registry AND reads `os.environ`). "
-                        f"Per `KB section PATTERNS/dev-prod-parity.md` 2. Escape "
+                        f"Per `KB section PATTERNS/devops/dev-prod-parity.md` 2. Escape "
                         f"hatch: add `dev-artifact-derivation-ok` to a comment "
                         f"on the `def` line or the 5 preceding lines."
                     ),
@@ -6811,7 +6811,7 @@ def check_derives_from_dev_only_artifact(repo_root: Path | None = None) -> list[
 # as the consumer's error — exactly the toast a 404-swallow path is
 # usually trying to suppress.
 #
-# Class (B3 in `KB § PATTERNS/boundary-contract-tests.md`): a third-party
+# Class (B3 in `KB § PATTERNS/backend/boundary-contract-tests.md`): a third-party
 # library contract that crosses the seed/product → React Query Provider
 # boundary. Unit tests typically mock `useQuery({ data })` and miss the
 # real-Provider + real-queryFn + 404-response path.
@@ -6824,7 +6824,7 @@ def check_derives_from_dev_only_artifact(repo_root: Path | None = None) -> list[
 # sites in seed+products at ship time: zero remaining instances. Keeper
 # locks in the baseline.
 #
-# Per `KB § PATTERNS/boundary-contract-tests.md` § 5 +
+# Per `KB § PATTERNS/backend/boundary-contract-tests.md` § 5 +
 # `feedback_query_fn_never_returns_undefined.md`.
 #
 # Severity: `warning` (zero-baseline already proven; promote to `high`
@@ -6937,7 +6937,7 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
     "data is undefined" to the consumer, exactly the toast the
     404-swallow / topology-degrade path is usually trying to prevent.
 
-    Per `KB § PATTERNS/boundary-contract-tests.md` § 5 (B3 — third-party
+    Per `KB § PATTERNS/backend/boundary-contract-tests.md` § 5 (B3 — third-party
     library contract) + memory
     `feedback_query_fn_never_returns_undefined.md`.
 
@@ -7018,7 +7018,7 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
                             f"prevent). Return `null` (and type the "
                             f"query `<T | null, Error>`) or a sentinel "
                             f"object instead. Per "
-                            f"`KB § PATTERNS/boundary-contract-tests.md` "
+                            f"`KB § PATTERNS/backend/boundary-contract-tests.md` "
                             f"§ 5. Escape hatch: add "
                             f"`query-fn-undefined-ok` to a same-line or "
                             f"preceding-line comment."
@@ -7222,7 +7222,7 @@ def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dic
                     f"singleton's PostgREST token PROCESS-WIDE → service_role "
                     f"downgraded to authenticated → silent RLS breakage (core "
                     f"prod login outage 2026-05-23). Use a throwaway "
-                    f"create_client(url, anon_key) — see `KB § PATTERNS/backend.md` "
+                    f"create_client(url, anon_key) — see `KB § PATTERNS/backend/backend.md` "
                     f"(admin-client poisoning)."
                 ),
                 "severity": "error",
@@ -7242,7 +7242,7 @@ def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dic
 # clears the limiter between tests; merely importing it into the conftest
 # namespace activates it (autouse). N=6 byte-identical per-product fixtures
 # pre-existed → lifted to the seed → DRY recurrence ⇒ MUST formalize.
-# Per KB § PATTERNS/methodology-codification-pipeline.md (Stage-4).
+# Per KB § PATTERNS/common/methodology-codification-pipeline.md (Stage-4).
 # ---------------------------------------------------------------------------
 
 
@@ -7300,7 +7300,7 @@ def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
                     "pytest-randomly. Add "
                     "`from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401` "
                     "near the other noctusai_lib.testing imports. Per "
-                    "KB § PATTERNS/methodology-codification-pipeline.md."
+                    "KB § PATTERNS/common/methodology-codification-pipeline.md."
                 ),
                 "severity": "warning",
             })
@@ -7318,7 +7318,7 @@ def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
 # 2026-05-25). Emoji values (non-ASCII) render verbatim and are allowed.
 # This keeper folds the core product-catalog migrations into the final live
 # catalog and flags any product whose icone is EMPTY or an unregistered ASCII
-# name. See KB § PATTERNS/testing.md § Regression-test-the-detector and
+# name. See KB § PATTERNS/compliance/testing.md § Regression-test-the-detector and
 # CLAUDE/frontend.md (product icons).
 # ---------------------------------------------------------------------------
 
@@ -7470,7 +7470,7 @@ def check_product_icon_registered(repo_root: Path | None = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 # `check_detector_has_regression_test` — every keeper detector ships with a
 # colocated regression test. Enforces the platform-wide testing methodology
-# documented in KB § PATTERNS/testing.md § Regression-test-the-detector.
+# documented in KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
 # ---------------------------------------------------------------------------
 
 
@@ -7571,7 +7571,7 @@ def check_detector_has_regression_test(repo_root: Path | None = None) -> list[di
 
     The test pins the detector's true-positive and false-positive shapes so
     that a future refactor cannot silently regress it. Per KB §
-    PATTERNS/testing.md § Regression-test-the-detector. Severity `high` —
+    PATTERNS/compliance/testing.md § Regression-test-the-detector. Severity `high` —
     a missing detector test is the kind of gap that lets a real-world miss
     ship without being noticed.
     """
@@ -7594,7 +7594,7 @@ def check_detector_has_regression_test(repo_root: Path | None = None) -> list[di
             "file": "mcp/noctusai/tools/compliance.py",
             "issue": (
                 f"Keeper detector `{detector}` has no regression test. "
-                f"Per KB § PATTERNS/testing.md § Regression-test-the-detector, "
+                f"Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector, "
                 f"every detector must ship colocated with a test that pins "
                 f"its true-positive and false-positive shapes. Add a "
                 f"`class {expected}` (or `Test{_camel_case(detector)}`) to "
@@ -7769,7 +7769,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_methodology_doc_refs())
     # deferred-codification visibility — the always-on gate form of /codify;
     # reads NOC-REMEDIATE[codify] markers so a deferred codification can't go
-    # silent in prose (KB § PATTERNS/methodology-codification-pipeline.md).
+    # silent in prose (KB § PATTERNS/common/methodology-codification-pipeline.md).
     all_issues.extend(check_codification_debt())
     all_issues.extend(check_dispatcher_staleness())
     all_issues.extend(check_branch_orphan())
@@ -7807,27 +7807,27 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_agent_archetype_contract())
     # agent-context-architecture (2026-05-26) — agent files declare full-domain
     # owns_kb in frontmatter; keeper enforces existence + body-pointer mirror +
-    # exclusive ownership. KB § PATTERNS/agent-context-architecture.md.
+    # exclusive ownership. KB § PATTERNS/common/agent-context-architecture.md.
     all_issues.extend(check_agent_kb_alignment())
     # drift-fix-on-contact (2026-05-26) — recurring git-leftovers drift class
     # (untracked-at-root + worktree-uncommitted) caught at every gate.
-    # KB § PATTERNS/drift-fix-on-contact.md.
+    # KB § PATTERNS/common/drift-fix-on-contact.md.
     all_issues.extend(check_git_leftovers())
     # 2026-05-26 — the keeper-pattern cache MUST mirror compliance.py. A stale
     # cache → doc-authoring agents author drift-prone docs from outdated
-    # patterns. KB § PATTERNS/keeper-pattern-cache.md.
+    # patterns. KB § PATTERNS/common/keeper-pattern-cache.md.
     all_issues.extend(check_keeper_cache_freshness())
     # 2026-05-26 (Phase B) — sibling cache for agents. Each agent's bundle_sha
     # = sha256(agent.md ∪ owned_kb files) must match the cached value.
-    # KB § PATTERNS/agent-context-architecture.md § Keeper enforcement.
+    # KB § PATTERNS/common/agent-context-architecture.md § Keeper enforcement.
     all_issues.extend(check_agent_context_cache_freshness())
     # 2026-05-26 (Phase B) — third sibling: scoped-auto-improvement cache
     # mirrors project-history/auto-improvement.ndjson. Consult-before-editing
-    # discipline. KB § PATTERNS/scoped-auto-improvement.md.
+    # discipline. KB § PATTERNS/common/scoped-auto-improvement.md.
     all_issues.extend(check_auto_improvement_cache_freshness())
     # 2026-05-26 (Phase B) — CONTEXTUALIZE.md = fresh-agent read map; sibling
     # of check_claude_md_router (same pointer-only discipline, applied to the
-    # onboarding ramp). KB § PATTERNS/claude-md-router-discipline.md.
+    # onboarding ramp). KB § PATTERNS/common/claude-md-router-discipline.md.
     all_issues.extend(check_contextualize_alignment())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
@@ -7882,7 +7882,7 @@ def check_all_products() -> tuple[int, list]:
 # CLAUDE.md is the always-on auto-loaded router; its budget compounds across every
 # reply. The contract: §1 carries PRINCIPLE + the MAP; PROCEDURE/bodies live in
 # `.claude/skills/` + the `KB § …` pointers. Re-bloating it back toward the verbose
-# v3.0 form is gated. Depth: `KB § PATTERNS/claude-md-router-discipline.md`.
+# v3.0 form is gated. Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
 _CLAUDE_MD_MAX_WORDS = 2500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat)
 _CLAUDE_MD_MAX_RULE_WORDS = 60        # a §1 bullet beyond this is an inlined body
 _CLAUDE_MD_SECTION1_RE = re.compile(r"^##\s+1\s*[·.]")   # "## 1 · Universal rules"
@@ -7900,7 +7900,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
          header + blanks / `---` / `>`); an inlined body is the re-bloat tell.
 
     Stage-4 codification of the v4.0 router refactor (2026-05-25).
-    Depth: `KB § PATTERNS/claude-md-router-discipline.md`.
+    Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -7921,7 +7921,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
             "issue": (
                 f"CLAUDE.md is {total_words} words (cap {_CLAUDE_MD_MAX_WORDS}) — the "
                 "always-on router must stay pointer-only; move bodies to a skill / the "
-                "KB pointer (KB § PATTERNS/claude-md-router-discipline.md)."
+                "KB pointer (KB § PATTERNS/common/claude-md-router-discipline.md)."
             ),
             "severity": "high",
         })
@@ -8004,7 +8004,7 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
     """MEMORY.md is the auto-loaded memory index — keep entry lines tight.
 
     Gates two deterministic invariants of the harness-agents-skills MEMORY-trim
-    pattern (sibling rule of `KB § PATTERNS/claude-md-router-discipline.md`):
+    pattern (sibling rule of `KB § PATTERNS/common/claude-md-router-discipline.md`):
       1. whole-file budget <= _MEMORY_MD_MAX_KB,
       2. every `- [Title](file.md)` entry line is <= _MEMORY_MD_MAX_ENTRY_CHARS
          and carries a valid `](X.md)` link.
@@ -8035,7 +8035,7 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
                 f"MEMORY.md is {total_kb:.1f} KB (cap {_MEMORY_MD_MAX_KB} KB) — "
                 f"the auto-loaded memory index must stay tight; trim bloated "
                 f"entry lines to title + pointer + one recall hook (+ wikilinks). "
-                f"Sibling rule: KB § PATTERNS/claude-md-router-discipline.md."
+                f"Sibling rule: KB § PATTERNS/common/claude-md-router-discipline.md."
             ),
             "severity": "high",
         })
@@ -8082,7 +8082,7 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # are skipped by check_agent_archetype_contract.
 
 # ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
-# KB § PATTERNS/agent-context-architecture.md — agent files declare full-domain
+# KB § PATTERNS/common/agent-context-architecture.md — agent files declare full-domain
 # `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
 # exclusive ownership. The unowned-allowlist below names KB paths that are
 # universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
@@ -8095,29 +8095,30 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/04-SHARED-LIBRARY.md",
     "CONTEXT/06-AGENTS.md",
     "CONTEXT/07-GAMIFICATION.md",
-    "CONTEXT/PATTERNS/doc-symbology.md",
-    "CONTEXT/PATTERNS/agent-reading-discipline.md",
-    "CONTEXT/PATTERNS/ast.md",
-    "CONTEXT/PATTERNS/accept-with-rationale.md",
-    "CONTEXT/PATTERNS/remediation-markers.md",
-    "CONTEXT/PATTERNS/defer-is-not-resolve.md",
-    "CONTEXT/PATTERNS/absorption-ships-consume-docs.md",
-    "CONTEXT/PATTERNS/storage-hygiene.md",
-    "CONTEXT/PATTERNS/methodology-codification-pipeline.md",
-    "CONTEXT/PATTERNS/drift-fix-on-contact.md",
-    "CONTEXT/PATTERNS/persistent-files-absorption.md",
-    "CONTEXT/PATTERNS/keeper-check-before-docing.md",
-    "CONTEXT/PATTERNS/keeper-pattern-cache.md",
-    "CONTEXT/PATTERNS/claude-md-router-discipline.md",
-    "CONTEXT/PATTERNS/lossless-doc-refactor.md",
-    "CONTEXT/PATTERNS/agent-context-architecture.md",
-    "CONTEXT/PATTERNS/self-branching-mode.md",
-    "CONTEXT/PATTERNS/branching.md",
-    "CONTEXT/PATTERNS/harness-overlay-worktree-divergence.md",
-    "CONTEXT/PATTERNS/proposals-and-improvements.md",
-    "CONTEXT/PATTERNS/verify-seed-on-fork-base.md",
-    "CONTEXT/PATTERNS/phased-push-policy.md",
-    "CONTEXT/PATTERNS/minimum-viable-rebuild.md",
+    "CONTEXT/PATTERNS/common/doc-symbology.md",
+    "CONTEXT/PATTERNS/common/agent-reading-discipline.md",
+    "CONTEXT/PATTERNS/common/ast.md",
+    "CONTEXT/PATTERNS/common/accept-with-rationale.md",
+    "CONTEXT/PATTERNS/common/remediation-markers.md",
+    "CONTEXT/PATTERNS/common/defer-is-not-resolve.md",
+    "CONTEXT/PATTERNS/common/absorption-ships-consume-docs.md",
+    "CONTEXT/PATTERNS/common/storage-hygiene.md",
+    "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
+    "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
+    "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
+    "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",
+    "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
+    "CONTEXT/PATTERNS/common/claude-md-router-discipline.md",
+    "CONTEXT/PATTERNS/common/lossless-doc-refactor.md",
+    "CONTEXT/PATTERNS/common/agent-context-architecture.md",
+    "CONTEXT/PATTERNS/common/self-branching-mode.md",
+    "CONTEXT/PATTERNS/common/branching.md",
+    "CONTEXT/PATTERNS/common/harness-overlay-worktree-divergence.md",
+    "CONTEXT/PATTERNS/common/proposals-and-improvements.md",
+    "CONTEXT/PATTERNS/common/verify-seed-on-fork-base.md",
+    "CONTEXT/PATTERNS/common/phased-push-policy.md",
+    "CONTEXT/PATTERNS/common/minimum-viable-rebuild.md",
+    "CONTEXT/PATTERNS/common/scoped-auto-improvement.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
@@ -8213,7 +8214,7 @@ def check_agent_format(repo_root: Path | None = None) -> list[dict]:
 
     Required: `name:` (matches filename stem) + `description:` + `tools:`.
     Omitting `tools:` inherits ~400 deferred tool names (per
-    `KB § PATTERNS/dispatch-engineer-tuning.md`) — significant startup-token
+    `KB § PATTERNS/architect/dispatch-engineer-tuning.md`) — significant startup-token
     waste. Sibling of check_skill_format + check_agent_archetype_contract.
     """
     issues: list[dict] = []
@@ -8252,7 +8253,7 @@ def check_agent_format(repo_root: Path | None = None) -> list[dict]:
         if not fm.get("tools", ""):
             issues.append({
                 "product": "<harness>", "file": rel,
-                "issue": "Agent frontmatter missing `tools:` — omitting it inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md). Declare an explicit scoped allowlist.",
+                "issue": "Agent frontmatter missing `tools:` — omitting it inherits ~400 deferred tool names (KB § PATTERNS/architect/dispatch-engineer-tuning.md). Declare an explicit scoped allowlist.",
                 "severity": "high",
             })
     return issues
@@ -8379,7 +8380,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
     declares its full-domain `owns_kb:` and every declared path exists ∧ is
     referenced in the agent body ∧ is claimed by exactly one agent.
 
-    The agent-context-architecture (KB § PATTERNS/agent-context-architecture.md)
+    The agent-context-architecture (KB § PATTERNS/common/agent-context-architecture.md)
     treats `.claude/agents/<name>.md` as the SPECIALIST L1 index — bodies live
     in KB at the pointers. This keeper enforces that the routing is sound:
 
@@ -8395,7 +8396,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
           listed in `_AGENT_KB_UNOWNED_ALLOWLIST` (universal commons).
 
     Severity `high` (the gate keeps the methodology authority enforceable).
-    KB § PATTERNS/agent-context-architecture.md.
+    KB § PATTERNS/common/agent-context-architecture.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8422,7 +8423,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Agent `{stem}` missing `owns_kb:` frontmatter key — "
-                    f"required by KB § PATTERNS/agent-context-architecture.md. "
+                    f"required by KB § PATTERNS/common/agent-context-architecture.md. "
                     f"Declare `owns_kb: []` for meta-agents (no KB territory) "
                     f"or a list of `CONTEXT/...` paths the agent curates."
                 ),
@@ -8532,7 +8533,7 @@ def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
     Remediation: apply the on-contact drill (PAUSE → resolve → surface-if-blocked
     → update docs → continue). Silent-skip is forbidden.
 
-    KB § PATTERNS/drift-fix-on-contact.md.
+    KB § PATTERNS/common/drift-fix-on-contact.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8560,7 +8561,7 @@ def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": path,
                 "issue": (
                     f"Untracked file at repo root: `{path}` — drift-shape "
-                    f"covered by KB § PATTERNS/drift-fix-on-contact.md. "
+                    f"covered by KB § PATTERNS/common/drift-fix-on-contact.md. "
                     f"Apply the on-contact drill (absorb / delete / move + doc), "
                     f"don't leave it for next session."
                 ),
@@ -8593,7 +8594,7 @@ def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
                     "issue": (
                         f"Worktree `{rel_wt}` has {len(lines)} uncommitted "
                         f"entries (sample: `{sample}`) — drift-shape per "
-                        f"KB § PATTERNS/drift-fix-on-contact.md. Either commit "
+                        f"KB § PATTERNS/common/drift-fix-on-contact.md. Either commit "
                         f"+ integrate via `noctus.dev.task_branch action=integrate`, "
                         f"OR salvage + cleanup via `task_branch action=cleanup`."
                     ),
@@ -8625,7 +8626,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
 
     Remediation: ``python mcp/noctusai/cli.py --refresh-keeper-cache``.
 
-    KB § PATTERNS/keeper-pattern-cache.md.
+    KB § PATTERNS/common/keeper-pattern-cache.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8639,7 +8640,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
             "issue": (
                 "keeper-pattern cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-keeper-cache` "
-                "(KB § PATTERNS/keeper-pattern-cache.md)"
+                "(KB § PATTERNS/common/keeper-pattern-cache.md)"
             ),
             "severity": "high",
             "symbol": "keeper-cache-missing",
@@ -8694,7 +8695,7 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
 
     Remediation: ``python mcp/noctusai/cli.py --refresh-agent-context-cache``.
 
-    KB § PATTERNS/agent-context-architecture.md § Keeper enforcement.
+    KB § PATTERNS/common/agent-context-architecture.md § Keeper enforcement.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8708,7 +8709,7 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
             "issue": (
                 "agent-context cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-agent-context-cache` "
-                "(KB § PATTERNS/agent-context-architecture.md)"
+                "(KB § PATTERNS/common/agent-context-architecture.md)"
             ),
             "severity": "high",
             "symbol": "agent-context-cache-missing",
@@ -8768,12 +8769,12 @@ _CONTEXTUALIZE_CANONICAL_CORES = (
     "CONTEXT/03-SEED-ARCHITECTURE.md",
     "KB § INDEX.md",
     "MEMORY.md",
-    "PATTERNS/agent-context-architecture.md",
-    "PATTERNS/drift-fix-on-contact.md",
-    "PATTERNS/self-branching-mode.md",
-    "PATTERNS/ast.md",
-    "PATTERNS/keeper-pattern-cache.md",
-    "PATTERNS/scoped-auto-improvement.md",
+    "PATTERNS/common/agent-context-architecture.md",
+    "PATTERNS/common/drift-fix-on-contact.md",
+    "PATTERNS/common/self-branching-mode.md",
+    "PATTERNS/common/ast.md",
+    "PATTERNS/common/keeper-pattern-cache.md",
+    "PATTERNS/common/scoped-auto-improvement.md",
 )
 # Soft cap: re-bloat above this fires the keeper (sibling of check_claude_md_router).
 # Set at 75 lines to allow WIDE-REACH pointer coverage (domain map + specialists +
@@ -8801,7 +8802,7 @@ def check_contextualize_alignment(repo_root: Path | None = None) -> list[dict]:
     re-read the same docs you already trimmed; the codebase is the source
     of truth, and CONTEXTUALIZE.md is the front door).
 
-    KB § PATTERNS/claude-md-router-discipline.md (sibling discipline).
+    KB § PATTERNS/common/claude-md-router-discipline.md (sibling discipline).
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8870,7 +8871,7 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
 
     Remediation: ``python mcp/noctusai/cli.py --refresh-auto-improvement-cache``.
 
-    KB § PATTERNS/scoped-auto-improvement.md.
+    KB § PATTERNS/common/scoped-auto-improvement.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8884,7 +8885,7 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
             "issue": (
                 "auto-improvement cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-auto-improvement-cache` "
-                "(KB § PATTERNS/scoped-auto-improvement.md)"
+                "(KB § PATTERNS/common/scoped-auto-improvement.md)"
             ),
             "severity": "high",
             "symbol": "auto-improvement-cache-missing",
@@ -8954,7 +8955,7 @@ def _check_post_scaffold(
     the factory now derives its port map directly from ``start.sh PRODUCTS``
     at vite build time. Checks 1+2 already validate that registration, so
     the factory check became a redundant assertion against a literal that
-    no longer exists. See KB § PATTERNS/seed-canonical-defaults.md N=3.)
+    no longer exists. See KB § PATTERNS/architect/seed-canonical-defaults.md N=3.)
     """
     results: list[dict] = []
 
@@ -9121,7 +9122,7 @@ def _check_post_scaffold(
     # now derives its frontend→backend port map from start.sh PRODUCTS at
     # build time (single source of truth, parsed by both the Python seed
     # lib and the TS factory). Checks 1+2 already validate that registration.
-    # Per KB § PATTERNS/seed-canonical-defaults.md (N=3 2026-05-20).
+    # Per KB § PATTERNS/architect/seed-canonical-defaults.md (N=3 2026-05-20).
 
     return results
 

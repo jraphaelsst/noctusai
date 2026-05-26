@@ -28,7 +28,7 @@ Scope boundary is deliberate, not an omission.
 | `github.repo.view` | READ | `gh repo view --json` |
 | `github.diagnostics.connection_status` | READ | `gh --version` ∧ `gh api user` |
 
-- Writes: confirm-then-execute (`KB § PATTERNS/llm-bot-security.md`).
+- Writes: confirm-then-execute (`KB § PATTERNS/security/llm-bot-security.md`).
   `confirm` ≠ true ⇒ typed error `status 412`, ¬ side-effect.
 - `github.pr.checks` uses the runner's `allow_nonzero` opt-in — `gh pr
   checks` encodes CI *state* (exit 8 pending / 1 failing) in the exit

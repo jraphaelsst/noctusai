@@ -57,7 +57,7 @@ promotion manifests, workspace docs, **and the validated product source tree**.
   dispatch the inputs MUST be **committed-to-base**, OR run **master-tree-
   parallel** (engineers in the shared branch tree, ZERO engineer git ops, file-
   disjoint by package), OR inlined into the brief. (This is the platform-wide
-  worktree-base rule — `KB § PATTERNS/branching-and-merging.md` §16.7; absorption
+  worktree-base rule — `KB § PATTERNS/architect/branching-and-merging.md` §16.7; absorption
   only consumes it.)
 - Bring host-correct **path conventions**: sibling-validated *code* wins
   conflicts, but *paths* follow the host (sibling `integrations/google/x/` →
@@ -98,7 +98,7 @@ ran live; noc seed may not have. Where they diverge, **noc seed is rewritten to
 match the validated sibling** — even for already-seeded adapters.
 
 - Every IO module lands in canonical **Protocol+Fake+Real+factory** shape
-  (`KB § PATTERNS/seed-fake-real-adapter.md`). No half-ship.
+  (`KB § PATTERNS/backend/seed-fake-real-adapter.md`). No half-ship.
 - **verify-the-seed-ships-it has 4 shapes** — a same-name factory is NOT
   enough. Assert ALL of: (1) backend `__all__` membership (a symbol shipped
   with zero `__all__` + zero tests is a "reconciled-but-invisible" half-ship —
@@ -131,7 +131,7 @@ Port the sibling product functionality into the new product consuming the
 reconciled seed. Absorb any consolidated in-home product *domains* into it as
 modules behind a `MODULES` registration seam.
 
-- **Pilot-products-first cadence** (`KB § PATTERNS/project-execution.md § 2.12`):
+- **Pilot-products-first cadence** (`KB § PATTERNS/architect/project-execution.md § 2.12`):
   seed ripples prove on the 3 canonical pilots (`erp-imobiliario` ·
   `therapy-platform` · the new product) + `core` (control-plane), NOT the full
   fleet per change. Non-pilots extend in a gated follow-up wave only after the
@@ -143,7 +143,7 @@ modules behind a `MODULES` registration seam.
   **blocks with zero edits and surfaces** — a delete-and-rewrite would destroy
   validated behavior + the regression-test oracle. The architect's methodology-
   consistent response: keep the validated subpackage **product-local at N=1**
-  (catalogued in `KB § PATTERNS/accept-with-rationale.md` with a named seed-
+  (catalogued in `KB § PATTERNS/common/accept-with-rationale.md` with a named seed-
   convergence destination), build thin product-side bridge adapters if cheap,
   and file the seed-convergence as a gated follow-up. A same-name/different-
   contract factory is a silent under-ship — never force the rewrite.
@@ -200,7 +200,7 @@ build. Then deliver a completeness sign-off vs the Gate-2 audit. **The user
 retires the originating workspace manually — we never delete it.** Our
 deliverable is the explicit "safe to delete" sign-off, not the deletion.
 
-**Container-first (KB § PATTERNS/containerization.md § 1a).** Containerizing the
+**Container-first (KB § PATTERNS/devops/containerization.md § 1a).** Containerizing the
 absorbed product to the house single-container model is **not a final polish — it
 is the gate** that lets development continue *inside* the container (the
 `runtime-watch` develop-inside loop), not on the host. Render the thin
@@ -253,9 +253,9 @@ is proportional to (epoch gap) × (product surface).
   never hand-maintain a parallel count.
 - **Divergent-arch → house-container rule** — an incoming product whose
   architecture differs from noc's single-container house model MUST be
-  refactored to it on absorption (`KB § PATTERNS/containerization.md § 12a`).
-- **Pilot-products-first cadence** — `KB § PATTERNS/project-execution.md § 2.12`.
-- **verify-the-seed-ships-it 4 shapes** — `KB § PATTERNS/seed-fake-real-adapter.md`.
+  refactored to it on absorption (`KB § PATTERNS/devops/containerization.md § 12a`).
+- **Pilot-products-first cadence** — `KB § PATTERNS/architect/project-execution.md § 2.12`.
+- **verify-the-seed-ships-it 4 shapes** — `KB § PATTERNS/backend/seed-fake-real-adapter.md`.
 
 ---
 

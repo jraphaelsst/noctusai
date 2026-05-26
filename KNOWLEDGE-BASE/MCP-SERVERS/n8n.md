@@ -36,7 +36,7 @@ n8n workflows from an agent.
 | `n8n.execution.get` | READ | `GET /executions/{id}?includeData=true` + best-effort `error_summary` |
 | `n8n.diagnostics.connection_status` | READ | `GET /workflows?limit=1` probe |
 
-- Writes: confirm-then-execute (`KB § PATTERNS/llm-bot-security.md`).
+- Writes: confirm-then-execute (`KB § PATTERNS/security/llm-bot-security.md`).
   `confirm` ≠ true ⇒ typed error `status 412`, ¬ side-effect.
 - `n8n.workflow.update` (`PUT /workflows/{id}`) is hard-to-reverse —
   ALWAYS `n8n.workflow.get` first ∧ keep that JSON as a rollback

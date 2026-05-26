@@ -36,7 +36,7 @@ from an agent.
 | `cloudflare.tunnel.update_config` | WRITE 🔒 confirm | `PUT .../cfd_tunnel/{t}/configurations` `{config:{ingress:[...]}}` |
 | `cloudflare.diagnostics.connection_status` | READ | `GET /user/tokens/verify` probe |
 
-- Writes: confirm-then-execute (`KB § PATTERNS/llm-bot-security.md`).
+- Writes: confirm-then-execute (`KB § PATTERNS/security/llm-bot-security.md`).
   `confirm` ≠ true ⇒ typed error `status 412`, ¬ side-effect; the gate
   message states the concrete effect. `dns.delete_record` ∧
   `tunnel.delete` = **strongest gates** — outward-facing ∧ IRREVERSIBLE

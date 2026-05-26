@@ -1,6 +1,6 @@
 """Regression tests for `check_git_leftovers` — the drift-fix-on-contact git-shape gate.
 
-KB § PATTERNS/drift-fix-on-contact.md. The keeper scans for the recurring drift
+KB § PATTERNS/common/drift-fix-on-contact.md. The keeper scans for the recurring drift
 class (untracked at repo root depth 1, worktree uncommitted state) that the
 existing keepers (`check_branch_orphan` / `check_dispatcher_staleness` /
 `check_archive_staleness`) did not catch between commit gates.

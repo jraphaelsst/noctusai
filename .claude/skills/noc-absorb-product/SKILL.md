@@ -27,4 +27,4 @@ An absorption is a methodology-epoch merge: bring the source in, audit completen
 - `noctus.dev.promote_from_seed_workspace` for promotion-manifest items.
 
 ## Depth
-`KB § GUIDES/absorb-seed-workspace.md` (the 10 gates) · `KB § PATTERNS/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/containerization.md §12a`.
+`KB § GUIDES/absorb-seed-workspace.md` (the 10 gates) · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/devops/containerization.md §12a`.

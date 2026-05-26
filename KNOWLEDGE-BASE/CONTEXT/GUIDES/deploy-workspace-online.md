@@ -11,7 +11,7 @@ When the user says **"put X online"** / **"bring X up"** / **"deploy for testing
 - Workspace exists as a sibling of noc (has `.noctusai-workspace` marker at root, kind=`seed`).
 - A product is scaffolded inside it (`products/<slug>/`).
 - Docker + docker-compose v2 installed (`docker compose version` ≥ 2.0).
-- Workspace's `.env` carries `NOCTUSAI_HOME=<absolute path to noc>` so the build can reach the seed packages via the `additional_contexts: noc` mechanism. See `KB § PATTERNS/seed-workspace.md § Docker scaffolding` for why.
+- Workspace's `.env` carries `NOCTUSAI_HOME=<absolute path to noc>` so the build can reach the seed packages via the `additional_contexts: noc` mechanism. See `KB § PATTERNS/architect/seed-workspace.md § Docker scaffolding` for why.
 
 ---
 
@@ -55,7 +55,7 @@ bash $NOCTUSAI_HOME/scripts/bootstrap/bootstrap-seed-workspace.sh \
      --target $(pwd)
 ```
 
-If a product was scaffolded *before* the docker files arrived, the placeholder substitution didn't run; surface this and either re-scaffold (last-resort) or substitute by hand using the recipe in `KB § PATTERNS/seed-workspace.md § Docker scaffolding`.
+If a product was scaffolded *before* the docker files arrived, the placeholder substitution didn't run; surface this and either re-scaffold (last-resort) or substitute by hand using the recipe in `KB § PATTERNS/architect/seed-workspace.md § Docker scaffolding`.
 
 > **Convention.** `start.sh` and `stop.sh` are **inherited surface** — never hand-author them per workspace. Source of truth is `templates/seed-workspace-docker/{start,stop}.sh`; `bootstrap-seed-workspace.sh` copies them at workspace creation time and `scaffold_product` runs the placeholder substitution + restamps the executable bit. If the script is missing or stale, fix the template + bootstrap + scaffolder; do **not** patch the workspace copy in place.
 
@@ -171,6 +171,6 @@ If the workspace state isn't drill-ready (missing docker files, no scaffold, no 
 ---
 
 See also:
-- `KB § PATTERNS/seed-workspace.md § Docker scaffolding` — the structural layer (templates, bootstrap, scaffold patch step).
+- `KB § PATTERNS/architect/seed-workspace.md § Docker scaffolding` — the structural layer (templates, bootstrap, scaffold patch step).
 - `KB § GUIDES/new-product.md § Mandatory files from day one § item 9` — the docker artifacts as a day-one requirement.
 - `templates/seed-workspace-docker/` — the canonical files (source of truth — never edit the workspace copies in place). Includes `start.sh` + `stop.sh` since 2026-05-07.

@@ -6,7 +6,7 @@ Two layers:
 2. **Fixture-driven end-to-end tests** that round-trip through the adapter
    to confirm the detectors fire correctly when fed real JSONL bytes.
 
-Per `KB § PATTERNS/testing.md § Regression-test-the-detector`, every keeper
+Per `KB § PATTERNS/compliance/testing.md § Regression-test-the-detector`, every keeper
 detector ships colocated `Test<CamelCase>` regression coverage.
 """
 from __future__ import annotations

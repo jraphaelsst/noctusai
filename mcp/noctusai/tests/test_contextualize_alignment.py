@@ -1,7 +1,7 @@
 """Regression tests for `check_contextualize_alignment` — the fresh-agent
 read-map pointer-only discipline (sibling of `check_claude_md_router`).
 
-KB § PATTERNS/claude-md-router-discipline.md. Phase B (2026-05-26).
+KB § PATTERNS/common/claude-md-router-discipline.md. Phase B (2026-05-26).
 """
 import sys
 from pathlib import Path

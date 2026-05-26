@@ -8,7 +8,7 @@ structural fix: every test asserting on response BODY (`.text` / `.json()` /
 `.content`) must also assert on response STATUS CODE (`.status_code`) in the
 SAME method body.
 
-Per KB § PATTERNS/testing.md § Status-code-assertion rule + KB § PATTERNS/
+Per KB § PATTERNS/compliance/testing.md § Status-code-assertion rule + KB § PATTERNS/
 testing.md § Regression-test-the-detector.
 
 All tests use `tmp_path` so the detector runs against fixture-built test

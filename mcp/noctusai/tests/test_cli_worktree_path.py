@@ -12,8 +12,8 @@ via direct in-process `run_review(products_dir=...)` calls or symlinks.
 `from settings import REPO_ROOT, PRODUCTS_DIR` picks up the override at
 import time.
 
-Per KB § PATTERNS/testing.md § Regression-test-the-detector + KB §
-PATTERNS/project-execution.md § The methodology evolves rule.
+Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector + KB §
+PATTERNS/architect/project-execution.md § The methodology evolves rule.
 """
 from __future__ import annotations
 

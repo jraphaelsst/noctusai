@@ -1,6 +1,6 @@
 # Seed-First Design — How to scope a cross-product project
 
-> A checklist + worked examples for thinking seed-first when planning ANY cross-product feature, before writing a `PROJECT.md` §6 phase plan. Pairs with `KB § PATTERNS/project-execution.md § The replication-to-seed symmetry rule` (the slip-pattern doc) — this guide is the proactive companion: how to design correctly from the start, not how to recognize the slip after the fact.
+> A checklist + worked examples for thinking seed-first when planning ANY cross-product feature, before writing a `PROJECT.md` §6 phase plan. Pairs with `KB § PATTERNS/architect/project-execution.md § The replication-to-seed symmetry rule` (the slip-pattern doc) — this guide is the proactive companion: how to design correctly from the start, not how to recognize the slip after the fact.
 
 ---
 
@@ -119,7 +119,7 @@ After running the checklist, count the per-product code your design requires. Th
 - **0** — pure cross-product concern; lives entirely in seed. Products inherit from the factory. **(Most cases.)**
 - **1 line** — opt-out flag (`consentUI: false`) or opt-in component prop. Acceptable when justified.
 - **A small section** — product-specific data wiring around a seed-shaped container (e.g. `<DigestCard prose={useMonthlyNarrative().data}/>`). Acceptable for product-specific data sources.
-- **Multiple files / pages / mounts per product** — **STOP**. The design is wrong. Apply the language-trigger rule (`KB § PATTERNS/project-execution.md § The replication-to-seed symmetry rule`) and re-scope.
+- **Multiple files / pages / mounts per product** — **STOP**. The design is wrong. Apply the language-trigger rule (`KB § PATTERNS/architect/project-execution.md § The replication-to-seed symmetry rule`) and re-scope.
 
 If your design requires "mount on each product's settings page" or "scaffold a new file in each product's frontend" — the answer is wrong. Re-design in seed.
 
@@ -195,8 +195,8 @@ If your design has a "we'll add a test per product" step, the test is also seeda
 
 ## Cross-references
 
-- `KB § PATTERNS/project-execution.md § The replication-to-seed symmetry rule` — the slip-pattern doc (catches it after the fact).
-- `KB § PATTERNS/project-execution.md § 2.5 Phase 0 audits` — Phase 0 is where this checklist gets run.
-- `KB § PATTERNS/project-execution.md § 2.6 Active robustness review` — execution-time inspection.
+- `KB § PATTERNS/architect/project-execution.md § The replication-to-seed symmetry rule` — the slip-pattern doc (catches it after the fact).
+- `KB § PATTERNS/architect/project-execution.md § 2.5 Phase 0 audits` — Phase 0 is where this checklist gets run.
+- `KB § PATTERNS/architect/project-execution.md § 2.6 Active robustness review` — execution-time inspection.
 - `KB § 03-SEED-ARCHITECTURE § Seed Contract` — the canonical seam list for backend + frontend factories.
 - `CLAUDE.md` rule "Replication-to-seed symmetry — fires at LANGUAGE time, not action time" — the user-facing pointer.

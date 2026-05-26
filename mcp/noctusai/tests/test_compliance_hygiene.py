@@ -316,7 +316,7 @@ class TestGitignoreDrift:
 # check_new_script_lacks_mcp_analog
 # ---------------------------------------------------------------------------
 
-_DOC_REL = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/mcp-first-scripts.md"
+_DOC_REL = "KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/mcp-first-scripts.md"
 
 
 class TestNewScriptLacksMcpAnalog:

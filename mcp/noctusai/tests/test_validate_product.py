@@ -10,7 +10,7 @@ Phase 3.4 (sh-yt-scaffold-polish, 2026-05-04). The 4 binary checks mirror
 (The former `vite_factory_product_map` check was retired 2026-05-20 — the
 factory now derives its frontend→backend port map from `start.sh PRODUCTS`
 at vite build time, so the two `start_sh` checks above already validate
-registration. See KB § PATTERNS/seed-canonical-defaults.md N=3.)
+registration. See KB § PATTERNS/architect/seed-canonical-defaults.md N=3.)
 
 Tests fixture a minimal repo layout under `tmp_path`, point
 `validate_one_product` at it via `repo_root=` / `products_dir=` seams,

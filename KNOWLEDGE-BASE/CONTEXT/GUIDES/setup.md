@@ -43,7 +43,7 @@ cd products/erp-imobiliario/frontend && npm run dev
 cd <product>/backend && pytest
 ```
 
-See `PATTERNS/testing.md` for the three-layer test discipline.
+See `PATTERNS/compliance/testing.md` for the three-layer test discipline.
 
 ## Git hooks
 
@@ -57,10 +57,10 @@ No post-commit amend — everything lands in one commit. Skip (not recommended):
 
 ## Environment file
 
-Create `.env` at repo root. Template at `.env.example` (if present) lists required keys. See `PATTERNS/environment.md` for the full list of vars and the VITE/non-VITE security rule.
+Create `.env` at repo root. Template at `.env.example` (if present) lists required keys. See `PATTERNS/devops/environment.md` for the full list of vars and the VITE/non-VITE security rule.
 
 ---
 
 See also:
 - `scripts/README.md` — full script catalog
-- `PATTERNS/environment.md` — env var conventions
+- `PATTERNS/devops/environment.md` — env var conventions

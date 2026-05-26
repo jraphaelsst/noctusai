@@ -5,7 +5,7 @@ description: Default engineering agent for noctusai dispatches. Standing protoco
 # + the noctusai toolkit. Omitting `tools:` inherits ~400 deferred tool names (docker/cloudflare/n8n/
 # waha/chrome/claude_ai_* connectors) — pure startup-token waste it never calls. Do NOT widen this
 # back to "all tools" without a concrete need; add the single tool, not the wildcard. (No `Agent` tool:
-# engineers execute, never dispatch.) See KB § PATTERNS/dispatch-engineer-tuning.md.
+# engineers execute, never dispatch.) See KB § PATTERNS/architect/dispatch-engineer-tuning.md.
 tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 # Sonnet by default — engineer briefs are mechanical + fully-specified (architect plans, engineer
 # executes). The architect escalates a genuinely ambiguous / architectural / judgment-heavy task to
@@ -17,7 +17,7 @@ owns_kb: []
 
 # engineer-default — standing protocol
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/agent-context-architecture.md` — the body IS the protocol (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `orchestrator-operator`). **Owns no KB domain — it's the protocol every specialist executor applies.**
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the protocol (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `orchestrator-operator`). **Owns no KB domain — it's the protocol every specialist executor applies.**
 
 This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
 
@@ -98,7 +98,7 @@ Per CLAUDE.md §1: code changes go through `libcst` (Python) / `ts-morph` (TypeS
 
 ## 6a. Scoped verification — run the narrowest check that proves YOUR slice
 
-Verify the **smallest** thing that proves your change: the one changed test file (`pytest path/to/test_x.py -q`), the one product's `vite build`, the exact `grep` the Acceptance line names. **Do NOT run the full platform compliance gate** (`noctus.dev.validate` / the whole `mcp/noctusai` suite — 5-6 min) unless the brief explicitly asks: the architect runs that **once** at integration, on a clean `origin/dev` tree (a busy shared checkout gives phantom regressions anyway — `KB § PATTERNS/branching.md` worktree-sensitivity). Broad per-engineer verification multiplies minutes across the wave for zero added signal. Pre-existing failures **outside your changed files** → surface for architect routing (with a `git diff --name-only origin/dev` proof that the failing target isn't yours), don't fix or chase them.
+Verify the **smallest** thing that proves your change: the one changed test file (`pytest path/to/test_x.py -q`), the one product's `vite build`, the exact `grep` the Acceptance line names. **Do NOT run the full platform compliance gate** (`noctus.dev.validate` / the whole `mcp/noctusai` suite — 5-6 min) unless the brief explicitly asks: the architect runs that **once** at integration, on a clean `origin/dev` tree (a busy shared checkout gives phantom regressions anyway — `KB § PATTERNS/common/branching.md` worktree-sensitivity). Broad per-engineer verification multiplies minutes across the wave for zero added signal. Pre-existing failures **outside your changed files** → surface for architect routing (with a `git diff --name-only origin/dev` proof that the failing target isn't yours), don't fix or chase them.
 
 **Worktree env (fresh-checkout caveat):** a fresh worktree has no `node_modules`/`.venv` (gitignored). If your brief needs a FE build / vitest, the architect should dispatch after `noctus.dev.task_branch action=start wire_env=True` (auto-wires the §5a recipe), OR author-in-worktree + let the architect build-verify on integrate. Don't burn turns hand-wiring symlinks unless the brief tells you to.
 
@@ -115,9 +115,9 @@ Absence is a positive claim — quote it explicitly: `drift-found: (none observe
 
 **What goes where.**
 - **`drift-found:`** — git-shape OR methodology-pointer drift OUTSIDE your `Files-to-modify:` brief (untracked-at-root, orphan branch, broken `KB §` pointer, peer-tree residue, stale archive entry). You **CONTINUE your own slice** — tech-lead resolves at integration. Scope expansion is forbidden even if the drift "looks easy" because the engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing drift-fix into a feature commit.
-- **`scoped-improvement:`** — recurrence (N≥2) of a pattern, missing seed primitive, tool that should be MCP-exposed, doc drifted from code, AST opportunity, Pydantic silent-drop, etc. — observed WITHIN your slice. Surface; the tech-lead routes to the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per `KB § PATTERNS/methodology-codification-pipeline.md`. You don't codify; the tech-lead does (cross-cutting competence).
+- **`scoped-improvement:`** — recurrence (N≥2) of a pattern, missing seed primitive, tool that should be MCP-exposed, doc drifted from code, AST opportunity, Pydantic silent-drop, etc. — observed WITHIN your slice. Surface; the tech-lead routes to the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per `KB § PATTERNS/common/methodology-codification-pipeline.md`. You don't codify; the tech-lead does (cross-cutting competence).
 
-Both legs mirror `KB § PATTERNS/drift-fix-on-contact.md § Roles` + § Scoped auto-improvement.
+Both legs mirror `KB § PATTERNS/common/drift-fix-on-contact.md § Roles` + § Scoped auto-improvement.
 
 ## 8. Findings.md write-authorization
 
@@ -127,7 +127,7 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 
 You run inside the dispatching session's runtime, which already has the **stdio `noctusai` MCP server** spawned (`.mcp.json`). engineer-default inherits **all tools** → call `mcp__noctusai__*` directly (scan/validate/pytest/outline/refs/hound/dispatch_preflight/salvage_worktree/archive/…) instead of hand-reimplementing what a tool does. No network/container/tunnel involved — it's local IPC. If a brief restricts your agent type and you genuinely can't see the MCP tools, that's an allowlist gap → surface it (don't bare-Python around a missing tool — `KB § feedback mcp-unreachable-diagnose`). Depth: `KB § 06-AGENTS.md § Subagent MCP access`.
 
-**New automation defaults to an MCP tool, not a `scripts/` one-off.** If a brief has you author a new automation capability, the default home is a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`) — use `scaffold_mcp_tool`, never drop a fresh `scripts/*.sh|*.py`. Shell is allowed ONLY for three named structural carve-outs (git-hook entry → thin dispatcher · pre-venv bootstrap · thin docker-orchestration), each requiring a manifest row in `KB § PATTERNS/mcp-first-scripts.md` §3 + an accept-with-rationale entry. Adding a top-level `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` — surface it, don't ship it undecided.
+**New automation defaults to an MCP tool, not a `scripts/` one-off.** If a brief has you author a new automation capability, the default home is a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`) — use `scaffold_mcp_tool`, never drop a fresh `scripts/*.sh|*.py`. Shell is allowed ONLY for three named structural carve-outs (git-hook entry → thin dispatcher · pre-venv bootstrap · thin docker-orchestration), each requiring a manifest row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3 + an accept-with-rationale entry. Adding a top-level `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` — surface it, don't ship it undecided.
 
 ## 9. Bash safety
 
@@ -137,7 +137,7 @@ You run inside the dispatching session's runtime, which already has the **stdio 
 
 ## 10. Symbol-first when authoring dense docs
 
-When authoring OR refactoring dense docs OR AI-intended files (MASTER-PROMPTs, CLAUDE.md, KB patterns, memory bodies; **AI scaffolding** — whole PROJECT.md + `proposals/*.md`, `findings.md`, the dispatcher coord-file, `live-patterns-log.md`, dispatch briefs + `.claude/agents/*.md`; §1 framing / §2 quoted-user stay prose; from-now-on, existing not retrofitted): **use the doc-symbology glossary by default** — `KB § PATTERNS/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap. The glossary is caveman-skill-aligned (validated ~61-75% token-cut; prose-discipline + lite/full/ultra ladder + abbreviation set). Conformance is enforced by `check_doc_symbology_drift` (platform baseline: zero-drift) — do not introduce an out-of-glossary symbology glyph; if a new symbol is genuinely needed, add it to the glossary, never invent it inline.
+When authoring OR refactoring dense docs OR AI-intended files (MASTER-PROMPTs, CLAUDE.md, KB patterns, memory bodies; **AI scaffolding** — whole PROJECT.md + `proposals/*.md`, `findings.md`, the dispatcher coord-file, `live-patterns-log.md`, dispatch briefs + `.claude/agents/*.md`; §1 framing / §2 quoted-user stay prose; from-now-on, existing not retrofitted): **use the doc-symbology glossary by default** — `KB § PATTERNS/common/doc-symbology.md`. Lossless-swap test gates every prose→symbol swap. The glossary is caveman-skill-aligned (validated ~61-75% token-cut; prose-discipline + lite/full/ultra ladder + abbreviation set). Conformance is enforced by `check_doc_symbology_drift` (platform baseline: zero-drift) — do not introduce an out-of-glossary symbology glyph; if a new symbol is genuinely needed, add it to the glossary, never invent it inline.
 
 Core symbols: `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈` (logic) · `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️` (status) · `s1/s2/s3/s4` (codification stages) · `[F]/[R]/[A]` (triage) · `N≥3 N=2 Δ Σ ± D-N` (counts).
 
@@ -162,4 +162,4 @@ Total ~15 lines. Anything else is brief-specific override.
 - **`model`** — defaults to Sonnet (frontmatter). Pass `model: opus` ONLY for ambiguous / architectural / judgment-heavy slices; the mechanical majority stays Sonnet (faster, cheaper, same quality on a well-specified brief).
 - **`isolation: worktree`** — every WRITING dispatch. `run_in_background: true` for parallel waves.
 - **`wire_env`** — if the slice needs a FE build/vitest, run `noctus.dev.task_branch action=start wire_env=True` so the worktree can build (see §6a).
-- **Tight brief = the real speed lever.** A concrete brief (exact files + a grep/test Acceptance) removes the engineer's exploration phase — that, not raw model speed, is where dispatch wall-clock is won. Cold-start tuning rationale + measurement method: `KB § PATTERNS/dispatch-engineer-tuning.md`.
+- **Tight brief = the real speed lever.** A concrete brief (exact files + a grep/test Acceptance) removes the engineer's exploration phase — that, not raw model speed, is where dispatch wall-clock is won. Cold-start tuning rationale + measurement method: `KB § PATTERNS/architect/dispatch-engineer-tuning.md`.

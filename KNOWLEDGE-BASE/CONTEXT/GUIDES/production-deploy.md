@@ -17,7 +17,7 @@ your registrar (NS → Cloudflare)             │      docker, external `noctus
                                               │      └─ cloudflared (named tunnel)  ← edge option B
 ```
 
-- **Compute = ONE box.** The fleet is a docker-compose Python stack — it cannot run on Workers/Pages. CF owns the *edge* (DNS/TLS/tunnel/WAF); the VPS owns the *compute*. (`KB § PATTERNS/containerization.md`.)
+- **Compute = ONE box.** The fleet is a docker-compose Python stack — it cannot run on Workers/Pages. CF owns the *edge* (DNS/TLS/tunnel/WAF); the VPS owns the *compute*. (`KB § PATTERNS/devops/containerization.md`.)
 - **`noctus-net`** is the external shared bridge every layer joins (products + infra + edge), so containers reach each other by service name with **no published host ports**.
 - **Two edge options** (pick by what the registrar lets you do — see §4):
   - **A · Caddy on real subdomains** — works with only DNS-*record* editing (no nameserver control). Auto-TLS via Let's Encrypt. Interim/standalone.
@@ -59,7 +59,7 @@ docker build --target runtime -f products/<slug>/backend/Dockerfile \
   --build-arg VITE_CORE_API_URL="https://core.<domain>" .
 ```
 
-> ⚠️ **`VITE_*` are BAKED at build time** (Vite inlines `import.meta.env.VITE_*`). `VITE_CORE_URL`/`VITE_CORE_API_URL` MUST be the **public** URL where `core` is served — `core`'s own FE reads `VITE_CORE_API_URL` for its API (`products/core/frontend/src/lib/api.ts`); other products' own API is same-origin (`VITE_BACKEND_API_URL` define-injected to `window.location.origin`). Bake `localhost` → broken public app; rebuild to fix. (`KB § PATTERNS/boundary-contract-tests.md` B1.)
+> ⚠️ **`VITE_*` are BAKED at build time** (Vite inlines `import.meta.env.VITE_*`). `VITE_CORE_URL`/`VITE_CORE_API_URL` MUST be the **public** URL where `core` is served — `core`'s own FE reads `VITE_CORE_API_URL` for its API (`products/core/frontend/src/lib/api.ts`); other products' own API is same-origin (`VITE_BACKEND_API_URL` define-injected to `window.location.origin`). Bake `localhost` → broken public app; rebuild to fix. (`KB § PATTERNS/backend/boundary-contract-tests.md` B1.)
 
 > 🧭 **Cross-product NAV is a SEPARATE, RUNTIME layer (not baked) — easy to miss at deploy time.** The Core dashboard's product-launcher tiles resolve each product's URL **per-request** via `noctusai_lib.api.product_urls.resolve_product_url` (order: `PRODUCT_URL_<UPPER_SLUG>` → `PRODUCT_URL_PATTERN` → DB `public.products.url_base`). The DB column **stays at its `localhost` dev default by design**; production sets the URLs in the **VPS root `.env`** — no rebuild, just `--force-recreate core`. Miss this and every dashboard tile links to `localhost` (the 2026-05-22 nav-remap bug). The noctusai.com scheme is **hybrid**: `PRODUCT_URL_PATTERN=https://{slug}.noctusai.com` + per-product overrides for the live short names (`PRODUCT_URL_ERP_IMOBILIARIO=https://erp.noctusai.com`, `PRODUCT_URL_SOCIAL_WIRING=https://social.noctusai.com`). Also **seed each product's `public.products` row** — the launcher only renders rows it finds, so a missing row = no tile even when the product is live (social-wiring's `032` seed was never mirrored to prod → it had no tile until 2026-05-22). Full var docs: `.env.example` → "Cross-product navigation URLs". The FE back-link/SSO-callback (`VITE_CORE_URL`/`VITE_CORE_API_URL`) are the *baked* sibling above — change those = rebuild.
 
@@ -92,7 +92,7 @@ git status --short                          # SAME deploy-local files still M / 
 grep -c "<marker-from-new-commit>" <a-changed-file>   # the change actually landed on disk
 ```
 
-**Then rebuild ONLY if the running container serves what changed** (validation-freshness, §6 + `KB § PATTERNS/containerization.md § 12b`):
+**Then rebuild ONLY if the running container serves what changed** (validation-freshness, §6 + `KB § PATTERNS/devops/containerization.md § 12b`):
 - **docs / project files only** → nothing to do; the running fleet is untouched (the 2026-05-21 doc syncs were exactly this — pull, no rebuild).
 - **product code / Dockerfile / compose changed** → rebuild the slim `runtime` image on the VPS (§2) + restart that product, then live-probe the endpoint. Single-file bind-mounts (`config.yml`, `Caddyfile`) need `docker restart` (stale-inode, §6), not `reload`.
 
@@ -134,7 +134,7 @@ The ONLY sanctioned `reset --hard` is **C3 recovery** onto a `backup/` ref after
 
 ## 2b · Branch model — the `prod` promote gate (P3; the extra layer beyond "git = the wall")
 
-`dev` is the everyday **integration** branch (where work lands + accumulates — `KB § PATTERNS/branching-and-merging.md § 0`). `main` is the **blessed-release** ref (a deliberate `dev → main` FF promotes a reviewed, green line). `prod` is the **promotion** branch — the *only* ref the VPS pulls. Code becomes production *exclusively* by a deliberate human FF of `prod` from a blessed `main` sha. Two walls: a push to `dev` does NOT reach `main`, and a push to `main` does NOT reach prod — someone must **bless** (`dev → main`) then **promote** (`main → prod`). Both hops are pre-push-hook-gated (`NOCTUS_ALLOW_MAIN_PUSH=1`). (The user's requirement: *"when any branch is 100% to go for main it goes to prod branch and the vps only accepts pulls from prod branch."*)
+`dev` is the everyday **integration** branch (where work lands + accumulates — `KB § PATTERNS/architect/branching-and-merging.md § 0`). `main` is the **blessed-release** ref (a deliberate `dev → main` FF promotes a reviewed, green line). `prod` is the **promotion** branch — the *only* ref the VPS pulls. Code becomes production *exclusively* by a deliberate human FF of `prod` from a blessed `main` sha. Two walls: a push to `dev` does NOT reach `main`, and a push to `main` does NOT reach prod — someone must **bless** (`dev → main`) then **promote** (`main → prod`). Both hops are pre-push-hook-gated (`NOCTUS_ALLOW_MAIN_PUSH=1`). (The user's requirement: *"when any branch is 100% to go for main it goes to prod branch and the vps only accepts pulls from prod branch."*)
 
 ```
 feat/* ──▶ dev ──(bless: dev→main FF)──▶ main ──(promote: prod FF)──▶ prod ──(VPS §2a pull)──▶ production

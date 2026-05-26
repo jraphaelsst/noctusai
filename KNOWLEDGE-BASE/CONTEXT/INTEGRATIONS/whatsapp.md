@@ -13,7 +13,7 @@
 > (`whatsapp-seed-absorption/`, `social-wiring-absorption/`) are
 > deleted at close; this doc is durable and self-contained. The wiring
 > *recipe* (chatbot composition: buffer + worker + LLM dispatcher) is
-> at `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md`; THIS doc is the
+> at `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md`; THIS doc is the
 > connector API surface a product imports.
 >
 > **Provider-neutral by design.** Swapping WAHA -> Twilio -> Cloud API
@@ -94,7 +94,7 @@ data = await client.send_text(chat_id, message)
 
 `base_url=` set => `WahaClient`; unset => `FakeWahaClient`
 (configured-vs-not signal, mirrors `get_calendar_adapter()` per
-`CONTEXT/PATTERNS/seed-fake-real-adapter.md`). `external_base_url=`
+`CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md`). `external_base_url=`
 is the browser-facing host WAHA *emits* in media URLs vs `base_url`
 the docker-internal host the app *reaches* (defaults to `base_url` —
 single-host dev rewrite is a no-op).
@@ -116,7 +116,7 @@ never hand-register the receiver. Dedup is injected, not hard-wired.
   get_meta_cloud_client` (WhatsApp **Business Cloud API** path).
 
 The full chatbot composition (Redis buffer -> worker -> LLM dispatcher)
-is the recipe at `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md`.
+is the recipe at `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md`.
 
 ---
 
@@ -151,5 +151,5 @@ surface as typed `WhatsAppPayloadError`; non-message webhook events as
 |---|---|---|
 | Twilio backend | not shipped | Provider-neutral surface is ready; add `integrations/whatsapp/twilio_client.py` + factory branch when a consumer needs it |
 | Outbound media send (image/doc) | partial — `send_text` + `download_media` ship; rich outbound media is not in the Protocol | Additive Protocol extension; file when a consumer needs it |
-| Chatbot orchestration (buffer/worker/LLM dispatch) | **separate by design** | `noctusai_lib.domain.chatbot` + recipe `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md` |
+| Chatbot orchestration (buffer/worker/LLM dispatch) | **separate by design** | `noctusai_lib.domain.chatbot` + recipe `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md` |
 | FB Pages / Instagram Graph | **separate package** | `noctusai_lib.integrations.meta` — `CONTEXT/INTEGRATIONS/meta.md` |

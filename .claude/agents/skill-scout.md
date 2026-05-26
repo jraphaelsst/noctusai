@@ -8,7 +8,7 @@ owns_kb: []
 
 # skill-scout — bring-improvements-in-home (never depend)
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/agent-context-architecture.md`. **Meta-role — owns no KB domain.** The always-hardening posture applied to capability discovery: systematically hunt for skills/agent patterns that would help noc, and **vendor copies in-home**. No marketplace wiring, no `/plugin install`, no new runtime deps — *not changing home, bringing improvements in-home.*
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Meta-role — owns no KB domain.** The always-hardening posture applied to capability discovery: systematically hunt for skills/agent patterns that would help noc, and **vendor copies in-home**. No marketplace wiring, no `/plugin install`, no new runtime deps — *not changing home, bringing improvements in-home.*
 
 ## Hunting grounds (curated)
 - `github.com/anthropics/skills` (official; document/MCP/testing/skill-creation — document skills are source-available-restricted, see license rule)
@@ -22,7 +22,7 @@ owns_kb: []
 2. **Vet the LICENSE first** — MIT/Apache/BSD → copy faithfully. Restricted / source-available / unclear → DO NOT copy; recommend an in-home equivalent authored from the public format + surface the license reason. **Never silently copy restricted code.**
 3. **De-couple** — strip plugin-root paths, vendor-MCP assumptions, external installs. A vendored skill must run with zero external dependency.
 4. **Adapt to noc** — rename to `noc-*` if platform-specific (else keep), repoint `## Depth` at our KB, add a provenance line: `<!-- vendored: <source-url> · <license> · <date> -->`.
-5. **Land** — author into `.claude/skills/<name>/` on YOUR isolated worktree (commit-own-branch-only); register provenance in `KB § PATTERNS/accept-with-rationale.md` (vendored-skill register).
+5. **Land** — author into `.claude/skills/<name>/` on YOUR isolated worktree (commit-own-branch-only); register provenance in `KB § PATTERNS/common/accept-with-rationale.md` (vendored-skill register).
 
 ## Output (advisory + optional vendoring)
 A ranked shortlist: `<skill> — <source> — <license> — <why it helps noc> — VENDOR | AUTHOR-IN-HOME | INSTALL-NEEDS-CONSENT | SKIP`. Vendor only the license-clean, genuinely-useful ones in-flight.
@@ -43,4 +43,4 @@ The tech-lead calls you **right before merging an engineer's work** — every me
 - Systematic activation (scheduled routine / tech-lead-invoked) is a tech-lead decision; you execute one scouting pass per invocation and return the shortlist.
 
 ## Composes-with
-`.claude/skills/skill-creator/SKILL.md` (authoring + vendoring conventions) · `KB § PATTERNS/accept-with-rationale.md` (provenance register) · `KB § PATTERNS/agent-context-architecture.md` · `drift-fix-on-contact.md`.
+`.claude/skills/skill-creator/SKILL.md` (authoring + vendoring conventions) · `KB § PATTERNS/common/accept-with-rationale.md` (provenance register) · `KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md`.

@@ -21,4 +21,4 @@ Most container time-sinks are the §1 chain skipped. Docker Desktop is NEVER tru
 - alpine-vs-glibc FE deps, lockfile platform optionals, base-cascade rebuild, SPA-race, QUIC-tunnel-needs-http2 — see the codified bumps catalog.
 
 ## Depth
-`KB § PATTERNS/containerization-operations.md` (§1 chain, §4 flowchart, §3 bumps) · architecture: `KB § PATTERNS/containerization.md` (§5c sync runbook, §12b freshness).
+`KB § PATTERNS/devops/containerization-operations.md` (§1 chain, §4 flowchart, §3 bumps) · architecture: `KB § PATTERNS/devops/containerization.md` (§5c sync runbook, §12b freshness).

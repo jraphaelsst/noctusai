@@ -17,7 +17,7 @@ wrong numbers.
 
 References:
 - `projects/mcp-ast-tools-hardening/PROJECT.md § Phase 2 — C.6`
-- `KB § PATTERNS/agent-reading-discipline.md § Companion tooling`
+- `KB § PATTERNS/common/agent-reading-discipline.md § Companion tooling`
 """
 from __future__ import annotations
 

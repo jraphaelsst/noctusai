@@ -4,8 +4,8 @@ Surfaced by Engineer GG's therapy P4 audit (commit a56a39e, 2026-05-10).
 Each detector pins a known-bad fixture and a known-good fixture so future
 refactors can't silently regress the catch.
 
-Per KB § PATTERNS/testing.md § Production-correctness keeper detectors +
-KB § PATTERNS/testing.md § Regression-test-the-detector.
+Per KB § PATTERNS/compliance/testing.md § Production-correctness keeper detectors +
+KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
 """
 import sys
 import tempfile

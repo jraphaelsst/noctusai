@@ -1,5 +1,5 @@
 """Colocated regression test for the `check_files_outlined` keeper
-(KB § PATTERNS/ast.md § Always-outline-able platform). Every keeper
+(KB § PATTERNS/common/ast.md § Always-outline-able platform). Every keeper
 check_* ships a colocated Test<CamelCase> per the meta-detector."""
 from __future__ import annotations
 

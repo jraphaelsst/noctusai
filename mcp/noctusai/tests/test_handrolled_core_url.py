@@ -5,7 +5,7 @@ URL through the canonical seed getter `env.CORE_URL` / `env.CORE_API_URL`, never
 hand-roll `import.meta.env.VITE_CORE_* || "<literal>"`. The detector flags any
 hand-rolled site, with one carve-out: core's own same-origin `lib/api.ts`.
 
-See KB § PATTERNS/core-url-routing.md + boundary-contract-tests.md B1.
+See KB § PATTERNS/frontend/core-url-routing.md + boundary-contract-tests.md B1.
 All tests use `tmp_path` — no dependency on the live `products/` tree.
 """
 from __future__ import annotations

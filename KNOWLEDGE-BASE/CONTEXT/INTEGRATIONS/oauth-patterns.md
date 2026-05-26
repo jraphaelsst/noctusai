@@ -386,14 +386,14 @@ three primitives rather than gating them.
 
 ## 8 · Related
 
-- `CONTEXT/PATTERNS/whatsapp-chatbot-seed.md` — WhatsApp connector +
+- `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md` — WhatsApp connector +
   chatbot framework wiring recipe (the chatbot-side consumer of these
   OAuth adapters).
-- `CONTEXT/PATTERNS/seed-fake-real-adapter.md` — the Protocol+Fake+Real+
+- `CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md` — the Protocol+Fake+Real+
   factory shape every Layer-3 adapter follows.
-- `CONTEXT/PATTERNS/containerization.md` §12a — the house single-container
+- `CONTEXT/PATTERNS/devops/containerization.md` §12a — the house single-container
   model that subsumes takeaways 5.7/5.8 + gotcha G4/G6.
-- `CONTEXT/PATTERNS/webhook-signatures.md` — sibling
+- `CONTEXT/PATTERNS/security/webhook-signatures.md` — sibling
   `noctusai_lib.security` primitive (the 5-pin webhook contract; WAHA
   webhook receivers compose dedup §5.1 + this).
 - `CONTEXT/GUIDES/google-oauth-setup.md` — GCP Console operator walkthrough

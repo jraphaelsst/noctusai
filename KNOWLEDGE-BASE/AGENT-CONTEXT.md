@@ -102,12 +102,12 @@ Quick pointers:
 | Infrastructure (ports, deploy) | `KNOWLEDGE-BASE/CONTEXT/05-INFRASTRUCTURE.md` |
 | MCP dev toolkit (observation-only review) | `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md` |
 | Gamification philosophy | `KNOWLEDGE-BASE/CONTEXT/07-GAMIFICATION.md` |
-| Backend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md` |
-| Frontend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend.md` |
-| Testing discipline | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/testing.md` |
-| DB + RLS patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/database-rls.md` |
-| Env / `.env` conventions | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/environment.md` |
-| Notifications pattern | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/notifications.md` |
+| Backend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/backend.md` |
+| Frontend patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend/frontend.md` |
+| Testing discipline | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/compliance/testing.md` |
+| DB + RLS patterns | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/database-rls.md` |
+| Env / `.env` conventions | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/environment.md` |
+| Notifications pattern | `KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend/notifications.md` |
 | First-time setup | `KNOWLEDGE-BASE/CONTEXT/GUIDES/setup.md` |
 | Creating a new product | `KNOWLEDGE-BASE/CONTEXT/GUIDES/new-product.md` |
 | Product details | `products/<name>/MASTER-PROMPT.md` |

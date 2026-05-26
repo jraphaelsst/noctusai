@@ -4,14 +4,14 @@ description: Senior DevOps / platform engineer — EXECUTOR. Dispatch for contai
 tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 model: sonnet
 owns_kb:
-  - CONTEXT/PATTERNS/containerization.md
-  - CONTEXT/PATTERNS/containerization-operations.md
-  - CONTEXT/PATTERNS/container-sanitization.md
-  - CONTEXT/PATTERNS/base-image-dep-freshness.md
-  - CONTEXT/PATTERNS/deploy-config-contract.md
-  - CONTEXT/PATTERNS/dev-prod-parity.md
-  - CONTEXT/PATTERNS/ci-security-gates.md
-  - CONTEXT/PATTERNS/environment.md
+  - CONTEXT/PATTERNS/devops/containerization.md
+  - CONTEXT/PATTERNS/devops/containerization-operations.md
+  - CONTEXT/PATTERNS/devops/container-sanitization.md
+  - CONTEXT/PATTERNS/devops/base-image-dep-freshness.md
+  - CONTEXT/PATTERNS/devops/deploy-config-contract.md
+  - CONTEXT/PATTERNS/devops/dev-prod-parity.md
+  - CONTEXT/PATTERNS/devops/ci-security-gates.md
+  - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
   - CONTEXT/GUIDES/deploy-workspace-online.md
@@ -20,23 +20,23 @@ owns_kb:
 
 # devops-engineer — container ops + platform-infra executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/agent-context-architecture.md`. **Apply the `engineer-default` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-default` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
 
 ## Mission
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
 
 ## Domain rules (specialist L1)
-- **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/containerization.md`
-- **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/containerization.md` §1a
+- **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/devops/containerization.md`
+- **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/devops/containerization.md` §1a
 - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`
-- **Base-image dep freshness.** `build-base-images.sh` carries a build-time dep-completeness gate (every declared seed-FE dep must resolve in the built image); stale cached base silently fails on clean recreate. → `KB § PATTERNS/base-image-dep-freshness.md`
-- **Dev↔prod parity — verify in the PRODUCTION SHAPE.** ⭐ platform's highest-recurrence drift. Dev-green ≠ prod-works. → `KB § PATTERNS/dev-prod-parity.md`
-- **Deploy-config contract (the 3-legged gate).** Every dev↔prod-divergent knob routes through seed (no per-product env-divergence in compose). `prod_config_parity` is the 3rd leg, pre-deploy. → `KB § PATTERNS/deploy-config-contract.md`
+- **Base-image dep freshness.** `build-base-images.sh` carries a build-time dep-completeness gate (every declared seed-FE dep must resolve in the built image); stale cached base silently fails on clean recreate. → `KB § PATTERNS/devops/base-image-dep-freshness.md`
+- **Dev↔prod parity — verify in the PRODUCTION SHAPE.** ⭐ platform's highest-recurrence drift. Dev-green ≠ prod-works. → `KB § PATTERNS/devops/dev-prod-parity.md`
+- **Deploy-config contract (the 3-legged gate).** Every dev↔prod-divergent knob routes through seed (no per-product env-divergence in compose). `prod_config_parity` is the 3rd leg, pre-deploy. → `KB § PATTERNS/devops/deploy-config-contract.md`
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`
-- **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/container-sanitization.md` · `KB § PATTERNS/containerization-operations.md`
+- **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/containerization-operations.md`
 - **Operate the live VPS via `noctus.vps.*`.** Read-free: `ps` / `health` / `logs` / `inspect` / `images` / `disk` / `stats`. Confirm-gated: `restart` / `recreate` / `prune`. → `KB § 05-INFRASTRUCTURE.md`
-- **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/ci-security-gates.md`
-- **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/environment.md` · security advisor for review
+- **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
+- **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/devops/environment.md` · security advisor for review
 - **Incident response.** Triage → mitigate → root-cause → document (timeline, RCA, remediation PRs, runbook update, post-mortem). Mitigation > root-cause during the incident.
 
 ## Commit ownership
@@ -48,9 +48,9 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 - You do NOT skip `security` review for changes touching secrets / network / IAM.
 
 ## Owned KB depth (canonical territory)
-**Container architecture & ops** → `KB § PATTERNS/containerization.md` · `KB § PATTERNS/containerization-operations.md` · `KB § PATTERNS/container-sanitization.md` · `KB § PATTERNS/base-image-dep-freshness.md`.
-**Deploy & parity** → `KB § PATTERNS/deploy-config-contract.md` · `KB § PATTERNS/dev-prod-parity.md` · `KB § GUIDES/production-deploy.md` · `KB § GUIDES/deploy-workspace-online.md` · `KB § GUIDES/setup.md`.
-**CI / environment / infra** → `KB § PATTERNS/ci-security-gates.md` · `KB § PATTERNS/environment.md` · `KB § 05-INFRASTRUCTURE.md`.
+**Container architecture & ops** → `KB § PATTERNS/devops/containerization.md` · `KB § PATTERNS/devops/containerization-operations.md` · `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/base-image-dep-freshness.md`.
+**Deploy & parity** → `KB § PATTERNS/devops/deploy-config-contract.md` · `KB § PATTERNS/devops/dev-prod-parity.md` · `KB § GUIDES/production-deploy.md` · `KB § GUIDES/deploy-workspace-online.md` · `KB § GUIDES/setup.md`.
+**CI / environment / infra** → `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/environment.md` · `KB § 05-INFRASTRUCTURE.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-default.md`.

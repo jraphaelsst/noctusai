@@ -1,7 +1,7 @@
 """Tests for the learn/extract-before-delete worktree-salvage ledger leg.
 
 `_worktree_salvage` is the mechanical "recovery record → tracked ledger" leg
-(KB § PATTERNS/storage-hygiene.md § 2.3): every swept worktree is recorded to
+(KB § PATTERNS/common/storage-hygiene.md § 2.3): every swept worktree is recorded to
 `project-history/worktree-salvage.ndjson` so the recovery pointer survives the
 transient out-of-repo salvage dir. Verifies the pure helpers + the real-git
 integration through `cleanup_stale_worktrees(force=True)`.

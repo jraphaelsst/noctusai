@@ -66,7 +66,7 @@ class TestEnvArtifactExclusion:
     """`is_env_artifact` excludes non-deterministic / worktree-specific issue
     classes from BOTH the committed baseline and the live regression gate, so
     the gate cannot flap on stamp-lag / wall-clock / fresh-worktree state.
-    Per `KB § PATTERNS/compliance-regression-baseline.md`.
+    Per `KB § PATTERNS/compliance/compliance-regression-baseline.md`.
     """
 
     def test_seed_drift_prefix_excluded(self):
@@ -443,7 +443,7 @@ class TestPhaseStateConsistency:
     Slip pattern: agent writes a §11 entry saying "Phase N ✅ shipped" but
     leaves §6 sub-task checkboxes / phase header in pre-close state. The
     user reads §6 as a real-time dashboard; the mismatch is a documented
-    lie about progress. Per `KB § PATTERNS/project-execution.md § 2`.
+    lie about progress. Per `KB § PATTERNS/architect/project-execution.md § 2`.
     """
 
     def _mk_repo(self, project_md_content: str, slug: str = "test-slug") -> Path:
@@ -889,7 +889,7 @@ class TestCheckNoSelfMonkeypatch:
             f"send_message is NOT email boundary, must flag, got: {issues}"
         )
 
-    # ---- Severity ratchet (per `KB § PATTERNS/testing.md § Severity ratchet`)
+    # ---- Severity ratchet (per `KB § PATTERNS/compliance/testing.md § Severity ratchet`)
 
     def _mk_product_test_file(self, product: str, content: str) -> Path:
         """Build a tmp repo with a test file under products/<product>/backend/tests/."""
@@ -1240,7 +1240,7 @@ class TestCheckSeedCanonicalDefault:
 
 # ---------------------------------------------------------------------------
 # `check_query_fn_returns_undefined` — TanStack v5 contract; `queryFn` body
-# may not return `undefined` (B3 in KB § PATTERNS/boundary-contract-tests.md).
+# may not return `undefined` (B3 in KB § PATTERNS/backend/boundary-contract-tests.md).
 # ---------------------------------------------------------------------------
 
 
@@ -1702,7 +1702,7 @@ class TestCheckSection7PlaceholderConsistency:
 class TestCheckDetectorHasRegressionTest:
     """Pin the platform-wide methodology: every `check_*` keeper detector
     in `mcp/noctusai/tools/compliance.py` must have a regression test.
-    Per KB § PATTERNS/testing.md § Regression-test-the-detector.
+    Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
 
     Origin: 2026-04-29 — `platform-logging-standardization` Phase 6.
     User directive: regression-test-the-detector becomes platform-wide
@@ -1792,7 +1792,7 @@ class TestCheckSlowapiWithPep563:
     """Regression suite for the slowapi-PEP563 gotcha keeper.
 
     Pins true-positive and false-positive shapes so the detector cannot
-    silently regress. Per KB § PATTERNS/testing.md § Regression-test-the-detector.
+    silently regress. Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
     """
 
     def _mk_product_with_router(

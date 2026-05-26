@@ -34,7 +34,7 @@ class TestSymbolScanner:
         """Sanity check: several canonical lib symbols must appear.
 
         Paths reflect the layered layout adopted 2026-04-30 — see
-        `KB § PATTERNS/seed-lib-layout.md`. The catalog scanner emits the
+        `KB § PATTERNS/architect/seed-lib-layout.md`. The catalog scanner emits the
         canonical path where a symbol is *exported*: `resolve_sso_role` and
         `first_or_none` are re-exported at the top-level `noctusai_lib`
         package (post platform-auth-modernization), so the scanner attributes

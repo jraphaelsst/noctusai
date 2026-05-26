@@ -23,4 +23,4 @@ Each page/widget/stat/table is wired to a real endpoint that actually RETURNS re
 - Live admin-token probe = runtime leg (advisory). Page-scoped-CRUD = judgment leg (advisory).
 
 ## Depth
-`KB § PATTERNS/product-internal-wiring.md` · siblings `KB § PATTERNS/boundary-contract-tests.md`, `KB § PATTERNS/core-url-routing.md`.
+`KB § PATTERNS/frontend/product-internal-wiring.md` · siblings `KB § PATTERNS/backend/boundary-contract-tests.md`, `KB § PATTERNS/frontend/core-url-routing.md`.

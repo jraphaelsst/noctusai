@@ -1,7 +1,7 @@
 """Tests for check_codification_debt + markers_of_class.
 
 The keeper is the always-on compliance-gate form of the /codify command's
-*detection* half (KB § PATTERNS/methodology-codification-pipeline.md). It reads
+*detection* half (KB § PATTERNS/common/methodology-codification-pipeline.md). It reads
 ``NOC-REMEDIATE[codify]`` markers so a deferred codification can never go silent
 in prose. Real git repos + real ``git grep`` (no monkey-patch of our own code) so
 the parse/classify path exercises the actual plumbing.
@@ -97,8 +97,8 @@ class TestCodificationDebt:
         marker = "leave a `NOC-REMEDIATE[codify]: <rule> — 2026-05-04` marker\n"
         r = _repo(tmp_path, {
             ".claude/commands/codify.md": marker,
-            "KNOWLEDGE-BASE/CONTEXT/PATTERNS/remediation-markers.md": marker,
-            "KNOWLEDGE-BASE/CONTEXT/PATTERNS/methodology-codification-pipeline.md": marker,
+            "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/remediation-markers.md": marker,
+            "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-codification-pipeline.md": marker,
         })
         assert check_codification_debt(repo_root=r) == []
 

@@ -30,7 +30,7 @@ public Developers API is the only programmatic path; the
 | `hostinger.vps.stop` | WRITE/POWER 🔒 confirm (**strongest**) | `POST .../{id}/stop` |
 | `hostinger.diagnostics.connection_status` | READ | `GET .../virtual-machines` probe |
 
-- Writes/power: confirm-then-execute (`KB § PATTERNS/llm-bot-security.md`).
+- Writes/power: confirm-then-execute (`KB § PATTERNS/security/llm-bot-security.md`).
   `confirm` ≠ true ⇒ typed error `status 412`, ¬ side-effect; the gate
   message states the concrete effect. `stop` = **strongest gate** — it
   TAKES THE SERVER DOWN (every service offline until a `start`).

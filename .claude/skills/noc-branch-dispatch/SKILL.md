@@ -27,4 +27,4 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 - Engineers commit ONLY their own branch; tech-lead owns all merging/pushing/blessing.
 
 ## Depth
-`KB § PATTERNS/branching-dispatch.md` (the runbook) · `KB § PATTERNS/branching-and-merging.md` §18/§21 (collision-class) · `KB § PATTERNS/dispatch-engineer-tuning.md` (fast/cheap engineers).
+`KB § PATTERNS/architect/branching-dispatch.md` (the runbook) · `KB § PATTERNS/architect/branching-and-merging.md` §18/§21 (collision-class) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` (fast/cheap engineers).

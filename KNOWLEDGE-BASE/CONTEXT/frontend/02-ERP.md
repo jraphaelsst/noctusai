@@ -1,7 +1,7 @@
 # 02 — ERP Frontend Context
 
 > Path: `products/erp-imobiliario/frontend/src/` · Port: 8080 · 60 pages · 63 hooks · API: `VITE_BACKEND_API_URL`
-> Standard frontend patterns (toast, hooks, auth init, dates): see `../PATTERNS/frontend.md`.
+> Standard frontend patterns (toast, hooks, auth init, dates): see `../PATTERNS/frontend/frontend.md`.
 
 ## Overview
 

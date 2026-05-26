@@ -8,7 +8,7 @@ refactor can't silently re-introduce either shape.
 References:
 - `projects/methodology-extraction/PROJECT.md § Phase 4 Improvements`
 - `projects/mcp-ast-tools-hardening/PROJECT.md § Phase 2 — C.2`
-- `KB § PATTERNS/testing.md § Regression tests in practice`
+- `KB § PATTERNS/compliance/testing.md § Regression tests in practice`
 """
 from __future__ import annotations
 

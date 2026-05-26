@@ -1,7 +1,7 @@
 # 04 — Database Context
 
 > Supabase PostgreSQL · RLS per org/role · **7 schemas · ~232 tables** (verified 2026-04-18)
-> RLS rules and access patterns: see `../PATTERNS/database-rls.md`.
+> RLS rules and access patterns: see `../PATTERNS/backend/database-rls.md`.
 
 ## Schema Architecture
 
@@ -55,4 +55,4 @@ Shared trigger on most ERP tables. Sets `created_at` on INSERT, `updated_at` on 
 
 ## Sidebar: `status_pagina`
 
-Each product schema has this table. Controls page visibility per role. See `../PATTERNS/backend.md` for page_status pattern.
+Each product schema has this table. Controls page visibility per role. See `../PATTERNS/backend/backend.md` for page_status pattern.

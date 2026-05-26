@@ -1090,7 +1090,7 @@ class TestWorkspaceDockerPatch:
     `bootstrap-seed-workspace.sh` drops in the workspace-root docker
     artifacts. The convention exists so the user can `docker compose up`
     immediately after `scaffold_product` without hand-authoring compose.
-    See KB § PATTERNS/seed-workspace.md § Docker scaffolding."""
+    See KB § PATTERNS/architect/seed-workspace.md § Docker scaffolding."""
 
     def _seed_docker_files(self, workspace: Path) -> None:
         (workspace / "Dockerfile").write_text(
@@ -1374,7 +1374,7 @@ class TestScaffoldRegistersInRootCompose:
     override-drift at author time (SW-SCAFFOLD-FIX): the scaffold template
     once emitted an `include:` registration with an
     `override`-paired/`- path:` block that drifted from the single-env
-    house model documented in KB § PATTERNS/containerization.md
+    house model documented in KB § PATTERNS/devops/containerization.md
     ("NO dev/prod split — ONE container, ONE shape always"). Pin the shape
     so it can never silently regress.
     """
