@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# post-merge hook — auto-refresh caches after merge / pull
+#
+# Runs after `git pull` (= fetch + merge) OR after `git merge` lands.
+# If KB / code / methodology files changed in the merge, refresh the
+# affected keeper-mirror caches so they stay aligned with the new tree
+# state. Non-blocking (vector search is advisory).
+#
+# Why this hook
+#   The pre-commit hook handles LOCAL edits at commit time, but
+#   `git pull` brings in remote changes that NEVER fired pre-commit.
+#   Without this hook, the local cache stales after every pull.
+#
+# What it refreshes
+#   - kb-embeddings  (if any KNOWLEDGE-BASE/**/*.md changed in the merge)
+#   - code-embeddings (if any tracked .py/.ts/.tsx under tracked roots changed)
+#   - auto-improvement cache (if auto-improvement.ndjson changed)
+#   - agent-context cache (if .claude/agents/* OR owned KB changed)
+#   - keeper-patterns cache (if compliance.py changed)
+#
+# KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md.
+# ──────────────────────────────────────────────────────────────
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# ─── venv-aware Python resolution (same logic as pre-commit) ────
+if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+    PY="$REPO_ROOT/venv/bin/python"
+else
+    MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+        MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+        if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+            PY="$MAIN_REPO_ROOT/venv/bin/python"
+        fi
+    fi
+    PY="${PY:-${PYTHON:-python3}}"
+fi
+CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
+
+# Git passes "$1" = squash flag (0 = normal merge, 1 = squash). We don't
+# differentiate; either way, files may have changed.
+
+# Figure out which files changed in the merge (HEAD@{1} = old tip; HEAD = new tip).
+CHANGED=$(git diff --name-only HEAD@{1} HEAD 2>/dev/null || true)
+
+if [[ -z "$CHANGED" ]]; then
+    # Nothing changed (rare; fast-forward of empty merge).
+    exit 0
+fi
+
+echo "[post-merge] $(echo "$CHANGED" | wc -l | tr -d ' ') file(s) changed; checking caches..."
+
+if have_py; then
+    # ─── kb-embeddings (advisory, non-blocking)
+    if echo "$CHANGED" | grep -qE '^KNOWLEDGE-BASE/.+\.md$'; then
+        echo "[post-merge] KB docs changed — refreshing kb-embeddings cache..."
+        "$PY" "$CLI" --refresh-kb-embeddings 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ kb-embeddings refresh skipped (provider unreachable or no key)."
+    fi
+
+    # ─── code-embeddings (advisory, non-blocking)
+    if echo "$CHANGED" | grep -qE '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$'; then
+        echo "[post-merge] Code source changed — refreshing code-embeddings cache..."
+        "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ code-embeddings refresh skipped (provider unreachable or no key)."
+    fi
+
+    # ─── auto-improvement cache (blocking on failure — it's high-severity)
+    if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
+        echo "[post-merge] auto-improvement.ndjson changed — refreshing cache..."
+        "$PY" "$CLI" --refresh-auto-improvement-cache 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ auto-improvement refresh failed — investigate." >&2
+    fi
+
+    # ─── agent-context cache
+    if echo "$CHANGED" | grep -qE '^\.claude/agents/.+\.md$|^KNOWLEDGE-BASE/'; then
+        echo "[post-merge] Agent/owned-KB content changed — refreshing agent-context cache..."
+        "$PY" "$CLI" --refresh-agent-context-cache 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ agent-context refresh skipped (advisory)."
+    fi
+
+    # ─── keeper-patterns cache
+    if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
+        echo "[post-merge] compliance.py changed — refreshing keeper-patterns cache..."
+        "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ keeper-patterns refresh failed — investigate." >&2
+    fi
+fi
+
+echo "[post-merge] cache refresh pass complete."

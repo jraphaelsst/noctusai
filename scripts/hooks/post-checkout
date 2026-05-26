@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# post-checkout hook — auto-refresh caches after branch switch
+#
+# Runs after `git checkout <branch>`, `git switch`, `git clone`, or
+# `git checkout -- <file>`. Git passes 3 args:
+#   $1 = previous HEAD ref
+#   $2 = new HEAD ref
+#   $3 = flag (1 = branch checkout; 0 = file checkout)
+#
+# We ONLY refresh on branch checkouts (flag=1), and only when the
+# branch switch actually changed files we care about.
+#
+# Why this hook
+#   `git checkout <branch>` swaps the working tree. Caches built for
+#   the old branch are stale for the new one. Without this hook, the
+#   first query after a branch switch returns yesterday's answers.
+#
+# Composes with the post-merge hook (the OTHER auto-freshness leg).
+#
+# KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md.
+# ──────────────────────────────────────────────────────────────
+set -euo pipefail
+
+PREV_HEAD="$1"
+NEW_HEAD="$2"
+IS_BRANCH_CHECKOUT="$3"
+
+# Skip file-level checkouts (flag=0); they don't switch working tree.
+if [[ "$IS_BRANCH_CHECKOUT" != "1" ]]; then
+    exit 0
+fi
+
+# Skip when prev == new (no-op checkout).
+if [[ "$PREV_HEAD" == "$NEW_HEAD" ]]; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+    PY="$REPO_ROOT/venv/bin/python"
+else
+    MAIN_REPO_GITDIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [[ -n "$MAIN_REPO_GITDIR" ]]; then
+        MAIN_REPO_ROOT=$(dirname "$MAIN_REPO_GITDIR")
+        if [[ -x "$MAIN_REPO_ROOT/venv/bin/python" ]]; then
+            PY="$MAIN_REPO_ROOT/venv/bin/python"
+        fi
+    fi
+    PY="${PY:-${PYTHON:-python3}}"
+fi
+CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
+
+# Files changed between prev and new HEAD.
+CHANGED=$(git diff --name-only "$PREV_HEAD" "$NEW_HEAD" 2>/dev/null || true)
+
+if [[ -z "$CHANGED" ]]; then
+    exit 0
+fi
+
+# Same triggers as post-merge — same refresh logic. Differs only in the
+# hook name + the env vars passed in.
+RELEVANT=$(echo "$CHANGED" | grep -E '^(KNOWLEDGE-BASE/|mcp/|noctusai_lib/|products/seed/|project-history/auto-improvement\.ndjson|\.claude/agents/)' || true)
+if [[ -z "$RELEVANT" ]]; then
+    # No cache-relevant changes — fast exit.
+    exit 0
+fi
+
+echo "[post-checkout] branch switch changed cache-relevant files; refreshing..."
+
+if have_py; then
+    if echo "$CHANGED" | grep -qE '^KNOWLEDGE-BASE/.+\.md$'; then
+        "$PY" "$CLI" --refresh-kb-embeddings 2>&1 | tail -2 || true
+    fi
+    if echo "$CHANGED" | grep -qE '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$'; then
+        "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || true
+    fi
+    if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
+        "$PY" "$CLI" --refresh-auto-improvement-cache 2>&1 | tail -2 || true
+    fi
+    if echo "$CHANGED" | grep -qE '^\.claude/agents/.+\.md$|^KNOWLEDGE-BASE/'; then
+        "$PY" "$CLI" --refresh-agent-context-cache 2>&1 | tail -2 || true
+    fi
+    if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
+        "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || true
+    fi
+fi
+
+echo "[post-checkout] cache refresh pass complete."

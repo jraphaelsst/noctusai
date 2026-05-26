@@ -70,6 +70,7 @@ def register_all(server) -> None:
     from . import propagate
     from . import proposals
     from . import recurrence
+    from . import refresh_all_caches
     from . import refs
     from . import release
     from . import review
@@ -156,6 +157,7 @@ def register_all(server) -> None:
     propagate.register(server)
     proposals.register(server)
     recurrence.register(server)
+    refresh_all_caches.register(server)
     refs.register(server)
     release.register(server)
     review.register(server)

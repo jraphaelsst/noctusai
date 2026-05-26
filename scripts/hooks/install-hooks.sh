@@ -38,6 +38,22 @@ ln -s "$REPO_ROOT/scripts/hooks/pre-push" "$HOOKS_DIR/pre-push"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-push"
 echo "  pre-push: gate main/prod pushes (NOCTUS_ALLOW_MAIN_PUSH=1 to deploy) + refuse force/delete"
 
+# ─── post-merge: auto-refresh caches after git pull / merge.
+# Without this, `git pull` brings in remote KB / code changes but the
+# local caches stay stale (no commit boundary means pre-commit doesn't fire).
+# KB § PATTERNS/common/cache-auto-freshness.md.
+rm -f "$HOOKS_DIR/post-merge"
+ln -s "$REPO_ROOT/scripts/hooks/post-merge" "$HOOKS_DIR/post-merge"
+chmod +x "$REPO_ROOT/scripts/hooks/post-merge"
+echo "  post-merge: auto-refresh caches after git pull / merge"
+
+# ─── post-checkout: auto-refresh caches after branch switch.
+# Working tree changes on branch switch; caches must follow.
+rm -f "$HOOKS_DIR/post-checkout"
+ln -s "$REPO_ROOT/scripts/hooks/post-checkout" "$HOOKS_DIR/post-checkout"
+chmod +x "$REPO_ROOT/scripts/hooks/post-checkout"
+echo "  post-checkout: auto-refresh caches after branch switch"
+
 # ─── Remove legacy post-commit hook (seed sync moved to pre-commit)
 if [[ -f "$HOOKS_DIR/post-commit" && ! -L "$HOOKS_DIR/post-commit" ]]; then
     # Only remove if it looks like our seed-sync hook (grep for marker)

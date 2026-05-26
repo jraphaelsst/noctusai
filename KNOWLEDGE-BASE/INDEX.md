@@ -31,6 +31,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── auto-author-scaffolds.md
 │   │   │   ├── brief-similarity-radar.md
 │   │   │   ├── branching.md
+│   │   │   ├── cache-auto-freshness.md
 │   │   │   ├── cache-locking-discipline.md
 │   │   │   ├── cache-telemetry.md
 │   │   │   ├── claude-md-router-discipline.md
