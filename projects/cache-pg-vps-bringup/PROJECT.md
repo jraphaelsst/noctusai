@@ -153,8 +153,62 @@ Network alias: `noctus-cache-pg:5432` (internal to `noctus-net`; not host-publis
 
 ## 7. Open questions
 
-1. **Mirror connectivity** — SSH-tunnel vs CF Tunnel TCP vs temp port-publish? CF Tunnel TCP requires paid plan. SSH-tunnel via deploy key is simplest; needs `~/.ssh/cache-pg-deploy-key` setup. Decision needed before Phase 2.
-2. **VPS venv readiness** — does `/opt/noctus/.venv/` (or equivalent) carry `pgvector` + `psycopg2-binary`? Probably not — these were never needed before. SCP-based mirror requires either install OR a different VPS-side approach (e.g., `pg_dump`/`pg_restore` via sqlite-dump bridge).
+### 7a. Resolved: VPS environment audit (2026-05-26 evening)
+
+Confirmed via `ssh noctus-vps`:
+- **No `/opt/noctus/.venv/`** exists. System python is `/usr/bin/python3`.
+- **No `psycopg2` or `pgvector` Python packages** on system python.
+- **Port `5432` is free** on the VPS host (`ss -tln` shows nothing listening; no other PG container publishes the port; legacy-permutas and fleet services live on 8xxx/3000/6379/5678).
+- **`noctus-cache-pg:5432` is reachable only inside the `noctus-net` docker network** — host can `docker exec`, container-internal alias works, but the VPS host's own python can't `connect()` directly without a route.
+
+These facts shape the recommendations below — Option F.2 is the lowest-friction sequence.
+
+### 7b. Recommended sequence (Phase 2 → Phase 3)
+
+The two open paths from the prior delivery note are connected: Phase 2 needs short-term local→prod connectivity (one-shot mirror); Phase 3 needs sustainable CI-runner→prod connectivity. The trade-off table covers all six concrete routes:
+
+| # | Route | What changes | Phase 2 fit | Phase 3 fit | Effort | Pros | Cons |
+|---|---|---|---|---|---|---|---|
+| A | **SSH-tunnel via GH Actions deploy key + host-loopback publish** | Add `ports: ["127.0.0.1:5432:5432"]` to cache-pg compose. Provision deploy key. GH Actions uses `ssh-action` to forward `-L 5432:127.0.0.1:5432 noctus-vps`. | Works (after compose change) | **STRONG FIT** | medium | Standard CI pattern · scoped per-run · no public exposure · works for Phase 2 too | Compose change (1 line) · deploy-key provisioning · key rotation discipline |
+| B | **Cloudflare Tunnel TCP** | Run `cloudflared tunnel` with a TCP route to cache-pg. GH Actions uses `cloudflared access tcp`. | Works | Works | high | Managed · no port exposure · no SSH keys | **Paid CF plan required for TCP** · vendor lock-in · additional component to operate |
+| C | **Profile-gated temp port-publish** | Add a `cache-debug` compose profile with `ports: ["127.0.0.1:5432:5432"]`. Operator runs `up --profile cache,cache-debug` for one-off ops; takes back down. | Works | Awkward (CI must orchestrate compose up/down) | low | Surgical · scoped per-operation · no permanent host port | Two states for the compose; CI scripting overhead; operator must remember to take down |
+| D | **VPS-side mirror via `vps_exec_sql` + SQL generation** | Read local SQLite → generate `INSERT … VALUES …` SQL → stream via `noctus.vps.exec_sql`. NO connectivity change. | Works (with per-cache SQL generators) | N/A (one-way local→prod, not query-shaped) | medium-high | NO compose change · uses the new tool · no connectivity infra | 5 cache schemas to generate; pgvector BLOB encoding is non-trivial; doesn't reuse `cache_deploy_mirror` |
+| E | **Sidecar container on `noctus-net`** | Build a `python:3.13-slim + pip install -e mcp/noctusai` image; run inside `noctus-net` so it resolves `noctus-cache-pg:5432` natively. | Works | Awkward (CI invokes container build) | medium | Reuses `cache_deploy_mirror` as-is · no host pkg install | Image build/maintenance · cold-start latency in CI |
+| F | **VPS-side python venv at `/opt/noctus/.venv/`** | `python3 -m venv /opt/noctus/.venv && pip install -r mcp/noctusai/requirements.txt` on VPS. Run `cache_deploy_mirror` via VPS-side `python cli.py`. Cache-pg port reached via either (F.1) docker bridge IP, (F.2) host-loopback publish, or (F.3) docker network from within a sidecar. | Works | Works (combined with A or C) | low-medium | One-time setup · reuses tool · self-contained on VPS | Adds python deps to VPS host (low impact — venv-isolated); needs the network route decision |
+
+### 7c. Recommended sequence — pick this
+
+**Phase 2 (mirror NOW, one-shot)** — **Route F.2** (VPS-side venv + host-loopback publish):
+
+1. One-line compose change: add `ports: ["127.0.0.1:5432:5432"]` to cache-pg (host-loopback only, NOT public — security posture preserved).
+2. Recreate the container: `docker compose --profile cache up -d --force-recreate cache-pg`.
+3. SSH to VPS: `python3 -m venv /opt/noctus/.venv` (one-time).
+4. Activate + `pip install psycopg2-binary pgvector` (one-time).
+5. From local: SCP the 5 local SQLite caches to `noctus-vps:/opt/noctus/cache-snapshots/`.
+6. SSH to VPS: run `/opt/noctus/.venv/bin/python /opt/noctus/noctusai/mcp/noctusai/cli.py --cache-deploy-mirror --confirm` against `localhost:5432` DSN.
+7. Verify row counts via `noctus.vps.exec_sql` (e.g., `SELECT count(*) FROM noctus_cache.cache_keeper_patterns`).
+
+Why F.2: smallest compose change · reuses `cache_deploy_mirror` as-is · sets up the infra Phase 3 will also use · keeps cache-pg internal (host-loopback ≠ public).
+
+**Phase 3 (CI sustainable)** — **Route A** (GH Actions deploy key + the same host-loopback publish from Phase 2):
+
+1. Generate a deploy key: `ssh-keygen -t ed25519 -f /tmp/cache-deploy-key -N ''`.
+2. Add public half to `noctus-vps:~/.ssh/authorized_keys` with `command="echo 'tunnel-only'",restrict,permitopen="127.0.0.1:5432"` (defense-in-depth — the key can ONLY open the local-loopback PG port).
+3. Set GH repo secrets: `NOCTUS_VPS_DEPLOY_KEY` (private half) + `NOCTUS_CACHE_POSTGRES_DSN` = `postgresql://noctus_cache:<PG_PASS>@localhost:5432/noctus_cache`.
+4. Update `.github/workflows/embedding-cache-gate.yml` to use `webfactory/ssh-agent` + `ssh -L 5432:127.0.0.1:5432 -fN noctus-vps` before the embedding-gate step.
+
+Why A: scoped per-run · standard pattern · the `command="…",permitopen=…` directive in `authorized_keys` makes the key safe even if leaked (it can only forward the PG port). Same compose change as Phase 2 — no double infrastructure.
+
+### 7d. Routes-not-taken (recorded per dispatch-with-PROJECT-and-notes §4a.3 convention)
+
+| Route | Why not |
+|---|---|
+| **B (CF Tunnel TCP)** | Requires paid CF plan. Reconsider only if SSH-tunnel pattern becomes untenable. |
+| **C (profile-gated port-publish on demand)** | CI orchestration overhead exceeds the value of "no permanent host port" — `127.0.0.1:5432` is already host-loopback only. |
+| **D (vps_exec_sql + SQL generation)** | Pgvector BLOB encoding (sqlite-vec → pgvector vector(N) via `struct.unpack`) is already implemented in `cache_deploy_mirror`. Re-implementing in pure SQL-generation duplicates logic without benefit. |
+| **E (sidecar container)** | Image build/maintenance + cold-start latency in CI > value vs. F.2's one-time venv. |
+| **F.1 (docker bridge IP)** | Bridge IP changes on `docker network` recreate. Not durable. |
+| **F.3 (sidecar on noctus-net)** | Subset of E; same trade-offs. |
 
 ---
 
@@ -183,3 +237,4 @@ Network alias: `noctus-cache-pg:5432` (internal to `noctus-net`; not host-publis
 | Date | Change | By |
 |---|---|---|
 | 2026-05-26 | Phase 1 executed (container live + schema init + verified). Phase 2 + 3 deferred. | architect (tech-lead) |
+| 2026-05-26 | §7 expanded — VPS env audit recorded + 6-route trade-off table + recommended sequence (Phase 2 = Route F.2 · Phase 3 = Route A). Awaits user go/no-go before execution. | architect (tech-lead) |

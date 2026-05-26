@@ -100,6 +100,10 @@ def main():
     parser.add_argument("--check-project-has-dispatch-routing", action="store_true", help="Stage-4 keeper: every PROJECT.md with §6 phases must carry §4a Dispatch routing (slice→lens · codification expectations s1-s4 · routes-not-taken · notes contract). Projects whose PROJECT.md first-commit predates 2026-05-26 are grandfathered automatically. Severity warning. KB § PATTERNS/common/dispatch-with-project-and-notes.md.")
     parser.add_argument("--codify-log", nargs=3, metavar=("STAGE", "TARGET", "DESCRIPTION"), help="Log a codification event with s-stage progression enforcement. STAGE ∈ {s1-emergent, s2-memory, s3-codified, s4-keeper}. TARGET = KB path / agent / keeper name. DESCRIPTION = what+why (min 20 chars). Enforces invariants: s4 requires preceding s3 for same target; s3 requires preceding s1|s2. Pass --force to bypass for backfill / same-commit compression. Solves the 5×-backfill slip from 2026-05-26. KB § PATTERNS/common/methodology-codification-pipeline.md.")
     parser.add_argument("--codify-source-ref", help="Optional provenance for --codify-log (commit SHA / session ID / project slug).")
+    parser.add_argument("--vps-exec-sql", nargs=3, metavar=("SQL_FILE", "CONTAINER", "DB"), help="Execute a SQL script inside a containerized DB on the VPS. SQL_FILE = path to local .sql file (contents are streamed). Wraps the docker-cp+docker-exec-psql idiom (the working alternative to the silent-fail `ssh docker exec psql <<EOF` heredoc path). MCP: noctus.vps.exec_sql. KB § PATTERNS/devops/containerization-operations.md.")
+    parser.add_argument("--vps-exec-sql-user", help="Override Postgres user for --vps-exec-sql (default = DB name).")
+    parser.add_argument("--vps-exec-sql-host", default="noctus-vps", help="SSH host alias for --vps-exec-sql (default noctus-vps).")
+    parser.add_argument("--vps-exec-sql-no-cleanup", action="store_true", help="Skip the tmp-file cleanup for --vps-exec-sql (debug only — leaves /tmp/<file>.sql in place on host + container).")
     parser.add_argument("--check-prod-cache-reachable", action="store_true", help="Safety gate: when NOCTUS_CACHE_BACKEND=postgres, verify the prod cache is reachable + pgvector extension installed. NO-OP for sqlite default. Severity high. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-cache-backend-env-matches-environment", action="store_true", help="Advisory: NOCTUS_CACHE_BACKEND env should match the detected environment (CI=postgres / container=postgres / local=sqlite). Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-drift-shield", action="store_true", help="Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries touching files changed in origin/prod..origin/main. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
@@ -471,6 +475,37 @@ def main():
             print(f"  {RED}missing prereq: {result['missing_prereq']}{RESET}")
             print(f"  {YELLOW}override: re-run with --force (and --codify-source-ref <rationale>){RESET}")
         sys.exit(1)
+    elif args.vps_exec_sql:
+        from tools.noctus.dev.vps_exec_sql import exec_sql
+        sql_file, container, db = args.vps_exec_sql
+        from pathlib import Path as _P
+        sql_path = _P(sql_file)
+        if not sql_path.exists():
+            print(f"  {RED}✗ SQL file not found: {sql_file}{RESET}")
+            sys.exit(1)
+        sql_content = sql_path.read_text(encoding="utf-8")
+        result = exec_sql(
+            sql=sql_content,
+            container=container,
+            db=db,
+            user=args.vps_exec_sql_user,
+            host=args.vps_exec_sql_host,
+            cleanup=not args.vps_exec_sql_no_cleanup,
+        )
+        if result.get("ok"):
+            print(f"  {GREEN}✓ exec_sql succeeded on {result['container']} / {result['db']}.{RESET}")
+            if result.get("stdout"):
+                print(f"  {GREEN}stdout:{RESET}")
+                for line in result["stdout"].splitlines():
+                    print(f"    {line}")
+            if not result.get("cleanup_ok", True):
+                print(f"  {YELLOW}⚠ cleanup left tmp file: {result.get('cleanup_err', '')}{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ exec_sql failed at step '{result.get('step')}': {result.get('error') or result.get('stderr', '').strip()}{RESET}")
+        if result.get("stderr"):
+            for line in (result["stderr"] or "").splitlines():
+                print(f"    {line}")
+        sys.exit(result.get("returncode", 1) or 1)
     elif args.check_prod_cache_reachable:
         from tools.noctus.dev.compliance import check_prod_cache_reachable
         issues = check_prod_cache_reachable()

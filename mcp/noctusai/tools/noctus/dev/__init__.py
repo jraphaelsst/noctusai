@@ -100,6 +100,7 @@ def register_all(server) -> None:
     from . import vector_costs
     from . import vectorize
     from . import vps
+    from . import vps_exec_sql
 
     agent_context.register(server)
     ai_brain.register(server)
@@ -189,6 +190,7 @@ def register_all(server) -> None:
     vector_costs.register(server)
     vectorize.register(server)
     vps.register(server)
+    vps_exec_sql.register(server)
 
 
 __all__ = ["register_all"]
