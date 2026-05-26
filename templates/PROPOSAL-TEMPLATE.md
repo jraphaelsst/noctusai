@@ -2,8 +2,7 @@
 
 > **This is the canonical proposal format for the NoctusAI dev toolkit.**
 > Every agent (human, Claude, OpenAI, …) files compliance + improvement
-> proposals in this shape. Start from this template — don't invent a new
-> structure.
+> proposals — and **dispatch surface / delivery notes** (`Note kind:` below) — in this shape. Start from this template — don't invent a new structure.
 >
 > **This proposal is a context-transfer vehicle.** The authoring agent lived
 > the situation (built the phase, detected the compliance issue, reviewed the
@@ -16,16 +15,35 @@
 > N/A (a one-product cosmetic fix has no alternatives worth listing), write
 > `N/A — {{one-line why}}` rather than silently dropping the heading.
 >
-> See `KNOWLEDGE-BASE/CONTEXT/PATTERNS/proposals-and-improvements.md` for
-> the full two-system protocol.
+> **Note kinds — the dispatch workflow.** `Note kind:` below is the *concept layer* the dispatch workflow adds on top of this file format. Three values:
+>
+> - **`phase`** (default, legacy) — end-of-phase bundled-improvement proposal. §1-6 used as-is.
+> - **`surface`** — in-flight surface from engineer to tech-lead proposing an alternative route. The engineer BLOCKS execution until the tech-lead responds (`set_proposal_status` accepted/rejected/adapted). §3.5 Alternatives + §3.4 Risks are the load-bearing sections; §3.1 Linkage explains why the alt fits the situation; §3.2 Application instructions describe what would change if accepted.
+> - **`delivery`** — post-execution return-from-engineer note. What landed + codification events emitted (`s1/s2/s3/s4`) + drift-found + scoped-improvement (the engineer-default two-leg footer's durable form). §2 Situation = "as-shipped state"; §4 Effects = "what changed"; §5 Acceptance = which dispatch-acceptance items hit / missed.
+>
+> See `KB § PATTERNS/common/dispatch-with-project-and-notes.md` for the dispatch protocol, `KB § PATTERNS/architect/proposals-and-improvements.md` for the legacy phase-proposal protocol.
 
-**Agent:** {{AGENT}}  <!-- e.g. keeper, keeper-openai-gpt-4o-mini, claude-opus-4-7 -->
-**Origin:** {{ORIGIN}}  <!-- e.g. "project:erp-metas:phase-3", "keeper:noctus.dev.validate", "lgpd:noctus.dev.lgpd_flag" -->
+**Agent:** {{AGENT}}  <!-- e.g. keeper, keeper-openai-gpt-4o-mini, claude-opus-4-7, backend-engineer, devops-engineer, architect-inline -->
+**Note kind:** {{phase | surface | delivery}}
+**Origin:** {{ORIGIN}}  <!-- e.g. "project:erp-metas:phase-3", "dispatch:cache-pg-rollout:W1-A", "keeper:noctus.dev.validate", "lgpd:noctus.dev.lgpd_flag" -->
 **Generated:** {{YYYY-MM-DD HH:MM}}
 **Severity:** {{high | medium | low}}
 **Effort:** {{high | medium | low}}
 **Affected products:** {{product1, product2, …}}
-**Status:** pending
+**Status:** pending  <!-- surface notes: tech-lead flips to accepted/rejected/adapted; delivery notes: stay 'pending' until tech-lead absorbs lessons + closes -->
+
+<!-- For kind=delivery: also include this footer block (mirrors engineer-default §7) -->
+<!--
+**Codification events emitted (this slice):**
+- s1-emergent: {{target + 1-line description, or "none"}}
+- s2-memory: {{target + 1-line description, or "none"}}
+- s3-codified: {{target + 1-line description, or "none"}}
+- s4-keeper: {{target + 1-line description, or "none"}}
+
+**drift-found:** {{leftover OUTSIDE the brief — path + shape + suspected cause, or "(none observed)"}}
+**scoped-improvement:** {{slip/pattern observed IN your slice → suggested codification, or "(none surfaced)"}}
+-->
+
 
 ---
 

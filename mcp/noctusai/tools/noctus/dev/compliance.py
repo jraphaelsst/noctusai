@@ -8147,6 +8147,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
     "CONTEXT/PATTERNS/common/claude-md-router-discipline.md",
     "CONTEXT/PATTERNS/common/lenses-applied-trailer.md",  # universal commons: every lens/role applies
+    "CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md",  # universal commons: every dispatch + inline-lens reads PROJECT.md + files notes
     "CONTEXT/PATTERNS/common/lossless-doc-refactor.md",
     "CONTEXT/PATTERNS/common/agent-context-architecture.md",
     "CONTEXT/PATTERNS/common/self-branching-mode.md",

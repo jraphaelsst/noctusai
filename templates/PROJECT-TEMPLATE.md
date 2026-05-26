@@ -97,6 +97,59 @@ Run the six-question checklist (`KB § GUIDES/seed-first-design.md § The seed-f
 
 ---
 
+## 4a. Dispatch routing (REQUIRED — the slice-to-engineer map)
+
+> **Rule.** Every PROJECT.md doubles as a dispatch brief. The tech-lead writes this section *before dispatching any slice* so the engineer (or inline-lens) knows their slice boundaries, which specialist `owns_kb` the work, what codification surfaces to expect, and which routes the tech-lead has already pre-rejected. Without §4a, dispatches drift (engineers infer scope, surface as drift-found, scope-expand, or skip codification stages). With §4a, the engineer reads ONE section and knows what's theirs. **`KB § PATTERNS/common/dispatch-with-project-and-notes.md`** is the canonical reference.
+>
+> **Block-on-surface.** If during execution an engineer (or inline-lens) sees a better route than the dispatched one, they STOP, write a **surface note** (`noctus.dev.file_proposal kind="surface"`), and wait for the tech-lead to approve / reject / adapt with rationale. They do NOT proceed on un-approved divergence. This is the "agents don't get lost" gate.
+
+### 4a.1 Slice → Lens table
+
+| Slice / Phase | Lens | Files (or globs) | Time-box | Dispatched as |
+|---|---|---|---|---|
+| {{Phase 1 / W1-A}} | {{backend-engineer / frontend-engineer / devops-engineer / architect-inline / security-advisor / compliance-advisor}} | {{paths}} | {{e.g. 2h}} | {{Agent dispatch / inline-empersonation / advisor consult}} |
+| {{Phase 2 / W1-B}} | {{…}} | {{…}} | {{…}} | {{…}} |
+
+*Inline-empersonation: tech-lead applies the named lens's discipline + `owns_kb` until the slice's commit, then switches. Same as dispatch but no subagent — used below the cutoff (<100 LoC ∧ <3 files) or when shared-state demands a single coherent voice. See `KB § PATTERNS/architect/parallelization-first-orchestration.md`.*
+
+### 4a.2 Codification expectations per slice
+
+For each slice, mark which codification stages the tech-lead expects to land. Agents log the marked stages explicitly in their **delivery note** so `check_codification_pipeline_health` stays fed.
+
+| Slice | s1 detected | s2 to memory | s3 KB+CLAUDE.md | s4 keeper | Why |
+|---|---|---|---|---|---|
+| {{Phase 1}} | {{yes/no}} | {{yes/no}} | {{yes/no}} | {{yes/no}} | {{e.g. "pattern recurs N≥3; lift to KB"}} |
+| {{Phase 2}} | {{…}} | {{…}} | {{…}} | {{…}} | {{…}} |
+
+*Pipeline: `s1 emergent` (recurrence detected) → `s2 memory` (logged in `MEMORY.md` index entry) → `s3 codified` (KB pattern + CLAUDE.md §1 one-liner) → `s4 keeper` (`check_*` function with severity). Skipping a stage silently is what `check_codification_pipeline_health` flags. Agents emit `s2/s3/s4` events to `project-history/auto-improvement.ndjson` via the codification log (or surface the gap in their delivery note if they couldn't).*
+
+### 4a.3 Routes-not-taken (pre-rejected by tech-lead)
+
+| Route | Why rejected |
+|---|---|
+| {{e.g. "Use Redis instead of pgvector for cache"}} | {{e.g. "Redis lacks vector type; double-store would drift; pgvector already in the stack"}} |
+| {{…}} | {{…}} |
+
+*This is where the tech-lead writes down the routes they've already considered and ruled out, so the dispatched engineer doesn't waste a turn surfacing them. Empty when truly no obvious alternatives exist — write `N/A — single viable path` rather than dropping the table.*
+
+### 4a.4 Notes — surface + delivery
+
+Every slice produces a **delivery note** (`noctus.dev.file_proposal kind="delivery" project="<slug>"`) at the end. A **surface note** (`kind="surface"`) is filed in-flight when the engineer sees a better route and BLOCKS until the tech-lead responds. Both kinds land in `projects/<slug>/proposals/` (the existing per-project folder — proposals = the file format; notes = the concept layer that maps to it). Filename convention: `<agent>-<ts>-<kind>-<slug>.md`.
+
+**Delivery-note contents (minimum):**
+- What landed (files + tests + acceptance hit/missed)
+- Codification events emitted (s1/s2/s3/s4 — match §4a.2 expectations)
+- `drift-found:` + `scoped-improvement:` (the engineer-default two-leg footer — durable)
+- Routes-not-taken that the engineer encountered + chose-not-to-surface (rationale)
+
+**Surface-note contents:**
+- Proposed alternative route (what + why)
+- Linkage to §4a.1 slice scope (which boundaries it expands / contracts)
+- Risk assessment (additive / breaking / cross-slice impact)
+- Wait for tech-lead `noctus.dev.set_proposal_status` → `accepted` (re-dispatch with adapted brief) or `rejected` (continue original brief with rationale logged).
+
+---
+
 ## 5. Architecture / Data Model
 
 *Keep this section if the plan involves new data, APIs, or components. Delete if the plan is purely process-oriented.*

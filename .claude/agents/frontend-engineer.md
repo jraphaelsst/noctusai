@@ -42,4 +42,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per-product frontend)** → `KB § frontend/01-CORE.md` · `KB § frontend/02-ERP.md` · `KB § frontend/03-PF.md` · `KB § frontend/04-THERAPY.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-default.md`.

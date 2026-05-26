@@ -73,4 +73,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § GUIDES/google-oauth-setup.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-default.md`.

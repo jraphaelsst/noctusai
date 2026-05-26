@@ -47,6 +47,36 @@ The harness file overlay can report `Edit`/`Write`/`Read` **success while the on
 
 **Architect-side corollary:** the architect verifies every salvaged worktree from its **own separate Bash context** (reads true disk) before committing — never trusts the engineer's report or self-verification block. A salvage `git commit` that says "nothing to commit" is the divergence tell. Divergence-clean worktree ⇒ do NOT loop-redispatch (it recurs) — apply the well-specified change architect-inline from the reliable context.
 
+## 1b. Read PROJECT.md first (project-scoped dispatches)
+
+When the brief references `projects/<slug>/PROJECT.md` (the default for project-scoped dispatches — `KB § PATTERNS/common/dispatch-with-project-and-notes.md`), **read the whole file**, not just your slice row:
+
+- §1-3 — context, constraints, design principles (frame the WHY)
+- §3a — seed-first analysis (the seam you consume or extend)
+- §4 — scope (in / out)
+- §4a — dispatch routing: §4a.1 slice→lens table (find YOUR row + confirm scope) · §4a.2 codification expectations (which s1/s2/s3/s4 events you're expected to emit) · §4a.3 routes-not-taken (alternatives the tech-lead pre-rejected — do NOT re-surface them) · §4a.4 notes contract
+- §5-6 — architecture + phase context for the slice you're touching
+
+If §4a is MISSING from the PROJECT.md and the brief still names a project slug, **surface that as drift-found** (the tech-lead's responsibility to populate). Execute the slice on the brief alone; record the missing-§4a observation in your delivery note. Do NOT block on a missing §4a — the brief contract is the override.
+
+## 1c. Surface notes — alt route ⇒ STOP + file note + BLOCK
+
+If during execution you see a better route than the dispatched one (different architecture / seam / tool / slice boundary / codification stage):
+
+1. **STOP execution.** Do NOT proceed with the proposed alternative.
+2. **Confirm not already pre-rejected** — scan PROJECT.md §4a.3 routes-not-taken.
+3. **File a surface note** via `noctus.dev.file_proposal(kind="surface", project=<slug>, title=<short>, body=<filled template>)`. Contents (mirrors `templates/PROPOSAL-TEMPLATE.md`):
+   - §1 Context — your slice row + why the alt occurred to you
+   - §2 Situation — current state vs the alt's target state
+   - §3.1 Linkage — why the alt fits the situation better
+   - §3.2 Application instructions — what would change if accepted
+   - §3.4 Risks — additive / breaking / cross-slice impact
+   - §3.5 Alternatives — the original brief route counts as one
+4. **Return to tech-lead** with the surface-note filename + your stopped-here `pwd` + the current `git diff --cached --name-only` (so the tech-lead knows your true state).
+5. **WAIT** — do not proceed until the tech-lead calls `noctus.dev.set_proposal_status` with `accepted` / `rejected` / `adapted` + a `reason` (recorded as durable trailer on the note). On `adapted`, the tech-lead re-dispatches with the adapted brief.
+
+The block-on-surface rule mirrors `§7 drift-found:` rationale — your worktree doesn't see the broad picture; the tech-lead routes cross-slice decisions.
+
 ## 2. Stage-only contract (CRITICAL)
 
 - `git add` with **explicit paths only** — never `git add .` or `-A`
@@ -71,12 +101,16 @@ The harness file overlay can report `Edit`/`Write`/`Read` **success while the on
 Status: ready
 Files: <explicit list>
 Tests: <pass/fail count if relevant>
+codification-events: s1=... s2=... s3=... s4=...  ← match PROJECT.md §4a.2 expectations; "none" for any stage not touched
 drift-found: (none observed)            ← or one line per leftover; see §7
 scoped-improvement: (none surfaced)     ← or one line per slip/pattern; see §7
+delivery-note: <filename>               ← project-scoped dispatches: filed via noctus.dev.file_proposal(kind="delivery", project=...); omit for non-project dispatches
 Commit msg: <2-5 line draft>
 ```
 
-That's it. Skip 5-category findings. Skip verification-command transcripts. Skip absolute paths. The two auto-improvement legs (`drift-found:` / `scoped-improvement:`) ARE mandatory even on a clean ready-for-commit — absence is a positive claim, not a skip (silent skip = silent-error shape).
+That's it. Skip 5-category findings. Skip verification-command transcripts. Skip absolute paths. The auto-improvement legs (`drift-found:` / `scoped-improvement:`) AND the `codification-events:` line ARE mandatory even on a clean ready-for-commit — absence is a positive claim, not a skip (silent skip = silent-error shape).
+
+**Delivery note (project-scoped dispatches only).** When the brief references a `projects/<slug>/PROJECT.md`, file a `kind="delivery"` note at end of execution via `noctus.dev.file_proposal(kind="delivery", project=<slug>, ...)`. The note is the DURABLE form of this footer — same content, persisted to `projects/<slug>/proposals/<agent>-<ts>-delivery-<slug>.md` so the tech-lead can absorb at integration time (`KB § PATTERNS/common/dispatch-with-project-and-notes.md`). The chat-return footer above is for the immediate tech-lead read; the delivery note is for the durable record + cache + audit.
 
 **If `status=blocked` OR `status=partial` OR surprises (test regressions / methodology gaps / unexpected scope expansion):**
 

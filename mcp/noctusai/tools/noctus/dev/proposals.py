@@ -13,6 +13,22 @@ Two entry points:
 The legacy `generate_proposal(title, problem, solution, ...)` shim remains
 for callers that pre-date the template workflow (e.g. `tools/review.py` when
 the LLM is unavailable and we need a bare-bones skeleton proposal).
+
+**Note kinds (the dispatch workflow concept layer).** `kind=` on
+`file_proposal` / `fill_proposal_template` is the conceptual dimension
+the dispatch workflow adds on top of this file format. Valid values:
+
+  - ``"phase"`` (default — back-compat) — end-of-phase bundled-improvement
+    proposal. The legacy meaning. Filename: ``<agent>-<ts>-<slug>.md``.
+  - ``"surface"`` — in-flight surface from engineer to tech-lead proposing
+    an alternative route. Engineer BLOCKS execution until tech-lead responds.
+    Filename: ``<agent>-<ts>-surface-<slug>.md``.
+  - ``"delivery"`` — post-execution return-from-engineer note. What landed +
+    codification events emitted + drift-found + scoped-improvement.
+    Filename: ``<agent>-<ts>-delivery-<slug>.md``.
+
+See `KB § PATTERNS/common/dispatch-with-project-and-notes.md` for the
+dispatch protocol.
 """
 import json
 import re
@@ -411,6 +427,9 @@ When this is applied, these change:
     return body.rstrip() + "\n"
 
 
+VALID_NOTE_KINDS = ("phase", "surface", "delivery")
+
+
 def file_proposal(
     *,
     title: str,
@@ -419,6 +438,7 @@ def file_proposal(
     project: Optional[str] = None,
     product: Optional[str] = None,
     subdir: Optional[str] = None,
+    kind: str = "phase",
     worktree_path: str | Path | None = None,
 ) -> dict:
     """Write a fully-rendered proposal markdown to disk.
@@ -446,16 +466,33 @@ def file_proposal(
             for evaluation sub-folders.
         subdir: Subdirectory under the product proposals dir (e.g.
             ``evaluations/<ts>``). Only valid when ``product`` is set.
+        kind: Note kind in the dispatch workflow concept layer —
+            ``"phase"`` (default, legacy bundled-improvement proposal),
+            ``"surface"`` (in-flight alt-route surface from engineer),
+            ``"delivery"`` (post-execution return-from-engineer note).
+            Shapes the filename: ``surface`` / ``delivery`` get the kind
+            slug embedded (``<agent>-<ts>-<kind>-<slug>.md``); ``phase``
+            keeps the legacy ``<agent>-<ts>-<slug>.md`` shape for
+            back-compat. See `KB § PATTERNS/common/dispatch-with-project-and-notes.md`.
         worktree_path: **Caller-aware path resolution.** When set, the
             proposal lands under the given worktree's ``projects/`` or
             ``products/`` tree instead of the MCP server's startup
             workspace. Engineers in a git worktree pass their worktree
             root; architects on main noc omit. See ``resolve_caller_root``.
     """
+    if kind not in VALID_NOTE_KINDS:
+        raise ValueError(
+            f"invalid kind={kind!r}; valid: {VALID_NOTE_KINDS}"
+        )
     if project and product:
         raise ValueError("Pass only one of `project` / `product` — not both.")
     if subdir and not product:
         raise ValueError("`subdir` requires `product` to be set.")
+    if kind in ("surface", "delivery") and not project:
+        raise ValueError(
+            f"kind={kind!r} requires `project=<slug>` — surface/delivery "
+            "notes are scoped to a dispatched project, not a product."
+        )
 
     projects_dir, products_dir = _resolve_dirs(worktree_path)
 
@@ -482,7 +519,10 @@ def file_proposal(
         )
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"{agent}-{timestamp}-{_slug(title)}.md"
+    if kind == "phase":
+        filename = f"{agent}-{timestamp}-{_slug(title)}.md"
+    else:
+        filename = f"{agent}-{timestamp}-{kind}-{_slug(title)}.md"
     filepath = target_dir / filename
     filepath.write_text(body)
     return {
@@ -492,6 +532,7 @@ def file_proposal(
         "project": _project_slug(project) if project else None,
         "product": product,
         "subdir": subdir,
+        "kind": kind,
     }
 
 
@@ -603,51 +644,89 @@ def list_proposals(agent=None, product=None):
     return results
 
 
+VALID_NOTE_STATUSES = ("accepted", "rejected", "adapted")
+
+
 def update_proposal_status(
     filename,
     status,
     reason="",
     product=None,
+    project=None,
     *,
     products_dir: Path | None = None,
     worktree_path: str | Path | None = None,
 ):
-    """Update a proposal's status to accepted/rejected.
+    """Update a proposal / note's status.
+
+    Valid statuses: ``accepted`` · ``rejected`` · ``adapted`` (for surface
+    notes where the tech-lead approves but adapts the route — re-dispatch
+    happens with a brief that reflects the adaptation).
 
     When ``product`` is given, looks in ``products/<product>/proposals/``.
+    When ``project`` is given, looks in the project's ``proposals/`` folder
+    (root projects/<slug>/ OR products/<x>/projects/<slug>/).
     Otherwise searches all ``products/*/proposals/`` for the file.
 
     Args:
         products_dir: Override the products directory (test seam). When set,
             wins over ``worktree_path``.
         worktree_path: **Caller-aware path resolution.** When set, resolves
-            against the caller's worktree (`<root>/products`). MCP write tools
-            require this because the server boots with a fixed cwd; see
+            against the caller's worktree. MCP write tools require this
+            because the server boots with a fixed cwd; see
             ``resolve_caller_root`` in ``mcp/noctusai/workspace.py``.
 
     3-tier priority: explicit ``products_dir`` > ``worktree_path`` > module
-    default (``PRODUCTS_DIR``).
+    default.
+
+    The ``reason`` field is recorded for every non-default status (not just
+    ``rejected``) — the dispatch workflow's audit trail requires rationale
+    on adapt + reject equally.
 
     Raises:
         ValueError: ``worktree_path`` is given but does not look like a
         git worktree root (handled by ``resolve_caller_root``).
     """
+    if status not in VALID_NOTE_STATUSES:
+        return {
+            "error": f"invalid status {status!r}; valid: {VALID_NOTE_STATUSES}"
+        }
+
     if products_dir is not None:
         base_products = products_dir
+        base_projects = (products_dir.parent / "projects") if products_dir.name == "products" else PROJECTS_DIR
     elif worktree_path is not None:
-        base_products = resolve_caller_root(worktree_path) / "products"
+        root = resolve_caller_root(worktree_path)
+        base_products = root / "products"
+        base_projects = root / "projects"
     else:
         base_products = PRODUCTS_DIR
+        base_projects = PROJECTS_DIR
 
     filepath = None
-    if product:
+    if project:
+        slug = _project_slug(project)
+        found = _find_project_dir(
+            slug, projects_dir=base_projects, products_dir=base_products,
+        )
+        if found is not None:
+            candidate = found / "proposals" / filename
+            if candidate.exists():
+                filepath = candidate
+    elif product:
         candidate = base_products / product / "proposals" / filename
         if candidate.exists():
             filepath = candidate
     else:
-        # Search across all products
+        # Search across all products + project proposals/ folders.
         if base_products.is_dir():
             for d in sorted(base_products.glob("*/proposals")):
+                candidate = d / filename
+                if candidate.exists():
+                    filepath = candidate
+                    break
+        if filepath is None and base_projects.is_dir():
+            for d in sorted(base_projects.glob("*/proposals")):
                 candidate = d / filename
                 if candidate.exists():
                     filepath = candidate
@@ -656,10 +735,15 @@ def update_proposal_status(
         return {"error": "Proposal not found"}
     content = filepath.read_text()
     content = re.sub(r'\*\*Status:\*\* \w+', f'**Status:** {status}', content)
-    if reason and status == "rejected":
-        content = content.replace("**Reject** — with reason: ___", f"**Reject** — with reason: {reason}")
+    if reason:
+        # Append rationale as a durable trailer (the legacy "Reject reason"
+        # template-line was specific to rejection; the dispatch workflow
+        # demands rationale on adapt + reject equally).
+        trailer = f"\n\n---\n\n**Tech-lead status change — {status}:** {reason}\n"
+        if trailer.strip() not in content:
+            content = content.rstrip() + trailer
     filepath.write_text(content)
-    return {"updated": True, "status": status}
+    return {"updated": True, "status": status, "path": str(filepath)}
 
 
 def register(server) -> None:
@@ -677,14 +761,17 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.file_proposal",
         description=(
-            "Write a fully-rendered proposal markdown. For project-phase proposals "
-            "pass `project=<slug>` — the file lands in `projects/<slug>/proposals/` "
-            "(ONE bundled proposal per phase). For keeper/compliance proposals pass "
-            "`product=<slug>` — the file lands in `products/<product>/proposals/`. "
-            "Agents typically call `noctus.dev.proposal_template`, fill it, then submit "
-            "via this tool. Dedups by title slug + key entity. Pass `worktree_path` "
-            "when calling from inside a git worktree so the proposal lands in the "
-            "worktree, not the MCP server's startup workspace."
+            "Write a fully-rendered proposal / dispatch note markdown. "
+            "`kind` (default 'phase') = dispatch-workflow concept layer: "
+            "'phase' (legacy bundled-improvement proposal), 'surface' (engineer→tech-lead "
+            "in-flight alt-route surface; engineer BLOCKS until tech-lead responds), "
+            "'delivery' (post-execution return note with codification events + drift-found + "
+            "scoped-improvement). 'surface'/'delivery' REQUIRE `project=<slug>` (dispatch-scoped). "
+            "For legacy phase proposals: project= for end-of-phase bundled improvement, OR "
+            "product= for keeper/compliance proposals (lands in `products/<product>/proposals/`). "
+            "Filename embeds kind: `<agent>-<ts>-<kind>-<slug>.md` for surface/delivery; "
+            "`<agent>-<ts>-<slug>.md` for phase (back-compat). Pass `worktree_path` when "
+            "calling from inside a git worktree. See KB § PATTERNS/common/dispatch-with-project-and-notes.md."
         ),
     )
     def _file_proposal(
@@ -694,6 +781,7 @@ def register(server) -> None:
         project: str | None = None,
         product: str | None = None,
         subdir: str | None = None,
+        kind: str = "phase",
         worktree_path: str | None = None,
     ) -> dict:
         return file_proposal(
@@ -703,6 +791,7 @@ def register(server) -> None:
             project=project,
             product=product,
             subdir=subdir,
+            kind=kind,
             worktree_path=worktree_path,
         )
 
@@ -722,10 +811,15 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.set_proposal_status",
         description=(
-            "Accept or reject a proposal. status='accepted' or 'rejected'. "
-            "Pass `worktree_path` when called from inside a git worktree so "
-            "the file path resolves under the caller's worktree, not the MCP "
-            "server's startup workspace."
+            "Accept / reject / adapt a proposal or dispatch note. "
+            "status='accepted' | 'rejected' | 'adapted' (the 'adapted' value "
+            "is for SURFACE notes where the tech-lead approves the alt route "
+            "but adapts it — re-dispatch with the adapted brief follows). "
+            "`reason` is the rationale and is recorded as a durable trailer "
+            "in the note (audit trail). Pass `project=<slug>` to search a "
+            "project's proposals/ folder (surface/delivery notes live there); "
+            "`product=<slug>` for legacy product-scoped proposals. Pass "
+            "`worktree_path` when called from inside a git worktree."
         ),
     )
     def _set_status(
@@ -733,10 +827,10 @@ def register(server) -> None:
         status: str,
         reason: str = "",
         product: str | None = None,
+        project: str | None = None,
         worktree_path: str | None = None,
     ) -> dict:
-        if status not in {"accepted", "rejected"}:
-            return {"error": f"invalid status {status!r}; valid: accepted / rejected"}
         return update_proposal_status(
-            filename, status, reason, product=product, worktree_path=worktree_path,
+            filename, status, reason,
+            product=product, project=project, worktree_path=worktree_path,
         )

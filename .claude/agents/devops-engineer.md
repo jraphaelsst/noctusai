@@ -59,4 +59,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **CI / environment / infra** → `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/environment.md` · `KB § 05-INFRASTRUCTURE.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-default.md`.
