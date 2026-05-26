@@ -49,6 +49,8 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **No silent errors.** No `except: pass`, no silent fallback, no deferral without a named destination; ambiguity → ask. → `KB § 01-PHILOSOPHY.md`
 - **Remediation markers.** A batch-able deferral lives in-code as `NOC-REMEDIATE[<class>]` — the named destination. → `KB § PATTERNS/remediation-markers.md`
 - **Doc-propagation sync.** A rule/tool change lives in KB ↔ CLAUDE.md ↔ memory ↔ tool-code the same commit. → `KB § 01-PHILOSOPHY.md`
+- **Keeper-check before doc'ing.** Query the local keeper-pattern cache before authoring any gated doc (agent/skill/CLAUDE.md/MEMORY.md/KB) — author from the live contract, not memory; the cache mirrors `compliance.py` via pre-commit refresh + lazy rebuild + `check_keeper_cache_freshness`. → `KB § PATTERNS/keeper-pattern-cache.md` · `KB § PATTERNS/keeper-check-before-docing.md`
+- **Persistent-files absorption.** Durable context in `projects/`/`.claude/worktrees/` (findings.md, PROJECT.md decisions, lessons) MUST land in KB/memory BEFORE archive or teardown — recovery pointer preserves access, absorption preserves the learning; both legs fire. → `KB § PATTERNS/persistent-files-absorption.md`
 - **Durable surfaces self-contained.** A config/script ref into `projects/`/`archive/` breaks loudly when archived. → `KB § 01-PHILOSOPHY.md`
 - **Symbol-first for dense / AI-intended docs.** Lossless-swap test gates each prose→symbol swap; `→`=routes, `⇒`=implies. → `KB § PATTERNS/doc-symbology.md`
 - **Context budget discipline.** The auto-loaded budget compounds every reply. MCP keep-list: `noctusai`+`supabase`+`n8n`+`waha`. → `KB § 01-PHILOSOPHY.md`

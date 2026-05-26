@@ -54,6 +54,7 @@ build/
 .claude/settings.local.json
 .claude/snapshots/
 .claude/worktrees/
+.claude/cache/
 
 # Artifacts (Gemini)
 .gemini/

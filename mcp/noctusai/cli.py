@@ -85,7 +85,10 @@ def main():
     parser.add_argument("--check-memory-md-index", action="store_true", help="Keeper: MEMORY.md auto-loaded-index discipline (sibling of --check-claude-md-router) — every `- [Title](file.md)` entry stays under the per-line cap and the whole file under the KB budget. MEMORY.md is OUT-OF-REPO (Claude-Code per-project store), so this gates at `validate` + this CLI flag, NOT at git commit. Silent skip if the per-project memory dir isn't configured. MCP keeper check_memory_md_index; sibling KB § PATTERNS/claude-md-router-discipline.md.")
     parser.add_argument("--check-skill-format", action="store_true", help="Keeper: every .claude/skills/<name>/SKILL.md has valid required frontmatter (name: matching dir + non-empty description: with trigger phrases). Harness-layer authoring discipline.")
     parser.add_argument("--check-agent-format", action="store_true", help="Keeper: every .claude/agents/<name>.md has valid required frontmatter (name: matching filename + description: + EXPLICIT tools:). Omitting `tools:` inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md).")
-    parser.add_argument("--check-agent-archetype-contract", action="store_true", help="Keeper: advisor agents (architect/security/compliance-reviewer) declare NO Edit/Write in tools: (read-only contract enforced at the tool layer). Executor agents (backend-engineer/frontend-engineer/engineer-default) body references `engineer-default` protocol.")
+    parser.add_argument("--check-agent-archetype-contract", action="store_true", help="Keeper: advisor agents (architect/security/compliance-reviewer) declare NO Edit/Write in tools: (read-only contract enforced at the tool layer). Executor agents (backend-engineer/frontend-engineer/devops-engineer/engineer-default) body references `engineer-default` protocol.")
+    parser.add_argument("--refresh-keeper-cache", action="store_true", help="Refresh the local keeper-pattern cache (.claude/cache/keeper-patterns.sqlite) from compliance.py + tests. Mirrors the keepers so doc-authoring agents can lookup patterns BEFORE authoring (avoid gated rework). Pair --force to bypass the in-sync short-circuit. Auto-run by pre-commit on compliance.py change; lazy-rebuilt on query-time source_sha mismatch. KB § PATTERNS/keeper-pattern-cache.md.")
+    parser.add_argument("--keeper-pattern-lookup", metavar="KEEPER_OR_FILE", help="Query the keeper-pattern cache by keeper-name substring OR file path (e.g. .claude/agents/devops-engineer.md → agent-format + agent-archetype). Print matching pattern rows. The keeper-check-before-doc'ing discipline starts here.")
+    parser.add_argument("--check-keeper-cache-freshness", action="store_true", help="Keeper: the local cache must mirror compliance.py — cache_meta.source_sha must equal sha256(compliance.py). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-keeper-cache to fix. (Pair --force with --refresh-keeper-cache to rebuild even when in-sync; the existing --force flag is shared.)")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -280,6 +283,42 @@ def main():
         )
         sys.exit(1)
 
+    elif args.refresh_keeper_cache:
+        from tools.noctus.dev import keeper_pattern_cache as kpc
+        r = kpc.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ keeper-pattern cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ keeper-pattern cache rebuilt — {r['rows_written']} rows (source_sha={r['source_sha'][:12]}).{RESET}")
+        sys.exit(0)
+    elif args.keeper_pattern_lookup:
+        from tools.noctus.dev import keeper_pattern_cache as kpc
+        arg = args.keeper_pattern_lookup
+        # File-path heuristic vs keeper-name: a path-shaped arg gets file_path, else keeper_name.
+        rows = kpc.lookup(file_path=arg) if "/" in arg or arg.endswith(".md") else kpc.lookup(keeper_name=arg)
+        if not rows:
+            print(f"  {YELLOW}(no patterns matched '{arg}'){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ {len(rows)} pattern row(s) for '{arg}':{RESET}")
+        for r in rows[:30]:
+            sev = r.get("severity") or "—"
+            print(f"    [{sev}] {r['keeper_name']} ({r['pattern_kind']}) — {r['source_file']}:{r['source_line']}")
+            if r.get("pattern_value"):
+                preview = r["pattern_value"][:120].replace("\n", " ⏎ ")
+                print(f"        {preview}{'…' if len(r['pattern_value']) > 120 else ''}")
+        if len(rows) > 30:
+            print(f"    … and {len(rows) - 30} more")
+        sys.exit(0)
+    elif args.check_keeper_cache_freshness:
+        from tools.noctus.dev.compliance import check_keeper_cache_freshness
+        issues = check_keeper_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ keeper-pattern cache fresh (mirrors compliance.py).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} keeper-cache-freshness issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
     elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
         from tools.noctus.dev.compliance import (
             check_skill_format, check_agent_format, check_agent_archetype_contract,

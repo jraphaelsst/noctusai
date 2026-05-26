@@ -30,8 +30,10 @@ ADDING A NEW DETECTOR — read this first.
 # surfaces outline_python deliberately omits. Migration evaluated
 # 2026-05-02 by ast-callers-consolidation Phase 0 → accept.
 import ast
+import hashlib
 import logging
 import re
+import sqlite3
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -7803,6 +7805,10 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_skill_format())
     all_issues.extend(check_agent_format())
     all_issues.extend(check_agent_archetype_contract())
+    # 2026-05-26 — the keeper-pattern cache MUST mirror compliance.py. A stale
+    # cache → doc-authoring agents author drift-prone docs from outdated
+    # patterns. KB § PATTERNS/keeper-pattern-cache.md.
+    all_issues.extend(check_keeper_cache_freshness())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8234,6 +8240,75 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
                     ),
                     "severity": "warning",
                 })
+    return issues
+
+
+def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26): the local keeper-pattern cache MUST mirror
+    `compliance.py` — the user mandate is *"the memory should always be the
+    keeper mirror."*
+
+    The cache (`.claude/cache/keeper-patterns.sqlite`, gitignored) is what
+    doc-authoring agents query BEFORE writing a gated doc — so a stale cache
+    means agents author drift-prone docs from outdated patterns.
+    `keeper_pattern_cache.refresh()` is idempotent; the pre-commit hook
+    auto-runs it whenever `compliance.py` is staged, and `lookup()` self-heals
+    lazily on `source_sha` mismatch. This keeper is the loud freshness gate.
+
+    Predicate: ``cache exists ∧ cache_meta.source_sha ≡ sha256(compliance.py)``.
+    Severity: ``high`` (gates the gate). Silent skip when ``compliance.py``
+    absent (a non-noc tree).
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-keeper-cache``.
+
+    KB § PATTERNS/keeper-pattern-cache.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    src = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+    if not src.exists():
+        return issues
+    cache = root / ".claude" / "cache" / "keeper-patterns.sqlite"
+    if not cache.exists():
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                "keeper-pattern cache missing — run "
+                "`python mcp/noctusai/cli.py --refresh-keeper-cache` "
+                "(KB § PATTERNS/keeper-pattern-cache.md)"
+            ),
+            "severity": "high",
+            "symbol": "keeper-cache-missing",
+        })
+        return issues
+    src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
+    try:
+        conn = sqlite3.connect(str(cache))
+        cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+        row = cur.fetchone()
+        conn.close()
+    except sqlite3.Error as e:
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                f"keeper-pattern cache unreadable ({e}) — re-create via "
+                "`--refresh-keeper-cache`"
+            ),
+            "severity": "high",
+            "symbol": "keeper-cache-unreadable",
+        })
+        return issues
+    if not row or row[0] != src_sha:
+        cached = row[0] if row else "(none)"
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                f"keeper-pattern cache STALE — cache.source_sha={cached[:12]} "
+                f"≠ compliance.py sha={src_sha[:12]}; run `--refresh-keeper-cache`"
+            ),
+            "severity": "high",
+            "symbol": "keeper-cache-stale",
+        })
     return issues
 
 
