@@ -68,4 +68,17 @@ Persistent files in projects + `.claude/worktrees/*` must be absorbed to KB/memo
 - **Test-only patterns** — some keepers have patterns defined inline in `compliance.py` without a colocated test fixture; those land as `contract-clause` rows (docstring 1st-line) which may be less complete than fixture-example. The agent's discipline: read the docstring + open the keeper if the cache row alone is insufficient — *the cache is a shortcut, not the entire contract*.
 
 ## Composes with
-[[methodology-codification-pipeline]] (this cache is a Stage-4-adjacent infrastructure — it makes the existing keepers more usable, not new keepers) · [[claude-md-router-discipline]] (the router/format-keeper sibling pattern) · [[storage-hygiene]] (the gitignored-derived-artifact precedent) · [[testing]] (regression-test-the-detector for the new keeper) · [[ast]] (AST-first extractor was the fix when regex extraction broke).
+[[methodology-codification-pipeline]] (this cache is a Stage-4-adjacent infrastructure — it makes the existing keepers more usable, not new keepers) · [[claude-md-router-discipline]] (the router/format-keeper sibling pattern) · [[storage-hygiene]] (the gitignored-derived-artifact precedent) · [[testing]] (regression-test-the-detector for the new keeper) · [[ast]] (AST-first extractor was the fix when regex extraction broke) · [[cache-auto-freshness]] (the propagation umbrella — extends the 3-leg mirror across pull/checkout boundaries via `post-merge` + `post-checkout` hooks + `refresh_all_caches` orchestrator; the closed loop on doc-update propagation).
+
+## Closed-loop propagation (since v4.0-beta)
+
+The 3-leg mirror contract above (eager pre-commit + lazy query-time + loud freshness gate) was **commit-boundary-scoped**. After v4.0-beta the loop is closed across pull/checkout/edit boundaries too:
+
+| Trigger | Mechanism |
+|---|---|
+| Edit + commit | pre-commit hook leg (existing) |
+| `git pull` / `git merge` | **`scripts/hooks/post-merge`** (new) — diff HEAD@{1}..HEAD → refresh affected caches |
+| `git checkout <branch>` | **`scripts/hooks/post-checkout`** (new) — diff prev..new → refresh affected |
+| Manual / "warm everything" | `noctus.dev.refresh_all_caches(only_stale=True)` — pre-checks freshness keepers, refreshes ONLY stale |
+
+See `KB § PATTERNS/common/cache-auto-freshness.md` for the umbrella + selection modes (`only=[...]` / `only_stale=True` / `skip=[...]` / all).
