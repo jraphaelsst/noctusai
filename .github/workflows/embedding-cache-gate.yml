@@ -1,0 +1,90 @@
+name: Embedding Cache Gate
+
+# Validates that KB + code embedding caches are reachable and fresh against
+# the shared prod cache (Trigger T3 of roadmap cache-backend-portability-2026-05).
+# Graceful-degrade: cache unreachable → warning, not failure (full Phase 3 is
+# a sibling slice; the gates here go non-blocking until the secret is provisioned
+# and the prod cache container is live).
+#
+# KB § CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
+
+on:
+  pull_request:
+    paths:
+      - "KNOWLEDGE-BASE/**/*.md"
+      - "mcp/**/*.py"
+      - "noctusai_lib/**/*.py"
+      - "products/seed/**"
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same branch so two rapid pushes don't
+# queue up redundant embedding work.
+concurrency:
+  group: cache-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  embedding-cache-validate:
+    name: Embedding Cache Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system build deps
+        # pycairo / weasyprint / psycopg2-binary build deps — same set as test.yml
+        # to keep the env shape uniform across CI jobs.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+
+      - name: Install dependencies
+        run: pip install -r mcp/noctusai/requirements.txt
+
+      - name: Check cache reachability
+        # continue-on-error: sibling slice (PGV-COMPOSE) ships the CLI flag
+        # --check-prod-cache-reachable; graceful-degrade until it lands.
+        continue-on-error: true
+        run: python mcp/noctusai/cli.py --check-prod-cache-reachable
+
+      - name: Connect to prod cache
+        # Exports the backend selector so all subsequent steps use the shared
+        # Postgres cache. NOCTUS_CACHE_POSTGRES_DSN is provisioned as a GH
+        # Actions secret by the tech-lead on first deploy (never inlined).
+        # Until the secret is set the env var is empty → backend falls back to
+        # local SQLite and subsequent steps continue-on-error.
+        run: |
+          echo "NOCTUS_CACHE_BACKEND=postgres" >> $GITHUB_ENV
+          echo "NOCTUS_CACHE_POSTGRES_DSN=${{ secrets.NOCTUS_CACHE_POSTGRES_DSN }}" >> $GITHUB_ENV
+
+      - name: Run KB vector canonical gate
+        # Advisory-only until Phase 3 (PostgresCacheBackend) ships + baseline
+        # is seeded on the prod cache. continue-on-error prevents blocking PRs
+        # on a cache that may be unreachable or unseeded.
+        continue-on-error: true
+        run: python mcp/noctusai/cli.py --check-kb-vector-canonical
+
+      - name: Run code embeddings cache freshness gate
+        # Same graceful-degrade rationale as above.
+        continue-on-error: true
+        run: python mcp/noctusai/cli.py --check-code-embeddings-cache-freshness
+
+      - name: Report embedding cost since PR opened
+        # Advisory output only — not a gate. Helps the tech-lead see cumulative
+        # embedding cost attributed to this PR's churn.
+        continue-on-error: true
+        run: >
+          python mcp/noctusai/cli.py
+          --vector-costs-total
+          --since=${{ github.event.pull_request.created_at }}

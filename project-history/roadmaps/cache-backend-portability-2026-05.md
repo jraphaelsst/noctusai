@@ -25,7 +25,7 @@ Migration kicks off when **ANY** of the following fires:
 |---|---|---|---|
 | T1 | N≥2 architects working noc concurrently | observed: ≥2 dev `feat/*` branches per week across distinct authors | shared cache stops being "nice" and starts saving real $ + wall-clock |
 | T2 | Hosted noc deployment (SaaS / shared instance) | strategic decision (not auto-detectable) | mandatory — remote agents can't hit a local SQLite file |
-| T3 | CI runs embedding-using gates | observed: CI green/red depends on a `kb_*` / `code_*` vector call | local-per-runner cache = wasted minutes + cost on every CI run |
+| T3 | CI runs embedding-using gates | observed: CI green/red depends on a `kb_*` / `code_*` vector call | local-per-runner cache = wasted minutes + cost on every CI run | **fired 2026-05-26** |
 | T4 | Embedding corpus crosses 1M chunks | observed: code-embeddings rows >1M | sqlite-vec KNN starts struggling; pgvector with HNSW handles it |
 | T5 | Multi-machine same-architect (laptop + desktop + VPS) | user-reported friction: "I keep regenerating the same 49MB on each machine" | shared cache eliminates the redundant rebuild |
 
@@ -59,6 +59,15 @@ When the abstraction has real consumers, the 5 cache modules each migrate their 
 **Trigger**: do P2.x when the next-write to that module is needed for something else anyway (fix-on-contact opportunity), OR when Phase 3 needs the consumer migrated.
 
 **Why not big-bang now**: zero current benefit + 5h of churn + test surface. Lazy migration is correct.
+
+## Phase 3 (CI slice) — embedding-cache-gate workflow (SHIPPED — workflow only)
+
+| # | Title | Files | Status |
+|---|---|---|---|
+| P3.0 | CI workflow `.github/workflows/embedding-cache-gate.yml` — connects runners to shared prod cache; all gates `continue-on-error` until secret + PostgresCacheBackend ship | NEW `.github/workflows/embedding-cache-gate.yml` | **shipped (workflow only; CI greens depend on secret + prod cache from sibling slices)** |
+| P3.0-KB | KB pattern `ci-embedding-cache-gate.md` + INDEX.md catalog row | NEW `KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md`; EDIT `INDEX.md` | **shipped** |
+
+**Next**: sibling slice PGV-COMPOSE ships `PostgresCacheBackend` + compose service + `--check-prod-cache-reachable` CLI flag → tech-lead provisions `NOCTUS_CACHE_POSTGRES_DSN` secret → remove `continue-on-error` from each gate to harden.
 
 ## Phase 3 — PostgresCacheBackend (DEFERRED — fires when T1/T2/T3 trigger)
 
@@ -117,6 +126,7 @@ The original question included "containerize the SQLite cache." Phase 5 captures
 ## Decision log
 
 - **2026-05-26**: User question + analysis → decision to **ship abstraction, defer migration**. Trigger conditions T1-T5 documented. Phase 1 shipped.
+- **2026-05-26 evening**: CI embedding-cache-gate workflow shipped (P3.0); secret `NOCTUS_CACHE_POSTGRES_DSN` to be set on first deploy. All gates are `continue-on-error` until sibling slice PGV-COMPOSE ships the `PostgresCacheBackend` + `--check-prod-cache-reachable` CLI flag.
 
 ## Retrospective (filled at first trigger)
 

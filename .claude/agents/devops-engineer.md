@@ -11,6 +11,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/deploy-config-contract.md
   - CONTEXT/PATTERNS/devops/dev-prod-parity.md
   - CONTEXT/PATTERNS/devops/ci-security-gates.md
+  - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
   - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
@@ -36,6 +37,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/containerization-operations.md`
 - **Operate the live VPS via `noctus.vps.*`.** Read-free: `ps` / `health` / `logs` / `inspect` / `images` / `disk` / `stats`. Confirm-gated: `restart` / `recreate` / `prune`. → `KB § 05-INFRASTRUCTURE.md`
 - **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
+- **CI embedding-cache gate.** GitHub Actions workflow (`embedding-cache-gate.yml`) connecting CI to the shared prod pgvector cache; secret `NOCTUS_CACHE_POSTGRES_DSN`; graceful-degrade via `continue-on-error` until full prod-cache rollout. → `KB § PATTERNS/devops/ci-embedding-cache-gate.md`
 - **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/devops/environment.md` · security advisor for review
 - **Incident response.** Triage → mitigate → root-cause → document (timeline, RCA, remediation PRs, runbook update, post-mortem). Mitigation > root-cause during the incident.
 
