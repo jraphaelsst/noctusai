@@ -2,7 +2,7 @@
 
 **The discipline.** Before authoring any doc / agent / skill / config that a `check_*` keeper gates, **query the keeper-pattern cache** ([[keeper-pattern-cache]]) for the applicable patterns. Author from the live contract, not from memory or example-mimicry. Codified 2026-05-26.
 
-**Why it matters.** This session bumped this twice in different shapes: (a) the new `devops-engineer` agent was written speculatively before the format-keeper contract was read → fortunately passed first try only because the existing `backend-engineer` was structurally close enough; (b) a test fixture-extraction regex over-matched gaps BETWEEN string literals → caught by a failing test, but had I checked AST-first patterns first I'd have used `ast.walk` from the start. The cache is the cheap way to flip "discover the contract by getting gated" → "discover the contract by querying."
+**Why it matters.** This session bumped this twice in different shapes: (a) the new `devops-engineer` agent was written speculatively before the format-keeper contract was read → fortunately passed first try only because the existing `backend-engineer` was structurally close enough; (b) a test fixture-extraction regex over-matched gaps BETWEEN string literals → caught by a failing test, but had I checked AST-first patterns first I'd have used `ast.walk` from the start. The cache is the cheap way to flip "discover the contract by getting gated" → "discover the contract by querying AND author against the pattern so you don't get gated."
 
 ## The one-line check
 
