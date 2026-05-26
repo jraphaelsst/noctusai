@@ -55,9 +55,9 @@ User-directed verification pass exercising each shipped slice against live state
 | **W3-E2** `code_baseline` | Ratify 3 pairs → mutate cache → diff | ✅ **VERIFIED** — `new=2 resolved=2 unchanged=1`, corpus_drift flag wired |
 | **W2-E4'** `codification_radar` | Cluster live `auto-improvement.ndjson` at threshold 0.75 | ✅ **VERIFIED** — 2 real clusters surfaced: {kb_embeddings, code_embeddings} (avg_score 0.805) and {kb_baseline, code_baseline} (0.825); both already at s4-keeper status so promotion ≈ noop, but the radar found the semantic pairs we'd expect from the post-close batch |
 | **W3-E3** `kb_recurrence_radar` | Consult 3 sample queries against live ledger | ✅ **VERIFIED** — 3 ranked hits per query with realistic scores 0.27–0.52, `key_overlap` flag correctly transparent; e.g. "vector calibration reasoning" → top hit `vector_calibration.py` at 0.469 |
-| **E5** `vector_costs` | Real kb_embeddings.refresh() → confirm cost ledger row | ✅ **VERIFIED** (pending B1 reformat — first attempt's process hung and held the kb-embeddings.sqlite lock; killed; retry running) |
-| **W2-E3' kb side** | Real kb_embeddings refresh → kb_search returns ranked hits | ✅ **VERIFIED** (same B1 retry) |
-| **W2-E3' code side** | Real code_embeddings refresh → code_search('extract phone number') | ⏳ **B4 in flight** — large corpus, ~$0.034 |
+| **E5** `vector_costs` | Real kb_embeddings.refresh() → confirm cost ledger row | ✅ **VERIFIED** — 1 row written to `vector-costs.ndjson`: `namespace=kb-embeddings model=text-embedding-3-small doc_count=142 chunk_count=1964 estimated_tokens=883,800 estimated_cost_usd=$0.017676` |
+| **W2-E3' kb side** | Real kb_embeddings refresh → kb_search returns ranked hits | ✅ **VERIFIED** — refresh wrote 1,964 chunks across 142 docs (0 errors). `kb_search('stale-base hazard agent dispatch')` top-3: `branching-dispatch.md` (0.423) / `dispatch-engineer-tuning.md` (0.416) / `agent-context-architecture.md` (0.394) — all semantically relevant |
+| **W2-E3' code side** | Real code_embeddings refresh → code_search('extract phone number') | 🟡 **PARTIAL — cache populated, search test deferred** — refresh ran for 35+ min and populated code-embeddings.sqlite to **79MB+** with active OpenAI calls visible (18 concurrent TCP); was wrapped before completion to close session. Cache is usable as-is; outstanding: confirm the closing `log_refresh_batch` cost row + run `code_search` end-to-end. ~5-second follow-up next session. |
 
 ### Verification-pass findings
 
@@ -68,6 +68,8 @@ User-directed verification pass exercising each shipped slice against live state
 3. **codification_radar found the post-close batch pairs unprompted**: kb_embeddings ↔ code_embeddings + kb_baseline ↔ code_baseline. Strong evidence the semantic radar works against real data; would have surfaced the cross-product symmetry even if a human hadn't already paired them in the same commit.
 
 4. **The "don't block on background" rule was codified MID-VERIFY-PASS** (commit `d13b61b3`) when I idle-polled the first kb-embeddings refresh for 5+ minutes instead of parallelizing the other slices. The rule's first real-world application was the verify pass itself, finishing in roughly half the wall-clock time of the serial path.
+
+5. **Chunk-count + cost estimates were 6× under-estimate**: kb-embeddings produced **1,964 chunks across 142 docs (~14 chunks/doc)**, not the predicted ~280. Real cost: **$0.018** vs. predicted **$0.003**. The driver is `MAX_CHUNK_CHARS=1800` interacting with KB docs that have many H2 sections — each section becomes ≥1 chunk plus character-cap splits. *Codify candidate*: surface chunk count in `vector_status()` BEFORE refreshing so future cost estimates use empirical, not theoretical, ratios.
 
 ### 🔒 Closure note (2026-05-26)
 
