@@ -89,6 +89,22 @@ This merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_
 - `git cherry origin/dev <branch>` empty `^+` lines ✓ → patch-id merged, safe to remove
 - Both fail → UNMERGED, do NOT remove (active work, cherry-pick pending, or stalled engineer)
 
+**When raw commit-count is misleading — `git patch-id --stable` as truth-source (2026-05-26).** `git rev-list --left-right --count origin/dev...<branch>` is fast but **wrong about content** after cherry-pick / rebase / replay. A branch can report "6 unique commits" purely because those 6 were replayed onto a sibling tree under different SHAs — the WORK is on `dev`, just under different commit IDs. `git cherry` and `git patch-id --stable` are the truth-sources: they compare diff content, not SHA. The recipe when raw-counts surface "N unique commits" and you suspect cherry-pick replay:
+
+```bash
+# For each parked commit, compute the stable patch-id (content-fingerprint).
+for sha in $(git -C <worktree> log --format='%H' origin/dev..HEAD); do
+  git -C <worktree> show "$sha" | git patch-id --stable | awk '{print $1}'
+done
+# Then compute the same for candidate dev twins (the suspected replays):
+for sha in $(git log --format='%H' origin/dev --since="<date>" --grep="<theme>"); do
+  git show "$sha" | git patch-id --stable | awk '{print $1}'
+done
+# Patch-IDs that match across the two sets = the WORK landed on dev under different SHAs.
+```
+
+If every parked patch-ID has a matching dev twin → the worktree is content-merged (just SHA-unique). Safe to remove via the salvage path. If even one patch-ID has no twin → unique work remaining; do NOT remove without a salvage extraction (legs 1+2 of §2.3 above). Origin: 2026-05-26 `harness-agents-skills` worktree — raw count said "6 ahead" + "79 behind", patch-id audit proved the 6 were all cherry-pick replays already on `dev` under different SHAs (the `a313107c fix(hygiene): … replay onto v4.0 router` integration); safe to delete with no extraction needed.
+
 **Lock detection + "resolve before sweep"**: `git worktree list --porcelain` reports `locked` flag. Cleanup script's `git worktree remove --force` (single force) does NOT break locks. **The mole NEVER auto-`-f -f` past a lock** — locks exist because another process is using the dir (active agent, stale lock, recovery handle). Force-removing a lock could destroy uncommitted work, stashes, or inflight artifacts the agent hadn't yet committed.
 
 **Instead**, the mole **surfaces locked-stale worktrees as UNRESOLVED findings** with a diagnosis (uncommitted-files / stashes / clean-locked) and a per-case resolution recipe. The user (or architect) decides whether to act. The "resolve" step is:

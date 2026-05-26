@@ -8,23 +8,57 @@ Without a shared cache every CI runner rebuilds the kb-embeddings + code-embeddi
 
 `.github/workflows/embedding-cache-gate.yml` wires CI to the shared cache ∧ runs the vector-using keeper gates that would otherwise be cost-prohibitive per-run.
 
-## Graceful-degrade posture
+## Graceful-degrade posture (historical context)
 
-**Phase 3 not yet fully shipped**: the `PostgresCacheBackend` + the `--check-prod-cache-reachable` CLI flag arrive in a sibling slice (PGV-COMPOSE). Until that slice is integrated ∧ the GH secret is provisioned:
+**Phase 3 shipped 2026-05-26.** This section captures the original posture during Phase 1-2 (prod cache empty / unreachable); the live workflow now uses the **conditional gating pattern** described below.
 
-- Every gate in the workflow runs with `continue-on-error: true`.
-- Cache unreachable ⇒ workflow warns ∧ exits 0 (no PR block).
-- Steps that call unshipped CLI flags log a non-zero exit that is absorbed.
+Original Phase 1-2 posture: every gate ran `continue-on-error: true` unconditionally. Cache unreachable ⇒ workflow warned ∧ exited 0 (no PR block). Steps calling unshipped CLI flags logged a non-zero exit that was absorbed. Once the prod cache went live ∧ the baseline was seeded, the tech-lead flipped each gate to the conditional shape below.
 
-Once the prod cache is live ∧ the baseline is seeded, the tech-lead removes `continue-on-error` from each gate to harden it.
+## Conditional gating pattern (parallel-liveness-aware) — the reusable shape
+
+The Phase-3 flip exposed a generalizable CI pattern: **a gate's strictness should depend on whether the validation surface is reachable in this run**. Two cases:
+
+1. **Push from main repo (secrets available)** — tunnel can open → prod cache is reachable → hard-fail makes sense (real validation)
+2. **Fork PR (no secrets — GitHub policy)** — tunnel skipped → cache unreachable → fall back to local sqlite → soft-fail makes sense (advisory only; can't meaningfully validate)
+
+The pattern uses an env-from-step flag exported by the connectivity-establishing step. The gate steps then read the flag inside `continue-on-error`:
+
+```yaml
+- name: Open SSH tunnel to prod cache-pg
+  if: ${{ secrets.NOCTUS_VPS_DEPLOY_KEY != '' && secrets.NOCTUS_VPS_HOST != '' }}
+  run: |
+    # ... ssh -L 5432:127.0.0.1:5432 -fN ... ...
+    (timeout 5 bash -c 'until nc -z 127.0.0.1 5432; do sleep 0.3; done') \
+      || (echo "::warning::tunnel failed; downstream gates soft-fail" && exit 0)
+    echo "CACHE_TUNNEL_UP=1" >> $GITHUB_ENV     # ← the load-bearing line
+
+- name: Run KB vector canonical gate
+  # Hard-fail when tunnel UP (real prod cache validation).
+  # Soft-fail when DOWN (fork PR fallback to sqlite, advisory only).
+  continue-on-error: ${{ env.CACHE_TUNNEL_UP != '1' }}
+  run: python mcp/noctusai/cli.py --check-kb-vector-canonical
+```
+
+**Why this shape generalizes.** It applies to ANY CI gate where:
+- The validation requires a secret-gated resource (prod DB / private cache / partner API)
+- Fork PRs legitimately cannot reach the resource (GitHub doesn't pass secrets to fork-PR workflows)
+- You want hard-fail under conditions where validation is real, without blocking the fork-PR contributor pipeline
+
+The key insight: `continue-on-error` accepts a **GitHub expression**, not just `true`/`false`. Exporting `CACHE_TUNNEL_UP=1` (or any flag) from the connectivity step lets downstream gates conditionally strict themselves. The flag's NAME should reflect the validation-surface being gated (the example uses `CACHE_TUNNEL_UP`; for a partner API it might be `PARTNER_API_REACHABLE`).
+
+**Anti-pattern**: leaving `continue-on-error: true` unconditional even after the validation surface is live. The gate becomes permanently advisory and the methodology layer loses its closed-loop. Once the secret-gated resource is reachable from the main repo's CI, FLIP the gate to conditional hard-fail.
+
+## Required GH secrets
 
 ## Required GH secrets
 
 | Secret | Value shape | Provisioned by |
 |---|---|---|
-| `NOCTUS_CACHE_POSTGRES_DSN` | `postgresql://user:pass@host:port/dbname` | tech-lead, on first deploy of the prod cache container |
+| `NOCTUS_VPS_DEPLOY_KEY` | ed25519 private key (restricted via `command="/bin/false",no-pty,no-X11-forwarding,no-agent-forwarding,permitopen="127.0.0.1:5432"`) | tech-lead, on first wire-up of the CI tunnel |
+| `NOCTUS_VPS_HOST` | VPS hostname (the `ssh-keyscan` target) | tech-lead, on first wire-up |
+| `NOCTUS_CACHE_POSTGRES_DSN` | `postgresql://user:pass@127.0.0.1:5432/dbname` (post-tunnel localhost) | tech-lead, on first deploy of the prod cache container |
 
-Secret MUST be set in repo `Settings → Secrets and variables → Actions` before the workflow can connect to the shared cache. Until it is set, `NOCTUS_CACHE_POSTGRES_DSN` is empty ∧ the backend silently falls back to local SQLite (graceful-degrade via the `get_backend()` factory in `cache_backend.py`).
+Secrets MUST be set in repo `Settings → Secrets and variables → Actions` before the workflow can connect. Until they are, the tunnel step skips ∧ `CACHE_TUNNEL_UP` stays unset ∧ the conditional gating pattern auto-soft-fails downstream gates (graceful-degrade via fall-through, not via explicit `continue-on-error: true`). Sibling KB: `KB § CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md` documents the `restrict`-vs-`permitopen` quirk that caught us during first wire-up.
 
 ## Cost characteristic
 
