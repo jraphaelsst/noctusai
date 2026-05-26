@@ -666,6 +666,24 @@ state change, not a removal.
 - **To add another product's control-plane mount:** add a slug entry to `_C_VOLUME_EXTRA` (+ extend the test). No hand-restore, no accept entry.
 - **Recorded by:** `container-first-codify-and-absorb-ke` P4 (2026-05-23 surfaced → 2026-05-24 formalized) — the npm-10 seed-Dockerfile commit tripped the gate and converted this from accept to formalize.
 
+## Entries from `harness-agents-skills` (filed 2026-05-25)
+
+### Specialist personas live in TWO homes — agno charters + `.claude/agents` (two runtimes) — [A]
+
+- **Divergence:** the senior-specialist personas (architect / security / code-reviewer / backend / frontend / …) exist as BOTH `dev_team/src/dev_team/charters/*.md` (the agno multi-agent runtime) AND `.claude/agents/*.md` (the Claude Code harness runtime). N=2 duplication of persona text.
+- **Why accept (not formalize):** the two are DIFFERENT execution substrates — agno (a paid product, `noctus.team.*`, collaborate-mode cross-talk) vs the Claude Code harness (the day-to-day branch-isolated dispatch: read-only advisors + worktree executors). Neither can `import` the other's format. The shared core (the universal §1 rules) already lives once in `CLAUDE.md` / `dev_team/.../charters/shared.md`; only the thin role-specific layer is dual-authored. Each `.claude/agents/*.md` carries an `Adapted from dev_team/.../X.md` provenance line so the pair is greppable.
+- **Bound:** a THIRD consumer of the same persona, OR role-text drift between the two homes, flips this to [F] — extract a shared persona-core both runtimes consume (plan option A2).
+- **Decision:** A3 of the `harness-agents-skills` plan, user-approved 2026-05-25.
+
+### Three CLAUDE.md backup poles tracked in-repo at `backup/` — [A]
+
+- **Divergence:** `backup/CLAUDE.md.bak` (verbose original) + `CLAUDE-Aggressive.md.bak` + `CLAUDE-Moderate.md.bak` live at repo root — unusual for a docs tree.
+- **Why accept:** they are the rollback + comparison poles for the v4.0 router synthesis. `KB § PATTERNS/claude-md-router-discipline.md` references them as the rollback mechanism (`cp backup/<pole> CLAUDE.md`). User-requested for safe reversibility (2026-05-25). Revisit at integration — keep as durable rollback OR gitignore to local-only.
+
+### `harness-agents-skills` shipped commit-per-phase, not the single-commit first floated — [A]
+
+- The user initially asked for one squashed commit (easy revert), then revised mid-build to **commit-per-phase** (more auditable). Per-phase won; the parked `feat/harness-agents-skills` checkpoint + a `git revert` of the phase range preserves reversibility without losing the audit trail. Recorded so the deviation from the single-commit ask is non-silent.
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.

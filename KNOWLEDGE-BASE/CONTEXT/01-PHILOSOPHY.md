@@ -844,6 +844,8 @@ Bundled Claude Code skills used in this repo:
 - **`loop`** — recurring tasks / polling.
 - **`schedule`** — background routines (CronCreate-based).
 - **`security-review`** — occasional security passes.
+- **`codify`** — Stage-4 codification driver (discipline → mechanical gate; drains the methodology-codification-pipeline). On-list since 2026-05-25.
+- **`noc-*` workspace skills** (`.claude/skills/`) — the repo-native PROCEDURE layer authored by the `harness-agents-skills` refactor (2026-05-25): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` + the `skill-creator` meta-skill. They re-home the old `CLAUDE.md` §3 routing procedures OFF the always-on budget (`KB § PATTERNS/claude-md-router-discipline.md`) and auto-trigger on their phrases. ON-list by construction — they ARE the workspace.
 
 **Off-list (policy)**: `keybindings-help`, `simplify`, `fewer-permission-prompts`, `claude-api`, `init`, `review`. Bundled skills can't be CLI-disabled, but the policy reduces accidental invocation. (`init` and `review` overlap with repo-native tooling — `CLAUDE.md` already exists; the MCP keeper performs reviews.) `claude-api` is for building Anthropic SDK apps directly; this repo's LLM access goes through `noctusai_lib.llm` so the skill rarely applies.
 
