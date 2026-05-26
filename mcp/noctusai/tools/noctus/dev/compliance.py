@@ -8124,6 +8124,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/minimum-viable-rebuild.md",
     "CONTEXT/PATTERNS/common/scoped-auto-improvement.md",
     "CONTEXT/PATTERNS/common/kb-vector-search.md",
+    "CONTEXT/PATTERNS/common/roadmap-tracking.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
