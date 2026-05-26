@@ -41,15 +41,18 @@ Notable behavior:
 
 ## `refresh_all_caches` orchestrator
 
-`noctus.dev.refresh_all_caches(force=False, skip=None)` runs all 5 cache refreshes in sequence:
+`noctus.dev.refresh_all_caches(...)` with **4 selection modes** (mutually exclusive):
 
-```
-1. keeper-patterns       (mirrors compliance.py)
-2. agent-context         (mirrors .claude/agents/<name>.md ∪ owned_kb)
-3. auto-improvement      (mirrors project-history/auto-improvement.ndjson)
-4. kb-embeddings         (vector cache over KNOWLEDGE-BASE/**/*.md)
-5. code-embeddings       (vector cache over code corpus)
-```
+| Mode | Param | Behavior |
+|---|---|---|
+| **specified** (most-specified) | `only=["kb-embeddings", ...]` | Refresh ONLY listed caches; everything else skipped. Use when you KNOW what needs refresh. |
+| **stale-detect** (smart default) | `only_stale=True` | Pre-check freshness keepers; refresh ONLY caches with surfaced drift. Zero work on clean caches — no cache walk overhead. |
+| **skip** | `skip=["code-embeddings"]` | Refresh all except listed. Useful when offline (skip the expensive vector caches). |
+| **all** | (none of the above) | Walk all 5 caches; each cache's internal source_sha guard still skips in-sync content. Lower-overhead "verify everything" pass. |
+
+Combine any mode with `force=True` to rebuild matching caches even when source_sha matches.
+
+Valid cache names: `keeper-patterns` / `agent-context` / `auto-improvement` / `kb-embeddings` / `code-embeddings`.
 
 Returns:
 ```python
@@ -59,9 +62,14 @@ Returns:
   "failures": [cache_name, ...],
   "total_rows_written": int,
   "warnings": [str, ...],
-  "skipped": [cache_name, ...]
+  "skipped": [cache_name, ...],
+  "selection_mode": "only" | "only-stale" | "skip" | "all"
 }
 ```
+
+### `detect_stale_caches()`
+
+Sibling tool. Returns the list of cache names whose source has drifted, with NO refresh. Lightweight; powers the `only_stale=True` mode and useful for status displays.
 
 ## `/refresh-caches` slash command
 

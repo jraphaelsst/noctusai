@@ -41,6 +41,7 @@ KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -59,25 +60,121 @@ def _refresh_one(name: str, refresh_call: Callable[[], dict]) -> tuple[dict, str
         return ({"ok": False, "error": str(e)[:200]}, f"{name}: {str(e)[:120]}")
 
 
-def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str, Any]:
-    """Refresh every keeper-mirror cache.
+_ALL_CACHES = (
+    "keeper-patterns",
+    "agent-context",
+    "auto-improvement",
+    "kb-embeddings",
+    "code-embeddings",
+)
+
+
+def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
+    """Return the subset of caches whose source has drifted since last refresh.
+
+    Lightweight check — opens each cache's freshness keeper and includes
+    the cache name iff issues surface. NO refresh happens; this is the
+    "only refresh what's actually stale" predicate.
 
     Args:
-      force: pass `force=True` to each cache's refresh (rebuild even if
-        source_sha matches).
-      skip: optional list of cache names to skip (e.g.
-        `["code-embeddings"]` when offline).
+      repo_root: optional override (defaults to settings.REPO_ROOT).
 
-    Returns: orchestration summary.
+    Returns: list of cache names in `_ALL_CACHES` order whose source
+    differs from the cached state.
     """
-    skip_set = set(skip or [])
+    stale: list[str] = []
+    # Each cache has its own freshness keeper in compliance.py. We
+    # invoke each, and consider the cache stale if ANY issues surface.
+    keeper_map: dict[str, str] = {
+        "keeper-patterns":    "check_keeper_cache_freshness",
+        "agent-context":      "check_agent_context_cache_freshness",
+        "auto-improvement":   "check_auto_improvement_cache_freshness",
+        "kb-embeddings":      "check_kb_vector_canonical",
+        "code-embeddings":    "check_code_embeddings_cache_freshness",
+    }
+    try:
+        from . import compliance as _c
+    except Exception:  # noqa: BLE001
+        return list(_ALL_CACHES)  # defensive: if compliance won't import, refresh everything
+    for cache_name in _ALL_CACHES:
+        keeper_name = keeper_map[cache_name]
+        keeper_fn = getattr(_c, keeper_name, None)
+        if keeper_fn is None:
+            # Conservative: if no keeper, mark stale so caller has the option to refresh.
+            stale.append(cache_name)
+            continue
+        try:
+            issues = keeper_fn(repo_root) if repo_root else keeper_fn()
+        except Exception:  # noqa: BLE001 — defensive
+            stale.append(cache_name)
+            continue
+        if issues:
+            stale.append(cache_name)
+    return stale
+
+
+def refresh_all(
+    force: bool = False,
+    skip: list[str] | None = None,
+    only: list[str] | None = None,
+    only_stale: bool = False,
+) -> dict[str, Any]:
+    """Refresh keeper-mirror caches.
+
+    Selection (mutually exclusive, applied in this priority):
+      1. `only=[...]`: refresh ONLY the listed caches; everything else
+         skipped. Pass empty list to refresh nothing.
+      2. `only_stale=True`: pre-check freshness keepers and refresh ONLY
+         caches with surfaced drift. Skips clean ones entirely (no SHA
+         walk overhead).
+      3. Neither + `skip=[...]`: refresh every cache except those in skip.
+      4. None of the above: refresh all 5 (each cache's internal SHA
+         guard still skips in-sync content; only overhead is the walk).
+
+    Args:
+      force: pass `force=True` to each refreshed cache (rebuild even when
+        source_sha matches). Combine with `only=[...]` for targeted force.
+      skip: cache names to omit (used when `only` / `only_stale` not set).
+      only: explicit allowlist; supersedes `skip`. Names must be in
+        `_ALL_CACHES`; unknown names surface in warnings.
+      only_stale: pre-check freshness keepers; refresh only stale caches.
+
+    Returns: orchestration summary `{ok, ts, refreshed, failures,
+    total_rows_written, warnings, skipped, selection_mode}`.
+    """
+    # Resolve selection.
+    selection_mode = "all"
+    if only is not None:
+        # Specified: only refresh listed caches.
+        valid = set(_ALL_CACHES)
+        requested = set(only)
+        unknown = requested - valid
+        active = requested & valid
+        selection_mode = "only"
+    elif only_stale:
+        stale = detect_stale_caches()
+        active = set(stale)
+        unknown = set()
+        selection_mode = "only-stale"
+    else:
+        skip_set = set(skip or [])
+        active = set(_ALL_CACHES) - skip_set
+        unknown = set()
+        selection_mode = "skip" if skip else "all"
+
     refreshed: dict[str, dict] = {}
     failures: list[str] = []
     warnings: list[str] = []
     total_rows = 0
+    if unknown:
+        warnings.append(
+            f"unknown cache name(s) ignored: {sorted(unknown)}; "
+            f"valid: {sorted(_ALL_CACHES)}"
+        )
+    skipped_names = sorted(set(_ALL_CACHES) - active)
 
     # 1. keeper-pattern cache
-    if "keeper-patterns" not in skip_set:
+    if "keeper-patterns" in active:
         try:
             from . import keeper_pattern_cache as kpc
             result, err = _refresh_one("keeper-patterns",
@@ -91,7 +188,7 @@ def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str,
             warnings.append(f"keeper-patterns import: {str(e)[:120]}")
 
     # 2. agent-context cache
-    if "agent-context" not in skip_set:
+    if "agent-context" in active:
         try:
             from . import agent_context_cache as acc
             result, err = _refresh_one("agent-context",
@@ -105,7 +202,7 @@ def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str,
             warnings.append(f"agent-context import: {str(e)[:120]}")
 
     # 3. auto-improvement cache
-    if "auto-improvement" not in skip_set:
+    if "auto-improvement" in active:
         try:
             from . import auto_improvement as ai
             result, err = _refresh_one("auto-improvement",
@@ -119,7 +216,7 @@ def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str,
             warnings.append(f"auto-improvement import: {str(e)[:120]}")
 
     # 4. kb-embeddings cache
-    if "kb-embeddings" not in skip_set:
+    if "kb-embeddings" in active:
         try:
             from . import kb_embeddings as kbe
             result, err = _refresh_one("kb-embeddings",
@@ -135,7 +232,7 @@ def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str,
             warnings.append(f"kb-embeddings import: {str(e)[:120]}")
 
     # 5. code-embeddings cache
-    if "code-embeddings" not in skip_set:
+    if "code-embeddings" in active:
         try:
             from . import code_embeddings as ce
             result, err = _refresh_one("code-embeddings",
@@ -157,7 +254,8 @@ def refresh_all(force: bool = False, skip: list[str] | None = None) -> dict[str,
         "failures": failures,
         "total_rows_written": total_rows,
         "warnings": warnings,
-        "skipped": sorted(skip_set),
+        "skipped": skipped_names,
+        "selection_mode": selection_mode,
     }
 
 
@@ -166,18 +264,38 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.refresh_all_caches",
         description=(
-            "Refresh all 5 keeper-mirror caches in sequence (keeper-patterns, "
-            "agent-context, auto-improvement, kb-embeddings, code-embeddings). "
-            "Optional `force=True` to rebuild even when source_sha matches. "
-            "Optional `skip=[...]` to omit specific caches. Returns per-cache "
-            "outcome + failures list + total_rows_written. Called by the "
-            "post-merge / post-checkout git hooks for automatic freshness; "
-            "also user-invocable via /refresh-caches. "
-            "KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md."
+            "Refresh keeper-mirror caches. SELECTION MODES (mutually exclusive):\n"
+            "  • only=[...]:     refresh ONLY listed caches (most specified).\n"
+            "  • only_stale=True: pre-check freshness keepers; refresh ONLY stale.\n"
+            "  • skip=[...]:     refresh all except listed.\n"
+            "  • (none):         refresh all 5 (each cache's source_sha guard "
+            "                    still skips in-sync content; only orchestrator "
+            "                    walk overhead).\n"
+            "Valid cache names: keeper-patterns / agent-context / "
+            "auto-improvement / kb-embeddings / code-embeddings.\n"
+            "Optional `force=True` to rebuild even when source_sha matches.\n"
+            "Returns per-cache outcome + failures + total_rows_written + "
+            "selection_mode. KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md."
         ),
     )
-    def _refresh(force: bool = False, skip: list[str] | None = None) -> dict:
-        return refresh_all(force=force, skip=skip)
+    def _refresh(force: bool = False,
+                 skip: list[str] | None = None,
+                 only: list[str] | None = None,
+                 only_stale: bool = False) -> dict:
+        return refresh_all(force=force, skip=skip, only=only, only_stale=only_stale)
+
+    @server.tool(
+        name="noctus.dev.detect_stale_caches",
+        description=(
+            "Pre-check freshness keepers across the 5 keeper-mirror caches; "
+            "return the list of cache names whose source differs from the "
+            "cached state. NO refresh happens — this is the predicate "
+            "powering `refresh_all_caches(only_stale=True)`. Lightweight "
+            "compared to a full refresh; useful for status displays."
+        ),
+    )
+    def _detect() -> list[str]:
+        return detect_stale_caches()
 
 
-__all__ = ["refresh_all", "register"]
+__all__ = ["refresh_all", "detect_stale_caches", "register"]

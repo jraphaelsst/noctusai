@@ -8,21 +8,26 @@ You are running the **refresh-caches** protocol. The user invoked `/refresh-cach
 
 The 5 keeper-mirror caches (`keeper-patterns` / `agent-context` / `auto-improvement` / `kb-embeddings` / `code-embeddings`) each have their own refresh logic. This command runs all of them in one orchestrated sequence + reports per-cache outcome.
 
-## When to use
+## When to use which mode
 
-- After `git pull` brought in many changes (post-merge hook also fires, but this is the manual equivalent).
-- After a long out-of-band edit session.
-- Start of a session that will lean heavily on vector search.
-- After an embedding model upgrade (use `--force` to rebuild everything).
-- When `--check-*-cache-freshness` keepers report drift you want to fix.
+| Scenario | Recommended mode |
+|---|---|
+| Start of session, want fresh state | `only_stale=True` (default; touches nothing if clean) |
+| Just pulled / branch-switched (hooks should've fired, but verify) | `only_stale=True` |
+| Specific drift surfaced by keeper | `only=["<name>"]` |
+| Offline / no OpenAI key | `skip=["kb-embeddings","code-embeddings"]` |
+| Model upgrade / schema migration | `only=["<name>"], force=True` |
+| Audit "are all 5 actually in-sync?" | `only_stale=True` first; if empty, you're clean |
 
 ## Protocol
 
-1. Call `noctus.dev.refresh_all_caches()` (MCP).
-   - Optional `force=True` to rebuild even when source_sha matches.
-   - Optional `skip=["code-embeddings"]` to omit a cache (useful when offline).
+1. **Default — refresh only what's stale**: call `noctus.dev.refresh_all_caches(only_stale=True)`. This pre-checks freshness keepers and refreshes ONLY caches whose source has drifted. Zero work on clean caches.
+2. **Specified**: `noctus.dev.refresh_all_caches(only=["kb-embeddings"])` — refresh ONLY the listed caches. Most explicit; use when you know which caches need attention.
+3. **Skip-mode**: `noctus.dev.refresh_all_caches(skip=["code-embeddings"])` — refresh all except listed (useful when offline; code corpus is the heaviest).
+4. **Full**: `noctus.dev.refresh_all_caches()` — refresh all 5; each cache's source_sha guard still skips in-sync content, so this is a "walk to verify" pass.
+5. **Force**: pair any of the above with `force=True` to rebuild even when source_sha matches. RESERVED for: model upgrade, schema migration, debug.
 
-2. Report per-cache outcome:
+Report per-cache outcome:
    ```
    keeper-patterns:   ✓ rebuilt / in-sync
    agent-context:     ✓ rebuilt / in-sync
