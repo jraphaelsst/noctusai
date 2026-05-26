@@ -7833,6 +7833,17 @@ def check_all_products() -> tuple[int, list]:
     # vector-DB-is-enrichment principle. Severity warning (advisory layer,
     # never blocking). KB § PATTERNS/common/kb-vector-search.md.
     all_issues.extend(check_kb_vector_canonical())
+    # 2026-05-26 (W2-E3' code-embeddings) — fifth keeper-mirror cache; sibling
+    # of kb-embeddings. Code source ↔ cache freshness; orphan-row + per-file
+    # source_sha. Severity warning (advisory discovery layer). KB § CONTEXT/
+    # PATTERNS/common/code-embeddings.md.
+    all_issues.extend(check_code_embeddings_cache_freshness())
+    # 2026-05-26 (W2-E6 kb-baseline) — ratified-canonical layer over the
+    # owns_kb vector signal. Surfaces when current findings diverge from
+    # the latest ratified baseline by > threshold. Severity warning
+    # (advisory; ratification is human-reasoning, not auto-tuning).
+    # KB § CONTEXT/PATTERNS/common/vector-baseline.md.
+    all_issues.extend(check_kb_semantic_drift())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8127,6 +8138,8 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/roadmap-tracking.md",
     "CONTEXT/PATTERNS/common/vector-cost-tracking.md",
     "CONTEXT/PATTERNS/common/vector-calibration.md",
+    "CONTEXT/PATTERNS/common/code-embeddings.md",
+    "CONTEXT/PATTERNS/common/vector-baseline.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
@@ -8887,6 +8900,180 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
                 "severity": "warning",
                 "symbol": "kb-vector-stale",
             })
+    return issues
+
+
+def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, W2-E3'): the code-embeddings cache MUST
+    mirror each source file's `sha256(file)`. Fifth member of the keeper-mirror
+    family — sibling of `check_kb_vector_canonical`, applied to the code
+    corpus instead of the docs corpus.
+
+    Predicates (severity WARNING — advisory keeper, not blocker):
+      (a) Every cached chunk's `path` resolves to a real source file under
+          the tracked roots (`mcp/`, `noctusai_lib/`, `products/seed/`).
+          Orphan rows (file deleted but cache row remains) ⇒ flag for refresh.
+      (b) When the cache has rows, every chunk's `source_sha` must match
+          the live file. Stale ⇒ flag.
+
+    Severity ``warning`` (NOT high) — vector code search is advisory; a
+    stale or partially-orphaned cache degrades discovery but never breaks
+    correctness. Surface, don't block.
+
+    Silent skip when:
+      - The cache file is absent (no rows to validate — fresh clone).
+      - No tracked code roots exist under repo_root (non-noc tree).
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-code-embeddings``.
+
+    KB § CONTEXT/PATTERNS/common/code-embeddings.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    cache = root / ".claude" / "cache" / "code-embeddings.sqlite"
+    tracked_roots = ("mcp", "noctusai_lib", "products/seed")
+    if not any((root / r).is_dir() for r in tracked_roots) or not cache.exists():
+        return issues
+    try:
+        conn = sqlite3.connect(str(cache))
+        try:
+            cur = conn.execute(
+                "SELECT path, source_sha FROM code_chunks GROUP BY path"
+            )
+            rows = list(cur.fetchall())
+        except sqlite3.OperationalError:
+            rows = []
+        conn.close()
+    except sqlite3.Error as e:
+        issues.append({
+            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "issue": (
+                f"code-embeddings cache unreadable ({e}) — refresh via "
+                "--refresh-code-embeddings"
+            ),
+            "severity": "warning",
+            "symbol": "code-vector-cache-unreadable",
+        })
+        return issues
+    for path, cached_sha in rows:
+        src = root / path
+        if not src.exists():
+            issues.append({
+                "product": "<harness>", "file": str(cache.relative_to(root)),
+                "issue": (
+                    f"code-embeddings cache has rows for `{path}` but the "
+                    f"file doesn't exist (orphan). Refresh with "
+                    f"--refresh-code-embeddings to drop orphans."
+                ),
+                "severity": "warning",
+                "symbol": "code-vector-orphan",
+            })
+            continue
+        try:
+            live_sha = hashlib.sha256(src.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if live_sha != cached_sha:
+            issues.append({
+                "product": "<harness>", "file": path,
+                "issue": (
+                    f"code-embeddings stale for `{path}` — cached.sha="
+                    f"{cached_sha[:12]} ≠ live={live_sha[:12]}; refresh via "
+                    f"--refresh-code-embeddings."
+                ),
+                "severity": "warning",
+                "symbol": "code-vector-stale",
+            })
+    return issues
+
+
+def check_kb_semantic_drift(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, W2-E6): surfaces when the live owns_kb
+    vector validation diverges from the latest ratified baseline by more
+    than the drift threshold (default 5 NEW findings).
+
+    Sibling of `check_kb_vector_canonical` — same advisory tier, applied
+    to a different layer of the signal stack:
+      - `check_kb_vector_canonical` enforces the markdown-canonical contract
+        (cache mirrors source-of-truth).
+      - `check_kb_semantic_drift` enforces the ratified-canonical contract
+        (current signal ≈ approved baseline; new drift gets reviewed, not
+        silently accepted).
+
+    Severity ``warning`` (NOT high) — ratification is human-reasoning, not
+    auto-blocking. The keeper surfaces drift; the architect ratifies or
+    fixes case-by-case.
+
+    Silent skip when:
+      - `KNOWLEDGE-BASE/` is absent (non-noc tree).
+      - The kb-embeddings cache is absent (advisory layer not initialized).
+      - No tools.noctus.dev.kb_baseline module (defensive).
+
+    KB § CONTEXT/PATTERNS/common/vector-baseline.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not (root / "KNOWLEDGE-BASE").is_dir():
+        return issues
+    cache = root / ".claude" / "cache" / "kb-embeddings.sqlite"
+    if not cache.exists():
+        return issues
+    try:
+        from .kb_baseline import diff as _diff, _DRIFT_THRESHOLD
+    except Exception:  # noqa: BLE001 — defensive, never crash compliance
+        return issues
+    try:
+        d = _diff()
+    except Exception:  # noqa: BLE001
+        return issues
+    if not d.get("ok"):
+        return issues
+    baseline_id = d.get("baseline_id")
+    new_count = len(d.get("new_findings", []))
+    if baseline_id is None:
+        # No baseline ratified. If there ARE current findings, suggest
+        # ratification — silent skip when there are none.
+        current = d.get("current_count", 0)
+        if current > 0:
+            issues.append({
+                "product": "<harness>",
+                "file": "project-history/kb-baselines/",
+                "issue": (
+                    f"owns_kb validation surfaces {current} finding(s) but "
+                    f"no baseline ratified — call `noctus.dev.kb_ratify` "
+                    f"with a reason to baseline the current state, then "
+                    f"subsequent runs report only NEW drift."
+                ),
+                "severity": "warning",
+                "symbol": "kb-baseline-missing",
+            })
+        return issues
+    if new_count > _DRIFT_THRESHOLD:
+        issues.append({
+            "product": "<harness>",
+            "file": "project-history/kb-baselines/",
+            "issue": (
+                f"owns_kb validation shows {new_count} NEW finding(s) since "
+                f"baseline `{baseline_id}` (threshold {_DRIFT_THRESHOLD}). "
+                f"Review via `noctus.dev.kb_baseline_diff`; fix or re-ratify "
+                f"with `noctus.dev.kb_ratify`."
+            ),
+            "severity": "warning",
+            "symbol": "kb-semantic-drift",
+        })
+    if d.get("kb_corpus_drifted"):
+        issues.append({
+            "product": "<harness>",
+            "file": "project-history/kb-baselines/",
+            "issue": (
+                f"KB corpus has shifted since baseline `{baseline_id}` was "
+                f"ratified — resolved_findings in the diff may be artifacts "
+                f"of changed corpus, not real fixes. Consider re-ratifying "
+                f"once the new corpus state is reviewed."
+            ),
+            "severity": "warning",
+            "symbol": "kb-baseline-corpus-drifted",
+        })
     return issues
 
 

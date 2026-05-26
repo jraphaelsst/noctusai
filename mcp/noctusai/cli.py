@@ -101,6 +101,13 @@ def main():
     parser.add_argument("--kb-search", metavar="QUERY", help="Semantic search over the KB — embeds the query, returns top-K KB chunks by cosine similarity. Use for fuzzy-intent queries where exact terminology is unknown. For named patterns, use grep + INDEX.md.")
     parser.add_argument("--top-k", type=int, default=5, help="Number of results to return for --kb-search (default 5).")
     parser.add_argument("--check-kb-embeddings-cache-freshness", action="store_true", help="Keeper: KB embeddings cache should mirror each KB doc's sha256. Severity WARNING (not high) — vector search is advisory; stale cache degrades discovery but never breaks correctness. Auto-refresh in pre-commit on KB doc change.")
+    parser.add_argument("--refresh-code-embeddings", action="store_true", help="Re-populate the local code embeddings cache (.claude/cache/code-embeddings.sqlite) from the tracked source roots (mcp/, noctusai_lib/, products/seed/). Python files chunked at module-level FunctionDef/AsyncFunctionDef/ClassDef via stdlib ast; TS/TSX one chunk per file. ADDITIVE discovery layer — does not replace grep / scan_recurrence. KB § CONTEXT/PATTERNS/common/code-embeddings.md.")
+    parser.add_argument("--code-search", metavar="QUERY", help="Semantic search over the code corpus — embeds the query, returns top-K matching code symbols by cosine similarity. Use for fuzzy-intent queries ('find helpers that extract a phone number') where exact identifiers are unknown.")
+    parser.add_argument("--check-code-embeddings-cache-freshness", action="store_true", help="Keeper: code embeddings cache should mirror each source file's sha256. Severity WARNING (advisory layer). Auto-refresh in pre-commit on staged .py/.ts/.tsx change.")
+    parser.add_argument("--kb-ratify", metavar="REASON", help="Snapshot the current kb_validate_owns_kb findings as approved-canonical baseline. REQUIRED reason explains why (future-us reads it). Persists durably to project-history/kb-baselines/. KB § CONTEXT/PATTERNS/common/vector-baseline.md.")
+    parser.add_argument("--kb-baseline-diff", metavar="AGAINST", nargs="?", const="latest", help="Compare current owns_kb validation against a ratified baseline (default: latest). Shows new_findings + resolved_findings + corpus-drift flag — the signal-vs-noise differentiator.")
+    parser.add_argument("--kb-baseline-list", action="store_true", help="Chronological summary of every ratified baseline — id, ratified_at, reason, finding_count.")
+    parser.add_argument("--check-kb-semantic-drift", action="store_true", help="Keeper: surfaces when live owns_kb validation diverges from latest ratified baseline by > threshold. Severity WARNING. Suggests ratification when no baseline exists yet.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -441,13 +448,94 @@ def main():
             print(f"        {preview}…")
         sys.exit(0)
     elif args.check_kb_embeddings_cache_freshness:
-        from tools.noctus.dev.compliance import check_kb_embeddings_cache_freshness
-        issues = check_kb_embeddings_cache_freshness()
+        # NOTE: drift-found — CLI flag historically pointed at a name that
+        # never existed; the actual keeper is `check_kb_vector_canonical`.
+        # Fixed in-flight as part of W2-E3' (sibling code-embeddings keeper
+        # arrived; surfaced the bug). Pre-existing debt → fix on contact.
+        from tools.noctus.dev.compliance import check_kb_vector_canonical
+        issues = check_kb_vector_canonical()
         if not issues:
             print(f"  {GREEN}✓ kb embeddings cache fresh.{RESET}")
             sys.exit(0)
         # Warning-severity keeper — surface but don't exit non-zero (advisory layer).
         print(f"  {YELLOW}⚠ {len(issues)} kb-embeddings-cache-freshness issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)
+    elif args.refresh_code_embeddings:
+        from tools.noctus.dev import code_embeddings as ce
+        r = ce.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ code embeddings cache in-sync ({len(r['skipped'])} file(s); --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ code embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} file(s).{RESET}")
+            if r["errors"]:
+                print(f"  {YELLOW}⚠ {len(r['errors'])} error(s):{RESET}")
+                for e in r["errors"][:5]:
+                    print(f"    {e}")
+        sys.exit(0 if r["ok"] else 1)
+    elif args.code_search:
+        from tools.noctus.dev import code_embeddings as ce
+        hits = ce.search(args.code_search, top_k=args.top_k)
+        if not hits:
+            print(f"  {YELLOW}(no hits for {args.code_search!r} — cache empty or embedding provider unreachable){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ Top {len(hits)} hits for {args.code_search!r}:{RESET}")
+        for h in hits:
+            preview = h["chunk_text"].splitlines()[0][:80] if h["chunk_text"] else ""
+            label = f"{h['symbol_name']} ({h['kind']})" if h["symbol_name"] else f"({h['kind']})"
+            print(f"    [{h['score']:.3f}] {h['path']} :: {label}")
+            print(f"        {preview}…")
+        sys.exit(0)
+    elif args.check_code_embeddings_cache_freshness:
+        from tools.noctus.dev.compliance import check_code_embeddings_cache_freshness
+        issues = check_code_embeddings_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ code embeddings cache fresh.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} code-embeddings-cache-freshness issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)
+    elif args.kb_ratify:
+        from tools.noctus.dev import kb_baseline as kbb
+        result = kbb.ratify(args.kb_ratify)
+        if not result["ok"]:
+            print(f"  {RED}✗ {result['error']}{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ baseline ratified: {result['baseline_id']} ({result['finding_count']} finding(s)).{RESET}")
+        print(f"    path: {result['path']}")
+        sys.exit(0)
+    elif args.kb_baseline_diff:
+        from tools.noctus.dev import kb_baseline as kbb
+        result = kbb.diff(against=args.kb_baseline_diff)
+        if not result["ok"]:
+            print(f"  {RED}✗ {result.get('error', 'diff failed')}{RESET}")
+            sys.exit(1)
+        bid = result.get("baseline_id") or "(none)"
+        print(f"  {GREEN}✓ diff vs baseline {bid}: "
+              f"new={len(result['new_findings'])} resolved={len(result['resolved_findings'])} "
+              f"unchanged={result['unchanged_count']}{RESET}")
+        if result.get("kb_corpus_drifted"):
+            print(f"  {YELLOW}⚠ KB corpus shifted since baseline — resolved may be artifacts.{RESET}")
+        sys.exit(0)
+    elif args.kb_baseline_list:
+        from tools.noctus.dev import kb_baseline as kbb
+        baselines = kbb.list_baselines()
+        if not baselines:
+            print(f"  {YELLOW}(no baselines ratified yet — call --kb-ratify <reason>){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ {len(baselines)} ratified baseline(s):{RESET}")
+        for b in baselines:
+            print(f"    [{b['baseline_id']}] {b['ratified_at']} — {b['finding_count']} finding(s) — {b['reason']}")
+        sys.exit(0)
+    elif args.check_kb_semantic_drift:
+        from tools.noctus.dev.compliance import check_kb_semantic_drift
+        issues = check_kb_semantic_drift()
+        if not issues:
+            print(f"  {GREEN}✓ kb semantic drift within threshold.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} kb-semantic-drift issue(s) (warnings, not blockers):{RESET}")
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)

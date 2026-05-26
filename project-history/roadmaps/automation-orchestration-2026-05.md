@@ -27,9 +27,9 @@ Specifically: ship the **Tier-1 automations** identified in the 2026-05-26 diagn
 | E3 | `code-embeddings.sqlite` (5th keeper-mirror cache) | NEW `mcp/.../code_embeddings.py` + keeper + KB doc + test | backend-engineer | **DEFERRED → W2-E3'** (stale-base fork; engineer still running but expected to need re-dispatch) | W2 | — |
 | E4 | `auto_improvement_cluster` + `codification_radar` | NEW `mcp/.../codification_radar.py` + KB doc + test | backend-engineer | **DEFERRED → W2-E4'** (E4 re-created `auto_improvement.py` + `vectorize.py` from scratch with incompatible APIs; needs porting to the REAL modules) | W2 | — |
 | E5 | Vector cost tracking (OpenAI embed token / $) | NEW `mcp/.../vector_costs.py` + `__init__.py` + small instrumentation in `kb_embeddings.py` + `project-history/vector-costs.ndjson` + KB doc + test | backend-engineer | **shipped (this commit)** | W1 | TBD |
-| W2-E3' | Re-dispatch code-embeddings via two-level branching | (same as E3, correct flow) | backend-engineer | pending | W2 | — |
+| W2-E3' | Re-dispatch code-embeddings via two-level branching | (same as E3, correct flow) | inline-empersonation (backend-engineer) | **shipped (Wave-2 final commit)** | W2 | TBD |
 | W2-E4' | Port codification_radar to real auto_improvement/vectorize APIs | Rewrite `codification_radar.py` using `auto_improvement.query()` + `vectorize.embed_text()` dict-return shape | inline-empersonation (backend-engineer) | **shipped (this commit)** | W2 | TBD |
-| W2-E6 | Vector approval-canonical layer (ratified baseline) | NEW `kb_baseline.py` + keeper + KB pattern + working-cache integration + `project-history/kb-baselines/` + tests | backend-engineer | pending (next session) | W2 | — |
+| W2-E6 | Vector approval-canonical layer (ratified baseline) | NEW `kb_baseline.py` + keeper + KB pattern + working-cache integration + `project-history/kb-baselines/` + tests | inline-empersonation (backend-engineer) | **shipped (Wave-2 final commit)** | W2 | TBD |
 | W2-E7 | **Vector autocalibration + auto-improvement** | NEW `vector_calibration.py` — observes vector signals + reasons about whether signals make sense vs canonical truth + surfaces recommendations (NOT auto-applies) + decision ledger with required reasoning. KB pattern doc + 16 tests. | inline-empersonation (backend-engineer) | **shipped (this commit)** | W2 | TBD |
 
 ### Wave-1 collision-class
@@ -119,6 +119,39 @@ Each engineer's branch is independent. If any single slice breaks integration:
 - Inline-specialist-empersonation is the inline counterpart to dispatch routing.
 - Engineer's two-leg footer discipline (`drift-found:` / `scoped-improvement:`) is the system's auto-immune response — IT WORKED.
 - Vector autocalibration must be reasoning-driven, not threshold-blind.
+
+## Retrospective (Wave-2 full close — 2026-05-26 follow-on session)
+
+### What shipped this session
+- **W2-E3'** (`code_embeddings.py`): 5th keeper-mirror cache, mirrors `kb_embeddings.py` structure, applies AST chunking to Python (`stdlib ast` — top-level `FunctionDef` / `AsyncFunctionDef` / `ClassDef`) + whole-file to TS, full vector-costs instrumentation, `check_code_embeddings_cache_freshness` keeper (warning), 5 MCP tools, CLI flags, pre-commit auto-refresh leg, KB pattern doc, 30 tests.
+- **W2-E6** (`kb_baseline.py`): ratified-canonical layer over `kb_validate_owns_kb`, durable JSON snapshots in `project-history/kb-baselines/`, `kb_ratify` + `kb_baseline_diff` + `kb_baseline_list` MCP tools + `check_kb_semantic_drift` keeper (warning), KB pattern doc, 25 tests.
+- **Drift fixed in-flight**: CLI `--check-kb-embeddings-cache-freshness` was pointing at a non-existent `check_kb_embeddings_cache_freshness` function; the actual keeper is `check_kb_vector_canonical`. Wired correctly during W2-E3' contact (fix-on-contact for pre-existing debt).
+
+### Methodology meta-win — inline-empersonation outperformed dispatch
+Both Wave-2 slices shipped via **inline-specialist-empersonation** (`backend-engineer` lens). Same as W2-E4' + W2-E7. Result: zero stale-base hazards, zero API mismatches, zero porting passes. Wall-clock per slice was comparable to (and possibly faster than) what a dispatched-engineer cycle would have been at this scope, with cleaner integration.
+
+**Inline-empersonation is the right call** when:
+- The slice has a strong canonical mirror in the existing code (W2-E3' mirrored `kb_embeddings.py`).
+- The architect has the canonical pattern fully loaded already.
+- Scope is ~500-800 lines with file-disjoint scope.
+
+**Parallel dispatch via two-level branching is the right call** when:
+- Multiple slices have NO canonical mirror (genuine novel design).
+- Architect's context is already saturated.
+- Wall-clock matters more than integration cost.
+
+### Final close
+All 5 roadmap goals delivered. Full vector platform now live:
+1. `kb-embeddings` (search docs) — Phase B.
+2. `code-embeddings` (search code, cross-product recurrence) — W2-E3'.
+3. `vector_costs` (OpenAI spend tracking) — W1-E5.
+4. `vector_calibration` (reasoning-driven threshold tuning) — W2-E7.
+5. `kb_baseline` (ratified-canonical findings) — W2-E6.
+
+### Lessons absorbed at close (now durable in KB/memory)
+- Inline-empersonation IS a valid dispatch alternative for scope-disciplined slices with canonical mirrors. Codified in `CLAUDE.md §1 — Inline = empersonate the specialist`.
+- The vector platform's reasoning-driven duo (`vector_calibration` + `kb_baseline`) is the structural answer to "evaluate canonical truth, don't accept blindly" — both encode user judgment as durable artifacts (decisions ledger + baseline snapshots).
+- Fix-on-contact for pre-existing debt (the CLI keeper-name bug) caught a silent disconnect; would have stayed broken otherwise.
 
 ## Composes with
 

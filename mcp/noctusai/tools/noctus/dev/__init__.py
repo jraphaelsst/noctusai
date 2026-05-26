@@ -23,6 +23,7 @@ def register_all(server) -> None:
     from . import catalog
     from . import check_framework_deps
     from . import cleanup_worktrees
+    from . import code_embeddings
     from . import codification_radar
     from . import compliance
     from . import context
@@ -36,6 +37,7 @@ def register_all(server) -> None:
     from . import findings
     from . import history
     from . import improvements
+    from . import kb_baseline
     from . import kb_embeddings
     from . import keeper_pattern
     from . import lgpd
@@ -91,6 +93,7 @@ def register_all(server) -> None:
     catalog.register(server)
     check_framework_deps.register(server)
     cleanup_worktrees.register(server)
+    code_embeddings.register(server)
     codification_radar.register(server)
     compliance.register(server)
     context.register(server)
@@ -104,6 +107,7 @@ def register_all(server) -> None:
     findings.register(server)
     history.register(server)
     improvements.register(server)
+    kb_baseline.register(server)
     kb_embeddings.register(server)
     keeper_pattern.register(server)
     lgpd.register(server)

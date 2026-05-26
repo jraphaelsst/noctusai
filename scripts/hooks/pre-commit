@@ -225,6 +225,18 @@ if [[ -n "$STAGED_KB" ]] && have_py; then
     "$PY" "$CLI" --refresh-kb-embeddings 2>&1 || echo "[pre-commit]   ↳ kb-embeddings refresh skipped (provider unreachable or no key) — vector search will be stale until next refresh."
 fi
 
+# ─── 9c. Code-embeddings cache auto-refresh (W2-E3' 2026-05-26) ──
+# Fifth in the keeper-mirror family — semantic search over code corpus.
+# When .py/.ts/.tsx under tracked roots is staged, refresh the embeddings
+# so cross-product recurrence discovery returns current results.
+# Non-blocking (warning severity): if provider unreachable, skip silently.
+# KB § CONTEXT/PATTERNS/common/code-embeddings.md.
+STAGED_CODE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$' || true)
+if [[ -n "$STAGED_CODE" ]] && have_py; then
+    echo "[pre-commit] code source staged — refreshing code-embeddings cache (advisory; non-blocking)..."
+    "$PY" "$CLI" --refresh-code-embeddings 2>&1 || echo "[pre-commit]   ↳ code-embeddings refresh skipped (provider unreachable or no key) — vector code search will be stale until next refresh."
+fi
+
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
 # Third in the keeper-mirror family. When the auto-improvement ndjson is
 # staged, the cache MUST refresh so consult-before-editing returns live
