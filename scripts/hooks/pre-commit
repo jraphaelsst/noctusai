@@ -213,6 +213,18 @@ if [[ -n "$STAGED_AGENT_OR_KB" ]] && have_py; then
     fi
 fi
 
+# ─── 9b. KB-embeddings cache auto-refresh (kb-vector-search 2026-05-26) ──
+# Fourth in the keeper-mirror family — semantic search over KB.
+# When KB doc changes, refresh the embeddings so search returns
+# current results. Non-blocking (warning severity): if the embedding
+# provider is unreachable (no API key, network), skip silently —
+# vector search is advisory. KB § PATTERNS/common/kb-vector-search.md.
+STAGED_KB=$(git diff --cached --name-only 2>/dev/null | grep -E '^KNOWLEDGE-BASE/.+\.md$' || true)
+if [[ -n "$STAGED_KB" ]] && have_py; then
+    echo "[pre-commit] KB doc staged — refreshing kb-embeddings cache (advisory; non-blocking)..."
+    "$PY" "$CLI" --refresh-kb-embeddings 2>&1 || echo "[pre-commit]   ↳ kb-embeddings refresh skipped (provider unreachable or no key) — vector search will be stale until next refresh."
+fi
+
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
 # Third in the keeper-mirror family. When the auto-improvement ndjson is
 # staged, the cache MUST refresh so consult-before-editing returns live

@@ -34,6 +34,7 @@ def register_all(server) -> None:
     from . import findings
     from . import history
     from . import improvements
+    from . import kb_embeddings
     from . import keeper_pattern
     from . import lgpd
     from . import master_prompts
@@ -72,6 +73,7 @@ def register_all(server) -> None:
     from . import task_branch
     from . import testing
     from . import three_way_sync
+    from . import vectorize
     from . import vps
 
     agent_context.register(server)
@@ -96,6 +98,7 @@ def register_all(server) -> None:
     findings.register(server)
     history.register(server)
     improvements.register(server)
+    kb_embeddings.register(server)
     keeper_pattern.register(server)
     lgpd.register(server)
     master_prompts.register(server)
@@ -134,6 +137,7 @@ def register_all(server) -> None:
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
+    vectorize.register(server)
     vps.register(server)
 
 

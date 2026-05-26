@@ -7829,6 +7829,10 @@ def check_all_products() -> tuple[int, list]:
     # of check_claude_md_router (same pointer-only discipline, applied to the
     # onboarding ramp). KB § PATTERNS/common/claude-md-router-discipline.md.
     all_issues.extend(check_contextualize_alignment())
+    # 2026-05-26 (kb-vector-search) — enforces the markdown-canonical /
+    # vector-DB-is-enrichment principle. Severity warning (advisory layer,
+    # never blocking). KB § PATTERNS/common/kb-vector-search.md.
+    all_issues.extend(check_kb_vector_canonical())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8119,6 +8123,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/phased-push-policy.md",
     "CONTEXT/PATTERNS/common/minimum-viable-rebuild.md",
     "CONTEXT/PATTERNS/common/scoped-auto-improvement.md",
+    "CONTEXT/PATTERNS/common/kb-vector-search.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
@@ -8782,6 +8787,104 @@ _CONTEXTUALIZE_CANONICAL_CORES = (
 # A 54-line file with duplicated CLAUDE.md §1 bodies was worse than a 64-line
 # file with broad pointer-only reach. Raise via codified rationale only.
 _CONTEXTUALIZE_LINE_CAP = 75
+
+
+def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, kb-vector-search): enforces the
+    **markdown-canonical, vector-DB-is-enrichment** principle.
+
+    The vector DB at `.claude/cache/kb-embeddings.sqlite` is an INDEX +
+    enrichment over the markdown KB — never a content store. User
+    mandate 2026-05-26: *"markdown stays in git as canonical … vector
+    DB becomes a smarter index, not a replacement."* This keeper enforces
+    that contract.
+
+    Predicates (severity WARNING — advisory keeper, not blocker):
+      (a) Every cached chunk's `path` resolves to a real `.md` under
+          `KNOWLEDGE-BASE/`. Orphan rows (markdown deleted but cache row
+          remains) ⇒ flag for refresh.
+      (b) When the cache has rows, every chunk's `source_sha` must match
+          the live file (per-doc freshness). Stale ⇒ flag.
+      (c) (Optional, deferred) — no code path returns vector-DB content
+          AS authoritative content; vectors index back to markdown.
+          Codified as the principle, enforced by code review for now;
+          can be promoted to a `noctus.dev.kb_chunks_match_markdown`
+          tool when needed.
+
+    Severity ``warning`` (NOT high): vector search is advisory; a stale
+    or partially-orphaned cache degrades discovery but never breaks
+    correctness. Surface, don't block.
+
+    Silent skip when:
+      - The cache file is absent (no rows to validate — fresh clone).
+      - `KNOWLEDGE-BASE/` is absent (non-noc tree, e.g. test fixtures).
+
+    KB § PATTERNS/common/kb-vector-search.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    kb_dir = root / "KNOWLEDGE-BASE"
+    cache = root / ".claude" / "cache" / "kb-embeddings.sqlite"
+    if not kb_dir.is_dir() or not cache.exists():
+        return issues
+    # Query the cache directly via sqlite3 (avoid module import to keep
+    # the keeper resilient to a partially-broken kb_embeddings module).
+    try:
+        conn = sqlite3.connect(str(cache))
+        # Schema may be either the new dual-engine shape or the older
+        # single-table shape — try the new first, fall back if needed.
+        try:
+            cur = conn.execute(
+                "SELECT path, source_sha FROM kb_chunks GROUP BY path"
+            )
+            rows = list(cur.fetchall())
+        except sqlite3.OperationalError:
+            try:
+                cur = conn.execute(
+                    "SELECT path, source_sha FROM kb_embeddings GROUP BY path"
+                )
+                rows = list(cur.fetchall())
+            except sqlite3.OperationalError:
+                rows = []
+        conn.close()
+    except sqlite3.Error as e:
+        issues.append({
+            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "issue": f"kb-embeddings cache unreadable ({e}) — refresh via --refresh-kb-embeddings",
+            "severity": "warning",
+            "symbol": "kb-vector-cache-unreadable",
+        })
+        return issues
+    for path, cached_sha in rows:
+        md = kb_dir / path
+        if not md.exists():
+            # (a) orphan row — markdown deleted, cache still has it.
+            issues.append({
+                "product": "<harness>", "file": str(cache.relative_to(root)),
+                "issue": (
+                    f"kb-embeddings cache has rows for `{path}` but the "
+                    f"markdown doesn't exist (orphan). Vector DB must mirror "
+                    f"markdown — refresh with --refresh-kb-embeddings to drop "
+                    f"orphans."
+                ),
+                "severity": "warning",
+                "symbol": "kb-vector-orphan",
+            })
+            continue
+        # (b) per-doc staleness.
+        live_sha = hashlib.sha256(md.read_bytes()).hexdigest()
+        if live_sha != cached_sha:
+            issues.append({
+                "product": "<harness>", "file": f"KNOWLEDGE-BASE/{path}",
+                "issue": (
+                    f"kb-embeddings stale for `{path}` — cached.sha="
+                    f"{cached_sha[:12]} ≠ live={live_sha[:12]}; refresh via "
+                    f"--refresh-kb-embeddings."
+                ),
+                "severity": "warning",
+                "symbol": "kb-vector-stale",
+            })
+    return issues
 
 
 def check_contextualize_alignment(repo_root: Path | None = None) -> list[dict]:

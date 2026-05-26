@@ -43,6 +43,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── phased-push-policy.md
 │   │   │   ├── proposals-and-improvements.md
 │   │   │   ├── remediation-markers.md
+│   │   │   ├── kb-vector-search.md
 │   │   │   ├── scoped-auto-improvement.md
 │   │   │   ├── self-branching-mode.md
 │   │   │   ├── storage-hygiene.md

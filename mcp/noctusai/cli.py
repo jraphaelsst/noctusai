@@ -97,6 +97,10 @@ def main():
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
+    parser.add_argument("--refresh-kb-embeddings", action="store_true", help="Re-populate the local KB embeddings cache (.claude/cache/kb-embeddings.sqlite) from KNOWLEDGE-BASE/**/*.md. Embeds via OpenAI text-embedding-3-small through noctusai_lib.integrations.llm (no new external dep). ADDITIVE discovery layer — does not replace owns_kb / INDEX.md / grep. KB § PATTERNS/common/kb-vector-search.md.")
+    parser.add_argument("--kb-search", metavar="QUERY", help="Semantic search over the KB — embeds the query, returns top-K KB chunks by cosine similarity. Use for fuzzy-intent queries where exact terminology is unknown. For named patterns, use grep + INDEX.md.")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of results to return for --kb-search (default 5).")
+    parser.add_argument("--check-kb-embeddings-cache-freshness", action="store_true", help="Keeper: KB embeddings cache should mirror each KB doc's sha256. Severity WARNING (not high) — vector search is advisory; stale cache degrades discovery but never breaks correctness. Auto-refresh in pre-commit on KB doc change.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -404,6 +408,41 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
+    elif args.refresh_kb_embeddings:
+        from tools.noctus.dev import kb_embeddings as kbe
+        r = kbe.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ kb embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ kb embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
+            if r["errors"]:
+                print(f"  {YELLOW}⚠ {len(r['errors'])} error(s):{RESET}")
+                for e in r["errors"][:5]:
+                    print(f"    {e}")
+        sys.exit(0 if r["ok"] else 1)
+    elif args.kb_search:
+        from tools.noctus.dev import kb_embeddings as kbe
+        hits = kbe.search(args.kb_search, top_k=args.top_k)
+        if not hits:
+            print(f"  {YELLOW}(no hits for {args.kb_search!r} — cache empty or embedding provider unreachable){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ Top {len(hits)} hits for {args.kb_search!r}:{RESET}")
+        for h in hits:
+            preview = h["chunk_text"].splitlines()[0][:80] if h["chunk_text"] else ""
+            print(f"    [{h['score']:.3f}] {h['path']}#chunk{h['chunk_idx']}")
+            print(f"        {preview}…")
+        sys.exit(0)
+    elif args.check_kb_embeddings_cache_freshness:
+        from tools.noctus.dev.compliance import check_kb_embeddings_cache_freshness
+        issues = check_kb_embeddings_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ kb embeddings cache fresh.{RESET}")
+            sys.exit(0)
+        # Warning-severity keeper — surface but don't exit non-zero (advisory layer).
+        print(f"  {YELLOW}⚠ {len(issues)} kb-embeddings-cache-freshness issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)
     elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
         from tools.noctus.dev.compliance import (
             check_skill_format, check_agent_format, check_agent_archetype_contract,
