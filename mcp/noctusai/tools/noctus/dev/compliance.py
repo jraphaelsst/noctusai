@@ -7797,6 +7797,12 @@ def check_all_products() -> tuple[int, list]:
     # index discipline. OUT-OF-REPO (Claude Code per-project store) → gates at
     # validate + --check-memory-md-index CLI only, NOT at git commit.
     all_issues.extend(check_memory_md_index())
+    # harness-layer format keepers (2026-05-25, harness-agents-skills) — gate
+    # authoring discipline on .claude/skills + .claude/agents so new surfaces
+    # conform by construction (sibling of check_claude_md_router/check_memory_md_index).
+    all_issues.extend(check_skill_format())
+    all_issues.extend(check_agent_format())
+    all_issues.extend(check_agent_archetype_contract())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8038,6 +8044,196 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
                 ),
                 "severity": "high",
             })
+    return issues
+
+
+# ── Harness-layer format keepers (Stage-4 2026-05-25, harness-agents-skills) ──
+# .claude/skills + .claude/agents are always-on surfaces; these keepers gate
+# authoring discipline so new skills/agents conform by construction.
+_HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "engineer-default"})
+# Other agents (orchestrator-operator, skill-scout) have specialized contracts and
+# are skipped by check_agent_archetype_contract.
+
+
+def _parse_frontmatter(text: str) -> dict[str, str] | None:
+    """Parse the first `--- … ---` YAML block at the top of a markdown file.
+
+    Returns None if frontmatter is absent or unclosed; values returned as raw
+    strings (no YAML coercion — we only need top-level string keys).
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    fm: dict[str, str] = {}
+    for raw in lines[1:]:
+        if raw.strip() == "---":
+            return fm
+        if ":" in raw and not raw.lstrip().startswith("#"):
+            key, _, val = raw.partition(":")
+            # only top-level keys (no leading whitespace) — skip nested YAML
+            if key == key.lstrip():
+                fm[key.strip()] = val.strip()
+    return None  # no closing delimiter — malformed
+
+
+def check_skill_format(repo_root: Path | None = None) -> list[dict]:
+    """Every `.claude/skills/<name>/SKILL.md` has valid required frontmatter.
+
+    Required: `name:` (matches parent dir) + non-empty `description:` (carries
+    the trigger phrases the harness matches on). Sibling of check_agent_format.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    skills_dir = root / ".claude" / "skills"
+    if not skills_dir.is_dir():
+        return issues
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        rel = f".claude/skills/{skill_dir.name}/SKILL.md"
+        if not skill_md.is_file():
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": f"Skill dir `{skill_dir.name}` has no SKILL.md — every .claude/skills/<name>/ must contain SKILL.md.",
+                "severity": "high",
+            })
+            continue
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fm = _parse_frontmatter(text)
+        if fm is None:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": "SKILL.md missing/malformed frontmatter — must open with `---`, declare `name:` + `description:`, then close with `---`.",
+                "severity": "high",
+            })
+            continue
+        name = fm.get("name", "")
+        desc = fm.get("description", "")
+        if not name:
+            issues.append({"product": "<harness>", "file": rel, "issue": "SKILL.md frontmatter missing `name:`.", "severity": "high"})
+        elif name != skill_dir.name:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": f"SKILL.md `name: {name}` ≠ directory `{skill_dir.name}` — name and dir must agree for the harness to load the skill.",
+                "severity": "high",
+            })
+        if not desc:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": "SKILL.md frontmatter missing `description:` — the description carries the trigger phrases the harness uses to auto-fire the skill.",
+                "severity": "high",
+            })
+    return issues
+
+
+def check_agent_format(repo_root: Path | None = None) -> list[dict]:
+    """Every `.claude/agents/<name>.md` has valid required frontmatter + tools:.
+
+    Required: `name:` (matches filename stem) + `description:` + `tools:`.
+    Omitting `tools:` inherits ~400 deferred tool names (per
+    `KB § PATTERNS/dispatch-engineer-tuning.md`) — significant startup-token
+    waste. Sibling of check_skill_format + check_agent_archetype_contract.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return issues
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if not agent_md.is_file():
+            continue
+        rel = f".claude/agents/{agent_md.name}"
+        stem = agent_md.stem
+        try:
+            text = agent_md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fm = _parse_frontmatter(text)
+        if fm is None:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": "Agent file missing/malformed frontmatter — must open with `---`, declare `name:` + `description:` + `tools:`, then close with `---`.",
+                "severity": "high",
+            })
+            continue
+        name = fm.get("name", "")
+        if not name:
+            issues.append({"product": "<harness>", "file": rel, "issue": "Agent frontmatter missing `name:`.", "severity": "high"})
+        elif name != stem:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": f"Agent `name: {name}` ≠ filename `{stem}.md` — the Agent tool dispatches by frontmatter name; mismatch = unreachable.",
+                "severity": "high",
+            })
+        if not fm.get("description", ""):
+            issues.append({"product": "<harness>", "file": rel, "issue": "Agent frontmatter missing `description:`.", "severity": "high"})
+        if not fm.get("tools", ""):
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": "Agent frontmatter missing `tools:` — omitting it inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md). Declare an explicit scoped allowlist.",
+                "severity": "high",
+            })
+    return issues
+
+
+def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
+    """Advisors declare no Edit/Write; executors reference engineer-default.
+
+    Two archetypes per the harness-agents-skills model:
+      - ADVISORS (architect, security, compliance-reviewer) — read-only; their
+        `tools:` MUST NOT include `Edit` or `Write` (contract enforced at the
+        tool layer, not just discipline).
+      - EXECUTORS (backend-engineer, frontend-engineer, engineer-default) —
+        body should reference the `engineer-default` protocol.
+    Other agents (orchestrator-operator, skill-scout) have specialized
+    contracts and are skipped. Update the archetype sets when new agents land.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return issues
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if not agent_md.is_file():
+            continue
+        stem = agent_md.stem
+        rel = f".claude/agents/{agent_md.name}"
+        try:
+            text = agent_md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fm = _parse_frontmatter(text)
+        if fm is None:
+            continue  # check_agent_format already flagged this
+        tools = fm.get("tools", "")
+        if stem in _HARNESS_ADVISOR_AGENTS:
+            for forbidden in ("Edit", "Write"):
+                if re.search(rf"\b{forbidden}\b", tools):
+                    issues.append({
+                        "product": "<harness>", "file": rel,
+                        "issue": (
+                            f"Advisor agent `{stem}` declares `{forbidden}` in `tools:` — "
+                            f"advisor archetype is read-only (surfaces a recommendation, never "
+                            f"writes code). Remove `{forbidden}` from tools."
+                        ),
+                        "severity": "high",
+                    })
+        elif stem in _HARNESS_EXECUTOR_AGENTS:
+            if "engineer-default" not in text:
+                issues.append({
+                    "product": "<harness>", "file": rel,
+                    "issue": (
+                        f"Executor agent `{stem}` body does not reference `engineer-default` — "
+                        f"executors apply the standing engineer-default protocol; the body should "
+                        f"say so (e.g. \"Apply the engineer-default protocol\")."
+                    ),
+                    "severity": "warning",
+                })
     return issues
 
 
