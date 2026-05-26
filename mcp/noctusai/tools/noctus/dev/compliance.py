@@ -7805,6 +7805,14 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_skill_format())
     all_issues.extend(check_agent_format())
     all_issues.extend(check_agent_archetype_contract())
+    # agent-context-architecture (2026-05-26) — agent files declare full-domain
+    # owns_kb in frontmatter; keeper enforces existence + body-pointer mirror +
+    # exclusive ownership. KB § PATTERNS/agent-context-architecture.md.
+    all_issues.extend(check_agent_kb_alignment())
+    # drift-fix-on-contact (2026-05-26) — recurring git-leftovers drift class
+    # (untracked-at-root + worktree-uncommitted) caught at every gate.
+    # KB § PATTERNS/drift-fix-on-contact.md.
+    all_issues.extend(check_git_leftovers())
     # 2026-05-26 — the keeper-pattern cache MUST mirror compliance.py. A stale
     # cache → doc-authoring agents author drift-prone docs from outdated
     # patterns. KB § PATTERNS/keeper-pattern-cache.md.
@@ -8061,6 +8069,57 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # Other agents (orchestrator-operator, skill-scout) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
+# ── Agent-context architecture (Stage-4 2026-05-26, agent-context-architecture) ──
+# KB § PATTERNS/agent-context-architecture.md — agent files declare full-domain
+# `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
+# exclusive ownership. The unowned-allowlist below names KB paths that are
+# universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
+# Procedure-doc carve-out: orchestrator-operator + engineer-default own no KB
+# (they ARE protocols); skill-scout is a meta-scout (owns no KB).
+_AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
+    "CONTEXT/01-PHILOSOPHY.md",
+    "CONTEXT/02-LANDSCAPE.md",
+    "CONTEXT/03-SEED-ARCHITECTURE.md",
+    "CONTEXT/04-SHARED-LIBRARY.md",
+    "CONTEXT/06-AGENTS.md",
+    "CONTEXT/07-GAMIFICATION.md",
+    "CONTEXT/PATTERNS/doc-symbology.md",
+    "CONTEXT/PATTERNS/agent-reading-discipline.md",
+    "CONTEXT/PATTERNS/ast.md",
+    "CONTEXT/PATTERNS/accept-with-rationale.md",
+    "CONTEXT/PATTERNS/remediation-markers.md",
+    "CONTEXT/PATTERNS/defer-is-not-resolve.md",
+    "CONTEXT/PATTERNS/absorption-ships-consume-docs.md",
+    "CONTEXT/PATTERNS/storage-hygiene.md",
+    "CONTEXT/PATTERNS/methodology-codification-pipeline.md",
+    "CONTEXT/PATTERNS/drift-fix-on-contact.md",
+    "CONTEXT/PATTERNS/persistent-files-absorption.md",
+    "CONTEXT/PATTERNS/keeper-check-before-docing.md",
+    "CONTEXT/PATTERNS/keeper-pattern-cache.md",
+    "CONTEXT/PATTERNS/claude-md-router-discipline.md",
+    "CONTEXT/PATTERNS/lossless-doc-refactor.md",
+    "CONTEXT/PATTERNS/agent-context-architecture.md",
+    "CONTEXT/PATTERNS/self-branching-mode.md",
+    "CONTEXT/PATTERNS/branching.md",
+    "CONTEXT/PATTERNS/harness-overlay-worktree-divergence.md",
+    "CONTEXT/PATTERNS/proposals-and-improvements.md",
+    "CONTEXT/PATTERNS/verify-seed-on-fork-base.md",
+    "CONTEXT/PATTERNS/phased-push-policy.md",
+    "CONTEXT/PATTERNS/minimum-viable-rebuild.md",
+})
+
+# Agents that intentionally own no KB territory (meta-roles / procedure-docs).
+# Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
+_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-default", "orchestrator-operator", "skill-scout"})
+
+# Repo-root-relative untracked allowlist for check_git_leftovers — files that
+# may legitimately appear at depth 1 untracked. Anything else trips the keeper.
+# (.gitignore covers the bulk; this is for items neither gitignored nor expected.)
+_GIT_LEFTOVERS_ROOT_ALLOWLIST = frozenset({
+    # nothing additional — .gitignore is the canonical allowlist;
+    # this set exists for tools-only carve-outs surfaced as they appear.
+})
+
 
 def _parse_frontmatter(text: str) -> dict[str, str] | None:
     """Parse the first `--- … ---` YAML block at the top of a markdown file.
@@ -8240,6 +8299,299 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
                     ),
                     "severity": "warning",
                 })
+    return issues
+
+
+def _parse_frontmatter_owns_kb(text: str) -> list[str] | None:
+    """Extract the `owns_kb:` list from agent frontmatter.
+
+    Returns:
+      - list[str] (possibly empty) when the key is present
+      - None when the key is absent OR frontmatter is malformed.
+
+    Recognizes both inline `owns_kb: []` and the block form
+
+        owns_kb:
+          - CONTEXT/PATTERNS/foo.md
+          - CONTEXT/PATTERNS/bar.md
+
+    Sibling of `_parse_frontmatter` (which handles top-level scalars only).
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    in_block = False
+    items: list[str] = []
+    saw_key = False
+    for raw in lines[1:]:
+        if raw.strip() == "---":
+            return items if saw_key else None
+        if not in_block:
+            stripped = raw.lstrip()
+            if stripped.startswith("owns_kb:") and raw == stripped:
+                saw_key = True
+                rhs = raw.partition(":")[2].strip()
+                if rhs == "[]":
+                    return []  # explicit empty
+                if rhs:
+                    # inline list `[a, b]` form — best-effort split
+                    if rhs.startswith("[") and rhs.endswith("]"):
+                        inner = rhs[1:-1]
+                        return [p.strip().strip('"').strip("'") for p in inner.split(",") if p.strip()]
+                    # unknown inline shape → treat as malformed
+                    return None
+                in_block = True
+                continue
+        else:
+            if raw.startswith("  - ") or raw.startswith("- "):
+                value = raw.lstrip()[2:].strip().strip('"').strip("'")
+                if value:
+                    items.append(value)
+                continue
+            # End of block: either dedented top-level key, or blank+something-else.
+            if raw.strip() == "":
+                continue
+            if not raw.startswith(" "):
+                # next top-level key — owns_kb block ends here
+                in_block = False
+                # don't consume this line; loop will continue and re-process
+                # (we just need to NOT take it as a list item).
+                # The frontmatter scanner is forward-only so we accept the
+                # current items and keep scanning until --- closer.
+                continue
+    return None  # never closed
+
+
+def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, agent-context-architecture): every agent file
+    declares its full-domain `owns_kb:` and every declared path exists ∧ is
+    referenced in the agent body ∧ is claimed by exactly one agent.
+
+    The agent-context-architecture (KB § PATTERNS/agent-context-architecture.md)
+    treats `.claude/agents/<name>.md` as the SPECIALIST L1 index — bodies live
+    in KB at the pointers. This keeper enforces that the routing is sound:
+
+      (a) `owns_kb:` is declared (list, possibly empty) — explicit "owns
+          nothing" required for meta-agents (`_AGENT_KB_OWNS_NOTHING`).
+      (b) Every declared path EXISTS at `KNOWLEDGE-BASE/<path>` on disk.
+      (c) Every declared path appears in the agent body as a `KB § <path>`
+          pointer — a declaration without a body pointer is dead.
+      (d) No path is double-claimed across two agents (until shared-multi-domain
+          frontmatter ships — Phase B).
+      (e) Every in-scope KB path (PATTERNS / GUIDES / INTEGRATIONS /
+          CONTEXT/<domain>/ / top-level CONTEXT/0X) is claimed by ≥1 agent OR
+          listed in `_AGENT_KB_UNOWNED_ALLOWLIST` (universal commons).
+
+    Severity `high` (the gate keeps the methodology authority enforceable).
+    KB § PATTERNS/agent-context-architecture.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    agents_dir = root / ".claude" / "agents"
+    kb_dir = root / "KNOWLEDGE-BASE"
+    if not agents_dir.is_dir() or not kb_dir.is_dir():
+        return issues
+
+    # Pass 1 — per-agent: parse owns_kb, verify (a)(b)(c), accumulate claims.
+    claims: dict[str, list[str]] = {}  # KB path → [agent_name, ...]
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if not agent_md.is_file():
+            continue
+        rel = f".claude/agents/{agent_md.name}"
+        stem = agent_md.stem
+        try:
+            text = agent_md.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        owns = _parse_frontmatter_owns_kb(text)
+        # (a) Declaration present?
+        if owns is None:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": (
+                    f"Agent `{stem}` missing `owns_kb:` frontmatter key — "
+                    f"required by KB § PATTERNS/agent-context-architecture.md. "
+                    f"Declare `owns_kb: []` for meta-agents (no KB territory) "
+                    f"or a list of `CONTEXT/...` paths the agent curates."
+                ),
+                "severity": "high",
+            })
+            continue
+        # Meta-agent must declare empty.
+        if stem in _AGENT_KB_OWNS_NOTHING and owns:
+            issues.append({
+                "product": "<harness>", "file": rel,
+                "issue": (
+                    f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
+                    f"meta-agents (engineer-default, orchestrator-operator, "
+                    f"skill-scout) own no KB territory. Declare `owns_kb: []`."
+                ),
+                "severity": "high",
+            })
+            continue
+        # (b)(c) per-path verification.
+        for path in owns:
+            kb_file = kb_dir / path
+            if not kb_file.is_file():
+                issues.append({
+                    "product": "<harness>", "file": rel,
+                    "issue": (
+                        f"`owns_kb:` declares `{path}` but `KNOWLEDGE-BASE/{path}` "
+                        f"does NOT exist — ownership of a missing doc. Fix the "
+                        f"path or remove the declaration."
+                    ),
+                    "severity": "high",
+                })
+                continue
+            # Body-pointer mirror: the agent body MUST reference the path as a
+            # `KB § <path>` pointer (or `KB § <path stripped of CONTEXT/>`, the
+            # canonical short form the router uses).
+            short = path.removeprefix("CONTEXT/")
+            if (f"KB § {path}" not in text) and (f"KB § {short}" not in text):
+                issues.append({
+                    "product": "<harness>", "file": rel,
+                    "issue": (
+                        f"`owns_kb:` declares `{path}` but the agent body has no "
+                        f"`KB § {short}` pointer — declaration without body "
+                        f"pointer is dead routing. Add a one-line pointer."
+                    ),
+                    "severity": "high",
+                })
+            claims.setdefault(path, []).append(stem)
+
+    # (d) double-claim across agents.
+    for path, owners in claims.items():
+        if len(owners) > 1:
+            issues.append({
+                "product": "<harness>", "file": f"KNOWLEDGE-BASE/{path}",
+                "issue": (
+                    f"KB path `{path}` is claimed by ≥2 agents ({', '.join(sorted(set(owners)))}) — "
+                    f"exclusive ownership required until shared-multi-domain "
+                    f"frontmatter ships (Phase B). Move to unowned-allowlist "
+                    f"if universal, or pick one canonical owner."
+                ),
+                "severity": "high",
+            })
+
+    # (e) every in-scope KB path is claimed OR allowlisted.
+    in_scope_dirs = ["CONTEXT/PATTERNS", "CONTEXT/GUIDES", "CONTEXT/INTEGRATIONS",
+                     "CONTEXT/backend", "CONTEXT/frontend"]
+    in_scope_top = [f"CONTEXT/0{i}-" for i in range(1, 8)]
+    for md in sorted(kb_dir.rglob("*.md")):
+        try:
+            rel_to_kb = md.relative_to(kb_dir).as_posix()
+        except ValueError:
+            continue
+        # Filter to in-scope.
+        if not (
+            any(rel_to_kb.startswith(d + "/") for d in in_scope_dirs)
+            or any(rel_to_kb.startswith(prefix) for prefix in in_scope_top)
+        ):
+            continue
+        if rel_to_kb in _AGENT_KB_UNOWNED_ALLOWLIST:
+            continue
+        if rel_to_kb in claims:
+            continue
+        issues.append({
+            "product": "<harness>", "file": f"KNOWLEDGE-BASE/{rel_to_kb}",
+            "issue": (
+                f"KB doc `{rel_to_kb}` is not claimed by any agent's `owns_kb:` "
+                f"and not in the unowned-commons allowlist — either add it to "
+                f"an agent's `owns_kb` + body pointer, or to "
+                f"`_AGENT_KB_UNOWNED_ALLOWLIST` in compliance.py with a one-line "
+                f"rationale (universal commons)."
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
+def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, drift-fix-on-contact): scan for the git-shape
+    drift class that recurred despite existing keepers (check_branch_orphan /
+    check_dispatcher_staleness / check_archive_staleness). Severity `high`.
+
+    Scans:
+      (a) Untracked at repo root depth 1 (excluding allowlist + .gitignore).
+          A `decision.md` paste / `notes.md` scratch / stray `.patch` ⇒ drift.
+      (b) `.claude/worktrees/<x>/` with uncommitted state (`git status --porcelain`
+          non-empty in the worktree).
+
+    Remediation: apply the on-contact drill (PAUSE → resolve → surface-if-blocked
+    → update docs → continue). Silent-skip is forbidden.
+
+    KB § PATTERNS/drift-fix-on-contact.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    # Silently skip in non-git contexts (test harnesses, vendored copies).
+    if not (root / ".git").exists():
+        return issues
+    try:
+        import subprocess
+        # (a) Untracked at depth 1 — `git status --porcelain` filtered for `?? `
+        # entries that don't contain a `/`.
+        result = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            if not line.startswith("?? "):
+                continue
+            path = line[3:].strip()
+            # Depth-1 only (untracked dirs come as `dirname/`).
+            if "/" in path.rstrip("/"):
+                continue
+            if path in _GIT_LEFTOVERS_ROOT_ALLOWLIST:
+                continue
+            issues.append({
+                "product": "<harness>", "file": path,
+                "issue": (
+                    f"Untracked file at repo root: `{path}` — drift-shape "
+                    f"covered by KB § PATTERNS/drift-fix-on-contact.md. "
+                    f"Apply the on-contact drill (absorb / delete / move + doc), "
+                    f"don't leave it for next session."
+                ),
+                "severity": "high",
+                "symbol": "untracked-at-root",
+            })
+        # (b) Per-registered-worktree uncommitted state.
+        wt_result = subprocess.run(
+            ["git", "-C", str(root), "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+        )
+        worktree_paths: list[Path] = []
+        for line in wt_result.stdout.splitlines():
+            if line.startswith("worktree "):
+                wt_path = Path(line.split(" ", 1)[1].strip())
+                if wt_path != root and wt_path.exists():
+                    worktree_paths.append(wt_path)
+        for wt in worktree_paths:
+            wt_status = subprocess.run(
+                ["git", "-C", str(wt), "status", "--porcelain"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if wt_status.stdout.strip():
+                rel_wt = wt.relative_to(root).as_posix() if wt.is_relative_to(root) else str(wt)
+                # Count + sample first line.
+                lines = wt_status.stdout.splitlines()
+                sample = lines[0][:80] if lines else ""
+                issues.append({
+                    "product": "<harness>", "file": rel_wt,
+                    "issue": (
+                        f"Worktree `{rel_wt}` has {len(lines)} uncommitted "
+                        f"entries (sample: `{sample}`) — drift-shape per "
+                        f"KB § PATTERNS/drift-fix-on-contact.md. Either commit "
+                        f"+ integrate via `noctus.dev.task_branch action=integrate`, "
+                        f"OR salvage + cleanup via `task_branch action=cleanup`."
+                    ),
+                    "severity": "high",
+                    "symbol": "worktree-uncommitted",
+                })
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        # If git is unreachable, silently skip (test/vendored contexts);
+        # this keeper is a drift-detector, not a git-availability gate.
+        return issues
     return issues
 
 

@@ -10,6 +10,7 @@ version: 1.0.0
 
 ## Workflow
 
+0. **Residue sweep (drift-fix-on-contact §0).** BEFORE `task_branch action=start`, scan for the recurring git-leftovers drift class (untracked at repo root, worktree-uncommitted state on peer trees). One call: `git status --porcelain` at the primary + glance at `git worktree list --porcelain`. Drift found ⇒ apply the on-contact drill (PAUSE → resolve → surface-if-blocked → update docs → continue) BEFORE forking the new worktree. The clean tree is the precondition for clean parallel work — leftovers absorbed into your fresh worktree become your problem. → `KB § PATTERNS/drift-fix-on-contact.md`
 1. **Start** — `noctus.dev.task_branch action=start slug=<kebab-task>` (dry-run → `confirm=true`). Forks `.claude/worktrees/<slug>` on `feat/<slug>` off `origin/dev`. Add `wire_env=true` if the slice needs a FE build / vitest in the worktree.
 2. **Work + commit IN the worktree** — every Edit/Write/commit happens under `.claude/worktrees/<slug>/`. Confirm `pwd` is the worktree path, never the primary checkout.
 3. **Integrate (worktree-explicit — NOT the MCP wrapper when a peer is live):** `git -C <wt> fetch origin && git -C <wt> rebase origin/dev && git -C <wt> push origin HEAD:dev`. Retry on non-FF race; NEVER `--force`. Conflict → abort + surface.

@@ -27,6 +27,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Estimate off evidence, not structure.** Cross-cutting layers hide cost; open the files before sizing. → `KB § 01-PHILOSOPHY.md`
 - **Codebase is source of truth.** Docs/memory/reports drift; verify against the tree first, code wins. → `KB § 01-PHILOSOPHY.md`
 - **Fix-on-contact for pre-existing debt.** Surface-only = a silent-error one level up; fix in-flight then surface. → `KB § 01-PHILOSOPHY.md`
+- **Drift-fix-on-contact.** Git leftovers (untracked-at-root, orphan branches, uncommitted worktrees) + broken methodology pointers + stale process artifacts: PAUSE → resolve → surface-if-blocked → update docs the resolution touches → continue. Silent-skip = silent-error shape. → `KB § PATTERNS/drift-fix-on-contact.md` · skill `noc-self-branch`
 - **DRY — the recurrence rule.** N=2 → triage; N=3+ MUST formalize; shipping the 4th instance is forbidden. → `KB § PATTERNS/project-execution.md` · skill `noc-hygiene`
 - **Componentize everything.** If another product will need it, build it shared from day one. → `KB § 04-SHARED-LIBRARY.md`
 - **Reading & research discipline.** Whole-file reads waste budget; narrow-read + delegate breadth to Explore. → `KB § PATTERNS/agent-reading-discipline.md`
@@ -50,6 +51,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Remediation markers.** A batch-able deferral lives in-code as `NOC-REMEDIATE[<class>]` — the named destination. → `KB § PATTERNS/remediation-markers.md`
 - **Doc-propagation sync.** A rule/tool change lives in KB ↔ CLAUDE.md ↔ memory ↔ tool-code the same commit. → `KB § 01-PHILOSOPHY.md`
 - **Keeper-check before doc'ing.** Query the local keeper-pattern cache before authoring any gated doc (agent/skill/CLAUDE.md/MEMORY.md/KB) — author from the live contract, not memory; the cache mirrors `compliance.py` via pre-commit refresh + lazy rebuild + `check_keeper_cache_freshness`. → `KB § PATTERNS/keeper-pattern-cache.md` · `KB § PATTERNS/keeper-check-before-docing.md`
+- **Agent-context architecture — lean L1 over canonical depth.** `.claude/agents/<name>.md` is the specialist INDEX (rule + `→` pointer, mirrors CLAUDE.md §1); frontmatter `owns_kb:` declares full-domain territory; KB holds depth; agent-context cache (Phase B) holds the compact extract. Keeper `check_agent_kb_alignment` enforces ownership + body-pointer mirror. → `KB § PATTERNS/agent-context-architecture.md`
 - **Persistent-files absorption.** Durable context in `projects/`/`.claude/worktrees/` (findings.md, PROJECT.md decisions, lessons) MUST land in KB/memory BEFORE archive or teardown — recovery pointer preserves access, absorption preserves the learning; both legs fire. → `KB § PATTERNS/persistent-files-absorption.md`
 - **Durable surfaces self-contained.** A config/script ref into `projects/`/`archive/` breaks loudly when archived. → `KB § 01-PHILOSOPHY.md`
 - **Symbol-first for dense / AI-intended docs.** Lossless-swap test gates each prose→symbol swap; `→`=routes, `⇒`=implies. → `KB § PATTERNS/doc-symbology.md`

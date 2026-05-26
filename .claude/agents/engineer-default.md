@@ -12,9 +12,12 @@ tools: Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*
 # Opus per-dispatch via the Agent tool's `model: opus` param (overrides this line). Hard-judgment work
 # must NOT ride Sonnet silently — that's a brief-scoping decision the architect makes at dispatch.
 model: sonnet
+owns_kb: []
 ---
 
 # engineer-default — standing protocol
+
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/agent-context-architecture.md` — the body IS the protocol (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `orchestrator-operator`). **Owns no KB domain — it's the protocol every specialist executor applies.**
 
 This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
 
