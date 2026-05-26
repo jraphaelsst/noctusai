@@ -60,10 +60,11 @@ When the abstraction has real consumers, the 5 cache modules each migrate their 
 
 **Why not big-bang now**: zero current benefit + 5h of churn + test surface. Lazy migration is correct.
 
-## Phase 3 — PostgresCacheBackend (DEFERRED — fires when T1/T2/T3 trigger)
+## Phase 3 — PostgresCacheBackend (container shipped; consumer wiring deferred)
 
-| # | Title | Files | Trigger |
+| # | Title | Files | Status / Trigger |
 |---|---|---|---|
+| P3.1.5 | `pgvector/pgvector:pg16` container in prod fleet — profile-gated (`cache`/`full`); named volume `noctus-cache-pg-data`; `.env.fleet.example`; KB pattern doc | `deploy/fleet/compose.infra.prod.yml` · `deploy/fleet/.env.fleet.example` · `KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/prod-cache-container.md` | **shipped (compose container only; consumer wiring deferred to P3.4)** |
 | P3.1 | `PostgresCacheBackend` impl — psycopg2 / asyncpg wrapper conforming to the Protocol | NEW `mcp/noctusai/tools/noctus/dev/cache_backend_postgres.py` | T1 / T2 / T3 |
 | P3.2 | Per-cache parameter-style audit — replace `?` placeholders with cursor.execute-style adaptation OR keep sqlite-style + paramstyle adapter | edits across the 5 cache modules' SQL | with P3.1 |
 | P3.3 | Migration tool — `noctus.dev.cache_migrate(from='sqlite', to='postgres')` — pure dump+reload (NOT data migration; just refresh against the new backend) | NEW migration tool OR document `force=True` refresh on the new backend | with P3.1 |
@@ -117,6 +118,7 @@ The original question included "containerize the SQLite cache." Phase 5 captures
 ## Decision log
 
 - **2026-05-26**: User question + analysis → decision to **ship abstraction, defer migration**. Trigger conditions T1-T5 documented. Phase 1 shipped.
+- **2026-05-26 evening**: pgvector/pgvector:pg16 container added to prod fleet infra (`compose.infra.prod.yml`); cache profile gated; volume `noctus-cache-pg-data` created; `.env.fleet.example` documents required vars; KB pattern `prod-cache-container.md` published. Consumer wiring (P3.1–P3.4) deferred until T2 trigger confirmed.
 
 ## Retrospective (filled at first trigger)
 
