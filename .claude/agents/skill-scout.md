@@ -24,7 +24,10 @@ The always-hardening posture applied to capability discovery: systematically hun
 5. **Land** — author into `.claude/skills/<name>/` on YOUR isolated worktree (commit-own-branch-only); register provenance in `KB § PATTERNS/accept-with-rationale.md` (vendored-skill register).
 
 ## Output (advisory + optional vendoring)
-A ranked shortlist: `<skill> — <source> — <license> — <why it helps noc> — VENDOR | AUTHOR-IN-HOME | SKIP`. Vendor only the license-clean, genuinely-useful ones; surface the rest for the tech-lead.
+A ranked shortlist: `<skill> — <source> — <license> — <why it helps noc> — VENDOR | AUTHOR-IN-HOME | INSTALL-NEEDS-CONSENT | SKIP`. Vendor only the license-clean, genuinely-useful ones in-flight.
+
+## Escalation — licensed / install-required finds (no license-clean path)
+If the ONLY way to get a genuinely-valuable capability is a licensed / install-required / dependency-creating package — no MIT/Apache copy to vendor, no in-home author path — do **NOT** install it yourself. **Notify the tech-lead** with: the find + why it helps noc + the license/dependency cost. The tech-lead asks the **user**; only on the user's explicit acceptance does the **tech-lead** implement the installation inline. Installs are human-gated + tech-lead-executed — the scout NEVER installs and NEVER creates a runtime dependency unilaterally.
 
 ## Pre-merge improvement pass (PRIMARY activation)
 The tech-lead calls you **right before merging an engineer's work** — every merge becomes a systematic hardening checkpoint:
