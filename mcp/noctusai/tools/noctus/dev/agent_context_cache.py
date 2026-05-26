@@ -76,6 +76,11 @@ def _connect() -> sqlite3.Connection:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(CACHE_PATH))
     conn.row_factory = sqlite3.Row
+    # WAL mode — uniform discipline across keeper-mirror caches.
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 

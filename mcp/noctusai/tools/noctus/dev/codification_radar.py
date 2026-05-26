@@ -115,7 +115,7 @@ def cluster(threshold: float = DEFAULT_THRESHOLD, limit: int = 200) -> dict:
         description = row.get("description") or ""
         if not description.strip():
             continue
-        result = embed_text(description)
+        result = embed_text(description, namespace="codification_radar")
         if not result.get("ok") or not result.get("vector"):
             # Provider issue — abort cluster (partial clusters mislead).
             return {

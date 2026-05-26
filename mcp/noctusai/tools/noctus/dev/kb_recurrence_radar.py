@@ -77,7 +77,7 @@ def _embed(text: str) -> list[float] | None:
         return None
     try:
         from . import vectorize
-        result = vectorize.embed_text(text)
+        result = vectorize.embed_text(text, namespace="kb_recurrence_radar")
         if result.get("ok") and "vector" in result:
             return result["vector"]
     except Exception:  # noqa: BLE001

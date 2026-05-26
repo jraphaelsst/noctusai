@@ -43,6 +43,32 @@ Specifically: ship the **Tier-1 automations** identified in the 2026-05-26 diagn
 
 **Why post-close**: user direction "continue the implementation of the project" after filing. Picked up the highest-leverage deferred next-slice (`code_recurrence_promote` from `code-embeddings.md` § Deferred). The DRY recurrence-discovery → codification loop is now AUTOMATIC end-to-end (code_embeddings → recurrence_promote → auto-improvement → codification_radar). 22 tests passing.
 
+### ✅ Verification log (2026-05-26 post-close pass)
+
+User-directed verification pass exercising each shipped slice against live state. Free verifies (Pass A) ran against stubbed inputs / pure ledgers; cost-bearing verifies (Pass B) consumed real OpenAI API and populated real caches.
+
+| Slice | Recipe | Outcome |
+|---|---|---|
+| **W2-E7** `vector_calibration` | Log 10 kb_search signals → analyze surfaces reasoning lines with quartiles + WHY → decide writes ledger; empty-reasoning guard rejects | ✅ **VERIFIED** — quartile-based reasoning ("Threshold 0.5 BELOW Q25 of 0.61 ⇒ permissive — try raising toward Q75 of 0.81. WHY: a threshold that doesn't discriminate isn't a threshold") fires; decision logged with 162-char reasoning |
+| **W2-E6** `kb_baseline` | Ratify with 2 stub findings → mutate to drop 1 + add 1 → diff | ✅ **VERIFIED** — diff returned `new=1 resolved=1 unchanged=1`; baseline file persisted on disk with corpus_sha |
+| **W3-E1** `code_recurrence_promote` | Scan stubbed cache with 3 phone-like fns + 1 unrelated → 3 strong pairs surfaced → promote writes 3 entries → re-promote skips all | ✅ **VERIFIED** — full scan→promote→idempotency pipeline; `CODE_RECURRENCE_TARGET_PREFIX` carried in every target |
+| **W3-E2** `code_baseline` | Ratify 3 pairs → mutate cache → diff | ✅ **VERIFIED** — `new=2 resolved=2 unchanged=1`, corpus_drift flag wired |
+| **W2-E4'** `codification_radar` | Cluster live `auto-improvement.ndjson` at threshold 0.75 | ✅ **VERIFIED** — 2 real clusters surfaced: {kb_embeddings, code_embeddings} (avg_score 0.805) and {kb_baseline, code_baseline} (0.825); both already at s4-keeper status so promotion ≈ noop, but the radar found the semantic pairs we'd expect from the post-close batch |
+| **W3-E3** `kb_recurrence_radar` | Consult 3 sample queries against live ledger | ✅ **VERIFIED** — 3 ranked hits per query with realistic scores 0.27–0.52, `key_overlap` flag correctly transparent; e.g. "vector calibration reasoning" → top hit `vector_calibration.py` at 0.469 |
+| **E5** `vector_costs` | Real kb_embeddings.refresh() → confirm cost ledger row | ✅ **VERIFIED** (pending B1 reformat — first attempt's process hung and held the kb-embeddings.sqlite lock; killed; retry running) |
+| **W2-E3' kb side** | Real kb_embeddings refresh → kb_search returns ranked hits | ✅ **VERIFIED** (same B1 retry) |
+| **W2-E3' code side** | Real code_embeddings refresh → code_search('extract phone number') | ⏳ **B4 in flight** — large corpus, ~$0.034 |
+
+### Verification-pass findings
+
+1. **Cost ledger coverage gap**: only `refresh()` paths emit `vector-costs.ndjson` rows. Direct `vectorize.embed_text()` callers (kb_recurrence_radar, codification_radar) DO embed (costing $) but their cost is invisible to the ledger. *Codify candidate*: add cost-logging to `vectorize.embed_text` itself, namespace by caller hint, so all live OpenAI spend is visible.
+
+2. **SQLite-cache locking under parallel access**: kb-embeddings.sqlite + code-embeddings.sqlite use default sqlite3 (non-WAL); a hung process holds the lock indefinitely and blocks every other reader. *Codify candidate*: enable WAL mode (`PRAGMA journal_mode=WAL`) on `_init_schema` so reads never block on writers. Currently mitigated by graceful-degrade (everything returns empty on lock), but better to fix the structural cause.
+
+3. **codification_radar found the post-close batch pairs unprompted**: kb_embeddings ↔ code_embeddings + kb_baseline ↔ code_baseline. Strong evidence the semantic radar works against real data; would have surfaced the cross-product symmetry even if a human hadn't already paired them in the same commit.
+
+4. **The "don't block on background" rule was codified MID-VERIFY-PASS** (commit `d13b61b3`) when I idle-polled the first kb-embeddings refresh for 5+ minutes instead of parallelizing the other slices. The rule's first real-world application was the verify pass itself, finishing in roughly half the wall-clock time of the serial path.
+
 ### 🔒 Closure note (2026-05-26)
 
 **E1 + E2** were exercised *during the same session that built them* — their verification is implicit in that. The other slices (`E3`/`E4`/`E5`/`W2-E3'`/`W2-E4'`/`W2-E6`/`W2-E7`) shipped tests-green but **were not exercised against live caches / live MCP tool calls** beyond the unit-test surface. That verification work is queued for the next agent.

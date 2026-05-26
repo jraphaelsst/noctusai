@@ -126,7 +126,7 @@ class TestClusterHappyPath:
         )
         # Mock embed_text to return high-similarity vectors for the first
         # two (about Pydantic) and a different vector for the third.
-        def fake_embed(text):
+        def fake_embed(text, namespace=None):
             if "pydantic" in text.lower() or "strict" in text.lower():
                 return {"ok": True, "vector": [1.0, 0.0, 0.0]}
             return {"ok": True, "vector": [0.0, 1.0, 0.0]}

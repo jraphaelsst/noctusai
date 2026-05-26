@@ -48,11 +48,21 @@ def register_cache(name: str, purpose: str, rows_fn: Any) -> None:
     _REGISTERED_CACHES.append({"name": name, "purpose": purpose, "rows_fn": rows_fn})
 
 
-def embed_text(text: str) -> dict:
+def embed_text(text: str, namespace: str | None = None) -> dict:
     """Embed any text via the shared seed embedder.
 
     Returns `{ok, vector, dim, model, provider}` on success or
     `{ok: False, error}` on failure (provider unconfigured, network, etc.).
+
+    `namespace` is an OPT-IN cost-attribution label. When provided, the
+    successful embed is logged to `project-history/vector-costs.ndjson`
+    via `vector_costs.log_refresh_batch` (chunk_count=1) under that
+    namespace. Closes the cost-coverage gap surfaced by the 2026-05-26
+    verify pass: routine `refresh()` callers were already logged, but
+    direct `vectorize.embed_text` callers (kb_recurrence_radar,
+    codification_radar) consumed OpenAI API silently. Pass a namespace
+    string like `"kb_recurrence_radar"` to opt in. Omit to preserve the
+    prior silent behavior (no surprise side-effect for generic callers).
 
     Use case: ad-hoc embedding for prototyping, debugging, or one-off
     cross-corpus comparisons before building a dedicated cache module.
@@ -64,13 +74,29 @@ def embed_text(text: str) -> dict:
         from noctusai_lib.integrations.llm.client import get_llm_config
         vec = asyncio.run(generate_embedding(text))
         cfg = get_llm_config()
-        return {
+        result = {
             "ok": True,
             "vector": vec,
             "dim": len(vec),
             "model": cfg.default_embedding_model,
             "provider": cfg.default_provider,
         }
+        if namespace:
+            try:
+                from . import vector_costs as _vc
+                _estimated_tokens = max(1, len(text) // 4)
+                _vc.log_refresh_batch(
+                    namespace=namespace,
+                    model=cfg.default_embedding_model,
+                    doc_count=1,
+                    chunk_count=1,
+                    estimated_tokens=_estimated_tokens,
+                    provider=cfg.default_provider,
+                    source_ref=None,
+                )
+            except Exception:  # noqa: BLE001 — never block the embed on logging failure
+                pass
+        return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}
 

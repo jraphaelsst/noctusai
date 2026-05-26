@@ -110,6 +110,12 @@ def _connect() -> sqlite3.Connection:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(CACHE_PATH))
     conn.row_factory = sqlite3.Row
+    # WAL mode — see kb_embeddings._connect for rationale (2026-05-26
+    # verify-pass surfaced rollback-journal blocking).
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass
     if _HAS_VEC:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)

@@ -105,6 +105,14 @@ def _connect() -> sqlite3.Connection:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(CACHE_PATH))
     conn.row_factory = sqlite3.Row
+    # WAL mode: readers don't block writers and vice versa. Set on every
+    # connect; idempotent (no-op if already WAL). Surfaced during the
+    # 2026-05-26 verify pass: a hung refresh held the rollback-journal
+    # lock and blocked every other reader. WAL fixes the structural cause.
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass  # fallback to default journal if WAL unavailable
     if _HAS_VEC:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)  # registers vec0 virtual tables + vec_* functions
