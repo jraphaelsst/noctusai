@@ -121,7 +121,8 @@ class TestFactory:
         assert be.kind() == "sqlite"
 
     def test_get_backend_unknown_raises_ValueError(self, monkeypatch):
-        monkeypatch.setenv(cb._ENV_VAR, "postgres")
+        # "postgres" is now valid (Phase 3.1); use a truly unknown value.
+        monkeypatch.setenv(cb._ENV_VAR, "supabase")
         with pytest.raises(ValueError, match="not a valid backend yet"):
             cb.get_backend()
 

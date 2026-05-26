@@ -64,7 +64,7 @@ When the abstraction has real consumers, the 5 cache modules each migrate their 
 
 | # | Title | Files | Trigger |
 |---|---|---|---|
-| P3.1 | `PostgresCacheBackend` impl — psycopg2 / asyncpg wrapper conforming to the Protocol | NEW `mcp/noctusai/tools/noctus/dev/cache_backend_postgres.py` | T1 / T2 / T3 |
+| P3.1 | `PostgresCacheBackend` impl — psycopg2 / asyncpg wrapper conforming to the Protocol | NEW `mcp/noctusai/tools/noctus/dev/cache_backend_postgres.py` | **shipped** |
 | P3.2 | Per-cache parameter-style audit — replace `?` placeholders with cursor.execute-style adaptation OR keep sqlite-style + paramstyle adapter | edits across the 5 cache modules' SQL | with P3.1 |
 | P3.3 | Migration tool — `noctus.dev.cache_migrate(from='sqlite', to='postgres')` — pure dump+reload (NOT data migration; just refresh against the new backend) | NEW migration tool OR document `force=True` refresh on the new backend | with P3.1 |
 | P3.4 | Per-cache backend selection env var — `NOCTUS_CACHE_BACKEND_<NAME>` for gradual rollout (e.g., vector caches go remote, methodology caches stay local) | extend `get_backend()` in `cache_backend.py` | with P3.1 |
@@ -117,6 +117,7 @@ The original question included "containerize the SQLite cache." Phase 5 captures
 ## Decision log
 
 - **2026-05-26**: User question + analysis → decision to **ship abstraction, defer migration**. Trigger conditions T1-T5 documented. Phase 1 shipped.
+- **2026-05-26 evening**: T2 trigger fired (hosted noc deployment); `PostgresCacheBackend` implemented as Phase 3.1. psycopg2 present in venv; `pgvector` Python package missing (DRIFT — surfaced to architect). 22 new tests; existing 18 updated (1 test updated: `test_get_backend_unknown_raises_ValueError` was using `"postgres"` as its "unknown" value — now uses `"supabase"`).
 
 ## Retrospective (filled at first trigger)
 

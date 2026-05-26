@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, Iterator, Protocol, runtime_checkable
 
 from settings import REPO_ROOT
+from tools.noctus.dev.cache_backend_postgres import PostgresCacheBackend  # noqa: E402
 
 
 # ── Cache catalog (single source of truth for cache names + files) ───────────
@@ -176,7 +177,7 @@ class SqliteCacheBackend:
 # ── Factory ──────────────────────────────────────────────────────────────────
 
 _ENV_VAR = "NOCTUS_CACHE_BACKEND"
-_VALID_BACKENDS = ("sqlite",)  # extend when Phase 2+ ships
+_VALID_BACKENDS = ("sqlite", "postgres")  # extend when Phase 4+ ships
 
 
 def get_backend(repo_root: Path | None = None) -> CacheBackend:
@@ -197,6 +198,8 @@ def get_backend(repo_root: Path | None = None) -> CacheBackend:
     requested = os.environ.get(_ENV_VAR, "sqlite").strip().lower()
     if requested == "sqlite":
         return SqliteCacheBackend(repo_root=repo_root)
+    elif requested == "postgres":
+        return PostgresCacheBackend()
     raise ValueError(
         f"{_ENV_VAR}={requested!r} is not a valid backend yet; "
         f"valid today: {sorted(_VALID_BACKENDS)}. "
@@ -207,6 +210,7 @@ def get_backend(repo_root: Path | None = None) -> CacheBackend:
 
 __all__ = [
     "CacheBackend",
+    "PostgresCacheBackend",
     "SqliteCacheBackend",
     "cache_path",
     "get_backend",
