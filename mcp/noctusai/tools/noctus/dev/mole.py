@@ -4,7 +4,9 @@ MCP-first: this is the NATIVE-Python implementation of the storage-hygiene
 `mole` (formerly a thin subprocess shim over `scripts/mole.sh`). An agent
 can scan/sweep storage waste — artifacts (regenerable caches/builds),
 environments (venv/node_modules dup, advisory-only), worktrees (stale
-`.claude/worktrees/agent-*/`).
+worktrees under `.claude/worktrees/` — any subdir: `agent-<id>` from Agent
+isolation OR a self-branch `feat/<slug>`; the merged + clean gates are the
+safety, not the name).
 
 Project cleanup is a DIFFERENT surface — already `noctus.dev.archive`.
 
@@ -332,7 +334,10 @@ def _classify_worktrees(root: Path) -> list[tuple[str, str, str, str]]:
                 locked = False
     _flush()
 
-    # Pass 2: on-disk agent-* dirs not in the seen set → ORPHAN.
+    # Pass 2: on-disk `agent-*` dirs not in the seen set → ORPHAN. Stays
+    # `agent-*` CONSERVATIVE — an orphan (unregistered) dir has no branch ⇒
+    # no merge gate; registered worktrees of any name are handled (merge-
+    # gated) by _classify_emit_registered.
     if worktree_dir.is_dir():
         for d in worktree_dir.iterdir():
             if not d.is_dir():
@@ -373,10 +378,12 @@ def _classify_emit_registered(
     wts_run: wts.GitRunner,
     base: str,
 ) -> None:
-    # Filter: only agent-* worktrees under WORKTREE_DIR. Non-agent paths
-    # (main repo, sibling workspaces) ignored entirely.
-    agent_prefix = str(worktree_dir / "agent-")
-    if not wt.startswith(agent_prefix):
+    # Filter: any worktree under WORKTREE_DIR (was `agent-*` only — left raw
+    # `git worktree add` + `task_branch` self-branch worktrees un-swept).
+    # Main repo + sibling workspaces live OUTSIDE .claude/worktrees/, so
+    # they're still ignored; the merged + clean gates remain the real safety.
+    worktrees_root = str(worktree_dir) + os.sep
+    if not wt.startswith(worktrees_root):
         return
 
     # Record we've seen this path BEFORE the self-skip — Pass 2 must not

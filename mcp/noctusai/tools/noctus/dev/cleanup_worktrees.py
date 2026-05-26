@@ -10,7 +10,9 @@ Why this exists
 
 What "stale" means (shared predicate — ``_worktree_staleness``, the SAME
 core ``noctus.dev.mole``'s worktree scope consumes)
-    An agent worktree whose branch is either:
+    Any worktree under ``.claude/worktrees/`` (an ``agent-<id>`` from
+    ``Agent(isolation:"worktree")`` OR a self-branch ``feat/<slug>`` from
+    ``task_branch`` / a raw ``git worktree add``) whose branch is either:
       (a) reachable from ``origin/dev`` by SHA ancestry (true merge), OR
       (b) all commits already present on ``origin/dev`` by PATCH-ID
           (cherry-pick — the orchestrator integrates via cherry-pick: new
@@ -24,7 +26,7 @@ core ``noctus.dev.mole``'s worktree scope consumes)
 Safety (identical contract — the THE-P10 / THE-P11 lessons)
     * Never removes the main worktree.
     * Never removes sibling workspaces (paths NOT under
-      ``.claude/worktrees/agent-*``).
+      ``.claude/worktrees/``).
     * Refuses to remove worktrees with uncommitted files or stashes —
       surfaces them as ``dirty`` manual-review findings. ``force=True`` does
       NOT override this (it only suppresses the interactive prompt).
@@ -202,13 +204,19 @@ def cleanup_stale_worktrees(
     locked: list[str] = []
     stale: list[str] = []
 
-    agent_prefix = str(worktree_dir / "agent-")
+    worktrees_root = str(worktree_dir) + os.sep
 
     def classify(wt: str, branch: str | None, is_locked: bool, lock_reason: str) -> None:
         # Main repo or sibling workspace: ignore.
         if wt == str(root):
             return
-        if not wt.startswith(agent_prefix):
+        # Any worktree under .claude/worktrees/ (was `agent-*` only — which
+        # left raw `git worktree add` + `task_branch` feat/<slug> self-branch
+        # worktrees un-sweepable, the 2026-05-25 bare-`worktree remove`
+        # hazard). The merged-to-dev + clean + unlocked gates below are the
+        # real safety; the NAME was never the protection. Main repo + sibling
+        # workspaces live OUTSIDE .claude/worktrees/, so they stay excluded.
+        if not wt.startswith(worktrees_root):
             return
         if branch is None:
             return
@@ -265,7 +273,11 @@ def cleanup_stale_worktrees(
     for wt, branch, is_locked, lock_reason in _registered_worktrees(root):
         classify(wt, branch, is_locked, lock_reason)
 
-    # Orphan detection: on-disk agent-* dir NOT in `git worktree list`.
+    # Orphan detection: on-disk `agent-*` dir NOT in `git worktree list`.
+    # Stays `agent-*` CONSERVATIVE on purpose — an orphan (unregistered) dir
+    # has no branch ⇒ NO merge gate, so only sweep ones unmistakably ours.
+    # Registered worktrees of ANY name are handled by classify() above, where
+    # the merged + clean gate is the real safety.
     registered_paths = {
         e[0] for e in _registered_worktrees(root)
     }

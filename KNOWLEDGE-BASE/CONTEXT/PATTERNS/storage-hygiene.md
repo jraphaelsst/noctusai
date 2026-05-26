@@ -1,6 +1,6 @@
 # Storage hygiene — the `mole` and the trio
 
-> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/agent-*/`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`); its worktree-scope merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_staleness.py` helper**, consumed identically by `noctus.dev.cleanup_stale_worktrees` (one source of truth — no parity drift). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`dev` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
+> **TL;DR.** Third member of the regulatory/curatorial/custodial trio. Keeper guards laws, hound sniffs out hygiene, **mole burrows for storage waste**. Three orthogonal scopes — `artifacts` (regenerable caches/builds), `environments` (venv/node_modules duplication), `worktrees` (stale `.claude/worktrees/*` — any subdir, not just `agent-*`). Active by default: pre-dispatch + pre-commit + post-merge. **MCP-exposed** as `noctus.dev.mole` (`mode=scan|sweep`, `scope`, `force`); its worktree-scope merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_staleness.py` helper**, consumed identically by `noctus.dev.cleanup_stale_worktrees` (one source of truth — no parity drift). **Safe-gate:** `sweep` deletes only with `force=True`, and only merged-to-`dev` (SHA-ancestry|patch-id) worktrees + regenerable artifacts — never uncommitted/unmerged/main/sibling/`.env`/migration content; caller must also confirm no agent is mid-flight in a target worktree (scan → eyeball → force-sweep). Project cleanup is the separate `noctus.dev.archive`.
 
 ---
 
@@ -73,16 +73,16 @@ Each agent has **observation-only scan** (default) + **destructive sweep** (gate
 - Auto-wiping `.venv/` without warning — engineer next session loses 30s × N rehydrate cost
 - Touching `seed/lib/backend/.venv` — it's the seed lib editable install; deleting requires re-install gymnastics
 
-### 2.3 · Worktrees (stale `.claude/worktrees/agent-*/`)
+### 2.3 · Worktrees (stale `.claude/worktrees/*`)
 
-**Definition**: agent worktree directories under `.claude/worktrees/` whose branch is reachable from `origin/dev` by SHA ancestry OR patch-id equivalence (cherry-pick). Engineer worktrees fork from + integrate to the `dev` integration branch, NOT `main` (KB § PATTERNS/branching-and-merging.md § 0) — a merged-to-dev-but-not-yet-blessed-to-main worktree was never swept under the old `origin/main` keying.
+**Definition**: ANY worktree directory under `.claude/worktrees/` (an `agent-<id>` from Agent isolation OR a self-branch `feat/<slug>` from `task_branch` / a raw `git worktree add` — broadened 2026-05-25 from the old `agent-*`-only filter so self-branch worktrees can't fall through to a bare hand-`rm`; the merged + clean gate is the safety, not the name) whose branch is reachable from `origin/dev` by SHA ancestry OR patch-id equivalence (cherry-pick). Engineer worktrees fork from + integrate to the `dev` integration branch, NOT `main` (KB § PATTERNS/branching-and-merging.md § 0) — a merged-to-dev-but-not-yet-blessed-to-main worktree was never swept under the old `origin/main` keying.
 
 This merged-base + merged predicate is the **shared `tools/noctus/dev/_worktree_staleness.py` helper** — the single source of truth consumed identically by both `noctus.dev.mole` (worktree scope) and `noctus.dev.cleanup_stale_worktrees`, so changing one can no longer drift the other.
 
 **Patterns**:
 - `.claude/worktrees/agent-<id>/` with branch SHA-merged to origin/dev (true merge)
 - `.claude/worktrees/agent-<id>/` with branch commits all present on origin/dev by patch-id (cherry-pick — the gap §19 of branching-and-merging.md captures)
-- Orphan dirs under `.claude/worktrees/agent-*/` that git doesn't recognize as worktrees (rm'd manually but metadata left)
+- Orphan dirs under `.claude/worktrees/agent-*/` that git doesn't recognize as worktrees (rm'd manually but metadata left) — orphan-detection stays `agent-*`-CONSERVATIVE (an unregistered dir has no branch ⇒ no merge gate); REGISTERED worktrees of any name sweep via the merge+clean gate
 
 **Reversibility test**: is the work merged? Either:
 - `git merge-base --is-ancestor <branch> origin/dev` ✓ → SHA-merged, safe to remove
@@ -128,7 +128,7 @@ Merged-clean sweep is extraction-no-op for the *learnings* leg (content already 
 - **Salvaging only to an out-of-repo dir** (`~/…-salvage-*/`) and calling it done — that's the transient net, not the durable extraction; learnings + a tracked recovery record must land first (the 2026-05-25 re-drift).
 - Removing a worktree whose branch has UNMERGED commits — loses the engineer's work
 - Removing the main worktree (the repo root itself)
-- Removing sibling workspaces (paths NOT under `.claude/worktrees/agent-*/`) — those are user-managed seed workspaces
+- Removing sibling workspaces (paths NOT under `.claude/worktrees/`) — those are user-managed seed workspaces
 - **`git worktree remove -f -f` (double force) as automation** — bypasses the lock check that was put there for a reason. Use only after manual verification.
 - **Auto-removing locked-stale worktrees on the assumption that "lock == stale"** — a lock can be active. Always diagnose before destroying.
 
@@ -238,7 +238,7 @@ Mirrors `disk-usage-monitor.sh` exit-code semantics:
 
 1. **Never deletes uncommitted work** — checks `git diff --quiet` and `git diff --cached --quiet` before any destructive op.
 2. **Never deletes the main worktree** — refuses to operate on `$REPO_ROOT` directly.
-3. **Never deletes sibling workspaces** — paths NOT under `.claude/worktrees/agent-*/` are skipped.
+3. **Never deletes sibling workspaces** — paths NOT under `.claude/worktrees/` are skipped.
 4. **Never deletes unmerged branches** — `git merge-base --is-ancestor` OR `git cherry origin/dev <branch>` must confirm reachability (the shared `_worktree_staleness` predicate).
 5. **Never deletes `.env` files** — they contain secrets; always in the deny-list.
 6. **Never deletes migration files** — `products/*/backend/migrations/*.sql` always preserved.

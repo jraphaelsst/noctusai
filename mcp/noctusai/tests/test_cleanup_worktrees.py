@@ -77,6 +77,17 @@ class TestDryRunDefault:
         assert result["removed"] == 0
         assert wt.exists(), "dry-run must NOT remove the worktree"
 
+    def test_non_agent_named_worktree_is_stale(self, repo):
+        # Regression (2026-05-25): self-branch worktrees from a raw
+        # `git worktree add` or `task_branch` feat/<slug> are NOT named
+        # `agent-*`, so the old `agent-` path filter skipped them entirely —
+        # un-sweepable, the bare-`git worktree remove` hazard. They must now
+        # sweep like any other; the merged + clean gates are the real safety.
+        wt = _add_worktree(repo, "my-task", "feat/my-task")
+        result = cleanup_stale_worktrees(repo_root=repo)
+        assert str(wt) in result["stale"], "merged non-agent worktree must be stale"
+        assert wt.exists(), "dry-run must NOT remove it"
+
 
 class TestMergePredicate:
     def test_unmerged_branch_is_active_kept(self, repo):
