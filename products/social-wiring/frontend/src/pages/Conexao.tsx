@@ -67,8 +67,9 @@ import {
   type WhatsAppConnectionLine,
 } from "@/hooks/useWhatsAppConnections";
 
-// Default inbound webhook (Docker-internal: waha ↔ app share the network).
-const DEFAULT_WEBHOOK_URL = "http://app:8010/api/whatsapp/webhook";
+// Default inbound webhook (Docker-internal: WAHA → social-wiring over
+// noctus-net by the compose service name `social-wiring` on its house port).
+const DEFAULT_WEBHOOK_URL = "http://social-wiring:8011/api/whatsapp/webhook";
 
 // ─── Status badge ───────────────────────────────────────────────────────────
 function StatusBadge({ status, paired }: { status: string | null; paired: boolean }) {
