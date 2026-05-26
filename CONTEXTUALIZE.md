@@ -1,54 +1,64 @@
-# CONTEXTUALIZE.md — fresh-agent onboarding map
+# CONTEXTUALIZE.md — fresh-agent read map (pointer-only)
 
-> **Trigger.** The user said "contextualize" / "please contextualize" to a clean-context agent, OR you genuinely don't know what this platform is. Read this **once**, top to bottom, follow the map, then do the task the user asked. **If you are already working / already oriented: you should not be here — `CLAUDE.md`'s NEW-SESSION-CONTEXTUALIZATION section told you to skip. Re-reading this wastes tokens.**
+> **Trigger.** Clean-context agent **AND** user said "contextualize" / "please contextualize" / "I don't know this platform." Read once, follow the pointers, proceed. **Already working / oriented? Skip — re-reading wastes tokens** (re-bloat is keeper-gated by `check_contextualize_alignment`).
 >
-> This file is a **map and a mental model**, not a copy of the docs. It points; the targets hold the depth. After this + the linked reads you are contextualized — everything else loads on-demand via `CLAUDE.md` §2/§3 + `KNOWLEDGE-BASE/INDEX.md`.
+> Pointer-only map (mirrors CLAUDE.md §1 pattern: rule + one-clause why + `→` pointer). Bodies live at the pointers; nothing inlined here drifts.
 
 ---
 
-## 1. What this platform is (30 seconds)
+## 1 · Core read order (each line: what to read → what you'll know after; stop when enough)
 
-NoctusAI is a **multi-product platform built on a shared seed**. A fleet of products (ERP, therapy, social-wiring, PF, daily-life, core, …; **authoritative roster/count → `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`**, auto-derived — never hand-count) all inherit one backend factory (`create_product_app()`) + one frontend factory (`createProductApp()`) + a shared library (`noctusai_lib`) + a shared seed framework. Products are thin; the seed is the spine. There is a heavy, **living methodology** governing how work is done — it is codified in docs and it improves itself every session.
+- **`CLAUDE.md` §1** → the always-on behavioral contract (auto-loaded; actually read §1, don't skim).
+- **`KNOWLEDGE-BASE/AGENT-CONTEXT.md`** → fresh-session orientation + "what is this place" prose.
+- **`KB § CONTEXT/02-LANDSCAPE.md`** → products / schemas / ports / stack — *what exists*.
+- **`KB § CONTEXT/01-PHILOSOPHY.md`** → engineering principles — *how we think*.
+- **`KB § CONTEXT/03-SEED-ARCHITECTURE.md`** → the spine; the single most load-bearing architectural rule.
+- **`KB § CONTEXT/04-SHARED-LIBRARY.md`** → reusable components catalog (`noctusai_lib` + `@noctusai/lib`).
+- **`KB § CONTEXT/05-INFRASTRUCTURE.md`** → deployment + self-hosted services + the VPS fleet.
+- **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (130 tools) + Claude-side agents.
+- **`KB § INDEX.md`** → the full KB catalog; where depth lives (pull on-demand, never cover-to-cover).
+- **`MEMORY.md`** → working-agreement index (auto-loaded; one line each, expand the relevant ones).
 
-## 2. Read in this order (the core set)
+## 2 · Universal patterns to recognize before editing anything
 
-Each line: *what to read → what you'll know after.* Stop when you have enough for the task; the rest is on-demand.
+- **Agent-context architecture** — `.claude/agents/<name>.md` are lean L1 INDEX over KB depth; frontmatter `owns_kb:` declares full-domain territory. → `KB § PATTERNS/agent-context-architecture.md`
+- **Drift-fix-on-contact + scoped auto-improvement** — drift = PAUSE → resolve → surface-if-blocked → DOC → continue. Tech-lead RESOLVES; engineers SURFACE in `drift-found:` / `scoped-improvement:` lines (two-leg footer mandatory every dispatch). → `KB § PATTERNS/drift-fix-on-contact.md` · `KB § PATTERNS/scoped-auto-improvement.md`
+- **Cache family — consult-before-editing** — three keeper-mirror caches (keeper-pattern + agent-context + auto-improvement). Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/keeper-pattern-cache.md` · `KB § PATTERNS/keeper-check-before-docing.md`
+- **Self-branching mode** — 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/self-branching-mode.md` · skill `noc-self-branch`
+- **AST-first** — code edits via `libcst` / `ts-morph` / `tree-sitter` — never regex/sed on source. → `KB § PATTERNS/ast.md`
+- **DRY — the recurrence rule** — N=2 → triage; N=3+ MUST formalize; the 4th instance is forbidden. → `KB § PATTERNS/project-execution.md`
+- **Triage at decision time — accept-with-rationale** — every divergence lands on `[F]/[R]/[A]` with paperwork (catalog survives folder deletion). → `KB § PATTERNS/accept-with-rationale.md`
+- **Methodology codification pipeline** — s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector. → `KB § PATTERNS/methodology-codification-pipeline.md`
+- **Three-way sync + symbol-first + lossless doc-refactor** — rule changes live in KB↔CLAUDE.md↔memory same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. → `KB § PATTERNS/claude-md-router-discipline.md` · `KB § PATTERNS/doc-symbology.md` · `KB § PATTERNS/lossless-doc-refactor.md`
+- **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/persistent-files-absorption.md` · `KB § PATTERNS/storage-hygiene.md`
+- **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/remediation-markers.md`
 
-1. **`CLAUDE.md` §1 (Universal rules)** → the non-negotiable behavioral contract you obey every turn. §2 (The Map) + §3 (When to read what) → how to find any depth doc on-demand. *(It's auto-loaded; actually read §1, don't skim.)*
-2. **`KNOWLEDGE-BASE/AGENT-CONTEXT.md`** → fresh-session orientation (the existing first-stop).
-3. **`KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`** → the product list, schemas, ports, stack — *what exists*.
-4. **`KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md`** → the foundational principles — *how we think* (seed-first rationale, no-silent-errors, always-hardening, codebase-is-source-of-truth).
-5. **`KNOWLEDGE-BASE/CONTEXT/03-SEED-ARCHITECTURE.md`** → how products inherit the seed; the named seams; the "verify-the-seed-ships-it" test. The single most load-bearing architectural rule.
-6. **`KNOWLEDGE-BASE/INDEX.md`** → the full KB map. You don't read KB cover-to-cover; you grep/route here when a task needs depth.
-7. **`MEMORY.md`** (memory index, auto-loaded) → the accumulated feedback/working-agreement rules — one line each, expand the relevant ones on demand.
+## 3 · Domain map (high-traffic patterns by area — first stop when working in that domain)
 
-**Conditional (read only if the task is that):**
-- Project / dispatch / branching work → `CLAUDE/projects.md` + `KB § PATTERNS/project-execution.md` + `KB § PATTERNS/branching-and-merging.md` (esp. §21 collision-class branching).
-- You will dispatch or be dispatched as an engineer → `.claude/agents/engineer-default.md`.
-- Backend/frontend code → `CLAUDE/backend.md` / `CLAUDE/frontend.md` + the matching `KB § PATTERNS/` + `KB § backend|frontend/0X-*.md`.
-- New product / absorb / deploy → the `CLAUDE.md` §3 trigger-phrase row points to the exact guide.
+- **Backend** (FastAPI / Pydantic / RLS / migrations) → `KB § PATTERNS/backend.md` · `database-rls.md` · `pydantic-strict-http.md` · `di-test-seam.md` · `logging.md` · `seed-fake-real-adapter.md`. Specialist agent: `backend-engineer`.
+- **Frontend** (React / TanStack Query / vite / seed factories) → `KB § PATTERNS/frontend.md` · `core-url-routing.md` · `product-internal-wiring.md` · `product-icon-registry.md`. Specialist agent: `frontend-engineer`.
+- **DevOps / containers / deploy** → `KB § PATTERNS/containerization.md` · `container-sanitization.md` · `base-image-dep-freshness.md` · `dev-prod-parity.md` · `deploy-config-contract.md` · `KB § GUIDES/production-deploy.md`. Specialist agent: `devops-engineer`.
+- **Security / LGPD / webhook signatures** → `KB § PATTERNS/webhook-signatures.md` · `lgpd.md` · `llm-bot-security.md`. Specialist agent: `security` (advisor).
+- **Compliance / testing / regression baseline** → `KB § PATTERNS/compliance-regression-baseline.md` · `testing.md`. Specialist agent: `compliance-reviewer` (advisor).
+- **Integrations** (Google / Meta / WhatsApp / OAuth / image-gen) → `KB § INTEGRATIONS/*.md`.
+- **Branching / dispatch / parallel waves** → `KB § PATTERNS/branching.md` · `branching-and-merging.md` (§18/§21 collision-class) · `branching-dispatch.md` · `dispatch-engineer-tuning.md` · `parallelization-first-orchestration.md`. Specialist agent: `architect`.
 
-## 3. How we work — the mental model you must hold before touching anything
+## 4 · Specialist agents + procedure skills
 
-- **Seed first, always.** Never hand-fork what the seed provides; flow customizations through named seams. Verify the seed actually ships a thing (`__init__.py` + real adapter) before consuming it.
-- **The methodology is living and self-improving.** It is never finished. Every execution is a *training pass*: spotted improvements are announced **loudly** in-the-moment (`**Methodology improvement spotted**`), implemented before the in-flight work ships, and three-way-synced. Silent-but-correct self-improvement breaks the contract.
-- **Three-way sync.** Any rule/methodology change lives in **KB ↔ CLAUDE.md (or CLAUDE/topical) ↔ memory** the same session. Docs are layered: `CLAUDE.md` = router; `CLAUDE/<topic>.md` = topical rules; `KNOWLEDGE-BASE/` = depth; `MEMORY.md` = index.
-- **Codebase is source of truth.** Docs/memory/another agent's report drift. Before acting on any claim, verify it against the tree (`git status`/`Read`/`pytest`). Doc disagrees with code → code wins, fix the doc same change.
-- **No silent errors. No stale work.** No `except: pass`, no unverified "✓", no deferred item without a named destination. Clear-path deferrals / accept-with-rationale / findings / AI↔AI comms are resolved **in-flight, same commit** — not parked for later (`KB § PATTERNS/project-execution.md §2.13`).
-- **Branching-first.** Parallelizable work → isolated worktrees + parallel engineer dispatch; the architect plans+dispatches+stays-with-user, engineers build. Merge cleanliness is decided at *dispatch* time (collision-class C1/C2/C3, `KB §21`).
-- **AST-first** for code edits (libcst/ts-morph/tree-sitter) — never regex/sed on source.
-- **Fix-on-contact.** Bumped into pre-existing debt while doing other work → fix it in-flight, then surface problem+root-cause+solution. Surface-only is forbidden.
-- **Commit discipline.** Never auto-commit/push except project gates; commit only your own authored work; verify staged set; main pushes are R4 human-gated (present → explicit go → execute).
-- **MCP keep-list:** `noctusai` + `supabase` only. Any other MCP/skill needs explicit user approval.
-- **Symbol-first** for AI-intended docs (the glossary is `KB § PATTERNS/doc-symbology.md`) — but NOT for first-paragraph context, quoted-user, errors, commits.
-- **The user thinks-with the architect.** Stay available; engineers (subagents) do heavy lifting in isolation.
+- **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-default` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy).
+- **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `skill-creator` (+ `codify`).
 
-## 4. Trigger phrases that change behavior (recognize these in the user's prompt)
+## 5 · Conditional reads (only if the task is that)
 
-`create/scaffold/absorb a product` · `branch this / branch X` · `put X online / deploy / spin up` · `absorb the X workspace` · `two sessions / architect-operator` · `contextualize` (this file) · `c-push` · `/loop` `/schedule` `/security-review` · "what cleanup is urgent?" (→ `noctus.hound.scan`). The exact routing for each is in `CLAUDE.md` §3.
+| Task | First stop |
+|---|---|
+| Create / scaffold / absorb a product · deploy/ship · branch/dispatch · self-branch · wiring audit · container debug · cleanup | matching `noc-*` skill (auto-triggers) |
+| Dispatched as engineer | `.claude/agents/engineer-default.md` (standing protocol) |
+| Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/project-execution.md` |
+| Trigger phrases the user might say | `CLAUDE.md` §3 routing table |
 
-## 5. You're contextualized
+## 6 · You're contextualized
 
-You now know: what the platform is, the core docs + where depth lives, the non-negotiable mental model, the trigger phrases. **Proceed with the user's actual task.** Pull depth on-demand via `CLAUDE.md` §2/§3 + `KNOWLEDGE-BASE/INDEX.md` — do not pre-read everything (that wastes tokens; the methodology values lean context). Welcome aboard.
+Proceed with the user's task. Pull depth on-demand via `CLAUDE.md` §2/§3 + `KB § INDEX.md` — don't pre-read everything; the methodology values lean context.
 
-> *Provenance: this ramp is **clean-context-agent-verified** (not asserted) — first validated 2026-05-18 by dispatching a zero-context agent given only "please contextualize"; it passed (oriented after ~2 files) and surfaced 2 doc-drift bugs, fixed in-flight. Re-run that self-test after material changes to the core onboarding docs (memory `feedback_new_session_contextualization`).*
+> *Provenance: clean-context-agent-verified 2026-05-18; re-run the self-test after material changes to the core onboarding docs (memory `feedback_new_session_contextualization`). Conformance enforced by `check_contextualize_alignment` (pre-commit) — pointer-only discipline + canonical-cores covered + line cap.*

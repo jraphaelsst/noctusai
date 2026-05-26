@@ -7825,6 +7825,10 @@ def check_all_products() -> tuple[int, list]:
     # mirrors project-history/auto-improvement.ndjson. Consult-before-editing
     # discipline. KB § PATTERNS/scoped-auto-improvement.md.
     all_issues.extend(check_auto_improvement_cache_freshness())
+    # 2026-05-26 (Phase B) — CONTEXTUALIZE.md = fresh-agent read map; sibling
+    # of check_claude_md_router (same pointer-only discipline, applied to the
+    # onboarding ramp). KB § PATTERNS/claude-md-router-discipline.md.
+    all_issues.extend(check_contextualize_alignment())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8748,6 +8752,101 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
                 ),
                 "severity": "high",
                 "symbol": "agent-context-cache-stale",
+            })
+    return issues
+
+
+_CONTEXTUALIZE_CANONICAL_CORES = (
+    # Each entry: a substring that MUST appear as a pointer in CONTEXTUALIZE.md.
+    # Curated list of the docs a fresh agent MUST be routed to. Adding a new
+    # canonical core = add the line here + ensure CONTEXTUALIZE.md points at
+    # it; check_contextualize_alignment enforces both legs.
+    "CLAUDE.md",
+    "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
+    "CONTEXT/01-PHILOSOPHY.md",
+    "CONTEXT/02-LANDSCAPE.md",
+    "CONTEXT/03-SEED-ARCHITECTURE.md",
+    "KB § INDEX.md",
+    "MEMORY.md",
+    "PATTERNS/agent-context-architecture.md",
+    "PATTERNS/drift-fix-on-contact.md",
+    "PATTERNS/self-branching-mode.md",
+    "PATTERNS/ast.md",
+    "PATTERNS/keeper-pattern-cache.md",
+    "PATTERNS/scoped-auto-improvement.md",
+)
+# Soft cap: re-bloat above this fires the keeper (sibling of check_claude_md_router).
+# Set at 75 lines to allow WIDE-REACH pointer coverage (domain map + specialists +
+# universal patterns + conditional reads) without rewarding inline-body re-bloat.
+# A 54-line file with duplicated CLAUDE.md §1 bodies was worse than a 64-line
+# file with broad pointer-only reach. Raise via codified rationale only.
+_CONTEXTUALIZE_LINE_CAP = 75
+
+
+def check_contextualize_alignment(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, Phase B): CONTEXTUALIZE.md MUST remain a
+    pointer-only fresh-agent read map. Sibling discipline to
+    `check_claude_md_router` — same shape, applied to the fresh-agent
+    onboarding ramp.
+
+    Predicate:
+      (a) File exists at repo root.
+      (b) Line count ≤ `_CONTEXTUALIZE_LINE_CAP` — re-bloat is forbidden
+          (the auto-loaded budget for fresh agents compounds).
+      (c) Every entry in `_CONTEXTUALIZE_CANONICAL_CORES` appears as a
+          pointer substring in the body — the curated list of docs a
+          fresh agent MUST be routed to.
+
+    Severity ``high`` (drift here ⇒ fresh agents arrive un-oriented and
+    re-read the same docs you already trimmed; the codebase is the source
+    of truth, and CONTEXTUALIZE.md is the front door).
+
+    KB § PATTERNS/claude-md-router-discipline.md (sibling discipline).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ctx = root / "CONTEXTUALIZE.md"
+    if not ctx.exists():
+        issues.append({
+            "product": "<harness>", "file": "CONTEXTUALIZE.md",
+            "issue": (
+                "CONTEXTUALIZE.md missing at repo root — fresh-agent read "
+                "map is required (CLAUDE.md §0 routes here)."
+            ),
+            "severity": "high",
+            "symbol": "contextualize-missing",
+        })
+        return issues
+    try:
+        text = ctx.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return issues
+    line_count = len(text.splitlines())
+    if line_count > _CONTEXTUALIZE_LINE_CAP:
+        issues.append({
+            "product": "<harness>", "file": "CONTEXTUALIZE.md",
+            "issue": (
+                f"CONTEXTUALIZE.md is {line_count} lines, cap is "
+                f"{_CONTEXTUALIZE_LINE_CAP} — pointer-only discipline "
+                "(CLAUDE.md §1 pattern). Trim inline bodies; push depth "
+                "to the pointers."
+            ),
+            "severity": "high",
+            "symbol": "contextualize-bloated",
+        })
+    for ref in _CONTEXTUALIZE_CANONICAL_CORES:
+        if ref not in text:
+            issues.append({
+                "product": "<harness>", "file": "CONTEXTUALIZE.md",
+                "issue": (
+                    f"CONTEXTUALIZE.md missing a pointer to `{ref}` — "
+                    "fresh agents must be routed to every canonical core. "
+                    "Add a one-line pointer (rule + `→` pointer) OR remove "
+                    "the entry from `_CONTEXTUALIZE_CANONICAL_CORES` in "
+                    "compliance.py with a rationale."
+                ),
+                "severity": "high",
+                "symbol": "contextualize-missing-canonical-core",
             })
     return issues
 

@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--refresh-auto-improvement-cache", action="store_true", help="Refresh the local auto-improvement cache (.claude/cache/auto-improvement.sqlite) from project-history/auto-improvement.ndjson. The scoped-auto-improvement system's mirror leg. Tech-leads / agents consult this cache BEFORE editing a doc/agent to surface relevant past observations. Auto-run by pre-commit on ndjson change. KB § PATTERNS/scoped-auto-improvement.md.")
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
+    parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -390,6 +391,16 @@ def main():
             print(f"  {GREEN}✓ auto-improvement cache fresh (mirrors ndjson).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} auto-improvement-cache-freshness issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_contextualize_alignment:
+        from tools.noctus.dev.compliance import check_contextualize_alignment
+        issues = check_contextualize_alignment()
+        if not issues:
+            print(f"  {GREEN}✓ CONTEXTUALIZE.md aligned (pointer-only + canonical cores covered).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} contextualize-alignment issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
