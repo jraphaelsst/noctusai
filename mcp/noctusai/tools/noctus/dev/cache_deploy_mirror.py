@@ -128,27 +128,36 @@ CREATE TABLE IF NOT EXISTS noctus_cache.cache_code_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_pg_code_path ON noctus_cache.cache_code_embeddings(path);
 
--- agent-context + auto-improvement: small row stores, mirror as TEXT bodies.
+-- agent-context: disaggregated rows-per-section (matches local agent_context.py
+-- _SCHEMA). The earlier `bundle_json` shape was speculative; locally each
+-- section gets its own row so prod queries are SQL-native (no JSON unpack).
 CREATE TABLE IF NOT EXISTS noctus_cache.cache_agent_context (
-    agent_name      TEXT PRIMARY KEY,
-    bundle_json     TEXT NOT NULL,
+    agent_name      TEXT NOT NULL,
+    section_kind    TEXT NOT NULL,
+    section_path    TEXT,
+    section_value   TEXT NOT NULL,
     source_sha      TEXT NOT NULL,
     cached_at       TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_pg_agent_name ON noctus_cache.cache_agent_context(agent_name);
+CREATE INDEX IF NOT EXISTS idx_pg_section_kind ON noctus_cache.cache_agent_context(section_kind);
 
+-- auto-improvement: matches local auto_improvement.py _SCHEMA. The earlier
+-- `source_sha` column was speculative; local cache uses `cached_at` only.
 CREATE TABLE IF NOT EXISTS noctus_cache.cache_auto_improvement (
     id              SERIAL PRIMARY KEY,
     ts              TEXT NOT NULL,
-    agent           TEXT NOT NULL,
-    scope           TEXT,
-    kind            TEXT,
-    target          TEXT,
-    description     TEXT,
+    agent           TEXT,
+    scope           TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    target          TEXT NOT NULL,
+    description     TEXT NOT NULL,
     status          TEXT NOT NULL,
     source_ref      TEXT,
-    source_sha      TEXT NOT NULL
+    cached_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pg_ai_target ON noctus_cache.cache_auto_improvement(target);
+CREATE INDEX IF NOT EXISTS idx_pg_ai_status ON noctus_cache.cache_auto_improvement(status);
 CREATE INDEX IF NOT EXISTS idx_pg_ai_status ON noctus_cache.cache_auto_improvement(status);
 """
 
@@ -260,6 +269,101 @@ def _mirror_vector_cache(
     return len(rows)
 
 
+def _mirror_chunks_with_json_embedding(
+    local: sqlite3.Connection,
+    pg_conn: Any,
+    chunks_table: str,
+    embeddings_json_table: str,
+    pg_table: str,
+    chunk_columns_local: list[str],
+    pg_insert_cols: list[str],
+    *,
+    embedding_pg_col_idx: int,
+    column_renames: dict[str, str] | None = None,
+) -> int:
+    """Mirror local SQLite `*_chunks` + sibling `*_embeddings_json` → prod PG.
+
+    Local design (the real shape — surfaced in-flight 2026-05-26 evening):
+      `kb_chunks` / `code_chunks` carry the chunk text + path + metadata.
+      `kb_embeddings_json` / `code_embeddings_json` carry the JSON-serialized
+      embedding keyed by `chunk_rowid → chunks.rowid_alias`.
+
+    Prod design: one wide row per chunk with `embedding vector(1536)` column
+    populated by JOIN. The JOIN happens here (local-side) and the resulting
+    Python list[float] is sent to pgvector via psycopg2.
+
+    Args:
+      chunks_table: e.g. ``kb_chunks`` / ``code_chunks``.
+      embeddings_json_table: e.g. ``kb_embeddings_json`` / ``code_embeddings_json``.
+      pg_table: e.g. ``cache_kb_embeddings`` / ``cache_code_embeddings``.
+      chunk_columns_local: SELECT cols from the chunks table (in INSERT order).
+      pg_insert_cols: target PG column names (parallel to chunk_columns_local
+        but the embedding entry is inserted via JOIN from embeddings_json_table).
+      embedding_pg_col_idx: position of the ``embedding`` column in
+        ``pg_insert_cols`` (so we know where to inject the JSON-parsed list).
+      column_renames: optional ``{local_col: pg_col}`` for renames (e.g.
+        ``{"symbol_name": "symbol"}``). Only affects the SELECT clause — the
+        PG insert uses ``pg_insert_cols`` verbatim.
+    """
+    import json
+    cur_pg = pg_conn.cursor()
+    cur_pg.execute(f"TRUNCATE TABLE noctus_cache.{pg_table}")
+
+    # Build SELECT clause: chunks columns + embedding JSON from the JOIN.
+    renames = column_renames or {}
+    chunk_select = ", ".join(
+        f"c.{col}" + (f" AS {renames[col]}" if col in renames else "")
+        for col in chunk_columns_local
+    )
+    select_sql = (
+        f"SELECT {chunk_select}, e.embedding AS _embedding_json "
+        f"FROM {chunks_table} c "
+        f"JOIN {embeddings_json_table} e ON c.rowid_alias = e.chunk_rowid"
+    )
+    rows = local.execute(select_sql).fetchall()
+    if not rows:
+        cur_pg.close()
+        return 0
+
+    converted = []
+    for row in rows:
+        row_dict = dict(row) if isinstance(row, sqlite3.Row) else None
+        if row_dict is None:
+            row_list = list(row)
+            embedding_json = row_list[-1]
+            chunk_vals = row_list[:-1]
+        else:
+            embedding_json = row_dict.pop("_embedding_json")
+            # Honor pg_insert_cols ORDER — but the SELECT order was set by
+            # chunk_columns_local (+ renames applied via AS), so row_dict
+            # keys match pg_insert_cols MINUS the embedding column.
+            chunk_vals = [
+                row_dict[renames.get(c, c)]
+                for c in chunk_columns_local
+            ]
+
+        # Decode JSON embedding to list[float]. psycopg2 + pgvector accepts
+        # a list[float] for a vector(N) column.
+        try:
+            embedding_list = json.loads(embedding_json) if embedding_json else None
+        except (TypeError, ValueError):
+            embedding_list = None
+
+        # Splice the embedding into the row at the right position.
+        full_row = list(chunk_vals)
+        full_row.insert(embedding_pg_col_idx, embedding_list)
+        converted.append(tuple(full_row))
+
+    placeholders = ", ".join(["%s"] * len(pg_insert_cols))
+    cur_pg.executemany(
+        f"INSERT INTO noctus_cache.{pg_table} ({', '.join(pg_insert_cols)}) "
+        f"VALUES ({placeholders})",
+        converted
+    )
+    cur_pg.close()
+    return len(rows)
+
+
 def _mirror_simple_table(
     local: sqlite3.Connection,
     pg_conn: Any,
@@ -324,33 +428,45 @@ def mirror_one_cache(
                 if cache_name == "keeper-patterns":
                     rows = _mirror_keeper_patterns(local, pg_conn)
                 elif cache_name == "kb-embeddings":
-                    rows = _mirror_vector_cache(
+                    # Local stores chunks + embedding-JSON in sibling tables;
+                    # JOIN locally + parse JSON → pgvector list[float].
+                    rows = _mirror_chunks_with_json_embedding(
                         local, pg_conn,
-                        "kb_chunks", "cache_kb_embeddings",
-                        ["path", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
-                        ["path", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
-                        vector_col_idx=3,
+                        chunks_table="kb_chunks",
+                        embeddings_json_table="kb_embeddings_json",
+                        pg_table="cache_kb_embeddings",
+                        chunk_columns_local=["path", "chunk_idx", "chunk_text", "source_sha", "cached_at"],
+                        pg_insert_cols=["path", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
+                        embedding_pg_col_idx=3,
                     )
                 elif cache_name == "code-embeddings":
-                    rows = _mirror_vector_cache(
+                    # Same JOIN pattern + symbol_name→symbol rename.
+                    rows = _mirror_chunks_with_json_embedding(
                         local, pg_conn,
-                        "code_chunks", "cache_code_embeddings",
-                        ["path", "symbol", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
-                        ["path", "symbol", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
-                        vector_col_idx=4,
+                        chunks_table="code_chunks",
+                        embeddings_json_table="code_embeddings_json",
+                        pg_table="cache_code_embeddings",
+                        chunk_columns_local=["path", "symbol_name", "chunk_idx", "chunk_text", "source_sha", "cached_at"],
+                        pg_insert_cols=["path", "symbol", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
+                        embedding_pg_col_idx=4,
+                        column_renames={"symbol_name": "symbol"},
                     )
                 elif cache_name == "agent-context":
+                    # Disaggregated rows-per-section (matches local schema).
                     rows = _mirror_simple_table(
                         local, pg_conn,
                         "agent_context", "cache_agent_context",
-                        ["agent_name", "bundle_json", "source_sha", "cached_at"],
+                        ["agent_name", "section_kind", "section_path",
+                         "section_value", "source_sha", "cached_at"],
                     )
                 elif cache_name == "auto-improvement":
+                    # `cached_at` is the local truth; `source_sha` was speculative
+                    # in the prior PG schema and is dropped per route X.
                     rows = _mirror_simple_table(
                         local, pg_conn,
                         "auto_improvement", "cache_auto_improvement",
                         ["ts", "agent", "scope", "kind", "target", "description",
-                         "status", "source_ref", "source_sha"],
+                         "status", "source_ref", "cached_at"],
                     )
                 else:
                     rows = 0

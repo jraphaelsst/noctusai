@@ -7,7 +7,11 @@
 **Severity:** high
 **Effort:** medium
 **Affected products:** none (methodology + tooling — `mcp/noctusai/tools/noctus/dev/cache_deploy_mirror.py`)
-**Status:** pending  <!-- BLOCKING: awaits tech-lead accept/reject/adapt -->
+**Status:** accepted  <!-- Route X picked + executed 2026-05-26 evening; see project change log -->
+
+---
+
+**Tech-lead status change — accepted:** User picked Route X ("x - ok") with explicit "no partial acceptance" (rejecting Z's accept-the-partial-mirror option). Route X execution closed Phase 2 with all 5 caches mirrored (4726 rows). See `architect-inline-20260526-201712-delivery-route-x-mirror-alignment.md` for the implementation delivery note.
 
 ---
 
