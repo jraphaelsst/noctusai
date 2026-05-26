@@ -5,17 +5,21 @@
 # (docker-compose.prod.yml) talks to over the external noctus-net.
 #
 # What the prod fleet actually needs (per the deploy audit):
-#   • Redis   — ALWAYS. The chatbot buffer/worker + rate-limiter use it.
-#               Products fall back to in-memory only in tests; prod needs
-#               a real Redis. NOT profile-gated here — it always comes up.
-#   • WAHA    — OPTIONAL. WhatsApp HTTP API for chatbot-using products.
-#               Profile-gated behind `waha`; absent ⇒ FakeWahaClient
-#               fallback (WAHA_BASE_URL empty), non-chatbot products
-#               unaffected. Only `up` it once a real WhatsApp number is
-#               provisioned.
-#   • Postgres— NOT here. Prod uses remote Supabase (root .env
-#               SUPABASE_URL). The root infra file's local postgres is a
-#               dev/offline convenience only.
+#   • Redis     — ALWAYS. The chatbot buffer/worker + rate-limiter use it.
+#                 Products fall back to in-memory only in tests; prod needs
+#                 a real Redis. NOT profile-gated here — it always comes up.
+#   • WAHA      — OPTIONAL. WhatsApp HTTP API for chatbot-using products.
+#                 Profile-gated behind `waha`; absent ⇒ FakeWahaClient
+#                 fallback (WAHA_BASE_URL empty), non-chatbot products
+#                 unaffected. Only `up` it once a real WhatsApp number is
+#                 provisioned.
+#   • cache-pg  — OPTIONAL. Postgres + pgvector for the keeper-mirror cache
+#                 backend. Profile-gated behind `cache` (also included in
+#                 `full`). Dev uses local SQLite — this service is prod-only.
+#                 See KB § PATTERNS/devops/prod-cache-container.md.
+#   • Postgres  — NOT here. Prod uses remote Supabase (root .env
+#                 SUPABASE_URL). The root infra file's local postgres is a
+#                 dev/offline convenience only.
 #
 # Why a separate prod infra file (not just reuse the root one): the root
 # docker-compose.infra.yml PUBLISHES host ports (6379, 3000, 5432) for
@@ -31,8 +35,10 @@
 #   docker network create noctus-net
 #
 # Usage on the VPS:
-#   docker compose -f compose.infra.prod.yml up -d            # Redis only
-#   docker compose -f compose.infra.prod.yml --profile waha up -d   # + WAHA
+#   docker compose -f compose.infra.prod.yml up -d                         # Redis only
+#   docker compose -f compose.infra.prod.yml --profile waha up -d          # + WAHA
+#   docker compose -f compose.infra.prod.yml --profile cache up -d         # + cache-pg
+#   docker compose -f compose.infra.prod.yml --profile full up -d          # all services
 
 name: noctusai-infra-prod
 
@@ -56,6 +62,36 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  cache-pg:
+    # NoctusAI keeper-mirror cache backend — Postgres + pgvector.
+    # Used in PROD only; dev uses local SQLite (see KB § PATTERNS/common/
+    # cache-backend-portability for the migration path).
+    # Image is pinned to pgvector/pgvector:pg16 (Postgres 16 + pgvector
+    # extension pre-baked).
+    image: pgvector/pgvector:pg16
+    container_name: noctus-cache-pg
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_DB: ${NOCTUS_CACHE_PG_DB:-noctus_cache}
+      POSTGRES_USER: ${NOCTUS_CACHE_PG_USER:-noctus_cache}
+      POSTGRES_PASSWORD: ${NOCTUS_CACHE_PG_PASSWORD:?set NOCTUS_CACHE_PG_PASSWORD in .env.fleet}
+    volumes:
+      - cache_pg_data:/var/lib/postgresql/data
+    networks:
+      noctus-net:
+        aliases: [noctus-cache-pg]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOCTUS_CACHE_PG_USER:-noctus_cache} -d ${NOCTUS_CACHE_PG_DB:-noctus_cache}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    profiles:
+      - cache
+      - full
 
   waha:
     # WhatsApp HTTP API — profile-gated. Absent ⇒ FakeWahaClient fallback.
@@ -81,6 +117,7 @@ services:
     restart: unless-stopped
     profiles:
       - waha
+      - full
 
 networks:
   noctus-net:
@@ -90,3 +127,5 @@ networks:
 volumes:
   redis_data:
   waha_sessions:
+  cache_pg_data:
+    name: noctus-cache-pg-data
