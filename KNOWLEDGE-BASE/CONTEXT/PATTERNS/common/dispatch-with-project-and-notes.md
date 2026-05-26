@@ -118,13 +118,17 @@ After all slices in §4a.1 are delivered + integrated:
 - **MCP**: `noctus.dev.file_proposal(kind="phase|surface|delivery", project=<slug>, ...)` — same tool, three kinds.
 - **MCP**: `noctus.dev.set_proposal_status(status="accepted|rejected|adapted", project=<slug>, reason=<rationale>, ...)` — `adapted` is new; `reason` now recorded for all non-default statuses (audit).
 - **MCP**: `noctus.dev.proposal_template` — returns the canonical template (which now carries `**Note kind:**` field + per-kind guidance).
+- **MCP**: `noctus.dev.codify_log(stage, target, description, force?)` — append a codification event with s-stage progression enforcement (s4 requires preceding s3 same-target · s3 requires preceding s1|s2 same-target · `force=True` with rationale for backfill / same-commit s2→s3→s4 compression). Solves the bypass-the-stages slip that needed 5× manual backfill on 2026-05-26 evening. Sibling of §4a.2 — the dispatched engineer / inline-lens EMITS what §4a.2 anticipates. → `KB § PATTERNS/common/methodology-codification-pipeline.md`.
+- **Keeper**: `check_project_has_dispatch_routing` (Stage-4, severity warning, 2026-05-26 evening) — every PROJECT.md with §6 phases must carry §4a; projects whose PROJECT.md first-commit predates the rule's birthday are grandfathered via git first-commit date.
 - **CLI**: `python mcp/noctusai/cli.py --list-proposals --product <slug>` — existing listing (project-scoped listing TBD as follow-up).
+- **CLI**: `python mcp/noctusai/cli.py --codify-log <STAGE> <TARGET> <DESCRIPTION> [--force --codify-source-ref <ref>]` — codify_log from the command line.
+- **CLI**: `python mcp/noctusai/cli.py --check-project-has-dispatch-routing` — run the dispatch-routing keeper standalone.
 
 ## Recurrence trigger
 
 This pattern emerged when the user surfaced (2026-05-26 session): *"agents (and even inline deving) skip steps and get lost — give them roadmaps to follow upon dispatch, structured instructions and structured communications."* The s4-keeper-without-s3-codification gap shipped earlier the same day (`check_codification_pipeline_health` smoke-fired on s3-codified-NEVER) was the proximate signal — agents skip s2→s4 because nothing structurally requires them to mark s3. §4a.2 makes the expectation explicit; the delivery note records what landed.
 
-**N=1 (this codification).** If a future incident shows the protocol works (agents stop skipping stages, surface notes catch real route-disagreements before they ship), promote to s4 — keeper `check_project_has_dispatch_routing` could enforce that every PROJECT.md with §6 phases also has §4a.1 populated. Until then, the protocol is methodology-only (s3-codified).
+**Promoted to s4 same-day (2026-05-26 evening).** User override of the N=1 deferral — keeper `check_project_has_dispatch_routing` shipped + `noctus.dev.codify_log` shipped + pre-commit hook drift fixed in one slice (project `dispatch-pattern-hardening`). Both keeper + helper enforce the pattern structurally instead of advisory-only. Grandfather rule (pre-birthday projects skipped) keeps the warning surface tractable.
 
 ## What this does NOT do
 

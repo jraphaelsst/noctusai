@@ -58,7 +58,11 @@ LEDGER_PATH = REPO_ROOT / "project-history" / "auto-improvement.ndjson"
 # Allowed enums (defensive; loud-fail on unknown values so typos don't grow stalely).
 SCOPES = frozenset({"scoped", "broad"})
 KINDS = frozenset({"drift", "improvement"})
-STATUSES = frozenset({"s1-emergent", "s2-memory", "s3-kb", "s4-keeper", "closed"})
+# `s3-codified` is the canonical s3 name (matches `check_codification_pipeline_health` +
+# CLAUDE.md §1 + user-facing terminology). `s3-kb` is the LEGACY alias from the
+# first implementation (one historical entry uses it; new writes should prefer
+# `s3-codified`). The codify_log helper standardizes on `s3-codified`.
+STATUSES = frozenset({"s1-emergent", "s2-memory", "s3-kb", "s3-codified", "s4-keeper", "closed"})
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

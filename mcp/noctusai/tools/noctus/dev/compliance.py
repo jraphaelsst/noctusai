@@ -7762,6 +7762,11 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_out_of_contract_trees())
     all_issues.extend(check_seed_version_propagation())
     all_issues.extend(check_phase_state_consistency())
+    # dispatch-with-PROJECT-and-notes (2026-05-26) — every PROJECT.md with §6
+    # phases carries §4a Dispatch routing (slice→lens · codification s1-s4 ·
+    # routes-not-taken · notes). Grandfathered for pre-birthday projects.
+    # KB § PATTERNS/common/dispatch-with-project-and-notes.md.
+    all_issues.extend(check_project_has_dispatch_routing())
     all_issues.extend(check_no_self_monkeypatch())
     all_issues.extend(check_silent_errors())
     all_issues.extend(check_clean_folder_violations())
@@ -9718,6 +9723,116 @@ def check_codification_pipeline_health(
                 "severity": "warning",
                 "symbol": f"codification-pipeline-{status}-silent",
             })
+    return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# `check_project_has_dispatch_routing` — Stage-4 keeper for the
+# dispatch-with-PROJECT-and-notes rule (2026-05-26 evening). Every PROJECT.md
+# with §6 phases must carry §4a Dispatch routing. Projects whose PROJECT.md
+# first-commit predates the rule's birthday are grandfathered.
+# KB § PATTERNS/common/dispatch-with-project-and-notes.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+DISPATCH_ROUTING_BIRTHDAY = "2026-05-26"
+_DISPATCH_ROUTING_HEADER_RE = re.compile(r'^##\s+4a\b', re.MULTILINE)
+
+
+def check_project_has_dispatch_routing(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26): every PROJECT.md with §6 phases must
+    carry §4a Dispatch routing.
+
+    Per `KB § PATTERNS/common/dispatch-with-project-and-notes.md`, every
+    multi-slice project encodes its dispatch routing (slice→lens table ·
+    codification expectations s1/s2/s3/s4 · routes-not-taken · notes
+    contract) in §4a BEFORE any slice dispatches. Without §4a, engineers
+    infer scope, surface drift-found, scope-expand silently, or skip
+    codification stages — the exact "agents skip steps + get lost" pattern
+    the user surfaced 2026-05-26 evening.
+
+    Predicate: PROJECT.md contains `### Phase \\d+` (real phase) AND does
+    NOT contain a `## 4a` header. Severity ``warning`` (advisory —
+    grandfathered projects predating ``DISPATCH_ROUTING_BIRTHDAY`` are
+    skipped via git first-commit date).
+
+    **Grandfather rule.** A project whose PROJECT.md first-commit predates
+    the birthday is skipped (it had no contract at its birthday). New
+    projects (committed on/after the birthday) MUST carry §4a. If git is
+    unreachable OR the file is untracked, we assume NEW and flag — better
+    to surface than silently grandfather an untracked file.
+
+    Remediation: add §4a per template (see `templates/PROJECT-TEMPLATE.md`
+    §4a Dispatch routing — the canonical scaffold). Three sub-sections
+    minimum: §4a.1 Slice→Lens · §4a.2 Codification expectations · §4a.3
+    Routes-not-taken · §4a.4 Notes — surface + delivery.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    import subprocess
+    from datetime import datetime as _dt
+
+    try:
+        birthday = _dt.fromisoformat(DISPATCH_ROUTING_BIRTHDAY).date()
+    except ValueError:
+        return issues  # config error; bail rather than half-fire
+
+    for project_md in _find_all_project_md(root):
+        content = project_md.read_text(encoding="utf-8")
+
+        # Has real §6 Phase headers? (skip §5 architecture placeholder phases)
+        if not _PHASE_HEADER_RE.search(content):
+            continue
+
+        # §4a present?
+        if _DISPATCH_ROUTING_HEADER_RE.search(content):
+            continue
+
+        # Grandfather check via git first-commit date.
+        try:
+            relative = project_md.relative_to(root)
+        except ValueError:
+            continue
+        try:
+            result = subprocess.run(
+                ["git", "log", "--diff-filter=A", "--format=%aI", "--follow",
+                 "--", str(relative)],
+                cwd=str(root), check=False, capture_output=True, text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+                if lines:
+                    # `--diff-filter=A` plus `--follow` should give the
+                    # ADD event; the LAST line is the oldest add (renames
+                    # preserved).
+                    first_commit_iso = lines[-1]
+                    try:
+                        first_date = _dt.fromisoformat(first_commit_iso).date()
+                        if first_date < birthday:
+                            continue  # grandfathered
+                    except ValueError:
+                        pass  # unparseable date → fall through to flag
+        except (subprocess.SubprocessError, OSError):
+            pass  # git unreachable → fall through to flag (better signal)
+
+        issues.append({
+            "file": str(relative),
+            "issue": (
+                "PROJECT.md has §6 phases but no §4a Dispatch routing "
+                "section. Add §4a per `templates/PROJECT-TEMPLATE.md` "
+                "(slice→lens table · codification expectations s1-s4 · "
+                "routes-not-taken · notes contract). "
+                f"Grandfather: projects whose PROJECT.md first-commit "
+                f"predates {DISPATCH_ROUTING_BIRTHDAY} are skipped "
+                "automatically. "
+                "KB § PATTERNS/common/dispatch-with-project-and-notes.md."
+            ),
+            "severity": "warning",
+            "symbol": "project-missing-dispatch-routing",
+        })
     return issues
 
 

@@ -97,6 +97,9 @@ def main():
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--check-codification-pipeline-health", action="store_true", help="Meta-keeper: verify the codification pipeline (s1→s2→s3→s4) is FLOWING. Surfaces warning when no s2/s3/s4 entries have landed within configured silence thresholds. Severity warning (advisory). KB § PATTERNS/common/scoped-auto-improvement.md.")
+    parser.add_argument("--check-project-has-dispatch-routing", action="store_true", help="Stage-4 keeper: every PROJECT.md with §6 phases must carry §4a Dispatch routing (slice→lens · codification expectations s1-s4 · routes-not-taken · notes contract). Projects whose PROJECT.md first-commit predates 2026-05-26 are grandfathered automatically. Severity warning. KB § PATTERNS/common/dispatch-with-project-and-notes.md.")
+    parser.add_argument("--codify-log", nargs=3, metavar=("STAGE", "TARGET", "DESCRIPTION"), help="Log a codification event with s-stage progression enforcement. STAGE ∈ {s1-emergent, s2-memory, s3-codified, s4-keeper}. TARGET = KB path / agent / keeper name. DESCRIPTION = what+why (min 20 chars). Enforces invariants: s4 requires preceding s3 for same target; s3 requires preceding s1|s2. Pass --force to bypass for backfill / same-commit compression. Solves the 5×-backfill slip from 2026-05-26. KB § PATTERNS/common/methodology-codification-pipeline.md.")
+    parser.add_argument("--codify-source-ref", help="Optional provenance for --codify-log (commit SHA / session ID / project slug).")
     parser.add_argument("--check-prod-cache-reachable", action="store_true", help="Safety gate: when NOCTUS_CACHE_BACKEND=postgres, verify the prod cache is reachable + pgvector extension installed. NO-OP for sqlite default. Severity high. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-cache-backend-env-matches-environment", action="store_true", help="Advisory: NOCTUS_CACHE_BACKEND env should match the detected environment (CI=postgres / container=postgres / local=sqlite). Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-drift-shield", action="store_true", help="Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries touching files changed in origin/prod..origin/main. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
@@ -437,6 +440,37 @@ def main():
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)  # advisory — don't fail CI on pipeline silence
+    elif args.check_project_has_dispatch_routing:
+        from tools.noctus.dev.compliance import check_project_has_dispatch_routing
+        issues = check_project_has_dispatch_routing()
+        if not issues:
+            print(f"  {GREEN}✓ every PROJECT.md with §6 phases carries §4a Dispatch routing (or is grandfathered).{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} project-missing-dispatch-routing issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)  # advisory
+    elif args.codify_log:
+        from tools.noctus.dev.codify import codify_log
+        stage, target, description = args.codify_log
+        result = codify_log(
+            stage=stage,
+            target=target,
+            description=description,
+            source_ref=args.codify_source_ref,
+            force=getattr(args, 'force', False),
+        )
+        if result.get("ok"):
+            entry = result["entry"]
+            print(f"  {GREEN}✓ codify_log wrote {stage} entry for target {target!r}.{RESET}")
+            print(f"  ledger: {result['ledger_path']}")
+            print(f"  source_ref: {entry.get('source_ref')}")
+            sys.exit(0)
+        print(f"  {RED}✗ codify_log refused: {result.get('error')}{RESET}")
+        if result.get("missing_prereq"):
+            print(f"  {RED}missing prereq: {result['missing_prereq']}{RESET}")
+            print(f"  {YELLOW}override: re-run with --force (and --codify-source-ref <rationale>){RESET}")
+        sys.exit(1)
     elif args.check_prod_cache_reachable:
         from tools.noctus.dev.compliance import check_prod_cache_reachable
         issues = check_prod_cache_reachable()

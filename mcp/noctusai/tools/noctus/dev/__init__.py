@@ -32,6 +32,7 @@ def register_all(server) -> None:
     from . import code_embeddings
     from . import code_recurrence_promote
     from . import codification_radar
+    from . import codify
     from . import compliance
     from . import dispatch_token_log
     from . import dispatch_warmup
@@ -120,6 +121,7 @@ def register_all(server) -> None:
     code_embeddings.register(server)
     code_recurrence_promote.register(server)
     codification_radar.register(server)
+    codify.register(server)
     compliance.register(server)
     context.register(server)
     cost_evaluation.register(server)
