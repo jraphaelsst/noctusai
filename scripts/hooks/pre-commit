@@ -169,5 +169,19 @@ if [[ -n "$STAGED_SRC" ]] && have_py; then
     fi
 fi
 
+# ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
+# Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
+# CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),
+# no inlined bodies, whole file under the word budget. Re-bloat is gated.
+STAGED_CLAUDE_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '^CLAUDE\.md$' || true)
+if [[ -n "$STAGED_CLAUDE_MD" ]] && have_py; then
+    echo "[pre-commit] Checking CLAUDE.md router discipline..."
+    if ! "$PY" "$CLI" --check-claude-md-router --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] CLAUDE.md router check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Keep §1 rules one-line (rule + → pointer); move bodies to the KB pointer / a skill." >&2
+        exit 1
+    fi
+fi
+
 echo "[pre-commit] OK"
 exit 0

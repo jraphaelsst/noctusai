@@ -7783,6 +7783,10 @@ def check_all_products() -> tuple[int, list]:
     # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
     # doc-symbology / symbol-first authoring methodology (warn-only).
     all_issues.extend(check_doc_symbology_drift())
+    # claude-md-router-discipline (2026-05-25) — CLAUDE.md is the always-on
+    # router: §1 rules stay one-line (rule + `→` pointer), no inlined bodies,
+    # whole file under the word budget. Stage-4 of the v4.0 router refactor.
+    all_issues.extend(check_claude_md_router())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -7830,6 +7834,100 @@ def check_all_products() -> tuple[int, list]:
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
+
+
+# ── CLAUDE.md router-discipline (claude-md-router-discipline, Stage-4 2026-05-25) ──
+# CLAUDE.md is the always-on auto-loaded router; its budget compounds across every
+# reply. The contract: §1 carries PRINCIPLE + the MAP; PROCEDURE/bodies live in
+# `.claude/skills/` + the `KB § …` pointers. Re-bloating it back toward the verbose
+# v3.0 form is gated. Depth: `KB § PATTERNS/claude-md-router-discipline.md`.
+_CLAUDE_MD_MAX_WORDS = 2500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat)
+_CLAUDE_MD_MAX_RULE_WORDS = 60        # a §1 bullet beyond this is an inlined body
+_CLAUDE_MD_SECTION1_RE = re.compile(r"^##\s+1\s*[·.]")   # "## 1 · Universal rules"
+_CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …" header
+
+
+def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+    """CLAUDE.md is the always-on router — keep it pointer-only.
+
+    Gates three deterministic invariants of the harness-agents-skills pattern:
+      1. whole-file word budget (<= _CLAUDE_MD_MAX_WORDS),
+      2. every §1 rule bullet is ONE line, carries a `→` pointer, and is
+         <= _CLAUDE_MD_MAX_RULE_WORDS words,
+      3. §1 contains NO prose body lines (only `- ` rule bullets + the section
+         header + blanks / `---` / `>`); an inlined body is the re-bloat tell.
+
+    Stage-4 codification of the v4.0 router refactor (2026-05-25).
+    Depth: `KB § PATTERNS/claude-md-router-discipline.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    claude_md = root / "CLAUDE.md"
+    if not claude_md.exists():
+        return issues
+    try:
+        text = claude_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read CLAUDE.md (%s)", exc)
+        return issues
+
+    total_words = len(text.split())
+    if total_words > _CLAUDE_MD_MAX_WORDS:
+        issues.append({
+            "product": "<docs>",
+            "file": "CLAUDE.md",
+            "issue": (
+                f"CLAUDE.md is {total_words} words (cap {_CLAUDE_MD_MAX_WORDS}) — the "
+                "always-on router must stay pointer-only; move bodies to a skill / the "
+                "KB pointer (KB § PATTERNS/claude-md-router-discipline.md)."
+            ),
+            "severity": "high",
+        })
+
+    in_section1 = False
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if _CLAUDE_MD_SECTION1_RE.match(raw):
+            in_section1 = True
+            continue
+        if in_section1 and _CLAUDE_MD_NEXT_SECTION_RE.match(raw):
+            break  # reached §2 — stop scanning §1
+        if not in_section1:
+            continue
+        stripped = raw.strip()
+        if not stripped or stripped == "---" or stripped.startswith(">"):
+            continue
+        if stripped.startswith("- "):
+            words = len(stripped.split())
+            if "→" not in stripped:
+                issues.append({
+                    "product": "<docs>", "file": "CLAUDE.md",
+                    "issue": (
+                        f"§1 rule (line {line_no}) has no `→` pointer — every always-on "
+                        f"rule routes to its KB depth: {stripped[:70]}…"
+                    ),
+                    "severity": "high",
+                })
+            if words > _CLAUDE_MD_MAX_RULE_WORDS:
+                issues.append({
+                    "product": "<docs>", "file": "CLAUDE.md",
+                    "issue": (
+                        f"§1 rule (line {line_no}) is {words} words "
+                        f"(cap {_CLAUDE_MD_MAX_RULE_WORDS}) — trim the body to the KB "
+                        f"pointer: {stripped[:60]}…"
+                    ),
+                    "severity": "high",
+                })
+        else:
+            issues.append({
+                "product": "<docs>", "file": "CLAUDE.md",
+                "issue": (
+                    f"§1 prose body line (line {line_no}) — rules must be one-line "
+                    f"bullets (rule + `→` pointer); move the body to the KB pointer: "
+                    f"{stripped[:60]}…"
+                ),
+                "severity": "high",
+            })
+    return issues
 
 
 def _check_post_scaffold(
