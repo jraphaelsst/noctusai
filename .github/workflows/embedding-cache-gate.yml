@@ -58,12 +58,42 @@ jobs:
         continue-on-error: true
         run: python mcp/noctusai/cli.py --check-prod-cache-reachable
 
+      - name: Open SSH tunnel to prod cache-pg
+        # Phase 3 connectivity (Route A — KB § PATTERNS/common/dispatch-with-project-and-notes.md §4a.3
+        # of projects/cache-pg-vps-bringup/). The cache-pg container exposes
+        # 5432 only on the VPS host's 127.0.0.1; CI tunnels via a restricted
+        # deploy key (command="/bin/false",no-pty,permitopen="127.0.0.1:5432")
+        # so the key can ONLY forward this port and CANNOT execute commands.
+        # Secrets (set by tech-lead):
+        #   NOCTUS_VPS_DEPLOY_KEY  — private half of the ed25519 deploy key
+        #   NOCTUS_VPS_HOST        — public hostname of noctus-vps
+        # Graceful-degrade: if either secret is unset, skip the tunnel; the
+        # downstream gates run continue-on-error against local-sqlite fallback.
+        if: ${{ secrets.NOCTUS_VPS_DEPLOY_KEY != '' && secrets.NOCTUS_VPS_HOST != '' }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.NOCTUS_VPS_DEPLOY_KEY }}" > ~/.ssh/cache-deploy-key
+          chmod 600 ~/.ssh/cache-deploy-key
+          ssh-keyscan -H "${{ secrets.NOCTUS_VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # Open background tunnel; -fN = forward only, no remote command;
+          # ExitOnForwardFailure=yes ensures we fail fast if permitopen rejects.
+          ssh -i ~/.ssh/cache-deploy-key \
+              -L 5432:127.0.0.1:5432 -fN \
+              -o ExitOnForwardFailure=yes \
+              -o ServerAliveInterval=30 \
+              -o StrictHostKeyChecking=yes \
+              root@"${{ secrets.NOCTUS_VPS_HOST }}"
+          # Verify the tunnel is alive before downstream steps consume it.
+          (timeout 5 bash -c 'until nc -z 127.0.0.1 5432; do sleep 0.3; done') \
+            || (echo "::warning::cache-pg tunnel failed to come up; downstream gates will use sqlite fallback" && exit 0)
+          echo "cache-pg tunnel UP on 127.0.0.1:5432"
+
       - name: Connect to prod cache
         # Exports the backend selector so all subsequent steps use the shared
-        # Postgres cache. NOCTUS_CACHE_POSTGRES_DSN is provisioned as a GH
-        # Actions secret by the tech-lead on first deploy (never inlined).
-        # Until the secret is set the env var is empty → backend falls back to
-        # local SQLite and subsequent steps continue-on-error.
+        # Postgres cache. With the tunnel open, the DSN points at localhost.
+        # Until the secrets above are set the tunnel step is skipped → backend
+        # falls back to local SQLite and subsequent steps continue-on-error.
         run: |
           echo "NOCTUS_CACHE_BACKEND=postgres" >> $GITHUB_ENV
           echo "NOCTUS_CACHE_POSTGRES_DSN=${{ secrets.NOCTUS_CACHE_POSTGRES_DSN }}" >> $GITHUB_ENV
@@ -88,3 +118,11 @@ jobs:
           python mcp/noctusai/cli.py
           --vector-costs-total
           --since=${{ github.event.pull_request.created_at }}
+
+      - name: Close SSH tunnel
+        # Always-run cleanup — tear down the tunnel even on prior step failure
+        # so the runner doesn't leak processes.
+        if: always()
+        run: |
+          pkill -f "ssh -i .*cache-deploy-key" 2>/dev/null || true
+          rm -f ~/.ssh/cache-deploy-key

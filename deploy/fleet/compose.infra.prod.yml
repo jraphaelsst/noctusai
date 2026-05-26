@@ -73,6 +73,15 @@ services:
     container_name: noctus-cache-pg
     expose:
       - "5432"
+    # Host-loopback publish (NOT public). 127.0.0.1:5432 → container 5432.
+    # Enables: (a) Phase 2 one-shot mirror via SSH tunnel from architect's
+    # laptop; (b) Phase 3 sustainable CI via GH Actions deploy-key tunnel.
+    # The `127.0.0.1:` prefix is the security carve-out — the port is reachable
+    # ONLY from the VPS host's loopback; never from the public interface.
+    # Tunneling clients reach it as `localhost:5432` after `ssh -L ... noctus-vps`.
+    # KB § PATTERNS/devops/prod-cache-container.md · projects/cache-pg-vps-bringup/PROJECT.md §7.
+    ports:
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${NOCTUS_CACHE_PG_DB:-noctus_cache}
       POSTGRES_USER: ${NOCTUS_CACHE_PG_USER:-noctus_cache}

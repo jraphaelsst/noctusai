@@ -57,8 +57,13 @@ def _now_iso() -> str:
 # Each entry = (sqlite_table_name, pg_table_name_under_noctus_cache_schema).
 _TABLE_MAP: dict[str, tuple[str, str]] = {
     "keeper-patterns":  ("keeper_patterns", "cache_keeper_patterns"),
-    "agent-context":    ("agent_contexts",  "cache_agent_context"),
-    "auto-improvement": ("auto_improvements", "cache_auto_improvement"),
+    # Note: sqlite table names are SINGULAR (agent_context / auto_improvement),
+    # matching auto_improvement.py:_SCHEMA + agent_context.py:_SCHEMA. The
+    # previous plural form ("agent_contexts" / "auto_improvements") was a drift
+    # caught in-flight on first real mirror execution (2026-05-26 evening,
+    # Phase 2 of cache-pg-vps-bringup).
+    "agent-context":    ("agent_context",   "cache_agent_context"),
+    "auto-improvement": ("auto_improvement", "cache_auto_improvement"),
     "kb-embeddings":    ("kb_chunks",       "cache_kb_embeddings"),
     "code-embeddings":  ("code_chunks",     "cache_code_embeddings"),
 }
@@ -337,13 +342,13 @@ def mirror_one_cache(
                 elif cache_name == "agent-context":
                     rows = _mirror_simple_table(
                         local, pg_conn,
-                        "agent_contexts", "cache_agent_context",
+                        "agent_context", "cache_agent_context",
                         ["agent_name", "bundle_json", "source_sha", "cached_at"],
                     )
                 elif cache_name == "auto-improvement":
                     rows = _mirror_simple_table(
                         local, pg_conn,
-                        "auto_improvements", "cache_auto_improvement",
+                        "auto_improvement", "cache_auto_improvement",
                         ["ts", "agent", "scope", "kind", "target", "description",
                          "status", "source_ref", "source_sha"],
                     )
