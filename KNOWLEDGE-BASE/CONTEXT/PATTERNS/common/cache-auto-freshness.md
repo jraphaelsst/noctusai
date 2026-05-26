@@ -87,6 +87,7 @@ User-invocable version of the same orchestrator. See `.claude/commands/refresh-c
 1. **Embedding-model version stamp**: cache rows don't currently record the model name. If the seed lib upgrades `text-embedding-3-small` → `4-small`, dim mismatch errors only surface at retrieve time. A `model:` column per row + a startup check would auto-trigger force-refresh on model change.
 2. **Orphan-row auto-purge tool**: a separate `noctus.dev.purge_orphan_cache_rows()` MCP tool that the keeper remediation messages point at. Keeps the "keepers surface, never act" rule clean while still offering one-command cleanup.
 3. **Filesystem watcher** (heavy): daemon that watches the tracked surfaces + triggers refresh on save. OS-specific; defer until pull/checkout coverage proves insufficient.
+4. **Backend portability** (Phase 1 SHIPPED 2026-05-26 evening, Phase 2+ deferred): the `CacheBackend` Protocol + default `SqliteCacheBackend` ship in `mcp/noctusai/tools/noctus/dev/cache_backend.py`. Phase 2+ (migrate the 5 cache modules to consume it; add PostgresBackend / SupabaseBackend) is on the roadmap — see `project-history/roadmaps/cache-backend-portability-2026-05.md` for triggers (T1–T5) + slice list. **The auto-freshness hooks above are sqlite-aware today; remote backends will need an equivalent-discipline section per `cache-locking-discipline.md`.**
 
 ## Composes with
 
