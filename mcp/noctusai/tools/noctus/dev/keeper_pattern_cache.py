@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,38 +96,44 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-# ── Extractors (tests-first; AST cross-validates from compliance.py) ─────────
-_CHECK_DEF_RE = re.compile(r"^def\s+(check_[a-z_]+)\s*\(", re.MULTILINE)
-_FROZENSET_RE = re.compile(
-    r"^(_HARNESS_[A-Z_]+)\s*=\s*frozenset\(\{([^}]+)\}\)", re.MULTILINE
-)
-_TEST_IMPORT_RE = re.compile(
-    r"from tools\.noctus\.dev\.compliance import\s+(check_[a-z_]+)"
-)
+# ── Extractors (AST-first per CLAUDE.md §1 — Python source is parsed code) ───
+# Three extractors, all `ast.walk`. Earlier regex versions were the AST-first
+# slip the docs warn about — the fixture regex over-matched gaps BETWEEN string
+# literals (proven by a build-time test failure 2026-05-26). Regex purged.
+
+
+def _parse(path: Path) -> ast.Module | None:
+    if not path.exists():
+        return None
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return None
 
 
 def _extract_keepers_from_compliance() -> list[dict]:
-    """`def check_*(...)` symbols + their docstring first-line as contract-clause."""
-    if not COMPLIANCE_SRC.exists():
+    """AST-walk for `def check_*(...)` function defs + docstring 1st-line."""
+    tree = _parse(COMPLIANCE_SRC)
+    if tree is None:
         return []
-    src = COMPLIANCE_SRC.read_text(encoding="utf-8")
-    out: list[dict] = []
     rel = str(COMPLIANCE_SRC.relative_to(REPO_ROOT))
-    for m in _CHECK_DEF_RE.finditer(src):
-        name = m.group(1)
-        line = src.count("\n", 0, m.start()) + 1
-        body_window = src[m.end() : m.end() + 1500]
-        doc_m = re.search(r'"""(.+?)"""', body_window, re.DOTALL)
-        doc = doc_m.group(1).strip().split("\n")[0] if doc_m else ""
+    out: list[dict] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not node.name.startswith("check_"):
+            continue
+        doc = ast.get_docstring(node) or ""
+        first = doc.strip().split("\n", 1)[0] if doc else ""
         out.append(
             {
-                "keeper_name": name,
+                "keeper_name": node.name,
                 "pattern_kind": "contract-clause",
-                "pattern_value": (doc[:300] or name),
+                "pattern_value": (first[:300] or node.name),
                 "severity": None,
                 "remediation": None,
                 "source_file": rel,
-                "source_line": line,
+                "source_line": node.lineno,
                 "fixture_example": None,
             }
         )
@@ -136,28 +141,51 @@ def _extract_keepers_from_compliance() -> list[dict]:
 
 
 def _extract_set_membership() -> list[dict]:
-    """`_HARNESS_*_AGENTS = frozenset({...})` constants — set-membership contracts."""
-    if not COMPLIANCE_SRC.exists():
+    """AST-walk for `_HARNESS_*_AGENTS = frozenset({...})` assignments — pulls
+    set members as `Constant(str)` elements."""
+    tree = _parse(COMPLIANCE_SRC)
+    if tree is None:
         return []
-    src = COMPLIANCE_SRC.read_text(encoding="utf-8")
-    out: list[dict] = []
     rel = str(COMPLIANCE_SRC.relative_to(REPO_ROOT))
-    for m in _FROZENSET_RE.finditer(src):
-        const = m.group(1)
-        members = re.findall(r'"([^"]+)"', m.group(2))
-        line = src.count("\n", 0, m.start()) + 1
+    out: list[dict] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        const_name = node.targets[0].id
+        if not (
+            const_name.startswith("_HARNESS_") and const_name.endswith("_AGENTS")
+        ):
+            continue
+        v = node.value
+        if not (
+            isinstance(v, ast.Call)
+            and isinstance(v.func, ast.Name)
+            and v.func.id == "frozenset"
+            and len(v.args) == 1
+            and isinstance(v.args[0], ast.Set)
+        ):
+            continue
+        members = [
+            elt.value
+            for elt in v.args[0].elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        ]
         out.append(
             {
-                "keeper_name": f"check_agent_archetype_contract::{const}",
+                "keeper_name": (
+                    f"check_agent_archetype_contract::{const_name}"
+                ),
                 "pattern_kind": "set-membership",
                 "pattern_value": ",".join(members),
                 "severity": "high",
                 "remediation": (
-                    f"Add the agent stem to {const} when porting a new agent of "
-                    f"this archetype (see .claude/agents/ for current files)."
+                    f"Add the agent stem to {const_name} when porting a new "
+                    f"agent of this archetype (see .claude/agents/ for current files)."
                 ),
                 "source_file": rel,
-                "source_line": line,
+                "source_line": node.lineno,
                 "fixture_example": None,
             }
         )
@@ -165,47 +193,58 @@ def _extract_set_membership() -> list[dict]:
 
 
 def _extract_fixtures_from_tests() -> list[dict]:
-    """Test fixtures often carry the canonical *pattern* explicitly. Walk the AST
-    (AST-first per CLAUDE.md §1) to find real `str` constants — a naive
-    `"..."` regex matches gaps BETWEEN string literals (code text) too."""
+    """AST-walk each test file: find the `from tools.noctus.dev.compliance
+    import check_X` statement (binds the test to its keeper), then find
+    frontmatter-shaped `Constant(str)` literals."""
     out: list[dict] = []
     if not TESTS_DIR.exists():
         return out
     for tf in sorted(TESTS_DIR.glob("test_*.py")):
-        text = tf.read_text(encoding="utf-8")
-        m = _TEST_IMPORT_RE.search(text)
-        if not m:
+        tree = _parse(tf)
+        if tree is None:
             continue
-        keeper = m.group(1)
-        rel = str(tf.relative_to(REPO_ROOT))
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue
+        keeper: str | None = None
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                literal = node.value
-                if len(literal) < 10:
-                    continue
-                if not (
-                    "---" in literal
-                    or "name:" in literal
-                    or "tools:" in literal
-                    or "description:" in literal
-                ):
-                    continue
-                out.append(
-                    {
-                        "keeper_name": keeper,
-                        "pattern_kind": "fixture-example",
-                        "pattern_value": literal[:500],
-                        "severity": None,
-                        "remediation": None,
-                        "source_file": rel,
-                        "source_line": getattr(node, "lineno", 0),
-                        "fixture_example": literal[:1200],
-                    }
-                )
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "tools.noctus.dev.compliance"
+            ):
+                for alias in node.names:
+                    if alias.name.startswith("check_"):
+                        keeper = alias.name
+                        break
+                if keeper:
+                    break
+        if not keeper:
+            continue
+        rel = str(tf.relative_to(REPO_ROOT))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Constant) and isinstance(node.value, str)
+            ):
+                continue
+            literal = node.value
+            if len(literal) < 10:
+                continue
+            if not (
+                "---" in literal
+                or "name:" in literal
+                or "tools:" in literal
+                or "description:" in literal
+            ):
+                continue
+            out.append(
+                {
+                    "keeper_name": keeper,
+                    "pattern_kind": "fixture-example",
+                    "pattern_value": literal[:500],
+                    "severity": None,
+                    "remediation": None,
+                    "source_file": rel,
+                    "source_line": getattr(node, "lineno", 0),
+                    "fixture_example": literal[:1200],
+                }
+            )
     return out
 
 

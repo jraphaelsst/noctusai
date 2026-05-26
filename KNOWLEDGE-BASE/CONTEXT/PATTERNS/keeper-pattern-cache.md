@@ -35,10 +35,11 @@ CREATE TABLE cache_meta (
 );
 ```
 
-## Population (AST-first per the rule)
-- `_extract_keepers_from_compliance()` — regex-locates `def check_*(...)`, takes its docstring 1st-line as a contract-clause row.
-- `_extract_set_membership()` — regex-locates `_HARNESS_*_AGENTS = frozenset({...})` constants; emits set-membership rows with severity=high + remediation note.
-- `_extract_fixtures_from_tests()` — **`ast.walk`** the test files (a naive `"..."` regex catches code text BETWEEN string literals — proven by build-time test failure on 2026-05-26; AST is the fix). Filters string constants `≥10` chars containing `---`/`name:`/`tools:`/`description:` → fixture-example rows.
+## Population (pure AST — `ast.walk`, no regex)
+All three extractors `ast.parse` + `ast.walk` (Python source is parsed code → AST-first per CLAUDE.md §1; an earlier regex version of the fixture extractor over-matched gaps BETWEEN string literals, proven by a build-time test failure 2026-05-26 — full regex purge followed):
+- `_extract_keepers_from_compliance()` — `FunctionDef` nodes whose `name` starts with `check_`; emits a contract-clause row with `ast.get_docstring(node)` 1st-line as the pattern_value.
+- `_extract_set_membership()` — `Assign` nodes where target is `_HARNESS_*_AGENTS` and value is `Call(Name('frozenset'), [Set(elts=...)])`; emits a set-membership row with members pulled from `Constant(str)` elements + severity=high + remediation note.
+- `_extract_fixtures_from_tests()` — `ImportFrom(module='tools.noctus.dev.compliance')` binds the test to its keeper; then `Constant(str)` nodes ≥10 chars containing `---`/`name:`/`tools:`/`description:` → fixture-example row.
 
 ## API
 - `noctus.dev.keeper_pattern_lookup(keeper_name?, file_path?)` — query by keeper-name substring OR file-path heuristic (`.claude/agents/<x>.md` → `agent_format` + `agent_archetype`; `CLAUDE.md` → `claude_md_router`; etc.). Both filters optional; combined = AND.
