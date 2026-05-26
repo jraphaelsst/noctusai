@@ -97,6 +97,11 @@ def main():
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--check-codification-pipeline-health", action="store_true", help="Meta-keeper: verify the codification pipeline (s1→s2→s3→s4) is FLOWING. Surfaces warning when no s2/s3/s4 entries have landed within configured silence thresholds. Severity warning (advisory). KB § PATTERNS/common/scoped-auto-improvement.md.")
+    parser.add_argument("--check-prod-cache-reachable", action="store_true", help="Safety gate: when NOCTUS_CACHE_BACKEND=postgres, verify the prod cache is reachable + pgvector extension installed. NO-OP for sqlite default. Severity high. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-cache-backend-env-matches-environment", action="store_true", help="Advisory: NOCTUS_CACHE_BACKEND env should match the detected environment (CI=postgres / container=postgres / local=sqlite). Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-drift-shield", action="store_true", help="Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries touching files changed in origin/prod..origin/main. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="Keeper: the 7-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index sub-keepers. Severity high. KB § PATTERNS/common/seven-way-sync.md.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="Back-compat alias for --check-seven-way-sync. Will be removed once external callers migrate.")
@@ -432,6 +437,63 @@ def main():
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)  # advisory — don't fail CI on pipeline silence
+    elif args.check_prod_cache_reachable:
+        from tools.noctus.dev.compliance import check_prod_cache_reachable
+        issues = check_prod_cache_reachable()
+        if not issues:
+            print(f"  {GREEN}✓ prod cache reachable (or sqlite NO-OP).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} prod-cache-reachable issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_cache_backend_env_matches_environment:
+        from tools.noctus.dev.compliance import check_cache_backend_env_matches_environment
+        issues = check_cache_backend_env_matches_environment()
+        if not issues:
+            print(f"  {GREEN}✓ cache backend env matches environment.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} cache-backend-env issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)  # advisory
+    elif args.check_drift_shield:
+        from tools.noctus.dev.compliance import check_drift_shield
+        issues = check_drift_shield()
+        if not issues:
+            print(f"  {GREEN}✓ drift-shield clean (no open entries touch this deploy).{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} drift-shield issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)  # advisory
+    elif args.check_slip_shield:
+        from tools.noctus.dev.compliance import check_slip_shield
+        issues = check_slip_shield()
+        if not issues:
+            print(f"  {GREEN}✓ slip-shield clean (no codification slips touch this deploy).{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} slip-shield issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)  # advisory
+    elif args.check_pre_deploy_gate:
+        from tools.noctus.dev.compliance import check_pre_deploy_gate
+        issues = check_pre_deploy_gate()
+        if not issues:
+            print(f"  {GREEN}✓ pre-deploy gate clean (all 4 safety keepers green).{RESET}")
+            sys.exit(0)
+        highs = [i for i in issues if i.get("severity") == "high"]
+        warns = [i for i in issues if i.get("severity") != "high"]
+        if highs:
+            print(f"  {RED}✗ {len(highs)} HIGH-severity pre-deploy issue(s):{RESET}")
+            for i in highs:
+                print(f"    {RED}[high]{RESET} {i['file']} — {i['issue']}")
+        if warns:
+            print(f"  {YELLOW}⚠ {len(warns)} advisory pre-deploy issue(s):{RESET}")
+            for i in warns:
+                print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1 if highs else 0)
     elif args.check_contextualize_alignment:
         from tools.noctus.dev.compliance import check_contextualize_alignment
         issues = check_contextualize_alignment()

@@ -9720,6 +9720,327 @@ def check_codification_pipeline_health(
     return issues
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Prod-deploy safety gates (added 2026-05-26 evening, cache-backend-portability
+# Phase 3.4). These compose into the deploy safety net — see KB § PATTERNS/
+# devops/prod-deploy-safety-gates.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def check_prod_cache_reachable(repo_root: Path | None = None) -> list[dict]:
+    """Verify the configured cache backend is reachable.
+
+    Fires only when `NOCTUS_CACHE_BACKEND=postgres` (the prod shape).
+    For sqlite (default/dev), this keeper is a NO-OP — local file is
+    always 'reachable' by definition.
+
+    Postgres reachability predicate: psycopg2 connects + simple query
+    returns + pgvector extension is queryable. Severity ``high``.
+
+    Remediation: verify `NOCTUS_CACHE_POSTGRES_DSN` is set; verify the
+    pgvector container is running on the VPS; verify network reachability
+    from this host.
+
+    KB § PATTERNS/devops/prod-deploy-safety-gates.md.
+    """
+    import os
+    backend = os.environ.get("NOCTUS_CACHE_BACKEND", "sqlite").lower()
+    if backend != "postgres":
+        return []  # NO-OP for sqlite default
+    issues: list[dict] = []
+    try:
+        # Use the abstraction so this keeper composes with future backends.
+        from .cache_backend_postgres import PostgresCacheBackend
+    except ImportError as e:
+        issues.append({
+            "file": "mcp/noctusai/tools/noctus/dev/cache_backend_postgres.py",
+            "issue": (
+                f"NOCTUS_CACHE_BACKEND=postgres but PostgresCacheBackend "
+                f"import failed: {e}. Verify psycopg2-binary + pgvector "
+                "packages are installed."
+            ),
+            "severity": "high",
+            "symbol": "prod-cache-backend-unimportable",
+        })
+        return issues
+    try:
+        backend_obj = PostgresCacheBackend()
+        with backend_obj.connect("keeper-patterns") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            row = cur.fetchone()
+            if not row or row[0] != 1:
+                issues.append({
+                    "file": "prod-cache",
+                    "issue": "SELECT 1 against prod cache returned unexpected result",
+                    "severity": "high",
+                    "symbol": "prod-cache-bad-response",
+                })
+            # Verify pgvector extension.
+            try:
+                cur.execute("SELECT 1 FROM pg_extension WHERE extname='vector'")
+                if not cur.fetchone():
+                    issues.append({
+                        "file": "prod-cache",
+                        "issue": (
+                            "pgvector extension NOT installed in prod cache. "
+                            "Run `noctus.dev.init_prod_cache_schema` to "
+                            "bootstrap (requires superuser at init time)."
+                        ),
+                        "severity": "high",
+                        "symbol": "prod-cache-pgvector-missing",
+                    })
+            except Exception:  # noqa: BLE001 — pg_extension query may fail in odd setups
+                pass
+            cur.close()
+    except Exception as e:  # noqa: BLE001 — wide catch by design (connection failure modes)
+        issues.append({
+            "file": "prod-cache",
+            "issue": (
+                f"Prod cache unreachable: {str(e)[:200]}. "
+                "Check NOCTUS_CACHE_POSTGRES_DSN + VPS container."
+            ),
+            "severity": "high",
+            "symbol": "prod-cache-unreachable",
+        })
+    return issues
+
+
+def check_cache_backend_env_matches_environment(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Advisory: `NOCTUS_CACHE_BACKEND` SHOULD match the environment.
+
+    Heuristic environment detection:
+      - `CI=true` env var OR `GITHUB_ACTIONS=true` ⇒ expect `postgres`
+        (CI should share the prod cache; T3 of roadmap).
+      - Running in a Docker container (presence of `/.dockerenv`) ⇒
+        likely prod ⇒ expect `postgres`.
+      - Otherwise ⇒ expect `sqlite` (local dev).
+
+    Surfaces a WARNING (not high) when mismatch — manual override is
+    legitimate (e.g., debugging prod backend locally).
+
+    KB § PATTERNS/devops/prod-deploy-safety-gates.md.
+    """
+    import os
+    issues: list[dict] = []
+    configured = os.environ.get("NOCTUS_CACHE_BACKEND", "sqlite").lower()
+    is_ci = (
+        os.environ.get("CI", "").lower() == "true"
+        or os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+    )
+    is_container = Path("/.dockerenv").exists()
+    expected = "postgres" if (is_ci or is_container) else "sqlite"
+    if configured != expected:
+        env_label = "CI" if is_ci else ("container" if is_container else "local-dev")
+        issues.append({
+            "file": ".env or runtime-env",
+            "issue": (
+                f"NOCTUS_CACHE_BACKEND={configured} but {env_label} env "
+                f"typically uses {expected}. Verify intentional override "
+                "(e.g., debugging) — otherwise correct the env var."
+            ),
+            "severity": "warning",
+            "symbol": "cache-backend-env-mismatch",
+        })
+    return issues
+
+
+def check_drift_shield(repo_root: Path | None = None) -> list[dict]:
+    """Pre-deploy DRIFT-SHIELD: surface OPEN auto-improvement entries
+    touching files changed since last deploy.
+
+    Predicate: the diff `origin/prod..origin/main` lists changed files;
+    each file is matched against `auto-improvement.ndjson` entries with
+    status `s1-emergent` / `s2-memory` / `s3-codified` (i.e., NOT yet
+    `closed` and NOT yet `s4-keeper`). Surfacing reminds the architect
+    to triage these BEFORE the deploy promotes the changes.
+
+    Severity ``warning`` (advisory — won't block deploy; nudges review).
+
+    KB § PATTERNS/devops/prod-deploy-safety-gates.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "auto-improvement.ndjson"
+    if not ledger.exists():
+        return issues  # fresh tree
+    # Diff prod..main; if either ref is missing locally, skip gracefully.
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "origin/prod..origin/main"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return issues  # one of the refs is missing; not a deploy context
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return issues
+    changed = {ln.strip() for ln in result.stdout.splitlines() if ln.strip()}
+    if not changed:
+        return issues
+    # Walk the ledger; collect OPEN entries whose target is in changed.
+    import json as _json
+    open_statuses = {"s1-emergent", "s2-memory", "s3-codified"}
+    hits: list[dict] = []
+    try:
+        with ledger.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                if entry.get("status") not in open_statuses:
+                    continue
+                target = entry.get("target", "")
+                # target may be a path or a "code-recurrence:..." prefix.
+                if target.startswith("code-recurrence:"):
+                    continue
+                # Match if any changed file substring-contains the target
+                # OR target substring-contains any changed file.
+                for f in changed:
+                    if f in target or target in f:
+                        hits.append({
+                            "target": target,
+                            "ts": entry.get("ts", ""),
+                            "status": entry.get("status", ""),
+                            "matched_file": f,
+                        })
+                        break
+    except OSError:
+        return issues
+    if hits:
+        # Compact preview — first 5 hits.
+        preview = "; ".join(
+            f"{h['target']}@{h['ts']}({h['status']})" for h in hits[:5]
+        )
+        suffix = f" (+{len(hits)-5} more)" if len(hits) > 5 else ""
+        issues.append({
+            "file": "project-history/auto-improvement.ndjson",
+            "issue": (
+                f"DRIFT-SHIELD: {len(hits)} OPEN drift/improvement "
+                f"entry/entries touch files in this deploy. Review "
+                f"BEFORE promoting. First 5: {preview}{suffix}"
+            ),
+            "severity": "warning",
+            "symbol": "drift-shield-open-entries",
+        })
+    return issues
+
+
+def check_slip_shield(repo_root: Path | None = None) -> list[dict]:
+    """Pre-deploy SLIP-SHIELD: surface s2-memory entries with high
+    promotion-readiness scores (codification candidates) that should be
+    looked at BEFORE the deploy ships their target files.
+
+    A "slip" = a pattern that emerged + hit memory but never got
+    promoted to KB+keeper. Shipping changes touching those files
+    without resolving the slip = scope-shrink slip.
+
+    Reuses the codification_radar logic (s1/s2 → s3 promotion
+    candidates) and filters to those whose target is in the
+    `origin/prod..origin/main` diff.
+
+    Severity ``warning`` (advisory).
+
+    KB § PATTERNS/devops/prod-deploy-safety-gates.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "auto-improvement.ndjson"
+    if not ledger.exists():
+        return issues
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "origin/prod..origin/main"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return issues
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return issues
+    changed = {ln.strip() for ln in result.stdout.splitlines() if ln.strip()}
+    if not changed:
+        return issues
+    # Count s2-memory entries per target; >=2 entries on same target = slip.
+    import json as _json
+    from collections import Counter
+    target_counts: Counter[str] = Counter()
+    try:
+        with ledger.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                if entry.get("status") != "s2-memory":
+                    continue
+                target = entry.get("target", "")
+                if not target or target.startswith("code-recurrence:"):
+                    continue
+                target_counts[target] += 1
+    except OSError:
+        return issues
+    slips = []
+    for target, count in target_counts.items():
+        if count < 2:
+            continue
+        for f in changed:
+            if f in target or target in f:
+                slips.append((target, count))
+                break
+    if slips:
+        preview = "; ".join(f"{t}(×{c})" for t, c in slips[:3])
+        suffix = f" (+{len(slips)-3} more)" if len(slips) > 3 else ""
+        issues.append({
+            "file": "project-history/auto-improvement.ndjson",
+            "issue": (
+                f"SLIP-SHIELD: {len(slips)} target(s) have ≥2 s2-memory "
+                f"entries (codification slip candidates) touched by this "
+                f"deploy. Consider promoting to s3/s4 before shipping. "
+                f"First 3: {preview}{suffix}"
+            ),
+            "severity": "warning",
+            "symbol": "slip-shield-codification-candidates",
+        })
+    return issues
+
+
+def check_pre_deploy_gate(repo_root: Path | None = None) -> list[dict]:
+    """Composite pre-deploy gate — runs all 4 safety keepers in sequence.
+
+    Returns the UNION of issues from:
+      - `check_prod_cache_reachable` (high — postgres-only)
+      - `check_cache_backend_env_matches_environment` (warning)
+      - `check_drift_shield` (warning)
+      - `check_slip_shield` (warning)
+
+    Use this as the single composite gate in CI / pre-deploy automation.
+
+    KB § PATTERNS/devops/prod-deploy-safety-gates.md.
+    """
+    issues: list[dict] = []
+    issues.extend(check_prod_cache_reachable(repo_root))
+    issues.extend(check_cache_backend_env_matches_environment(repo_root))
+    issues.extend(check_drift_shield(repo_root))
+    issues.extend(check_slip_shield(repo_root))
+    return issues
+
+
 def _check_post_scaffold(
     slug: str,
     *,

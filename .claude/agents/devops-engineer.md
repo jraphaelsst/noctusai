@@ -12,6 +12,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/dev-prod-parity.md
   - CONTEXT/PATTERNS/devops/ci-security-gates.md
   - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
+  - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
   - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/PATTERNS/devops/prod-cache-container.md
   - CONTEXT/05-INFRASTRUCTURE.md
@@ -36,6 +37,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Deploy-config contract (the 3-legged gate).** Every dev↔prod-divergent knob routes through seed (no per-product env-divergence in compose). `prod_config_parity` is the 3rd leg, pre-deploy. → `KB § PATTERNS/devops/deploy-config-contract.md`
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`
 - **Prod cache container.** `pgvector/pgvector:pg16` service in `deploy/fleet/compose.infra.prod.yml`; profile-gated (`--profile cache` / `--profile full`); volume `noctus-cache-pg-data`; internal-only via `noctus-net`. → `KB § PATTERNS/devops/prod-cache-container.md`
+- **Prod-deploy safety gates.** 4 keepers + composite + cache_deploy_mirror tool — `check_prod_cache_reachable` (high) + `check_cache_backend_env_matches_environment` (warning) + `check_drift_shield` (warning) + `check_slip_shield` (warning) + `check_pre_deploy_gate` (composite). The prod-side closed loop. → `KB § PATTERNS/devops/prod-deploy-safety-gates.md`
 - **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/containerization-operations.md`
 - **Operate the live VPS via `noctus.vps.*`.** Read-free: `ps` / `health` / `logs` / `inspect` / `images` / `disk` / `stats`. Confirm-gated: `restart` / `recreate` / `prune`. → `KB § 05-INFRASTRUCTURE.md`
 - **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
