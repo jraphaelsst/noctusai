@@ -8,7 +8,53 @@ as codified in `KB § CONTEXT/PATTERNS/common/versioning.md`.
 
 ---
 
-## [4.0.0-beta] — 2026-05-26
+## [4.0.0-beta] — 2026-05-26 (continued, same release)
+
+Additional follow-up sprint within v4.0-beta scope. Extracted unshipped
+items from the `DIAGNOSTIC-automation-opportunities.md` survey into
+`project-history/roadmaps/automation-orchestration-followup-2026-06.md`
+then shipped the 6 file-disjoint items inline:
+
+### New MCP modules (6 tools added — F1 through F6)
+
+- `engineer_output_linter` — mechanize the dispatched-engineer two-leg
+  footer rule. `noctus.dev.engineer_output_lint(text)` returns
+  `{ok, missing, empty, warnings}`. Pre-integration check.
+- `unified_query` — single semantic query across kb-embeddings +
+  code-embeddings + auto-improvement, merged + normalized + ranked.
+  Graceful-degrade on per-source failure.
+- `scan_repetition_semantic` — semantic variant of `scan_repetition`
+  filtered for absorb-to-seed candidates (cross-source pairs;
+  seed↔product flagged `reimplementation_of_seed=True`).
+- `doc_to_code_drift` — score KB pattern docs vs. live code symbols
+  they name; flags `referent_not_found` (hard drift) or
+  `below_threshold` (soft drift).
+- `orphan_branch_sweeper` — classify local branches by integration
+  state + artifact presence (`integrated` / `active-worktree` /
+  `stale-with-roadmap` / `stale-no-artifacts`); optional dry-run
+  delete of `integrated` branches.
+- `cache_telemetry` — opt-in cache hit/miss + frequency telemetry.
+  `record(cache, op, ...)` appends to gitignored ledger;
+  `summary()` aggregates per-cache + per-operation.
+
+### Diagnostic retired
+
+`DIAGNOSTIC-automation-opportunities.md` (untracked local file) deleted
+after extraction. Unshipped items live in the follow-up roadmap with
+DEFERRED status + rationale.
+
+### Items DEFERRED to next session (still under v4.0-beta scope)
+
+F7 brief similarity radar · F8 session-end auto-salvage · F9 pre-dispatch
+cache warmup · F10 per-product centroid drift · F11 dispatch token-budget
+telemetry. All require design conversation or harness hook research.
+
+F12 (auto-author scaffolding) PERMANENTLY DEFERRED — judgment-heavy;
+the original diagnostic flagged it.
+
+---
+
+## [4.0.0-beta] — 2026-05-26 (original release)
 
 The methodology + structural-refactor release. v3 → v4 is a MAJOR bump
 because the methodology surface contract changed shape (3-way → 7-way sync),

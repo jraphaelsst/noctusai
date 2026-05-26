@@ -22,12 +22,15 @@ def register_all(server) -> None:
     from . import build
     from . import catalog
     from . import check_framework_deps
+    from . import cache_telemetry
     from . import cleanup_worktrees
     from . import code_baseline
     from . import code_embeddings
     from . import code_recurrence_promote
     from . import codification_radar
     from . import compliance
+    from . import doc_to_code_drift
+    from . import engineer_output_linter
     from . import context
     from . import cost_evaluation
     from . import diff
@@ -37,6 +40,9 @@ def register_all(server) -> None:
     from . import dispatch_preflight
     from . import engineer_brief_compose
     from . import findings
+    from . import orphan_branch_sweeper
+    from . import scan_repetition_semantic
+    from . import unified_query
     from . import history
     from . import improvements
     from . import kb_baseline
@@ -93,6 +99,7 @@ def register_all(server) -> None:
     auto_improvement.register(server)
     batch_speed_gains.register(server)
     build.register(server)
+    cache_telemetry.register(server)
     catalog.register(server)
     check_framework_deps.register(server)
     cleanup_worktrees.register(server)
@@ -108,8 +115,13 @@ def register_all(server) -> None:
     deploy_pull.register(server)
     disk_usage.register(server)
     dispatch_preflight.register(server)
+    doc_to_code_drift.register(server)
     engineer_brief_compose.register(server)
+    engineer_output_linter.register(server)
     findings.register(server)
+    orphan_branch_sweeper.register(server)
+    scan_repetition_semantic.register(server)
+    unified_query.register(server)
     history.register(server)
     improvements.register(server)
     kb_baseline.register(server)
