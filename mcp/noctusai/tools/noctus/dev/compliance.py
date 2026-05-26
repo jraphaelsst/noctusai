@@ -7787,6 +7787,10 @@ def check_all_products() -> tuple[int, list]:
     # router: §1 rules stay one-line (rule + `→` pointer), no inlined bodies,
     # whole file under the word budget. Stage-4 of the v4.0 router refactor.
     all_issues.extend(check_claude_md_router())
+    # memory-md-index-discipline (2026-05-25) — sibling: MEMORY.md auto-loaded
+    # index discipline. OUT-OF-REPO (Claude Code per-project store) → gates at
+    # validate + --check-memory-md-index CLI only, NOT at git commit.
+    all_issues.extend(check_memory_md_index())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -7924,6 +7928,107 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
                     f"§1 prose body line (line {line_no}) — rules must be one-line "
                     f"bullets (rule + `→` pointer); move the body to the KB pointer: "
                     f"{stripped[:60]}…"
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ── MEMORY.md index discipline (memory-md-index-discipline, Stage-4 2026-05-25) ──
+# Sibling of check_claude_md_router. MEMORY.md is the auto-loaded agent-memory
+# INDEX — its budget compounds across every session. Entries are
+# `- [Title](file.md) — <recall hook>`; bloat the line and the index overflows
+# (the 88 KB → 47 KB harness-agents-skills MEMORY trim was the corrective).
+#
+# Structural caveat: MEMORY.md lives OUT-OF-REPO at
+# `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md` (Claude Code per-project
+# store), so this keeper CANNOT gate at git commit (pre-commit sees no memory
+# edits). It gates at `validate` + the `--check-memory-md-index` CLI flag, and
+# is silently skipped if the per-project memory dir isn't configured (other
+# developers / forks). Optional true-auto-gate = a Claude Code Stop hook.
+_MEMORY_MD_MAX_KB = 60                    # whole-file budget (live ~47 KB; cap blocks regression toward 88 KB)
+_MEMORY_MD_MAX_ENTRY_CHARS = 500          # per-entry-line cap (worst pre-trim: 2,042 chars)
+
+
+def _memory_md_path(repo_root: Path, home: Path | None = None) -> Path:
+    """Derive the auto-loaded MEMORY.md path from the project root.
+
+    Claude Code keys per-project state under `<home>/.claude/projects/<encoded>`
+    where <encoded> = the absolute project path with `/` → `-`. `home` defaults
+    to `Path.home()`; tests inject a tmp dir.
+    """
+    encoded = str(repo_root).replace("/", "-")
+    base = home if home is not None else Path.home()
+    return base / ".claude" / "projects" / encoded / "memory" / "MEMORY.md"
+
+
+def check_memory_md_index(repo_root: Path | None = None, home: Path | None = None) -> list[dict]:
+    """MEMORY.md is the auto-loaded memory index — keep entry lines tight.
+
+    Gates two deterministic invariants of the harness-agents-skills MEMORY-trim
+    pattern (sibling rule of `KB § PATTERNS/claude-md-router-discipline.md`):
+      1. whole-file budget <= _MEMORY_MD_MAX_KB,
+      2. every `- [Title](file.md)` entry line is <= _MEMORY_MD_MAX_ENTRY_CHARS
+         and carries a valid `](X.md)` link.
+
+    Memory is out-of-repo (Claude-Code-managed), so gates fire at `validate` and
+    via `--check-memory-md-index`, NOT at git commit. Silent skip when the
+    per-project memory dir isn't configured (other developers / forks).
+
+    Born from the `harness-agents-skills` MEMORY trim (88 KB → 47 KB, 2026-05-25).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    memory_md = _memory_md_path(root, home=home)
+    if not memory_md.exists():
+        return issues  # per-project memory not configured for this developer
+    try:
+        text = memory_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read MEMORY.md (%s)", exc)
+        return issues
+
+    total_kb = len(text.encode("utf-8")) / 1024
+    if total_kb > _MEMORY_MD_MAX_KB:
+        issues.append({
+            "product": "<memory>",
+            "file": "MEMORY.md",
+            "issue": (
+                f"MEMORY.md is {total_kb:.1f} KB (cap {_MEMORY_MD_MAX_KB} KB) — "
+                f"the auto-loaded memory index must stay tight; trim bloated "
+                f"entry lines to title + pointer + one recall hook (+ wikilinks). "
+                f"Sibling rule: KB § PATTERNS/claude-md-router-discipline.md."
+            ),
+            "severity": "high",
+        })
+
+    entry_link_re = re.compile(r"^- \[[^\]]+\]\([^)]+\.md\)")
+    extract_link_re = re.compile(r"\]\(([^)]+\.md)\)")
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if not raw.startswith("- ["):
+            continue
+        if not entry_link_re.match(raw):
+            issues.append({
+                "product": "<memory>",
+                "file": "MEMORY.md",
+                "issue": (
+                    f"MEMORY.md entry (line {line_no}) malformed — must start "
+                    f"with `- [Title](filename.md)`: {raw[:80]}…"
+                ),
+                "severity": "high",
+            })
+            continue
+        n = len(raw)
+        if n > _MEMORY_MD_MAX_ENTRY_CHARS:
+            m = extract_link_re.search(raw)
+            link = m.group(1) if m else "<unknown>"
+            issues.append({
+                "product": "<memory>",
+                "file": "MEMORY.md",
+                "issue": (
+                    f"MEMORY.md entry (line {line_no}, {n} chars, cap "
+                    f"{_MEMORY_MD_MAX_ENTRY_CHARS}) is bloated — trim to title + "
+                    f"pointer + one recall hook (+ wikilinks): {link}"
                 ),
                 "severity": "high",
             })

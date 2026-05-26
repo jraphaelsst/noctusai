@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--scan-migrations", action="store_true", help="Scan SQL migration files for RLS policy / FK index / trigger / search_path patterns recurring across products. 5 known shapes probed; reports which products write each shape and how many times. RLS/trigger templates are absorption candidates for `noctusai_lib.sql.<helper>`.")
     parser.add_argument("--check-outlined", action="store_true", help="Keeper: every STAGED .py/.ts/.tsx must be AST-outline-able (no SyntaxError / parse failure). Exits 1 on any un-outline-able staged file. Used by the pre-commit hook so the platform stays AST-readable + narrow-read/AST-first tooling always functional.")
     parser.add_argument("--check-claude-md-router", action="store_true", help="Keeper: CLAUDE.md router discipline — §1 rules are ONE line (rule + `→` pointer, no inlined bodies) and the whole file stays under the word budget. Exits 1 on any violation. Pre-commit gate when CLAUDE.md is staged. MCP keeper check_claude_md_router; KB § PATTERNS/claude-md-router-discipline.md.")
+    parser.add_argument("--check-memory-md-index", action="store_true", help="Keeper: MEMORY.md auto-loaded-index discipline (sibling of --check-claude-md-router) — every `- [Title](file.md)` entry stays under the per-line cap and the whole file under the KB budget. MEMORY.md is OUT-OF-REPO (Claude-Code per-project store), so this gates at `validate` + this CLI flag, NOT at git commit. Silent skip if the per-project memory dir isn't configured. MCP keeper check_memory_md_index; sibling KB § PATTERNS/claude-md-router-discipline.md.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -258,6 +259,21 @@ def main():
         print(
             f"\n  {BOLD}Keep CLAUDE.md pointer-only: §1 = rule + `→` pointer (one line); bodies in KB / a skill.{RESET}\n"
             f"  Per `KB § PATTERNS/claude-md-router-discipline.md`."
+        )
+        sys.exit(1)
+
+    elif args.check_memory_md_index:
+        from tools.noctus.dev.compliance import check_memory_md_index
+        issues = check_memory_md_index()
+        if not issues:
+            print(f"  {GREEN}✓ MEMORY.md index discipline clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} MEMORY.md index issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        print(
+            f"\n  {BOLD}Keep MEMORY.md entries tight: title + pointer + one recall hook (+ wikilinks).{RESET}\n"
+            f"  Per `KB § PATTERNS/claude-md-router-discipline.md` (sibling pattern)."
         )
         sys.exit(1)
 
