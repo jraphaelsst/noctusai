@@ -1,1 +1,2 @@
 {"ts": "2026-05-26T14:16:54.536545+00:00", "namespace": "kb-embeddings", "model": "text-embedding-3-small", "provider": "openai", "doc_count": 142, "chunk_count": 1964, "estimated_tokens": 883800, "estimated_cost_usd": 0.017676, "source_ref": "session:2026-05-26"}
+{"ts": "2026-05-26T14:26:37.297139+00:00", "namespace": "code-embeddings", "model": "text-embedding-3-small", "provider": "openai", "doc_count": 393, "chunk_count": 2779, "estimated_tokens": 4168500, "estimated_cost_usd": 0.08337, "source_ref": "session:2026-05-26"}
