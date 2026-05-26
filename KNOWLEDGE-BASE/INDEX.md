@@ -33,6 +33,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── code-embeddings.md
 │   │   │   ├── code-recurrence-baseline.md
 │   │   │   ├── defer-is-not-resolve.md
+│   │   │   ├── dont-block-on-background.md
 │   │   │   ├── doc-symbology.md
 │   │   │   ├── drift-fix-on-contact.md
 │   │   │   ├── harness-overlay-worktree-divergence.md

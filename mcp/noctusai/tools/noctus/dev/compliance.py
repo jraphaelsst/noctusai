@@ -8146,6 +8146,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/code-embeddings.md",
     "CONTEXT/PATTERNS/common/vector-baseline.md",
     "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
+    "CONTEXT/PATTERNS/common/dont-block-on-background.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
 })
 
