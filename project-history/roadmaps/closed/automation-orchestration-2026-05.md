@@ -1,12 +1,15 @@
 # automation-orchestration-2026-05 — Hardening via automation built on Phase B primitives
 
+> **🔒 FILED** — moved to `closed/` 2026-05-26 at user request.
+>
+> **Status on close:**
+> - **E1 + E2**: shipped AND verified by tech-lead (real-use proof during session).
+> - **E3 + E4 + E5 + W2-E3' + W2-E4' + W2-E6 + W2-E7**: code shipped to `dev`, tests green, **VERIFICATION PENDING** — picked up by a follow-up agent.
+> - **Verification scope** (per slice): smoke the MCP tool with a real call against a live cache + confirm graceful-degrade behavior + confirm keeper exits clean.
+> - **Lessons absorbed**: see retrospective sections below + `MEMORY.md` updates 2026-05-26.
+>
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
-> Lives in `project-history/roadmaps/` because:
-> - `projects/<slug>/` is ephemeral (archived on close)
-> - `KNOWLEDGE-BASE/` is for methodology, not project state
-> - This is multi-session, mutable, structured — none of the existing
->   ndjson ledgers fit.
-> On close: absorb lessons → KB/memory, move to `closed/` subdir (optional).
+> Lives in `project-history/roadmaps/closed/` because the project is filed; original location was `project-history/roadmaps/` while active.
 
 ## Goal
 
@@ -22,15 +25,29 @@ Specifically: ship the **Tier-1 automations** identified in the 2026-05-26 diagn
 
 | # | Title | Files-to-modify (primary) | Agent | Status | Wave | SHA |
 |---|---|---|---|---|---|---|
-| E1 | `task_branch cleanup` gitignored-fix + worktree-ledger-fix | `mcp/noctusai/tools/noctus/dev/task_branch.py` + colocated test | backend-engineer | **shipped** | W1 | `f43b75da` |
-| E2 | `engineer_brief_compose` (auto-author tool) | NEW `mcp/.../engineer_brief_compose.py` + `__init__.py` + cli.py + test | backend-engineer | **shipped (this commit)** | W1 | TBD |
-| E3 | `code-embeddings.sqlite` (5th keeper-mirror cache) | NEW `mcp/.../code_embeddings.py` + keeper + KB doc + test | backend-engineer | **DEFERRED → W2-E3'** (stale-base fork; engineer still running but expected to need re-dispatch) | W2 | — |
-| E4 | `auto_improvement_cluster` + `codification_radar` | NEW `mcp/.../codification_radar.py` + KB doc + test | backend-engineer | **DEFERRED → W2-E4'** (E4 re-created `auto_improvement.py` + `vectorize.py` from scratch with incompatible APIs; needs porting to the REAL modules) | W2 | — |
-| E5 | Vector cost tracking (OpenAI embed token / $) | NEW `mcp/.../vector_costs.py` + `__init__.py` + small instrumentation in `kb_embeddings.py` + `project-history/vector-costs.ndjson` + KB doc + test | backend-engineer | **shipped (this commit)** | W1 | TBD |
-| W2-E3' | Re-dispatch code-embeddings via two-level branching | (same as E3, correct flow) | inline-empersonation (backend-engineer) | **shipped (Wave-2 final commit)** | W2 | TBD |
-| W2-E4' | Port codification_radar to real auto_improvement/vectorize APIs | Rewrite `codification_radar.py` using `auto_improvement.query()` + `vectorize.embed_text()` dict-return shape | inline-empersonation (backend-engineer) | **shipped (this commit)** | W2 | TBD |
-| W2-E6 | Vector approval-canonical layer (ratified baseline) | NEW `kb_baseline.py` + keeper + KB pattern + working-cache integration + `project-history/kb-baselines/` + tests | inline-empersonation (backend-engineer) | **shipped (Wave-2 final commit)** | W2 | TBD |
-| W2-E7 | **Vector autocalibration + auto-improvement** | NEW `vector_calibration.py` — observes vector signals + reasons about whether signals make sense vs canonical truth + surfaces recommendations (NOT auto-applies) + decision ledger with required reasoning. KB pattern doc + 16 tests. | inline-empersonation (backend-engineer) | **shipped (this commit)** | W2 | TBD |
+| E1 | `task_branch cleanup` gitignored-fix + worktree-ledger-fix | `mcp/noctusai/tools/noctus/dev/task_branch.py` + colocated test | backend-engineer | ✅ **shipped + verified** (real-use proof during session: gitignored-only cleanup + salvage ledger written to correct worktree path; the verifying use-case was the same session) | W1 | `f43b75da` |
+| E2 | `engineer_brief_compose` (auto-author tool) | NEW `mcp/.../engineer_brief_compose.py` + `__init__.py` + cli.py + test | backend-engineer | ✅ **shipped + verified** (real-use proof during session: composed briefs for W2 dispatches; tool returned expected markdown) | W1 | `c606fa15` |
+| E3 | `code-embeddings.sqlite` (5th keeper-mirror cache) | NEW `mcp/.../code_embeddings.py` + keeper + KB doc + test | backend-engineer | **shipped (via W2-E3'); VERIFY-PENDING** — needs real-cache smoke + MCP call vs live corpus | W2 | `3f36ec86` |
+| E4 | `auto_improvement_cluster` + `codification_radar` | NEW `mcp/.../codification_radar.py` + KB doc + test | backend-engineer | **shipped (via W2-E4'); VERIFY-PENDING** — needs `noctus.dev.codification_radar` smoke against the live `auto-improvement.ndjson` | W2 | `5048b559` |
+| E5 | Vector cost tracking (OpenAI embed token / $) | NEW `mcp/.../vector_costs.py` + `__init__.py` + small instrumentation in `kb_embeddings.py` + `project-history/vector-costs.ndjson` + KB doc + test | backend-engineer | **shipped; VERIFY-PENDING** — needs real OpenAI embed call → confirm ledger entry written with realistic cost | W1 | `c606fa15` |
+| W2-E3' | Re-dispatch code-embeddings via two-level branching | (same as E3, correct flow) | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — see E3 row | W2 | `3f36ec86` |
+| W2-E4' | Port codification_radar to real auto_improvement/vectorize APIs | Rewrite `codification_radar.py` using `auto_improvement.query()` + `vectorize.embed_text()` dict-return shape | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — see E4 row | W2 | `5048b559` |
+| W2-E6 | Vector approval-canonical layer (ratified baseline) | NEW `kb_baseline.py` + keeper + KB pattern + working-cache integration + `project-history/kb-baselines/` + tests | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — needs `noctus.dev.kb_ratify` smoke + diff vs subsequent run | W2 | `3f36ec86` |
+| W2-E7 | **Vector autocalibration + auto-improvement** | NEW `vector_calibration.py` — observes vector signals + reasons about whether signals make sense vs canonical truth + surfaces recommendations (NOT auto-applies) + decision ledger with required reasoning. KB pattern doc + 16 tests. | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — needs end-to-end smoke: log signals → analyze produces reasoning lines → decide writes ledger | W2 | `5048b559` |
+
+### 🔒 Closure note (2026-05-26)
+
+**E1 + E2** were exercised *during the same session that built them* — their verification is implicit in that. The other slices (`E3`/`E4`/`E5`/`W2-E3'`/`W2-E4'`/`W2-E6`/`W2-E7`) shipped tests-green but **were not exercised against live caches / live MCP tool calls** beyond the unit-test surface. That verification work is queued for the next agent.
+
+**Verify handoff scope** (per slice, in priority order):
+
+| Slice | Verify recipe |
+|---|---|
+| E5 (vector_costs) | Trigger a real `kb_embeddings.refresh()` (requires `OPENAI_API_KEY`) → confirm `project-history/vector-costs.ndjson` gains a row with realistic `estimated_tokens` / `estimated_cost_usd`. |
+| W2-E3' (code_embeddings) | `noctus.dev.code_embeddings_refresh` against the live tree → confirm corpus rows written, then `code_search('extract phone number')` returns plausible hits. |
+| W2-E4' (codification_radar) | `noctus.dev.codification_radar(threshold=0.75, limit=50)` against live `auto-improvement.ndjson` → confirm clusters surface s1/s2 → s3 candidates; then `auto_improvement_promote(matches, target_status='s2-memory')` and confirm ledger updates. |
+| W2-E6 (kb_baseline) | `noctus.dev.kb_ratify(reason='initial baseline of current FPs')` → confirm file written; mutate KB; `kb_baseline_diff()` → confirm new_findings surfaces. |
+| W2-E7 (vector_calibration) | Log ~10 signals via `vector_signal_log` → `vector_calibration_analyze` → confirm reasoning lines reference quartiles + WHY clauses; `vector_calibration_decide(reasoning='...')` → confirm ledger written. |
 
 ### Wave-1 collision-class
 
