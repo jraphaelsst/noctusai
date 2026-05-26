@@ -51,6 +51,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── kb-vector-search.md
 │   │   │   ├── scoped-auto-improvement.md
 │   │   │   ├── self-branching-mode.md
+│   │   │   ├── six-way-sync.md
 │   │   │   ├── storage-hygiene.md
 │   │   │   ├── vector-baseline.md
 │   │   │   ├── vector-calibration.md

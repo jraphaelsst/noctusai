@@ -97,6 +97,8 @@ def main():
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
+    parser.add_argument("--check-six-way-sync", action="store_true", help="Keeper: the 6-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + memory_md_index sub-keepers under one named symbol-prefix. Severity high. KB § PATTERNS/common/six-way-sync.md.")
+    parser.add_argument("--check-skills-listed-in-router", action="store_true", help="Keeper sub-leg of check_six_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--refresh-kb-embeddings", action="store_true", help="Re-populate the local KB embeddings cache (.claude/cache/kb-embeddings.sqlite) from KNOWLEDGE-BASE/**/*.md. Embeds via OpenAI text-embedding-3-small through noctusai_lib.integrations.llm (no new external dep). ADDITIVE discovery layer — does not replace owns_kb / INDEX.md / grep. KB § PATTERNS/common/kb-vector-search.md.")
     parser.add_argument("--kb-search", metavar="QUERY", help="Semantic search over the KB — embeds the query, returns top-K KB chunks by cosine similarity. Use for fuzzy-intent queries where exact terminology is unknown. For named patterns, use grep + INDEX.md.")
     parser.add_argument("--top-k", type=int, default=5, help="Number of results to return for --kb-search (default 5).")
@@ -424,6 +426,26 @@ def main():
             print(f"  {GREEN}✓ CONTEXTUALIZE.md aligned (pointer-only + canonical cores covered).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} contextualize-alignment issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_six_way_sync:
+        from tools.noctus.dev.compliance import check_six_way_sync
+        issues = check_six_way_sync()
+        if not issues:
+            print(f"  {GREEN}✓ 6-way sync clean (CLAUDE.md / MEMORY.md / agents / KB / CONTEXTUALIZE.md / skills all aligned).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} six-way-sync issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
+        sys.exit(1)
+    elif args.check_skills_listed_in_router:
+        from tools.noctus.dev.compliance import check_skills_listed_in_router
+        issues = check_skills_listed_in_router()
+        if not issues:
+            print(f"  {GREEN}✓ skills ↔ CLAUDE.md §2 router in sync.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} skills-router-sync issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)

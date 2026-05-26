@@ -64,6 +64,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Context budget discipline.** The auto-loaded budget compounds every reply. MCP keep-list: `noctusai`+`supabase`+`n8n`+`waha`. → `KB § 01-PHILOSOPHY.md`
 - **Lossless doc-refactor.** Changing the doc-set itself is methodology surgery — lossless proven, not asserted. → `KB § PATTERNS/common/lossless-doc-refactor.md`
 - **CLAUDE.md is the always-on router — keep it pointer-only.** §1 = principle + map (one-line rule + `→` pointer); procedures in skills, depth in KB; re-bloat is gated. → `KB § PATTERNS/common/claude-md-router-discipline.md`
+- **6-way sync — methodology surfaces stay aligned.** Six first-class surfaces (CLAUDE.md / MEMORY.md / `.claude/agents/` / KB / CONTEXTUALIZE.md / `.claude/skills/`) carry the methodology; a rule added to one MUST touch the others where applicable. Enforced by `check_six_way_sync`. → `KB § PATTERNS/common/six-way-sync.md`
 - **Sibling workspaces consume noc read-only, whole.** Trimming the inherited surface breaks seed-first analysis + sync. → `KB § PATTERNS/architect/seed-workspace.md`
 - **Divergent-architecture absorptions → house container model.** One container, `serve_spa`, seed base image; no fleet carve-out. → `KB § PATTERNS/devops/containerization.md §12a` · skill `noc-absorb-product`
 - **Parallel-agent collision protocol.** Twice-reverted → STOP, wait, continue non-colliding; no collision-report project. → `KB § PATTERNS/architect/project-execution.md`

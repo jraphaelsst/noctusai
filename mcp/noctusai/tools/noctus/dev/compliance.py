@@ -7829,6 +7829,15 @@ def check_all_products() -> tuple[int, list]:
     # of check_claude_md_router (same pointer-only discipline, applied to the
     # onboarding ramp). KB § PATTERNS/common/claude-md-router-discipline.md.
     all_issues.extend(check_contextualize_alignment())
+    # 2026-05-26 (six-way-sync) — skills declared in CLAUDE.md §2 must match
+    # the on-disk .claude/skills/ tree. Sub-keeper composed by
+    # check_six_way_sync. KB § PATTERNS/common/six-way-sync.md.
+    all_issues.extend(check_skills_listed_in_router())
+    # 2026-05-26 (six-way-sync) — composition keeper validating the
+    # 6-surface sync invariant. Most legs reuse existing sub-keepers
+    # (kb_sync, contextualize, agent_kb_alignment, skills_listed,
+    # memory_md_index). KB § PATTERNS/common/six-way-sync.md.
+    all_issues.extend(check_six_way_sync())
     # 2026-05-26 (kb-vector-search) — enforces the markdown-canonical /
     # vector-DB-is-enrichment principle. Severity warning (advisory layer,
     # never blocking). KB § PATTERNS/common/kb-vector-search.md.
@@ -8147,6 +8156,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/vector-baseline.md",
     "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
     "CONTEXT/PATTERNS/common/dont-block-on-background.md",
+    "CONTEXT/PATTERNS/common/six-way-sync.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
 })
 
@@ -9072,6 +9082,174 @@ def check_code_recurrence_drift(repo_root: Path | None = None) -> list[dict]:
             "severity": "warning",
             "symbol": "code-baseline-corpus-drifted",
         })
+    return issues
+
+
+def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, six-way-sync): every skill directory
+    under `.claude/skills/<name>/SKILL.md` MUST be referenced in CLAUDE.md
+    §2's "Procedure skills" line. Drift class — agents query CLAUDE.md to
+    discover available skills; a skill that exists but isn't listed is
+    invisible to discovery.
+
+    Predicates (severity ``high`` — methodology surface drift):
+      (a) Every on-disk skill dir is mentioned in CLAUDE.md somewhere.
+      (b) Every skill name in CLAUDE.md §2 has a real directory on disk.
+
+    Silent skip when CLAUDE.md absent or .claude/skills/ absent.
+
+    KB § PATTERNS/common/six-way-sync.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    claude_md = root / "CLAUDE.md"
+    skills_dir = root / ".claude" / "skills"
+    if not claude_md.exists() or not skills_dir.is_dir():
+        return issues
+    try:
+        text = claude_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return issues
+    on_disk = sorted(
+        p.name for p in skills_dir.iterdir()
+        if p.is_dir() and (p / "SKILL.md").is_file()
+    )
+    # Leg (a): skill on disk not in CLAUDE.md.
+    for skill in on_disk:
+        if skill not in text:
+            issues.append({
+                "product": "<harness>", "file": f".claude/skills/{skill}/SKILL.md",
+                "issue": (
+                    f"skill `{skill}` exists on disk but is NOT referenced in "
+                    f"CLAUDE.md (§2 'Procedure skills' line or §1 rule pointer). "
+                    f"Add it to the router so agents can discover it."
+                ),
+                "severity": "high",
+                "symbol": "skill-orphan-on-disk",
+            })
+    # Leg (b): name in §2 not on disk. Extract names matching `noc-<word>`
+    # OR explicit ones from a known set. Heuristic: scan §2 line for
+    # backtick-quoted tokens that LOOK like skills.
+    import re
+    # Find the §2 'Procedure skills' line, then every backtick-quoted
+    # token on that line whose name looks skill-shaped (kebab-case).
+    skills_listed: set[str] = set()
+    for line in text.splitlines():
+        if "Procedure skills" in line and ".claude/skills" in line:
+            for match in re.findall(r"`([a-z][a-z0-9-]+)`", line):
+                # Heuristic: kebab-case + not too short
+                if "-" in match and len(match) >= 4:
+                    skills_listed.add(match)
+            break
+    for name in sorted(skills_listed):
+        # Allow non-skill helper names like "codify" (which is a command);
+        # only flag if it LOOKS skill-shaped (noc-<...> OR explicit
+        # skill-creator). Otherwise skip — heuristic noise tolerable.
+        if not (name.startswith("noc-") or name == "skill-creator"):
+            continue
+        if name not in on_disk:
+            issues.append({
+                "product": "<harness>", "file": "CLAUDE.md",
+                "issue": (
+                    f"skill `{name}` listed in CLAUDE.md §2 but no "
+                    f".claude/skills/{name}/ directory exists. Either "
+                    f"create the skill or remove the stale reference."
+                ),
+                "severity": "high",
+                "symbol": "skill-orphan-in-router",
+            })
+    return issues
+
+
+def check_six_way_sync(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26): the 6-way sync contract — six first-class
+    methodology surfaces stay aligned (CLAUDE.md / MEMORY.md / .claude/agents/
+    / KNOWLEDGE-BASE/ / CONTEXTUALIZE.md / .claude/skills/).
+
+    Composition keeper — re-runs the existing sub-keepers under one named
+    gate so a single CLI flag surfaces all 6-way-sync mismatches in one
+    pass. Severity ``high`` (methodology drift breaks the agent-context
+    contract).
+
+    Composes:
+      - check_kb_sync (#1 CLAUDE.md pointers + #4 KB INDEX)
+      - check_contextualize_alignment (#5 fresh-agent ramp)
+      - check_agent_kb_alignment (#3 agent owns_kb)
+      - check_skills_listed_in_router (#6 skills ↔ router)
+      - check_memory_md_index (#2 MEMORY.md discipline)
+
+    Each sub-keeper has its own severity; this composition surfaces the
+    UNION and prefixes the issue symbol with `six-way-sync-` so callers
+    can tell a composed issue from a direct sub-keeper call.
+
+    KB § PATTERNS/common/six-way-sync.md.
+    """
+    issues: list[dict] = []
+    # Each sub-keeper is already wired into check_all_products. Calling
+    # them directly here for the SCOPED 6-way-sync gate (CLI surface +
+    # pre-commit). Reuse the same function bodies; mark each issue with
+    # the composition prefix so root-cause is traceable.
+    for sub_name, sub_call in (
+        ("kb-sync", lambda: _check_kb_sync_for_six_way(repo_root)),
+        ("contextualize", lambda: check_contextualize_alignment(repo_root)),
+        ("agent-kb", lambda: check_agent_kb_alignment(repo_root)),
+        ("skills-router", lambda: check_skills_listed_in_router(repo_root)),
+        ("memory-md-index", lambda: check_memory_md_index(repo_root)),
+    ):
+        try:
+            sub_issues = sub_call() or []
+        except Exception as e:  # noqa: BLE001 — defensive, never crash the gate
+            sub_issues = [{
+                "product": "<harness>", "file": "<six-way-sync>",
+                "issue": f"sub-keeper {sub_name!r} raised: {str(e)[:200]}",
+                "severity": "warning",
+                "symbol": f"six-way-sync-{sub_name}-error",
+            }]
+        for i in sub_issues:
+            tagged = dict(i)
+            tagged["symbol"] = f"six-way-sync-{sub_name}::{i.get('symbol', '?')}"
+            issues.append(tagged)
+    return issues
+
+
+def _check_kb_sync_for_six_way(repo_root: Path | None = None) -> list[dict]:
+    """Adapter: invoke `tools.kb_sync.verify_kb_sync` (top-level module,
+    NOT under tools.noctus.dev) and adapt its KBSyncResult into the
+    standard {file, issue, severity, symbol} keeper shape.
+
+    `verify_kb_sync` returns `{ok, exit_code, stdout, stderr}`. On
+    failure, the stderr contains the diagnostic lines we surface.
+    """
+    issues: list[dict] = []
+    try:
+        from tools import kb_sync as _kbs
+        result = _kbs.verify_kb_sync()
+    except Exception as e:  # noqa: BLE001
+        return [{
+            "product": "<harness>", "file": "<kb-sync>",
+            "issue": f"kb_sync.verify_kb_sync raised: {str(e)[:200]}",
+            "severity": "warning",
+            "symbol": "kb-sync-unavailable",
+        }]
+    if not result.get("ok", True):
+        stderr = result.get("stderr") or result.get("stdout") or ""
+        for raw_line in stderr.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            issues.append({
+                "product": "<harness>", "file": "<kb-sync>",
+                "issue": line,
+                "severity": "high",
+                "symbol": "kb-sync-issue",
+            })
+        if not issues:
+            issues.append({
+                "product": "<harness>", "file": "<kb-sync>",
+                "issue": f"kb_sync verify failed (exit_code={result.get('exit_code')})",
+                "severity": "high",
+                "symbol": "kb-sync-failed",
+            })
     return issues
 
 

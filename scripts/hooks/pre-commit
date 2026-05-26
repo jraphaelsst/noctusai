@@ -128,6 +128,22 @@ if have_py; then
     fi
 fi
 
+# ─── 4a. Skills ↔ CLAUDE.md §2 sync (blocking, when skills OR router staged) ─
+# When .claude/skills/* OR CLAUDE.md is staged, verify every on-disk skill
+# is referenced in CLAUDE.md §2 'Procedure skills' line. Sibling of kb_sync
+# applied to the procedural-skill surface (6-way sync #6). Severity high.
+# KB § PATTERNS/common/six-way-sync.md.
+if have_py; then
+    STAGED_SKILLS_OR_ROUTER=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.claude/skills/|CLAUDE\.md$)' || true)
+    if [[ -n "$STAGED_SKILLS_OR_ROUTER" ]]; then
+        echo "[pre-commit] Skills or CLAUDE.md staged — verifying skills↔router sync..."
+        if ! "$PY" "$CLI" --check-skills-listed-in-router --worktree-path "$REPO_ROOT"; then
+            echo "[pre-commit] Skills↔router sync FAILED. Commit aborted." >&2
+            exit 1
+        fi
+    fi
+fi
+
 # ─── 4b. Containerization propagation drift (blocking, when seed staged) ─
 # The seed at products/seed/ is canonical; per-product Dockerfiles +
 # composes + overrides are GENERATED. If the canonical seed is staged
