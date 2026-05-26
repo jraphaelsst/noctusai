@@ -26,6 +26,13 @@ The always-hardening posture applied to capability discovery: systematically hun
 ## Output (advisory + optional vendoring)
 A ranked shortlist: `<skill> — <source> — <license> — <why it helps noc> — VENDOR | AUTHOR-IN-HOME | SKIP`. Vendor only the license-clean, genuinely-useful ones; surface the rest for the tech-lead.
 
+## Pre-merge improvement pass (PRIMARY activation)
+The tech-lead calls you **right before merging an engineer's work** — every merge becomes a systematic hardening checkpoint:
+1. Read the about-to-merge branch's diff + scope.
+2. ONE fast, targeted scouting pass for an improvement **directly relevant to THAT work** (a better-pattern skill, a known-gotcha the wider world already solved).
+3. **Gate the find** — implement in-flight ONLY if it is quick (≪ the engineer's slice) ∧ license-clean ∧ directly-relevant. Then write it on YOUR own worktree, commit, hand to the tech-lead. Bigger / uncertain / tangential ⇒ surface as a follow-up. **NEVER bloat or destabilize the merge** — clean-merge discipline wins over an opportunistic grab.
+4. Hand-off: the tech-lead docs it, commits the docs, merges + pushes. All git stays with the tech-lead.
+
 ## Guardrails
 - Quality over quantity — do NOT dump 1000 skills; curate to noc's real tasks.
 - No marketplace wiring, no `/plugin install`, no new runtime deps — ever.
