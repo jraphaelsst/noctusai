@@ -31,6 +31,7 @@ def register_all(server) -> None:
     from . import deploy_pull
     from . import disk_usage
     from . import dispatch_preflight
+    from . import engineer_brief_compose
     from . import findings
     from . import history
     from . import improvements
@@ -73,6 +74,7 @@ def register_all(server) -> None:
     from . import task_branch
     from . import testing
     from . import three_way_sync
+    from . import vector_costs
     from . import vectorize
     from . import vps
 
@@ -95,6 +97,7 @@ def register_all(server) -> None:
     deploy_pull.register(server)
     disk_usage.register(server)
     dispatch_preflight.register(server)
+    engineer_brief_compose.register(server)
     findings.register(server)
     history.register(server)
     improvements.register(server)
@@ -137,6 +140,7 @@ def register_all(server) -> None:
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
+    vector_costs.register(server)
     vectorize.register(server)
     vps.register(server)
 

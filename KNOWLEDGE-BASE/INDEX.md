@@ -48,6 +48,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── scoped-auto-improvement.md
 │   │   │   ├── self-branching-mode.md
 │   │   │   ├── storage-hygiene.md
+│   │   │   ├── vector-cost-tracking.md
 │   │   │   └── verify-seed-on-fork-base.md
 │   │   ├── architect/
 │   │   │   ├── absorbed-product-seed-shape-seam.md

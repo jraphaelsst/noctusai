@@ -46,3 +46,62 @@
 - **Serial-by-default** — running engineers one-at-a-time when slices are file-disjoint. C1 work belongs in parallel.
 - **Skip-the-architect** — dispatching executors without an advisor's design pass on judgment-heavy work; the design seat (opus) catches recurrence, seam mismatches, and "is this a bone or an organ?" before the implementation ships.
 - **Dispatch what you should inline** — a 50-LoC patch in one file does NOT amortize the dispatch tax; inline cutoff applies.
+- **🔴 Agent `isolation: "worktree"` for noc dispatches** — Wave-1 (2026-05-26) surfaced N=4 stale-base recurrence: 4 of 5 agents dispatched via the harness `Agent` tool with `isolation: "worktree"` forked from `7c2a778e` (weeks old, pre-Phase-B) instead of `origin/dev`. Code referenced modules that didn't exist in the worktree base; one engineer (E4) RE-CREATED `auto_improvement.py` + `vectorize.py` from scratch, generating conflicts. The harness's built-in isolation does NOT honor noc-self-branch's fork-from-`origin/dev` rule. **The correct flow** is in the next section.
+
+## Two-level branching (the dispatch flow — codified 2026-05-26 N=4)
+
+**Why two levels:** the architect's branch is the integration sandbox; engineer branches fork off the architect's branch (not `dev` directly) so the architect can collect commits + manage merging before the work touches `dev`. Extra insurance layer against engineer-vs-engineer collisions AND a deliberate place to reconcile semantic surprises before they land in `dev`.
+
+```
+origin/dev
+   │
+   ↓ (1) architect self-branches off origin/dev → architect-branch (e.g. feat/wave-X)
+   │
+   ├──→ (2) noctus.dev.task_branch action=start slug=E1 ─→ wt-E1 (forks off architect-branch)
+   ├──→ (2) noctus.dev.task_branch action=start slug=E2 ─→ wt-E2 (forks off architect-branch)
+   ├──→ (2) noctus.dev.task_branch action=start slug=E3 ─→ wt-E3 (forks off architect-branch)
+   │
+   ↓ (3) DISPATCH each agent INTO its pre-created worktree
+   │     (NOT via Agent tool's isolation: "worktree" param)
+   │     each agent works in its wt-E<X>, stages files, returns
+   │
+   ↓ (4) Architect collects commits from each wt-E<X>, evaluates, merges to architect-branch
+   │     Surprises / collisions reconciled HERE, before dev sees anything
+   │
+   ↓ (5) Architect pushes architect-branch → origin/dev (FF) when ALL slices integrated cleanly
+```
+
+**Mechanism:**
+1. **Self-branch off `origin/dev`** (architect's branch — e.g. `noctus.dev.task_branch action=start slug=wave-X-arch`).
+2. **For each engineer**: call `noctus.dev.task_branch action=start slug=E<X>` from the ARCHITECT'S branch. This forks the engineer's worktree off architect-branch (per `noc-self-branch` workflow), NOT off `dev`.
+3. **Dispatch the agent INTO that worktree** — pass the worktree path in the brief as the engineer's cwd. Do NOT use the Agent tool's `isolation: "worktree"` parameter (the harness's built-in isolation forks from an arbitrary base; we have N=4 evidence it doesn't honor `origin/dev`).
+4. **Collect + reconcile** at architect-branch level. Architect cherry-picks / merges each engineer's commits. Semantic conflicts (E4 re-creating shared modules) get caught HERE, before `dev`.
+5. **Push architect-branch → `dev`** (FF) when the wave is clean.
+
+**The collision-insurance properties:**
+- Even if two engineers semantically collide, the architect catches it at step 4 (their work is on architect-branch sibling branches, not dev).
+- If one engineer's work is unsalvageable, the others ship without it; the architect just doesn't merge that branch.
+- `dev` never sees a partial / half-integrated wave; it only sees the architect's reconciled merge.
+
+## Inline-deving — empersonate the specialist (codified 2026-05-26)
+
+When the work is **below the inline cutoff** OR the architect chooses inline for a specific reason (e.g., methodology work that needs a single coherent voice across sub-domains), the architect MUST still ROUTE BY DOMAIN. Inline ≠ "use generic architect mode for everything."
+
+**The rule:** at each task boundary during inline work, ask the same question as at dispatch — "which specialist would I dispatch for this?" — and EMPERSONATE that specialist until the task's commit. Then switch lens for the next task. Apply each specialist's discipline + owns_kb + behavioral specifics from their `.claude/agents/<name>.md` body.
+
+**Practical empersonation matrix:**
+
+| Task domain | Empersonate | Apply (per `.claude/agents/<name>.md`) |
+|---|---|---|
+| FastAPI routers / services / Pydantic schemas / RLS / migrations / integrations | backend-engineer | seed-first via `create_product_app`, FastAPI dep factory, `StrictHttpModel`, AST-first libcst, MCP path constants, no monkey-patch our own |
+| React / TanStack Query / vite / hooks-in-dedicated-files / SSO callback | frontend-engineer | createProductApp factory, page-scoped CRUD, env.CORE_URL (no hand-roll), AST-first ts-morph, status_pagina gating |
+| Containers / CI / deploy / dev↔prod parity / base-image / sanitization / VPS ops | devops-engineer | single-container-per-product, container-first dev loop, deploy-config contract, source-of-truth chain, secrets discipline |
+| Webhook signatures / LGPD / LLM-bot defense / auth bypass / input validation | security (advisor lens) | threat-model first, verify-before-side-effect, no `VITE_` secrets, RLS per-org, keeper-runs |
+| Regression baseline / wiring audit / DRY recurrence / three-way sync verify | compliance-reviewer (advisor lens) | regression semantics, route-exists ≠ wired, replication-to-seed symmetry, `scan_*` sextet |
+| Seed architecture / orchestration / branching / dispatch / project shape / MCP toolkit | architect (self) | Phase-0 audit, 4-question practical decision test, replication-to-seed-symmetry at LANGUAGE time, parallelization-first |
+
+**Switch lens at task boundaries**, not within a task. A single backend task doesn't half-empersonate two specialists; it's wholly the backend-engineer's lens until commit. Then the next task may switch to compliance-reviewer for the verify pass, then to devops-engineer for the deploy wiring.
+
+**Why this matters:** inline-without-empersonation drifts into generalist mode — all the same patterns get applied uniformly regardless of domain, missing the domain-specific discipline each specialist owns. Empersonation preserves the specialist value during inline work.
+
+The rule mirrors dispatch decisions; only difference is empersonation vs. delegation. Same routing logic. Same `owns_kb` boundaries.

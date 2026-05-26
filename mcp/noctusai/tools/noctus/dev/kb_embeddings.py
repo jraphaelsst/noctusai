@@ -351,6 +351,29 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
     conn.commit()
     conn.close()
     status = "in-sync" if not refreshed else ("rebuilt" if not errors else "partial")
+
+    # ── Cost instrumentation (ADDITIVE — does not modify existing logic) ───────
+    # Log embedding work to the durable vector-costs ledger. Skipped when
+    # total_rows == 0 (in-sync, no API calls). Wrapped — never blocks refresh.
+    if total_rows > 0:
+        try:
+            from tools.noctus.dev import vector_costs as _vc
+            _estimated_tokens = total_rows * (MAX_CHUNK_CHARS // 4)
+            _vc.log_refresh_batch(
+                namespace="kb-embeddings",
+                model="text-embedding-3-small",
+                doc_count=len(refreshed),
+                chunk_count=total_rows,
+                estimated_tokens=_estimated_tokens,
+                provider="openai",
+                source_ref=f"session:{_now_iso()[:10]}",
+            )
+        except Exception as _vc_exc:  # noqa: BLE001
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "kb_embeddings: vector_costs instrumentation failed: %s", _vc_exc
+            )
+
     return {
         "ok": not errors,
         "status": status,
