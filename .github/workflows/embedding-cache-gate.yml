@@ -88,6 +88,12 @@ jobs:
           (timeout 5 bash -c 'until nc -z 127.0.0.1 5432; do sleep 0.3; done') \
             || (echo "::warning::cache-pg tunnel failed to come up; downstream gates will use sqlite fallback" && exit 0)
           echo "cache-pg tunnel UP on 127.0.0.1:5432"
+          # Export tunnel-status flag so downstream gates know whether to
+          # hard-fail (tunnel UP = prod cache reachable = real validation)
+          # vs. soft-fail (tunnel skipped on fork PR = sqlite fallback,
+          # advisory only). The flag is consumed by `continue-on-error`
+          # expressions on the gate steps below.
+          echo "CACHE_TUNNEL_UP=1" >> $GITHUB_ENV
 
       - name: Connect to prod cache
         # Exports the backend selector so all subsequent steps use the shared
@@ -99,15 +105,17 @@ jobs:
           echo "NOCTUS_CACHE_POSTGRES_DSN=${{ secrets.NOCTUS_CACHE_POSTGRES_DSN }}" >> $GITHUB_ENV
 
       - name: Run KB vector canonical gate
-        # Advisory-only until Phase 3 (PostgresCacheBackend) ships + baseline
-        # is seeded on the prod cache. continue-on-error prevents blocking PRs
-        # on a cache that may be unreachable or unseeded.
-        continue-on-error: true
+        # Hard-fail when the prod cache tunnel is UP (real validation against
+        # the seeded prod pgvector cache). Soft-fail when the tunnel is DOWN
+        # (fork PR with no secrets → sqlite fallback, advisory only).
+        # The CACHE_TUNNEL_UP env is set by the tunnel step above when nc
+        # confirms 127.0.0.1:5432 is listening.
+        continue-on-error: ${{ env.CACHE_TUNNEL_UP != '1' }}
         run: python mcp/noctusai/cli.py --check-kb-vector-canonical
 
       - name: Run code embeddings cache freshness gate
-        # Same graceful-degrade rationale as above.
-        continue-on-error: true
+        # Same conditional hard-fail rationale as the KB gate above.
+        continue-on-error: ${{ env.CACHE_TUNNEL_UP != '1' }}
         run: python mcp/noctusai/cli.py --check-code-embeddings-cache-freshness
 
       - name: Report embedding cost since PR opened

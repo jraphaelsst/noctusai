@@ -25,6 +25,12 @@ dependencies = [
     # (not just under [testing]) because it ships precision the chars/4
     # fallback can't match; production agents benefit from the precise path.
     "tiktoken>=0.7.0",
+    # Postgres cache backend (cache_backend_postgres.py) + the deploy-time
+    # mirror (cache_deploy_mirror.py). pgvector ships register_vector() for
+    # psycopg2 — without it, mirroring emits a "pgvector not installed"
+    # warning and falls back to text-encoded vector(N) on insert.
+    "psycopg2-binary>=2.9.0",
+    "pgvector>=0.2.5",
 ]
 
 [project.optional-dependencies]
