@@ -5483,7 +5483,12 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 _SYMBOLOGY_DOC_GLOBS: tuple[str, ...] = (
     "CLAUDE.md",
     "CLAUDE/*.md",
+    # FLAT pattern (pre-reorg legacy) — keeps tolerance for trees that
+    # haven't migrated yet; current noc tree has no docs at this level.
     "KNOWLEDGE-BASE/CONTEXT/PATTERNS/*.md",
+    # OWNERSHIP-organized pattern (post-`cec3533e` PATTERNS reorg) —
+    # the live shape. Required after 2026-05-26 doc-sprint.
+    "KNOWLEDGE-BASE/CONTEXT/PATTERNS/*/*.md",
     "products/*/MASTER-PROMPT.md",
     ".claude/agents/*.md",
     ".claude/skills/*/SKILL.md",

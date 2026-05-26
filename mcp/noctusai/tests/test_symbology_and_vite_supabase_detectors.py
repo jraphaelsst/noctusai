@@ -74,12 +74,15 @@ class TestCheckDocSymbologyDrift:
     """
 
     def _mk_glossary(self, tmp_path: Path, text: str = _GLOSSARY) -> None:
-        gp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS"
+        # 2026-05-26 PATTERNS reorg moved the glossary into common/.
+        gp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS" / "common"
         gp.mkdir(parents=True, exist_ok=True)
         (gp / "doc-symbology.md").write_text(text)
 
     def _mk_kb_pattern(self, tmp_path: Path, body: str, *, name: str = "x.md") -> None:
-        kp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS"
+        # Place under common/ — matches the post-reorg glob
+        # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/*/*.md`.
+        kp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS" / "common"
         kp.mkdir(parents=True, exist_ok=True)
         (kp / name).write_text(body)
 
@@ -212,7 +215,8 @@ class TestCheckDocSymbologyDrift:
     def test_unparseable_glossary_test_uses_out_of_glossary(self, tmp_path):
         # Sanity: the unparseable path short-circuits regardless of doc
         # content (already covered above; this pins the early-return).
-        gp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS"
+        # 2026-05-26 PATTERNS reorg: glossary moved into common/.
+        gp = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS" / "common"
         gp.mkdir(parents=True)
         (gp / "doc-symbology.md").write_text("# no tables\n")
         (gp / "x.md").write_text("# P\n\n- a ⊗ b\n")
