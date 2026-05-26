@@ -516,3 +516,148 @@ def test_start_without_wire_env_is_unchanged(tmp_path):
     res = T.task_branch(action="start", slug="feat-x", confirm=False, run=fake)
     assert res["status"] == "planned"
     assert "wire_env" not in res and "would_wire" not in res
+
+
+# ── Bug A: gitignored-only dirty worktree → cleanup succeeds (no manual --force) ──
+
+class FakeGitWithGitIgnoredDirt(FakeGit):
+    """Extends FakeGit to simulate a worktree that fails `git worktree remove`
+    on the first attempt (because of gitignored files), but returns a clean
+    `git status --porcelain` (confirming the dirt is all gitignored), and
+    succeeds on the forced remove."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._remove_attempts = 0
+
+    def __call__(self, cmd, cwd=None):
+        self.calls.append((cmd, cwd))
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "status":
+            # Return empty output → worktree is clean (excluding gitignored files)
+            return (0, "", "")
+        if sub == "worktree" and cmd[2] == "remove":
+            if "--force" in cmd:
+                return (0, "", "")
+            self._remove_attempts += 1
+            if self._remove_attempts == 1:
+                # First attempt fails (gitignored files present, e.g. .claude/cache/*.sqlite)
+                return (1, "", "fatal: '.claude/cache/agent.sqlite' is dirty")
+            return (0, "", "")
+        return super().__call__(cmd, cwd=cwd)
+
+
+def test_cleanup_succeeds_when_only_gitignored_files_are_present():
+    """Bug A regression: if `git worktree remove` fails but `git status --porcelain`
+    returns nothing (only gitignored files), the cleanup must proceed via
+    force-remove instead of returning an error. N=4 workaround eliminator."""
+    fake = FakeGitWithGitIgnoredDirt(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+    )
+    rec = _capture_recorder()
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned", f"expected cleaned, got {res!r}"
+    assert res["exit_code"] == 0
+    force_removes = [
+        c for c, _cwd in fake.calls
+        if len(c) > 2 and c[1] == "worktree" and c[2] == "remove" and "--force" in c
+    ]
+    assert force_removes, "expected a --force worktree remove for gitignored-only dirt"
+    assert res["worktree_removed"] is True and res["branch_deleted"] is True
+
+
+def test_cleanup_still_blocks_when_real_uncommitted_changes_exist():
+    """Bug A inverse: real uncommitted changes must still block cleanup — only
+    gitignored-only dirt gets the force-remove pass-through."""
+
+    class FakeGitRealDirty(FakeGit):
+        def __call__(self, cmd, cwd=None):
+            self.calls.append((cmd, cwd))
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "status":
+                return (0, " M seed/lib/backend/real_change.py\n", "")
+            if sub == "worktree" and cmd[2] == "remove":
+                return (1, "", "fatal: dirty worktree")
+            return super().__call__(cmd, cwd=cwd)
+
+    fake = FakeGitRealDirty(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+    )
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=_capture_recorder())
+    assert res["status"] == "error", f"expected error for real dirt, got {res!r}"
+    assert "real uncommitted changes" in res["error"]
+    force_removes = [
+        c for c, _cwd in fake.calls
+        if len(c) > 2 and c[1] == "worktree" and c[2] == "remove" and "--force" in c
+    ]
+    assert not force_removes, "must NOT force-remove when real uncommitted changes exist"
+
+
+def test_is_dirty_excluding_gitignored_returns_false_for_clean_worktree():
+    """Unit: helper returns False when git status --porcelain emits nothing."""
+    runner = lambda cmd, cwd=None: (0, "", "")
+    assert T._is_dirty_excluding_gitignored(runner, "/some/worktree") is False
+
+
+def test_is_dirty_excluding_gitignored_returns_true_for_modified_files():
+    """Unit: helper returns True when git status --porcelain lists tracked files."""
+    runner = lambda cmd, cwd=None: (0, " M some/file.py\n", "")
+    assert T._is_dirty_excluding_gitignored(runner, "/some/worktree") is True
+
+
+def test_is_dirty_excluding_gitignored_returns_true_on_git_failure():
+    """Unit: conservative — returns True when git status itself fails (rc != 0)."""
+    runner = lambda cmd, cwd=None: (128, "", "not a git repo")
+    assert T._is_dirty_excluding_gitignored(runner, "/some/worktree") is True
+
+
+# ── Bug B: salvage ledger writes to the WORKTREE root, not the primary root ──
+
+def test_cleanup_salvage_ledger_root_is_worktree_not_primary():
+    """Bug B regression: the recovery pointer must land in the WORKTREE's own
+    project-history/worktree-salvage.ndjson (not the primary tree's) so it commits
+    atomically on the worktree branch. Eliminates the follow-up self-branch +
+    salvage commit dance that bit N=4 times."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+    )
+    rec = _capture_recorder()
+    # wt_path will be ".claude/worktrees/x" (relative); primary_root = "/repo"
+    # Expected ledger root = Path("/repo") / ".claude/worktrees/x"
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    assert len(rec.captured) == 1
+    ledger_root, removed = rec.captured[0]
+    from pathlib import Path
+    expected_root = Path("/repo") / ".claude/worktrees/x"
+    assert Path(str(ledger_root)) == expected_root, (
+        f"Ledger root should be {expected_root!r} (the worktree), "
+        f"not the primary root. Got: {ledger_root!r}")
+    # Sanity: the ledger path the caller would commit IS inside the worktree
+    assert res["salvage_ledger"].startswith(str(expected_root))
+
+
+def test_cleanup_salvage_ledger_root_absolute_wt_path():
+    """Bug B (absolute wt_path): when wt_path is absolute (absolute worktrees_dir),
+    the ledger root is that absolute path directly."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/abs": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+    )
+    rec = _capture_recorder()
+    res = T.task_branch(
+        action="cleanup", slug="abs", confirm=True, run=fake,
+        worktrees_dir="/abs/wt",  # absolute → wt_path = "/abs/wt/abs"
+        primary_root="/repo", salvage_recorder=rec,
+    )
+    assert res["status"] == "cleaned", f"unexpected: {res!r}"
+    ledger_root, _ = rec.captured[0]
+    from pathlib import Path
+    assert Path(str(ledger_root)) == Path("/abs/wt/abs"), (
+        f"Expected /abs/wt/abs, got {ledger_root!r}")
