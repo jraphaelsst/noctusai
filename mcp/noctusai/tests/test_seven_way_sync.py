@@ -1,6 +1,6 @@
-"""Regression tests for `check_six_way_sync` + `check_skills_listed_in_router`.
+"""Regression tests for `check_seven_way_sync` + `check_skills_listed_in_router`.
 
-KB § PATTERNS/common/six-way-sync.md.
+KB § PATTERNS/common/seven-way-sync.md.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
-    check_six_way_sync,
+    check_seven_way_sync,
     check_skills_listed_in_router,
 )
 
@@ -114,29 +114,29 @@ class TestSkillsListedInRouter:
         assert check_skills_listed_in_router(tmp_path) == []
 
 
-# ── check_six_way_sync (composition) ────────────────────────────────────────
+# ── check_seven_way_sync (composition) ────────────────────────────────────────
 class TestSixWaySync:
     def test_each_issue_carries_composition_prefix(self, tmp_path):
         # Empty repo → kb_sync sub-keeper will return something or nothing,
-        # but ANY issues returned MUST carry the six-way-sync-<sub> prefix.
+        # but ANY issues returned MUST carry the seven-way-sync-<sub> prefix.
         _mk_repo(tmp_path)
         # CLAUDE.md missing → contextualize keeper might fire.
-        result = check_six_way_sync(tmp_path)
+        result = check_seven_way_sync(tmp_path)
         # Every result must have the composition prefix.
         for issue in result:
-            assert issue["symbol"].startswith("six-way-sync-"), \
+            assert issue["symbol"].startswith("seven-way-sync-"), \
                 f"missing composition prefix on {issue}"
 
     def test_composes_skills_listed_results(self, tmp_path):
         # Create a real orphan-on-disk scenario; the composition keeper
-        # MUST surface it (with the six-way-sync- prefix).
+        # MUST surface it (with the seven-way-sync- prefix).
         _mk_repo(tmp_path)
         _mk_skill(tmp_path, "noc-orphan")
         _mk_claude_md(
             tmp_path,
             "**Procedure skills** (`.claude/skills/`, auto-trigger): `noc-other`.",
         )
-        result = check_six_way_sync(tmp_path)
+        result = check_seven_way_sync(tmp_path)
         skills_issues = [i for i in result if "skills-router" in i["symbol"]]
         assert len(skills_issues) >= 1
         assert any("noc-orphan" in i["issue"] for i in skills_issues)
@@ -150,7 +150,7 @@ class TestSixWaySync:
             raise RuntimeError("synthetic sub-keeper failure")
 
         monkeypatch.setattr(_c, "check_agent_kb_alignment", _boom)
-        result = check_six_way_sync(tmp_path)
+        result = check_seven_way_sync(tmp_path)
         # We expect at least one warning-symbol-error issue for agent-kb.
         agent_kb_errs = [i for i in result if "agent-kb-error" in i["symbol"]]
         assert len(agent_kb_errs) == 1

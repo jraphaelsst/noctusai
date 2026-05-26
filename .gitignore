@@ -116,3 +116,4 @@ scripts/archive-clean-last-sweep.log
 # `01-production-deploy-migration`). NOT a blanket `archive/` ignore: archive/ intentionally
 # tracks every project's PROJECT.md/findings.md history. See that project's PROJECT.md.
 **/*production-deploy-migration/reference/
+.claude/scheduled_tasks.lock

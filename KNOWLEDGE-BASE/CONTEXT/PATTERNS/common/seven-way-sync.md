@@ -1,8 +1,8 @@
-# Six-way sync — the methodology surface contract
+# Seven-way sync — the methodology surface contract
 
-**What it is.** A formal sync contract across the six **first-class methodology surfaces** in this codebase. Changing one without aligning the others is structural drift — the codebase becomes inconsistent with what an agent or developer reads in CLAUDE.md / KB / agent files / etc. Born 2026-05-26 (promotion from the legacy "three-way sync" rule after the methodology surface count grew to six).
+**What it is.** A formal sync contract across the seven **first-class methodology surfaces** in this codebase. Changing one without aligning the others is structural drift — the codebase becomes inconsistent with what an agent or developer reads in CLAUDE.md / KB / agent files / etc. Born 2026-05-26 (promotion from the legacy "three-way sync" rule).
 
-## The six surfaces
+## The seven surfaces
 
 | # | Surface | What it carries | Load timing |
 |---|---|---|---|
@@ -12,19 +12,21 @@
 | 4 | **`KNOWLEDGE-BASE/`** (tree) | Methodology depth — patterns, integrations, guides, per-product detail | On-demand (consulted via grep / kb_search / agent_context cache) |
 | 5 | **`CONTEXTUALIZE.md`** | Fresh-agent read map (pointer-only) | Session start when `/contextualize` skill triggers |
 | 6 | **`.claude/skills/<name>/SKILL.md`** | Procedural skill bodies — auto-trigger on phrases | Session start (auto-load) + at trigger phrase |
+| 7 | **`.claude/commands/<name>.md`** | Slash-invoked commands (`/codify`, `/vector-status`, ...) | Session start (auto-load) + at slash invocation |
 
-These six are **first-class methodology surfaces**: an agent reading any one of them should arrive at a consistent picture. A rule added to CLAUDE.md §1 that isn't reflected in the relevant skill OR isn't backed by a KB doc OR isn't carried in the right agent's `owns_kb` IS drift.
+These seven are **first-class methodology surfaces**: an agent reading any one of them should arrive at a consistent picture. A rule added to CLAUDE.md §1 that isn't reflected in the relevant skill OR isn't backed by a KB doc OR isn't carried in the right agent's `owns_kb` IS drift.
 
-## What's NOT in the 6-way
+**Promotion #6 → #7 (2026-05-26 same-day)**: surface count moved from 6 to 7 after `.claude/commands/` grew from 1 entry (`codify`) to 6 (added `vector-status` / `baselines` / `codification-radar` / `cost-report` / `verify-pass`). The harness auto-loads them as available skills indistinguishably from `.claude/skills/`. With N=6 commands carrying methodology procedure they crossed the recurrence threshold from "referenced sibling" to "first-class surface."
+
+## What's NOT in the 7-way
 
 These are **referenced** by the methodology surfaces but aren't themselves first-class methodology carriers:
 
-- `.claude/commands/<name>.md` — slash commands. User-invoked, not auto-loaded. Mentioned in CLAUDE.md but methodology details live elsewhere.
 - `scripts/hooks/pre-commit` — executable gate. Implements but doesn't define methodology.
 - `mcp/noctusai/tools/noctus/dev/compliance.py` — keeper code. The EXECUTABLE form of the rules. The pre-commit hook calls into it; the rules' canonical statement is in CLAUDE.md §1 + KB.
 - `mcp/noctusai/cli.py` — CLI flags. Surface for the keeper executions, not the rules themselves.
 
-These are gated by their own contracts (pre-commit hook itself runs each cli flag → any mismatch fails LOUD). They don't need to be members of the 6-way sync because they don't carry methodology PROSE that can independently drift.
+These are gated by their own contracts (pre-commit hook itself runs each cli flag → any mismatch fails LOUD). They don't need to be members of the 7-way sync because they don't carry methodology PROSE that can independently drift.
 
 ## The sync contract
 
@@ -41,7 +43,7 @@ Adding or modifying a methodology rule MUST touch all surfaces where it applies,
 
 ## Keeper enforcement
 
-`check_six_way_sync` (severity `high` — methodology drift IS a correctness issue at the agent-context layer).
+`check_seven_way_sync` (severity `high` — methodology drift IS a correctness issue at the agent-context layer).
 
 **What it checks** (per the canonical surface predicates):
 
@@ -50,14 +52,34 @@ Adding or modifying a methodology rule MUST touch all surfaces where it applies,
 3. **`KNOWLEDGE-BASE/INDEX.md`**: every KB doc on disk is indexed (via the existing `kb_sync` gate).
 4. **`.claude/agents/<name>.md`**: every `owns_kb:` entry resolves; not in `_AGENT_KB_UNOWNED_ALLOWLIST` unless commons.
 5. **`.claude/skills/<name>/SKILL.md`**: every skill listed in CLAUDE.md §2 maps to a directory containing `SKILL.md`.
-6. **`MEMORY.md`**: index lines ≤ ~200 chars (existing `check_memory_md_index` discipline).
+6. **`.claude/commands/<name>.md`**: every command listed in CLAUDE.md §2 maps to a file on disk; every on-disk command is mentioned in CLAUDE.md.
+7. **`MEMORY.md`**: index lines ≤ ~200 chars (existing `check_memory_md_index` discipline).
 
-The keeper is a **composition** of existing checks + the new surface-presence check for skills. Reuses the established sub-keepers:
+The keeper is a **composition** of existing checks + the new surface-presence checks for skills + commands. Reuses the established sub-keepers:
 - `check_kb_sync` (#1, #3)
 - `check_contextualize_alignment` (#2)
 - `check_agent_kb_alignment` (#4)
-- `check_memory_md_index` (#6)
-- NEW: `check_skills_listed_in_router` (#5) — surfaces skill-set drift between CLAUDE.md §2 listings and the actual `.claude/skills/<name>/SKILL.md` files on disk.
+- `check_memory_md_index` (#7)
+- `check_skills_listed_in_router` (#5) — surfaces skill-set drift between CLAUDE.md §2 listings and the actual `.claude/skills/<name>/SKILL.md` files on disk.
+- NEW: `check_commands_listed_in_router` (#6) — sister of skills check, applied to `.claude/commands/`.
+
+## Composition-keeper base (`_run_composed_keeper`)
+
+`check_seven_way_sync` was the first composition keeper that ran multiple sub-keepers and decorated each result with a `seven-way-sync-<sub>::<orig-symbol>` prefix so root-cause is traceable. The pattern was extracted to a reusable helper `_run_composed_keeper(name, sub_keepers)` in compliance.py — future composition gates can reuse it without copy-pasting the loop + exception-tolerant wrapper.
+
+## Adding a new methodology surface (the promotion ritual)
+
+If a new auto-loaded surface appears (say, `.claude/<X>/` directories that the harness consumes), follow the promotion ritual to keep the codebase honest:
+
+1. **Demonstrate recurrence**: N≥3 items already exist OR a forcing function that guarantees N≥3 (e.g. a new harness feature loads 5 docs).
+2. **Rename the file**: `seven-way-sync.md` → `eight-way-sync.md`. Mechanical churn but the count IS the point.
+3. **Add the surface to the table** in this doc, with load timing.
+4. **Add a sub-keeper** for it (mirror `check_skills_listed_in_router` / `check_commands_listed_in_router`).
+5. **Wire into the composition** via `_run_composed_keeper`.
+6. **Update CLAUDE.md §1** rule + (if §2 contains the listing) update §2.
+7. **Update tests**.
+
+Don't silently promote. The count IS a versioning signal.
 
 ## Composes with
 
@@ -71,7 +93,7 @@ The keeper is a **composition** of existing checks + the new surface-presence ch
 - **DON'T** add a §1 rule without a depth pointer + ensuring the agent / skill / KB tree the pointer leads to actually contains the depth. Pointer-only discipline ⊥ broken pointers.
 - **DON'T** add a KB doc without an INDEX entry + (if always-on relevant) a CLAUDE.md line.
 - **DON'T** add a new skill without listing it in CLAUDE.md §2 map.
-- **DON'T** silently expand the surface count to 7+. Promote `six-way-sync` to `seven-way-sync` LOUDLY with a new keeper rev.
+- **DON'T** silently expand the surface count to 8+. Promote `seven-way-sync` to `eight-way-sync` LOUDLY with a new keeper rev.
 
 ## History
 
@@ -79,6 +101,7 @@ This pattern formalizes what was previously called "three-way sync" (CLAUDE.md /
 - 2026-04: three-way (CLAUDE.md + KB + agent context)
 - 2026-05: four-way (added MEMORY.md after the auto-memory layer landed)
 - 2026-05 (Phase B): five-way (added CONTEXTUALIZE.md as a sibling of CLAUDE.md for fresh-agent ramp)
-- 2026-05-26: six-way (added `.claude/skills/` as a first-class auto-load methodology surface, after the keeper-pattern cache surfaced its load-bearing role)
+- 2026-05-26 (morning): six-way (added `.claude/skills/` as a first-class auto-load methodology surface)
+- 2026-05-26 (same-day evening): **seven-way** (added `.claude/commands/` after the v4.0-beta doc sprint grew it from N=1 to N=6 — the harness auto-loads commands indistinguishably from skills; recurrence rule promoted them to first-class)
 
 Each promotion has been a methodology evolution, captured here so future surface additions follow the same path: add the surface + add it to this list + bump the keeper.

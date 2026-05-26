@@ -52,12 +52,13 @@ KNOWLEDGE-BASE/
 │   │   │   ├── kb-vector-search.md
 │   │   │   ├── scoped-auto-improvement.md
 │   │   │   ├── self-branching-mode.md
-│   │   │   ├── six-way-sync.md
+│   │   │   ├── seven-way-sync.md
 │   │   │   ├── storage-hygiene.md
 │   │   │   ├── vector-baseline.md
 │   │   │   ├── vector-calibration.md
 │   │   │   ├── vector-cost-tracking.md
-│   │   │   └── verify-seed-on-fork-base.md
+│   │   │   ├── verify-seed-on-fork-base.md
+│   │   │   └── versioning.md
 │   │   ├── architect/
 │   │   │   ├── absorbed-product-seed-shape-seam.md
 │   │   │   ├── autonomous-operator-via-subagent.md

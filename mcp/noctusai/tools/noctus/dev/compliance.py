@@ -7829,15 +7829,18 @@ def check_all_products() -> tuple[int, list]:
     # of check_claude_md_router (same pointer-only discipline, applied to the
     # onboarding ramp). KB § PATTERNS/common/claude-md-router-discipline.md.
     all_issues.extend(check_contextualize_alignment())
-    # 2026-05-26 (six-way-sync) — skills declared in CLAUDE.md §2 must match
-    # the on-disk .claude/skills/ tree. Sub-keeper composed by
-    # check_six_way_sync. KB § PATTERNS/common/six-way-sync.md.
+    # 2026-05-26 (seven-way-sync) — skills declared in CLAUDE.md §2 must
+    # match the on-disk .claude/skills/ tree. Sub-keeper composed by
+    # check_seven_way_sync. KB § PATTERNS/common/seven-way-sync.md.
     all_issues.extend(check_skills_listed_in_router())
-    # 2026-05-26 (six-way-sync) — composition keeper validating the
-    # 6-surface sync invariant. Most legs reuse existing sub-keepers
+    # 2026-05-26 (seven-way-sync evening) — sister of skills check,
+    # applied to .claude/commands/.
+    all_issues.extend(check_commands_listed_in_router())
+    # 2026-05-26 (seven-way-sync) — composition keeper validating the
+    # 7-surface sync invariant. Most legs reuse existing sub-keepers
     # (kb_sync, contextualize, agent_kb_alignment, skills_listed,
-    # memory_md_index). KB § PATTERNS/common/six-way-sync.md.
-    all_issues.extend(check_six_way_sync())
+    # commands_listed, memory_md_index). KB § PATTERNS/common/seven-way-sync.md.
+    all_issues.extend(check_seven_way_sync())
     # 2026-05-26 (kb-vector-search) — enforces the markdown-canonical /
     # vector-DB-is-enrichment principle. Severity warning (advisory layer,
     # never blocking). KB § PATTERNS/common/kb-vector-search.md.
@@ -8156,8 +8159,9 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/vector-baseline.md",
     "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
     "CONTEXT/PATTERNS/common/dont-block-on-background.md",
-    "CONTEXT/PATTERNS/common/six-way-sync.md",
+    "CONTEXT/PATTERNS/common/seven-way-sync.md",
     "CONTEXT/PATTERNS/common/cache-locking-discipline.md",
+    "CONTEXT/PATTERNS/common/versioning.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
 })
 
@@ -9087,7 +9091,7 @@ def check_code_recurrence_drift(repo_root: Path | None = None) -> list[dict]:
 
 
 def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
-    """Stage-4 keeper (2026-05-26, six-way-sync): every skill directory
+    """Stage-4 keeper (2026-05-26, seven-way-sync): every skill directory
     under `.claude/skills/<name>/SKILL.md` MUST be referenced in CLAUDE.md
     §2's "Procedure skills" line. Drift class — agents query CLAUDE.md to
     discover available skills; a skill that exists but isn't listed is
@@ -9099,7 +9103,7 @@ def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
 
     Silent skip when CLAUDE.md absent or .claude/skills/ absent.
 
-    KB § PATTERNS/common/six-way-sync.md.
+    KB § PATTERNS/common/seven-way-sync.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -9162,55 +9166,149 @@ def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
-def check_six_way_sync(repo_root: Path | None = None) -> list[dict]:
-    """Stage-4 keeper (2026-05-26): the 6-way sync contract — six first-class
-    methodology surfaces stay aligned (CLAUDE.md / MEMORY.md / .claude/agents/
-    / KNOWLEDGE-BASE/ / CONTEXTUALIZE.md / .claude/skills/).
+def _run_composed_keeper(
+    composition_name: str,
+    sub_keepers: list[tuple[str, callable]],
+) -> list[dict]:
+    """Reusable composition-keeper runner.
+
+    Given a list of `(sub_name, sub_callable)` tuples, runs each sub-keeper
+    inside a try/except, decorates each returned issue with the
+    `<composition_name>-<sub_name>::<orig-symbol>` prefix, and emits a
+    warning-severity error-shaped issue if a sub-keeper raises.
+
+    Extracted from `check_seven_way_sync` (the first composition keeper)
+    so future composition gates can reuse the loop + exception-tolerant
+    decorator without copy-pasting. KB § PATTERNS/common/seven-way-sync.md.
+
+    Args:
+      composition_name: prefix string (e.g. "seven-way-sync").
+      sub_keepers: list of (sub_name, no-arg callable returning list[dict]).
+
+    Returns: list of issue dicts, every one tagged with the composition prefix.
+    """
+    issues: list[dict] = []
+    for sub_name, sub_call in sub_keepers:
+        try:
+            sub_issues = sub_call() or []
+        except Exception as e:  # noqa: BLE001
+            sub_issues = [{
+                "product": "<harness>", "file": f"<{composition_name}>",
+                "issue": f"sub-keeper {sub_name!r} raised: {str(e)[:200]}",
+                "severity": "warning",
+                "symbol": f"{composition_name}-{sub_name}-error",
+            }]
+        for i in sub_issues:
+            tagged = dict(i)
+            tagged["symbol"] = f"{composition_name}-{sub_name}::{i.get('symbol', '?')}"
+            issues.append(tagged)
+    return issues
+
+
+def check_commands_listed_in_router(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26 evening, seven-way-sync): every
+    `.claude/commands/<name>.md` MUST be referenced in CLAUDE.md (§2 'Slash
+    commands' line, primarily). Sister of `check_skills_listed_in_router`
+    applied to the 7th first-class methodology surface.
+
+    Predicates (severity ``high``):
+      (a) Every on-disk command is mentioned in CLAUDE.md somewhere.
+      (b) Every command name in CLAUDE.md §2 'Slash commands' line has a
+          real `.claude/commands/<name>.md` on disk.
+
+    Silent skip when CLAUDE.md absent or .claude/commands/ absent.
+
+    KB § PATTERNS/common/seven-way-sync.md.
+    """
+    import re
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    claude_md = root / "CLAUDE.md"
+    commands_dir = root / ".claude" / "commands"
+    if not claude_md.exists() or not commands_dir.is_dir():
+        return issues
+    try:
+        text = claude_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return issues
+    on_disk = sorted(
+        p.stem for p in commands_dir.iterdir()
+        if p.is_file() and p.suffix == ".md"
+    )
+    # Leg (a): command on disk not in CLAUDE.md.
+    for cmd in on_disk:
+        if cmd not in text:
+            issues.append({
+                "product": "<harness>", "file": f".claude/commands/{cmd}.md",
+                "issue": (
+                    f"command `/{cmd}` exists on disk but is NOT referenced in "
+                    f"CLAUDE.md (§2 'Slash commands' line). Add it so the "
+                    f"router and agents can discover it."
+                ),
+                "severity": "high",
+                "symbol": "command-orphan-on-disk",
+            })
+    # Leg (b): name in §2 'Slash commands' line not on disk.
+    commands_listed: set[str] = set()
+    for line in text.splitlines():
+        if "Slash commands" in line and ".claude/commands" in line:
+            # Match backtick-quoted `/foo` slash commands.
+            for match in re.findall(r"`/([a-z][a-z0-9-]+)`", line):
+                if len(match) >= 3:
+                    commands_listed.add(match)
+            break
+    for name in sorted(commands_listed):
+        if name not in on_disk:
+            issues.append({
+                "product": "<harness>", "file": "CLAUDE.md",
+                "issue": (
+                    f"command `/{name}` listed in CLAUDE.md §2 but no "
+                    f".claude/commands/{name}.md file exists. Either "
+                    f"create the command or remove the stale reference."
+                ),
+                "severity": "high",
+                "symbol": "command-orphan-in-router",
+            })
+    return issues
+
+
+def check_seven_way_sync(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26): the 7-way sync contract — seven
+    first-class methodology surfaces stay aligned (CLAUDE.md / MEMORY.md
+    / .claude/agents/ / KNOWLEDGE-BASE/ / CONTEXTUALIZE.md /
+    .claude/skills/ / .claude/commands/).
 
     Composition keeper — re-runs the existing sub-keepers under one named
-    gate so a single CLI flag surfaces all 6-way-sync mismatches in one
-    pass. Severity ``high`` (methodology drift breaks the agent-context
-    contract).
+    gate via `_run_composed_keeper` so a single CLI flag surfaces all
+    7-way-sync mismatches in one pass. Severity ``high`` (methodology
+    drift breaks the agent-context contract).
 
     Composes:
       - check_kb_sync (#1 CLAUDE.md pointers + #4 KB INDEX)
       - check_contextualize_alignment (#5 fresh-agent ramp)
       - check_agent_kb_alignment (#3 agent owns_kb)
       - check_skills_listed_in_router (#6 skills ↔ router)
+      - check_commands_listed_in_router (#7 commands ↔ router, NEW)
       - check_memory_md_index (#2 MEMORY.md discipline)
 
-    Each sub-keeper has its own severity; this composition surfaces the
-    UNION and prefixes the issue symbol with `six-way-sync-` so callers
-    can tell a composed issue from a direct sub-keeper call.
+    Each sub-keeper's issues are decorated with the
+    `seven-way-sync-<sub>::<orig-symbol>` prefix so root-cause is traceable.
 
-    KB § PATTERNS/common/six-way-sync.md.
+    KB § PATTERNS/common/seven-way-sync.md.
     """
-    issues: list[dict] = []
-    # Each sub-keeper is already wired into check_all_products. Calling
-    # them directly here for the SCOPED 6-way-sync gate (CLI surface +
-    # pre-commit). Reuse the same function bodies; mark each issue with
-    # the composition prefix so root-cause is traceable.
-    for sub_name, sub_call in (
+    return _run_composed_keeper("seven-way-sync", [
         ("kb-sync", lambda: _check_kb_sync_for_six_way(repo_root)),
         ("contextualize", lambda: check_contextualize_alignment(repo_root)),
         ("agent-kb", lambda: check_agent_kb_alignment(repo_root)),
         ("skills-router", lambda: check_skills_listed_in_router(repo_root)),
+        ("commands-router", lambda: check_commands_listed_in_router(repo_root)),
         ("memory-md-index", lambda: check_memory_md_index(repo_root)),
-    ):
-        try:
-            sub_issues = sub_call() or []
-        except Exception as e:  # noqa: BLE001 — defensive, never crash the gate
-            sub_issues = [{
-                "product": "<harness>", "file": "<six-way-sync>",
-                "issue": f"sub-keeper {sub_name!r} raised: {str(e)[:200]}",
-                "severity": "warning",
-                "symbol": f"six-way-sync-{sub_name}-error",
-            }]
-        for i in sub_issues:
-            tagged = dict(i)
-            tagged["symbol"] = f"six-way-sync-{sub_name}::{i.get('symbol', '?')}"
-            issues.append(tagged)
-    return issues
+    ])
+
+
+# Back-compat alias — old name retained so external callers (if any) keep
+# working. Will be removed in a future cleanup when no recurrence remains.
+check_six_way_sync = check_seven_way_sync
 
 
 def _check_kb_sync_for_six_way(repo_root: Path | None = None) -> list[dict]:
