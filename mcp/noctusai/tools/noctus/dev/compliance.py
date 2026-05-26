@@ -8146,6 +8146,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",
     "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
     "CONTEXT/PATTERNS/common/claude-md-router-discipline.md",
+    "CONTEXT/PATTERNS/common/lenses-applied-trailer.md",  # universal commons: every lens/role applies
     "CONTEXT/PATTERNS/common/lossless-doc-refactor.md",
     "CONTEXT/PATTERNS/common/agent-context-architecture.md",
     "CONTEXT/PATTERNS/common/self-branching-mode.md",
@@ -9595,6 +9596,127 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
             "severity": "high",
             "symbol": "auto-improvement-cache-stale",
         })
+    return issues
+
+
+def check_codification_pipeline_health(
+    repo_root: Path | None = None,
+    *,
+    s2_silence_days: int = 30,
+    s3_silence_days: int = 60,
+    s4_silence_days: int = 90,
+) -> list[dict]:
+    """Stage-4 meta-keeper (2026-05-26 evening): verify the codification
+    pipeline (s1-emergent → s2-memory → s3-codified → s4-keeper) is FLOWING.
+
+    The codification pipeline is itself an infrastructure dependency — if
+    no s2/s3/s4 entries land for an extended window, drift accumulates
+    quietly even though no individual keeper fires. This meta-keeper is
+    the "is the inner loop alive?" check.
+
+    Predicate: ``project-history/auto-improvement.ndjson`` contains a
+    status=s2-memory entry within ``s2_silence_days`` AND a s3-codified
+    within ``s3_silence_days`` AND a s4-keeper within ``s4_silence_days``.
+
+    Severity ``warning`` (advisory — silence is a SIGNAL, not a hard
+    failure; an architect may have just been on vacation).
+
+    Remediation: review `noctus.dev.codification_radar` output for
+    pending s2→s3 promotion candidates, and the s3 candidates' KB-doc
+    + keeper-implementation status.
+
+    Args:
+      repo_root: optional override.
+      s2_silence_days: max acceptable gap without ANY s2-memory entry.
+      s3_silence_days: max acceptable gap without ANY s3-codified entry.
+      s4_silence_days: max acceptable gap without ANY s4-keeper entry.
+
+    KB § PATTERNS/common/scoped-auto-improvement.md (pipeline siblings) +
+    `methodology-codification-pipeline` (the s1→s4 contract).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "auto-improvement.ndjson"
+    if not ledger.exists():
+        return issues  # fresh tree — pipeline can't be silent if it's brand-new
+
+    import json as _json
+    from datetime import date as _date, timedelta as _timedelta
+
+    today = _date.today()
+    thresholds = {
+        "s2-memory": today - _timedelta(days=s2_silence_days),
+        "s3-codified": today - _timedelta(days=s3_silence_days),
+        "s4-keeper": today - _timedelta(days=s4_silence_days),
+    }
+    latest: dict[str, _date | None] = {k: None for k in thresholds}
+
+    try:
+        with ledger.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                status = entry.get("status", "")
+                if status not in latest:
+                    continue
+                ts_str = entry.get("ts", "")
+                try:
+                    entry_date = _date.fromisoformat(ts_str[:10])
+                except ValueError:
+                    continue
+                if latest[status] is None or entry_date > latest[status]:
+                    latest[status] = entry_date
+    except OSError as e:
+        issues.append({
+            "file": str(ledger.relative_to(root)),
+            "issue": (
+                f"codification pipeline ledger unreadable ({e}); "
+                "investigate auto-improvement.ndjson permissions"
+            ),
+            "severity": "high",
+            "symbol": "codification-pipeline-ledger-unreadable",
+        })
+        return issues
+
+    for status, threshold in thresholds.items():
+        last_seen = latest[status]
+        days_label = {
+            "s2-memory": s2_silence_days,
+            "s3-codified": s3_silence_days,
+            "s4-keeper": s4_silence_days,
+        }[status]
+        if last_seen is None:
+            issues.append({
+                "file": "project-history/auto-improvement.ndjson",
+                "issue": (
+                    f"codification pipeline: NO {status} entries ever logged "
+                    f"in `auto-improvement.ndjson`. Pipeline stage may be "
+                    f"silent. Review `noctus.dev.codification_radar` output. "
+                    f"(KB § PATTERNS/common/scoped-auto-improvement.md)"
+                ),
+                "severity": "warning",
+                "symbol": f"codification-pipeline-{status}-never",
+            })
+            continue
+        if last_seen < threshold:
+            gap_days = (today - last_seen).days
+            issues.append({
+                "file": "project-history/auto-improvement.ndjson",
+                "issue": (
+                    f"codification pipeline: last {status} entry was "
+                    f"{gap_days} days ago ({last_seen.isoformat()}); "
+                    f"threshold {days_label} days. Pipeline stage may be "
+                    f"silent — review `noctus.dev.codification_radar` for "
+                    f"pending promotion candidates."
+                ),
+                "severity": "warning",
+                "symbol": f"codification-pipeline-{status}-silent",
+            })
     return issues
 
 

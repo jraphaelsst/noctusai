@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--refresh-auto-improvement-cache", action="store_true", help="Refresh the local auto-improvement cache (.claude/cache/auto-improvement.sqlite) from project-history/auto-improvement.ndjson. The scoped-auto-improvement system's mirror leg. Tech-leads / agents consult this cache BEFORE editing a doc/agent to surface relevant past observations. Auto-run by pre-commit on ndjson change. KB § PATTERNS/scoped-auto-improvement.md.")
     parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
     parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
+    parser.add_argument("--check-codification-pipeline-health", action="store_true", help="Meta-keeper: verify the codification pipeline (s1→s2→s3→s4) is FLOWING. Surfaces warning when no s2/s3/s4 entries have landed within configured silence thresholds. Severity warning (advisory). KB § PATTERNS/common/scoped-auto-improvement.md.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="Keeper: the 7-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index sub-keepers. Severity high. KB § PATTERNS/common/seven-way-sync.md.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="Back-compat alias for --check-seven-way-sync. Will be removed once external callers migrate.")
@@ -421,6 +422,16 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
+    elif args.check_codification_pipeline_health:
+        from tools.noctus.dev.compliance import check_codification_pipeline_health
+        issues = check_codification_pipeline_health()
+        if not issues:
+            print(f"  {GREEN}✓ codification pipeline alive (s2 + s3 + s4 entries within thresholds).{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} codification-pipeline-health issue(s):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)  # advisory — don't fail CI on pipeline silence
     elif args.check_contextualize_alignment:
         from tools.noctus.dev.compliance import check_contextualize_alignment
         issues = check_contextualize_alignment()
