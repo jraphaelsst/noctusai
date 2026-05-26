@@ -5474,11 +5474,17 @@ def check_hardcoded_fleet_size_literal(repo_root: Path | None = None) -> list[di
 
 # Dense-doc surfaces in scope — the glossary §2 "Where to use" set.
 # Patterns are repo-root-relative globs resolved with `Path.glob`.
+# Extended 2026-05-25 (harness-agents-skills) — the new always-on harness
+# surfaces (.claude/agents/*.md + .claude/skills/**/SKILL.md) are AI-intended
+# docs per CLAUDE.md §1 doc-symbology rule and were previously ungated for
+# symbology drift.
 _SYMBOLOGY_DOC_GLOBS: tuple[str, ...] = (
     "CLAUDE.md",
     "CLAUDE/*.md",
     "KNOWLEDGE-BASE/CONTEXT/PATTERNS/*.md",
     "products/*/MASTER-PROMPT.md",
+    ".claude/agents/*.md",
+    ".claude/skills/*/SKILL.md",
 )
 
 # The KB doc the glossary is parsed from (single source of truth).

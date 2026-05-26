@@ -410,6 +410,14 @@ def methodology_reference_gaps(root: Path) -> list[str]:
         for p in sorted(agents_dir.glob("*.md")):
             if p.is_file():
                 surfaces.append(p)
+    # .claude/skills/*/SKILL.md  (added 2026-05-25, harness-agents-skills:
+    # the new always-on procedure surface; broken KB pointers in skill bodies
+    # were previously silent and only surface at recall time.)
+    skills_dir = root / ".claude" / "skills"
+    if skills_dir.is_dir():
+        for p in sorted(skills_dir.glob("*/SKILL.md")):
+            if p.is_file():
+                surfaces.append(p)
     # KNOWLEDGE-BASE/**/*.md
     for p in kb_dir.rglob("*.md"):
         if p.is_file() and not any(

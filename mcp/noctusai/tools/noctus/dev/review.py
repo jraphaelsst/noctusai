@@ -77,16 +77,21 @@ def _detect(
         check_path_references,
         check_standard_routers_audit,
         check_frontend_entrypoint,
+        check_handrolled_core_url,                     # registration-drift fix 2026-05-25
         check_fe_route_missing,
         check_name_on_nome_select,
         check_promise_all_shared_catch,
         check_config_extends_product_settings,
         check_frontend_config_paths,
+        check_mock_schema_validation,                  # registration-drift fix 2026-05-25
+        check_ai_feature_completeness,                 # registration-drift fix 2026-05-25
         check_out_of_contract_trees,
         check_test_status_assertion,
         check_unknown_table_references,
         check_function_search_path_pinned,
+        check_rls_policy_self_reference,               # registration-drift fix 2026-05-25
         check_admin_endpoint_service_role_bypass,
+        check_auth_session_mutation_on_shared_client,  # registration-drift fix 2026-05-25
         check_slowapi_with_pep563,
     )
 
@@ -103,15 +108,20 @@ def _detect(
         issues.extend(check_path_references(product_path))
         issues.extend(check_standard_routers_audit(product_path))
         issues.extend(check_frontend_entrypoint(product_path))
+        issues.extend(check_handrolled_core_url(product_path))               # registration-drift fix 2026-05-25
         issues.extend(check_fe_route_missing(product_path))
         issues.extend(check_name_on_nome_select(product_path))
         issues.extend(check_promise_all_shared_catch(product_path))
         issues.extend(check_config_extends_product_settings(product_path))
         issues.extend(check_frontend_config_paths(product_path))
+        issues.extend(check_mock_schema_validation(product_path))            # registration-drift fix 2026-05-25
+        issues.extend(check_ai_feature_completeness(product_path))           # registration-drift fix 2026-05-25
         issues.extend(check_test_status_assertion(product_path))
         issues.extend(check_unknown_table_references(product_path))
         issues.extend(check_function_search_path_pinned(product_path))
+        issues.extend(check_rls_policy_self_reference(product_path))         # registration-drift fix 2026-05-25
         issues.extend(check_admin_endpoint_service_role_bypass(product_path))
+        issues.extend(check_auth_session_mutation_on_shared_client(product_path))  # registration-drift fix 2026-05-25
         issues.extend(check_slowapi_with_pep563(product_path))
     # Global repo-root sweep — only when not scoped to a single product.
     if product_slug is None:
