@@ -8168,6 +8168,12 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/doc-to-code-drift.md",
     "CONTEXT/PATTERNS/common/orphan-branch-sweeper.md",
     "CONTEXT/PATTERNS/common/cache-telemetry.md",
+    "CONTEXT/PATTERNS/common/brief-similarity-radar.md",
+    "CONTEXT/PATTERNS/common/session-end-sweep.md",
+    "CONTEXT/PATTERNS/common/dispatch-warmup.md",
+    "CONTEXT/PATTERNS/common/product-centroid-drift.md",
+    "CONTEXT/PATTERNS/common/dispatch-token-log.md",
+    "CONTEXT/PATTERNS/common/auto-author-scaffolds.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
 })
 

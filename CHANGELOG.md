@@ -8,6 +8,55 @@ as codified in `KB § CONTEXT/PATTERNS/common/versioning.md`.
 
 ---
 
+## [4.0.0-beta] — 2026-05-26 (continued, final follow-up wave)
+
+The final follow-up wave under v4.0-beta scope. Implemented F7-F12 from
+the follow-up roadmap (all formerly DEFERRED items, reasoned through and
+shipped via inline-empersonation).
+
+### New MCP modules (F7-F12, 7 new — one slice ships 2 modules)
+
+- `brief_ledger` (F7-storage) — per-user, gitignored append-only ledger
+  of every dispatched brief. `append/query/list_recent` API.
+- `brief_similarity_radar` (F7-radar) — pre-dispatch radar:
+  `similarity_check(description, since_days=7)` finds similar past
+  briefs; `route_to_agent(description, target_files?)` ranks agents by
+  owns_kb-centroid cosine.
+- `session_end_sweep` (F8) — user-invoked end-of-session orchestration;
+  surfaces every worktree + branch with classification (`safe-to-cleanup`
+  / `uncommitted-work` / `ahead-of-dev` / `unknown`); never auto-deletes.
+- `dispatch_warmup` (F9) — pre-dispatch context bundle: agent body
+  excerpt + top kb_search + code_search + auto-improvement hits, formatted
+  as paste-ready markdown the architect inserts in the brief.
+- `product_centroid_drift` (F10) — per-product code centroid vs. seed
+  centroid; distance scalar per product per snapshot; appends to
+  `project-history/product-drift.ndjson` for trend tracking.
+- `dispatch_token_log` (F11) — manual per-dispatch budget log with
+  outcome classification; `summary` aggregates by outcome / agent;
+  automatic backend deferred until harness exposes lifecycle hooks.
+- `auto_author_scaffolds` (F12) — STARTING POINT scaffolds (not finished
+  artifacts) for memory entries / KB patterns / keepers. Vector-matched
+  similar-existing references; every judgment field marked `<TODO>`.
+
+### New KB pattern docs (6)
+
+brief-similarity-radar · session-end-sweep · dispatch-warmup ·
+product-centroid-drift · dispatch-token-log · auto-author-scaffolds.
+
+### Reasoning applied to formerly "needs design conversation" items
+
+- **F7 7-day default window**, configurable. Per-user ledger stays
+  gitignored (cross-user aggregation = noise unless multi-architect).
+- **F8 user-invoked, not auto**. Claude Code harness has no session-close
+  hook; manual is the right shape for now.
+- **F9 opt-in, not auto-injected**. Architect curates; auto would bloat
+  briefs.
+- **F10 snapshot + ledger**, not continuous. Trend value > realtime.
+- **F11 manual log path** + summary. Automatic backend deferred until
+  harness exposes dispatch lifecycle.
+- **F12 scaffold-only**, not ghostwriter. Template + placeholders +
+  vector-matched references. Judgment stays human.
+
 ## [4.0.0-beta] — 2026-05-26 (continued, same release)
 
 Additional follow-up sprint within v4.0-beta scope. Extracted unshipped

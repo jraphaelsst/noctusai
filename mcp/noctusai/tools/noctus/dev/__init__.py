@@ -14,11 +14,14 @@ def register_all(server) -> None:
     """Register every dev-umbrella tool on the given FastMCP server."""
     from . import agent_context
     from . import ai_brain
+    from . import auto_author_scaffolds
     from . import auto_improvement
     from . import analyzers
     from . import archive
     from . import audit_product
     from . import batch_speed_gains
+    from . import brief_ledger
+    from . import brief_similarity_radar
     from . import build
     from . import catalog
     from . import check_framework_deps
@@ -29,6 +32,8 @@ def register_all(server) -> None:
     from . import code_recurrence_promote
     from . import codification_radar
     from . import compliance
+    from . import dispatch_token_log
+    from . import dispatch_warmup
     from . import doc_to_code_drift
     from . import engineer_output_linter
     from . import context
@@ -41,7 +46,9 @@ def register_all(server) -> None:
     from . import engineer_brief_compose
     from . import findings
     from . import orphan_branch_sweeper
+    from . import product_centroid_drift
     from . import scan_repetition_semantic
+    from . import session_end_sweep
     from . import unified_query
     from . import history
     from . import improvements
@@ -96,8 +103,11 @@ def register_all(server) -> None:
     analyzers.register(server)
     archive.register(server)
     audit_product.register(server)
+    auto_author_scaffolds.register(server)
     auto_improvement.register(server)
     batch_speed_gains.register(server)
+    brief_ledger.register(server)
+    brief_similarity_radar.register(server)
     build.register(server)
     cache_telemetry.register(server)
     catalog.register(server)
@@ -115,12 +125,16 @@ def register_all(server) -> None:
     deploy_pull.register(server)
     disk_usage.register(server)
     dispatch_preflight.register(server)
+    dispatch_token_log.register(server)
+    dispatch_warmup.register(server)
     doc_to_code_drift.register(server)
     engineer_brief_compose.register(server)
     engineer_output_linter.register(server)
     findings.register(server)
     orphan_branch_sweeper.register(server)
+    product_centroid_drift.register(server)
     scan_repetition_semantic.register(server)
+    session_end_sweep.register(server)
     unified_query.register(server)
     history.register(server)
     improvements.register(server)
