@@ -7817,6 +7817,14 @@ def check_all_products() -> tuple[int, list]:
     # cache → doc-authoring agents author drift-prone docs from outdated
     # patterns. KB § PATTERNS/keeper-pattern-cache.md.
     all_issues.extend(check_keeper_cache_freshness())
+    # 2026-05-26 (Phase B) — sibling cache for agents. Each agent's bundle_sha
+    # = sha256(agent.md ∪ owned_kb files) must match the cached value.
+    # KB § PATTERNS/agent-context-architecture.md § Keeper enforcement.
+    all_issues.extend(check_agent_context_cache_freshness())
+    # 2026-05-26 (Phase B) — third sibling: scoped-auto-improvement cache
+    # mirrors project-history/auto-improvement.ndjson. Consult-before-editing
+    # discipline. KB § PATTERNS/scoped-auto-improvement.md.
+    all_issues.extend(check_auto_improvement_cache_freshness())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8660,6 +8668,156 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
             ),
             "severity": "high",
             "symbol": "keeper-cache-stale",
+        })
+    return issues
+
+
+def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, Phase B): the agent-context cache MUST mirror
+    each agent's `bundle_sha = sha256(agent.md ∪ each owned_kb)`. Sibling of
+    `check_keeper_cache_freshness` — same 3-leg mirror contract (eager
+    pre-commit refresh + lazy query-time rebuild + this loud freshness gate).
+
+    The cache (`.claude/cache/agent-context.sqlite`, gitignored) holds the
+    compact bundle (frontmatter + body + owned-KB compact extracts) that an
+    architect / dispatched agent queries via `noctus.dev.agent_context(...)`
+    in one round-trip instead of N Reads. A stale cache means agents query
+    yesterday's pattern.
+
+    Predicate: ``cache exists ∧ for each .claude/agents/<name>.md the cached
+    bundle_sha matches live sha256(agent.md ∪ owned_kb)``. Severity ``high``.
+    Silent skip when `.claude/agents/` absent (a non-noc tree).
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-agent-context-cache``.
+
+    KB § PATTERNS/agent-context-architecture.md § Keeper enforcement.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return issues
+    cache = root / ".claude" / "cache" / "agent-context.sqlite"
+    if not cache.exists():
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                "agent-context cache missing — run "
+                "`python mcp/noctusai/cli.py --refresh-agent-context-cache` "
+                "(KB § PATTERNS/agent-context-architecture.md)"
+            ),
+            "severity": "high",
+            "symbol": "agent-context-cache-missing",
+        })
+        return issues
+    # Per-agent bundle_sha check (uses the live extractor for parity).
+    try:
+        from .agent_context_cache import get_bundle_sha
+    except Exception as e:  # noqa: BLE001  (module-load failure is loud)
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                f"agent-context cache module unreadable ({e}) — re-create via "
+                "`--refresh-agent-context-cache`"
+            ),
+            "severity": "high",
+            "symbol": "agent-context-cache-module-error",
+        })
+        return issues
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        stem = agent_md.stem
+        live, cached_sha = get_bundle_sha(stem)
+        if cached_sha is None:
+            issues.append({
+                "product": "<harness>", "file": f".claude/agents/{stem}.md",
+                "issue": (
+                    f"agent-context cache MISSING entry for `{stem}` — run "
+                    f"`--refresh-agent-context-cache --agent {stem}`"
+                ),
+                "severity": "high",
+                "symbol": "agent-context-cache-missing-agent",
+            })
+            continue
+        if cached_sha != live:
+            issues.append({
+                "product": "<harness>", "file": f".claude/agents/{stem}.md",
+                "issue": (
+                    f"agent-context cache STALE for `{stem}` — "
+                    f"cached.bundle_sha={cached_sha[:12]} ≠ live={live[:12]}; "
+                    f"run `--refresh-agent-context-cache --agent {stem}`"
+                ),
+                "severity": "high",
+                "symbol": "agent-context-cache-stale",
+            })
+    return issues
+
+
+def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26, Phase B): the auto-improvement cache MUST
+    mirror `project-history/auto-improvement.ndjson`. Third member of the
+    keeper-mirror family (with keeper-pattern + agent-context). Same 3-leg
+    contract — pre-commit eager refresh + lazy query-time rebuild + this
+    loud freshness gate.
+
+    The cache (`.claude/cache/auto-improvement.sqlite`, gitignored) is what
+    the tech-lead / dispatched agents consult BEFORE editing a doc/agent
+    (the **consult-before-editing** discipline — sibling of
+    keeper-check-before-doc'ing). A stale cache means agents author from
+    yesterday's surfaced patterns.
+
+    Predicate: ``cache exists ∧ cache_meta.source_sha ≡ sha256(ndjson)``.
+    Severity ``high``. Silent skip when the ndjson is absent (no surfaces
+    logged yet — fresh repo).
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-auto-improvement-cache``.
+
+    KB § PATTERNS/scoped-auto-improvement.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "auto-improvement.ndjson"
+    if not ledger.exists():
+        return issues  # nothing to mirror yet; fresh tree
+    cache = root / ".claude" / "cache" / "auto-improvement.sqlite"
+    if not cache.exists():
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                "auto-improvement cache missing — run "
+                "`python mcp/noctusai/cli.py --refresh-auto-improvement-cache` "
+                "(KB § PATTERNS/scoped-auto-improvement.md)"
+            ),
+            "severity": "high",
+            "symbol": "auto-improvement-cache-missing",
+        })
+        return issues
+    src_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
+    try:
+        conn = sqlite3.connect(str(cache))
+        cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+        row = cur.fetchone()
+        conn.close()
+    except sqlite3.Error as e:
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                f"auto-improvement cache unreadable ({e}) — re-create via "
+                "`--refresh-auto-improvement-cache`"
+            ),
+            "severity": "high",
+            "symbol": "auto-improvement-cache-unreadable",
+        })
+        return issues
+    if not row or row[0] != src_sha:
+        cached = row[0] if row else "(none)"
+        issues.append({
+            "file": str(cache.relative_to(root)),
+            "issue": (
+                f"auto-improvement cache STALE — cache.source_sha={cached[:12]} "
+                f"≠ ndjson sha={src_sha[:12]}; run `--refresh-auto-improvement-cache`"
+            ),
+            "severity": "high",
+            "symbol": "auto-improvement-cache-stale",
         })
     return issues
 

@@ -71,14 +71,16 @@ The harness file overlay can report `Edit`/`Write`/`Read` **success while the on
 Status: ready
 Files: <explicit list>
 Tests: <pass/fail count if relevant>
+drift-found: (none observed)            ← or one line per leftover; see §7
+scoped-improvement: (none surfaced)     ← or one line per slip/pattern; see §7
 Commit msg: <2-5 line draft>
 ```
 
-That's it. Skip 5-category findings. Skip verification-command transcripts. Skip absolute paths.
+That's it. Skip 5-category findings. Skip verification-command transcripts. Skip absolute paths. The two auto-improvement legs (`drift-found:` / `scoped-improvement:`) ARE mandatory even on a clean ready-for-commit — absence is a positive claim, not a skip (silent skip = silent-error shape).
 
 **If `status=blocked` OR `status=partial` OR surprises (test regressions / methodology gaps / unexpected scope expansion):**
 
-Use the full 5-category format (Errors / Mistakes-slips / Lessons / Interesting / Knowledge). This is when the durable-knowledge artifact matters. Include the architect-followup line.
+Use the full 5-category format (Errors / Mistakes-slips / Lessons / Interesting / Knowledge). This is when the durable-knowledge artifact matters. Include the architect-followup line + both auto-improvement legs.
 
 ## 4. File-disjoint discipline
 
@@ -100,9 +102,22 @@ Verify the **smallest** thing that proves your change: the one changed test file
 
 **Worktree env (fresh-checkout caveat):** a fresh worktree has no `node_modules`/`.venv` (gitignored). If your brief needs a FE build / vitest, the architect should dispatch after `noctus.dev.task_branch action=start wire_env=True` (auto-wires the §5a recipe), OR author-in-worktree + let the architect build-verify on integrate. Don't burn turns hand-wiring symlinks unless the brief tells you to.
 
-## 7. Surface methodology gaps via findings
+## 7. Scoped auto-improvement — the standing duty (every dispatch)
 
-If you find a recurrence (N≥2) of a pattern, a missing seed primitive, a tool that should be MCP-exposed, or a doc that's drifted from code — surface it in findings (or short-form's commit-msg footer). The architect routes it to the codification pipeline (memory → KB → keeper detector) per `KB § PATTERNS/methodology-codification-pipeline.md`.
+Every dispatch is also a scoped auto-improvement pass, not just feature delivery. At the end of your slice, evaluate **your own** mistakes / slips / surprise patterns / observed drift and return both legs in the short-form footer — **surface, do NOT resolve unilaterally** (the tech-lead has the broad-context view to codify):
+
+```
+drift-found: <leftover OUTSIDE your brief — path + shape + suspected cause>
+scoped-improvement: <mistake/slip/pattern observed IN YOUR slice → suggested codification>
+```
+
+Absence is a positive claim — quote it explicitly: `drift-found: (none observed)` · `scoped-improvement: (none surfaced)`. Silent absence reads as "didn't look" (silent-error shape).
+
+**What goes where.**
+- **`drift-found:`** — git-shape OR methodology-pointer drift OUTSIDE your `Files-to-modify:` brief (untracked-at-root, orphan branch, broken `KB §` pointer, peer-tree residue, stale archive entry). You **CONTINUE your own slice** — tech-lead resolves at integration. Scope expansion is forbidden even if the drift "looks easy" because the engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing drift-fix into a feature commit.
+- **`scoped-improvement:`** — recurrence (N≥2) of a pattern, missing seed primitive, tool that should be MCP-exposed, doc drifted from code, AST opportunity, Pydantic silent-drop, etc. — observed WITHIN your slice. Surface; the tech-lead routes to the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per `KB § PATTERNS/methodology-codification-pipeline.md`. You don't codify; the tech-lead does (cross-cutting competence).
+
+Both legs mirror `KB § PATTERNS/drift-fix-on-contact.md § Roles` + § Scoped auto-improvement.
 
 ## 8. Findings.md write-authorization
 

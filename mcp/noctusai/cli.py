@@ -89,6 +89,13 @@ def main():
     parser.add_argument("--refresh-keeper-cache", action="store_true", help="Refresh the local keeper-pattern cache (.claude/cache/keeper-patterns.sqlite) from compliance.py + tests. Mirrors the keepers so doc-authoring agents can lookup patterns BEFORE authoring (avoid gated rework). Pair --force to bypass the in-sync short-circuit. Auto-run by pre-commit on compliance.py change; lazy-rebuilt on query-time source_sha mismatch. KB § PATTERNS/keeper-pattern-cache.md.")
     parser.add_argument("--keeper-pattern-lookup", metavar="KEEPER_OR_FILE", help="Query the keeper-pattern cache by keeper-name substring OR file path (e.g. .claude/agents/devops-engineer.md → agent-format + agent-archetype). Print matching pattern rows. The keeper-check-before-doc'ing discipline starts here.")
     parser.add_argument("--check-keeper-cache-freshness", action="store_true", help="Keeper: the local cache must mirror compliance.py — cache_meta.source_sha must equal sha256(compliance.py). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-keeper-cache to fix. (Pair --force with --refresh-keeper-cache to rebuild even when in-sync; the existing --force flag is shared.)")
+    parser.add_argument("--refresh-agent-context-cache", action="store_true", help="Refresh the local agent-context cache (.claude/cache/agent-context.sqlite) from .claude/agents/*.md + each agent's owns_kb-declared KB paths. At dispatch, an agent's compact bundle (frontmatter + body + per-owned-KB extract) replaces N Reads. Per-agent bundle_sha guards in-sync agents; --force rebuilds anyway. Pair with --agent <name> to limit scope. Auto-run by pre-commit on agent.md OR owned-KB change. KB § PATTERNS/agent-context-architecture.md.")
+    parser.add_argument("--agent-context", metavar="AGENT_NAME", help="Print the compact agent-context bundle for an agent — frontmatter + body + per-owned-KB compact extract. Lazy-rebuilds on bundle_sha mismatch.")
+    parser.add_argument("--agent", metavar="AGENT_NAME", help="(scope flag) Limit --refresh-agent-context-cache to a single agent. No-op without --refresh-agent-context-cache.")
+    parser.add_argument("--check-agent-context-cache-freshness", action="store_true", help="Keeper: the agent-context cache must mirror each agent's bundle_sha = sha256(agent.md ∪ owned_kb files). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-agent-context-cache to fix.")
+    parser.add_argument("--refresh-auto-improvement-cache", action="store_true", help="Refresh the local auto-improvement cache (.claude/cache/auto-improvement.sqlite) from project-history/auto-improvement.ndjson. The scoped-auto-improvement system's mirror leg. Tech-leads / agents consult this cache BEFORE editing a doc/agent to surface relevant past observations. Auto-run by pre-commit on ndjson change. KB § PATTERNS/scoped-auto-improvement.md.")
+    parser.add_argument("--auto-improvement-query", metavar="TARGET", help="Consult the auto-improvement cache for a target (path substring) — the consult-before-editing discipline. Returns most-recent-first list of surfaced drift/improvement observations relevant to that doc/agent.")
+    parser.add_argument("--check-auto-improvement-cache-freshness", action="store_true", help="Keeper: the auto-improvement cache must mirror the ndjson ledger. Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-auto-improvement-cache to fix.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -316,6 +323,73 @@ def main():
             print(f"  {GREEN}✓ keeper-pattern cache fresh (mirrors compliance.py).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} keeper-cache-freshness issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.refresh_agent_context_cache:
+        from tools.noctus.dev import agent_context_cache as acc
+        r = acc.refresh(force=args.force, agent_name=args.agent)
+        scope = f" (agent={args.agent})" if args.agent else ""
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ agent-context cache in-sync{scope} ({len(r['skipped'])} agent(s) skipped; --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ agent-context cache rebuilt{scope} — refreshed {len(r['refreshed'])} agent(s), {r['rows_written']} rows.{RESET}")
+            if r["refreshed"]:
+                print(f"    refreshed: {', '.join(r['refreshed'])}")
+        sys.exit(0)
+    elif args.agent_context:
+        from tools.noctus.dev import agent_context_cache as acc
+        b = acc.lookup(args.agent_context)
+        if not b.get("ok"):
+            print(f"  {RED}✗ {b.get('error', 'lookup failed')}{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ agent `{b['agent_name']}` bundle (bundle_sha={b['bundle_sha'][:12]}, cached_at={b['cached_at']}):{RESET}")
+        print(f"    body: {len(b['body'])} chars")
+        print(f"    owned_kb: {len(b['owned_kb'])} doc(s)")
+        for o in b["owned_kb"][:5]:
+            extract_first_line = (o["extract"].splitlines()[0] if o["extract"] else "(empty)")[:80]
+            print(f"      · {o['path']} → {extract_first_line}")
+        if len(b["owned_kb"]) > 5:
+            print(f"      … and {len(b['owned_kb']) - 5} more")
+        sys.exit(0)
+    elif args.check_agent_context_cache_freshness:
+        from tools.noctus.dev.compliance import check_agent_context_cache_freshness
+        issues = check_agent_context_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ agent-context cache fresh (each agent's bundle_sha matches live).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} agent-context-cache-freshness issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.refresh_auto_improvement_cache:
+        from tools.noctus.dev import auto_improvement as ai
+        r = ai.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ auto-improvement cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ auto-improvement cache rebuilt — {r['rows_written']} rows (source_sha={r['source_sha'][:12]}).{RESET}")
+        sys.exit(0)
+    elif args.auto_improvement_query:
+        from tools.noctus.dev import auto_improvement as ai
+        rows = ai.query(target=args.auto_improvement_query, open_only=True, limit=50)
+        if not rows:
+            print(f"  {YELLOW}(no open auto-improvement entries for '{args.auto_improvement_query}'){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ {len(rows)} open entr(ies) for '{args.auto_improvement_query}':{RESET}")
+        for r in rows:
+            short = r["description"][:120].replace("\n", " ")
+            print(f"    [{r['status']}] {r['kind']:11s} {r['scope']:6s} {r['target']}")
+            print(f"        {short}{'…' if len(r['description']) > 120 else ''}")
+            print(f"        ts={r['ts']} agent={r['agent']} source_ref={r['source_ref']}")
+        sys.exit(0)
+    elif args.check_auto_improvement_cache_freshness:
+        from tools.noctus.dev.compliance import check_auto_improvement_cache_freshness
+        issues = check_auto_improvement_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ auto-improvement cache fresh (mirrors ndjson).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} auto-improvement-cache-freshness issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)

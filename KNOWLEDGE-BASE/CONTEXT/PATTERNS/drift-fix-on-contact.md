@@ -45,6 +45,49 @@ The rule fires when, during ANY task, you observe:
 
 **The "doc" step is non-negotiable.** If your resolution discovered a missing keeper, a gap in a procedure, a phrasing fix in a KB doc — codify it in the same commit. Drift-fix without doc-update is half-resolution: the same drift returns next session.
 
+## Roles — who resolves vs who surfaces (the orchestration rule)
+
+The on-contact drill **splits by role** so dispatched background agents don't expand scope while the tech-lead carries the broad-context view that drift-resolution needs (user mandate 2026-05-26 — *"no more work being left behind"*):
+
+- **Tech-lead (the conversational session)** — **RESOLVES on-contact.** Bumps into drift → applies the 5-step drill end-to-end in-session. Owns the doc-update + the commit + the integration. Non-negotiable: every observed leftover is resolved before the session ends, not parked.
+- **Background agents (dispatched engineers / advisors / scouts)** — **SURFACE to the tech-lead, never resolve unilaterally.** An engineer that spots drift OUTSIDE its `Files-to-modify:` brief returns a `drift-found:` line in its short-form report (worktree-relative path + observed shape + suspected cause) and continues its own slice. The tech-lead reads the surface and applies the drill at integration. **Scope expansion by the engineer is forbidden** — even if the drift "looks easy" — because (a) the engineer's worktree doesn't see the broad picture (peer activity, archived projects, cross-product impact), (b) the architect's batched view consolidates N drifts into one resolution pass, and (c) silent fix-and-continue in an engineer worktree muddies file-disjoint commit hygiene (mixes drift-fix into a feature commit).
+
+**Return-shape leg for engineers** — append a `drift-found:` line per observed leftover to the short-form return, then continue. The tech-lead routes in the next user turn (or batches into the next dispatch wave):
+
+```
+Status: ready
+Files: <explicit list>
+Tests: <pass/fail count if relevant>
+drift-found: <observed leftover — path + shape + suspected cause>
+drift-found: <... another, if any ...>
+Commit msg: <2-5 line draft>
+```
+
+Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-default § 4` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
+
+## Scoped auto-improvement — the engine behind surface-don't-resolve
+
+Every agent dispatch is also a **scoped auto-improvement pass**, not just a feature delivery (user mandate 2026-05-26 — *"agents are scoped auto-improving"*). At the end of a slice, each role evaluates **its own** mistakes / slips / surprise patterns / observed drift and hands them to the tech-lead. Different roles operate at different scopes — the rule says BOTH sides auto-improve, but each within its slice:
+
+- **Engineer (scoped — slice-local)** — evaluates what slipped within the brief's scope: a regex that should have been AST, a Pydantic model that silent-dropped, a Read that should have hit the cache, a missed test, an N=2 recurrence the slice surfaced. The engineer **does NOT codify** (that's the tech-lead's broader-context job) — instead, the engineer returns those observations in the short-form's findings footer alongside `drift-found:` lines:
+  ```
+  Status: ready
+  Files: <list>
+  Tests: <pass/fail>
+  drift-found: <leftover — path + shape + suspected cause>
+  scoped-improvement: <mistake/slip/pattern observed in MY slice → suggested codification>
+  Commit msg: <draft>
+  ```
+- **Tech-lead (broad — cross-cutting)** — auto-improves at the methodology level. Receives engineer surfaces + their own session observations + safety-net firings → routes through the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per [[methodology-codification-pipeline]]. The tech-lead is the one who decides WHICH observations cross the N≥2-triage / N≥3-must-formalize bar AND owns the durable doc-update.
+
+**Why scope the engineer's auto-improvement.** An engineer's worktree-local view doesn't see (a) whether the slip is N=1 (slice-only) vs N≥3 (platform-wide), (b) what the right durable destination is (memory vs KB vs new keeper), (c) cross-product impact. Forcing the engineer to surface-not-codify keeps each role at its competence boundary. Mirrors [[safety-nets-become-learnings]] (the safety net firing IS the methodology working — but the codification happens at the tech-lead's level) + [[always-hardening-posture]] (continuous improvement is everyone's duty; *scope* is everyone's discipline).
+
+**The two-leg standing duty** — every dispatch returns both legs:
+1. `drift-found:` — observed leftover state the engineer didn't cause (resolution = tech-lead).
+2. `scoped-improvement:` — observed mistake/slip/pattern the engineer's own work surfaced (codification = tech-lead).
+
+Absence of both legs is a positive claim (nothing observed) — quote it explicitly when true: `drift-found: (none observed)` · `scoped-improvement: (none surfaced)`. Silent absence reads as "didn't look" which is the silent-error shape.
+
 ## Worked examples
 
 ### Example 1 — untracked `decision.md` at root (2026-05-26)

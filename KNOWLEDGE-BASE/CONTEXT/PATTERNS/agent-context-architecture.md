@@ -68,13 +68,13 @@ Rules:
 
 Severity `high`. Wires into `check_all_products` + `cli.py --validate` + pre-commit (via the existing harness-keeper sweep).
 
-**Leg 2 — Agent-context cache + freshness keeper (Phase B design — implementation deferred).** Sibling of `.claude/cache/keeper-patterns.sqlite`. See **§ Agent-context cache** below.
+**Leg 2 — Agent-context cache + freshness keeper (Phase B — SHIPPED 2026-05-26).** Sibling of `.claude/cache/keeper-patterns.sqlite`. See **§ Agent-context cache** below for the final API + the third-sibling [[scoped-auto-improvement]] cache.
 
 **Leg 3 — `kb_sync` pre-commit pointer-resolvability (existing, applies automatically).** The existing CLAUDE.md §4 sync rule already blocks unresolved `KB § …` pointers. The new agent-file pointers ride this rail for free.
 
-## Agent-context cache (Phase B design — committed authority)
+## Agent-context cache (Phase B — SHIPPED 2026-05-26)
 
-**The pattern.** `.claude/cache/agent-context.sqlite` (gitignored) — local mirror of each agent's body + a compact extract of every owned KB doc. At dispatch time, the architect (or any tool) queries `noctus.dev.agent_context(agent="backend-engineer")` and gets a single round-trip with the agent body + owned-KB highlights, instead of N Read calls.
+**The pattern.** `.claude/cache/agent-context.sqlite` (gitignored) — local mirror of each agent's body + a compact extract of every owned KB doc. At dispatch time, the architect (or any tool) queries `noctus.dev.agent_context(agent="backend-engineer")` and gets a single round-trip with the agent body + owned-KB highlights, instead of N Read calls. Implementation: `mcp/noctusai/tools/noctus/dev/agent_context_cache.py` (core) + `agent_context.py` (MCP wrappers) + `check_agent_context_cache_freshness` keeper + pre-commit refresh + CLI `--refresh-agent-context-cache` / `--agent-context <name>` / `--check-agent-context-cache-freshness`. The third-in-family sibling cache [[scoped-auto-improvement]] ships alongside.
 
 **Mirror contract** (analog of the keeper-pattern-cache's "memory should always be the keeper mirror"):
 

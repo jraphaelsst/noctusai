@@ -198,5 +198,33 @@ if [[ -n "$STAGED_COMPLIANCE" ]] && have_py; then
     fi
 fi
 
+# ─── 9. Agent-context cache auto-refresh (Phase B 2026-05-26) ──
+# Sibling of the keeper-pattern cache. When an agent file OR any KB doc is
+# staged, the local agent-context cache MUST refresh so the cached bundles
+# mirror live agent.md + owned_kb files. Lazy query-time rebuild +
+# check_agent_context_cache_freshness keeper are the safety nets.
+# KB § PATTERNS/agent-context-architecture.md § Keeper enforcement.
+STAGED_AGENT_OR_KB=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.claude/agents/.+\.md|KNOWLEDGE-BASE/.+\.md)$' || true)
+if [[ -n "$STAGED_AGENT_OR_KB" ]] && have_py; then
+    echo "[pre-commit] agent.md or KB doc staged — refreshing agent-context cache (mirror contract)..."
+    if ! "$PY" "$CLI" --refresh-agent-context-cache; then
+        echo "[pre-commit] agent-context-cache refresh FAILED — investigate before committing." >&2
+        exit 1
+    fi
+fi
+
+# ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
+# Third in the keeper-mirror family. When the auto-improvement ndjson is
+# staged, the cache MUST refresh so consult-before-editing returns live
+# observations. KB § PATTERNS/scoped-auto-improvement.md.
+STAGED_AUTO_IMPROVEMENT=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/auto-improvement\.ndjson$' || true)
+if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
+    echo "[pre-commit] auto-improvement.ndjson staged — refreshing auto-improvement cache (mirror contract)..."
+    if ! "$PY" "$CLI" --refresh-auto-improvement-cache; then
+        echo "[pre-commit] auto-improvement-cache refresh FAILED — investigate before committing." >&2
+        exit 1
+    fi
+fi
+
 echo "[pre-commit] OK"
 exit 0

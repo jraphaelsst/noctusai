@@ -12,7 +12,9 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every dev-umbrella tool on the given FastMCP server."""
+    from . import agent_context
     from . import ai_brain
+    from . import auto_improvement
     from . import analyzers
     from . import archive
     from . import audit_product
@@ -32,6 +34,7 @@ def register_all(server) -> None:
     from . import findings
     from . import history
     from . import improvements
+    from . import keeper_pattern
     from . import lgpd
     from . import master_prompts
     from . import merge_debt
@@ -71,10 +74,12 @@ def register_all(server) -> None:
     from . import three_way_sync
     from . import vps
 
+    agent_context.register(server)
     ai_brain.register(server)
     analyzers.register(server)
     archive.register(server)
     audit_product.register(server)
+    auto_improvement.register(server)
     batch_speed_gains.register(server)
     build.register(server)
     catalog.register(server)
@@ -91,6 +96,7 @@ def register_all(server) -> None:
     findings.register(server)
     history.register(server)
     improvements.register(server)
+    keeper_pattern.register(server)
     lgpd.register(server)
     master_prompts.register(server)
     merge_debt.register(server)
