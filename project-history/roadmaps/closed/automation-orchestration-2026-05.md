@@ -35,6 +35,14 @@ Specifically: ship the **Tier-1 automations** identified in the 2026-05-26 diagn
 | W2-E6 | Vector approval-canonical layer (ratified baseline) | NEW `kb_baseline.py` + keeper + KB pattern + working-cache integration + `project-history/kb-baselines/` + tests | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — needs `noctus.dev.kb_ratify` smoke + diff vs subsequent run | W2 | `3f36ec86` |
 | W2-E7 | **Vector autocalibration + auto-improvement** | NEW `vector_calibration.py` — observes vector signals + reasons about whether signals make sense vs canonical truth + surfaces recommendations (NOT auto-applies) + decision ledger with required reasoning. KB pattern doc + 16 tests. | inline-empersonation (backend-engineer) | **shipped; VERIFY-PENDING** — needs end-to-end smoke: log signals → analyze produces reasoning lines → decide writes ledger | W2 | `5048b559` |
 
+### Post-close slice (2026-05-26 same-day continuation)
+
+| # | Title | Status | SHA |
+|---|---|---|---|
+| W3-E1 | `code_recurrence_promote` — close the cross-product recurrence loop | ✅ **shipped** | TBD (this commit) |
+
+**Why post-close**: user direction "continue the implementation of the project" after filing. Picked up the highest-leverage deferred next-slice (`code_recurrence_promote` from `code-embeddings.md` § Deferred). The DRY recurrence-discovery → codification loop is now AUTOMATIC end-to-end (code_embeddings → recurrence_promote → auto-improvement → codification_radar). 22 tests passing.
+
 ### 🔒 Closure note (2026-05-26)
 
 **E1 + E2** were exercised *during the same session that built them* — their verification is implicit in that. The other slices (`E3`/`E4`/`E5`/`W2-E3'`/`W2-E4'`/`W2-E6`/`W2-E7`) shipped tests-green but **were not exercised against live caches / live MCP tool calls** beyond the unit-test surface. That verification work is queued for the next agent.

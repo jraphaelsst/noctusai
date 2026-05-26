@@ -24,6 +24,7 @@ def register_all(server) -> None:
     from . import check_framework_deps
     from . import cleanup_worktrees
     from . import code_embeddings
+    from . import code_recurrence_promote
     from . import codification_radar
     from . import compliance
     from . import context
@@ -94,6 +95,7 @@ def register_all(server) -> None:
     check_framework_deps.register(server)
     cleanup_worktrees.register(server)
     code_embeddings.register(server)
+    code_recurrence_promote.register(server)
     codification_radar.register(server)
     compliance.register(server)
     context.register(server)

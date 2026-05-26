@@ -137,5 +137,19 @@ The first full refresh of noc's code corpus is the biggest single embed batch we
 | Future tool | Status | What it does |
 |---|---|---|
 | `code_cluster` | deferred | k-means topic clusters over the code corpus — surfaces "natural groupings" the seed should be aware of. |
-| `code_recurrence_promote` | deferred | Reads `code_neighbors` output + auto-improvement.ndjson → suggests "this function recurs N times above threshold; consider absorbing to seed." Wires into the codification pipeline (s1→s4). |
+| `code_recurrence_promote` | ✅ **shipped 2026-05-26** | Closes the cross-product recurrence loop: `scan(threshold, top_k_per_file, limit)` walks every anchor in the cache → dedupes pairs → groups by score-band (strong ≥0.9 / medium ≥0.8 / weak ≥0.7); `promote(matches)` writes each as an `s1-emergent` `improvement` entry to `auto-improvement.ndjson` with `target = "code-recurrence:<p1>::<s1> ≈ <p2>::<s2>"` (canonical order; idempotency key). `codification_radar` then surfaces s2/s3 candidates on its next cluster pass. KB § CONTEXT/PATTERNS/common/code-embeddings.md § Use case 1 wires here. |
 | TS AST chunking | deferred | When file-level recall drops, add tree-sitter-typescript for finer TS chunks. |
+
+### Pipeline now closed
+
+```
+code_embeddings (W2-E3')
+        ↓ scan() — walks anchors corpus-wide
+code_recurrence_promote (THIS slice, 2026-05-26)
+        ↓ promote() — writes s1-emergent to auto-improvement.ndjson
+codification_radar (W2-E4')
+        ↓ cluster() — surfaces s2/s3 candidates when N≥3 cluster
+architect — absorbs to seed (DRY recurrence rule)
+```
+
+The full DRY recurrence-discovery → codification loop is now AUTOMATIC end-to-end.
