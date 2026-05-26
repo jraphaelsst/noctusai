@@ -29,6 +29,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── agent-reading-discipline.md
 │   │   │   ├── ast.md
 │   │   │   ├── branching.md
+│   │   │   ├── cache-locking-discipline.md
 │   │   │   ├── claude-md-router-discipline.md
 │   │   │   ├── code-embeddings.md
 │   │   │   ├── code-recurrence-baseline.md

@@ -266,5 +266,59 @@ if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
     fi
 fi
 
+# ─── 11. Vector-costs ledger sanity (2026-05-26, post-verify-pass) ──
+# The vector-costs.ndjson append-only ledger MUST stay parseable. If a
+# concurrent writer races and produces a malformed line, downstream
+# consumers (cost-report, calibration) silently degrade. Light sanity:
+# every non-empty line must be valid JSON with the expected keys.
+# Severity warning — surface, don't block, since the ledger is advisory.
+STAGED_VECTOR_COSTS=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/vector-costs\.ndjson$' || true)
+if [[ -n "$STAGED_VECTOR_COSTS" ]] && have_py; then
+    if ! "$PY" -c "
+import json, pathlib, sys
+p = pathlib.Path('project-history/vector-costs.ndjson')
+bad = 0
+for i, line in enumerate(p.read_text().splitlines(), 1):
+    if not line.strip(): continue
+    try:
+        e = json.loads(line)
+        for k in ('ts', 'namespace', 'estimated_cost_usd'):
+            if k not in e:
+                print(f'  line {i}: missing key {k!r}', file=sys.stderr); bad += 1
+    except json.JSONDecodeError as ex:
+        print(f'  line {i}: not JSON ({ex})', file=sys.stderr); bad += 1
+sys.exit(0 if bad == 0 else 1)
+"; then
+        echo "[pre-commit] ⚠ vector-costs.ndjson has malformed line(s) — surface, not blocking." >&2
+    fi
+fi
+
+# ─── 12. Six-way sync gate when ANY methodology surface is staged ──
+# CLAUDE.md / MEMORY.md / .claude/agents/ / KNOWLEDGE-BASE/ / CONTEXTUALIZE.md
+# / .claude/skills/ — if any are staged, the 6-way sync must hold. Calls the
+# composition keeper. Severity high (the keeper itself dispatches sub-keepers
+# with their own severities). KB § PATTERNS/common/six-way-sync.md.
+STAGED_SIX_WAY=$(git diff --cached --name-only 2>/dev/null | grep -E '^(CLAUDE\.md$|\.claude/agents/|\.claude/skills/|KNOWLEDGE-BASE/|CONTEXTUALIZE\.md$)' || true)
+if [[ -n "$STAGED_SIX_WAY" ]] && have_py; then
+    echo "[pre-commit] Methodology surface staged — verifying 6-way sync..."
+    if ! "$PY" "$CLI" --check-six-way-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] 6-way sync FAILED. Commit aborted." >&2
+        echo "[pre-commit] See KB § PATTERNS/common/six-way-sync.md for what must move together." >&2
+        exit 1
+    fi
+fi
+
+# ─── 13. KB-baselines staleness check (advisory, when KB changes) ──
+# When KB markdown changes, the kb_validate_owns_kb findings may shift
+# (vector centroids move). If a baseline exists AND the change is large,
+# we surface "consider re-ratifying" — but never block. Severity warning.
+# KB § PATTERNS/common/vector-baseline.md.
+STAGED_KB_FOR_BASELINE=$(git diff --cached --name-only 2>/dev/null | grep -E '^KNOWLEDGE-BASE/.+\.md$' | wc -l | tr -d ' ' || echo 0)
+if [[ "$STAGED_KB_FOR_BASELINE" -gt 5 ]] && have_py; then
+    # Heuristic: 5+ KB docs staged in one commit = large KB change.
+    # Suggest the user check baselines (no exit code).
+    "$PY" "$CLI" --check-kb-semantic-drift 2>&1 | sed 's/^/[pre-commit] /' || true
+fi
+
 echo "[pre-commit] OK"
 exit 0

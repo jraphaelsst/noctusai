@@ -137,6 +137,55 @@ if chunks_embedded > 0:
 The try/except wrapper ensures cost tracking never propagates failures back
 to the caller. Keep it additive — do not modify the existing refresh logic.
 
+## Opt-in cost attribution from `vectorize.embed_text` (2026-05-26)
+
+The original cost-ledger path required wrapping the `refresh()` call in
+each cache module. That covered the BATCH refreshes (kb-embeddings,
+code-embeddings) but missed direct `vectorize.embed_text()` callers
+(kb_recurrence_radar, codification_radar) — they consumed OpenAI silently.
+
+The fix (codified after the 2026-05-26 verify pass surfaced the gap):
+`vectorize.embed_text` now accepts an OPTIONAL `namespace=` kwarg. When
+provided, the successful embed logs to `vector-costs.ndjson` via
+`log_refresh_batch(namespace, chunk_count=1)`:
+
+```python
+# vectorize.py
+def embed_text(text: str, namespace: str | None = None) -> dict:
+    ...  # do the embed
+    if namespace:
+        try:
+            from . import vector_costs as _vc
+            _vc.log_refresh_batch(
+                namespace=namespace,                       # caller's attribution
+                model=cfg.default_embedding_model,
+                doc_count=1,
+                chunk_count=1,
+                estimated_tokens=max(1, len(text) // 4),
+                provider=cfg.default_provider,
+                source_ref=None,
+            )
+        except Exception:  # never block embed on logging failure
+            pass
+    return result
+```
+
+**Caller pattern**:
+```python
+# kb_recurrence_radar.py
+result = vectorize.embed_text(text, namespace="kb_recurrence_radar")
+
+# codification_radar.py
+result = embed_text(description, namespace="codification_radar")
+```
+
+**Design choices**:
+- **Opt-in, not opt-out**: generic callers (prototyping, debugging) don't
+  spam the ledger. They get an unlabeled embed; the cost just doesn't show.
+- **Per-call, not per-batch**: each `embed_text` produces ONE row. For
+  high-volume callers, prefer a batch refresh pattern with one summary row.
+- **Failure-tolerant**: logging errors never propagate to the embed result.
+
 ## Universality
 
 This is a `common/` pattern — owned by no single agent; every agent inherits
