@@ -46,6 +46,20 @@ class TestAgentArchetypeContract:
         assert any("does not reference `engineer-default`" in i["issue"] for i in issues)
         assert all(i["severity"] == "warning" for i in issues)
 
+    def test_executor_devops_engineer_with_engineer_default_passes(self, tmp_path):
+        # `devops-engineer` added to `_HARNESS_EXECUTOR_AGENTS` 2026-05-25
+        # (harness port of `dev_team/charters/devops_engineer.md`). The keeper
+        # must enforce the executor contract on it like the other engineers.
+        _write_agent(tmp_path, "devops-engineer",
+            "---\nname: devops-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\nApply the engineer-default protocol.\n")
+        assert check_agent_archetype_contract(repo_root=tmp_path) == []
+
+    def test_executor_devops_engineer_missing_engineer_default_flagged(self, tmp_path):
+        _write_agent(tmp_path, "devops-engineer",
+            "---\nname: devops-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\n# No protocol mention.\n")
+        issues = check_agent_archetype_contract(repo_root=tmp_path)
+        assert any("does not reference `engineer-default`" in i["issue"] for i in issues)
+
     def test_other_archetype_skipped(self, tmp_path):
         # orchestrator-operator + skill-scout have specialized contracts → skipped.
         _write_agent(tmp_path, "orchestrator-operator",

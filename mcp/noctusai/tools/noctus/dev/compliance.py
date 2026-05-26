@@ -8051,7 +8051,7 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # .claude/skills + .claude/agents are always-on surfaces; these keepers gate
 # authoring discipline so new skills/agents conform by construction.
 _HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer"})
-_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "engineer-default"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-default"})
 # Other agents (orchestrator-operator, skill-scout) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
