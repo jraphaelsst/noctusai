@@ -324,7 +324,12 @@ fi
 # (vector centroids move). If a baseline exists AND the change is large,
 # we surface "consider re-ratifying" — but never block. Severity warning.
 # KB § PATTERNS/common/vector-baseline.md.
-STAGED_KB_FOR_BASELINE=$(git diff --cached --name-only 2>/dev/null | grep -E '^KNOWLEDGE-BASE/.+\.md$' | wc -l | tr -d ' ' || echo 0)
+# `grep -c` is the single source of truth for the count; `|| true` swallows
+# grep's exit-1 when no matches (under set -o pipefail the prior pipeline
+# `grep -E … | wc -l | tr -d ' ' || echo 0` produced "0\n0" which broke
+# `[[ -gt 5 ]]` with "syntax error in expression"). One number out, period.
+STAGED_KB_FOR_BASELINE=$(git diff --cached --name-only 2>/dev/null | grep -cE '^KNOWLEDGE-BASE/.+\.md$' || true)
+: "${STAGED_KB_FOR_BASELINE:=0}"
 if [[ "$STAGED_KB_FOR_BASELINE" -gt 5 ]] && have_py; then
     # Heuristic: 5+ KB docs staged in one commit = large KB change.
     # Suggest the user check baselines (no exit code).
