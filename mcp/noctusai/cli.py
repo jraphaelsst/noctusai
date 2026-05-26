@@ -108,6 +108,10 @@ def main():
     parser.add_argument("--kb-baseline-diff", metavar="AGAINST", nargs="?", const="latest", help="Compare current owns_kb validation against a ratified baseline (default: latest). Shows new_findings + resolved_findings + corpus-drift flag — the signal-vs-noise differentiator.")
     parser.add_argument("--kb-baseline-list", action="store_true", help="Chronological summary of every ratified baseline — id, ratified_at, reason, finding_count.")
     parser.add_argument("--check-kb-semantic-drift", action="store_true", help="Keeper: surfaces when live owns_kb validation diverges from latest ratified baseline by > threshold. Severity WARNING. Suggests ratification when no baseline exists yet.")
+    parser.add_argument("--code-ratify", metavar="REASON", help="Snapshot the current code_recurrence_scan output as approved-canonical baseline. REQUIRED reason explains why. Persists durably to project-history/code-baselines/. Sister of --kb-ratify.")
+    parser.add_argument("--code-baseline-diff", metavar="AGAINST", nargs="?", const="latest", help="Compare current code recurrence matches against a ratified baseline (default: latest). Shows new_matches + resolved_matches + corpus-drift flag.")
+    parser.add_argument("--code-baseline-list", action="store_true", help="Chronological summary of every ratified code-recurrence baseline.")
+    parser.add_argument("--check-code-recurrence-drift", action="store_true", help="Keeper: surfaces when live code recurrence scan diverges from latest ratified baseline by > threshold. Severity WARNING.")
     parser.add_argument("--scan-outlined", action="store_true", help="Audit: scan the WHOLE platform (products/seed/mcp/scripts/noctusai_lib) for files the AST/outline tooling cannot read. Read-only — surfaces the un-outline-able pattern so it can be fixed. MCP-exposed as noctus.dev.scan_outlined.")
     parser.add_argument("--scan-remediation-markers", action="store_true", help="Batch-sweep + triage the NOC-REMEDIATE deferral markers (KB § PATTERNS/remediation-markers.md): parse class + age, group by class, flag malformed (no class/date) + FORBIDDEN on-`except` markers, surface classes at N≥3 (promote to project/seed lift). MCP-exposed as noctus.dev.scan_remediation_markers; exit 1 on defects. Pass --worktree-path to scan an isolated worktree.")
     parser.add_argument("--scan-wiring", metavar="PRODUCT", help="Static wiring-check for ONE product (the product-internal-wiring rule, legs 2/4/5). Scans products/<PRODUCT>/frontend + /backend for: (A) FE api.<method>('<path>') calls with no matching backend route (404 class); (B) selecting `name` on a nome-table (plans/products/organizations — the 500 class); (C) Promise.all([bare fetches]) under one shared try/catch (all-zeros class). Route-exists != wired. MCP-exposed as noctus.dev.scan_wiring; pass --worktree-path to scan an isolated worktree.")
@@ -536,6 +540,48 @@ def main():
             print(f"  {GREEN}✓ kb semantic drift within threshold.{RESET}")
             sys.exit(0)
         print(f"  {YELLOW}⚠ {len(issues)} kb-semantic-drift issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)
+    elif args.code_ratify:
+        from tools.noctus.dev import code_baseline as cb
+        result = cb.ratify(args.code_ratify)
+        if not result["ok"]:
+            print(f"  {RED}✗ {result['error']}{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ code baseline ratified: {result['baseline_id']} ({result['pair_count']} pair(s)).{RESET}")
+        print(f"    path: {result['path']}")
+        sys.exit(0)
+    elif args.code_baseline_diff:
+        from tools.noctus.dev import code_baseline as cb
+        result = cb.diff(against=args.code_baseline_diff)
+        if not result["ok"]:
+            print(f"  {RED}✗ {result.get('error', 'diff failed')}{RESET}")
+            sys.exit(1)
+        bid = result.get("baseline_id") or "(none)"
+        print(f"  {GREEN}✓ diff vs code-baseline {bid}: "
+              f"new={len(result['new_matches'])} resolved={len(result['resolved_matches'])} "
+              f"unchanged={result['unchanged_count']}{RESET}")
+        if result.get("code_corpus_drifted"):
+            print(f"  {YELLOW}⚠ Code corpus shifted since baseline — resolved may be artifacts.{RESET}")
+        sys.exit(0)
+    elif args.code_baseline_list:
+        from tools.noctus.dev import code_baseline as cb
+        baselines = cb.list_baselines()
+        if not baselines:
+            print(f"  {YELLOW}(no code baselines ratified yet — call --code-ratify <reason>){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ {len(baselines)} ratified code-baseline(s):{RESET}")
+        for b in baselines:
+            print(f"    [{b['baseline_id']}] {b['ratified_at']} — {b['pair_count']} pair(s) — {b['reason']}")
+        sys.exit(0)
+    elif args.check_code_recurrence_drift:
+        from tools.noctus.dev.compliance import check_code_recurrence_drift
+        issues = check_code_recurrence_drift()
+        if not issues:
+            print(f"  {GREEN}✓ code recurrence drift within threshold.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} code-recurrence-drift issue(s) (warnings, not blockers):{RESET}")
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)

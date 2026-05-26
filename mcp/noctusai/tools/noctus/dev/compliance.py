@@ -7844,6 +7844,11 @@ def check_all_products() -> tuple[int, list]:
     # (advisory; ratification is human-reasoning, not auto-tuning).
     # KB § CONTEXT/PATTERNS/common/vector-baseline.md.
     all_issues.extend(check_kb_semantic_drift())
+    # 2026-05-26 (post-close batch — code-baseline) — sister of kb-baseline
+    # applied to code recurrence findings. Surfaces new pairs since the
+    # latest ratification. Severity warning.
+    # KB § CONTEXT/PATTERNS/common/code-recurrence-baseline.md.
+    all_issues.extend(check_code_recurrence_drift())
     # containerization single-container — boot-critical VITE_SUPABASE_*
     # build-arg contract (error: empty ⇒ blank SPA on every route).
     all_issues.extend(check_dockerfile_vite_supabase_args())
@@ -8140,6 +8145,8 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/vector-calibration.md",
     "CONTEXT/PATTERNS/common/code-embeddings.md",
     "CONTEXT/PATTERNS/common/vector-baseline.md",
+    "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
+    "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
@@ -8984,6 +8991,86 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
                 "severity": "warning",
                 "symbol": "code-vector-stale",
             })
+    return issues
+
+
+def check_code_recurrence_drift(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-26 post-close): surfaces when live code
+    recurrence scan diverges from the latest ratified baseline by more
+    than the drift threshold (default 3 NEW pairs).
+
+    Sister of `check_kb_semantic_drift` — same advisory tier, applied to
+    code recurrence findings instead of owns_kb validation findings.
+
+    Severity ``warning``. Silent skip when:
+      - `mcp/` is absent (non-noc tree).
+      - The code-embeddings cache is absent (advisory layer not initialized).
+      - `code_baseline` module unimportable (defensive).
+
+    KB § CONTEXT/PATTERNS/common/code-recurrence-baseline.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not (root / "mcp").is_dir():
+        return issues
+    cache = root / ".claude" / "cache" / "code-embeddings.sqlite"
+    if not cache.exists():
+        return issues
+    try:
+        from .code_baseline import diff as _diff, _DRIFT_THRESHOLD
+    except Exception:  # noqa: BLE001 — defensive
+        return issues
+    try:
+        d = _diff()
+    except Exception:  # noqa: BLE001
+        return issues
+    if not d.get("ok"):
+        return issues
+    baseline_id = d.get("baseline_id")
+    new_count = len(d.get("new_matches", []))
+    if baseline_id is None:
+        current = d.get("current_count", 0)
+        # Only suggest ratification when the corpus actually has strong-signal
+        # pairs — otherwise the noise tolerates absence of baseline.
+        if current > 0:
+            issues.append({
+                "product": "<harness>",
+                "file": "project-history/code-baselines/",
+                "issue": (
+                    f"code recurrence scan surfaces {current} pair(s) but "
+                    f"no baseline ratified — call `noctus.dev.code_ratify` "
+                    f"with a reason to baseline the current state; "
+                    f"subsequent runs report only NEW pairs."
+                ),
+                "severity": "warning",
+                "symbol": "code-baseline-missing",
+            })
+        return issues
+    if new_count > _DRIFT_THRESHOLD:
+        issues.append({
+            "product": "<harness>",
+            "file": "project-history/code-baselines/",
+            "issue": (
+                f"code recurrence scan shows {new_count} NEW pair(s) since "
+                f"baseline `{baseline_id}` (threshold {_DRIFT_THRESHOLD}). "
+                f"Review via `noctus.dev.code_baseline_diff`; fix or re-ratify "
+                f"with `noctus.dev.code_ratify`."
+            ),
+            "severity": "warning",
+            "symbol": "code-recurrence-drift",
+        })
+    if d.get("code_corpus_drifted"):
+        issues.append({
+            "product": "<harness>",
+            "file": "project-history/code-baselines/",
+            "issue": (
+                f"Code corpus has shifted since baseline `{baseline_id}` was "
+                f"ratified — resolved_matches in the diff may be artifacts "
+                f"of changed code, not real fixes. Consider re-ratifying."
+            ),
+            "severity": "warning",
+            "symbol": "code-baseline-corpus-drifted",
+        })
     return issues
 
 

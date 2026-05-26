@@ -23,6 +23,7 @@ def register_all(server) -> None:
     from . import catalog
     from . import check_framework_deps
     from . import cleanup_worktrees
+    from . import code_baseline
     from . import code_embeddings
     from . import code_recurrence_promote
     from . import codification_radar
@@ -40,6 +41,7 @@ def register_all(server) -> None:
     from . import improvements
     from . import kb_baseline
     from . import kb_embeddings
+    from . import kb_recurrence_radar
     from . import keeper_pattern
     from . import lgpd
     from . import master_prompts
@@ -94,6 +96,7 @@ def register_all(server) -> None:
     catalog.register(server)
     check_framework_deps.register(server)
     cleanup_worktrees.register(server)
+    code_baseline.register(server)
     code_embeddings.register(server)
     code_recurrence_promote.register(server)
     codification_radar.register(server)
@@ -111,6 +114,7 @@ def register_all(server) -> None:
     improvements.register(server)
     kb_baseline.register(server)
     kb_embeddings.register(server)
+    kb_recurrence_radar.register(server)
     keeper_pattern.register(server)
     lgpd.register(server)
     master_prompts.register(server)

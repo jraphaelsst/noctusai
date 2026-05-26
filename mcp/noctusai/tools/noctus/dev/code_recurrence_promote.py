@@ -53,6 +53,12 @@ BAND_STRONG = 0.90
 BAND_MEDIUM = 0.80
 BAND_WEAK = 0.70   # below this = noise; not promoted by default
 
+# Load-bearing string: appears in target_string + scan dedupe references
+# + promote idempotency check + downstream filters in code_baseline /
+# code_recurrence_radar. Promoted to a module-level constant so a
+# refactor moves all referents together (scoped-improvement from W3-E1).
+CODE_RECURRENCE_TARGET_PREFIX = "code-recurrence:"
+
 
 def _band(score: float) -> str:
     if score >= BAND_STRONG:
@@ -77,7 +83,7 @@ def _pair_key(a_path: str, a_sym: str, b_path: str, b_sym: str) -> tuple[str, st
 def _target_string(p1: str, s1: str, p2: str, s2: str) -> str:
     """The target string written to auto-improvement.ndjson — also the
     idempotency key for `promote()` (skip-if-exists check matches this)."""
-    return f"code-recurrence:{p1}::{s1} ≈ {p2}::{s2}"
+    return f"{CODE_RECURRENCE_TARGET_PREFIX}{p1}::{s1} ≈ {p2}::{s2}"
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -299,6 +305,7 @@ __all__ = [
     "BAND_STRONG",
     "BAND_MEDIUM",
     "BAND_WEAK",
+    "CODE_RECURRENCE_TARGET_PREFIX",
     "scan",
     "promote",
     "register",
