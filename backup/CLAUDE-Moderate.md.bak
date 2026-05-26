@@ -1,0 +1,95 @@
+# CLAUDE.md · v4.0-MODERATE — router (comparison backup, NOT live)
+
+> **This is the MODERATE-trim pole, kept for comparison/rollback.** Live = the aggressive `CLAUDE.md`; verbose original = `backup/CLAUDE.md.bak`. To adopt this instead: `cp backup/CLAUDE-Moderate.md.bak CLAUDE.md`.
+> Moderate = each §1 rule keeps its statement + a one-clause *why* (bodies/slip-history move to the pointer); §2 keeps a full one-line pattern index (paragraph blurbs dropped); §3 lean.
+
+---
+
+<!-- NEW-SESSION-CONTEXTUALIZATION -->
+## 0 · New session — "contextualize"
+
+Fresh/clean-context agent AND the user says "contextualize" → **skill `noc-contextualize`** → read `/CONTEXTUALIZE.md` first. Already-oriented → NO-OP, skip.
+
+---
+
+## 1 · Universal rules (rule + one-clause why; depth at the pointer)
+
+- **Vocabulary — methodology, not doctrine.** Hierarchical framing runs counter to how this team works. → `KB § 01-PHILOSOPHY.md`
+- **Seed first. Always.** The seed IS the approach; a customization not through a named seam is a structural fork. → `KB § 03-SEED-ARCHITECTURE.md` · skill `noc-new-product`
+- **Verify the seed ships it.** A planned "consume" silently becomes a "seed-build" if only the Protocol/Fake ships. → `KB § 03-SEED-ARCHITECTURE.md`
+- **Seed IO modules ship Fake+Real+factory.** Half-shipped seed IO generates consumer-side forks. → `KB § PATTERNS/seed-fake-real-adapter.md`
+- **Seed defaults = canonical answer, not consumer-#1 coincidence.** A coincidence default silently misroutes consumers #2..N. → `KB § PATTERNS/seed-canonical-defaults.md`
+- **No incomplete commits.** One real side + one placeholder side lies about maturity.
+- **Product-internal-wiring.** route-exists ≠ wired; a page must show real data ∧ own its CRUD. → `KB § PATTERNS/product-internal-wiring.md` · skill `noc-wiring-audit`
+- **No quick fixes.** A fix touching N products for one reason is at the wrong level — go to the root.
+- **No workarounds / no monkey-patching (incl. tests).** Patching our own guard means the test no longer exercises it. → `KB § PATTERNS/testing.md`
+- **Estimate off evidence, not structure.** Cross-cutting layers hide cost; open the files before sizing. → `KB § 01-PHILOSOPHY.md`
+- **Codebase is source of truth.** Docs/memory/reports drift; verify against the tree first, code wins. → `KB § 01-PHILOSOPHY.md`
+- **Fix-on-contact for pre-existing debt.** Surface-only = a silent-error one level up; fix in-flight then surface. → `KB § 01-PHILOSOPHY.md`
+- **DRY — the recurrence rule.** N=2 triage, N=3+ MUST formalize; shipping the 4th instance is forbidden. → `KB § PATTERNS/project-execution.md`
+- **Componentize everything.** If another product will need it, build it shared from day one. → `KB § 04-SHARED-LIBRARY.md`
+- **Reading & research discipline.** Whole-file reads waste budget; narrow-read + delegate breadth. → `KB § PATTERNS/agent-reading-discipline.md`
+- **Replication-to-seed symmetry.** The trigger is LANGUAGE — "per-product X" IS the slip; right count = zero. → `KB § PATTERNS/project-execution.md`
+- **AST-first.** If a compiler/type-checker parses the file, edit it via libcst/ts-morph, never regex. → `KB § PATTERNS/ast.md`
+- **Flag MCP-first / AST-first opportunities proactively.** Silent skipping = silent-error shape. → `KB § 01-PHILOSOPHY.md`
+- **MCP-first scripts.** A new automation IS an agent-exposable capability → a `noctus.dev.*` tool. → `KB § PATTERNS/mcp-first-scripts.md`
+- **Hygiene scanning.** Run hound/mole/keeper-analog sweeps before walking away; teardown = salvage-before-delete via a tool. → `KB § PATTERNS/storage-hygiene.md` · skill `noc-hygiene`
+- **Triage at decision time.** "Accept" is a real landing only with paperwork; recurrence flips accept→formalize. → `KB § PATTERNS/accept-with-rationale.md`
+- **Safety nets capture failures → learnings → methodology evolves.** The net firing IS the methodology working. → `KB § 01-PHILOSOPHY.md`
+- **Always-hardening posture.** Every surfaced pattern is a methodology-improvement opportunity; announce LOUDLY + apply before ship. → `KB § 01-PHILOSOPHY.md` · skills `skill-scout`/`codify`
+- **Branching — ONE unified methodology.** Worktree isolation is the primitive: isolate off `origin/dev` → integrate clean → never switch a shared HEAD. → `KB § PATTERNS/branching.md` · skill `noc-self-branch`
+- **`main` is production; `dev` is integration.** Everyday work + pushes → `dev`; `main`/`prod` only by explicit per-action consent. → `KB § PATTERNS/branching-and-merging.md §0` · skill `noc-ship`
+- **Branching-first orchestration.** Orchestrator=architect (stays with user), subagents=engineers; inline below the cutoff. → `KB § 01-PHILOSOPHY.md` · skill `noc-branch-dispatch`
+- **Self-branching mode.** 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/self-branching-mode.md` · skill `noc-self-branch`
+- **Knowledge tracking — durable findings.** findings.md = what-we-LEARNED; in-flight comms processed same commit, not parked. → `KB § 01-PHILOSOPHY.md`
+- **Wave-based dispatch + collision-class.** Merge cleanliness is decided at DISPATCH (C1/C2/C3), not at merge. → `KB § PATTERNS/branching-and-merging.md §18/§21`
+- **Pilot-products-first refactor cadence.** Prove a seed/lib change on 3 pilots before fan-out. → `KB § PATTERNS/project-execution.md`
+- **No silent errors.** No `except: pass`, no silent fallback, no deferral without a named destination; ambiguity → ask. → `KB § 01-PHILOSOPHY.md`
+- **Remediation markers.** A batch-able deferral lives in-code as `NOC-REMEDIATE[<class>]` — the named destination. → `KB § PATTERNS/remediation-markers.md`
+- **Doc-propagation sync.** A rule/tool change lives in KB ↔ CLAUDE.md ↔ memory ↔ tool-code the same commit. → `KB § 01-PHILOSOPHY.md`
+- **Durable surfaces self-contained.** A config/script ref into `projects/`/`archive/` breaks loudly when archived. → `KB § 01-PHILOSOPHY.md`
+- **Symbol-first for dense/AI-intended docs.** Lossless-swap test gates each prose→symbol swap; `→`=routes, `⇒`=implies. → `KB § PATTERNS/doc-symbology.md`
+- **Context budget discipline.** The auto-loaded budget compounds across every reply. MCP keep-list: `noctusai`+`supabase`+`n8n`+`waha`. → `KB § 01-PHILOSOPHY.md`
+- **Lossless doc-refactor.** Changing the doc-set itself is methodology surgery — lossless proven, not asserted. → `KB § PATTERNS/lossless-doc-refactor.md`
+- **Sibling workspaces consume noc read-only, whole.** Trimming the inherited surface breaks seed-first analysis + sync. → `KB § PATTERNS/seed-workspace.md`
+- **Divergent-architecture absorptions → house container model.** One container, `serve_spa`, seed base image; no fleet carve-out. → `KB § PATTERNS/containerization.md §12a` · skill `noc-absorb-product`
+- **Parallel-agent collision protocol.** Twice-reverted → STOP, wait, continue non-colliding; no collision-report project. → `KB § PATTERNS/project-execution.md`
+
+---
+
+## 2 · The Map — full one-line index (open on-demand)
+
+**Topical** (`CLAUDE/`): `backend.md` · `frontend.md` · `projects.md` · `platform.md`.
+**Agents** (`.claude/agents/`): `architect`·`security`·`compliance-reviewer` (advisors) · `backend-engineer`·`frontend-engineer`·`engineer-default` (executors) · `skill-scout` · `orchestrator-operator`. Tech-lead = the conversational session.
+**Skills** (`.claude/skills/`): `noc-contextualize`·`noc-new-product`·`noc-absorb-product`·`noc-ship`·`noc-branch-dispatch`·`noc-self-branch`·`noc-wiring-audit`·`noc-container-debug`·`noc-hygiene`·`skill-creator`·`codify`.
+**Architecture (KB):** `01-PHILOSOPHY`·`02-LANDSCAPE`·`03-SEED-ARCHITECTURE`·`04-SHARED-LIBRARY`·`05-INFRASTRUCTURE`·`06-AGENTS`·`07-GAMIFICATION`.
+
+**Patterns** (`KB § PATTERNS/…`): backend · frontend · testing · database-rls · environment · notifications · shared-library-conventions · project-execution · proposals-and-improvements · lgpd · llm-usage · logging · seed-lib-layout · seed-canonical-defaults · dev-prod-parity · deploy-config-contract · boundary-contract-tests · core-url-routing · product-icon-registry · product-internal-wiring · ast · agent-reading-discipline · webhook-signatures · accept-with-rationale · remediation-markers · mcp-tool-conventions · mcp-first-scripts · llm-tool-audit · llm-bot-security · seed-workspace · scheduling-seed · metas-seed · whatsapp-chatbot-seed · digest-seed · svg-render-mode · branching · branching-and-merging · branching-dispatch · self-branching-mode · master-tree-parallel-batches · dispatch-engineer-tuning · noc-graph · dev-team · containerization · containerization-operations · pydantic-strict-http · chatbot-operational-readiness · methodology-codification-pipeline · dev-toolkit-scaffolders · doc-symbology · lossless-doc-refactor · compliance-regression-baseline · di-test-seam · logging-at-except · absorbed-product-seed-shape-seam · absorption-ships-consume-docs · verify-seed-on-fork-base · phased-push-policy · defer-is-not-resolve · harness-overlay-worktree-divergence · two-session-architect-operator · autonomous-operator-via-subagent · seed-absorption · two-session.
+
+**MCP-server connectors** (`KB § MCP-SERVERS/…`): github · n8n · waha · hostinger · cloudflare · supabase.
+**Integrations** (`KB § INTEGRATIONS/…`): oauth-patterns · meta · whatsapp · google · vista · image-gen.
+**Guides** (`KB § GUIDES/…`): setup · new-product · seed-first-design · deploy-workspace-online · production-deploy · absorb-seed-workspace · google-oauth-setup.
+**Per-product** (`KB § backend/…` · `KB § frontend/…`) — open only the product you're working on.
+
+Full catalog with descriptions → `KB § INDEX.md`.
+
+---
+
+## 3 · When to read what
+
+| Situation | First stop |
+|---|---|
+| Fresh session | skill `noc-contextualize` |
+| Backend / frontend code | `CLAUDE/backend.md` / `CLAUDE/frontend.md` + `KB § PATTERNS/` |
+| New/absorb product · ship/deploy · branch/dispatch · self-branch · wiring · container debug · cleanup | the matching `noc-*` skill |
+| Specialist opinion mid-flight | agent `architect` / `security` / `compliance-reviewer` |
+| Project lifecycle / `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/project-execution.md` |
+| Migration · auth · OAuth · LGPD · anything else | `KB § INDEX.md` |
+
+---
+
+## 4 · Sync rule
+
+CLAUDE.md, `CLAUDE/*`, `.claude/skills/`, `.claude/agents/`, `KB § INDEX.md` stay in sync — add/rename/delete a KB doc or skill/agent → every referencing layer updates the same commit. Pre-commit hook (`scripts/hooks/pre-commit`) runs `noctus.dev.kb_sync` and blocks on unresolved `KB §` pointers, unindexed KB docs, or a product missing its `02-LANDSCAPE.md` roster row. Manual: `python mcp/noctusai/cli.py --verify-kb-sync`. Bypass (rare): `--no-verify`.
+
+> `KB § X` = `KNOWLEDGE-BASE/X`.
