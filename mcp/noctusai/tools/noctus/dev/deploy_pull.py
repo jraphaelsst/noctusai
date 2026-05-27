@@ -288,7 +288,7 @@ def deploy_pull(
         else:
             try:
                 if mirror_runner is None:
-                    from cache_deploy_mirror import mirror_all  # type: ignore[import]
+                    from tools.noctus.dev.cache_deploy_mirror import mirror_all  # type: ignore[import]
                     runner_fn: Callable[..., dict[str, Any]] = mirror_all
                 else:
                     runner_fn = mirror_runner

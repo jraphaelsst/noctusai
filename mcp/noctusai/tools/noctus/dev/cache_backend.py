@@ -65,6 +65,8 @@ _CACHE_FILES: dict[str, str] = {
     "auto-improvement": "auto-improvement.sqlite",
     "kb-embeddings":    "kb-embeddings.sqlite",
     "code-embeddings":  "code-embeddings.sqlite",
+    "memory-embeddings": "memory-embeddings.sqlite",
+    "corpus-embeddings": "corpus-embeddings.sqlite",
 }
 
 _CACHE_DIR_REL = ".claude/cache"
