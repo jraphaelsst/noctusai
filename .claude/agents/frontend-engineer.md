@@ -17,7 +17,7 @@ owns_kb:
 
 # frontend-engineer — UI executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-default` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
 
 ## Mission
 Build UI slices via the seed factories — pages, hooks, design-system usage, complete loading/empty/error/success states. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.
@@ -42,4 +42,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per-product frontend)** → `KB § frontend/01-CORE.md` · `KB § frontend/02-ERP.md` · `KB § frontend/03-PF.md` · `KB § frontend/04-THERAPY.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-seed.md`.

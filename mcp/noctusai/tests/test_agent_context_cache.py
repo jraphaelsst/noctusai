@@ -48,7 +48,7 @@ class TestRefreshAndLookup:
             "# Backend\n\nIntro paragraph.\n\n## Section A\nLine A1\n## Section B\nLine B1\n")
         _write_agent(tmp_repo, "backend-engineer",
             "name: backend-engineer\ndescription: x\ntools: Read\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
-            "Apply engineer-default. → KB § PATTERNS/backend/backend.md")
+            "Apply engineer-seed. → KB § PATTERNS/backend/backend.md")
         r = acc.refresh(force=True)
         assert r["ok"] is True
         assert r["status"] == "rebuilt"
@@ -77,7 +77,7 @@ class TestRefreshAndLookup:
         assert b["ok"] is True
         assert b["agent_name"] == "backend-engineer"
         assert "owns_kb:" in b["frontmatter"]
-        assert "engineer-default" not in b["frontmatter"]  # belongs to body
+        assert "engineer-seed" not in b["frontmatter"]  # belongs to body
         assert "KB § PATTERNS/backend/backend.md" in b["body"]
         assert len(b["owned_kb"]) == 1
         assert b["owned_kb"][0]["path"] == "CONTEXT/PATTERNS/backend/backend.md"

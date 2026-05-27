@@ -98,7 +98,7 @@ class TestSetMembership:
         # devops-engineer added 2026-05-25 (the prior commit on this dev line)
         assert "devops-engineer" in members
         assert "backend-engineer" in members
-        assert "engineer-default" in members
+        assert "engineer-seed" in members
 
     def test_set_membership_severity_high(self, tmp_path, monkeypatch):
         _isolate_cache(tmp_path, monkeypatch)

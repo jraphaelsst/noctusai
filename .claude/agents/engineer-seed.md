@@ -1,5 +1,5 @@
 ---
-name: engineer-default
+name: engineer-seed
 description: Default engineering agent for noctusai dispatches. Standing protocol referenced by all engineer briefs — encodes verify / stage-only / short-form-return / file-disjoint / AST-first defaults. Briefs reference this doc instead of repeating boilerplate.
 # Scoped allowlist (least-privilege + cold-start cost): an engineer only ever needs file/search/shell
 # + the noctusai toolkit. Omitting `tools:` inherits ~400 deferred tool names (docker/cloudflare/n8n/
@@ -15,7 +15,7 @@ model: sonnet
 owns_kb: []
 ---
 
-# engineer-default — standing protocol
+# engineer-seed — standing protocol
 
 > **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the protocol (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `orchestrator-operator`). **Owns no KB domain — it's the protocol every specialist executor applies.**
 
@@ -159,7 +159,7 @@ Per the brief (Write-authorization clause): you MAY create `findings.md` within 
 
 ## 8a. noctosai MCP toolkit is available to you
 
-You run inside the dispatching session's runtime, which already has the **stdio `noctusai` MCP server** spawned (`.mcp.json`). engineer-default inherits **all tools** → call `mcp__noctusai__*` directly (scan/validate/pytest/outline/refs/hound/dispatch_preflight/salvage_worktree/archive/…) instead of hand-reimplementing what a tool does. No network/container/tunnel involved — it's local IPC. If a brief restricts your agent type and you genuinely can't see the MCP tools, that's an allowlist gap → surface it (don't bare-Python around a missing tool — `KB § feedback mcp-unreachable-diagnose`). Depth: `KB § 06-AGENTS.md § Subagent MCP access`.
+You run inside the dispatching session's runtime, which already has the **stdio `noctusai` MCP server** spawned (`.mcp.json`). engineer-seed inherits **all tools** → call `mcp__noctusai__*` directly (scan/validate/pytest/outline/refs/hound/dispatch_preflight/salvage_worktree/archive/…) instead of hand-reimplementing what a tool does. No network/container/tunnel involved — it's local IPC. If a brief restricts your agent type and you genuinely can't see the MCP tools, that's an allowlist gap → surface it (don't bare-Python around a missing tool — `KB § feedback mcp-unreachable-diagnose`). Depth: `KB § 06-AGENTS.md § Subagent MCP access`.
 
 **New automation defaults to an MCP tool, not a `scripts/` one-off.** If a brief has you author a new automation capability, the default home is a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`) — use `scaffold_mcp_tool`, never drop a fresh `scripts/*.sh|*.py`. Shell is allowed ONLY for three named structural carve-outs (git-hook entry → thin dispatcher · pre-venv bootstrap · thin docker-orchestration), each requiring a manifest row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3 + an accept-with-rationale entry. Adding a top-level `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` — surface it, don't ship it undecided.
 
@@ -182,7 +182,7 @@ NOT for: error messages, first-paragraph context, quoted user instructions, bug-
 A minimum-viable brief now looks like:
 
 ```
-You are Engineer <X>. Apply engineer-default protocol.
+You are Engineer <X>. Apply engineer-seed protocol.
 
 Goal: <one sentence>
 Reference: <commit SHA / file path of the canonical pattern>

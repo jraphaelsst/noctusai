@@ -36,14 +36,14 @@ class TestAgentArchetypeContract:
 
     def test_executor_with_engineer_default_passes(self, tmp_path):
         _write_agent(tmp_path, "backend-engineer",
-            "---\nname: backend-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\nApply the engineer-default protocol.\n")
+            "---\nname: backend-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\nApply the engineer-seed protocol.\n")
         assert check_agent_archetype_contract(repo_root=tmp_path) == []
 
     def test_executor_missing_engineer_default_flagged(self, tmp_path):
         _write_agent(tmp_path, "frontend-engineer",
             "---\nname: frontend-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\n# No protocol mention.\n")
         issues = check_agent_archetype_contract(repo_root=tmp_path)
-        assert any("does not reference `engineer-default`" in i["issue"] for i in issues)
+        assert any("does not reference `engineer-seed`" in i["issue"] for i in issues)
         assert all(i["severity"] == "warning" for i in issues)
 
     def test_executor_devops_engineer_with_engineer_default_passes(self, tmp_path):
@@ -51,19 +51,19 @@ class TestAgentArchetypeContract:
         # (harness port of `dev_team/charters/devops_engineer.md`). The keeper
         # must enforce the executor contract on it like the other engineers.
         _write_agent(tmp_path, "devops-engineer",
-            "---\nname: devops-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\nApply the engineer-default protocol.\n")
+            "---\nname: devops-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\nApply the engineer-seed protocol.\n")
         assert check_agent_archetype_contract(repo_root=tmp_path) == []
 
     def test_executor_devops_engineer_missing_engineer_default_flagged(self, tmp_path):
         _write_agent(tmp_path, "devops-engineer",
             "---\nname: devops-engineer\ndescription: executor.\ntools: Bash, Read, Edit, Write\n---\n# No protocol mention.\n")
         issues = check_agent_archetype_contract(repo_root=tmp_path)
-        assert any("does not reference `engineer-default`" in i["issue"] for i in issues)
+        assert any("does not reference `engineer-seed`" in i["issue"] for i in issues)
 
     def test_other_archetype_skipped(self, tmp_path):
         # orchestrator-operator + skill-scout have specialized contracts → skipped.
         _write_agent(tmp_path, "orchestrator-operator",
-            "---\nname: orchestrator-operator\ndescription: operator.\ntools: Bash, Read, Write, Edit, Agent\n---\n# No engineer-default mention.\n")
+            "---\nname: orchestrator-operator\ndescription: operator.\ntools: Bash, Read, Write, Edit, Agent\n---\n# No engineer-seed mention.\n")
         _write_agent(tmp_path, "skill-scout",
-            "---\nname: skill-scout\ndescription: scout.\ntools: Bash, Read, Write, Grep, WebSearch\n---\n# No engineer-default.\n")
+            "---\nname: skill-scout\ndescription: scout.\ntools: Bash, Read, Write, Grep, WebSearch\n---\n# No engineer-seed.\n")
         assert check_agent_archetype_contract(repo_root=tmp_path) == []

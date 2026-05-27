@@ -60,7 +60,7 @@ The brief itself is now lean — references PROJECT.md instead of inlining all t
 
 ### 3. Engineer plans → executes, OR surfaces alt route → BLOCKS
 
-**If the brief is clear and the engineer agrees with the routing:** execute the slice (file-disjoint, stay-in-worktree, AST-first per `engineer-default.md`).
+**If the brief is clear and the engineer agrees with the routing:** execute the slice (file-disjoint, stay-in-worktree, AST-first per `engineer-seed.md`).
 
 **If the engineer sees a better route** (alternative architecture, alternative seam, alternative tool, alternative slice boundary, alternative codification stage):
 
@@ -77,11 +77,11 @@ The brief itself is now lean — references PROJECT.md instead of inlining all t
    - `adapted` (rationale recorded; re-dispatch follows with the adapted brief)
 5. Resume execution only after the surface note's status is set.
 
-**Why block-on-surface (not proceed-then-review):** an engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing route changes into a feature commit. Block-on-surface mirrors `engineer-default.md §7` (`drift-found:` rule — "you CONTINUE your own slice — tech-lead resolves at integration") applied to route alternatives.
+**Why block-on-surface (not proceed-then-review):** an engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing route changes into a feature commit. Block-on-surface mirrors `engineer-seed.md §7` (`drift-found:` rule — "you CONTINUE your own slice — tech-lead resolves at integration") applied to route alternatives.
 
 ### 4. Engineer writes delivery note at end
 
-At the end of execution — before returning to tech-lead — the engineer files a **delivery note** via `noctus.dev.file_proposal(kind="delivery", project=<slug>, ...)`. Contents (minimum, mirrors engineer-default short-form footer):
+At the end of execution — before returning to tech-lead — the engineer files a **delivery note** via `noctus.dev.file_proposal(kind="delivery", project=<slug>, ...)`. Contents (minimum, mirrors engineer-seed short-form footer):
 
 - §1 Context: "the slice was dispatched per PROJECT.md §4a.1 row <X>"
 - §2 Situation: "as-shipped state — which files changed, which tests added/passed, which acceptance criteria met"
@@ -89,7 +89,7 @@ At the end of execution — before returning to tech-lead — the engineer files
 - §4 Effects: behavior / risk / ergonomics / coverage (per template §4)
 - §5 Acceptance: tick the dispatch-acceptance items
 - **Codification events emitted (this slice):** explicit list of s1/s2/s3/s4 events the engineer logged (or "none + why")
-- **drift-found:** + **scoped-improvement:** — durable form of the engineer-default two-leg footer
+- **drift-found:** + **scoped-improvement:** — durable form of the engineer-seed two-leg footer
 - Routes-not-taken the engineer encountered + chose-not-to-surface (rationale)
 
 The delivery note IS the durable form of the engineer's return message. The tech-lead absorbs it at integration — lessons → KB/memory, drift-found → batched resolution, scoped-improvement → codification radar.
@@ -106,7 +106,7 @@ After all slices in §4a.1 are delivered + integrated:
 
 ## Composes-with
 
-- **`engineer-default.md`** — the standing protocol. §1a on-disk verification, §3 short-form return, §7 two-leg footer (drift-found / scoped-improvement). Delivery notes are the DURABLE form of §3's return shape — the same content, but persisted.
+- **`engineer-seed.md`** — the standing protocol. §1a on-disk verification, §3 short-form return, §7 two-leg footer (drift-found / scoped-improvement). Delivery notes are the DURABLE form of §3's return shape — the same content, but persisted.
 - **`KB § PATTERNS/architect/dispatch-engineer-tuning.md`** — brief shape (~15 lines, references PROJECT.md instead of inlining).
 - **`KB § PATTERNS/architect/parallelization-first-orchestration.md`** — inline-empersonation rules (the tech-lead applies a lens when no subagent dispatch). Same §4a metadata applies — tech-lead reads their own §4a.1 row, switches discipline, applies + commits, then switches.
 - **`KB § PATTERNS/common/scoped-auto-improvement.md`** — the two-leg footer's ledger destination. Delivery notes also write to `project-history/auto-improvement.ndjson` (so codification radar + cache stay fed).

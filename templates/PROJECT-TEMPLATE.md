@@ -139,7 +139,7 @@ Every slice produces a **delivery note** (`noctus.dev.file_proposal kind="delive
 **Delivery-note contents (minimum):**
 - What landed (files + tests + acceptance hit/missed)
 - Codification events emitted (s1/s2/s3/s4 — match §4a.2 expectations)
-- `drift-found:` + `scoped-improvement:` (the engineer-default two-leg footer — durable)
+- `drift-found:` + `scoped-improvement:` (the engineer-seed two-leg footer — durable)
 - Routes-not-taken that the engineer encountered + chose-not-to-surface (rationale)
 
 **Surface-note contents:**

@@ -37,12 +37,31 @@
 
 name: noctusai-products-prod
 
-# Shared per-service prod defaults (YAML anchor — DRY across 8 services).
+# Shared cache-backend env (YAML anchor — DRY across all 9 services).
+# Wires every prod product container to read the keeper-mirror caches from
+# the in-fleet `noctus-cache-pg` Postgres instead of local SQLite.
+# - Service alias: `noctus-cache-pg:5432` (resolves over the external
+#   `noctus-net` docker network — same fabric the products + infra share).
+# - The DSN's `${NOCTUS_CACHE_PG_PASSWORD}` is expanded by docker-compose at
+#   parse time from the operator's environment (set via `.env.fleet` or
+#   `--env-file`); deploy invocation MUST have it in scope, same as the
+#   sibling `compose.infra.prod.yml` cache-pg service.
+# Dev uses local SQLite (the backend selector falls back when
+# NOCTUS_CACHE_BACKEND is unset) — this anchor only fires in prod.
+# KB § PATTERNS/devops/prod-cache-container.md.
+x-cache-env: &cache-env
+  NOCTUS_CACHE_BACKEND: postgres
+  NOCTUS_CACHE_POSTGRES_DSN: postgresql://noctus_cache:${NOCTUS_CACHE_PG_PASSWORD}@noctus-cache-pg:5432/noctus_cache
+
+# Shared per-service prod defaults (YAML anchor — DRY across 9 services).
 # env_file the root .env (one source of runtime config + secrets);
+# environment carries cache-backend wiring (in-fleet alias);
 # restart unless-stopped; join the external noctus-net.
 x-prod-defaults: &prod-defaults
   env_file:
     - ../../.env
+  environment:
+    <<: *cache-env
   restart: unless-stopped
   networks:
     - noctus-net
@@ -164,7 +183,11 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-dev-team:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-dev-team
+    # YAML map-merge: cache-env first, then ANTHROPIC_API_KEY. Without the
+    # `<<:` merge, defining `environment:` here would shadow the *prod-defaults
+    # anchor's environment block entirely (dev-team would lose the cache wiring).
     environment:
+      <<: *cache-env
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     expose:
       - "8009"

@@ -7,7 +7,7 @@ owns_kb: []
 
 # orchestrator-operator — standing instructions
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the procedure (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `engineer-default`). **Owns no KB domain.**
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the procedure (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `engineer-seed`). **Owns no KB domain.**
 
 You are the **operator** half of the autonomous-operator-via-subagent pattern (Option D — see `KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md`). The **architect** stays in the main session with the user; you are dispatched per ScheduleWakeup tick (or by explicit "drain inbox" prompt) to drain the dispatcher inbox in an **isolated context** so the architect's conversation state stays clean.
 
@@ -211,7 +211,7 @@ Core symbols: `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈` (logic) · `✅ ⏳ ❌ �
 
 NOT for: error messages, first-paragraph context, quoted user instructions, commit messages. Stacking ≤2 symbols/clause. `→` = routes/pointer; `⇒` = logical implies (never interchangeable). New symbols added to the glossary, not invented inline.
 
-Inherited from `engineer-default.md § 10` for symmetry — same rule, same glossary, same lossless-swap gate. Codified per `KB § PATTERNS/common/doc-symbology.md` + `feedback_symbol_first_authoring.md`.
+Inherited from `engineer-seed.md § 10` for symmetry — same rule, same glossary, same lossless-swap gate. Codified per `KB § PATTERNS/common/doc-symbology.md` + `feedback_symbol_first_authoring.md`.
 
 ## Why this exists
 

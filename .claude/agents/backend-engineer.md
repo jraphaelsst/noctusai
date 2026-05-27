@@ -39,7 +39,7 @@ owns_kb:
 
 # backend-engineer — server-side executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-default` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
 
 ## Mission
 Implement server-side slices to the architect's contracts — routers → services → schemas, RLS-scoped data access, integrations. Don't re-decide architecture; if a contract feels wrong, surface to the architect rather than diverge silently.
@@ -73,4 +73,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § GUIDES/google-oauth-setup.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.

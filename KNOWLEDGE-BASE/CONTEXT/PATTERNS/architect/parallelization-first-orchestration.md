@@ -22,12 +22,12 @@
 | **<inline cutoff** (`<100 LoC ∧ <3 files ∧ single-phase`) | Dispatch tax (~45–60k contextualization tokens) > work amortizes; tech-lead does it inline ([[branching-and-merging]] §18.2.1) |
 | **Shared-state mutations** of the same lines | C3 substantive-overlap; re-scope to a parallel-clean sibling file OR sequence |
 | **A single coherent voice** (one design doc, one synthesis) | One agent's continuity > N voices; the tech-lead writes / one advisor returns |
-| **The agent isn't loaded** (newly-added `.claude/agents/*.md` need a fresh session — known harness behavior) | Surface the drift; use what IS loaded as proxy (engineer-default / Plan / Explore) OR defer the dispatch to the next session |
+| **The agent isn't loaded** (newly-added `.claude/agents/*.md` need a fresh session — known harness behavior) | Surface the drift; use what IS loaded as proxy (engineer-seed / Plan / Explore) OR defer the dispatch to the next session |
 
 ## The flow (tech-lead view)
 1. **Decompose** the task into slices. Ask: how many specialists? Are slices file-disjoint? Is judgment decomposable into design-then-impl?
 2. **Pick the roster** for each slice — read `KB § 06-AGENTS.md` + the live `.claude/agents/` files; prefer the most-specialized advisor/executor that fits the slice's domain.
-3. **Brief tight** (the `engineer-default` minimum-viable-brief: goal + reference + scope + acceptance — see `.claude/agents/engineer-default.md` §11). Tight briefs are the real speed lever, not the model.
+3. **Brief tight** (the `engineer-seed` minimum-viable-brief: goal + reference + scope + acceptance — see `.claude/agents/engineer-seed.md` §11). Tight briefs are the real speed lever, not the model.
 4. **Dispatch in one turn** when parallel-clean; one turn per wave when wave-gated (Wave N+1 dispatches only after Wave N FF-merges, per [[branching-and-merging]] §18).
 5. **Architect-side certify** each return on its own clean worktree before commit (per the worktree-sensitivity corollary in [[branching]]).
 6. **Integrate** (FF rebase-then-push); the tech-lead is the sole git owner.
@@ -39,7 +39,7 @@
 - [[self-branching-mode]] (the absolute "never work on `dev`" primitive — the substrate parallelization rides on).
 - [[dispatch-engineer-tuning]] (the per-engine efficiency layer; the dispatch tax this rule reasons about).
 - [[master-tree-parallel-batches]] (the multi-product orchestrator).
-- `.claude/agents/` (the actual specialist roster — architect/security/compliance-reviewer/backend-engineer/frontend-engineer/devops-engineer/engineer-default/skill-scout/orchestrator-operator).
+- `.claude/agents/` (the actual specialist roster — architect/security/compliance-reviewer/backend-engineer/frontend-engineer/devops-engineer/engineer-seed/skill-scout/orchestrator-operator).
 
 ## Anti-patterns
 - **Generalist-by-default** — the tech-lead handling everything inline because "it's just code." Specialist dispatch + the small dispatch tax pay back on wall-clock + quality for any non-trivial work.

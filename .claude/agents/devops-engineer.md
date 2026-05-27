@@ -24,7 +24,7 @@ owns_kb:
 
 # devops-engineer — container ops + platform-infra executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-default` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
 
 ## Mission
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
@@ -61,4 +61,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **CI / environment / infra** → `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/environment.md` · `KB § 05-INFRASTRUCTURE.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-default.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-seed.md`.

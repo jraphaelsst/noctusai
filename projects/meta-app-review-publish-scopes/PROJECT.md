@@ -116,7 +116,7 @@ Until these are approved on our Meta App, the live adapter raises `MetaGraphErro
 
 ## 10. How to use this plan
 
-This is a tracking / operational project, not a dispatch-an-engineer project. The user / architect drives the submission directly. No worktree needed; no `engineer-default` dispatch needed. Phase 3 (activation smoke) WILL benefit from a fresh `noctus-social-wiring` container + a real sandbox IG/FB Page.
+This is a tracking / operational project, not a dispatch-an-engineer project. The user / architect drives the submission directly. No worktree needed; no `engineer-seed` dispatch needed. Phase 3 (activation smoke) WILL benefit from a fresh `noctus-social-wiring` container + a real sandbox IG/FB Page.
 
 ---
 

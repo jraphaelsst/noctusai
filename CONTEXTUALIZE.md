@@ -45,7 +45,7 @@
 
 ## 4 · Specialist agents + procedure skills
 
-- **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-default` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy).
+- **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy).
 - **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `skill-creator` (+ `codify`).
 
 ## 5 · Conditional reads (only if the task is that)
@@ -53,7 +53,7 @@
 | Task | First stop |
 |---|---|
 | Create / scaffold / absorb a product · deploy/ship · branch/dispatch · self-branch · wiring audit · container debug · cleanup | matching `noc-*` skill (auto-triggers) |
-| Dispatched as engineer | `.claude/agents/engineer-default.md` (standing protocol) |
+| Dispatched as engineer | `.claude/agents/engineer-seed.md` (standing protocol) |
 | Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/architect/project-execution.md` |
 | Trigger phrases the user might say | `CLAUDE.md` §3 routing table |
 

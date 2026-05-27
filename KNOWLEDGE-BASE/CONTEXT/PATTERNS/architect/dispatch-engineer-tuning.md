@@ -18,10 +18,10 @@ Live engineer (`ae6ef9672df957715`, 2026-05-25) booted at **~65k tokens** before
 | `MEMORY.md` (auto, ~77 KB) | ~19k | mostly ❌ |
 | **deferred-tool list (~400 names)** | ~8–12k | ❌ — only `mcp__noctusai__*` ever called |
 | skill listing (12 skills) | ~1.5k | ❌ |
-| `engineer-default.md` | 3k | ✅ |
+| `engineer-seed.md` | 3k | ✅ |
 | MCP-server instructions + brief | ~2k | ✅ |
 
-The **deferred-tool list** looked like the cheapest waste to kill — every engineer is handed the names of `mcp__docker__*`, `mcp__cloudflare__*`, `mcp__n8n__*`, `mcp__waha__*`, `mcp__supabase__*`, all `claude_ai_*` connectors (**104 names!**), Chrome, Stripe, Figma, Gmail… ~300 tools it never invokes. **⚠️ MEASURED CORRECTION (2026-05-25, §3): a per-agent `tools:` allowlist does NOT remove these.** The deferred-name list is **session/connector-global** — a function of the *connected* MCP servers (`.mcp.json`) + the user's claude.ai account connectors — independent of any agent's `tools:`. A scoped engineer's first delta still carried 295 names (docker 19 · cloudflare 26 · claude_ai_* 104 · waha/n8n/supabase 38 · noctusai 126). So cutting this bloat is a **session/account lever** (disable unused connectors — see L7), NOT a per-agent one. `engineer-default.md` having shipped without a `tools:` allowlist was still worth fixing — for **least-privilege/safety**, not tokens.
+The **deferred-tool list** looked like the cheapest waste to kill — every engineer is handed the names of `mcp__docker__*`, `mcp__cloudflare__*`, `mcp__n8n__*`, `mcp__waha__*`, `mcp__supabase__*`, all `claude_ai_*` connectors (**104 names!**), Chrome, Stripe, Figma, Gmail… ~300 tools it never invokes. **⚠️ MEASURED CORRECTION (2026-05-25, §3): a per-agent `tools:` allowlist does NOT remove these.** The deferred-name list is **session/connector-global** — a function of the *connected* MCP servers (`.mcp.json`) + the user's claude.ai account connectors — independent of any agent's `tools:`. A scoped engineer's first delta still carried 295 names (docker 19 · cloudflare 26 · claude_ai_* 104 · waha/n8n/supabase 38 · noctusai 126). So cutting this bloat is a **session/account lever** (disable unused connectors — see L7), NOT a per-agent one. `engineer-seed.md` having shipped without a `tools:` allowlist was still worth fixing — for **least-privilege/safety**, not tokens.
 
 ---
 
@@ -29,11 +29,11 @@ The **deferred-tool list** looked like the cheapest waste to kill — every engi
 
 | # | Lever | Mechanism | Win | Status |
 |---|---|---|---|---|
-| **L1** | **Scope `tools:`** on `engineer-default.md` | allowlist `Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*` **gates INVOCATION** to file/search/shell + the noctusai toolkit (`mcp__<server>__*` wildcard works). **⚠️ Measured (§3): does NOT remove the deferred-tool *names* from injected context** — 295 names persist regardless | **least-privilege/safety, ~0 token saving** (NOT ~12k as first asserted): engineer can't invoke WhatsApp / delete CF DNS / run docker / **dispatch** (no `Agent` tool ⇒ "engineers execute, never dispatch") | ✅ shipped (for safety) |
+| **L1** | **Scope `tools:`** on `engineer-seed.md` | allowlist `Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*` **gates INVOCATION** to file/search/shell + the noctusai toolkit (`mcp__<server>__*` wildcard works). **⚠️ Measured (§3): does NOT remove the deferred-tool *names* from injected context** — 295 names persist regardless | **least-privilege/safety, ~0 token saving** (NOT ~12k as first asserted): engineer can't invoke WhatsApp / delete CF DNS / run docker / **dispatch** (no `Agent` tool ⇒ "engineers execute, never dispatch") | ✅ shipped (for safety) |
 | **L2** | **`model: sonnet`** default + Opus-on-demand | frontmatter sets the subagent default; the Agent/Task `model: opus` param overrides per-dispatch | biggest **wall-clock** lever — mechanical, fully-specified briefs don't need Opus latency; architect (Opus) plans, engineer (Sonnet) executes | ✅ shipped (reversible — see §4) |
 | **L3** | **Worktree env pre-wire** | `noctus.dev.task_branch action=start wire_env=True` symlinks PRIMARY `node_modules` + re-points `@noctusai/{lib,seed}` at the worktree (§5a recipe) | engineer can `vite build`/`vitest` in its own worktree instead of the slow hand-wire dance (was *the* biggest time-sink building ResourceManager) | ✅ shipped |
-| **L4** | **Scoped verification** | brief Acceptance names the narrowest check (one test file / one product build / one grep); the full compliance gate is the **architect's** single integration-time run on a clean tree | saves 5-6 min × every engineer in a wave | ✅ codified in `engineer-default.md §6a` |
-| **L5** | **Tight, concrete briefs** | exact `Files-to-modify` + a grep/test Acceptance line removes the engineer's exploration phase | the real speed win — exploration, not model speed, dominates a loose dispatch | ✅ standing (`engineer-default.md §11`) |
+| **L4** | **Scoped verification** | brief Acceptance names the narrowest check (one test file / one product build / one grep); the full compliance gate is the **architect's** single integration-time run on a clean tree | saves 5-6 min × every engineer in a wave | ✅ codified in `engineer-seed.md §6a` |
+| **L5** | **Tight, concrete briefs** | exact `Files-to-modify` + a grep/test Acceptance line removes the engineer's exploration phase | the real speed win — exploration, not model speed, dominates a loose dispatch | ✅ standing (`engineer-seed.md §11`) |
 | **L6** | **Stale-worktree hygiene** | `noctus.dev.mole` / `noctus.dev.cleanup_stale_worktrees` (dry-run default; never touches locked/active/uncommitted) | 28 stale worktrees = 2.6 GB clutter slowing creation + disk; sweep between waves | 🔁 run between waves |
 | **L7** | **Disable unused claude.ai connectors** (the REAL deferred-bloat cut) | the ~10k deferred-name bloat is dominated by **104 `claude_ai_*` connector names** (Ahrefs/Canva/Daloopa/DevRev/Docusign/Figma/Gamma/Harvey/Moody's/Postman/S&P/Udemy/Windsor/Cloudinary/Atlassian/Clarify…) — none used in noc dev. These come from the **user's claude.ai account connector settings**, not the repo → turning off the unused ones at the account/workspace level drops them from *every* session's deferred list (main + all subagents) | ~the only lever that actually shrinks the deferred bloat (L1 can't — it's session/connector-global) | ⏳ **user action** (account-level, surfaced) |
 
@@ -57,9 +57,9 @@ Greppable one-liners (extract only the number, never dump the JSONL): `grep -m1 
 ## 4 · The one reversible decision: engineer model
 
 `model: sonnet` is a **reversible default**, surfaced loudly because the platform values quality (*"quality is the constraint"*). The safety design:
-- **Default Sonnet** for the mechanical, fully-specified majority (the engineer-default contract: execute, never plan).
+- **Default Sonnet** for the mechanical, fully-specified majority (the engineer-seed contract: execute, never plan).
 - **Architect escalates** a genuinely ambiguous / architectural / judgment-heavy slice to Opus at dispatch (`model: opus` on the Agent call). This is a brief-scoping decision the architect owns — hard work must not ride Sonnet *silently*.
-- **Flip the floor** by changing one frontmatter line (`model:` in `engineer-default.md`) — e.g. back to `opus`, or `inherit` to track the parent.
+- **Flip the floor** by changing one frontmatter line (`model:` in `engineer-seed.md`) — e.g. back to `opus`, or `inherit` to track the parent.
 
 If engineer output quality drops on mechanical work, that's a **brief-tightness** signal (L5) before it's a model signal — under-specified briefs fail on any model.
 

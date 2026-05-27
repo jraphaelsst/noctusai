@@ -91,7 +91,7 @@ For each UI surface (page/widget/stat/table):
 
 **What surfaced + was codified (three-way synced this session):**
 - **Self-branch verification-env recipe** — fresh worktrees lack node_modules/.venv; the symlink + `@noctusai` repoint + venv-PYTHONPATH recipe → `KB § PATTERNS/self-branching-mode.md § 5a` + `feedback_self_branch_verification_env`. (Biggest time-sink.)
-- **Engineer worktree-slip** — one engineer drifted onto the primary checkout; hardened `engineer-default.md §1` (confirm `pwd` + never-touch-primary + FF-rebase-clean-behind-don't-blanket-STOP). VALIDATED: the next 2 engineers stayed in-worktree.
+- **Engineer worktree-slip** — one engineer drifted onto the primary checkout; hardened `engineer-seed.md §1` (confirm `pwd` + never-touch-primary + FF-rebase-clean-behind-don't-blanket-STOP). VALIDATED: the next 2 engineers stayed in-worktree.
 - **`ResourceManager` discoverability** → `KB § 04-SHARED-LIBRARY.md components/` (so the next product consumes, not re-hand-rolls).
 - **Lib vitest render-harness dual-React gap** → `reference_lib_frontend_vitest_render_harness_gap` (not CI-gated; gate = tsc).
 

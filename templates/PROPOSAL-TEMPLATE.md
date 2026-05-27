@@ -19,7 +19,7 @@
 >
 > - **`phase`** (default, legacy) — end-of-phase bundled-improvement proposal. §1-6 used as-is.
 > - **`surface`** — in-flight surface from engineer to tech-lead proposing an alternative route. The engineer BLOCKS execution until the tech-lead responds (`set_proposal_status` accepted/rejected/adapted). §3.5 Alternatives + §3.4 Risks are the load-bearing sections; §3.1 Linkage explains why the alt fits the situation; §3.2 Application instructions describe what would change if accepted.
-> - **`delivery`** — post-execution return-from-engineer note. What landed + codification events emitted (`s1/s2/s3/s4`) + drift-found + scoped-improvement (the engineer-default two-leg footer's durable form). §2 Situation = "as-shipped state"; §4 Effects = "what changed"; §5 Acceptance = which dispatch-acceptance items hit / missed.
+> - **`delivery`** — post-execution return-from-engineer note. What landed + codification events emitted (`s1/s2/s3/s4`) + drift-found + scoped-improvement (the engineer-seed two-leg footer's durable form). §2 Situation = "as-shipped state"; §4 Effects = "what changed"; §5 Acceptance = which dispatch-acceptance items hit / missed.
 >
 > See `KB § PATTERNS/common/dispatch-with-project-and-notes.md` for the dispatch protocol, `KB § PATTERNS/architect/proposals-and-improvements.md` for the legacy phase-proposal protocol.
 
@@ -32,7 +32,7 @@
 **Affected products:** {{product1, product2, …}}
 **Status:** pending  <!-- surface notes: tech-lead flips to accepted/rejected/adapted; delivery notes: stay 'pending' until tech-lead absorbs lessons + closes -->
 
-<!-- For kind=delivery: also include this footer block (mirrors engineer-default §7) -->
+<!-- For kind=delivery: also include this footer block (mirrors engineer-seed §7) -->
 <!--
 **Codification events emitted (this slice):**
 - s1-emergent: {{target + 1-line description, or "none"}}

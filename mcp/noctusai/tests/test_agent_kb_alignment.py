@@ -36,16 +36,16 @@ class TestAgentKbAlignment:
         _write_agent(
             tmp_path, "backend-engineer",
             "name: backend-engineer\ndescription: executor.\ntools: Read, Edit",
-            "Apply the engineer-default protocol.",
+            "Apply the engineer-seed protocol.",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
         assert any("missing `owns_kb:`" in i["issue"] for i in issues)
 
     def test_empty_owns_kb_meta_agent_passes(self, tmp_path):
-        # engineer-default is a meta-agent; `owns_kb: []` is the correct shape.
+        # engineer-seed is a meta-agent; `owns_kb: []` is the correct shape.
         _write_agent(
-            tmp_path, "engineer-default",
-            "name: engineer-default\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
+            tmp_path, "engineer-seed",
+            "name: engineer-seed\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
             "# protocol body",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
@@ -87,7 +87,7 @@ class TestAgentKbAlignment:
         _write_agent(
             tmp_path, "backend-engineer",
             "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/backend/backend.md",
-            "Apply the engineer-default protocol. → KB § PATTERNS/backend/backend.md",
+            "Apply the engineer-seed protocol. → KB § PATTERNS/backend/backend.md",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
         # No "missing body pointer" issue — the body explicitly mentions the path.
@@ -101,12 +101,12 @@ class TestAgentKbAlignment:
         _write_agent(
             tmp_path, "backend-engineer",
             "name: backend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/shared.md",
-            "Apply engineer-default. KB § PATTERNS/shared.md",
+            "Apply engineer-seed. KB § PATTERNS/shared.md",
         )
         _write_agent(
             tmp_path, "frontend-engineer",
             "name: frontend-engineer\ndescription: executor.\ntools: Read, Edit\nowns_kb:\n  - CONTEXT/PATTERNS/shared.md",
-            "Apply engineer-default. KB § PATTERNS/shared.md",
+            "Apply engineer-seed. KB § PATTERNS/shared.md",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
         assert any("claimed by ≥2 agents" in i["issue"] for i in issues)
@@ -116,8 +116,8 @@ class TestAgentKbAlignment:
         # unowned-allowlist trips the keeper.
         _write_kb(tmp_path, "CONTEXT/PATTERNS/orphan-pattern.md")
         _write_agent(
-            tmp_path, "engineer-default",
-            "name: engineer-default\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
+            tmp_path, "engineer-seed",
+            "name: engineer-seed\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
             "# protocol body",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)
@@ -127,8 +127,8 @@ class TestAgentKbAlignment:
         # 01-PHILOSOPHY is in `_AGENT_KB_UNOWNED_ALLOWLIST` — universal commons.
         _write_kb(tmp_path, "CONTEXT/01-PHILOSOPHY.md")
         _write_agent(
-            tmp_path, "engineer-default",
-            "name: engineer-default\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
+            tmp_path, "engineer-seed",
+            "name: engineer-seed\ndescription: protocol.\ntools: Read, Edit\nowns_kb: []",
             "# protocol body",
         )
         issues = check_agent_kb_alignment(repo_root=tmp_path)

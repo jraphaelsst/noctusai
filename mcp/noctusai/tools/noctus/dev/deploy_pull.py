@@ -35,6 +35,7 @@ zero real SSH, and asserts the destructive-command allowlist holds.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 import shlex
 import subprocess
@@ -163,6 +164,9 @@ def deploy_pull(
     repo_dir: str = "/opt/noctus/noctusai",
     confirm: bool = False,
     backup_dir: str = "/opt/noctus/backups",
+    mirror_caches: bool = True,
+    mirror_dsn: str | None = None,
+    mirror_runner: Callable[..., dict[str, Any]] | None = None,
     run_remote: Callable[[list[str]], tuple[int, str, str]] | None = None,
     now: Callable[[], _dt.datetime] | None = None,
 ) -> dict[str, Any]:
@@ -261,13 +265,59 @@ def deploy_pull(
     preserved = set(deploy_local).issubset(set(_parse_status_paths(status2)))
     verified = new_sha == target_sha
 
+    # ── MIRROR (local SQLite caches → prod pgvector) ──
+    # Runs LOCALLY (deploy_pull executes on the architect's machine; the mirror
+    # reads local .claude/cache/*.sqlite + writes via the SSH tunnel the
+    # architect opened to 127.0.0.1:5432). Surfaces but never silently swallows:
+    # if mirror_caches=True and no DSN is reachable, surface mirror_skipped with
+    # the named cause; if mirror errors, surface and flip the overall status
+    # to `partial` (code IS deployed, cache is stale).
+    mirror_result: dict[str, Any] = {"status": "skipped", "reason": "mirror_caches=False"}
+    if mirror_caches:
+        dsn = mirror_dsn or os.environ.get("NOCTUS_CACHE_POSTGRES_DSN")
+        if not dsn:
+            mirror_result = {
+                "status": "skipped",
+                "reason": (
+                    "no DSN — set NOCTUS_CACHE_POSTGRES_DSN env var or pass "
+                    "mirror_dsn= explicitly (e.g. via SSH tunnel: "
+                    "ssh -L 5432:127.0.0.1:5432 -fN noctus-vps then "
+                    "postgresql://noctus_cache:<pw>@127.0.0.1:5432/noctus_cache)"
+                ),
+            }
+        else:
+            try:
+                if mirror_runner is None:
+                    from cache_deploy_mirror import mirror_all  # type: ignore[import]
+                    runner_fn: Callable[..., dict[str, Any]] = mirror_all
+                else:
+                    runner_fn = mirror_runner
+                mirror_result = runner_fn(confirm=True, dsn=dsn)
+            except Exception as exc:  # noqa: BLE001
+                mirror_result = {
+                    "status": "error",
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+    mirror_failed = (
+        mirror_caches
+        and mirror_result.get("status") != "skipped"
+        and not mirror_result.get("ok", False)
+    )
+
+    status_value = "deployed" if verified else "error"
+    if verified and mirror_failed:
+        status_value = "partial"
+
     return {
-        **base, "status": "deployed" if verified else "error",
-        "exit_code": 0 if verified else 1,
+        **base, "status": status_value,
+        "exit_code": 0 if (verified and not mirror_failed) else 1,
         "new_sha": new_sha, "verified_head": verified,
         "deploy_local_preserved": preserved,
         "backup_ref": backup_ref, "backup_tar": backup_tar,
         "rebuild_required": rebuild["needed"], "rebuild_products": rebuild["products"],
+        "mirror": mirror_result,
         "message": (
             "deployed via clean fast-forward; "
             + (
@@ -276,6 +326,12 @@ def deploy_pull(
                 + " — run noctus.dev.deploy_image <product> (C2 atomic redeploy)"
                 if rebuild["needed"]
                 else "no rebuild needed (docs/non-runtime only)."
+            )
+            + (
+                f" CACHE MIRROR FAILED — code IS deployed, cache is stale: "
+                f"{mirror_result.get('error') or mirror_result.get('failures') or 'see mirror.*'}."
+                if mirror_failed
+                else ""
             )
         ),
     }
@@ -286,17 +342,19 @@ def register(server) -> None:
         name="noctus.dev.deploy_pull",
         description=(
             "Run the §2a safe-pull drill on a deploy target over SSH "
-            "(inspect → decide → backup → ff-only → verify), codifying "
-            "KB § GUIDES/production-deploy.md § 2a. DRY-RUN by default (returns "
-            "the plan: incoming commits/files, fast-forward-ability, deploy-local "
-            "overlap, and the DERIVED rebuild decision) — pass confirm=True to "
-            "actually fast-forward (a production action; the 412-style write "
-            "gate). REFUSES on a non-fast-forward or when incoming files overlap "
-            "deploy-local edits. BY CONSTRUCTION it only runs a safe git "
-            "allowlist + a tar backup — it can never emit reset/checkout/clean/"
-            "push. Backs up (git tag + tar to <backup_dir> OUTSIDE the repo) "
-            "before any HEAD move. status: up_to_date | planned | blocked | "
-            "deployed | error."
+            "(inspect → decide → backup → ff-only → verify → cache-mirror), "
+            "codifying KB § GUIDES/production-deploy.md § 2a + the cache_deploy_mirror "
+            "step. DRY-RUN by default (returns the plan: incoming commits/files, "
+            "fast-forward-ability, deploy-local overlap, and the DERIVED rebuild "
+            "decision) — pass confirm=True to actually fast-forward (a production "
+            "action; the 412-style write gate). REFUSES on a non-fast-forward or "
+            "when incoming files overlap deploy-local edits. BY CONSTRUCTION it "
+            "only runs a safe git allowlist + a tar backup — it can never emit "
+            "reset/checkout/clean/push. Backs up (git tag + tar to <backup_dir> "
+            "OUTSIDE the repo) before any HEAD move. After a successful FF, "
+            "mirrors local SQLite caches → prod pgvector (unless mirror_caches=False "
+            "or no DSN reachable). status: up_to_date | planned | blocked | "
+            "deployed | partial (code deployed, cache mirror failed) | error."
         ),
     )
     def _deploy_pull(
@@ -304,8 +362,17 @@ def register(server) -> None:
         ssh_host: str = "noctus-vps",
         repo_dir: str = "/opt/noctus/noctusai",
         confirm: bool = False,
+        mirror_caches: bool = True,
+        mirror_dsn: str | None = None,
     ) -> dict:
-        return deploy_pull(target=target, ssh_host=ssh_host, repo_dir=repo_dir, confirm=confirm)
+        return deploy_pull(
+            target=target,
+            ssh_host=ssh_host,
+            repo_dir=repo_dir,
+            confirm=confirm,
+            mirror_caches=mirror_caches,
+            mirror_dsn=mirror_dsn,
+        )
 
 
 __all__ = ["deploy_pull", "_rebuild_decision", "_ALLOWED_GIT", "_BANNED_TOKENS", "register"]

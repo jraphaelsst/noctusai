@@ -16,7 +16,7 @@ credentials — no PyGithub, no token handling here).
 
 The methodology rule **commit + push only your own work** + the
 engineers-stage-architect-commits split (CLAUDE.md §1, `.claude/agents/
-engineer-default.md §2`) deliberately keeps raw `git commit` / `git
+engineer-seed.md §2`) deliberately keeps raw `git commit` / `git
 push` in the human-audited git workflow. Exposing them as MCP tools
 would let any agent turn round-trips into commits, defeating authorship
 discipline. This connector is the **GitHub side** of the methodology —

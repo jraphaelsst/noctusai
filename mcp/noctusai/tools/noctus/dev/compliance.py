@@ -8119,7 +8119,7 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
 # .claude/skills + .claude/agents are always-on surfaces; these keepers gate
 # authoring discipline so new skills/agents conform by construction.
 _HARNESS_ADVISOR_AGENTS = frozenset({"architect", "security", "compliance-reviewer"})
-_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-default"})
+_HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "devops-engineer", "engineer-seed"})
 # Other agents (orchestrator-operator, skill-scout) have specialized contracts and
 # are skipped by check_agent_archetype_contract.
 
@@ -8128,7 +8128,7 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # `owns_kb:` in frontmatter; the keeper enforces existence + body-pointer mirror +
 # exclusive ownership. The unowned-allowlist below names KB paths that are
 # universal commons (no single owner) — every agent inherits via CLAUDE.md §1.
-# Procedure-doc carve-out: orchestrator-operator + engineer-default own no KB
+# Procedure-doc carve-out: orchestrator-operator + engineer-seed own no KB
 # (they ARE protocols); skill-scout is a meta-scout (owns no KB).
 _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/01-PHILOSOPHY.md",
@@ -8192,7 +8192,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-default", "orchestrator-operator", "skill-scout"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"engineer-seed", "orchestrator-operator", "skill-scout"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
@@ -8329,14 +8329,14 @@ def check_agent_format(repo_root: Path | None = None) -> list[dict]:
 
 
 def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
-    """Advisors declare no Edit/Write; executors reference engineer-default.
+    """Advisors declare no Edit/Write; executors reference engineer-seed.
 
     Two archetypes per the harness-agents-skills model:
       - ADVISORS (architect, security, compliance-reviewer) — read-only; their
         `tools:` MUST NOT include `Edit` or `Write` (contract enforced at the
         tool layer, not just discipline).
-      - EXECUTORS (backend-engineer, frontend-engineer, engineer-default) —
-        body should reference the `engineer-default` protocol.
+      - EXECUTORS (backend-engineer, frontend-engineer, engineer-seed) —
+        body should reference the `engineer-seed` protocol.
     Other agents (orchestrator-operator, skill-scout) have specialized
     contracts and are skipped. Update the archetype sets when new agents land.
     """
@@ -8371,13 +8371,13 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
                         "severity": "high",
                     })
         elif stem in _HARNESS_EXECUTOR_AGENTS:
-            if "engineer-default" not in text:
+            if "engineer-seed" not in text:
                 issues.append({
                     "product": "<harness>", "file": rel,
                     "issue": (
-                        f"Executor agent `{stem}` body does not reference `engineer-default` — "
-                        f"executors apply the standing engineer-default protocol; the body should "
-                        f"say so (e.g. \"Apply the engineer-default protocol\")."
+                        f"Executor agent `{stem}` body does not reference `engineer-seed` — "
+                        f"executors apply the standing engineer-seed protocol; the body should "
+                        f"say so (e.g. \"Apply the engineer-seed protocol\")."
                     ),
                     "severity": "warning",
                 })
@@ -8505,7 +8505,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (engineer-default, orchestrator-operator, "
+                    f"meta-agents (engineer-seed, orchestrator-operator, "
                     f"skill-scout) own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",

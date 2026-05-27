@@ -37,4 +37,4 @@ python mcp/noctusai/cli.py --keeper-pattern-lookup "<keeper_name_OR_file_path>"
 - **Skip the lookup "for a tiny edit"** — even a one-line CLAUDE.md change can trip `check_claude_md_router`. The cache lookup costs ~50ms.
 
 ## Composes with
-[[keeper-pattern-cache]] (the underlying infrastructure) · [[claude-md-router-discipline]] (the meta-rule the cache helps satisfy efficiently) · [[methodology-codification-pipeline]] (s4 keepers are the source the cache mirrors) · [[parallelization-first-orchestration]] (a dispatched executor that authors a gated doc should run the lookup first — codify into the engineer-default brief shape over time).
+[[keeper-pattern-cache]] (the underlying infrastructure) · [[claude-md-router-discipline]] (the meta-rule the cache helps satisfy efficiently) · [[methodology-codification-pipeline]] (s4 keepers are the source the cache mirrors) · [[parallelization-first-orchestration]] (a dispatched executor that authors a gated doc should run the lookup first — codify into the engineer-seed brief shape over time).

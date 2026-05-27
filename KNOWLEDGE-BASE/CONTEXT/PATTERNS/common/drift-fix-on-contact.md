@@ -63,7 +63,7 @@ drift-found: <... another, if any ...>
 Commit msg: <2-5 line draft>
 ```
 
-Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-default § 4` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
+Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-seed § 4` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
 
 ## Scoped auto-improvement — the engine behind surface-don't-resolve
 

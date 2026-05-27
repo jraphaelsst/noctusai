@@ -13,7 +13,7 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 1. `noctus.dev.dispatch_preflight project_slug=<slug>` — fork-base + collision + env-pin + project-doc-phantom checks.
 2. **Decompose into file-disjoint slices** — classify collision-class per slice vs the parallel-active file set (`git diff --name-only`): C1 disjoint → parallel-clean · C2 same-file-additive → brief additive-only · C3 substantive-overlap → re-scope to a sibling file OR sequence.
 3. One isolated worktree per engineer off `origin/dev` (`task_branch start` per slice).
-4. **Dispatch in ONE message** (multiple `Agent` calls) so they run concurrently. Each brief ≤~15 lines, references `engineer-default`. Sonnet default; `model: opus` only for judgment-heavy slices.
+4. **Dispatch in ONE message** (multiple `Agent` calls) so they run concurrently. Each brief ≤~15 lines, references `engineer-seed`. Sonnet default; `model: opus` only for judgment-heavy slices.
 5. Collect each engineer's short-form return + a `/tmp` patch overlay-safety copy.
 6. **Detect collisions** — (a) path-overlap AND (b) semantic-duplicate git can't see.
 7. Merge `--no-ff` least-conflict-first; **dedicated honest reconciliation commit** for any reconciliation.

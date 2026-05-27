@@ -28,7 +28,7 @@ Only the **architect's separate Bash context** (which reads true disk, outside t
 
 ## 3. How to apply
 
-**Engineer side** (`.claude/agents/engineer-default.md § 1a`):
+**Engineer side** (`.claude/agents/engineer-seed.md § 1a`):
 - After staging, prove on disk: `git diff --cached --name-only` + `grep -c <marker> <file>` against the **actual file**, not the Edit success message.
 - On divergence: do ¬ loop-fight the overlay. Re-author the change via Bash (`python -c` / libcst for code; heredoc for prose/SQL) and re-verify on disk.
 - Never return "ready" on the strength of an `Edit` "success" alone.
@@ -45,7 +45,7 @@ Only the **architect's separate Bash context** (which reads true disk, outside t
 - **Operationalized by the dev toolkit** — `noctus.dev.salvage_worktree` exists precisely to give the architect a reliable true-disk salvage path for the divergence this rule names.
 - **Instance of *no silent errors*** — "verification ✓" while disk is clean is the canonical unverified-checkmark.
 
-s1 (DOCS-CONSUME-2 + SW-RLS lost-work incidents) → s2 (memory `feedback_harness_overlay_worktree_divergence`) → **s3 (this doc + CLAUDE.md pointer + INDEX.md; engineer-default § 1a is the standing-protocol surface)**. s4 is not a `check_*` keeper (a code detector cannot see overlay-vs-disk divergence — the divergence is exactly what hides itself from in-context tooling); the codification surface is the engineer-default protocol block + architect salvage discipline, not a static-analysis detector.
+s1 (DOCS-CONSUME-2 + SW-RLS lost-work incidents) → s2 (memory `feedback_harness_overlay_worktree_divergence`) → **s3 (this doc + CLAUDE.md pointer + INDEX.md; engineer-seed § 1a is the standing-protocol surface)**. s4 is not a `check_*` keeper (a code detector cannot see overlay-vs-disk divergence — the divergence is exactly what hides itself from in-context tooling); the codification surface is the engineer-seed protocol block + architect salvage discipline, not a static-analysis detector.
 
 ## 5. Anti-patterns
 
@@ -56,6 +56,6 @@ s1 (DOCS-CONSUME-2 + SW-RLS lost-work incidents) → s2 (memory `feedback_harnes
 
 ---
 
-> **Note on R6 codification surface:** the durable home for R6 includes `.claude/agents/engineer-default.md § 1a` (the standing engineer protocol every dispatch reads). This pattern doc is the KB-depth s3 layer; the engineer-default block is the operational enforcement surface. (The connector-MCP project flagged the engineer-default §1a edit as needing explicit user authorization because it is harness-blocked agent self-modification; the rule statement itself ships at memory + CLAUDE.md + this doc independent of that edit's authorization.)
+> **Note on R6 codification surface:** the durable home for R6 includes `.claude/agents/engineer-seed.md § 1a` (the standing engineer protocol every dispatch reads). This pattern doc is the KB-depth s3 layer; the engineer-seed block is the operational enforcement surface. (The connector-MCP project flagged the engineer-seed §1a edit as needing explicit user authorization because it is harness-blocked agent self-modification; the rule statement itself ships at memory + CLAUDE.md + this doc independent of that edit's authorization.)
 
-**Memory:** `feedback_harness_overlay_worktree_divergence`. **CLAUDE.md:** §1 (codebase-source-of-truth bullet; *Anti-divergence on-disk verification*). **Companion:** `.claude/agents/engineer-default.md § 1a`, `KB § PATTERNS/architect/branching-and-merging.md § 16.7`, `noctus.dev.salvage_worktree`.
+**Memory:** `feedback_harness_overlay_worktree_divergence`. **CLAUDE.md:** §1 (codebase-source-of-truth bullet; *Anti-divergence on-disk verification*). **Companion:** `.claude/agents/engineer-seed.md § 1a`, `KB § PATTERNS/architect/branching-and-merging.md § 16.7`, `noctus.dev.salvage_worktree`.

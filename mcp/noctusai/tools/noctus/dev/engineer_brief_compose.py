@@ -14,13 +14,13 @@ or a cache is empty the tool gracefully degrades: `kb_references` and
 
 Output shape:
   {
-    brief: str,                      # rendered brief in engineer-default §11 shape
+    brief: str,                      # rendered brief in engineer-seed §11 shape
     suggested_agent: str,            # agent slug (picked or passed)
     auto_improvement_context: list,  # [{ts, kind, target, description, status}]
     kb_references: list,             # [{path, chunk_text, score}]
   }
 
-Render shape (engineer-default §11):
+Render shape (engineer-seed §11):
   ## Engineer Brief — <description[:60]>
   ### Goal
   <description>
@@ -35,7 +35,7 @@ Render shape (engineer-default §11):
   ---
   Two-leg footer:
     Leg 1: write a /tmp/*.patch file early so your work survives harness kill.
-    Leg 2: stage-only (no commit) — return short-form per engineer-default §3+§7.
+    Leg 2: stage-only (no commit) — return short-form per engineer-seed §3+§7.
 
 KB § PATTERNS/dispatch-engineer-tuning.md.
 """
@@ -253,7 +253,7 @@ def _render_brief(
     kb_references: list[dict],
     auto_improvement_context: list[dict],
 ) -> str:
-    """Render the brief in engineer-default §11 shape."""
+    """Render the brief in engineer-seed §11 shape."""
     title_slug = description[:60].rstrip()
     lines: list[str] = [
         f"## Engineer Brief — {title_slug}",
@@ -302,7 +302,7 @@ def _render_brief(
         "and the patch survives.",
         "",
         "**Leg 2 (return shape):** Stage-only, no commit. Return short-form per "
-        "engineer-default §3+§7: staged files, test command, pass/fail, findings.md entry "
+        "engineer-seed §3+§7: staged files, test command, pass/fail, findings.md entry "
         "(if any). The architect integrates.",
     ]
     return "\n".join(lines)
@@ -321,7 +321,7 @@ def compose_brief(
       2. Query auto-improvement.ndjson cache for related open surfaces.
       3. Query kb-embeddings cache for top-3 related KB chunks.
       4. If `agent` is None, cosine-pick best agent from agent-context cache.
-      5. Render the brief in engineer-default §11 shape.
+      5. Render the brief in engineer-seed §11 shape.
 
     Graceful-degrade: if the embedding provider is unreachable or any cache
     is missing, returns the brief with `kb_references=[]` and/or

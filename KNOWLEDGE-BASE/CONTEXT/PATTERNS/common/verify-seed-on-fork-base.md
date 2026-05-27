@@ -27,7 +27,7 @@ The engineer-side check (Phase 0, `feedback_verify_seed_ships_it`) caught it —
 
 - The dispatch-time check is `git ls-tree origin/main -- <seed path>`, never the working tree, never `ls`, never a `Read` of the working copy.
 - If the symbol is absent on `origin/main` but present on the feature branch: the brief is **not dispatchable as written**. Either (a) phase-push the prerequisite to `origin/main` first (see § 4), or (b) carry an explicit worktree-base reset directive in the brief preamble (`KB § PATTERNS/architect/branching-and-merging.md § 16.7`) so the engineer rebases onto the branch tip.
-- This binds into the engineer-default worktree-base preamble: every dispatch brief that wraps a seed symbol pairs the §16.7 worktree-base verification with the `git ls-tree origin/main` precondition.
+- This binds into the engineer-seed worktree-base preamble: every dispatch brief that wraps a seed symbol pairs the §16.7 worktree-base verification with the `git ls-tree origin/main` precondition.
 
 **The conflation R2 closes:** "the seed ships X" is two independent facts — *does X exist in some tree the architect can see* (working tree) ∧ *does X exist in the tree the engineer will fork* (`origin/main`). The dispatch-time check must assert the second. The first is necessary but not sufficient.
 

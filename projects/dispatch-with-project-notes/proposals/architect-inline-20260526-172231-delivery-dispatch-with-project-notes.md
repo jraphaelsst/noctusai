@@ -29,7 +29,7 @@ The methodology now carries a structural execution pattern, codified across 7 su
 - **`KB § PATTERNS/common/dispatch-with-project-and-notes.md`** — NEW canonical reference (~80 lines: why exists, the shape, the protocol §1-5, composes-with, tooling, recurrence trigger, anti-patterns).
 - **`KB § INDEX.md`** — tree entry (alphabetical, after `dispatch-warmup.md`) + catalog row (after methodology-codification-pipeline).
 - **`CLAUDE.md` §1** — new rule one-liner after `Scoped auto-improvement`.
-- **`.claude/agents/engineer-default.md`** — new §1b (Read PROJECT.md first) · new §1c (Surface notes — STOP + file + BLOCK) · §3 short-form return extended with `codification-events:` + `delivery-note:` lines.
+- **`.claude/agents/engineer-seed.md`** — new §1b (Read PROJECT.md first) · new §1c (Surface notes — STOP + file + BLOCK) · §3 short-form return extended with `codification-events:` + `delivery-note:` lines.
 - **`.claude/agents/backend-engineer.md` · `frontend-engineer.md` · `devops-engineer.md`** — composes-with pointers added to `dispatch-with-project-and-notes.md`.
 
 Sibling work:
@@ -56,7 +56,7 @@ The user's surface (`agents skip steps + get lost`) is a downstream consequence 
 4. Authored `KB § PATTERNS/common/dispatch-with-project-and-notes.md` from scratch (~140 lines, structured: rationale → shape → protocol → composes-with → tooling → recurrence → anti-patterns).
 5. Added INDEX.md tree entry + catalog row.
 6. Added CLAUDE.md §1 one-liner.
-7. Updated `engineer-default.md` (§1b + §1c new sections; §3 footer extended).
+7. Updated `engineer-seed.md` (§1b + §1c new sections; §3 footer extended).
 8. Updated `backend-engineer / frontend-engineer / devops-engineer.md` composes-with pointers.
 9. Created `projects/dispatch-with-project-notes/PROJECT.md` dogfooding the new §4a.
 10. Filed this delivery note (you're reading it).
@@ -90,7 +90,7 @@ Low risk — additive. `kind` defaults to `"phase"` (back-compat); existing phas
 - [x] `adapted` + `project=` on `noctus.dev.set_proposal_status`
 - [x] KB doc authored + INDEX.md updated
 - [x] CLAUDE.md §1 rule added
-- [x] engineer-default §1b + §1c + §3 updated
+- [x] engineer-seed §1b + §1c + §3 updated
 - [x] 3 engineer-agent composes-with updated
 - [x] Dogfood PROJECT.md created
 - [x] This delivery note filed
@@ -107,7 +107,7 @@ Low risk — additive. `kind` defaults to `"phase"` (back-compat); existing phas
 - `mcp/noctusai/tools/noctus/dev/proposals.py` — `kind` param + new statuses
 - `KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md` — canonical reference
 - `CLAUDE.md` §1 — one-liner
-- `.claude/agents/engineer-default.md` — §1b + §1c + §3
+- `.claude/agents/engineer-seed.md` — §1b + §1c + §3
 - `projects/dispatch-with-project-notes/PROJECT.md` — the dogfood
 
 ---
@@ -115,7 +115,7 @@ Low risk — additive. `kind` defaults to `"phase"` (back-compat); existing phas
 **Codification events emitted (this slice):**
 - s1-emergent: dispatch-with-project-and-notes pattern (recurrence trigger — user surface + s4-without-s3 smoke)
 - s2-memory: none (skipped — straight to s3 same commit, intentional for the codification-pass; if recurrence shows this skip is itself a slip, add MEMORY.md entry retroactively)
-- s3-codified: `KB § PATTERNS/common/dispatch-with-project-and-notes.md` + CLAUDE.md §1 + INDEX.md catalog row + templates carry the rule + engineer-default discipline mirror — all in this commit
+- s3-codified: `KB § PATTERNS/common/dispatch-with-project-and-notes.md` + CLAUDE.md §1 + INDEX.md catalog row + templates carry the rule + engineer-seed discipline mirror — all in this commit
 - s4-keeper: deferred (N=1 today; promote to s4 keeper `check_project_has_dispatch_routing` when recurrence proves the pattern earns it)
 
 **drift-found:** (none observed — pgvector pip + 4× s3 backfill were drift-fix-on-contact done in same session as the methodology slice; both already absorbed)

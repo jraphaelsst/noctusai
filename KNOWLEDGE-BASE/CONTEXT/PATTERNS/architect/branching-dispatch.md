@@ -34,7 +34,7 @@ This is the **operations runbook** (the actionable sequence). The deep reference
 ## Roles ([noc] = [[branching-and-merging]] § Roles)
 
 - **Architect** = the main session. Decomposes, dispatches, **collects signals, detects collisions, reconciles, verifies**, lands on the integration branch, cleans up, gates `main`. Does NOT do the subtask work.
-- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-default.md`). **Engineers only stage + commit on their own worker branch — they never merge, switch branches, or push to `dev`/`main`/`prod`.** All integration (merge, reconcile, push) is the architect's job.
+- **Engineers** = dispatched subagents, one per file-disjoint slice, isolated worktree, focused brief (inherit [noc] `.claude/agents/engineer-seed.md`). **Engineers only stage + commit on their own worker branch — they never merge, switch branches, or push to `dev`/`main`/`prod`.** All integration (merge, reconcile, push) is the architect's job.
 
 ---
 

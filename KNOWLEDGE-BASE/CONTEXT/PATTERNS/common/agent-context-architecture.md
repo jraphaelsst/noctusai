@@ -25,7 +25,7 @@ L2  KB § <domain>/...                            ← loaded ON-DEMAND via Read
     depth bodies                                  (or Phase B cache lookup)
        │
 L3  per-dispatch brief                           ← architect inlines per call
-    tight files + acceptance                      (already codified — engineer-default §11)
+    tight files + acceptance                      (already codified — engineer-seed §11)
 ```
 
 The cache boundary (L0 + L1 = stable / cacheable; L2 + L3 = variable) maps directly to Claude Code's globally-cacheable system prompt vs per-turn content split — staying lean on L1 keeps the cache hot.
@@ -56,7 +56,7 @@ Rules:
 - **Exclusive ownership** — each KB path appears in **exactly one** agent's owns_kb (with one carve-out below). Shared/multi-domain content stays in `CONTEXT/PATTERNS/` un-owned (universal — every agent is expected to know it).
 - **Shared-multi-domain carve-out** — a KB doc genuinely needed by ≥2 specialists declares `agent_owners: [...]` in its own frontmatter (Phase B; until then, paths claimed by ≥2 agents fail the keeper with a "needs shared-multi-domain declaration" message).
 - **Body-pointer mirror** — every owns_kb path appears at least once in the body as a `KB § <path>` pointer (keeper-enforced; otherwise the declaration is dead).
-- **`engineer-default.md` exempt** — it's the protocol meta-doc, not a specialist; owns no KB.
+- **`engineer-seed.md` exempt** — it's the protocol meta-doc, not a specialist; owns no KB.
 
 ## Keeper enforcement (3 legs, mirroring the keeper-pattern-cache contract)
 

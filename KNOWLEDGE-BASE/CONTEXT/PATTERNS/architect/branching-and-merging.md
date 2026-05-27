@@ -1476,9 +1476,9 @@ The dispatched dependency team is itself a normal engineer dispatch (briefed, sc
 
 **The orthogonal rule.** §18.2's "split rather than combine" assumes the work is **large enough to amortize a subagent's contextualization tax**. Below a threshold, the tax dominates the work — and that threshold has now been measured.
 
-**Measured engineer-default contextualization cost (per spawn):**
+**Measured engineer-seed contextualization cost (per spawn):**
 - `CLAUDE.md` auto-load (the router file): ~30k tokens
-- `.claude/agents/engineer-default.md` (the protocol doc engineers inherit): ~5–10k tokens
+- `.claude/agents/engineer-seed.md` (the protocol doc engineers inherit): ~5–10k tokens
 - The brief text the architect writes: ~1–2k tokens
 - Task-specific reads (PROJECT.md + the source files the engineer must touch): ~5–15k tokens
 
@@ -1489,7 +1489,7 @@ The dispatched dependency team is itself a normal engineer dispatch (briefed, sc
 | Task shape | Where it lands |
 |---|---|
 | <100 LoC ∧ <3 files ∧ single-phase reasoning | **Inline** — architect does it directly with `Edit`/`Read`/`Bash`, no `Agent` dispatch. |
-| ≥100 LoC ∨ ≥3 files ∨ multi-phase (design + apply + test) | **Dispatch** — engineer-default subagent, §18.2 bet holds. |
+| ≥100 LoC ∨ ≥3 files ∨ multi-phase (design + apply + test) | **Dispatch** — engineer-seed subagent, §18.2 bet holds. |
 | 2+ small file-disjoint tasks (each under the cutoff) | **Compound brief** — ONE engineer, multiple deliverables in the same brief ("Engineer X — three small fixes: A in file_1, B in file_2, C in file_3"). One contextualization, N deliverables. |
 
 **How to estimate at dispatch time.** *Open the files the change would touch before deciding* (per [[KB § 01-PHILOSOPHY § Estimate off evidence]] — same rule that governs A/B/C session-size estimation; the only new piece is applying it at *dispatch sizing*).

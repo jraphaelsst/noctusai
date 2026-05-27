@@ -24,7 +24,7 @@ The win: a tech-lead writes ONE structured PROJECT.md (with §4a Dispatch routin
 ## 2. Confirmed constraints
 
 - **Reuse existing infra, don't invent parallel** — *(user: "adapt proposals, keep project structure. We reutilize something we already have to harden the methodology.")* — drove the decision to add `kind` to `noctus.dev.file_proposal` rather than build a notes/ subdir.
-- **Block-on-surface (not proceed-then-review)** — *(user via AskUserQuestion: "pause and wait tech lead's answer")* — drove `engineer-default §1c` mandate to STOP + file + WAIT.
+- **Block-on-surface (not proceed-then-review)** — *(user via AskUserQuestion: "pause and wait tech lead's answer")* — drove `engineer-seed §1c` mandate to STOP + file + WAIT.
 - **Directory project shape** — *(user via AskUserQuestion: "Directory (Recommended)")* — confirmed the existing `projects/<slug>/` convention is correct; no flat-form pivot.
 - **Start small items in parallel** — *(user via AskUserQuestion: "Start small items now (Recommended)")* — drove the parallel pgvector + s3 backfill while methodology slice was designed.
 
@@ -60,7 +60,7 @@ The win: a tech-lead writes ONE structured PROJECT.md (with §4a Dispatch routin
 - Extend `proposals.py` with `kind` parameter + new `adapted` status + `project=` scoping for status updates
 - Author `KB § PATTERNS/common/dispatch-with-project-and-notes.md`
 - Add CLAUDE.md §1 one-liner
-- Update `engineer-default.md` (§1b, §1c, §3 return shape additions)
+- Update `engineer-seed.md` (§1b, §1c, §3 return shape additions)
 - Update `backend-engineer` / `frontend-engineer` / `devops-engineer` composes-with pointers
 - Add INDEX.md tree + catalog entries
 - Backfill 4 s3-codified ndjson entries
@@ -87,7 +87,7 @@ The win: a tech-lead writes ONE structured PROJECT.md (with §4a Dispatch routin
 | W2-A PROJECT/PROPOSAL templates | architect-inline (backend-engineer lens) | `templates/PROJECT-TEMPLATE.md` · `templates/PROPOSAL-TEMPLATE.md` | 30 min | inline-empersonation |
 | W2-B `proposals.py` tool adapt | architect-inline (backend-engineer lens) | `mcp/noctusai/tools/noctus/dev/proposals.py` | 30 min | inline-empersonation |
 | W2-C KB pattern doc | architect-inline (compliance-reviewer lens) | `KB § PATTERNS/common/dispatch-with-project-and-notes.md` · `KB § INDEX.md` | 20 min | inline-empersonation |
-| W2-D CLAUDE.md §1 + engineer docs | architect-inline (compliance-reviewer lens) | `CLAUDE.md` · `.claude/agents/engineer-default.md` · `backend-engineer.md` · `frontend-engineer.md` · `devops-engineer.md` | 30 min | inline-empersonation |
+| W2-D CLAUDE.md §1 + engineer docs | architect-inline (compliance-reviewer lens) | `CLAUDE.md` · `.claude/agents/engineer-seed.md` · `backend-engineer.md` · `frontend-engineer.md` · `devops-engineer.md` | 30 min | inline-empersonation |
 | W3 verify + commit + push | architect-inline (tech-lead) | (verification commands) | 15 min | inline |
 
 *Inline-only because: shared-state cross-surface (template ↔ tool ↔ KB ↔ CLAUDE.md ↔ agents need coherent voice + same-commit propagation). Dispatching to subagents would multiply merge-conflict risk for negligible parallelism gain.*
@@ -147,7 +147,7 @@ KNOWLEDGE-BASE/
 CLAUDE.md                       ← +§1 one-liner (after scoped-auto-improvement)
 
 .claude/agents/
-  engineer-default.md           ← +§1b Read PROJECT.md first,
+  engineer-seed.md           ← +§1b Read PROJECT.md first,
                                    +§1c Surface notes — STOP + file + BLOCK,
                                    +§3 codification-events + delivery-note lines
   backend-engineer.md           ← +Composes-with pointer
@@ -176,7 +176,7 @@ projects/dispatch-with-project-notes/  ← NEW (this folder)
 - [x] KB pattern doc authored (W2-C)
 - [x] INDEX.md tree + catalog row (W2-C)
 - [x] CLAUDE.md §1 one-liner (W2-D)
-- [x] engineer-default §1b + §1c + §3 updates (W2-D)
+- [x] engineer-seed §1b + §1c + §3 updates (W2-D)
 - [x] backend-engineer / frontend-engineer / devops-engineer composes-with pointers (W2-D)
 - [x] PROJECT.md for this slice (W2-A — dogfood)
 - [ ] Run keeper gates (kb_sync, check_claude_md_router, check_seven_way_sync, check_agent_kb_alignment) (W3)
