@@ -64,14 +64,11 @@ from pathlib import Path
 
 from settings import REPO_ROOT
 
-# ── sqlite-vec — optional fast path (storage layer engine) ─────────────────
-# Same pattern as kb_embeddings: optional import, JSON+pure-Python fallback.
-try:
-    import sqlite_vec  # type: ignore[import-not-found]
-    _HAS_VEC = True
-except ImportError:  # pragma: no cover — fallback path
-    sqlite_vec = None  # type: ignore[assignment]
-    _HAS_VEC = False
+# v4.0 N=4 consolidation: shared helpers (connect / pack / embed / cosine /
+# HAS_VEC / sqlite_vec) live in _embedding_corpus. Module-level aliases
+# below preserve back-compat for direct symbol importers.
+from . import _embedding_corpus as _ec
+from ._embedding_corpus import HAS_VEC as _HAS_VEC, sqlite_vec
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -97,34 +94,17 @@ MIN_CHUNK_CHARS = 50     # below this, the chunk is too trivial to be useful
 EMBEDDING_DIM = 1536     # OpenAI text-embedding-3-small.
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+# v4.0 N=4 consolidation: now/sha/connect/pack delegate to the framework.
+_now_iso = _ec.now_iso
+_sha_file = _ec.sha_file
 
 
 def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CACHE_PATH))
-    conn.row_factory = sqlite3.Row
-    # WAL mode — see kb_embeddings._connect for rationale (2026-05-26
-    # verify-pass surfaced rollback-journal blocking).
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass
-    if _HAS_VEC:
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
-    return conn
+    """Open the code-embeddings cache (delegates to shared connect_cache)."""
+    return _ec.connect_cache(CACHE_PATH)
 
 
-def _pack_vec(vec: list[float]) -> bytes:
-    return struct.pack(f"{len(vec)}f", *vec)
+_pack_vec = _ec.pack_vec
 
 
 # Metadata + chunks table — chunks carry both symbol_name AND kind so
@@ -250,24 +230,9 @@ def _chunk_typescript(text: str) -> list[tuple[str, str, str]]:
     return [("", "file", capped)]
 
 
-# ── Sync wrapper around the async seed embedder ──────────────────────────────
-def _embed_sync(text: str) -> list[float]:
-    from noctusai_lib.integrations.llm import generate_embedding
-    return asyncio.run(generate_embedding(text))
-
-
-# ── Cosine ───────────────────────────────────────────────────────────────────
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
+# v4.0 N=4 consolidation: embed/cosine delegate to _embedding_corpus.
+_embed_sync = _ec.embed_sync
+_cosine = _ec.cosine
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

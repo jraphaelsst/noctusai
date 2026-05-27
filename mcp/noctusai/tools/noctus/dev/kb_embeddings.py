@@ -69,16 +69,19 @@ from pathlib import Path
 
 from settings import REPO_ROOT
 
-# ── sqlite-vec — optional fast path (storage layer engine) ─────────────────
-# Loaded at module import time; degraded to JSON+pure-Python cosine if absent.
-# Cache files written with one engine are NOT compatible with the other —
-# both schemas live side-by-side and the active one is detected at refresh.
-try:
-    import sqlite_vec  # type: ignore[import-not-found]
-    _HAS_VEC = True
-except ImportError:  # pragma: no cover — fallback path
-    sqlite_vec = None  # type: ignore[assignment]
-    _HAS_VEC = False
+# v4.0 N=4 consolidation: helpers now live in _embedding_corpus.
+# The module-level aliases below (_chunk_markdown, _embed_sync, _cosine,
+# _pack_vec, _connect, _init_schema, _HAS_VEC) preserve back-compat for
+# any in-tree caller importing these symbols directly. New code should
+# import from _embedding_corpus.
+from . import _embedding_corpus as _ec
+from ._embedding_corpus import (
+    HAS_VEC as _HAS_VEC,
+    EMBEDDING_DIM,
+    MAX_CHUNK_CHARS,
+    MIN_CHUNK_CHARS,
+    sqlite_vec,
+)
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -86,43 +89,19 @@ CACHE_DIR = REPO_ROOT / ".claude" / "cache"
 CACHE_PATH = CACHE_DIR / "kb-embeddings.sqlite"
 KB_DIR = REPO_ROOT / "KNOWLEDGE-BASE"
 
-# Chunking knobs (tunable; tracked in the KB doc).
-MAX_CHUNK_CHARS = 1800   # ~450 tokens — well under the 8191-token model limit.
-MIN_CHUNK_CHARS = 200    # below this, don't emit (too short to be useful).
-EMBEDDING_DIM = 1536     # OpenAI text-embedding-3-small. Update if model changes.
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+# v4.0 N=4 consolidation: the leaf helpers now live in `_embedding_corpus`
+# and are imported above. Back-compat aliases below so any caller that
+# imported these symbols directly keeps working.
+_now_iso = _ec.now_iso
+_sha_file = _ec.sha_file
 
 
 def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CACHE_PATH))
-    conn.row_factory = sqlite3.Row
-    # WAL mode: readers don't block writers and vice versa. Set on every
-    # connect; idempotent (no-op if already WAL). Surfaced during the
-    # 2026-05-26 verify pass: a hung refresh held the rollback-journal
-    # lock and blocked every other reader. WAL fixes the structural cause.
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass  # fallback to default journal if WAL unavailable
-    if _HAS_VEC:
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)  # registers vec0 virtual tables + vec_* functions
-        conn.enable_load_extension(False)
-    return conn
+    """Open the kb-embeddings cache (delegates to shared connect_cache)."""
+    return _ec.connect_cache(CACHE_PATH)
 
 
-def _pack_vec(vec: list[float]) -> bytes:
-    """sqlite-vec stores vectors as little-endian float32 BLOBs."""
-    return struct.pack(f"{len(vec)}f", *vec)
+_pack_vec = _ec.pack_vec
 
 
 # Metadata table (always present — used in both engines).
@@ -169,77 +148,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-# ── Chunker (markdown-structural — H2 windows + char cap) ────────────────────
-def _chunk_markdown(text: str) -> list[str]:
-    """Split a markdown doc into chunks at H2 boundaries, then char-cap.
-
-    Each chunk preserves the H1 title as a prefix for context (so a chunk
-    can be retrieved standalone without losing what doc it's from). KB
-    docs are well-structured for this — every pattern has a clear H1 +
-    H2 sections.
-    """
-    lines = text.splitlines()
-    # H1 title prefix — first `# ...` line.
-    title = next((ln for ln in lines if ln.startswith("# ") and not ln.startswith("## ")), "")
-
-    # Group lines by H2 sections.
-    sections: list[list[str]] = []
-    current: list[str] = []
-    for ln in lines:
-        if ln.startswith("## "):
-            if current:
-                sections.append(current)
-            current = [ln]
-        else:
-            current.append(ln)
-    if current:
-        sections.append(current)
-
-    # If no H2 sections, treat the whole doc as one block.
-    if not sections:
-        sections = [lines]
-
-    # Build chunks: each H2 section becomes 1+ chunks (split at MAX_CHUNK_CHARS).
-    chunks: list[str] = []
-    for sec in sections:
-        body = "\n".join(sec).strip()
-        if not body:
-            continue
-        # Prefix with title for context.
-        prefixed = f"{title}\n\n{body}" if title and not body.startswith(title) else body
-        # Char-cap split.
-        while len(prefixed) > MAX_CHUNK_CHARS:
-            cut = prefixed.rfind("\n", MIN_CHUNK_CHARS, MAX_CHUNK_CHARS)
-            if cut < 0:
-                cut = MAX_CHUNK_CHARS
-            chunks.append(prefixed[:cut].strip())
-            prefixed = (f"{title}\n\n" if title else "") + prefixed[cut:].strip()
-        if len(prefixed) >= MIN_CHUNK_CHARS:
-            chunks.append(prefixed.strip())
-    return chunks
+# v4.0 N=4 consolidation: chunker + embedder now in _embedding_corpus.
+_chunk_markdown = _ec.chunk_markdown
+_embed_sync = _ec.embed_sync
 
 
-# ── Sync wrapper around the async seed embedder ──────────────────────────────
-def _embed_sync(text: str) -> list[float]:
-    """Sync-wrap the async `generate_embedding`. Run in a fresh event loop
-    so we don't fight any caller-owned loop."""
-    from noctusai_lib.integrations.llm import generate_embedding
-    return asyncio.run(generate_embedding(text))
-
-
-# ── Cosine ───────────────────────────────────────────────────────────────────
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-Python cosine similarity. ~10ms for 1536-D × 500 vectors."""
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
+# v4.0 N=4 consolidation: cosine now in _embedding_corpus.
+_cosine = _ec.cosine
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
