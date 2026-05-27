@@ -111,6 +111,20 @@ if have_py; then
     "$PY" "$CLI" --stamp-seed-version --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
+# ─── 3a. MAJOR-bump authorization gate ──────────────────────────────────
+# Runs ONLY when VERSION is staged. Refuses MAJOR bumps without an explicit
+# `.major-bump-authorized` marker. PATCH/MINOR within current MAJOR pass.
+# KB § PATTERNS/common/versioning.md.
+if have_py; then
+    STAGED_VERSION=$(git diff --cached --name-only -- VERSION 2>/dev/null || true)
+    if [[ -n "$STAGED_VERSION" ]]; then
+        if ! "$PY" "$CLI" --check-version-bump --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'; then
+            echo "[pre-commit] VERSION bump REFUSED — see above." >&2
+            exit 1
+        fi
+    fi
+fi
+
 # ─── 3b. Project-history ledger → PROJECT-HISTORY.md render ─────
 # Re-render the human view when the ledger is staged OR modified by an
 # earlier step in this hook chain. Output auto-stages so the human view

@@ -155,7 +155,8 @@ def main():
     parser.add_argument("--force", action="store_true", help="Authorize the destructive path for --mole sweep / --archive-clean / --cleanup-stale-worktrees (default = dry-run/report).")
     parser.add_argument("--sync-seed-template", action="store_true", help="Sync products/seed → templates/product-seed (absorbed scripts/sync-seed-template.sh). Pair --dry for preview. MCP: noctus.dev.sync_seed_template.")
     parser.add_argument("--dry", action="store_true", help="Preview mode for --sync-seed-template / --propagate (no write).")
-    parser.add_argument("--stamp-seed-version", action="store_true", help="Stamp short SHA into seed _version_static.py (absorbed scripts/stamp-seed-version.sh). MCP: noctus.dev.stamp_seed_version.")
+    parser.add_argument("--stamp-seed-version", action="store_true", help="Stamp short SHA + /VERSION SemVer into seed _version_static.py. MCP: noctus.dev.stamp_seed_version.")
+    parser.add_argument("--check-version-bump", action="store_true", help="Gate MAJOR-bump authorization: refuse working-tree VERSION whose MAJOR exceeds HEAD's unless .major-bump-authorized marker exists. Autonomous PATCH/MINOR pass. KB § PATTERNS/common/versioning.md. MCP: noctus.dev.version_guard.")
     parser.add_argument("--render-project-history", action="store_true", help="Render project-history/ledger.ndjson → PROJECT-HISTORY.md (absorbed scripts/render-project-history.py). Pair --check for drift gate. MCP: noctus.dev.render_project_history.")
     parser.add_argument("--backfill-project-history", action="store_true", help="Stamp historical ledger rows from archive/ (absorbed scripts/backfill-project-history.py). Pair --dry. MCP: noctus.dev.backfill_project_history.")
     parser.add_argument("--gen-promotions-index", action="store_true", help="Regenerate a seed-workspace's derived PROMOTIONS.md (absorbed scripts/gen-promotions-index.py). Pair --check for the drift gate. MCP: noctus.dev.gen_promotions_index.")
@@ -1343,6 +1344,13 @@ def main():
     elif args.stamp_seed_version:
         from tools.noctus.dev.stamp_seed_version import stamp_seed_version
         r = stamp_seed_version()
+        print(r.get("message", json.dumps(r, default=str)))
+        sys.exit(0 if r.get("ok", False) else 1)
+
+    elif args.check_version_bump:
+        from tools.noctus.dev.version_guard import check_version_bump
+        from settings import REPO_ROOT
+        r = check_version_bump(repo_root=REPO_ROOT)
         print(r.get("message", json.dumps(r, default=str)))
         sys.exit(0 if r.get("ok", False) else 1)
 

@@ -48,9 +48,27 @@ A MAJOR bump means at least one of these had a non-back-compat restructuring (fi
 | File | What it carries |
 |---|---|
 | **`/VERSION`** | Single source of truth. Plain text, one line: `<MAJOR>.<MINOR>.<PATCH>[-<PRERELEASE>]\n`. Committed; read by tooling. |
+| **`seed/{lib,framework}/backend/.../_version_static.py`** | Auto-stamped per commit by `noctus.dev.stamp_seed_version` (pre-commit hook step 3). Carries `__version__` (git short SHA — `check_seed_version_propagation` keeper contract) AND `__semver__` (the SemVer from `/VERSION` — readable as `noctusai_seed.__semver__` / `noctusai_lib.__semver__`). Gitignored. |
 | **Git tags** | `vX.Y.Z[-PRERELEASE]` (e.g. `v4.0.0-beta`). Created per release. `git tag -a vX.Y.Z -m "release notes"` then `git push origin vX.Y.Z`. |
 | **`/CHANGELOG.md`** | Human-readable release notes per version. Each entry: version, date, summary, breaking changes (if any), new features, fixes. |
-| **Pre-commit hook** | Echoes the current `VERSION` so every commit-time agent sees the stamp. |
+| **Pre-commit hook** | Echoes the current `VERSION` so every commit-time agent sees the stamp. Also gates MAJOR bumps via `--check-version-bump`. |
+
+## Authorization gate (the *.0 ramp is the human's)
+
+**The architect/agent autonomously authors PATCH and MINOR bumps. MAJOR bumps require explicit human authorization.**
+
+This is enforced structurally via `noctus.dev.version_guard` (CLI: `--check-version-bump`), wired into the pre-commit hook as step 3a. Behavior:
+
+| Bump shape | Gate verdict | Required action |
+|---|---|---|
+| VERSION unchanged | `no_change` ✓ | — |
+| `4.0.0 → 4.0.1` (PATCH within MAJOR) | `minor_or_patch` ✓ | None — autonomous |
+| `4.0.0 → 4.1.0` (MINOR within MAJOR) | `minor_or_patch` ✓ | None — autonomous |
+| `4.x.y → 5.0.0` (MAJOR ramp) | `major_unauthorized` ✗ BLOCKS | Create `.major-bump-authorized` at repo root with a one-line rationale, stage it WITH the VERSION bump in the same commit; gate flips to `major_authorized` ✓ |
+
+The marker is git-tracked so the authorization is visible in history; the same commit that bumps MAJOR should also remove the marker (so a stale marker can't re-arm a future un-authorized bump). The gate runs only when `VERSION` is staged.
+
+Why a file-based marker and not a commit-message trailer: pre-commit fires BEFORE the commit message is finalized, so a trailer-based check would need a second hook (`commit-msg`) and risks bypass via `--no-verify`. A staged-file marker is checkable at pre-commit time AND visible in the audit trail.
 
 ## How to bump
 

@@ -91,6 +91,7 @@ def register_all(server) -> None:
     from . import sso_smoke
     from . import stamp_seed_version
     from . import status
+    from . import version_guard
     from . import supabase_advisors
     from . import sync_seed_template
     from . import task_branch
@@ -181,6 +182,7 @@ def register_all(server) -> None:
     sso_smoke.register(server)
     stamp_seed_version.register(server)
     status.register(server)
+    version_guard.register(server)
     supabase_advisors.register(server)
     sync_seed_template.register(server)
     task_branch.register(server)
