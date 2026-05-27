@@ -33,6 +33,24 @@ ZERO_RE='^0+$'   # all-zero OID = a delete (SHA-1 or SHA-256)
 ALLOW="${NOCTUS_ALLOW_MAIN_PUSH:-}"
 blocked=0
 
+# ─── Embedding-freshness gate (v4.0 2026-05-27) ─────────────────
+# Pre-commit no longer refreshes kb/code embeddings (wasteful: many commits
+# re-embed unchanged chunks). The push boundary is the right batching unit
+# — accumulate work, embed once. This block refreshes BOTH caches before
+# the push proceeds. If OPENAI_API_KEY is missing OR the provider is
+# unreachable, this is advisory (the refresh skips with a warning; the
+# push still proceeds since vector search is enrichment, not load-bearing).
+# Set NOCTUS_SKIP_EMBED_REFRESH=1 to bypass entirely (e.g. CI smoke pushes).
+# KB § PATTERNS/common/push-time-embedding-gate.md.
+REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
+CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
+if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
+    echo "[pre-push] Refreshing embeddings (kb + code) before push..."
+    "$PY_PP" "$CLI_PP" --refresh-kb-embeddings 2>&1 | sed 's/^/[pre-push] kb-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-code-embeddings 2>&1 | sed 's/^/[pre-push] code-embed: /' || true
+fi
+
 # stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)
 while read -r local_ref local_oid remote_ref remote_oid; do
     [[ "$remote_ref" =~ $PROTECTED_RE ]] || continue

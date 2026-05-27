@@ -16,6 +16,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/PATTERNS/devops/prod-cache-container.md
   - CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md
+  - CONTEXT/PATTERNS/common/push-time-embedding-gate.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
   - CONTEXT/GUIDES/deploy-workspace-online.md
@@ -44,6 +45,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
 - **CI embedding-cache gate.** GitHub Actions workflow (`embedding-cache-gate.yml`) connecting CI to the shared prod pgvector cache; secrets `NOCTUS_VPS_DEPLOY_KEY` + `NOCTUS_VPS_HOST` + `NOCTUS_CACHE_POSTGRES_DSN`; conditional gating via `CACHE_TUNNEL_UP` env flag (hard-fail when tunnel up, soft-fail on fork PRs). → `KB § PATTERNS/devops/ci-embedding-cache-gate.md`
 - **SSH deploy-key restrictions.** `restrict` overrides `permitopen` on Ubuntu OpenSSH_9.6p1 — canonical pattern uses explicit `command="/bin/false",no-pty,no-X11-forwarding,no-agent-forwarding,permitopen=...`; verified during 2026-05-26 CI tunnel wiring for prod `noctus-cache-pg`. → `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md`
+- **Push-time embedding-freshness gate.** Embed at the push boundary, not on every commit (v4.0 2026-05-27). pre-commit no longer refreshes kb/code embeddings; pre-push runs the refresh + soft-fails on missing key/provider. `NOCTUS_SKIP_EMBED_REFRESH=1` bypass for CI smoke pushes. → `KB § PATTERNS/common/push-time-embedding-gate.md`
 - **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/devops/environment.md` · security advisor for review
 - **Incident response.** Triage → mitigate → root-cause → document (timeline, RCA, remediation PRs, runbook update, post-mortem). Mitigation > root-cause during the incident.
 

@@ -59,6 +59,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── persistent-files-absorption.md
 │   │   │   ├── phased-push-policy.md
 │   │   │   ├── proposals-and-improvements.md
+│   │   │   ├── push-time-embedding-gate.md
 │   │   │   ├── remediation-markers.md
 │   │   │   ├── roadmap-tracking.md
 │   │   │   ├── scan-repetition-semantic.md
