@@ -66,6 +66,8 @@ _TABLE_MAP: dict[str, tuple[str, str]] = {
     "auto-improvement": ("auto_improvement", "cache_auto_improvement"),
     "kb-embeddings":    ("kb_chunks",       "cache_kb_embeddings"),
     "code-embeddings":  ("code_chunks",     "cache_code_embeddings"),
+    "memory-embeddings": ("memory_chunks",  "cache_memory_embeddings"),
+    "corpus-embeddings": ("corpus_chunks",  "cache_corpus_embeddings"),
 }
 
 
@@ -127,6 +129,37 @@ CREATE TABLE IF NOT EXISTS noctus_cache.cache_code_embeddings (
     UNIQUE(path, symbol, chunk_idx, source_sha)
 );
 CREATE INDEX IF NOT EXISTS idx_pg_code_path ON noctus_cache.cache_code_embeddings(path);
+
+-- memory-embeddings: out-of-repo agent memory dir (feedback_*.md +
+-- reference_*.md + project_*.md + MEMORY.md). Same vector(1536) shape.
+CREATE TABLE IF NOT EXISTS noctus_cache.cache_memory_embeddings (
+    id              SERIAL PRIMARY KEY,
+    path            TEXT NOT NULL,
+    chunk_idx       INTEGER NOT NULL,
+    chunk_text      TEXT NOT NULL,
+    embedding       vector(1536),
+    source_sha      TEXT NOT NULL,
+    cached_at       TEXT NOT NULL,
+    UNIQUE(path, chunk_idx, source_sha)
+);
+CREATE INDEX IF NOT EXISTS idx_pg_memory_path ON noctus_cache.cache_memory_embeddings(path);
+
+-- corpus-embeddings: heterogeneous in-repo corpus (CHANGELOG + templates +
+-- .claude/agents FULL body + .claude/skills + PROJECT-HISTORY). source_type
+-- column distinguishes (changelog/template/agent/skill/history).
+CREATE TABLE IF NOT EXISTS noctus_cache.cache_corpus_embeddings (
+    id              SERIAL PRIMARY KEY,
+    source_type     TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    chunk_idx       INTEGER NOT NULL,
+    chunk_text      TEXT NOT NULL,
+    embedding       vector(1536),
+    source_sha      TEXT NOT NULL,
+    cached_at       TEXT NOT NULL,
+    UNIQUE(path, chunk_idx, source_sha)
+);
+CREATE INDEX IF NOT EXISTS idx_pg_corpus_path ON noctus_cache.cache_corpus_embeddings(path);
+CREATE INDEX IF NOT EXISTS idx_pg_corpus_type ON noctus_cache.cache_corpus_embeddings(source_type);
 
 -- agent-context: disaggregated rows-per-section (matches local agent_context.py
 -- _SCHEMA). The earlier `bundle_json` shape was speculative; locally each
@@ -450,6 +483,28 @@ def mirror_one_cache(
                         pg_insert_cols=["path", "symbol", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
                         embedding_pg_col_idx=4,
                         column_renames={"symbol_name": "symbol"},
+                    )
+                elif cache_name == "memory-embeddings":
+                    # Mirrors kb-embeddings shape (no source_type column needed).
+                    rows = _mirror_chunks_with_json_embedding(
+                        local, pg_conn,
+                        chunks_table="memory_chunks",
+                        embeddings_json_table="memory_embeddings_json",
+                        pg_table="cache_memory_embeddings",
+                        chunk_columns_local=["path", "chunk_idx", "chunk_text", "source_sha", "cached_at"],
+                        pg_insert_cols=["path", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
+                        embedding_pg_col_idx=3,
+                    )
+                elif cache_name == "corpus-embeddings":
+                    # Heterogeneous: source_type column comes first in PG schema.
+                    rows = _mirror_chunks_with_json_embedding(
+                        local, pg_conn,
+                        chunks_table="corpus_chunks",
+                        embeddings_json_table="corpus_embeddings_json",
+                        pg_table="cache_corpus_embeddings",
+                        chunk_columns_local=["source_type", "path", "chunk_idx", "chunk_text", "source_sha", "cached_at"],
+                        pg_insert_cols=["source_type", "path", "chunk_idx", "chunk_text", "embedding", "source_sha", "cached_at"],
+                        embedding_pg_col_idx=4,
                     )
                 elif cache_name == "agent-context":
                     # Disaggregated rows-per-section (matches local schema).

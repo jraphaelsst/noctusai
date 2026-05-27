@@ -91,6 +91,49 @@ async def handle_search_code(args: dict) -> dict:
     return SearchOutput(ok=True, query=inp.query, hits=hits).model_dump()
 
 
+async def handle_search_memory(args: dict) -> dict:
+    try:
+        inp = SearchInput(**args)
+    except Exception as exc:
+        return {"error": typed_error(exc, status=422)}
+    _add_noctusai_to_path()
+    try:
+        from tools.noctus.dev import memory_embeddings as mee  # type: ignore[import]
+    except ImportError as exc:
+        return {"error": typed_error(exc, status=503)}
+    try:
+        _ensure_llm_for_search()
+        raw = mee.search(inp.query, top_k=inp.top_k)
+    except Exception as exc:
+        return {"error": typed_error(exc, status=502)}
+    hits = _normalize_hits(raw)
+    if inp.min_score > 0.0:
+        hits = [h for h in hits if h.score >= inp.min_score]
+    return SearchOutput(ok=True, query=inp.query, hits=hits).model_dump()
+
+
+async def handle_search_corpus(args: dict) -> dict:
+    try:
+        inp = SearchInput(**args)
+    except Exception as exc:
+        return {"error": typed_error(exc, status=422)}
+    _add_noctusai_to_path()
+    try:
+        from tools.noctus.dev import corpus_embeddings as cee2  # type: ignore[import]
+    except ImportError as exc:
+        return {"error": typed_error(exc, status=503)}
+    try:
+        _ensure_llm_for_search()
+        source_type = args.get("source_type")
+        raw = cee2.search(inp.query, top_k=inp.top_k, source_type=source_type)
+    except Exception as exc:
+        return {"error": typed_error(exc, status=502)}
+    hits = _normalize_hits(raw)
+    if inp.min_score > 0.0:
+        hits = [h for h in hits if h.score >= inp.min_score]
+    return SearchOutput(ok=True, query=inp.query, hits=hits).model_dump()
+
+
 _LLM_READY = False
 
 
@@ -143,12 +186,34 @@ def tool_descriptors() -> list[Tool]:
             ),
             inputSchema=SearchInput.model_json_schema(),
         ),
+        Tool(
+            name="openai.search.memory",
+            description=(
+                "Semantic search over agent memory (out-of-repo feedback / "
+                "reference / project notes). Returns top-K chunks by cosine "
+                "similarity. Use for 'have we seen this pattern before' / "
+                "'what was learned about X' lookups."
+            ),
+            inputSchema=SearchInput.model_json_schema(),
+        ),
+        Tool(
+            name="openai.search.corpus",
+            description=(
+                "Semantic search over the heterogeneous in-repo corpus "
+                "(CHANGELOG + templates + agents FULL body + skills + "
+                "PROJECT-HISTORY). Optional `source_type` (changelog / "
+                "template / agent / skill / history) scopes the search."
+            ),
+            inputSchema=SearchInput.model_json_schema(),
+        ),
     ]
 
 
 HANDLERS: dict[str, Any] = {
     "openai.search.kb": handle_search_kb,
     "openai.search.code": handle_search_code,
+    "openai.search.memory": handle_search_memory,
+    "openai.search.corpus": handle_search_corpus,
 }
 
 

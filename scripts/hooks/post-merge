@@ -70,6 +70,14 @@ if have_py; then
             echo "[post-merge]   ↳ code-embeddings refresh skipped (provider unreachable or no key)."
     fi
 
+    # ─── corpus-embeddings (advisory, non-blocking) — CHANGELOG / templates /
+    # .claude/agents/ FULL body / .claude/skills/ / PROJECT-HISTORY.
+    if echo "$CHANGED" | grep -qE '^(CHANGELOG\.md$|templates/.+\.md$|\.claude/agents/.+\.md$|\.claude/skills/.+/SKILL\.md$|project-history/PROJECT-HISTORY\.md$)'; then
+        echo "[post-merge] Corpus source changed — refreshing corpus-embeddings cache..."
+        "$PY" "$CLI" --refresh-corpus-embeddings 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ corpus-embeddings refresh skipped (provider unreachable or no key)."
+    fi
+
     # ─── auto-improvement cache (blocking on failure — it's high-severity)
     if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
         echo "[post-merge] auto-improvement.ndjson changed — refreshing cache..."

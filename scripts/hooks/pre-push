@@ -46,9 +46,11 @@ REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
 CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
 if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
-    echo "[pre-push] Refreshing embeddings (kb + code) before push..."
+    echo "[pre-push] Refreshing all 4 embedding caches (kb + code + memory + corpus) before push..."
     "$PY_PP" "$CLI_PP" --refresh-kb-embeddings 2>&1 | sed 's/^/[pre-push] kb-embed: /' || true
     "$PY_PP" "$CLI_PP" --refresh-code-embeddings 2>&1 | sed 's/^/[pre-push] code-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | sed 's/^/[pre-push] memory-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | sed 's/^/[pre-push] corpus-embed: /' || true
 fi
 
 # stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)

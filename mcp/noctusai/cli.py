@@ -185,6 +185,13 @@ def main():
     parser.add_argument("--check-skills-listed-in-router", action="store_true", help="Keeper sub-leg of check_seven_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--check-commands-listed-in-router", action="store_true", help="Keeper sub-leg of check_seven_way_sync: every .claude/commands/<name>.md MUST be referenced in CLAUDE.md §2 'Slash commands' line; every command named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--refresh-kb-embeddings", action="store_true", help="Re-populate the local KB embeddings cache (.claude/cache/kb-embeddings.sqlite) from KNOWLEDGE-BASE/**/*.md. Embeds via OpenAI text-embedding-3-small through noctusai_lib.integrations.llm (no new external dep). ADDITIVE discovery layer — does not replace owns_kb / INDEX.md / grep. KB § PATTERNS/common/kb-vector-search.md.")
+    parser.add_argument("--refresh-memory-embeddings", action="store_true", help="Re-populate the local memory-embeddings cache (.claude/cache/memory-embeddings.sqlite) from the out-of-repo agent memory dir (`~/.claude/projects/<workspace>/memory/`). Per-file source_sha skip. KB § PATTERNS/common/memory-embeddings.md.")
+    parser.add_argument("--memory-search", metavar="QUERY", help="Semantic search over agent memory. Returns top-K chunks by cosine similarity. Pair --top-k N.")
+    parser.add_argument("--refresh-corpus-embeddings", action="store_true", help="Re-populate the local corpus-embeddings cache (.claude/cache/corpus-embeddings.sqlite) from CHANGELOG.md + templates/ + .claude/agents/*.md FULL body + .claude/skills/**/SKILL.md + PROJECT-HISTORY.md. KB § PATTERNS/common/corpus-embeddings.md.")
+    parser.add_argument("--corpus-search", metavar="QUERY", help="Semantic search over the in-repo corpus (heterogeneous; pair --source-type to scope to changelog/template/agent/skill/history).")
+    parser.add_argument("--source-type", metavar="TYPE", help="With --corpus-search: scope to one source type (changelog/template/agent/skill/history).")
+    parser.add_argument("--check-memory-embeddings-cache-freshness", action="store_true", help="Keeper: memory-embeddings cache source_sha matches the on-disk memory dir. KB § PATTERNS/common/memory-embeddings.md.")
+    parser.add_argument("--check-corpus-embeddings-cache-freshness", action="store_true", help="Keeper: corpus-embeddings cache source_sha matches the in-repo corpus files. KB § PATTERNS/common/corpus-embeddings.md.")
     parser.add_argument("--kb-search", metavar="QUERY", help="Semantic search over the KB — embeds the query, returns top-K KB chunks by cosine similarity. Use for fuzzy-intent queries where exact terminology is unknown. For named patterns, use grep + INDEX.md.")
     parser.add_argument("--top-k", type=int, default=5, help="Number of results to return for --kb-search (default 5).")
     parser.add_argument("--check-kb-embeddings-cache-freshness", action="store_true", help="Keeper: KB embeddings cache should mirror each KB doc's sha256. Severity WARNING (not high) — vector search is advisory; stale cache degrades discovery but never breaks correctness. Auto-refresh in pre-commit on KB doc change.")
@@ -676,6 +683,101 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
+    elif args.check_memory_embeddings_cache_freshness:
+        from tools.noctus.dev import memory_embeddings as mee
+        import sqlite3
+        if mee._resolve_memory_dir() is None:
+            print(f"  {YELLOW}⚠ no memory dir resolvable — gate is no-op.{RESET}")
+            sys.exit(0)
+        live_sha = mee.cache_source_sha()
+        if not mee.CACHE_PATH.exists():
+            print(f"  {YELLOW}⚠ memory-embeddings cache absent — run --refresh-memory-embeddings.{RESET}")
+            sys.exit(1)
+        try:
+            conn = sqlite3.connect(str(mee.CACHE_PATH))
+            cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+            row = cur.fetchone()
+            conn.close()
+            cached = row[0] if row else None
+        except sqlite3.Error:
+            cached = None
+        if cached != live_sha:
+            print(f"  {YELLOW}⚠ memory-embeddings stale (cached={cached!r}, live={live_sha!r}) — refresh recommended.{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ memory-embeddings cache fresh (sha={live_sha}).{RESET}")
+        sys.exit(0)
+    elif args.check_corpus_embeddings_cache_freshness:
+        from tools.noctus.dev import corpus_embeddings as cee
+        import sqlite3
+        live_sha = cee.cache_source_sha()
+        if not cee.CACHE_PATH.exists():
+            print(f"  {YELLOW}⚠ corpus-embeddings cache absent — run --refresh-corpus-embeddings.{RESET}")
+            sys.exit(1)
+        try:
+            conn = sqlite3.connect(str(cee.CACHE_PATH))
+            cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+            row = cur.fetchone()
+            conn.close()
+            cached = row[0] if row else None
+        except sqlite3.Error:
+            cached = None
+        if cached != live_sha:
+            print(f"  {YELLOW}⚠ corpus-embeddings stale (cached={cached!r}, live={live_sha!r}) — refresh recommended.{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ corpus-embeddings cache fresh (sha={live_sha}).{RESET}")
+        sys.exit(0)
+    elif args.refresh_memory_embeddings:
+        _ensure_llm_configured()
+        from tools.noctus.dev import memory_embeddings as mee
+        r = mee.refresh(force=args.force)
+        if r.get("status") == "no-memory-dir":
+            print(f"  {YELLOW}⚠ {r.get('message', 'memory dir not found')}{RESET}")
+        elif r["status"] == "in-sync":
+            print(f"  {GREEN}✓ memory embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ memory embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
+            if r["errors"]:
+                print(f"  {YELLOW}⚠ {len(r['errors'])} error(s):{RESET}")
+                for e in r["errors"][:5]:
+                    print(f"    {e}")
+        sys.exit(0 if r["ok"] else 1)
+    elif args.memory_search:
+        _ensure_llm_configured()
+        from tools.noctus.dev import memory_embeddings as mee
+        hits = mee.search(args.memory_search, top_k=args.top_k)
+        if not hits:
+            print(f"  {YELLOW}(no hits for {args.memory_search!r} — cache empty or provider unreachable){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ Top {len(hits)} hits for {args.memory_search!r}:{RESET}")
+        for h in hits:
+            print(f"  [{h['score']:.3f}] {h['path']}#{h['chunk_idx']}")
+            print(f"    {h['chunk_text'][:200]!r}")
+        sys.exit(0)
+    elif args.refresh_corpus_embeddings:
+        _ensure_llm_configured()
+        from tools.noctus.dev import corpus_embeddings as cee
+        r = cee.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ corpus embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ corpus embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
+            if r["errors"]:
+                print(f"  {YELLOW}⚠ {len(r['errors'])} error(s):{RESET}")
+                for e in r["errors"][:5]:
+                    print(f"    {e}")
+        sys.exit(0 if r["ok"] else 1)
+    elif args.corpus_search:
+        _ensure_llm_configured()
+        from tools.noctus.dev import corpus_embeddings as cee
+        hits = cee.search(args.corpus_search, top_k=args.top_k, source_type=getattr(args, 'source_type', None))
+        if not hits:
+            print(f"  {YELLOW}(no hits for {args.corpus_search!r}){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ Top {len(hits)} hits for {args.corpus_search!r}:{RESET}")
+        for h in hits:
+            print(f"  [{h['score']:.3f}] [{h['source_type']}] {h['path']}#{h['chunk_idx']}")
+            print(f"    {h['chunk_text'][:200]!r}")
+        sys.exit(0)
     elif args.refresh_kb_embeddings:
         _ensure_llm_configured()
         from tools.noctus.dev import kb_embeddings as kbe

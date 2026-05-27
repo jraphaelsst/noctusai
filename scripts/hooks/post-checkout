@@ -78,6 +78,9 @@ if have_py; then
     if echo "$CHANGED" | grep -qE '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$'; then
         "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || true
     fi
+    if echo "$CHANGED" | grep -qE '^(CHANGELOG\.md$|templates/.+\.md$|\.claude/agents/.+\.md$|\.claude/skills/.+/SKILL\.md$|project-history/PROJECT-HISTORY\.md$)'; then
+        "$PY" "$CLI" --refresh-corpus-embeddings 2>&1 | tail -2 || true
+    fi
     if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
         "$PY" "$CLI" --refresh-auto-improvement-cache 2>&1 | tail -2 || true
     fi
