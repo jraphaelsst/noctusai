@@ -260,17 +260,46 @@ fi
 # current results. Non-blocking (warning severity): if the embedding
 # provider is unreachable (no API key, network), skip silently —
 # vector search is advisory. KB § PATTERNS/common/kb-vector-search.md.
-# ─── Per-commit embedding refresh: MOVED TO pre-push (v4.0 2026-05-27).
-# Rationale: embedding every commit is wasteful — many small commits cost
-# many round-trips for chunks that don't change at the final push state.
-# The push boundary is the right batching unit: many local commits, one
-# accumulated embed pass. The pre-push hook now runs the refresh + gate.
-# See scripts/hooks/pre-push § Embedding-freshness gate.
-# KB § PATTERNS/common/push-time-embedding-gate.md.
-#
-# (Old blocks left here as comments for archeology; remove at N=3 hook touch.)
-# STAGED_KB=$(git diff --cached --name-only 2>/dev/null | grep -E '^KNOWLEDGE-BASE/.+\.md$' || true)
-# STAGED_CODE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$' || true)
+# ─── Per-commit cache auto-refresh (v4.0 2026-05-27 — REVERSED the "push-only" rule).
+# User mandate: every cache must refresh + be gated on EVERY boundary
+# (pre-commit / post-merge / post-checkout / pre-push). Belt-and-suspenders.
+# Yesterday's "push-time-only embedding" decision REVERSED here — the cost
+# of redundant refreshes is acceptable; the cost of stale caches at any
+# boundary is not.
+# KB § PATTERNS/common/cache-auto-freshness.md.
+
+# ─── 9b. KB-embeddings cache auto-refresh (advisory).
+STAGED_KB=$(git diff --cached --name-only 2>/dev/null | grep -E '^KNOWLEDGE-BASE/.+\.md$' || true)
+if [[ -n "$STAGED_KB" ]] && have_py; then
+    echo "[pre-commit] KB doc staged — refreshing kb-embeddings cache..."
+    "$PY" "$CLI" --refresh-kb-embeddings 2>&1 | tail -2 || \
+        echo "[pre-commit]   ↳ kb-embeddings refresh skipped (provider unreachable or no key)."
+fi
+
+# ─── 9c. Code-embeddings cache auto-refresh (advisory).
+STAGED_CODE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$' || true)
+if [[ -n "$STAGED_CODE" ]] && have_py; then
+    echo "[pre-commit] code source staged — refreshing code-embeddings cache..."
+    "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || \
+        echo "[pre-commit]   ↳ code-embeddings refresh skipped (provider unreachable or no key)."
+fi
+
+# ─── 9d. Corpus-embeddings cache auto-refresh (advisory).
+# CHANGELOG + templates + .claude/agents (FULL) + .claude/skills + PROJECT-HISTORY.
+STAGED_CORPUS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(CHANGELOG\.md$|templates/.+\.md$|\.claude/agents/.+\.md$|\.claude/skills/.+/SKILL\.md$|project-history/PROJECT-HISTORY\.md$)' || true)
+if [[ -n "$STAGED_CORPUS" ]] && have_py; then
+    echo "[pre-commit] corpus source staged — refreshing corpus-embeddings cache..."
+    "$PY" "$CLI" --refresh-corpus-embeddings 2>&1 | tail -2 || \
+        echo "[pre-commit]   ↳ corpus-embeddings refresh skipped (provider unreachable or no key)."
+fi
+
+# ─── 9e. Memory-embeddings cache auto-refresh (advisory; ALWAYS attempt —
+# out-of-repo source, no in-repo staged signal to gate on. Refresh is fast
+# when the memory dir hasn't changed (per-file source_sha skip).
+if have_py; then
+    "$PY" "$CLI" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-commit] memory-embed: /' || \
+        echo "[pre-commit]   ↳ memory-embeddings refresh skipped."
+fi
 
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
 # Third in the keeper-mirror family. When the auto-improvement ndjson is

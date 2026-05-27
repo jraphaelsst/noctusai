@@ -98,6 +98,12 @@ if have_py; then
         "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || \
             echo "[post-merge]   ↳ keeper-patterns refresh failed — investigate." >&2
     fi
+
+    # ─── memory-embeddings cache — out-of-repo source, no in-repo signal
+    # to gate on. Refresh is fast when memory dir unchanged (per-file
+    # source_sha skip). Always-attempt per the universal-refresh rule.
+    echo "[post-merge] Refreshing memory-embeddings cache (out-of-repo source)..."
+    "$PY" "$CLI" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[post-merge] memory-embed: /' || true
 fi
 
 echo "[post-merge] cache refresh pass complete."

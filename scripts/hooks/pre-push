@@ -46,11 +46,16 @@ REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
 CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
 if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
-    echo "[pre-push] Refreshing all 4 embedding caches (kb + code + memory + corpus) before push..."
-    "$PY_PP" "$CLI_PP" --refresh-kb-embeddings 2>&1 | sed 's/^/[pre-push] kb-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-code-embeddings 2>&1 | sed 's/^/[pre-push] code-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | sed 's/^/[pre-push] memory-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | sed 's/^/[pre-push] corpus-embed: /' || true
+    echo "[pre-push] Refreshing ALL 7 caches before push (belt-and-suspenders)..."
+    # 4 vector caches (OpenAI embedding calls — slower).
+    "$PY_PP" "$CLI_PP" --refresh-kb-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] kb-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-code-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] code-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] corpus-embed: /' || true
+    # 3 row caches (millisecond-fast local ops, no API).
+    "$PY_PP" "$CLI_PP" --refresh-keeper-cache 2>&1 | tail -1 | sed 's/^/[pre-push] keeper-patterns: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-agent-context-cache 2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /' || true
+    "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true
 fi
 
 # stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)

@@ -155,7 +155,8 @@ KNOWLEDGE-BASE/
 │   │   ├── whatsapp.md     ← WhatsApp connector consume-side reference — `noctusai_lib.integrations.whatsapp` `__all__` + WAHA vs Meta-Cloud-API backends + factory + webhook-router seam + lid-auth/dedup
 │   │   ├── google.md       ← Google integrations consume-side reference — Calendar/Maps/YouTube/Drive/Gmail `__all__` + factories + resolver injection + quota-cost docs + Gmail OAuth-only send+read v1 + seed-ahead consumer status
 │   │   ├── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
-│   │   └── image-gen.md    ← Image generation consume-side reference — `noctusai_lib.integrations.image_gen` `__all__` + `get_image_gen_adapter` factory + Fake/Gemini-Real adapters + renderer-agnostic Protocol + cited social-wiring consumer + backend-extension recipe
+│   │   ├── image-gen.md    ← Image generation consume-side reference — `noctusai_lib.integrations.image_gen` `__all__` + `get_image_gen_adapter` factory + Fake/Gemini-Real adapters + renderer-agnostic Protocol + cited social-wiring consumer + backend-extension recipe
+│   │   └── openai-mcp.md   ← OpenAI connector MCP (mcp/openai_mcp/) — 9 tools: embed / chat / vision / transcribe + search.{kb,code,memory,corpus} + diagnostics. Composes `_kit`. Reuses noctusai venv (no separate install). v4.0 ship.
 │   ├── backend/            ← per-product backend details
 │   │   ├── 01-CORE.md
 │   │   ├── 02-ERP.md

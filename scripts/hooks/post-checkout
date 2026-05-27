@@ -90,6 +90,8 @@ if have_py; then
     if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
         "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || true
     fi
+    # ─── memory-embeddings (out-of-repo; always-attempt per universal rule).
+    "$PY" "$CLI" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[post-checkout] memory-embed: /' || true
 fi
 
 echo "[post-checkout] cache refresh pass complete."
