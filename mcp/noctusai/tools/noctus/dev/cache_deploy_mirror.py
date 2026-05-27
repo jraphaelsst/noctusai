@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_pg_corpus_path ON noctus_cache.cache_corpus_embed
 CREATE INDEX IF NOT EXISTS idx_pg_corpus_type ON noctus_cache.cache_corpus_embeddings(source_type);
 
 -- agent-context: disaggregated rows-per-section (matches local agent_context.py
--- _SCHEMA). The earlier `bundle_json` shape was speculative; locally each
+-- _SCHEMA). The earlier `bundle_json` shape was speculative — locally each
 -- section gets its own row so prod queries are SQL-native (no JSON unpack).
 CREATE TABLE IF NOT EXISTS noctus_cache.cache_agent_context (
     agent_name      TEXT NOT NULL,
@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_pg_agent_name ON noctus_cache.cache_agent_context
 CREATE INDEX IF NOT EXISTS idx_pg_section_kind ON noctus_cache.cache_agent_context(section_kind);
 
 -- auto-improvement: matches local auto_improvement.py _SCHEMA. The earlier
--- `source_sha` column was speculative; local cache uses `cached_at` only.
+-- `source_sha` column was speculative — local cache uses `cached_at` only.
 CREATE TABLE IF NOT EXISTS noctus_cache.cache_auto_improvement (
     id              SERIAL PRIMARY KEY,
     ts              TEXT NOT NULL,
@@ -221,9 +221,17 @@ def init_prod_cache_schema(dsn: str | None = None) -> dict[str, Any]:
     target = backend.location("keeper-patterns").rsplit("/", 1)[0]
     with backend.connect("keeper-patterns") as conn:
         cur = conn.cursor()
-        # Split by ; and run each non-empty statement; psycopg2 doesn't
-        # execute multi-stmt strings reliably.
-        statements = [s.strip() for s in _PG_INIT_DDL.split(";") if s.strip()]
+        # Split by ; and run each non-empty + non-comment-only statement;
+        # psycopg2 doesn't execute multi-stmt strings reliably + raises
+        # "empty query" on comment-only chunks (when a `-- comment` line
+        # ends up between two `;` separators).
+        def _has_sql(s: str) -> bool:
+            for ln in s.splitlines():
+                stripped = ln.strip()
+                if stripped and not stripped.startswith("--"):
+                    return True
+            return False
+        statements = [s.strip() for s in _PG_INIT_DDL.split(";") if s.strip() and _has_sql(s)]
         for stmt in statements:
             cur.execute(stmt + ";")
         conn.commit()
