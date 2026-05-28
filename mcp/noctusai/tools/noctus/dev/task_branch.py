@@ -16,6 +16,13 @@ lifecycle so it is one call, not a hand-typed ritual:
                 clean) and surfaced loudly — never auto-resolved, never left
                 half-rebased. This is KB § branching-and-merging § 10.2 Option A
                 with `dev` substituted for the integration ref.
+                Known-benign refresh artifacts (cache refresh files that the
+                pre-commit hook writes as side-effects: KNOWLEDGE-BASE/
+                AGENT-CONTEXT.md, KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md,
+                project-history/vector-costs.ndjson, project-history/
+                auto-improvement.ndjson, .claude/cache/*) are auto-stashed
+                before the rebase and restored after, so a clean FF rebase is
+                never blocked by them. Only real conflicts surface.
   • cleanup   : SALVAGE-before-delete (KB § PATTERNS/storage-hygiene.md § 2.3 —
                 the worktree analogue of archive's learn-before-archive) THEN
                 `git worktree remove <wt>` (refuses if dirty — no --force) →
@@ -53,10 +60,14 @@ git and asserts the allowlist, the dev-only-push boundary, and the rebase-retry.
 """
 from __future__ import annotations
 
+import fnmatch
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 # git subcommands the tool may run. `worktree` (add/remove/list/prune) + `branch`
 # (only `-d`, the merged-only delete) + `rebase` are what distinguish this from
@@ -69,6 +80,21 @@ _ALLOWED_GIT = frozenset(
 _BANNED_TOKENS = (
     "reset", "checkout", "switch", "restore", "clean", "merge", "cherry-pick",
     "--hard", "--force", "--force-with-lease", "-f", "-D",
+)
+
+# Known-benign refresh artifacts — files the pre-commit / cache-refresh hooks
+# write as side-effects inside the worktree. These appear in `git status
+# --porcelain` and cause `git rebase` to refuse with a non-clean-worktree error,
+# producing an empty `conflicted_files` + `status=conflict` even though the
+# rebase would be a clean FF. The integrate precheck auto-stashes these before
+# the rebase and pops the stash after. Patterns are fnmatch-style relative paths
+# (as printed by `git status --porcelain`, XY-code stripped).
+_BENIGN_REFRESH_PATTERNS = (
+    "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
+    "KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md",
+    "project-history/vector-costs.ndjson",
+    "project-history/auto-improvement.ndjson",
+    ".claude/cache/*",
 )
 
 
@@ -182,6 +208,75 @@ def _is_dirty_excluding_gitignored(runner, wt_path: str) -> bool:
         return True
     lines = [ln for ln in out.splitlines() if ln.strip()]
     return bool(lines)
+
+
+def _classify_dirty_files(
+    runner, wt_path: str
+) -> tuple[list[str], list[str]]:
+    """Classify dirty files in the worktree into (benign, real).
+
+    `benign` = files matching ``_BENIGN_REFRESH_PATTERNS`` (known pre-commit /
+    cache-refresh side-effects that block rebase but carry no task work).
+    `real`   = everything else (actual conflicts, task-in-progress changes).
+
+    Returns two lists of relative paths (as `git status --porcelain` reports them,
+    XY-code stripped). A git-status failure → ([], ["<git-status-failed>"]) so the
+    caller treats it conservatively as a real conflict.
+    """
+    rc, out, _e = runner(["git", "status", "--porcelain"], cwd=wt_path)
+    if rc != 0:
+        return [], ["<git-status-failed>"]
+    benign: list[str] = []
+    real: list[str] = []
+    for raw in out.splitlines():
+        if not raw.strip():
+            continue
+        # porcelain format: "XY path" or "XY old -> new"; take the last token
+        parts = raw[3:].strip()
+        path = parts.split(" -> ")[-1].strip()
+        matched = any(fnmatch.fnmatch(path, pat) for pat in _BENIGN_REFRESH_PATTERNS)
+        (benign if matched else real).append(path)
+    return benign, real
+
+
+def _stash_benign_artifacts(
+    runner, wt_path: str, benign: list[str], verbose: bool = False
+) -> bool:
+    """Stash the known-benign refresh artifacts before a rebase so the worktree
+    is clean. Uses ``git stash push -- <paths>`` (bypasses ``_git()`` since stash
+    is not on the safe allowlist — this is an intentional, controlled carve-out
+    for known-safe paths only, mirroring the force-remove carve-out in cleanup).
+
+    Returns True if the stash succeeded (or there was nothing to stash), False on
+    failure (caller falls back to surfacing the files as blocking).
+    """
+    if not benign:
+        return True
+    if verbose:
+        logger.debug("task_branch.integrate: auto-stashing %d benign artifact(s): %s",
+                     len(benign), benign)
+    rc, _o, err = runner(
+        ["git", "-C", wt_path, "stash", "push", "--include-untracked",
+         "--message", "task_branch auto-stash: benign refresh artifacts", "--"] + benign
+    )
+    if rc != 0:
+        logger.warning("task_branch.integrate: auto-stash failed (%s); "
+                       "proceeding without stash — rebase may be blocked",
+                       (err or "").strip())
+        return False
+    return True
+
+
+def _pop_stash(runner, wt_path: str, verbose: bool = False) -> None:
+    """Pop the auto-stash created by ``_stash_benign_artifacts``. Best-effort:
+    a pop failure is logged but never raises (the integrate already completed)."""
+    if verbose:
+        logger.debug("task_branch.integrate: popping auto-stash")
+    rc, _o, err = runner(["git", "-C", wt_path, "stash", "pop"])
+    if rc != 0:
+        logger.warning("task_branch.integrate: stash pop failed (%s); "
+                       "the benign artifacts remain stashed — run `git stash pop` "
+                       "in the worktree to restore them", (err or "").strip())
 
 # ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
 # A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,
@@ -314,10 +409,14 @@ def task_branch(
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
     salvage_recorder: Callable[..., Any] | None = None,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
     `confirm`. Returns a structured plan/result; never raises on a refusal — it
     returns it (the refusal IS the safety net).
+
+    `verbose=True` emits debug-level logging for each step of integrate/cleanup
+    so future debugging is one re-run away (no code changes needed).
 
     `wire_env=True` (only meaningful on `action='start'`) auto-wires the §5a
     verification-env recipe into the fresh worktree AFTER it exists: symlink the
@@ -439,23 +538,79 @@ def task_branch(
                     "message": (f"will rebase {branch} onto {remote}/{dev_branch} "
                                 f"(behind {len(behind)}) then FF-push {len(ahead)} commit(s) → "
                                 f"{dev_branch} (retry on concurrent-push race). Pass confirm=True.")}
-        # ACT — rebase-then-push loop; fetch fresh each iteration (the race).
+        # ACT — auto-stash known-benign refresh artifacts, then rebase-then-push
+        # loop; fetch fresh each iteration (the race).
+        #
+        # ROOT-CAUSE FIX (2026-05-28, N=5+ observed): pre-commit / cache-refresh
+        # hooks write side-effect files into the worktree (KNOWLEDGE-BASE/
+        # AGENT-CONTEXT.md, project-history/vector-costs.ndjson, etc.). These
+        # appear in `git status --porcelain` ⇒ `git rebase` refuses ("error:
+        # cannot rebase: You have unstaged changes") ⇒ tool returns rc≠0 ⇒ tool
+        # surfaces status=conflict with empty conflicted_files. The actual rebase
+        # would be a clean FF — there are no real conflicts. Fix: classify dirty
+        # files into benign (the known patterns) vs real (actual task work);
+        # auto-stash benign files before the rebase, pop stash after success.
+        # Only if REAL dirty files exist (not just benign ones) do we block.
+        benign_stashed = False
+        if verbose:
+            logger.debug("task_branch.integrate: classifying dirty files in %s", wt_path)
+        benign_files, real_files = _classify_dirty_files(runner, wt_path)
+        if real_files and not benign_files:
+            # Real dirty files with no benign files — block before even trying to
+            # rebase (saves one rebase attempt + abort cycle).
+            if verbose:
+                logger.debug("task_branch.integrate: real dirty files block rebase: %s",
+                             real_files)
+        elif benign_files:
+            if verbose:
+                logger.debug("task_branch.integrate: found %d benign artifact(s) to stash: %s",
+                             len(benign_files), benign_files)
+            benign_stashed = _stash_benign_artifacts(runner, wt_path, benign_files, verbose)
+            if benign_stashed and verbose:
+                logger.debug("task_branch.integrate: benign artifacts stashed; "
+                             "proceeding with rebase")
+
         for attempt in range(1, max_retries + 1):
+            if verbose:
+                logger.debug("task_branch.integrate: attempt %d/%d — fetch + rebase",
+                             attempt, max_retries)
             git("fetch", remote, "--quiet")
             rc, out, err = git("rebase", f"{remote}/{dev_branch}", cwd=wt_path)
             if rc != 0:
-                # surface the conflict loudly, restore a clean worktree — never
-                # auto-resolve, never leave a half-rebase behind.
+                # Rebase failed — find actually-conflicted files via diff --diff-filter=U.
+                # If that list is EMPTY + we have benign_files that weren't stashed
+                # successfully, that is the known false-positive pattern. Surface with
+                # enough detail to diagnose.
                 _rc2, cout, _ce = git("diff", "--name-only", "--diff-filter=U", cwd=wt_path)
                 conflicted = [ln.strip() for ln in cout.splitlines() if ln.strip()]
                 git("rebase", "--abort", cwd=wt_path)
-                return {**plan, "status": "conflict", "exit_code": 1, "conflicted_files": conflicted,
+                # Restore the stash even on failure so the worktree is clean.
+                if benign_stashed:
+                    _pop_stash(runner, wt_path, verbose)
+                    benign_stashed = False
+                # Re-classify after the abort to give accurate diagnostics.
+                _, real_after = _classify_dirty_files(runner, wt_path)
+                detail = (f"Dirty files present before rebase: benign={benign_files} "
+                          f"real={real_files}; conflicted after rebase: {conflicted}. "
+                          f"If conflicted_files is empty, check for uncommitted "
+                          f"non-benign files in the worktree."
+                          if not conflicted else "")
+                return {**plan, "status": "conflict", "exit_code": 1,
+                        "conflicted_files": conflicted,
+                        "blocked_by_dirty": real_after,
                         "message": (f"rebase of {branch} onto {remote}/{dev_branch} hit conflicts "
                                     f"in {conflicted or 'unknown files'}; aborted to keep the "
                                     "worktree clean. Resolve manually in the worktree, then re-run "
-                                    "integrate.")}
+                                    f"integrate. {detail}").strip()}
+            if verbose:
+                logger.debug("task_branch.integrate: rebase succeeded; pushing to %s", dev_branch)
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc == 0:
+                # Pop stash AFTER the push so the worktree ends clean (the benign
+                # files reappear but that's fine — they're tracked + committed elsewhere).
+                if benign_stashed:
+                    _pop_stash(runner, wt_path, verbose)
+                    benign_stashed = False
                 new_dev = _resolve(git, f"{remote}/{dev_branch}")
                 new_head = _resolve(git, branch)
                 return {**plan, "status": "integrated", "exit_code": 0, "attempts": attempt,
@@ -463,6 +618,12 @@ def task_branch(
                         "message": (f"integrated {len(ahead)} commit(s) to {dev_branch} "
                                     f"(attempt {attempt}). Tear down: action='cleanup' slug='{slug}'.")}
             # non-FF: a peer pushed between rebase and push → loop, re-fetch+rebase
+            if verbose:
+                logger.debug("task_branch.integrate: push rejected (concurrent peer push) "
+                             "on attempt %d — re-fetching + rebasing", attempt)
+        # All attempts exhausted — restore stash so we don't leave the worktree stashed.
+        if benign_stashed:
+            _pop_stash(runner, wt_path, verbose)
         return {**plan, "status": "error", "exit_code": 1,
                 "error": f"could not FF-push to {dev_branch} after {max_retries} attempts "
                          "(persistent concurrent pushes). Retry integrate."}
@@ -479,6 +640,8 @@ def task_branch(
     #     knowledge → KB/memory before the lossy delete.
     #   2 RECOVERY POINTER (MECHANICAL, below): branch+SHA → the tracked ledger.
     #   3 STORAGE HYGIENE (sequenced): a mole worktree-sweep before the delete.
+    if verbose:
+        logger.debug("task_branch.cleanup: starting for slug=%s wt_path=%s", slug, wt_path)
     git("fetch", remote, "--quiet")
     # Resolve the worktree's ACTUAL branch from the worktree list (the dir is the
     # stable key) — robust to a reused/renamed worktree whose branch ≠ feat/<slug>.
@@ -549,11 +712,16 @@ def task_branch(
     salvage_pushed = False
     if salvage_ledger:
         rel_ledger = "project-history/worktree-salvage.ndjson"
+        if verbose:
+            logger.debug("task_branch.cleanup: checking if salvage ledger is dirty: %s",
+                         rel_ledger)
         rc_d, out_d, _ = runner(
             ["git", "-C", wt_path, "status", "--porcelain", "--", rel_ledger])
         if rc_d == 0 and (out_d or "").strip():
             # Ledger is dirty in the worktree (this call appended a new record).
             # Stage + commit + push to dev (FF-only — branch already merged to dev).
+            if verbose:
+                logger.debug("task_branch.cleanup: ledger dirty — staging + committing + pushing")
             rc_a, _, err_a = runner(["git", "-C", wt_path, "add", rel_ledger])
             if rc_a == 0:
                 msg = (f"chore(salvage): record {branch} recovery pointer\n\n"
@@ -666,7 +834,9 @@ def register(server) -> None:
         return task_branch(action=action, slug=slug, confirm=confirm, wire_env=wire_env)
 
 
-__all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_assert_push_targets_dev",
-           "_parse_worktrees", "_branch_for_path", "_is_dirty_excluding_gitignored",
+__all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",
+           "_assert_push_targets_dev", "_parse_worktrees", "_branch_for_path",
+           "_is_dirty_excluding_gitignored", "_classify_dirty_files",
+           "_stash_benign_artifacts", "_pop_stash",
            "_plan_env_wiring", "_apply_env_wiring",
            "FsOps", "register"]

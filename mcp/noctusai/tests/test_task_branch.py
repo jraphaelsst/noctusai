@@ -28,10 +28,15 @@ class FakeGit:
     """Scripts git IO. `refs` maps ref→sha. A push (when its scripted rc is 0)
     advances the dst ref to `head_sha` (the worktree HEAD), simulating the FF.
     `rebase_rcs` / `push_rcs` are consumed left-to-right (default → 0). `anc` is
-    an ancestor predicate over shas. Records every (cmd, cwd)."""
+    an ancestor predicate over shas. Records every (cmd, cwd).
+
+    `status_output` overrides the `git status --porcelain` response (default: "").
+    `stash_rc` controls the return code for `git stash push` (default: 0).
+    """
 
     def __init__(self, refs, anc, logs=None, porcelain="", head_sha=None,
-                 rebase_rcs=None, push_rcs=None, conflicts=None):
+                 rebase_rcs=None, push_rcs=None, conflicts=None,
+                 status_output="", stash_rc=0):
         self.refs = dict(refs)
         self.anc = anc
         self.logs = logs or {}
@@ -40,11 +45,17 @@ class FakeGit:
         self.rebase_rcs = list(rebase_rcs or [])
         self.push_rcs = list(push_rcs or [])
         self.conflicts = conflicts or []
+        self.status_output = status_output
+        self.stash_rc = stash_rc
         self.calls: list[tuple[list[str], str | None]] = []
 
     def __call__(self, cmd, cwd=None):
         self.calls.append((cmd, cwd))
-        sub = cmd[1] if len(cmd) > 1 else ""
+        # Handle both `git <sub> ...` and `git -C <path> <sub> ...` forms.
+        if len(cmd) > 1 and cmd[1] == "-C":
+            sub = cmd[3] if len(cmd) > 3 else ""
+        else:
+            sub = cmd[1] if len(cmd) > 1 else ""
         if sub == "fetch":
             return (0, "", "")
         if sub == "rev-parse":
@@ -58,10 +69,16 @@ class FakeGit:
             if "--diff-filter=U" in cmd:
                 return (0, "\n".join(self.conflicts), "")
             return (0, "", "")
+        if sub == "status":
+            return (0, self.status_output, "")
         if sub == "worktree":
-            if cmd[2] == "list":
+            if cmd[2] == "list" or (len(cmd) > 3 and cmd[3] == "list"):
                 return (0, self.porcelain, "")
             return (0, "", "")  # add / remove / prune
+        if sub == "stash":
+            if "pop" in cmd:
+                return (0, "", "")
+            return (self.stash_rc, "", "stash-error" if self.stash_rc else "")
         if sub == "rebase":
             if "--abort" in cmd:
                 return (0, "", "")
@@ -70,9 +87,21 @@ class FakeGit:
         if sub == "push":
             rc = self.push_rcs.pop(0) if self.push_rcs else 0
             if rc == 0:
-                dst = cmd[3].split(":refs/heads/")[1]
-                self.refs["origin/" + dst] = self.head_sha or self.refs.get("origin/" + dst)
+                # Handle both `git push origin HEAD:refs/heads/dev` and
+                # `git -C <wt> push origin HEAD:dev` refspec forms.
+                dst_tok = next((t for t in cmd if ":" in t and "refs/heads/" in t), None)
+                if dst_tok:
+                    dst = dst_tok.split(":refs/heads/")[1]
+                    self.refs["origin/" + dst] = self.head_sha or self.refs.get("origin/" + dst)
+                else:
+                    # HEAD:dev form (used by cleanup's commit-push leg)
+                    dst_tok2 = next((t for t in cmd if t.startswith("HEAD:")), None)
+                    if dst_tok2:
+                        dst = dst_tok2.split(":", 1)[1]
+                        self.refs["origin/" + dst] = self.head_sha or self.refs.get("origin/" + dst)
             return (rc, "", "non-fast-forward" if rc else "")
+        if sub == "add" or sub == "commit":
+            return (0, "", "")
         if sub == "branch":      # branch -d <name>
             return (0, "", "")
         return (0, "", "")
@@ -81,7 +110,14 @@ class FakeGit:
         return [(c[1] if len(c) > 1 else "", c) for c, _cwd in self.calls]
 
     def pushes(self):
-        return [c for c, _cwd in self.calls if len(c) > 1 and c[1] == "push"]
+        """Return all push commands (both `git push ...` and `git -C <wt> push ...` forms)."""
+        result = []
+        for c, _cwd in self.calls:
+            if len(c) > 1 and c[1] == "push":
+                result.append(c)
+            elif len(c) > 3 and c[1] == "-C" and c[3] == "push":
+                result.append(c)
+        return result
 
     def ran(self, *needles):
         flat = " ".join(" ".join(c) for c, _cwd in self.calls)
@@ -735,3 +771,234 @@ def test_cleanup_salvage_ledger_root_absolute_wt_path():
     from pathlib import Path
     assert Path(str(ledger_root)) == Path("/abs/wt/abs"), (
         f"Expected /abs/wt/abs, got {ledger_root!r}")
+
+
+# ── Bug C: integrate status=conflict + empty conflicted_files on clean FF rebase ──
+# Root cause: pre-commit / cache-refresh hooks write known-benign files into the
+# worktree (KNOWLEDGE-BASE/AGENT-CONTEXT.md, project-history/vector-costs.ndjson,
+# etc.). `git rebase` refuses with "error: cannot rebase: You have unstaged
+# changes" ⇒ rc≠0 ⇒ tool returns status=conflict + empty conflicted_files (the
+# diff --diff-filter=U finds nothing because the rebase was BLOCKED, not CONFLICTED).
+# Fix: auto-stash known-benign files before the rebase; pop after success.
+# Observed N=5+ times this session (2026-05-28). Tests cover both legs.
+
+def test_integrate_with_known_benign_dirty_files_succeeds():
+    """The bug we hit N=5+: worktree has benign refresh artifacts as dirty files,
+    but the actual rebase is a clean FF. The integrate must auto-stash them,
+    rebase cleanly, and return status=integrated (not status=conflict)."""
+    # Build a runner that: (1) reports benign dirty files on status, (2) reports
+    # clean status after the stash push, (3) succeeds the rebase.
+    stash_pushed = []
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "stash":
+                if "pop" in cmd:
+                    return (0, "", "")
+                # stash push — remember it happened
+                stash_pushed.append(True)
+                return (0, "", "")
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        # status returns benign dirty file BEFORE stash, clean after
+        status_output=" M KNOWLEDGE-BASE/AGENT-CONTEXT.md\n M project-history/vector-costs.ndjson\n",
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner,
+                        verbose=True)
+    assert res["status"] == "integrated", (
+        f"expected integrated, got {res!r} — benign artifacts should be auto-stashed")
+    assert res["exit_code"] == 0
+    assert stash_pushed, "stash push must be called for benign artifacts"
+
+
+def test_integrate_with_real_dirty_conflict_blocks_loudly():
+    """The inverse: real uncommitted changes (not in the benign list) must cause
+    the rebase to fail AND surface conflicted_files loudly. We must never silently
+    eat a real conflict."""
+    calls = []
+
+    def runner(cmd, cwd=None):
+        calls.append(cmd)
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "stash":
+                # Should NOT be called for real dirty files
+                return (0, "", "")
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": "e1 z"},
+        head_sha="b0",
+        rebase_rcs=[1],                  # rebase conflicts
+        conflicts=["products/myapp/backend/real_work.py"],
+        # Status shows a REAL file (not in the benign list)
+        status_output=" M products/myapp/backend/real_work.py\n",
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "conflict", f"expected conflict, got {res!r}"
+    assert res["exit_code"] == 1
+    assert res["conflicted_files"] == ["products/myapp/backend/real_work.py"]
+    # No stash push should have occurred for real files
+    stash_calls = [c for c in calls if len(c) > 3 and c[3] == "stash" and "pop" not in c]
+    assert not stash_calls, "must NOT stash real dirty files"
+
+
+def test_integrate_after_push_race_retries_once():
+    """TOCTOU mitigation: if the push fails (concurrent peer), the next attempt
+    re-fetches + re-rebases (the race loop). Benign stash is properly managed
+    across retries — stash once before the loop, pop after final success."""
+    stash_ops = []
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "stash":
+                op = "pop" if "pop" in cmd else "push"
+                stash_ops.append(op)
+                return (0, "", "")
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        push_rcs=[1, 0],  # first push rejected (peer beat us), second FFs
+        # Benign artifact present
+        status_output=" M project-history/auto-improvement.ndjson\n",
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "integrated", f"expected integrated, got {res!r}"
+    assert res["attempts"] == 2
+    # Stash pushed once before the loop, popped once after final success
+    assert stash_ops.count("push") == 1, "should stash exactly once before the retry loop"
+    assert stash_ops.count("pop") == 1, "should pop exactly once after success"
+
+
+def test_cleanup_idempotent_under_concurrent_call():
+    """The d2676bed fix invariant: a second cleanup call (after the first already
+    appended + committed the ledger) sees a clean ledger → no duplicate commit/push.
+    salvage_pushed is False on the second call."""
+    call_count = [0]
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "status":
+                # First call: ledger is dirty (new record appended)
+                # Second call: ledger is clean (already committed)
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    return (0, " M project-history/worktree-salvage.ndjson\n", "")
+                return (0, "", "")
+            if inner_sub in ("add", "commit", "fetch"):
+                return (0, "", "")
+            if inner_sub == "push":
+                return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
+                   anc=_anc_pairs([("b0", "d0")]))
+    rec = _capture_recorder()
+
+    # First call — ledger dirty → commit + push
+    res1 = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
+                         primary_root="/repo", salvage_recorder=rec)
+    assert res1["status"] == "cleaned"
+    assert res1["salvage_pushed"] is True
+
+    # Reset fake for second call with fresh state
+    fake2 = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
+                    anc=_anc_pairs([("b0", "d0")]))
+    rec2 = _capture_recorder()
+    call_count[0] = 99  # Force "clean" status for subsequent calls
+
+    def runner2(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "status":
+                return (0, "", "")  # already committed — clean
+        return fake2(cmd, cwd)
+
+    res2 = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner2,
+                         primary_root="/repo", salvage_recorder=rec2)
+    assert res2["status"] == "cleaned"
+    assert res2["salvage_pushed"] is False  # idempotent — nothing to push
+
+
+def test_cleanup_skips_already_recorded_sha():
+    """The d2676bed idempotency contract: when the salvage recorder returns a path
+    but the ledger file is already clean (append_ledger skipped the duplicate),
+    the commit/push leg is a no-op. `salvage_pushed` is False."""
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "status":
+                # Ledger is clean — idempotent append skipped the duplicate
+                return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
+                   anc=_anc_pairs([("b0", "d0")]))
+    rec = _capture_recorder()
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    assert res["salvage_pushed"] is False
+    # Recorder was still called (the attempt to append was made), but ledger was clean
+    assert len(rec.captured) == 1
+
+
+# ── Unit: _classify_dirty_files ──
+
+def test_classify_dirty_files_separates_benign_from_real():
+    """Unit: _classify_dirty_files correctly routes known-benign paths vs real ones."""
+    status_out = (
+        " M KNOWLEDGE-BASE/AGENT-CONTEXT.md\n"
+        " M project-history/vector-costs.ndjson\n"
+        " M project-history/auto-improvement.ndjson\n"
+        " M products/myapp/backend/services.py\n"
+        " M seed/lib/backend/core.py\n"
+    )
+    runner = lambda cmd, cwd=None: (0, status_out, "")
+    benign, real = T._classify_dirty_files(runner, "/wt")
+    assert "KNOWLEDGE-BASE/AGENT-CONTEXT.md" in benign
+    assert "project-history/vector-costs.ndjson" in benign
+    assert "project-history/auto-improvement.ndjson" in benign
+    assert "products/myapp/backend/services.py" in real
+    assert "seed/lib/backend/core.py" in real
+
+
+def test_classify_dirty_files_cache_glob_matches():
+    """Unit: .claude/cache/* pattern matches cache files."""
+    status_out = " M .claude/cache/agent-context.sqlite\n M .claude/cache/noc-graph.sqlite\n"
+    runner = lambda cmd, cwd=None: (0, status_out, "")
+    benign, real = T._classify_dirty_files(runner, "/wt")
+    assert ".claude/cache/agent-context.sqlite" in benign
+    assert ".claude/cache/noc-graph.sqlite" in benign
+    assert real == []
+
+
+def test_classify_dirty_files_on_git_failure_is_conservative():
+    """Unit: git status failure → conservative (no benign, one sentinel real entry)."""
+    runner = lambda cmd, cwd=None: (128, "", "not a git repo")
+    benign, real = T._classify_dirty_files(runner, "/wt")
+    assert benign == []
+    assert real == ["<git-status-failed>"]
