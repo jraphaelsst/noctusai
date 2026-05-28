@@ -243,6 +243,8 @@ def main():
     parser.add_argument("--check-disk-usage", action="store_true", help="Disk-pressure monitor 70/80/90 bands (absorbed scripts/disk-usage-monitor.sh). MCP: noctus.dev.check_disk_usage.")
     parser.add_argument("--check-framework-deps", action="store_true", help="Audit product frontend package.json framework-dep parity (absorbed scripts/check-framework-deps.py). MCP: noctus.dev.check_framework_deps.")
     parser.add_argument("--cleanup-stale-worktrees", action="store_true", help="Remove worktrees merged to origin/main (absorbed scripts/cleanup-stale-worktrees.sh). Dry-run unless --force. MCP: noctus.dev.cleanup_stale_worktrees.")
+    parser.add_argument("--tmp-cleanup", action="store_true", help="Sweep retired engineer-dispatch patch artifacts from /tmp (patch-id-on-dev OR aged-out OR malformed). DRY-RUN unless --force. MCP: noctus.dev.tmp_cleanup.")
+    parser.add_argument("--tmp-cleanup-max-age-days", type=int, default=14, help="With --tmp-cleanup: age threshold beyond which unmatched patches are retired (default 14).")
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
@@ -1591,6 +1593,12 @@ def main():
         r = cleanup_stale_worktrees(force=args.force)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0)
+
+    elif args.tmp_cleanup:
+        from tools.noctus.dev.tmp_cleanup import tmp_cleanup
+        r = tmp_cleanup(dry_run=not args.force, max_age_days=args.tmp_cleanup_max_age_days)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.check_merge_debt:
         from tools.noctus.dev.merge_debt import check_merge_debt

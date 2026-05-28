@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/common/push-time-embedding-gate.md
   - CONTEXT/PATTERNS/common/memory-embeddings.md
   - CONTEXT/PATTERNS/common/corpus-embeddings.md
+  - CONTEXT/PATTERNS/common/tmp-artifact-cleanup.md
   - CONTEXT/INTEGRATIONS/openai-mcp.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
@@ -51,6 +52,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Push-time embedding-freshness gate.** Embed at the push boundary, not on every commit (v4.0 2026-05-27). pre-commit no longer refreshes kb/code embeddings; pre-push runs the refresh + soft-fails on missing key/provider. `NOCTUS_SKIP_EMBED_REFRESH=1` bypass for CI smoke pushes. → `KB § PATTERNS/common/push-time-embedding-gate.md`
 - **Memory + corpus embedding caches (6th + 7th).** v4.0 added two corpora: memory (out-of-repo feedback/reference/project notes via `memory_embeddings`) + corpus (in-repo CHANGELOG/templates/agents-full-body/skills/PROJECT-HISTORY via `corpus_embeddings`). Both mirror to prod pgvector via `cache_deploy_mirror`. Same refresh boundaries as kb/code. → `KB § PATTERNS/common/memory-embeddings.md` · `KB § PATTERNS/common/corpus-embeddings.md`
 - **OpenAI connector MCP** (`mcp/openai_mcp/`). 9 tools wrapping OpenAI API + the 4 search engines: embed / chat / vision / transcribe / search.{kb,code,memory,corpus} / diagnostics. Reuses noctusai venv. `.mcp.json` wire-up per-operator. → `KB § INTEGRATIONS/openai-mcp.md`
+- **Tmp-artifact cleanup (orchestrator end-of-tick sweep).** `noctus.dev.tmp_cleanup` purges retired `/tmp/*.patch` files left by the engineer-brief-patch-file-first pattern (patch-id-on-`origin/dev` OR aged-out ≥14d OR malformed → delete; fresh-unmatched kept). DRY-RUN default; orchestrator-operator runs with `dry_run=False` at end of every drain tick, surfaces `Hygiene: <N> patches purged …`. Bounded scope: `/tmp/*.patch` ONLY (never harness state, never repo files). → `KB § PATTERNS/common/tmp-artifact-cleanup.md`
 - **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/devops/environment.md` · security advisor for review
 - **Incident response.** Triage → mitigate → root-cause → document (timeline, RCA, remediation PRs, runbook update, post-mortem). Mitigation > root-cause during the incident.
 

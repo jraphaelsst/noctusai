@@ -100,6 +100,7 @@ def register_all(server) -> None:
     from . import task_branch
     from . import testing
     from . import three_way_sync
+    from . import tmp_cleanup
     from . import vector_calibration
     from . import vector_costs
     from . import vectorize
@@ -194,6 +195,7 @@ def register_all(server) -> None:
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
+    tmp_cleanup.register(server)
     vector_calibration.register(server)
     vector_costs.register(server)
     vectorize.register(server)
