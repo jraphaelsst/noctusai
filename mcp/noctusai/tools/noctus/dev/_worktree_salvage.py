@@ -71,19 +71,56 @@ def build_records(removed: list[dict]) -> list[dict]:
     ]
 
 
-def append_ledger(root: Path, records: list[dict]) -> Path | None:
-    """Append recovery records to the TRACKED worktree-salvage ledger.
+def _existing_keys(ledger: Path) -> set[tuple]:
+    """Read the ledger and return the set of (path, branch, sha) keys already recorded.
 
-    Returns the ledger path (the sweep's caller commits it — it is tracked, exactly
-    like `ledger.ndjson`), or None when there is nothing to record. Never raises.
+    The idempotency primitive — `append_ledger` skips a record whose key already
+    appears. A malformed line is silently skipped (no spurious dupes from bad data);
+    a read failure returns the empty set (safe — caller appends as if fresh).
+    """
+    if not ledger.exists():
+        return set()
+    keys: set[tuple] = set()
+    try:
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            keys.add((rec.get("path"), rec.get("branch"), rec.get("sha")))
+    except OSError as exc:
+        logger.warning("worktree-salvage: read ledger %s failed (%s)", ledger, exc)
+    return keys
+
+
+def append_ledger(root: Path, records: list[dict]) -> Path | None:
+    """Append recovery records to the TRACKED worktree-salvage ledger — idempotent.
+
+    Skips a record whose (path, branch, sha) is already in the ledger. The N=3
+    cross-tree hazard fix (2026-05-28): the previous unconditional append created
+    a loop — every cleanup invocation re-appended the same pointer, leaving the
+    worktree dirty and blocking `git worktree remove`. Returns the ledger path
+    when at least one record was *written*, or when the path is already canonical
+    (records all duplicates) — callers can use the path to git-stage. Returns None
+    only on hard failure or empty input. Never raises.
     """
     if not records:
         return None
     ledger = root / LEDGER_REL
     try:
         ledger.parent.mkdir(parents=True, exist_ok=True)
+        existing = _existing_keys(ledger)
+        new = [
+            rec for rec in records
+            if (rec.get("path"), rec.get("branch"), rec.get("sha")) not in existing
+        ]
+        if not new:
+            return ledger  # canonical — caller still gets the path; nothing dirty
         with ledger.open("a", encoding="utf-8") as fh:
-            for rec in records:
+            for rec in new:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         return ledger
     except OSError as exc:

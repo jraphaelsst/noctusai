@@ -83,6 +83,60 @@ class TestAppendLedger:
         assert wsv.branch_sha(r, "no-such-branch") is None
 
 
+class TestAppendLedgerIdempotency:
+    """The N=3 cross-tree hazard fix (2026-05-28): repeated cleanup calls used to
+    re-append the same record, leaving the worktree dirty and looping forever."""
+
+    def _rec(self, path, branch, sha):
+        return {"ts": "2026-05-28", "event": "worktree-sweep", "path": path,
+                "branch": branch, "sha": sha, "reason": "merged-to-dev"}
+
+    def test_skip_duplicate_same_key(self, tmp_path):
+        rec = self._rec("/wt/x", "wt-x", "sX")
+        wsv.append_ledger(tmp_path, [rec])
+        wsv.append_ledger(tmp_path, [rec])
+        wsv.append_ledger(tmp_path, [rec])
+        lines = (tmp_path / LEDGER_REL).read_text().strip().splitlines()
+        assert len(lines) == 1  # idempotent — first write wins
+
+    def test_returns_path_even_when_all_duplicates(self, tmp_path):
+        rec = self._rec("/wt/y", "wt-y", "sY")
+        first = wsv.append_ledger(tmp_path, [rec])
+        # Second call: all records are duplicates → no write, but path is canonical.
+        second = wsv.append_ledger(tmp_path, [rec])
+        assert second == first  # caller still gets the path (for staging probes)
+
+    def test_new_keys_after_existing_still_appended(self, tmp_path):
+        wsv.append_ledger(tmp_path, [self._rec("/wt/a", "wt-a", "s1")])
+        # Mixed batch: one duplicate + one new — only the new one is written.
+        wsv.append_ledger(tmp_path, [
+            self._rec("/wt/a", "wt-a", "s1"),     # duplicate
+            self._rec("/wt/a", "wt-a", "s2"),     # new (same branch, different sha)
+        ])
+        lines = (tmp_path / LEDGER_REL).read_text().strip().splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[1])["sha"] == "s2"
+
+    def test_branch_distinguishes_key(self, tmp_path):
+        # Same path+sha but different branch ⇒ NOT a duplicate (the recovery
+        # pointer is branch-anchored — different branch = different recovery).
+        wsv.append_ledger(tmp_path, [self._rec("/wt/p", "branch-A", "sZ")])
+        wsv.append_ledger(tmp_path, [self._rec("/wt/p", "branch-B", "sZ")])
+        lines = (tmp_path / LEDGER_REL).read_text().strip().splitlines()
+        assert len(lines) == 2
+
+    def test_malformed_line_in_existing_ledger_does_not_block(self, tmp_path):
+        ledger = tmp_path / LEDGER_REL
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text("not json\n" +
+                          json.dumps(self._rec("/wt/q", "wt-q", "sQ")) + "\n")
+        # The malformed line is silently skipped (no spurious duplicate from
+        # garbage); the valid one still acts as a duplicate key.
+        wsv.append_ledger(tmp_path, [self._rec("/wt/q", "wt-q", "sQ")])
+        lines = ledger.read_text().splitlines()
+        assert len(lines) == 2  # malformed + 1 real, no new line
+
+
 class TestSweepWritesLedger:
     """Integration: a real force sweep records recovery pointers to the ledger."""
 

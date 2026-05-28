@@ -311,6 +311,80 @@ def test_cleanup_resolves_actual_branch_for_reused_worktree_dir():
     assert fake.ran("worktree remove .claude/worktrees/sw-waha-youtube")
 
 
+def test_cleanup_commits_dirty_salvage_ledger_before_remove():
+    """The N=3 cross-tree-hazard fix (2026-05-28): when the salvage record leaves
+    the ledger file dirty in the worktree, cleanup commits + pushes the entry to
+    dev BEFORE the worktree remove. Without this leg, remove refused (dirty tree)
+    and a retry was a no-op via idempotency yet STILL saw the same uncommitted
+    file ⇒ infinite loop. This test asserts the stage → commit → push sequence
+    happens between salvage record and worktree remove."""
+    order: list[str] = []
+    refs = {"origin/dev": "d0", "feat/x": "b0"}
+
+    def runner(cmd, cwd=None):
+        order.append(" ".join(cmd))
+        if cmd[:2] == ["git", "-C"]:
+            sub = cmd[3] if len(cmd) > 3 else ""
+            if sub == "status":          # dirty signal on the ledger file
+                return (0, " M project-history/worktree-salvage.ndjson\n", "")
+            if sub == "add" or sub == "commit" or sub == "fetch":
+                return (0, "", "")
+            if sub == "push":
+                return (0, "", "")       # FF push succeeds
+        # FakeGit handles the cleanup MCP tool's _git() wrapper calls.
+        return fake(cmd, cwd)
+
+    fake = FakeGit(refs=refs, anc=_anc_pairs([("b0", "d0")]))
+
+    def rec(root, removed):
+        order.append("salvage")
+        return Path(root) / "project-history/worktree-salvage.ndjson"
+
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    assert res["salvage_pushed"] is True
+    flat = " | ".join(order)
+    # The commit + push happen AFTER the salvage record and BEFORE the worktree
+    # remove — the precise sequencing that breaks the N=3 loop.
+    assert "salvage" in order
+    assert any("status --porcelain -- project-history/worktree-salvage.ndjson"
+               in o for o in order)
+    assert any("add project-history/worktree-salvage.ndjson" in o for o in order)
+    assert any("commit -m" in o for o in order)
+    assert any("push origin HEAD:dev" in o for o in order)
+    # Sequence: salvage → status/add/commit/push → remove
+    salvage_idx = order.index("salvage")
+    push_idx = next(i for i, o in enumerate(order) if "push origin HEAD:dev" in o)
+    remove_idx = next(i for i, o in enumerate(order) if "worktree remove" in o)
+    assert salvage_idx < push_idx < remove_idx
+
+
+def test_cleanup_skips_commit_push_when_ledger_clean():
+    """The idempotent case: second cleanup call sees ledger already canonical
+    (append_ledger skipped the duplicate), so status reports clean and the
+    commit+push leg is a no-op. Remove proceeds directly."""
+    order: list[str] = []
+
+    def runner(cmd, cwd=None):
+        order.append(" ".join(cmd))
+        if cmd[:2] == ["git", "-C"]:
+            sub = cmd[3] if len(cmd) > 3 else ""
+            if sub == "status":          # clean — no dirty signal
+                return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
+                   anc=_anc_pairs([("b0", "d0")]))
+    rec = _capture_recorder()
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
+                        primary_root="/repo", salvage_recorder=rec)
+    assert res["status"] == "cleaned"
+    assert res["salvage_pushed"] is False  # nothing to push — ledger was clean
+    assert not any("commit -m" in o for o in order)
+    assert not any("push origin HEAD:dev" in o for o in order)
+
+
 def test_branch_for_path_keys_on_dir_not_slug():
     """Unit: _branch_for_path matches by dir path/basename, returns the real
     branch; None for a detached or absent worktree."""

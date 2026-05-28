@@ -538,6 +538,59 @@ def task_branch(
             "path": wt_path, "branch": branch, "sha": head,
             "reason": "task_branch cleanup (learn-before-delete)"}])
         salvage_ledger = str(rec_path) if rec_path else None
+    # Leg 2b — commit & push the ledger entry FROM THE WORKTREE BEFORE remove.
+    # Without this, the appended ledger entry left the worktree dirty (one tracked
+    # file modified), `git worktree remove` refused, and a second cleanup call
+    # (now no-op via idempotency) STILL saw the uncommitted file from call #1 —
+    # an infinite loop. The N=3 cross-tree hazard codified 2026-05-28 (memory
+    # `feedback_task_branch_cleanup_ledger_loop`). Best-effort: a commit/push
+    # failure is reported but cleanup proceeds — the entry is already on disk
+    # (idempotent next-time), and the bulk-sweep keepers still find it.
+    salvage_pushed = False
+    if salvage_ledger:
+        rel_ledger = "project-history/worktree-salvage.ndjson"
+        rc_d, out_d, _ = runner(
+            ["git", "-C", wt_path, "status", "--porcelain", "--", rel_ledger])
+        if rc_d == 0 and (out_d or "").strip():
+            # Ledger is dirty in the worktree (this call appended a new record).
+            # Stage + commit + push to dev (FF-only — branch already merged to dev).
+            rc_a, _, err_a = runner(["git", "-C", wt_path, "add", rel_ledger])
+            if rc_a == 0:
+                msg = (f"chore(salvage): record {branch} recovery pointer\n\n"
+                       f"task_branch action=cleanup salvage-ledger entry "
+                       f"(branch+SHA → worktree-salvage.ndjson, the tracked "
+                       f"recovery-pointer ledger). Commits before worktree-"
+                       f"remove so the tree is clean for the remove (the "
+                       f"N=3 cross-tree-hazard fix, 2026-05-28).")
+                rc_c, _, err_c = runner(
+                    ["git", "-C", wt_path, "commit", "-m", msg])
+                if rc_c == 0:
+                    # Push HEAD:dev — branch is already merged to origin/dev
+                    # (cleanup precondition), so this is FF (adds the salvage
+                    # commit on top of dev). Race on concurrent push handled
+                    # by single retry (one fetch+push round).
+                    rc_p, _, err_p = runner(
+                        ["git", "-C", wt_path, "push", "origin", f"HEAD:{dev_branch}"])
+                    if rc_p != 0:
+                        # One retry after fetch — the cleanup MCP tool's retry
+                        # idiom for the concurrent-push race.
+                        runner(["git", "-C", wt_path, "fetch", "origin"])
+                        rc_p, _, err_p = runner(
+                            ["git", "-C", wt_path, "push", "origin", f"HEAD:{dev_branch}"])
+                    salvage_pushed = (rc_p == 0)
+                    if not salvage_pushed:
+                        logger.warning(
+                            "task_branch.cleanup: salvage push failed (%s); "
+                            "commit landed locally but ledger entry is not on "
+                            "dev yet — manual push needed", (err_p or "").strip())
+                else:
+                    logger.warning(
+                        "task_branch.cleanup: salvage commit failed (%s)",
+                        (err_c or "").strip())
+            else:
+                logger.warning(
+                    "task_branch.cleanup: salvage stage failed (%s)",
+                    (err_a or "").strip())
     # Attempt the remove. If it fails, check whether the only "dirty" files
     # are gitignored (e.g. `.claude/cache/*.sqlite`). If so, the refusal is
     # spurious — git considers those files non-blocking. We force-remove via
@@ -566,6 +619,7 @@ def task_branch(
                          f"{err.strip() or out.strip()}"}
     return {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
             "branch_deleted": True, "salvage_ledger": salvage_ledger,
+            "salvage_pushed": salvage_pushed,
             "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
                        f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."}
 
