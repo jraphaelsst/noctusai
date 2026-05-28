@@ -416,8 +416,13 @@ def main():
         sys.exit(1)
 
     elif args.refresh_keeper_cache:
-        from tools.noctus.dev import keeper_pattern_cache as kpc
-        r = kpc.refresh(force=args.force)
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("keeper-patterns") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ keeper-pattern refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            from tools.noctus.dev import keeper_pattern_cache as kpc
+            r = kpc.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ keeper-pattern cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
         else:
@@ -452,8 +457,13 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
     elif args.refresh_agent_context_cache:
-        from tools.noctus.dev import agent_context_cache as acc
-        r = acc.refresh(force=args.force, agent_name=args.agent)
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("agent-context") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ agent-context refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            from tools.noctus.dev import agent_context_cache as acc
+            r = acc.refresh(force=args.force, agent_name=args.agent)
         scope = f" (agent={args.agent})" if args.agent else ""
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ agent-context cache in-sync{scope} ({len(r['skipped'])} agent(s) skipped; --force to rebuild).{RESET}")
@@ -488,8 +498,13 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
     elif args.refresh_auto_improvement_cache:
-        from tools.noctus.dev import auto_improvement as ai
-        r = ai.refresh(force=args.force)
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("auto-improvement") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ auto-improvement refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            from tools.noctus.dev import auto_improvement as ai
+            r = ai.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ auto-improvement cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
         else:
@@ -733,8 +748,13 @@ def main():
         print(f"  {GREEN}✓ corpus-embeddings cache fresh (sha={live_sha}).{RESET}")
         sys.exit(0)
     elif args.refresh_memory_embeddings:
-        _ensure_llm_configured()
-        from tools.noctus.dev import memory_embeddings as mee
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("memory-embeddings") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ memory embeddings refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            _ensure_llm_configured()
+            from tools.noctus.dev import memory_embeddings as mee
         r = mee.refresh(force=args.force)
         if r.get("status") == "no-memory-dir":
             print(f"  {YELLOW}⚠ {r.get('message', 'memory dir not found')}{RESET}")
@@ -760,8 +780,13 @@ def main():
             print(f"    {h['chunk_text'][:200]!r}")
         sys.exit(0)
     elif args.refresh_corpus_embeddings:
-        _ensure_llm_configured()
-        from tools.noctus.dev import corpus_embeddings as cee
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("corpus-embeddings") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ corpus embeddings refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            _ensure_llm_configured()
+            from tools.noctus.dev import corpus_embeddings as cee
         r = cee.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ corpus embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
@@ -785,8 +810,13 @@ def main():
             print(f"    {h['chunk_text'][:200]!r}")
         sys.exit(0)
     elif args.refresh_kb_embeddings:
-        _ensure_llm_configured()
-        from tools.noctus.dev import kb_embeddings as kbe
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("kb-embeddings") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ kb embeddings refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            _ensure_llm_configured()
+            from tools.noctus.dev import kb_embeddings as kbe
         r = kbe.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ kb embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
@@ -826,8 +856,13 @@ def main():
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)
     elif args.refresh_code_embeddings:
-        _ensure_llm_configured()
-        from tools.noctus.dev import code_embeddings as ce
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("code-embeddings") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ code embeddings refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            _ensure_llm_configured()
+            from tools.noctus.dev import code_embeddings as ce
         r = ce.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ code embeddings cache in-sync ({len(r['skipped'])} file(s); --force to rebuild).{RESET}")
@@ -863,8 +898,13 @@ def main():
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)
     elif args.refresh_noc_graph:
-        from tools.noctus.dev import noc_graph_cache as ng
-        r = ng.refresh(force=args.force)
+        from tools.noctus.dev.cache_backend import acquire_refresh_lock
+        with acquire_refresh_lock("noc-graph") as _ok:
+            if not _ok:
+                print(f"  {GREEN}✓ noc-graph refresh skipped — another process holds the lock.{RESET}")
+                sys.exit(0)
+            from tools.noctus.dev import noc_graph_cache as ng
+            r = ng.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ noc-graph cache in-sync (sha={r['source_sha']}; --force to rebuild).{RESET}")
         else:

@@ -48,6 +48,29 @@ process, never repeats.
 
 Opt out via `NOCTUS_DISABLE_AUTO_CACHE_PULL=1` (CI / offline / first-machine-without-tunnel).
 
+## Concurrent-refresh discipline (the dogpile fix)
+
+Tier-1 means ALL worktrees share `<git-common-dir>/noctusai/cache/*.sqlite`. N parallel pre-commits → N writers serialize on the same SQLite file + N concurrent OpenAI embedding queries hit rate limits in parallel. The 2026-05-28 dogpile observed three concurrent pre-commits stalling for 31 min on shared `kb-embeddings.sqlite`.
+
+**The guard:** `cache_backend.acquire_refresh_lock(cache_name)` — single-writer lock per cache via `fcntl.flock`. Each CLI refresh handler wraps its body:
+
+```python
+with acquire_refresh_lock("kb-embeddings") as ok:
+    if not ok:
+        print("kb embeddings refresh skipped — another process holds the lock.")
+        sys.exit(0)
+    # ... do the refresh ...
+```
+
+**Properties:**
+- **Non-blocking by default** (`timeout=0`) — second writer SKIPS cleanly. Trust the in-flight refresh; next freshness boundary revisits.
+- **`flock` is kernel-tracked** — a crashed refresher does NOT strand the lock; the kernel releases on process death.
+- **Lock file is a sibling sentinel** (`<cache>.refresh.lock` next to the SQLite). SQLite + WAL state untouched.
+- **Refresh ENTRY only** — concurrent SEARCH / READ still flows freely (WAL handles those, per cache-locking-discipline).
+- **`timeout>0` available** for callers that must wait (e.g. pre-push final-gate); CI / hooks default to skip-cleanly.
+
+Composes with `cache-locking-discipline.md` (WAL for read concurrency) — these are orthogonal locks: WAL=read safety, `acquire_refresh_lock`=write coordination.
+
 ## Flow on a new machine
 
 ```bash

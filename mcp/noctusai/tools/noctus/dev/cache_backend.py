@@ -259,6 +259,83 @@ def _try_auto_pull(cache_name: str, repo_root: Path) -> bool:
     return False
 
 
+@contextmanager
+def acquire_refresh_lock(
+    cache_name: str,
+    *,
+    repo_root: Path | None = None,
+    timeout: float = 0.0,
+) -> Iterator[bool]:
+    """Single-writer lock per cache for refresh operations.
+
+    Why this exists
+        After Tier-1 relocation, ALL worktrees share `<git-common-dir>/noctusai/cache/`.
+        N parallel pre-commits → N writers serialize on the same SQLite file,
+        + N concurrent OpenAI embedding queries hit rate limits in parallel. The
+        2026-05-28 dogpile observed three concurrent pre-commits stalling for
+        31 min on shared `kb-embeddings.sqlite`. The fix: one writer at a time
+        per cache; others SKIP cleanly and trust the in-flight refresh.
+
+    Behavior
+        `timeout=0` (default): non-blocking. Yields `True` if the caller is the
+        sole writer; yields `False` immediately if another process holds the
+        lock. Caller decides — typically log + skip (the in-flight refresh will
+        bring the cache current; next boundary will revisit).
+
+        `timeout>0`: blocking wait up to `timeout` seconds.
+
+    Safety
+        - `fcntl.flock` is auto-released on process death (kernel-tracked) — a
+          crashed refresher does not strand the lock.
+        - Lock file is a sibling sentinel; SQLite + WAL state is untouched.
+        - Per-process: the lock affects refresh ENTRY only; concurrent SEARCH
+          / READ still flows freely (WAL handles those).
+
+    KB § PATTERNS/common/cache-portable-architecture.md §Concurrent-refresh.
+    """
+    import fcntl
+    import time
+    root = repo_root if repo_root is not None else REPO_ROOT
+    cdir = cache_dir(root)
+    lock_path = cdir / f"{cache_name}.refresh.lock"
+    try:
+        lock_path.touch()
+    except OSError:
+        # Cannot create the lock file — yield True and let the refresh attempt
+        # proceed (the slower-path is better than the no-refresh-ever-path).
+        yield True
+        return
+    fh = open(lock_path, "r")
+    acquired = False
+    try:
+        if timeout <= 0:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except BlockingIOError:
+                acquired = False
+        else:
+            start = time.monotonic()
+            while time.monotonic() - start < timeout:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    time.sleep(0.1)
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            fh.close()
+        except OSError:
+            pass
+
+
 def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
     """Resolve a cache name to its persistent SQLite file path.
 
