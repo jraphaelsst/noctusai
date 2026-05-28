@@ -28,17 +28,27 @@ class NodeKind(str, Enum):
     COMPONENT = "component"
     HOOK = "hook"
     MIGRATION = "migration"
-    # L2 — knowledge
+    # L2 — knowledge (authored prose)
     KB_PATTERN = "kb_pattern"
     KB_GUIDE = "kb_guide"
     KB_INTEGRATION = "kb_integration"
     KB_BACKEND_SPEC = "kb_backend_spec"
     KB_FRONTEND_SPEC = "kb_frontend_spec"
+    KB_CHAPTER = "kb_chapter"               # 0X-NAME.md top-level chapters
     MEMORY = "memory"
+    MEMORY_INDEX = "memory_index"            # MEMORY.md root
     MASTER_PROMPT_SECTION = "master_prompt_section"
     FINDING = "finding"
     PROJECT = "project"
     PROPOSAL = "proposal"
+    LANDSCAPE_DOC = "landscape_doc"          # CLAUDE.md + CLAUDE/*.md + CONTEXTUALIZE.md + CHANGELOG.md
+    HARNESS_AGENT = "harness_agent"          # .claude/agents/<name>.md
+    HARNESS_SKILL = "harness_skill"          # .claude/skills/<name>/SKILL.md
+    HARNESS_COMMAND = "harness_command"      # .claude/commands/<name>.md
+    AUTO_IMPROVEMENT_EVENT = "auto_improvement_event"  # one ndjson entry
+    KEEPER_RULE = "keeper_rule"              # check_* function in compliance.py
+    HOOK_SCRIPT = "hook_script"              # scripts/hooks/*
+    CLI_FLAG = "cli_flag"                    # mcp/noctusai/cli.py --flag
     # L0 — anchor
     PRODUCT = "product"
     SEED = "seed"
@@ -60,6 +70,19 @@ class EdgeKind(str, Enum):
     DEFINED_IN = "defined_in"
     BELONGS_TO = "belongs_to"
     CONTAINS = "contains"  # product → module, kb file → kb section
+    # Methodology fabric — agents/skills/commands/CLAUDE.md routing
+    AUTO_TRIGGERS = "auto_triggers"          # skill/command → trigger phrase or event
+    OWNS_KB = "owns_kb"                      # agent → kb_pattern (frontmatter owns_kb:)
+    INVOKES_SKILL = "invokes_skill"          # CLAUDE.md / agent → skill
+    INVOKES_AGENT = "invokes_agent"          # CLAUDE.md / orchestration → agent
+    EXPOSES_TOOL = "exposes_tool"            # module → mcp_tool
+    EXPOSES_FLAG = "exposes_flag"            # cli.py module → cli_flag
+    GUARDED_BY = "guarded_by"                # code/path → keeper_rule
+    REFERENCED_BY_EVENT = "referenced_by_event"  # auto-improvement event → node
+    MIRRORS = "mirrors"                      # cache → source surface
+    # Mined / semantic — confidence < 1.0
+    MINED_RECURRENCE = "mined_recurrence"    # hound/scan_cross_product/scan_fusions
+    SEMANTIC_NEIGHBOR = "semantic_neighbor"  # embedding-cosine sibling
 
 
 class Confidence(float, Enum):
@@ -67,6 +90,7 @@ class Confidence(float, Enum):
 
     EXTRACTED = 1.0
     AUTHORED = 1.0   # alias: durable prose pointer (KB §, [[name]]) — also lossless
+    EXTRACTED_LOW = 0.75  # regex-anchored extraction (TS top-level, FastAPI route decorator)
     MINED_HIGH = 0.9
     MINED_MEDIUM = 0.6
     MINED_LOW = 0.3

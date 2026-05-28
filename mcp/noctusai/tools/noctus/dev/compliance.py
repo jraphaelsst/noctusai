@@ -7860,6 +7860,12 @@ def check_all_products() -> tuple[int, list]:
     # source_sha. Severity warning (advisory discovery layer). KB § CONTEXT/
     # PATTERNS/common/code-embeddings.md.
     all_issues.extend(check_code_embeddings_cache_freshness())
+    # 2026-05-27 (noc-graph 8th-keeper-mirror) — structured graph mirror
+    # (`.claude/cache/noc-graph.sqlite`) that powers fresh-agent contextualization
+    # via `/contextualize` + `noctus.graph.*`. Aggregate source_sha gates the
+    # full rebuild. Severity warning (advisory: orientation map degrades, not
+    # blocks). KB § PATTERNS/architect/noc-graph.md.
+    all_issues.extend(check_noc_graph_cache_freshness())
     # 2026-05-26 (W2-E6 kb-baseline) — ratified-canonical layer over the
     # owns_kb vector signal. Surfaces when current findings diverge from
     # the latest ratified baseline by > threshold. Severity warning
@@ -9032,6 +9038,78 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
                 "severity": "warning",
                 "symbol": "code-vector-stale",
             })
+    return issues
+
+
+def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-27): the noc-graph cache MUST mirror the
+    aggregate sha of every source file that feeds the graph (code corpus +
+    KB + harness + landscape + memory index + cli + history). 8th member of
+    the keeper-mirror family — sibling of `check_code_embeddings_cache_freshness`,
+    applied to the structured graph instead of the embeddings cache.
+
+    Why advisory (severity ``warning``): the graph is an ORIENTATION map; a
+    stale one degrades fresh-agent contextualization but never breaks code
+    correctness. Surface, don't block. (When the orientation surface stops
+    being honest about the codebase, agents drift back to N-tool composition
+    — exactly what the cache was built to prevent.)
+
+    Predicate:
+      (a) cache exists → required for the lazy-rebuild leg to even fire.
+      (b) cached `aggregate_source_sha` matches the live aggregate.
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-noc-graph``.
+
+    Silent skip when:
+      - `seed/` AND `mcp/` AND `products/` all absent (non-noc tree).
+      - The `noc_graph_cache` module won't import (defensive).
+
+    KB § PATTERNS/architect/noc-graph.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    # Non-noc tree?
+    if not any((root / r).is_dir() for r in ("seed", "mcp", "products")):
+        return issues
+    cache = root / ".claude" / "cache" / "noc-graph.sqlite"
+    if not cache.exists():
+        issues.append({
+            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "issue": (
+                "noc-graph cache missing — run "
+                "`python mcp/noctusai/cli.py --refresh-noc-graph` "
+                "(KB § PATTERNS/architect/noc-graph.md)"
+            ),
+            "severity": "warning",
+            "symbol": "noc-graph-cache-missing",
+        })
+        return issues
+    try:
+        from .noc_graph_cache import compute_source_sha, get_cached_source_sha
+    except Exception as e:  # noqa: BLE001
+        issues.append({
+            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "issue": (
+                f"noc-graph cache module unreadable ({e}) — re-create via "
+                "`--refresh-noc-graph`"
+            ),
+            "severity": "warning",
+            "symbol": "noc-graph-cache-module-error",
+        })
+        return issues
+    cached = get_cached_source_sha(root)
+    live = compute_source_sha(root)
+    if cached != live:
+        issues.append({
+            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "issue": (
+                f"noc-graph cache STALE — cached={cached or '(none)'} "
+                f"≠ live={live}; run `--refresh-noc-graph` "
+                "(KB § PATTERNS/architect/noc-graph.md)"
+            ),
+            "severity": "warning",
+            "symbol": "noc-graph-cache-stale",
+        })
     return issues
 
 

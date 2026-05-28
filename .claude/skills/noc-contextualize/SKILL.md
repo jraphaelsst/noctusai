@@ -1,7 +1,7 @@
 ---
 name: noc-contextualize
 description: Use when a fresh/clean-context agent needs orientation on the NoctusAI platform — triggers "contextualize", "please contextualize", or genuine "I don't know what this platform is". One read, then oriented. Skip if already working/oriented.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-contextualize — fresh-agent onboarding ramp
@@ -10,13 +10,28 @@ If you are already working / already oriented, this is a NO-OP — skip it (re-r
 
 ## Workflow
 
-1. Read `/CONTEXTUALIZE.md` (repo root) top-to-bottom — it is the curated read-map (mental model + the core read order), not a copy of the docs.
-2. Follow its core set in order: `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`. Stop when you have enough for the task; the rest is on-demand.
-3. Hold the mental model before touching anything: seed-first · living/self-improving methodology · three-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact.
+1. **Read `/CONTEXTUALIZE.md`** (repo root) top-to-bottom — it is the curated read-map (mental model + the core read order), not a copy of the docs.
+2. **Pull a graph-shaped overview** in one MCP call — the noc-graph cache (8th keeper-mirror) materializes the whole platform (code + KB + memory + harness fabric) as a queryable graph:
+   - `noctus.graph.report` — counts, hot clusters, anchor surfaces.
+   - `noctus.graph.query "<keyword>" kinds=["harness_skill","harness_command","harness_agent","kb_chapter"]` — find the right skill / agent / chapter without grep.
+   - `noctus.graph.neighbors agent:architect depth=1 edge_kinds=["owns_kb","invokes_skill"]` — see what an agent owns + invokes.
+3. **Follow the core set in order** (only when needed; the graph often replaces step 3 for keyword-shaped questions): `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`. Stop when you have enough; the rest is on-demand.
+4. **Hold the mental model** before touching anything: seed-first · living/self-improving methodology · 7-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact.
+
+## When the graph is the answer
+
+- "Which skills exist?" → `noctus.graph.query "" kinds=["harness_skill"] limit=20`
+- "Which KB patterns does agent X own?" → `noctus.graph.neighbors agent:<name> edge_kinds=["owns_kb"]`
+- "What's loaded into every session?" → `noctus.graph.neighbors landscape:CLAUDE.md depth=1`
+- "Which mcp tools live in module Y?" → `noctus.graph.neighbors code:<path> edge_kinds=["exposes_tool"]`
+- "What does flag `--refresh-X` do?" → `noctus.graph.query "--refresh" kinds=["cli_flag"]`
+- "Hot drift surfaces (≥3 auto-improvement events)" → `noctus.graph.query "" kinds=["auto_improvement_event"]`
+
+If the cache is stale → `python mcp/noctusai/cli.py --refresh-noc-graph` (full rebuild ~13s) or the post-merge / post-checkout / pre-push hook handles it automatically.
 
 ## Guardrails
-- Do NOT pre-read everything — the methodology values lean context; pull depth on-demand via `CLAUDE.md` §2/§3 + `KB § INDEX.md`.
+- Do NOT pre-read everything — the methodology values lean context; pull depth on-demand via the graph + `CLAUDE.md` §2/§3 + `KB § INDEX.md`.
 - After material changes to the core onboarding docs, re-run the clean-context self-test.
 
 ## Depth
-`/CONTEXTUALIZE.md` · `CLAUDE.md` §1 (the behavioral contract).
+`/CONTEXTUALIZE.md` · `CLAUDE.md` §1 · `KB § PATTERNS/architect/noc-graph.md` (the graph fabric).

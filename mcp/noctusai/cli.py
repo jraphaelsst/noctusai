@@ -196,6 +196,8 @@ def main():
     parser.add_argument("--top-k", type=int, default=5, help="Number of results to return for --kb-search (default 5).")
     parser.add_argument("--check-kb-embeddings-cache-freshness", action="store_true", help="Keeper: KB embeddings cache should mirror each KB doc's sha256. Severity WARNING (not high) — vector search is advisory; stale cache degrades discovery but never breaks correctness. Auto-refresh in pre-commit on KB doc change.")
     parser.add_argument("--refresh-code-embeddings", action="store_true", help="Re-populate the local code embeddings cache (.claude/cache/code-embeddings.sqlite) from the tracked source roots (mcp/, noctusai_lib/, products/seed/). Python files chunked at module-level FunctionDef/AsyncFunctionDef/ClassDef via stdlib ast; TS/TSX one chunk per file. ADDITIVE discovery layer — does not replace grep / scan_recurrence. KB § CONTEXT/PATTERNS/common/code-embeddings.md.")
+    parser.add_argument("--refresh-noc-graph", action="store_true", help="Rebuild the noc-graph cache (.claude/cache/noc-graph.sqlite) — the 8th keeper-mirror cache. Aggregates code (AST) + KB + harness (.claude/agents+skills+commands) + landscape (CLAUDE.md+CLAUDE/+CONTEXTUALIZE.md) + memory + cli flags + auto-improvement events into a structured graph. Per-aggregate-source-sha skip when in-sync. Also re-derives .noc-graph/{graph.json,graph.html,REPORT.md}. KB § PATTERNS/architect/noc-graph.md.")
+    parser.add_argument("--check-noc-graph-cache-freshness", action="store_true", help="Keeper: noc-graph cache aggregate_source_sha matches the live aggregate over (code corpus + KB + harness + landscape + memory + cli + history). KB § PATTERNS/architect/noc-graph.md.")
     parser.add_argument("--code-search", metavar="QUERY", help="Semantic search over the code corpus — embeds the query, returns top-K matching code symbols by cosine similarity. Use for fuzzy-intent queries ('find helpers that extract a phone number') where exact identifiers are unknown.")
     parser.add_argument("--check-code-embeddings-cache-freshness", action="store_true", help="Keeper: code embeddings cache should mirror each source file's sha256. Severity WARNING (advisory layer). Auto-refresh in pre-commit on staged .py/.ts/.tsx change.")
     parser.add_argument("--kb-ratify", metavar="REASON", help="Snapshot the current kb_validate_owns_kb findings as approved-canonical baseline. REQUIRED reason explains why (future-us reads it). Persists durably to project-history/kb-baselines/. KB § CONTEXT/PATTERNS/common/vector-baseline.md.")
@@ -853,6 +855,24 @@ def main():
             print(f"  {GREEN}✓ code embeddings cache fresh.{RESET}")
             sys.exit(0)
         print(f"  {YELLOW}⚠ {len(issues)} code-embeddings-cache-freshness issue(s) (warnings, not blockers):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(0)
+    elif args.refresh_noc_graph:
+        from tools.noctus.dev import noc_graph_cache as ng
+        r = ng.refresh(force=args.force)
+        if r["status"] == "in-sync":
+            print(f"  {GREEN}✓ noc-graph cache in-sync (sha={r['source_sha']}; --force to rebuild).{RESET}")
+        else:
+            print(f"  {GREEN}✓ noc-graph cache rebuilt — {r.get('nodes', 0)} nodes / {r.get('edges', 0)} edges in {r.get('build_seconds')}s (sha={r['source_sha']}).{RESET}")
+        sys.exit(0 if r["ok"] else 1)
+    elif args.check_noc_graph_cache_freshness:
+        from tools.noctus.dev.compliance import check_noc_graph_cache_freshness
+        issues = check_noc_graph_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ noc-graph cache fresh.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} noc-graph-cache-freshness issue(s) (warnings, not blockers):{RESET}")
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)

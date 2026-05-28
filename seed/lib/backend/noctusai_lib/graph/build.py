@@ -1,27 +1,46 @@
 """Build orchestrator — runs every extractor and assembles a ``Graph``.
 
-Public entry point: ``build_graph(repo_root, *, scope, memory_root)``.
+Public entry point: ``build_graph(repo_root, *, scope, memory_root, paths,
+mined_rows)``.
 
 Scope values:
-- ``"repo"`` (default) — everything: every product + seed + mcp + KB + memory.
+- ``"repo"`` (default) — everything: every product + seed + mcp + KB + memory
+  + the harness fabric (.claude/agents + skills + commands) + the methodology
+  landscape (CLAUDE.md + CLAUDE/*.md + CONTEXTUALIZE.md + CHANGELOG.md) + the
+  auto-improvement ndjson (aggregated decorations) + the cli flag surface.
 - ``"product:<slug>"`` — one product + seed + KB (no other products).
 - ``"seed"`` — seed + KB only.
 - ``"kb"`` — KB + memory only (no code walk).
+- ``"harness"`` — JUST the harness fabric + CLAUDE.md routing (the contextualize
+  scope; minimum needed to orient a fresh agent).
 
-Clustering is best-effort — uses ``networkx`` Louvain when available,
-falls back to a simple degree-based bucketing.
+Optional ``paths`` (list of repo-relative paths) restricts the WALK to those
+files only — used by the incremental rebuild path. Anchors + harness + KB
+chapters are always re-extracted (cheap; bounded), but the deep code/KB
+walks scope to ``paths`` when provided.
+
+``mined_rows`` is the L3 injection point — see ``extract_mined.ingest_mined_rows``.
+
+Clustering is best-effort — uses ``networkx`` Louvain when available, falls
+back to product/folder bucketing.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
 from pathlib import Path
 
+from .extract_cli import walk_cli
 from .extract_code import CodeRoot, walk
 from .extract_docs import walk_findings, walk_kb, walk_projects
+from .extract_harness import walk_harness
+from .extract_history import walk_auto_improvement
+from .extract_landscape import walk_kb_chapters, walk_landscape
 from .extract_memory import walk_memory
+from .extract_mined import ingest_mined_rows
 from .extract_products import walk_products
 from .schema import Graph, NodeKind
 
@@ -33,6 +52,8 @@ def build_graph(
     *,
     scope: str = "repo",
     memory_root: Path | None = None,
+    paths: list[str] | None = None,
+    mined_rows: dict[str, list[dict]] | None = None,
 ) -> Graph:
     """Run extractors and return the assembled, deduplicated, clustered graph."""
     start = time.monotonic()
@@ -47,25 +68,120 @@ def build_graph(
     landscape = next((p for p in landscape_candidates if p.exists()), landscape_candidates[0])
     walk_products(graph, landscape)
 
-    # L1: code walks
+    # Harness scope: just the methodology fabric — the minimum a fresh agent needs.
+    if scope == "harness":
+        walk_harness(graph, repo_root / ".claude", repo_root=repo_root)
+        walk_landscape(graph, repo_root)
+        kb_root = repo_root / "KNOWLEDGE-BASE"
+        walk_kb(graph, kb_root, repo_root=repo_root)
+        walk_kb_chapters(graph, kb_root, repo_root=repo_root)
+        if memory_root is None:
+            memory_root = _discover_memory_root(repo_root)
+        if memory_root is not None:
+            walk_memory(graph, memory_root, repo_root=repo_root)
+        _dedup(graph)
+        _cluster(graph)
+        _stamp_meta(graph, start, scope)
+        return graph
+
+    # L1: code walks (optionally scoped to `paths`)
     code_roots = _resolve_code_roots(repo_root, scope)
     for root in code_roots:
-        walk(graph, root, repo_root=repo_root)
+        walk(graph, root, repo_root=repo_root, only_paths=paths)
 
     # L2: knowledge layers (after code so DOCUMENTS edges can resolve)
     if scope != "code-only":
         kb_root = repo_root / "KNOWLEDGE-BASE"
         walk_kb(graph, kb_root, repo_root=repo_root)
+        walk_kb_chapters(graph, kb_root, repo_root=repo_root)
         walk_projects(graph, repo_root / "projects", repo_root=repo_root)
         for products_projects in (repo_root / "products").glob("*/projects"):
             walk_projects(graph, products_projects, repo_root=repo_root)
         walk_findings(graph, repo_root)
+        if memory_root is None:
+            memory_root = _discover_memory_root(repo_root)
         if memory_root is not None:
             walk_memory(graph, memory_root, repo_root=repo_root)
 
+        # Methodology fabric — agents, skills, commands, CLAUDE.md routing.
+        walk_harness(graph, repo_root / ".claude", repo_root=repo_root)
+        walk_landscape(graph, repo_root)
+
+        # CLI flag surface.
+        cli_path = repo_root / "mcp" / "noctusai" / "cli.py"
+        if cli_path.exists():
+            walk_cli(graph, cli_path, repo_root=repo_root)
+
+        # Auto-improvement event aggregation (decorations + hot-aggregate nodes).
+        ai_ndjson = repo_root / "project-history" / "auto-improvement.ndjson"
+        if ai_ndjson.exists():
+            walk_auto_improvement(graph, ai_ndjson)
+
+    # L3: mined-edge layer (purely additive; rows injected from the mcp boundary).
+    if mined_rows:
+        ingest_mined_rows(graph, mined_rows)
+
     _dedup(graph)
     _cluster(graph)
+    _stamp_meta(graph, start, scope)
+    return graph
 
+
+def _discover_memory_root(repo_root: Path) -> Path | None:
+    """Best-effort: find the agent memory dir for this repo.
+
+    Convention: `~/.claude/projects/<slugged-repo-path>/memory/MEMORY.md`.
+
+    Also resolves the PRIMARY worktree's slug when running from a sibling
+    worktree (memory follows the primary checkout, not per-worktree).
+    """
+    candidate = os.environ.get("NOC_MEMORY_ROOT")
+    if candidate:
+        p = Path(candidate)
+        if (p / "MEMORY.md").exists():
+            return p
+
+    home = Path.home()
+    base = home / ".claude" / "projects"
+
+    # Resolve primary worktree via `.git/commondir` (cheap, no subprocess).
+    roots_to_try: list[Path] = [repo_root.resolve()]
+    git_file = repo_root / ".git"
+    if git_file.is_file():
+        try:
+            gitdir_line = git_file.read_text(encoding="utf-8").strip()
+            if gitdir_line.startswith("gitdir:"):
+                gitdir = Path(gitdir_line.removeprefix("gitdir:").strip()).resolve()
+                commondir_marker = gitdir / "commondir"
+                if commondir_marker.exists():
+                    common_rel = commondir_marker.read_text(encoding="utf-8").strip()
+                    primary_git = (gitdir / common_rel).resolve()
+                    # The primary git dir is `<primary>/.git`; parent = primary.
+                    primary = primary_git.parent
+                    if primary not in roots_to_try:
+                        roots_to_try.insert(0, primary)  # primary FIRST
+        except OSError:
+            pass
+
+    # Direct slug match for any candidate root.
+    for root in roots_to_try:
+        rp = str(root).replace("/", "-")
+        cand = base / rp / "memory"
+        if (cand / "MEMORY.md").exists():
+            return cand
+
+    # Suffix-match fallback: any ~/.claude/projects/* whose name ends with
+    # the leaf of any candidate root.
+    if base.exists():
+        leaves = {r.name for r in roots_to_try}
+        for child in base.iterdir():
+            for leaf in leaves:
+                if child.name.endswith(leaf) and (child / "memory" / "MEMORY.md").exists():
+                    return child / "memory"
+    return None
+
+
+def _stamp_meta(graph: Graph, start: float, scope: str) -> None:
     graph.meta.update({
         "node_count": len(graph.nodes),
         "edge_count": len(graph.edges),
@@ -76,7 +192,6 @@ def build_graph(
         "graph.build: %d nodes, %d edges in %.2fs (scope=%s)",
         len(graph.nodes), len(graph.edges), time.monotonic() - start, scope,
     )
-    return graph
 
 
 def _resolve_code_roots(repo_root: Path, scope: str) -> list[CodeRoot]:

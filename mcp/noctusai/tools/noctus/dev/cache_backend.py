@@ -67,6 +67,7 @@ _CACHE_FILES: dict[str, str] = {
     "code-embeddings":  "code-embeddings.sqlite",
     "memory-embeddings": "memory-embeddings.sqlite",
     "corpus-embeddings": "corpus-embeddings.sqlite",
+    "noc-graph":        "noc-graph.sqlite",  # 8th — structured graph mirror
 }
 
 _CACHE_DIR_REL = ".claude/cache"

@@ -63,7 +63,7 @@ fi
 
 # Same triggers as post-merge — same refresh logic. Differs only in the
 # hook name + the env vars passed in.
-RELEVANT=$(echo "$CHANGED" | grep -E '^(KNOWLEDGE-BASE/|mcp/|noctusai_lib/|products/seed/|project-history/auto-improvement\.ndjson|\.claude/agents/)' || true)
+RELEVANT=$(echo "$CHANGED" | grep -E '^(KNOWLEDGE-BASE/|mcp/|noctusai_lib/|products/|seed/|project-history/auto-improvement\.ndjson|\.claude/(agents|skills|commands)/|CLAUDE(\.md|/)|CONTEXTUALIZE\.md|CHANGELOG\.md)' || true)
 if [[ -z "$RELEVANT" ]]; then
     # No cache-relevant changes — fast exit.
     exit 0
@@ -86,6 +86,10 @@ if have_py; then
     fi
     if echo "$CHANGED" | grep -qE '^\.claude/agents/.+\.md$|^KNOWLEDGE-BASE/'; then
         "$PY" "$CLI" --refresh-agent-context-cache 2>&1 | tail -2 || true
+    fi
+    # noc-graph (8th keeper-mirror)
+    if echo "$CHANGED" | grep -qE '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$'; then
+        "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 || true
     fi
     if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
         "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || true

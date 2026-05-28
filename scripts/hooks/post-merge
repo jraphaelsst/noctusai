@@ -92,6 +92,15 @@ if have_py; then
             echo "[post-merge]   ↳ agent-context refresh skipped (advisory)."
     fi
 
+    # ─── noc-graph cache (8th keeper-mirror; structured graph for orientation)
+    # Refresh on any change to a graph-input surface: code / KB / harness /
+    # landscape / cli / auto-improvement / project-history.
+    if echo "$CHANGED" | grep -qE '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$'; then
+        echo "[post-merge] Graph-input surface changed — refreshing noc-graph cache..."
+        "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 || \
+            echo "[post-merge]   ↳ noc-graph refresh skipped (advisory)."
+    fi
+
     # ─── keeper-patterns cache
     if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
         echo "[post-merge] compliance.py changed — refreshing keeper-patterns cache..."

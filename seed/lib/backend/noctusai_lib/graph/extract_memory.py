@@ -37,6 +37,22 @@ def walk_memory(graph: Graph, memory_root: Path, *, repo_root: Path) -> None:
         logger.info("graph.extract_memory: memory_root %s missing — skipping", memory_root)
         return
 
+    # MEMORY.md index node — the top-level orientation surface.
+    index_path = memory_root / "MEMORY.md"
+    if index_path.exists():
+        try:
+            index_body = index_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            index_body = ""
+        graph.add_node(Node(
+            id="mem:_INDEX",
+            label="MEMORY.md (index)",
+            kind=NodeKind.MEMORY_INDEX,
+            path=str(index_path),
+            confidence=Confidence.AUTHORED.value,
+            meta=(("line_count", len(index_body.splitlines())),) if index_body else (),
+        ))
+
     for md_path in sorted(memory_root.glob("*.md")):
         if md_path.name == "MEMORY.md":
             continue  # index, not a memory entry

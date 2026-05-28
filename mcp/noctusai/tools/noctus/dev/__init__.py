@@ -93,6 +93,7 @@ def register_all(server) -> None:
     from . import status
     from . import corpus_embeddings
     from . import memory_embeddings
+    from . import noc_graph_cache
     from . import version_guard
     from . import supabase_advisors
     from . import sync_seed_template
@@ -186,6 +187,7 @@ def register_all(server) -> None:
     status.register(server)
     corpus_embeddings.register(server)
     memory_embeddings.register(server)
+    noc_graph_cache.register(server)
     version_guard.register(server)
     supabase_advisors.register(server)
     sync_seed_template.register(server)

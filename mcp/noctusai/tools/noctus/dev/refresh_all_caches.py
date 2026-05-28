@@ -66,6 +66,10 @@ _ALL_CACHES = (
     "auto-improvement",
     "kb-embeddings",
     "code-embeddings",
+    # 6th + 7th (memory-embeddings, corpus-embeddings) being landed by a
+    # parallel session — when that branch integrates first, they slot in
+    # before noc-graph here.
+    "noc-graph",  # 8th — structured graph mirror (KB § PATTERNS/architect/noc-graph.md)
 )
 
 
@@ -91,6 +95,7 @@ def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
         "auto-improvement":   "check_auto_improvement_cache_freshness",
         "kb-embeddings":      "check_kb_vector_canonical",
         "code-embeddings":    "check_code_embeddings_cache_freshness",
+        "noc-graph":          "check_noc_graph_cache_freshness",
     }
     try:
         from . import compliance as _c
@@ -246,6 +251,22 @@ def refresh_all(
         except Exception as e:  # noqa: BLE001
             failures.append("code-embeddings")
             warnings.append(f"code-embeddings import: {str(e)[:120]}")
+
+    # 8. noc-graph cache (structured graph mirror)
+    if "noc-graph" in active:
+        try:
+            from . import noc_graph_cache as ng
+            result, err = _refresh_one("noc-graph",
+                                       lambda: ng.refresh(force=force))
+            refreshed["noc-graph"] = result
+            if err:
+                failures.append("noc-graph")
+                warnings.append(err)
+            else:
+                total_rows += result.get("rows_written", 0)
+        except Exception as e:  # noqa: BLE001
+            failures.append("noc-graph")
+            warnings.append(f"noc-graph import: {str(e)[:120]}")
 
     return {
         "ok": not failures,

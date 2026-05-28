@@ -8,11 +8,21 @@ layer (rationale already lives as durable prose in KB + memory).
 
 Layers:
 
-- **L1 code** — `extract_code`: modules / classes / functions / methods
-  via stdlib `ast` (Python) + `outline_typescript` (TS).
-- **L2 knowledge** — `extract_docs` + `extract_memory` + `extract_products`:
-  KB patterns + memory entries + product anchors. Cross-layer
-  ``DOCUMENTS`` edges link KB prose to the code it documents.
+- **L1 code** — `extract_code`: modules / classes / functions / methods /
+  ROUTES (FastAPI decorator) / MCP_TOOLs (server.tool decorator) /
+  React components / hooks via stdlib `ast` (Python) + anchored regex (TS).
+- **L2 knowledge** — `extract_docs` + `extract_memory` + `extract_products` +
+  `extract_landscape` + `extract_harness` + `extract_cli`: KB patterns +
+  memory entries + product anchors + CLAUDE.md/CLAUDE/* + .claude/agents +
+  .claude/skills + .claude/commands + cli.py flag surface. Cross-layer
+  ``DOCUMENTS`` / ``OWNS_KB`` / ``INVOKES_SKILL`` / ``EXPOSES_FLAG`` edges
+  link the methodology fabric to the code it governs.
+- **L2.5 history** — `extract_history`: aggregates
+  ``project-history/auto-improvement.ndjson`` into per-node decorations +
+  hot-aggregate nodes for surfaces with ≥ 3 events.
+- **L3 mined** — `extract_mined`: ``MINED_RECURRENCE`` edges injected from
+  the mcp boundary (`hound.scan`, `scan_cross_product_helpers`,
+  `seed.scan_fusions`, …).
 
 Public surface — see ``schema`` + ``build`` modules.
 """
@@ -28,6 +38,7 @@ from .schema import (
     NodeKind,
 )
 from .build import build_graph
+from .extract_mined import ingest_mined_rows
 
 __all__ = [
     "Confidence",
@@ -37,4 +48,5 @@ __all__ = [
     "Node",
     "NodeKind",
     "build_graph",
+    "ingest_mined_rows",
 ]

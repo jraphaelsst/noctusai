@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 _PYTHON_SUFFIXES: frozenset[str] = frozenset({".py", ".pyi"})
 _TS_SUFFIXES: frozenset[str] = frozenset({".ts", ".tsx"})
 
+# FastAPI/Starlette route decorator shape: `<router-or-app>.<verb>` where
+# <verb> is one of get/post/put/patch/delete/head/options/api_route.
+_ROUTE_DECORATOR_RE = re.compile(
+    r"^([A-Za-z_]\w*)\.(get|post|put|patch|delete|head|options|api_route)$"
+)
+
 
 @dataclass(frozen=True)
 class CodeRoot:
@@ -45,14 +51,30 @@ def code_id(path: Path, symbol: str | None = None, *, repo_root: Path) -> str:
     return f"{base}:{symbol}" if symbol else base
 
 
-def walk(graph: Graph, root: CodeRoot, *, repo_root: Path) -> None:
+def walk(
+    graph: Graph,
+    root: CodeRoot,
+    *,
+    repo_root: Path,
+    only_paths: list[str] | None = None,
+) -> None:
     """Walk a root and emit nodes + edges into ``graph``.
 
     Skips ``node_modules``, ``__pycache__``, ``.venv``, ``dist``, ``build``.
+    If ``only_paths`` is provided, ONLY visit files whose repo-relative
+    posix path is in that allow-list (incremental rebuild mode).
     """
     skip_dirs = {"node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".git"}
+    allow: set[str] | None = set(only_paths) if only_paths else None
 
     for path in _iter_source_files(root.path, skip_dirs):
+        if allow is not None:
+            try:
+                rel = path.relative_to(repo_root).as_posix()
+            except ValueError:
+                continue
+            if rel not in allow:
+                continue
         suffix = path.suffix.lower()
         if suffix in _PYTHON_SUFFIXES:
             _extract_python(graph, path, root, repo_root=repo_root)
@@ -114,6 +136,42 @@ def _extract_python(graph: Graph, path: Path, root: CodeRoot, *, repo_root: Path
             confidence=Confidence.EXTRACTED.value,
         ))
 
+    # First pass: collect every server.tool-decorated function regardless of
+    # nesting (MCP tools live inside `register(server)` closures, which is
+    # NOT top-level — but they ARE the platform's user-facing surface).
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for d in node.decorator_list:
+                dname = _name_of(d) or ""
+                if "server.tool" not in dname and not dname.endswith(".tool"):
+                    continue
+                tool_name: str | None = None
+                if isinstance(d, ast.Call):
+                    for kw in d.keywords:
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                            tool_name = kw.value.value
+                            break
+                label = tool_name or node.name
+                tool_id = code_id(path, f"tool::{label}", repo_root=repo_root)
+                graph.add_node(Node(
+                    id=tool_id,
+                    label=label,
+                    kind=NodeKind.MCP_TOOL,
+                    path=str(path.relative_to(repo_root).as_posix()),
+                    line=node.lineno,
+                    end_line=getattr(node, "end_lineno", node.lineno),
+                    product=root.product,
+                    confidence=Confidence.EXTRACTED.value,
+                    meta=(("tool_name", label),),
+                ))
+                graph.add_edge(Edge(
+                    source=module_id,
+                    target=tool_id,
+                    kind=EdgeKind.EXPOSES_TOOL,
+                    confidence=Confidence.EXTRACTED.value,
+                ))
+                break  # one tool per function — collected; move on
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             _emit_import_edge(graph, node, module_id, repo_root=repo_root)
@@ -169,20 +227,40 @@ def _extract_python(graph: Graph, path: Path, root: CodeRoot, *, repo_root: Path
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_top_level(tree, node):
             fn_id = code_id(path, node.name, repo_root=repo_root)
             kind = NodeKind.FUNCTION
-            # MCP tool detection: decorator @server.tool(...)
+            # Decorator-based kind detection (open taxonomy — extend per surface).
             decorators = [_name_of(d) for d in node.decorator_list]
-            if any(d and ("server.tool" in d or d.endswith(".tool")) for d in decorators):
-                kind = NodeKind.MCP_TOOL
+            route_path = None
+            route_method = None
+            for d in node.decorator_list:
+                dname = _name_of(d) or ""
+                if "server.tool" in dname or dname.endswith(".tool"):
+                    kind = NodeKind.MCP_TOOL
+                # FastAPI route: @router.get(...) / @app.post(...) / etc.
+                route_match = _ROUTE_DECORATOR_RE.match(dname)
+                if route_match:
+                    kind = NodeKind.ROUTE
+                    route_method = route_match.group(2).upper()
+                    if isinstance(d, ast.Call) and d.args:
+                        first = d.args[0]
+                        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                            route_path = first.value
+            meta_dict: dict[str, object] = {}
+            if decorators:
+                meta_dict["decorators"] = tuple(d for d in decorators if d)
+            if route_path:
+                meta_dict["route_path"] = route_path
+            if route_method:
+                meta_dict["route_method"] = route_method
             graph.add_node(Node(
                 id=fn_id,
-                label=node.name,
+                label=node.name if not route_path else f"{route_method} {route_path}",
                 kind=kind,
                 path=str(path.relative_to(repo_root).as_posix()),
                 line=node.lineno,
                 end_line=getattr(node, "end_lineno", node.lineno),
                 product=root.product,
                 confidence=Confidence.EXTRACTED.value,
-                meta=(("decorators", tuple(d for d in decorators if d)),) if decorators else (),
+                meta=tuple(sorted(meta_dict.items())) if meta_dict else (),
             ))
             graph.add_edge(Edge(
                 source=fn_id,
@@ -190,6 +268,13 @@ def _extract_python(graph: Graph, path: Path, root: CodeRoot, *, repo_root: Path
                 kind=EdgeKind.DEFINED_IN,
                 confidence=Confidence.EXTRACTED.value,
             ))
+            if kind == NodeKind.MCP_TOOL:
+                graph.add_edge(Edge(
+                    source=module_id,
+                    target=fn_id,
+                    kind=EdgeKind.EXPOSES_TOOL,
+                    confidence=Confidence.EXTRACTED.value,
+                ))
 
 
 def _emit_import_edge(graph: Graph, node: ast.AST, module_id: str, *, repo_root: Path) -> None:
