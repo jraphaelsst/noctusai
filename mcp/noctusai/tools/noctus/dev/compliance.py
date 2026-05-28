@@ -9103,11 +9103,23 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     stops being honest about the codebase, agents drift back to N-tool
     composition — exactly what the cache was built to prevent.
 
+    Lazy-rebuild note (2026-05-28): as of the lazy-on-query architecture
+    (``noc_graph_cache._ensure_fresh_on_read``), the rebuild is NOT triggered
+    eagerly on every commit. Instead, it fires automatically the first time a
+    graph query tool (``noctus.graph.*`` / ``noctus.dev.noc_graph_status``) is
+    called after the cache becomes stale. This keeper therefore surfaces
+    *advisory* staleness — the graph will self-heal on the next query, not on
+    the next commit. This is intentional: the ~5s rebuild cost is deferred to
+    consumption time, never paid at commit time.
+    (KB § PATTERNS/common/cache-as-agent-tool.md · cache-auto-freshness.md)
+
     Predicate:
       (a) cache exists → required for the lazy-rebuild leg to even fire.
       (b) cached `aggregate_source_sha` matches the live aggregate.
 
-    Remediation: ``python mcp/noctusai/cli.py --refresh-noc-graph``.
+    Remediation: ``python mcp/noctusai/cli.py --refresh-noc-graph``
+    (or simply run any ``noctus.graph.*`` query — lazy rebuild fires
+    automatically on the next query when stale).
 
     Silent skip when:
       - `seed/` AND `mcp/` AND `products/` all absent (non-noc tree).

@@ -397,11 +397,65 @@ def _edge_row(e) -> tuple:
     return (e.source, e.target, e.kind.value, e.confidence, e.weight, meta_json)
 
 
+# ── Lazy-on-read freshness gate ────────────────────────────────────────────
+
+import threading
+
+_rebuild_lock = threading.Lock()
+
+
+def _ensure_fresh_on_read(repo_root: Optional[Path] = None) -> None:
+    """Trigger a synchronous rebuild if the noc-graph cache is stale.
+
+    Called at the entry of every graph READ path (noctus.graph.query,
+    noctus.graph.neighbors, noctus.graph.explain, noctus.graph.path,
+    noctus.graph.report, noctus.dev.noc_graph_status).
+
+    Lazy-on-query semantics (KB § PATTERNS/common/cache-as-agent-tool.md +
+    KB § PATTERNS/common/cache-auto-freshness.md): the cache is rebuilt ONLY
+    when queried + stale, never eagerly on commit boundaries. This eliminates
+    the ~5s pre-commit noc-graph pass that fired even when nobody was querying
+    the graph — the staleness window is now closed at READ time, which is
+    perfectly aligned with the cache-as-agent-tool consumption model.
+
+    Concurrent-read safety: ``_rebuild_lock`` ensures only one thread
+    triggers ``refresh()``; WAL mode lets the other readers continue against
+    the stale data while the rebuild is in progress, then re-check after the
+    lock is released.
+
+    Fall-through on rebuild failure: if ``refresh()`` raises, a warning is
+    logged and the stale cache is served rather than crashing the read path
+    (the caller will surface what it has, which is better than an exception).
+    """
+    root = repo_root or REPO_ROOT
+    live_sha = compute_source_sha(root)
+    cached_sha = get_cached_source_sha(root)
+    if cached_sha == live_sha and cache_path(root).exists():
+        return  # Fresh — no-op.
+
+    # Stale (or absent). Acquire the rebuild lock so that concurrent callers
+    # don't all fan-out into a full graph rebuild simultaneously.
+    with _rebuild_lock:
+        # Re-check after acquiring the lock — another thread may have just
+        # completed the rebuild while we were waiting.
+        cached_sha = get_cached_source_sha(root)
+        if cached_sha == live_sha and cache_path(root).exists():
+            return
+        try:
+            logger.info("noc-graph cache stale, rebuilding...")
+            refresh(force=True, repo_root=root)
+        except Exception as exc:
+            logger.warning(
+                "noc-graph lazy rebuild failed — serving stale cache. Error: %s", exc
+            )
+
+
 # ── Read-side helpers (used by query / report tools) ───────────────────────
 
 
 def load_summary(repo_root: Optional[Path] = None) -> dict[str, Any]:
     """One-shot summary the freshness keeper + /vector-status type display use."""
+    _ensure_fresh_on_read(repo_root)
     cache_p = cache_path(repo_root)
     if not cache_p.exists():
         return {"present": False, "cache_path": str(cache_p)}
@@ -454,4 +508,5 @@ __all__ = [
     "refresh",
     "load_summary",
     "register",
+    "_ensure_fresh_on_read",
 ]
