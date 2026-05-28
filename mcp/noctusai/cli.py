@@ -293,6 +293,15 @@ def main():
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
     parser.add_argument("--vector-costs-report", action="store_true", help="Aggregate the vector embedding cost ledger by day/week/month. Filter with --namespace and --since; granularity with --group-by. MCP: noctus.dev.vector_costs_report. KB § PATTERNS/common/vector-cost-tracking.md.")
     parser.add_argument("--vector-costs-total", action="store_true", help="Quick total aggregate of the vector embedding cost ledger. Filter with --namespace and --since. MCP: noctus.dev.vector_costs_total.")
+    parser.add_argument("--dispatch-budget-log", action="store_true", help="Append one dispatch token-budget row to project-history/dispatch-budget.ndjson. Requires --agent (existing flag), --budget-slug, --input-tokens, --output-tokens, --budget-model. Optional: --source-ref. MCP: noctus.dev.dispatch_budget_log. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
+    parser.add_argument("--dispatch-budget-report", action="store_true", help="Aggregate the dispatch-budget ledger by (agent, model) within a rolling window. Optional --agent (existing flag), --budget-model, --window-days (default 7; 0=all-time). MCP: noctus.dev.dispatch_budget_report. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
+    parser.add_argument("--dispatch-budget-summary", action="store_true", help="One-shot totals of the dispatch-budget ledger. Optional --agent (existing flag), --budget-model, --window-days (default 0=all-time). MCP: noctus.dev.dispatch_budget_summary. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
+    parser.add_argument("--budget-slug", metavar="SLUG", dest="budget_slug", help="With --dispatch-budget-log: branch/task slug (e.g. 'feat/r1-f11').")
+    parser.add_argument("--input-tokens", metavar="N", type=int, dest="input_tokens", help="With --dispatch-budget-log: input token count.")
+    parser.add_argument("--output-tokens", metavar="N", type=int, dest="output_tokens", help="With --dispatch-budget-log: output token count.")
+    parser.add_argument("--budget-model", metavar="MODEL", dest="budget_model", help="With --dispatch-budget-log/report/summary: model name (e.g. 'claude-sonnet-4-6').")
+    parser.add_argument("--source-ref", metavar="REF", dest="source_ref", help="With --dispatch-budget-log: optional source ref (e.g. 'session:2026-05-28').")
+    parser.add_argument("--window-days", metavar="DAYS", type=int, default=0, dest="window_days", help="With --dispatch-budget-report/--dispatch-budget-summary: rolling window in days (0=all-time).")
     parser.add_argument("--namespace", metavar="NS", help="With --vector-costs-report / --vector-costs-total: filter to one namespace (e.g. 'kb-embeddings').")
     parser.add_argument("--since", metavar="DATE", help="With --vector-costs-report / --vector-costs-total: only rows with ts >= DATE (ISO YYYY-MM-DD).")
     parser.add_argument("--group-by", metavar="GRANULARITY", default="day", choices=["day", "week", "month"], help="With --vector-costs-report: aggregation granularity (default: day).")
@@ -1740,6 +1749,65 @@ def main():
             since=getattr(args, "since", None),
         )
         print(f"  {GREEN}✓ Vector cost total:{RESET}")
+        print(json.dumps(result, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.dispatch_budget_log:
+        from tools.noctus.dev.dispatch_budget import log_dispatch as _db_log
+        agent = getattr(args, "agent", None)
+        slug = getattr(args, "budget_slug", None)
+        input_tokens = getattr(args, "input_tokens", None)
+        output_tokens = getattr(args, "output_tokens", None)
+        model = getattr(args, "budget_model", None)
+        missing = [f for f, v in [("--agent", agent), ("--budget-slug", slug),
+                                   ("--input-tokens", input_tokens),
+                                   ("--output-tokens", output_tokens),
+                                   ("--budget-model", model)] if v is None]
+        if missing:
+            print(f"  {RED}Error:{RESET} --dispatch-budget-log requires: {', '.join(missing)}")
+            sys.exit(2)
+        result = _db_log(
+            agent=agent,
+            slug=slug,
+            input_tokens=int(input_tokens),
+            output_tokens=int(output_tokens),
+            model=model,
+            source_ref=getattr(args, "source_ref", None),
+        )
+        if result["ok"]:
+            print(f"  {GREEN}✓ Dispatch budget row logged:{RESET}")
+            print(json.dumps(result["row"], indent=2, default=str))
+        else:
+            print(f"  {RED}✗ Failed to log dispatch budget row: {result.get('error')}{RESET}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif args.dispatch_budget_report:
+        from tools.noctus.dev.dispatch_budget import report as _db_report
+        rows = _db_report(
+            agent=getattr(args, "agent", None),
+            model=getattr(args, "budget_model", None),
+            window_days=getattr(args, "window_days", 7) or 7,
+        )
+        if not rows:
+            print(f"  {YELLOW}(no dispatch budget rows — ledger empty or no match for given filters){RESET}")
+            sys.exit(0)
+        print(f"  {GREEN}✓ Dispatch budget report ({len(rows)} group(s)):{RESET}")
+        print(json.dumps(rows, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.dispatch_budget_summary:
+        from tools.noctus.dev.dispatch_budget import summary as _db_summary
+        result = _db_summary(
+            agent=getattr(args, "agent", None),
+            model=getattr(args, "budget_model", None),
+            window_days=getattr(args, "window_days", 0),
+        )
+        count = result["dispatch_count"]
+        if count == 0:
+            print(f"  {YELLOW}(0 entries — dispatch-budget ledger empty){RESET}")
+        else:
+            print(f"  {GREEN}✓ Dispatch budget summary ({count} dispatch(es)):{RESET}")
         print(json.dumps(result, indent=2, default=str))
         sys.exit(0)
 

@@ -34,6 +34,7 @@ def register_all(server) -> None:
     from . import codification_radar
     from . import codify
     from . import compliance
+    from . import dispatch_budget
     from . import dispatch_token_log
     from . import dispatch_warmup
     from . import doc_to_code_drift
@@ -135,6 +136,7 @@ def register_all(server) -> None:
     deploy_image.register(server)
     deploy_pull.register(server)
     disk_usage.register(server)
+    dispatch_budget.register(server)
     dispatch_preflight.register(server)
     dispatch_token_log.register(server)
     dispatch_warmup.register(server)
