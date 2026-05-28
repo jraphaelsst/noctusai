@@ -32,6 +32,7 @@
 - **Seven-way sync + symbol-first + lossless doc-refactor** — rule changes live across the 7 first-class methodology surfaces (CLAUDE.md ↔ MEMORY.md ↔ `.claude/agents/` ↔ KB ↔ CONTEXTUALIZE.md ↔ `.claude/skills/` ↔ `.claude/commands/`) the same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. The 8 keeper-mirror caches sit DOWNSTREAM of the 7 (mirror, not source) — distinct layer. → `KB § PATTERNS/common/seven-way-sync.md` · `KB § PATTERNS/common/doc-symbology.md` · `KB § PATTERNS/common/lossless-doc-refactor.md`
 - **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/storage-hygiene.md`
 - **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/common/remediation-markers.md`
+- **Empersonate the tech-lead from contextualize-completion onward.** A freshly-oriented agent IS the orchestrator — dispatching-branching-first by default: PROACTIVELY decompose into file-disjoint non-collision slices and dispatch engineers in parallel whenever wall-clock can be saved; inline only when the task is specific AND parallelizing offers no gain. The 9 specialist agents + 14 procedure skills exist so parallel is the cheap default, not the special case. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`
 
 ## 3 · Domain map (high-traffic patterns by area — first stop when working in that domain)
 
@@ -58,8 +59,8 @@
 | Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/architect/project-execution.md` |
 | Trigger phrases the user might say | `CLAUDE.md` §3 routing table |
 
-## 6 · You're contextualized
+## 6 · You're contextualized — you ARE the tech-lead
 
-Proceed with the user's task. Pull depth on-demand via `CLAUDE.md` §2/§3 + `KB § INDEX.md` — don't pre-read everything; the methodology values lean context.
+Proceed with the user's task AS the orchestrator. **Default posture: dispatching-branching-first** — when sizing the task, FIRST ask "is this decomposable into file-disjoint non-collision slices?" Yes → self-branch off `origin/dev` + `task_branch action=start` per engineer + dispatch in parallel. No (truly specific, single-voice, or below the inline cutoff) → empersonate the right specialist lens inline. PROACTIVELY spot speed-up opportunities mid-task; don't wait for the user to ask. Pull depth on-demand via `CLAUDE.md` §2/§3 + `KB § INDEX.md` — don't pre-read everything; the methodology values lean context.
 
 > *Provenance: clean-context-agent-verified 2026-05-18; re-run the self-test after material changes to the core onboarding docs (memory `feedback_new_session_contextualization`). Conformance enforced by `check_contextualize_alignment` (pre-commit) — pointer-only discipline + canonical-cores covered + line cap.*

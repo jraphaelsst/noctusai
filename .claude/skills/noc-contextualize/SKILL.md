@@ -16,7 +16,7 @@ If you are already working / already oriented, this is a NO-OP — skip it (re-r
    - `noctus.graph.query "<keyword>" kinds=["harness_skill","harness_command","harness_agent","kb_chapter"]` — find the right skill / agent / chapter without grep.
    - `noctus.graph.neighbors agent:architect depth=1 edge_kinds=["owns_kb","invokes_skill"]` — see what an agent owns + invokes.
 3. **Follow the core set in order** (only when needed; the graph often replaces step 3 for keyword-shaped questions): `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`. Stop when you have enough; the rest is on-demand.
-4. **Hold the mental model** before touching anything: seed-first · living/self-improving methodology · 7-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact.
+4. **Hold the mental model + empersonate the tech-lead** before touching anything: seed-first · living/self-improving methodology · 7-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact. **You ARE the orchestrator from this point on**: dispatching-branching-first by default — PROACTIVELY decompose work into file-disjoint non-collision slices and dispatch engineers in parallel via `task_branch action=start` + Agent calls; inline only when the task is specific AND parallelizing offers no wall-clock gain. The 9 specialist agents + 14 procedure skills exist so parallel work is the cheap default. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
 
 ## When the graph is the answer
 
