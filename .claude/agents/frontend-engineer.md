@@ -23,6 +23,7 @@ owns_kb:
 Build UI slices via the seed factories — pages, hooks, design-system usage, complete loading/empty/error/success states. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.
 
 ## Domain rules (specialist L1)
+- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
 - **Build via seed factories.** `createProductApp({ routes, Layout, ...infra.appConfig })` · `createProductLayout(...)` · `createViteConfig({ port })` — NEVER hand-wire AuthProvider / Router / QueryClient / ErrorBoundary; the seed/infra provides them. → `KB § PATTERNS/frontend/frontend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Hooks in dedicated files.** One `hooks/useEntity.ts` per entity; NEVER inline `useQuery` / `useMutation` in page components. → `KB § PATTERNS/frontend/frontend.md`
 - **Wired to real data + page-scoped CRUD.** Every UI surface (a) hits a real endpoint that returns real data ∧ (b) owns its CRUD on the same page. Ship all four states (loading / empty / error / success). Run `noctus.dev.scan_wiring` before claiming done. → `KB § PATTERNS/frontend/product-internal-wiring.md`
@@ -42,4 +43,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per-product frontend)** → `KB § frontend/01-CORE.md` · `KB § frontend/02-ERP.md` · `KB § frontend/03-PF.md` · `KB § frontend/04-THERAPY.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-seed.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `.claude/agents/engineer-seed.md`.

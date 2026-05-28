@@ -37,6 +37,7 @@ owns_kb:
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
 
 ## Domain rules (specialist L1)
+- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
 - **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/devops/containerization.md`
 - **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/devops/containerization.md` §1a
 - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`

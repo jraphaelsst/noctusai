@@ -17,6 +17,7 @@ owns_kb:
 Review code for quality, maintainability, standards + seed-compliance — independent of who wrote it. Author the bundled phase proposal. Recommend block/pass against the bar. Keeper = regulatory; you cite it, the tech-lead enforces the merge gate.
 
 ## Domain rules (specialist L1)
+- **Cache-first discovery.** Your first move when reviewing recurrence / wiring / DRY claims is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural — esp. `graph.neighbors` for owns_kb / guarded_by). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log + switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
 - **Compliance regression-baseline.** `noctus.dev.validate` runs in regression semantics — no NEW high/critical vs the committed `compliance_baseline.json`. Absolute score is INFORMATIONAL, never asserted as pass/fail. → `KB § PATTERNS/compliance/compliance-regression-baseline.md`
 - **Seed-compliance scan.** `create_product_app` / `createProductApp` present + editable installs + no boilerplate routers on opt-in products + frontend wiring via the factories. → `KB § 03-SEED-ARCHITECTURE.md`
 - **Wiring audit.** `noctus.dev.scan_wiring`: route-exists ≠ wired; returns-real-data ∧ page-scoped CRUD. → `KB § PATTERNS/frontend/product-internal-wiring.md` (frontend-owned)
@@ -37,4 +38,4 @@ Pass/block recommendation + a bundled `noctus.dev.file_proposal` of captured imp
 **Compliance & testing** → `KB § PATTERNS/compliance/compliance-regression-baseline.md` · `testing.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `methodology-codification-pipeline.md` · `claude-md-router-discipline.md` · `product-internal-wiring.md` (frontend-owned) · `seed-absorption.md` (architect-owned) · `branching.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `methodology-codification-pipeline.md` · `claude-md-router-discipline.md` · `product-internal-wiring.md` (frontend-owned) · `seed-absorption.md` (architect-owned) · `branching.md`.

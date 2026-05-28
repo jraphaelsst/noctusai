@@ -65,6 +65,19 @@ If engineer output quality drops on mechanical work, that's a **brief-tightness*
 
 ---
 
+## 4a · Cache-first reflex — what makes the dispatch worth doing
+
+A dispatched engineer that opens `grep` / `Read` / `Glob` before a single MCP cache call has paid the full cold-start tax (§1) AND the platform's embedding-refresh cost (every pre-commit / post-merge / post-checkout / pre-push) for nothing — the engineer is rediscovering, not consuming, the index the caches exist to be.
+
+The cache-first discipline is therefore **in the standing protocol**, not in each brief:
+
+- `engineer-seed.md §0` is the top-of-protocol reflex (cache before grep/Read; depth at `KB § PATTERNS/common/cache-as-agent-tool.md`).
+- Every executor specialist's L1 (`backend-engineer` / `frontend-engineer` / `devops-engineer`) and every advisor's L1 (`architect` / `compliance-reviewer` / `security`) carries the same rule as a domain-bullet, and `cache-as-agent-tool.md` is in each `owns_kb:` so the agent-context cache pulls the depth into the engineer's compact bundle at spawn.
+
+**Brief-author rule (the corollary).** If you find yourself writing *"use `noctus.graph.report` for orientation"* or *"start with `kb_search`…"* in a brief, **the agent definition is the surface to fix, not the brief**. The whole point of the agent layer is to make these reflexes default by construction — re-spelling them per dispatch is the brief defeating itself. Symptom: the same cache-first reminder copied across 3+ briefs ⇒ the rule belongs in `.claude/agents/<lens>.md` (or the standing protocol if cross-lens), not in brief boilerplate.
+
+**Future keeper** (s1 → s3 once recurrence flips it). A `check_dispatched_engineer_cache_first_reflex` keeper could audit engineer transcripts (the `/tmp/.../tasks/<agentId>.output` JSONL) for the first tool call: if the engineer opens `Bash grep` / `Glob` / a whole-file `Read` of an unfamiliar path BEFORE any `mcp__noctusai__noctus_dev_*_search` / `mcp__noctusai__noctus_graph_*`, surface a `scoped-improvement:` candidate. Not yet codified — surfaced here as the natural next mechanization once we have N≥2 measured drift instances.
+
 ## 5 · Provenance
 
 Audit + L1/L2/L4 shipped 2026-05-25 (this session). L3 (`wire_env`) shipped same session by a parallel engineer. **Lesson (the reason this doc trusts measurement over docs):** claude-code-guide asserted a `tools:` allowlist *removes* non-allowed tools from injected context (a real token cut). Dogfooding the very change disproved it — the deferred-name list is session/connector-global and persisted (295 names) under the scoped agent (CC v2.1.150). The asserted ~12k L1 token win was **false**; L1's real value is least-privilege. *Measure the dispatch you just tuned; an LLM's "this saves tokens" is a hypothesis, not a result.* Re-measure if the harness version or connected-MCP-server/connector set changes (`.mcp.json` had `noctusai, docker, n8n, waha, supabase` + client-injected `claude_ai_*`/chrome connectors — the `claude_ai_*` 104 are the bloat's bulk, cut via L7).

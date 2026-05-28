@@ -45,6 +45,7 @@ owns_kb:
 Implement server-side slices to the architect's contracts — routers → services → schemas, RLS-scoped data access, integrations. Don't re-decide architecture; if a contract feels wrong, surface to the architect rather than diverge silently.
 
 ## Domain rules (specialist L1)
+- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
 - **Seed-first by construction.** `create_product_app(name, schema, settings, routers)` + `standard_routers=[…]`; never re-implement `create_database_module` / `create_dependencies`; compose deps, don't fork. → `KB § PATTERNS/backend/backend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **FastAPI dep factory pattern.** Module-level slots default `None`, populated by `configure_X_module(...)`, dep reads at request-time — never module-level singletons that bind at import. → `KB § PATTERNS/backend/backend.md`
 - **Auth wiring via factory.** `make_get_current_user_org(...)`; `ProductDependencies.get_*` deps WITHOUT `Depends()` (the 422 trap). → `KB § backend/07-AUTH-SECURITY.md`
@@ -73,4 +74,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § GUIDES/google-oauth-setup.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.

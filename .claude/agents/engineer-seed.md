@@ -21,6 +21,22 @@ owns_kb: []
 
 This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
 
+## 0. Cache-first discovery (the standing reflex)
+
+**Your FIRST move when you need to DISCOVER anything (a path, a pattern, a convention, similar code, a prior decision, who owns this) is an MCP cache call** — not `grep`, not `find`, not `Read`:
+
+- Semantic: `mcp__noctusai__noctus_dev_kb_search` · `noctus_dev_code_search` · `noctus_dev_memory_search` · `noctus_dev_corpus_search` · `noctus_dev_code_similar_to_text`
+- Structural: `mcp__noctusai__noctus_graph_explain` · `noctus_graph_neighbors` · `noctus_graph_query` · `noctus_graph_report` · `noctus_graph_path`
+- Row caches: `noctus_dev_keeper_pattern_lookup` · `noctus_dev_agent_context` · `noctus_dev_auto_improvement_query`
+
+`grep` / `Read` / `Glob` are **confirmation tools** AFTER a cache narrows scope, NOT discovery tools. The 8 keeper-mirror caches (~6600 vectors + ~23 800 graph nodes, refreshed every pre-commit / post-merge / post-checkout / pre-push) exist precisely so a question becomes one MCP call instead of N file reads — reaching for `grep` first pays the embedding cost without consuming the benefit.
+
+**Reaching for `grep` / `Read` / `Glob` before any cache call IS a methodology slip** — log it under `scoped-improvement:` in your return footer and switch. The brief MUST NOT have to remind you of this; the standing protocol IS the reminder.
+
+When `grep`/`Read` ARE right: exact-token verification of a cache hit · narrow re-reads at addresses the search surfaced · whole-file edits once you've found WHAT to edit. Principle: **search to discover, grep/read to verify**.
+
+Depth + cost model + the 8 caches × when-each-fires table: `KB § PATTERNS/common/cache-as-agent-tool.md`.
+
 ## 1. Stay-in-your-worktree + base verification (first action)
 
 **Confirm you are IN your isolated worktree, NOT the primary checkout** — a prior engineer drifted onto the shared primary tree on `dev` and worked there (the §9a hazard; recovered, but cost a salvage). Then verify the base:

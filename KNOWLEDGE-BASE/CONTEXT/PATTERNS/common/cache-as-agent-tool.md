@@ -122,6 +122,19 @@ Skipping step 1 means you've paid the platform's embedding cost without consumin
 
 The principle is **search to discover, grep/read to verify**.
 
+## Engineer-side enforcement (the reflex lives in the agent layer)
+
+The cache-first rule is not a per-brief reminder; it lives in **every executor and advisor agent definition** so the discipline is the default by construction:
+
+- **`.claude/agents/engineer-seed.md` §0** — the standing-protocol top-of-stack reflex (before `verify-first`). Every brief that references engineer-seed inherits it.
+- **Executor specialist L1 rules** — `backend-engineer.md` / `frontend-engineer.md` / `devops-engineer.md` carry the cache-first bullet in their `## Domain rules (specialist L1)` block.
+- **Advisor specialist L1 rules** — `architect.md` / `compliance-reviewer.md` / `security.md` carry the same bullet, scoped to their lens (orientation / recurrence-review / threat-model-research).
+- **Canonical owner.** `devops-engineer.md` owns this KB doc in `owns_kb:` (single owner per KB path — the platform's exclusive-ownership rule until shared-multi-domain frontmatter ships). Every other executor + advisor cites it via `→` pointer in their L1 rule + lists it under `Composes-with` so the discipline appears in the spawn-time L1 read even without `owns_kb` mirror. (Once Phase B multi-owner frontmatter ships, this doc moves to the universal-pattern allowlist or gains explicit multi-owner declaration.)
+
+**Brief-author corollary.** If a brief contains the phrase *"use `noctus.graph.report` for orientation"* or *"start with `kb_search`…"*, the agent definition is the surface to fix, not the brief — the dispatch defeats itself when the brief has to re-spell standing reflexes per slice. The whole point of the agent layer is reflex-by-construction. (Cross-link: `KB § PATTERNS/architect/dispatch-engineer-tuning.md §4a`.)
+
+**Future keeper** (s1 → s3 once recurrence flips it). A `check_dispatched_engineer_cache_first_reflex` keeper could parse engineer transcript JSONL at `/tmp/.../tasks/<agentId>.output` for the first tool call and surface a `scoped-improvement:` candidate if the engineer opens `Bash grep` / `Glob` / whole-file `Read` of an unfamiliar path BEFORE any `mcp__noctusai__noctus_dev_*_search` / `mcp__noctusai__noctus_graph_*`. Not yet codified — surfaced here as the natural mechanization once N≥2 measured drift instances accumulate.
+
 ## How this composes with the rest of the methodology
 
 - **`KB § PATTERNS/common/cache-portable-architecture.md`** — the underlying storage (Tier-1 worktree-shared SQLite + Tier-2 prod pgvector mirror). Implementation detail; the agent-facing rule is the one in THIS doc.
