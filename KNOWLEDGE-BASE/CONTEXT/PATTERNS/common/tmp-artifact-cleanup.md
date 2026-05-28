@@ -1,5 +1,12 @@
 # tmp-artifact-cleanup — automated sweep of retired engineer-dispatch patches
 
+> 🔒 **Caller-scope rule.** `noctus.dev.tmp_cleanup` is **orchestrator-only** — the
+> `orchestrator-operator` agent invokes it as a standing end-of-tick step with `dry_run=False`.
+> Specialist agents (backend / frontend / devops / compliance / security / architect /
+> engineer-seed) MUST NOT call it. Same shape as `release` / `deploy_pull` / `archive` — call
+> restriction is doc-discipline + the tool's own description banner, not a runtime guard.
+> devops-engineer OWNS this KB doc (the *what + why + how*) but does NOT invoke the *tool*.
+
 ## Why this pattern exists
 
 The **engineer-brief-patch-file-first** pattern (see `KB § PATTERNS/common/dispatch-engineer-tuning.md` — the dispatch-tuning protocol the patch-file-first rule is part of; the standalone authority lives today as memory `feedback_engineer_brief_patch_file_first.md` — NOC-REMEDIATE[kb-doc-missing]: 2026-05-27, promote memory → KB doc so this composes-with cite resolves to a peer KB pattern, not a sibling protocol) instructs every dispatched engineer to write its diff to `/tmp/<slug>.patch` **BEFORE** attempting return-text generation. This survives the harness watchdog (~600s) killing the return — the architect can salvage the work from the patch file. The cost: `/tmp/*.patch` accumulates across many sessions, and macOS's passive `periodic` daily sweep (3-day TTL) is timer-based, not semantic.

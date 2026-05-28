@@ -1,6 +1,13 @@
 """`noctus.dev.tmp_cleanup` — sweep retired engineer-dispatch patch artifacts.
 
-The engineer-brief-patch-file-first pattern (`KB § PATTERNS/common/engineer-brief-patch-file-first.md`)
+🔒 **ORCHESTRATOR-ONLY** — invoked by `.claude/agents/orchestrator-operator` as a standing
+end-of-tick step. Specialist agents (backend / frontend / devops / compliance / security /
+architect / engineer-seed) MUST NOT call this tool, same shape as `release` / `deploy_pull` /
+`archive` (doc-discipline, not runtime-enforced — the methodology layer's call-restriction
+model). devops-engineer OWNS the KB doc (`tmp-artifact-cleanup.md`); it does NOT invoke the
+tool.
+
+The engineer-brief-patch-file-first pattern (`KB § PATTERNS/common/dispatch-engineer-tuning.md`)
 has dispatched engineers write their work to `/tmp/<slug>.patch` BEFORE attempting return-text
 generation, so the harness watchdog (~600s) killing the return cannot lose the work. The cost of
 that durability is that `/tmp/*.patch` accumulates across many sessions. macOS's `periodic` daily
@@ -216,12 +223,16 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.tmp_cleanup",
         description=(
-            "Sweep retired engineer-dispatch patch artifacts from /tmp. A patch is retired when "
-            "(a) its git-patch-id matches a patch-id on origin/dev (content landed), (b) it is "
-            "older than max_age_days (default 14) and unmatched (orchestrator-retired beyond "
-            "salvage window), or (c) it is malformed. DRY-RUN by default — set dry_run=False to "
-            "actually delete. Orchestrator-operator invokes with dry_run=False at end of each "
-            "drain tick. KB § PATTERNS/common/tmp-artifact-cleanup.md."
+            "🔒 ORCHESTRATOR-ONLY — DO NOT CALL FROM OTHER AGENTS (same shape as release / "
+            "deploy_pull / archive — doc-discipline, not runtime-enforced). The "
+            "orchestrator-operator invokes this with dry_run=False as a standing end-of-tick "
+            "step; specialist agents (backend / frontend / devops / compliance / security / "
+            "architect / engineer-seed) MUST NOT call it. "
+            "Sweeps retired engineer-dispatch patch artifacts from /tmp/*.patch. A patch is "
+            "retired when (a) its git-patch-id matches a patch-id on origin/dev (content "
+            "landed), (b) it is older than max_age_days (default 14) and unmatched "
+            "(orchestrator-retired beyond salvage window), or (c) it is malformed. "
+            "DRY-RUN by default. KB § PATTERNS/common/tmp-artifact-cleanup.md."
         ),
     )
     def _tmp_cleanup(
