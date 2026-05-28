@@ -18,7 +18,7 @@ Valid lens names (mirror `.claude/agents/` executor + advisor names):
 - `compliance-reviewer` (advisor — gates, sync verification)
 - `security` (advisor — threat-model, auth, validation)
 - `engineer-seed` (executor — catch-all, when slice is methodology-internal)
-- `tech-lead` (the conversational session itself — git/merge/deploy ownership; default lens)
+- `tech-lead` (the orchestrator — git/merge/deploy ownership; default lens)
 
 A commit may declare multiple lenses (typical for cross-domain inline work).
 

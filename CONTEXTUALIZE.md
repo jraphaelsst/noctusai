@@ -15,7 +15,7 @@
 - **`KB § CONTEXT/03-SEED-ARCHITECTURE.md`** → the spine; the single most load-bearing architectural rule.
 - **`KB § CONTEXT/04-SHARED-LIBRARY.md`** → reusable components catalog (`noctusai_lib` + `@noctusai/lib`).
 - **`KB § CONTEXT/05-INFRASTRUCTURE.md`** → deployment + self-hosted services + the VPS fleet.
-- **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (130 tools) + Claude-side agents.
+- **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (197 tools) + Claude-side agents.
 - **`KB § INDEX.md`** → the full KB catalog; where depth lives (pull on-demand, never cover-to-cover).
 - **`MEMORY.md`** → working-agreement index (auto-loaded; one line each, expand the relevant ones).
 
@@ -23,13 +23,13 @@
 
 - **Agent-context architecture** — `.claude/agents/<name>.md` are lean L1 INDEX over KB depth; frontmatter `owns_kb:` declares full-domain territory. → `KB § PATTERNS/common/agent-context-architecture.md`
 - **Drift-fix-on-contact + scoped auto-improvement** — drift = PAUSE → resolve → surface-if-blocked → DOC → continue. Tech-lead RESOLVES; engineers SURFACE in `drift-found:` / `scoped-improvement:` lines (two-leg footer mandatory every dispatch). → `KB § PATTERNS/common/drift-fix-on-contact.md` · `KB § PATTERNS/common/scoped-auto-improvement.md`
-- **Cache family — consult-before-editing** — three keeper-mirror caches (keeper-pattern + agent-context + auto-improvement). Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md`
+- **Cache family — consult-before-editing** — eight keeper-mirror caches (keeper-patterns + agent-context + auto-improvement + kb-embeddings + code-embeddings + memory-embeddings + corpus-embeddings + noc-graph). The graph cache (`noc-graph.sqlite`) is the 8th and indexes ALL 7 doc-sync surfaces — reach `/contextualize` + `noctus.graph.*` over composing 5 ad-hoc scans. Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/architect/noc-graph.md`
 - **Self-branching mode** — 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/common/self-branching-mode.md` · skill `noc-self-branch`
 - **AST-first** — code edits via `libcst` / `ts-morph` / `tree-sitter` — never regex/sed on source. → `KB § PATTERNS/common/ast.md`
 - **DRY — the recurrence rule** — N=2 → triage; N=3+ MUST formalize; the 4th instance is forbidden. → `KB § PATTERNS/architect/project-execution.md`
 - **Triage at decision time — accept-with-rationale** — every divergence lands on `[F]/[R]/[A]` with paperwork (catalog survives folder deletion). → `KB § PATTERNS/common/accept-with-rationale.md`
 - **Methodology codification pipeline** — s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector. → `KB § PATTERNS/common/methodology-codification-pipeline.md`
-- **Three-way sync + symbol-first + lossless doc-refactor** — rule changes live in KB↔CLAUDE.md↔memory same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. → `KB § PATTERNS/common/claude-md-router-discipline.md` · `KB § PATTERNS/common/doc-symbology.md` · `KB § PATTERNS/common/lossless-doc-refactor.md`
+- **Seven-way sync + symbol-first + lossless doc-refactor** — rule changes live across the 7 first-class methodology surfaces (CLAUDE.md ↔ MEMORY.md ↔ `.claude/agents/` ↔ KB ↔ CONTEXTUALIZE.md ↔ `.claude/skills/` ↔ `.claude/commands/`) the same commit; symbol glossary gates dense docs; doc-refactor is methodology surgery. The 8 keeper-mirror caches sit DOWNSTREAM of the 7 (mirror, not source) — distinct layer. → `KB § PATTERNS/common/seven-way-sync.md` · `KB § PATTERNS/common/doc-symbology.md` · `KB § PATTERNS/common/lossless-doc-refactor.md`
 - **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/storage-hygiene.md`
 - **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/common/remediation-markers.md`
 
@@ -45,8 +45,9 @@
 
 ## 4 · Specialist agents + procedure skills
 
-- **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy).
-- **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `skill-creator` (+ `codify`).
+- **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the orchestrator** (the conversational session that owns all git/merge/deploy; no agent file).
+- **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `skill-creator`.
+- **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`) — `/contextualize` · `/codify` · `/vector-status` · `/baselines` · `/codification-radar` · `/cost-report` · `/verify-pass` · `/refresh-caches`. (7th sync surface — first-class per `KB § PATTERNS/common/seven-way-sync.md`.)
 
 ## 5 · Conditional reads (only if the task is that)
 
