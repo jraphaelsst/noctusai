@@ -133,7 +133,7 @@ For ~24k nodes (full repo) physics stabilization takes ~3-5s; filter aggressivel
 
 ## Related
 
-- Sibling primitives: `KB § PATTERNS/common/ast.md` (AST-first rule), `KB § PATTERNS/common/agent-reading-discipline.md` (narrow-read + Explore delegation), `KB § PATTERNS/common/cache-auto-freshness.md` (the 3-leg contract every keeper-mirror cache implements), `KB § PATTERNS/common/seven-way-sync.md` (the methodology surfaces this graph indexes).
+- Sibling primitives: `KB § PATTERNS/common/ast.md` (AST-first rule), `KB § PATTERNS/common/agent-reading-discipline.md` (narrow-read + Explore delegation), `KB § PATTERNS/common/cache-auto-freshness.md` (the 3-leg contract every keeper-mirror cache implements), `KB § PATTERNS/common/eight-way-sync.md` (the methodology surfaces this graph indexes).
 - Skill: `.claude/skills/noc-contextualize/SKILL.md` (the fresh-agent entry point).
 - Command: `.claude/commands/contextualize.md` (the `/contextualize` slash command).
 - External reference: https://graphify.net/ + https://github.com/safishamsi/graphify.

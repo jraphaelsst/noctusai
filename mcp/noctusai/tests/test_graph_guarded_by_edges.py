@@ -169,11 +169,11 @@ class TestResolveGuardedTargets:
         assert other_node.id not in results
 
     def test_cross_cutting_keeper_returns_empty(self):
-        """check_seven_way_sync has no path hints → returns []."""
+        """check_eight_way_sync has no path hints → returns []."""
         from tools.noctus.graph.build import _resolve_guarded_targets
 
         index = {"kb:x": object()}
-        results = _resolve_guarded_targets("check_seven_way_sync", index, "/repo")
+        results = _resolve_guarded_targets("check_eight_way_sync", index, "/repo")
         assert results == []
 
     def test_unknown_keeper_returns_empty(self):

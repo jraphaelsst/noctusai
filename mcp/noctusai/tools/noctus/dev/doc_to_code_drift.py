@@ -2,7 +2,7 @@
 
 Why this exists
     A KB pattern doc that names a tool / keeper / function (e.g.
-    "`check_six_way_sync` enforces...") is an implicit contract: the
+    "`check_eight_way_sync` enforces...") is an implicit contract: the
     code with that name implements what the doc describes. Over time
     the code evolves (refactors, renames, new logic) and the doc lags.
     The drift is invisible in line-diffs because the LINKS don't change

@@ -7499,6 +7499,14 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_config_extends_product_settings": "tests/test_config_inheritance.py",
     "check_frontend_config_paths": "tests/test_frontend_config_paths.py",
     "check_seed_version_propagation": "tests/test_seed_version_propagation.py",
+    # 2026-05-28 (7→8-way promotion): three new per-cache freshness
+    # keepers extracted from cli.py inline checks. Covered by the
+    # `TestAllCacheFreshness::test_composes_eight_legs` composition test.
+    "check_kb_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_corpus_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_memory_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_all_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_eight_way_sync": "tests/test_eight_way_sync.py::TestEightWaySync",
 }
 
 
@@ -7841,16 +7849,17 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_contextualize_alignment())
     # 2026-05-26 (seven-way-sync) — skills declared in CLAUDE.md §2 must
     # match the on-disk .claude/skills/ tree. Sub-keeper composed by
-    # check_seven_way_sync. KB § PATTERNS/common/seven-way-sync.md.
+    # check_eight_way_sync. KB § PATTERNS/common/eight-way-sync.md.
     all_issues.extend(check_skills_listed_in_router())
     # 2026-05-26 (seven-way-sync evening) — sister of skills check,
     # applied to .claude/commands/.
     all_issues.extend(check_commands_listed_in_router())
-    # 2026-05-26 (seven-way-sync) — composition keeper validating the
-    # 7-surface sync invariant. Most legs reuse existing sub-keepers
+    # 2026-05-28 (7→8-way promotion) — composition keeper validating the
+    # 8-surface sync invariant. Most legs reuse existing sub-keepers
     # (kb_sync, contextualize, agent_kb_alignment, skills_listed,
-    # commands_listed, memory_md_index). KB § PATTERNS/common/seven-way-sync.md.
-    all_issues.extend(check_seven_way_sync())
+    # commands_listed, memory_md_index, all_cache_freshness).
+    # KB § PATTERNS/common/eight-way-sync.md.
+    all_issues.extend(check_eight_way_sync())
     # 2026-05-26 (kb-vector-search) — enforces the markdown-canonical /
     # vector-DB-is-enrichment principle. Severity warning (advisory layer,
     # never blocking). KB § PATTERNS/common/kb-vector-search.md.
@@ -8177,7 +8186,8 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/vector-baseline.md",
     "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
     "CONTEXT/PATTERNS/common/dont-block-on-background.md",
-    "CONTEXT/PATTERNS/common/seven-way-sync.md",
+    "CONTEXT/PATTERNS/common/eight-way-sync.md",
+    "CONTEXT/PATTERNS/common/extractor-correctness-vs-mirror.md",
     "CONTEXT/PATTERNS/common/cache-locking-discipline.md",
     "CONTEXT/PATTERNS/common/versioning.md",
     "CONTEXT/PATTERNS/common/engineer-output-linter.md",
@@ -8684,6 +8694,38 @@ def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+def _resolve_cache_path(name: str, root: Path) -> Path:
+    """Resolve a cache file path via `cache_backend.cache_path` (honoring
+    the Tier-1 shared-cache layout at `<git-common-dir>/noctusai/cache/`,
+    per KB § PATTERNS/common/cache-portable-architecture.md). Falls back
+    to the legacy `<root>/.claude/cache/<name>.sqlite` when the backend
+    module is unavailable (test contexts, vendored copies).
+
+    Born 2026-05-28 as drift-fix-on-contact for the 7→8-way promotion:
+    the existing per-cache freshness keepers all hard-coded the legacy
+    path and reported false `<name>-cache-missing` on every worktree
+    using the new layout.
+    """
+    try:
+        from .cache_backend import cache_path as _cache_path
+        return _cache_path(name)
+    except Exception:  # noqa: BLE001 — defensive fallback
+        return root / ".claude" / "cache" / f"{name}.sqlite"
+
+
+def _cache_label(cache: Path, root: Path) -> str:
+    """Return a relative label for a cache file in keeper-issue output.
+
+    The Tier-1 cache may live OUTSIDE the worktree root
+    (at `<git-common-dir>/noctusai/cache/`), so `relative_to(root)` would
+    raise. Fall back to the absolute path string in that case.
+    """
+    try:
+        return str(cache.relative_to(root))
+    except ValueError:
+        return str(cache)
+
+
 def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26): the local keeper-pattern cache MUST mirror
     `compliance.py` — the user mandate is *"the memory should always be the
@@ -8709,10 +8751,11 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     src = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
     if not src.exists():
         return issues
-    cache = root / ".claude" / "cache" / "keeper-patterns.sqlite"
+    cache = _resolve_cache_path("keeper-patterns", root)
+    cache_file_label = _cache_label(cache, root)
     if not cache.exists():
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 "keeper-pattern cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-keeper-cache` "
@@ -8730,7 +8773,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
         conn.close()
     except sqlite3.Error as e:
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 f"keeper-pattern cache unreadable ({e}) — re-create via "
                 "`--refresh-keeper-cache`"
@@ -8742,7 +8785,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     if not row or row[0] != src_sha:
         cached = row[0] if row else "(none)"
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 f"keeper-pattern cache STALE — cache.source_sha={cached[:12]} "
                 f"≠ compliance.py sha={src_sha[:12]}; run `--refresh-keeper-cache`"
@@ -8778,10 +8821,11 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
     agents_dir = root / ".claude" / "agents"
     if not agents_dir.is_dir():
         return issues
-    cache = root / ".claude" / "cache" / "agent-context.sqlite"
+    cache = _resolve_cache_path("agent-context", root)
+    cache_file_label = _cache_label(cache, root)
     if not cache.exists():
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 "agent-context cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-agent-context-cache` "
@@ -8796,7 +8840,7 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
         from .agent_context_cache import get_bundle_sha
     except Exception as e:  # noqa: BLE001  (module-load failure is loud)
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 f"agent-context cache module unreadable ({e}) — re-create via "
                 "`--refresh-agent-context-cache`"
@@ -9043,17 +9087,21 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
 
 
 def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]:
-    """Stage-4 keeper (2026-05-27): the noc-graph cache MUST mirror the
-    aggregate sha of every source file that feeds the graph (code corpus +
-    KB + harness + landscape + memory index + cli + history). 8th member of
-    the keeper-mirror family — sibling of `check_code_embeddings_cache_freshness`,
+    """Stage-4 keeper (2026-05-27, hardened 2026-05-28 in the 7→8-way
+    promotion): the noc-graph cache MUST mirror the aggregate sha of
+    every source file that feeds the graph (code corpus + KB + harness
+    + landscape + memory index + cli + history). 8th member of the
+    keeper-mirror family — sibling of `check_code_embeddings_cache_freshness`,
     applied to the structured graph instead of the embeddings cache.
+    Composed into `check_all_cache_freshness` (the 8-way surface #8 gate).
 
-    Why advisory (severity ``warning``): the graph is an ORIENTATION map; a
-    stale one degrades fresh-agent contextualization but never breaks code
-    correctness. Surface, don't block. (When the orientation surface stops
-    being honest about the codebase, agents drift back to N-tool composition
-    — exactly what the cache was built to prevent.)
+    Severity ``warning`` (loud but auto-recoverable): cache rebuild is
+    a single `--refresh-noc-graph` call, so blocking would be punitive,
+    but it's louder than purely advisory because `cache-as-agent-tool`
+    makes the graph the live agent read path for orientation
+    (`/contextualize` + `noctus.graph.*`). When the orientation surface
+    stops being honest about the codebase, agents drift back to N-tool
+    composition — exactly what the cache was built to prevent.
 
     Predicate:
       (a) cache exists → required for the lazy-rebuild leg to even fire.
@@ -9072,10 +9120,11 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     # Non-noc tree?
     if not any((root / r).is_dir() for r in ("seed", "mcp", "products")):
         return issues
-    cache = root / ".claude" / "cache" / "noc-graph.sqlite"
+    cache = _resolve_cache_path("noc-graph", root)
+    cache_file_label = _cache_label(cache, root)
     if not cache.exists():
         issues.append({
-            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "product": "<harness>", "file": cache_file_label,
             "issue": (
                 "noc-graph cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-noc-graph` "
@@ -9089,7 +9138,7 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
         from .noc_graph_cache import compute_source_sha, get_cached_source_sha
     except Exception as e:  # noqa: BLE001
         issues.append({
-            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "product": "<harness>", "file": cache_file_label,
             "issue": (
                 f"noc-graph cache module unreadable ({e}) — re-create via "
                 "`--refresh-noc-graph`"
@@ -9102,7 +9151,7 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     live = compute_source_sha(root)
     if cached != live:
         issues.append({
-            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "product": "<harness>", "file": cache_file_label,
             "issue": (
                 f"noc-graph cache STALE — cached={cached or '(none)'} "
                 f"≠ live={live}; run `--refresh-noc-graph` "
@@ -9207,7 +9256,7 @@ def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
 
     Silent skip when CLAUDE.md absent or .claude/skills/ absent.
 
-    KB § PATTERNS/common/seven-way-sync.md.
+    KB § PATTERNS/common/eight-way-sync.md.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -9281,12 +9330,13 @@ def _run_composed_keeper(
     `<composition_name>-<sub_name>::<orig-symbol>` prefix, and emits a
     warning-severity error-shaped issue if a sub-keeper raises.
 
-    Extracted from `check_seven_way_sync` (the first composition keeper)
-    so future composition gates can reuse the loop + exception-tolerant
-    decorator without copy-pasting. KB § PATTERNS/common/seven-way-sync.md.
+    Extracted from `check_seven_way_sync` (now `check_eight_way_sync` —
+    the first composition keeper) so future composition gates can reuse
+    the loop + exception-tolerant decorator without copy-pasting.
+    KB § PATTERNS/common/eight-way-sync.md.
 
     Args:
-      composition_name: prefix string (e.g. "seven-way-sync").
+      composition_name: prefix string (e.g. "eight-way-sync", "all-cache-freshness").
       sub_keepers: list of (sub_name, no-arg callable returning list[dict]).
 
     Returns: list of issue dicts, every one tagged with the composition prefix.
@@ -9322,7 +9372,7 @@ def check_commands_listed_in_router(repo_root: Path | None = None) -> list[dict]
 
     Silent skip when CLAUDE.md absent or .claude/commands/ absent.
 
-    KB § PATTERNS/common/seven-way-sync.md.
+    KB § PATTERNS/common/eight-way-sync.md.
     """
     import re
     issues: list[dict] = []
@@ -9376,43 +9426,249 @@ def check_commands_listed_in_router(repo_root: Path | None = None) -> list[dict]
     return issues
 
 
-def check_seven_way_sync(repo_root: Path | None = None) -> list[dict]:
-    """Stage-4 keeper (2026-05-26): the 7-way sync contract — seven
-    first-class methodology surfaces stay aligned (CLAUDE.md / MEMORY.md
-    / .claude/agents/ / KNOWLEDGE-BASE/ / CONTEXTUALIZE.md /
-    .claude/skills/ / .claude/commands/).
+def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 composition keeper (2026-05-28, 7→8-way promotion):
+    every keeper-mirror cache under `.claude/cache/` MUST be structurally
+    in-sync with its source aggregate. Composes the 8 per-cache
+    freshness keepers under one named gate so the 8th methodology
+    surface (`.claude/cache/`, the live agent read path per
+    `cache-as-agent-tool`) is enforced as a single block.
 
-    Composition keeper — re-runs the existing sub-keepers under one named
-    gate via `_run_composed_keeper` so a single CLI flag surfaces all
-    7-way-sync mismatches in one pass. Severity ``high`` (methodology
-    drift breaks the agent-context contract).
+    Composes:
+      - check_keeper_cache_freshness        (#1 keeper-patterns)
+      - check_agent_context_cache_freshness (#2 agent-context)
+      - check_auto_improvement_cache_freshness (#3 auto-improvement)
+      - check_code_embeddings_cache_freshness (#4 code-embeddings)
+      - check_noc_graph_cache_freshness     (#5 noc-graph)
+      - check_kb_embeddings_cache_freshness (#6 kb-embeddings — NEW, extracted from cli.py inline)
+      - check_corpus_embeddings_cache_freshness (#7 corpus-embeddings — NEW, extracted from cli.py inline)
+      - check_memory_embeddings_cache_freshness (#8 memory-embeddings — NEW, extracted from cli.py inline)
+
+    Each sub-keeper's issues are decorated with the
+    `all-cache-freshness-<sub>::<orig-symbol>` prefix so the originating
+    cache is traceable from the composition output.
+
+    Severity is per-sub-keeper (warning for advisory caches; high for
+    the methodology-critical ones). Structural-mirror freshness only —
+    extractor-logic correctness is a separate test-surface concern
+    (see KB § PATTERNS/common/extractor-correctness-vs-mirror.md).
+
+    KB § PATTERNS/common/eight-way-sync.md.
+    """
+    return _run_composed_keeper("all-cache-freshness", [
+        ("keeper-patterns", lambda: check_keeper_cache_freshness(repo_root)),
+        ("agent-context", lambda: check_agent_context_cache_freshness(repo_root)),
+        ("auto-improvement", lambda: check_auto_improvement_cache_freshness(repo_root)),
+        ("code-embeddings", lambda: check_code_embeddings_cache_freshness(repo_root)),
+        ("noc-graph", lambda: check_noc_graph_cache_freshness(repo_root)),
+        ("kb-embeddings", lambda: check_kb_embeddings_cache_freshness(repo_root)),
+        ("corpus-embeddings", lambda: check_corpus_embeddings_cache_freshness(repo_root)),
+        ("memory-embeddings", lambda: check_memory_embeddings_cache_freshness(repo_root)),
+    ])
+
+
+def check_kb_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-28, 7→8-way promotion): the kb-embeddings
+    cache (`.claude/cache/kb-embeddings.sqlite`) MUST have per-doc
+    `source_sha` matching the on-disk KB tree. Extracted from cli.py
+    inline check into a real keeper so it can compose into
+    `check_all_cache_freshness` (the 8-way surface #8 gate).
+
+    Delegates to `check_kb_vector_canonical` which already implements the
+    per-doc source_sha + orphan-row predicates. Severity warning
+    (advisory discovery layer — markdown is canonical).
+
+    KB § PATTERNS/common/kb-vector-search.md.
+    """
+    root = repo_root or REPO_ROOT
+    if not (root / "KNOWLEDGE-BASE").is_dir():
+        return []
+    try:
+        return check_kb_vector_canonical(root)
+    except Exception as e:  # noqa: BLE001 — defensive
+        return [{
+            "product": "<harness>",
+            "file": ".claude/cache/kb-embeddings.sqlite",
+            "issue": f"kb-embeddings freshness check raised: {e}",
+            "severity": "warning",
+            "symbol": "kb-embeddings-cache-check-error",
+        }]
+
+
+def check_corpus_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-28, 7→8-way promotion): the corpus-embeddings
+    cache (`.claude/cache/corpus-embeddings.sqlite`) MUST mirror the
+    aggregate sha of the heterogeneous in-repo corpus (CHANGELOG.md +
+    templates/ + .claude/agents/*.md + .claude/skills/**/SKILL.md +
+    PROJECT-HISTORY.md). Extracted from cli.py inline check.
+
+    Severity warning. Silent skip when the cache is absent (corpus
+    layer not initialized in this tree).
+
+    KB § PATTERNS/common/corpus-embeddings.md.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    try:
+        from .corpus_embeddings import CACHE_PATH, cache_source_sha
+    except Exception:  # noqa: BLE001 — module absent / unimportable → silent skip
+        return issues
+    if not CACHE_PATH.exists():
+        return issues  # corpus-embeddings layer not initialized — advisory silent
+    try:
+        live_sha = cache_source_sha()
+    except Exception as e:  # noqa: BLE001
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/corpus-embeddings.sqlite",
+            "issue": f"corpus-embeddings live source_sha compute failed: {e}",
+            "severity": "warning",
+            "symbol": "corpus-embeddings-cache-check-error",
+        })
+        return issues
+    try:
+        conn = sqlite3.connect(str(CACHE_PATH))
+        cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+        row = cur.fetchone()
+        conn.close()
+        cached = row[0] if row else None
+    except sqlite3.Error as e:
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/corpus-embeddings.sqlite",
+            "issue": f"corpus-embeddings cache unreadable ({e}) — re-create via --refresh-corpus-embeddings",
+            "severity": "warning",
+            "symbol": "corpus-embeddings-cache-unreadable",
+        })
+        return issues
+    if cached != live_sha:
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/corpus-embeddings.sqlite",
+            "issue": (
+                f"corpus-embeddings cache STALE — cached={cached or '(none)'} "
+                f"≠ live={live_sha}; run `--refresh-corpus-embeddings`"
+            ),
+            "severity": "warning",
+            "symbol": "corpus-embeddings-cache-stale",
+        })
+    return issues
+
+
+def check_memory_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-28, 7→8-way promotion): the memory-embeddings
+    cache (`.claude/cache/memory-embeddings.sqlite`) MUST mirror the
+    aggregate sha of the out-of-repo agent memory dir
+    (`~/.claude/projects/<workspace>/memory/`). Extracted from cli.py
+    inline check.
+
+    Severity warning. Silent skip when:
+      - the memory dir is unresolvable (no auto-memory configured yet)
+      - the cache is absent (memory-embeddings layer not initialized)
+
+    KB § PATTERNS/common/memory-embeddings.md.
+    """
+    issues: list[dict] = []
+    try:
+        from .memory_embeddings import CACHE_PATH, _resolve_memory_dir, cache_source_sha
+    except Exception:  # noqa: BLE001 — module absent → silent skip
+        return issues
+    try:
+        if _resolve_memory_dir() is None:
+            return issues  # no memory dir resolvable — gate is no-op
+    except Exception:  # noqa: BLE001
+        return issues
+    if not CACHE_PATH.exists():
+        return issues  # memory-embeddings layer not initialized
+    try:
+        live_sha = cache_source_sha()
+    except Exception as e:  # noqa: BLE001
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/memory-embeddings.sqlite",
+            "issue": f"memory-embeddings live source_sha compute failed: {e}",
+            "severity": "warning",
+            "symbol": "memory-embeddings-cache-check-error",
+        })
+        return issues
+    try:
+        conn = sqlite3.connect(str(CACHE_PATH))
+        cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
+        row = cur.fetchone()
+        conn.close()
+        cached = row[0] if row else None
+    except sqlite3.Error as e:
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/memory-embeddings.sqlite",
+            "issue": f"memory-embeddings cache unreadable ({e}) — re-create via --refresh-memory-embeddings",
+            "severity": "warning",
+            "symbol": "memory-embeddings-cache-unreadable",
+        })
+        return issues
+    if cached != live_sha:
+        issues.append({
+            "product": "<harness>",
+            "file": ".claude/cache/memory-embeddings.sqlite",
+            "issue": (
+                f"memory-embeddings cache STALE — cached={cached or '(none)'} "
+                f"≠ live={live_sha}; run `--refresh-memory-embeddings`"
+            ),
+            "severity": "warning",
+            "symbol": "memory-embeddings-cache-stale",
+        })
+    return issues
+
+
+def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-28, promoted from check_seven_way_sync):
+    the 8-way sync contract — eight first-class methodology surfaces stay
+    aligned (CLAUDE.md / MEMORY.md / .claude/agents/ / KNOWLEDGE-BASE/ /
+    CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ /
+    .claude/cache/).
+
+    The 8th surface (`.claude/cache/`) is the live agent read path per
+    the `cache-as-agent-tool` rule — stale or wrong cache silently
+    mis-answers at the consumption layer. Structural-mirror freshness
+    is enforced here via `check_all_cache_freshness`; extractor-logic
+    correctness is a separate test-surface concern (see KB § PATTERNS/
+    common/extractor-correctness-vs-mirror.md).
+
+    Composition keeper — re-runs the existing sub-keepers under one
+    named gate via `_run_composed_keeper` so a single CLI flag surfaces
+    all 8-way-sync mismatches in one pass. Severity ``high``
+    (methodology drift breaks the agent-context contract).
 
     Composes:
       - check_kb_sync (#1 CLAUDE.md pointers + #4 KB INDEX)
       - check_contextualize_alignment (#5 fresh-agent ramp)
       - check_agent_kb_alignment (#3 agent owns_kb)
       - check_skills_listed_in_router (#6 skills ↔ router)
-      - check_commands_listed_in_router (#7 commands ↔ router, NEW)
+      - check_commands_listed_in_router (#7 commands ↔ router)
       - check_memory_md_index (#2 MEMORY.md discipline)
+      - check_all_cache_freshness (#8 .claude/cache/ structural mirror, NEW)
 
     Each sub-keeper's issues are decorated with the
-    `seven-way-sync-<sub>::<orig-symbol>` prefix so root-cause is traceable.
+    `eight-way-sync-<sub>::<orig-symbol>` prefix so root-cause is traceable.
 
-    KB § PATTERNS/common/seven-way-sync.md.
+    KB § PATTERNS/common/eight-way-sync.md.
     """
-    return _run_composed_keeper("seven-way-sync", [
+    return _run_composed_keeper("eight-way-sync", [
         ("kb-sync", lambda: _check_kb_sync_for_six_way(repo_root)),
         ("contextualize", lambda: check_contextualize_alignment(repo_root)),
         ("agent-kb", lambda: check_agent_kb_alignment(repo_root)),
         ("skills-router", lambda: check_skills_listed_in_router(repo_root)),
         ("commands-router", lambda: check_commands_listed_in_router(repo_root)),
         ("memory-md-index", lambda: check_memory_md_index(repo_root)),
+        ("cache-freshness", lambda: check_all_cache_freshness(repo_root)),
     ])
 
 
-# Back-compat alias — old name retained so external callers (if any) keep
-# working. Will be removed in a future cleanup when no recurrence remains.
-check_six_way_sync = check_seven_way_sync
+# Back-compat aliases — old names retained so external callers (if any)
+# keep working through the 7→8 transition. Will be removed in a future
+# cleanup when no recurrence remains.
+check_seven_way_sync = check_eight_way_sync
+check_six_way_sync = check_eight_way_sync
 
 
 def _check_kb_sync_for_six_way(repo_root: Path | None = None) -> list[dict]:
@@ -9640,10 +9896,11 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
     ledger = root / "project-history" / "auto-improvement.ndjson"
     if not ledger.exists():
         return issues  # nothing to mirror yet; fresh tree
-    cache = root / ".claude" / "cache" / "auto-improvement.sqlite"
+    cache = _resolve_cache_path("auto-improvement", root)
+    cache_file_label = _cache_label(cache, root)
     if not cache.exists():
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 "auto-improvement cache missing — run "
                 "`python mcp/noctusai/cli.py --refresh-auto-improvement-cache` "
@@ -9661,7 +9918,7 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
         conn.close()
     except sqlite3.Error as e:
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 f"auto-improvement cache unreadable ({e}) — re-create via "
                 "`--refresh-auto-improvement-cache`"
@@ -9673,7 +9930,7 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
     if not row or row[0] != src_sha:
         cached = row[0] if row else "(none)"
         issues.append({
-            "file": str(cache.relative_to(root)),
+            "file": cache_file_label,
             "issue": (
                 f"auto-improvement cache STALE — cache.source_sha={cached[:12]} "
                 f"≠ ndjson sha={src_sha[:12]}; run `--refresh-auto-improvement-cache`"

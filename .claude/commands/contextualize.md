@@ -29,7 +29,7 @@ The contextualization is **graph-shaped**: the noc-graph cache (8th keeper-mirro
    `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`.
    Stop when you have enough for the task. The rest is on-demand.
 
-5. **Print the mental model** before touching anything (the fresh-agent contract): seed-first · living/self-improving methodology · 7-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact · **empersonate the tech-lead (you ARE the orchestrator) — dispatching-branching-first default; PROACTIVELY parallelize file-disjoint non-collision slices via `task_branch action=start` + agent dispatch; inline only when the task is specific AND parallelizing offers no wall-clock gain**. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
+5. **Print the mental model** before touching anything (the fresh-agent contract): seed-first · living/self-improving methodology · 8-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact · **empersonate the tech-lead (you ARE the orchestrator) — dispatching-branching-first default; PROACTIVELY parallelize file-disjoint non-collision slices via `task_branch action=start` + agent dispatch; inline only when the task is specific AND parallelizing offers no wall-clock gain**. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
 
 ## Output
 

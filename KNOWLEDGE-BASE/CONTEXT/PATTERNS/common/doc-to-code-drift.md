@@ -61,4 +61,4 @@ That's a future iteration. Current shape: on-demand scan; architect reviews.
 
 - [`kb-vector-search`](kb-vector-search.md) — the KB embedding source.
 - [`code-embeddings`](code-embeddings.md) — the code embedding source.
-- [`seven-way-sync`](seven-way-sync.md) — doc-to-code drift is ONE leg of "methodology surfaces stay aligned" applied across the doc↔code boundary specifically.
+- [`eight-way-sync`](eight-way-sync.md) — doc-to-code drift is ONE leg of "methodology surfaces stay aligned" applied across the doc↔code boundary specifically.

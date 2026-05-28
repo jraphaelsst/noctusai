@@ -5,7 +5,7 @@ Catches: import-time errors, obvious API contract regressions, default
 parameter shapes.
 
 Born 2026-05-26 — closing the "untested but shipped" gap before v4.0-beta
-declaration. Per the seven-way-sync contract: every shipped module needs
+declaration. Per the eight-way-sync contract: every shipped module needs
 SOME test coverage; smoke is the floor.
 """
 from __future__ import annotations

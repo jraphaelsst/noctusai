@@ -9,7 +9,7 @@ Standard [Semantic Versioning](https://semver.org/) with project-specific semant
 | Component | When to bump | Examples |
 |---|---|---|
 | **MAJOR** (4.x.x → 5.x.x) | Breaking structural refactor — methodology surface count changes, agent context architecture overhaul, file-tree reorg | Adding the dev-team specialist agents (3.x → 4.0); rewriting the seed lib layout |
-| **MINOR** (4.0.x → 4.1.x) | Backward-compatible new functionality — new keeper, new MCP tool, new methodology rule | Adding `check_seven_way_sync` keeper; new `vector_calibration` module |
+| **MINOR** (4.0.x → 4.1.x) | Backward-compatible new functionality — new keeper, new MCP tool, new methodology rule | Adding `check_eight_way_sync` keeper; new `vector_calibration` module |
 | **PATCH** (4.0.0 → 4.0.1) | Backward-compatible fix — bug fix, doc-only update, small refinement of existing rule | Fixing the kb_sync adapter; trimming MEMORY.md entries |
 | **PRERELEASE** (`-alpha` / `-beta` / `-rc`) | Stability stage marker on top of MAJOR/MINOR/PATCH | `4.0.0-beta` → `4.0.0-rc1` → `4.0.0` |
 
@@ -100,7 +100,7 @@ The bump itself stays manual (in `VERSION`) so a human decides — Conventional 
 
 ## Composes with
 
-- [`seven-way-sync`](seven-way-sync.md) — the methodology surface contract this version stamps.
+- [`eight-way-sync`](eight-way-sync.md) — the methodology surface contract this version stamps.
 - [`claude-md-router-discipline`](claude-md-router-discipline.md) — versioned content sits inside CLAUDE.md too.
 - [`roadmap-tracking`](roadmap-tracking.md) — roadmaps occupy a version slice; multi-version roadmaps explicit about which version each slice ships under.
 - Conventional Commits (external standard) — the commit-message contract the bump scheme rides on.

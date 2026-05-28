@@ -1,6 +1,7 @@
-"""Regression tests for `check_seven_way_sync` + `check_skills_listed_in_router`.
+"""Regression tests for `check_eight_way_sync` + `check_skills_listed_in_router`
++ `check_all_cache_freshness`.
 
-KB § PATTERNS/common/seven-way-sync.md.
+KB § PATTERNS/common/eight-way-sync.md.
 """
 from __future__ import annotations
 
@@ -12,7 +13,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
+    check_all_cache_freshness,
+    check_eight_way_sync,
     check_seven_way_sync,
+    check_six_way_sync,
     check_skills_listed_in_router,
 )
 
@@ -114,29 +118,29 @@ class TestSkillsListedInRouter:
         assert check_skills_listed_in_router(tmp_path) == []
 
 
-# ── check_seven_way_sync (composition) ────────────────────────────────────────
-class TestSixWaySync:
+# ── check_eight_way_sync (composition) ─────────────────────────────────────
+class TestEightWaySync:
     def test_each_issue_carries_composition_prefix(self, tmp_path):
         # Empty repo → kb_sync sub-keeper will return something or nothing,
-        # but ANY issues returned MUST carry the seven-way-sync-<sub> prefix.
+        # but ANY issues returned MUST carry the eight-way-sync-<sub> prefix.
         _mk_repo(tmp_path)
         # CLAUDE.md missing → contextualize keeper might fire.
-        result = check_seven_way_sync(tmp_path)
+        result = check_eight_way_sync(tmp_path)
         # Every result must have the composition prefix.
         for issue in result:
-            assert issue["symbol"].startswith("seven-way-sync-"), \
+            assert issue["symbol"].startswith("eight-way-sync-"), \
                 f"missing composition prefix on {issue}"
 
     def test_composes_skills_listed_results(self, tmp_path):
         # Create a real orphan-on-disk scenario; the composition keeper
-        # MUST surface it (with the seven-way-sync- prefix).
+        # MUST surface it (with the eight-way-sync- prefix).
         _mk_repo(tmp_path)
         _mk_skill(tmp_path, "noc-orphan")
         _mk_claude_md(
             tmp_path,
             "**Procedure skills** (`.claude/skills/`, auto-trigger): `noc-other`.",
         )
-        result = check_seven_way_sync(tmp_path)
+        result = check_eight_way_sync(tmp_path)
         skills_issues = [i for i in result if "skills-router" in i["symbol"]]
         assert len(skills_issues) >= 1
         assert any("noc-orphan" in i["issue"] for i in skills_issues)
@@ -150,9 +154,92 @@ class TestSixWaySync:
             raise RuntimeError("synthetic sub-keeper failure")
 
         monkeypatch.setattr(_c, "check_agent_kb_alignment", _boom)
-        result = check_seven_way_sync(tmp_path)
+        result = check_eight_way_sync(tmp_path)
         # We expect at least one warning-symbol-error issue for agent-kb.
         agent_kb_errs = [i for i in result if "agent-kb-error" in i["symbol"]]
         assert len(agent_kb_errs) == 1
         assert agent_kb_errs[0]["severity"] == "warning"
         assert "synthetic" in agent_kb_errs[0]["issue"]
+
+    def test_composes_cache_freshness_leg(self, tmp_path):
+        # The 8th surface — .claude/cache/ — is checked via
+        # check_all_cache_freshness composed at the cache-freshness leg.
+        # On an empty tree most cache keepers silent-skip; the leg should
+        # exist with its composition prefix when issues do arise.
+        _mk_repo(tmp_path)
+        result = check_eight_way_sync(tmp_path)
+        # Any cache-related issue must carry the eight-way-sync-cache-freshness prefix.
+        cache_issues = [i for i in result if "cache-freshness" in i["symbol"]]
+        for issue in cache_issues:
+            assert issue["symbol"].startswith("eight-way-sync-cache-freshness::")
+
+
+# ── back-compat aliases ─────────────────────────────────────────────────────
+class TestBackCompatAliases:
+    def test_check_seven_way_sync_alias_resolves(self):
+        # The old symbol MUST still be callable and dispatch to the new one.
+        assert check_seven_way_sync is check_eight_way_sync
+
+    def test_check_six_way_sync_alias_resolves(self):
+        # Two-promotions-back alias preserved.
+        assert check_six_way_sync is check_eight_way_sync
+
+
+# ── check_all_cache_freshness (composition over 8 cache keepers) ────────────
+class TestAllCacheFreshness:
+    def test_each_issue_carries_composition_prefix(self, tmp_path):
+        # Empty repo — most cache freshness keepers silent-skip (no source,
+        # no cache). Any issues must carry the composition prefix.
+        result = check_all_cache_freshness(tmp_path)
+        for issue in result:
+            assert issue["symbol"].startswith("all-cache-freshness-"), \
+                f"missing composition prefix on {issue}"
+
+    def test_composes_eight_legs(self, tmp_path, monkeypatch):
+        # Each of the 8 sub-keepers must be invoked. Patch them to return
+        # a tagged sentinel issue; assert all 8 appear in the output.
+        from tools.noctus.dev import compliance as _c
+
+        sub_names = [
+            "check_keeper_cache_freshness",
+            "check_agent_context_cache_freshness",
+            "check_auto_improvement_cache_freshness",
+            "check_code_embeddings_cache_freshness",
+            "check_noc_graph_cache_freshness",
+            "check_kb_embeddings_cache_freshness",
+            "check_corpus_embeddings_cache_freshness",
+            "check_memory_embeddings_cache_freshness",
+        ]
+        for name in sub_names:
+            def _factory(n):
+                def _stub(*_a, **_kw):
+                    return [{
+                        "product": "<test>", "file": f"<{n}>",
+                        "issue": f"sentinel from {n}",
+                        "severity": "warning",
+                        "symbol": f"sentinel-{n}",
+                    }]
+                return _stub
+            monkeypatch.setattr(_c, name, _factory(name))
+
+        result = check_all_cache_freshness(tmp_path)
+        # Each sub-keeper contributed exactly one issue, decorated.
+        assert len(result) == 8
+        for issue in result:
+            assert issue["symbol"].startswith("all-cache-freshness-")
+            assert "::sentinel-check_" in issue["symbol"]
+
+    def test_sub_keeper_exception_absorbed(self, tmp_path, monkeypatch):
+        # If a per-cache keeper raises, the composition emits a
+        # warning-error issue and doesn't crash.
+        from tools.noctus.dev import compliance as _c
+
+        def _boom(*a, **kw):
+            raise RuntimeError("synthetic cache-keeper failure")
+
+        monkeypatch.setattr(_c, "check_noc_graph_cache_freshness", _boom)
+        result = check_all_cache_freshness(tmp_path)
+        noc_errs = [i for i in result if "noc-graph-error" in i["symbol"]]
+        assert len(noc_errs) == 1
+        assert noc_errs[0]["severity"] == "warning"
+        assert "synthetic" in noc_errs[0]["issue"]

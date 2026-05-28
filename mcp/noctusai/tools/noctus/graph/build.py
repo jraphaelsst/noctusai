@@ -308,7 +308,7 @@ def _resolve_guarded_targets(
       check_noc_graph_cache_freshness → noc-graph related nodes
 
     Returns an empty list when no specific target can be inferred (cross-
-    cutting keepers like ``check_seven_way_sync`` that touch everything).
+    cutting keepers like ``check_eight_way_sync`` that touch everything).
     """
     from noctusai_lib.graph.schema import NodeKind
 
@@ -333,8 +333,11 @@ def _resolve_guarded_targets(
         ("check_keeper_cache",       ["keeper-patterns", "keeper_pattern"],             None),
         # Claude.md router discipline.
         ("check_claude_md_router",   ["CLAUDE.md", "claude-md-router"],                 None),
-        # Seven-way sync — too cross-cutting; skip.
+        # Eight-way sync (and back-compat aliases) — too cross-cutting; skip.
+        ("check_eight_way_sync",     [],                                                None),
         ("check_seven_way_sync",     [],                                                None),
+        ("check_six_way_sync",       [],                                                None),
+        ("check_all_cache_freshness",[],                                                None),
         # Pre-commit / hook scripts.
         ("check_files_outlined",     ["scripts/hooks", "pre-commit"],                  None),
         # Code embeddings cache.

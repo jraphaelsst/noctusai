@@ -180,10 +180,12 @@ def main():
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
-    parser.add_argument("--check-seven-way-sync", action="store_true", help="Keeper: the 7-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index sub-keepers. Severity high. KB § PATTERNS/common/seven-way-sync.md.")
-    parser.add_argument("--check-six-way-sync", action="store_true", help="Back-compat alias for --check-seven-way-sync. Will be removed once external callers migrate.")
-    parser.add_argument("--check-skills-listed-in-router", action="store_true", help="Keeper sub-leg of check_seven_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.")
-    parser.add_argument("--check-commands-listed-in-router", action="store_true", help="Keeper sub-leg of check_seven_way_sync: every .claude/commands/<name>.md MUST be referenced in CLAUDE.md §2 'Slash commands' line; every command named in CLAUDE.md MUST exist on disk. Severity high.")
+    parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
+    parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
+    parser.add_argument("--check-six-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync (two promotions back). Will be removed once external callers migrate.")
+    parser.add_argument("--check-all-cache-freshness", action="store_true", help="Keeper: composes the 8 per-cache freshness keepers (keeper-patterns / agent-context / auto-improvement / code-embeddings / noc-graph / kb-embeddings / corpus-embeddings / memory-embeddings) into one named gate — the 8th methodology surface (.claude/cache/, live agent read path). Severity per-sub-keeper. KB § PATTERNS/common/eight-way-sync.md.")
+    parser.add_argument("--check-skills-listed-in-router", action="store_true", help="Keeper sub-leg of check_eight_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.")
+    parser.add_argument("--check-commands-listed-in-router", action="store_true", help="Keeper sub-leg of check_eight_way_sync: every .claude/commands/<name>.md MUST be referenced in CLAUDE.md §2 'Slash commands' line; every command named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--refresh-kb-embeddings", action="store_true", help="Re-populate the local KB embeddings cache (.claude/cache/kb-embeddings.sqlite) from KNOWLEDGE-BASE/**/*.md. Embeds via OpenAI text-embedding-3-small through noctusai_lib.integrations.llm (no new external dep). ADDITIVE discovery layer — does not replace owns_kb / INDEX.md / grep. KB § PATTERNS/common/kb-vector-search.md.")
     parser.add_argument("--refresh-memory-embeddings", action="store_true", help="Re-populate the local memory-embeddings cache (.claude/cache/memory-embeddings.sqlite) from the out-of-repo agent memory dir (`~/.claude/projects/<workspace>/memory/`). Per-file source_sha skip. KB § PATTERNS/common/memory-embeddings.md.")
     parser.add_argument("--memory-search", metavar="QUERY", help="Semantic search over agent memory. Returns top-K chunks by cosine similarity. Pair --top-k N.")
@@ -681,18 +683,45 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
-    elif args.check_seven_way_sync or args.check_six_way_sync:
-        # The six-way name is a back-compat alias; both routes call the same
-        # composition keeper (which now covers 7 surfaces).
-        from tools.noctus.dev.compliance import check_seven_way_sync
-        issues = check_seven_way_sync()
+    elif args.check_eight_way_sync or args.check_seven_way_sync or args.check_six_way_sync:
+        # --check-seven-way-sync and --check-six-way-sync are back-compat
+        # aliases; all three routes call the same composition keeper
+        # (which now covers 8 surfaces after the 7→8 promotion).
+        if args.check_seven_way_sync:
+            print(f"  {YELLOW}⚠ --check-seven-way-sync is deprecated → use --check-eight-way-sync.{RESET}")
+        if args.check_six_way_sync:
+            print(f"  {YELLOW}⚠ --check-six-way-sync is deprecated → use --check-eight-way-sync.{RESET}")
+        from tools.noctus.dev.compliance import check_eight_way_sync
+        issues = check_eight_way_sync()
         if not issues:
-            print(f"  {GREEN}✓ 7-way sync clean (CLAUDE.md / MEMORY.md / agents / KB / CONTEXTUALIZE.md / skills / commands all aligned).{RESET}")
+            print(f"  {GREEN}✓ 8-way sync clean (CLAUDE.md / MEMORY.md / agents / KB / CONTEXTUALIZE.md / skills / commands / cache all aligned).{RESET}")
             sys.exit(0)
-        print(f"  {RED}✗ {len(issues)} seven-way-sync issue(s):{RESET}")
+        # Split by severity: warning-only issues print but don't block;
+        # any high issue blocks. Preserves the pre-promotion blocking
+        # behavior while honoring per-sub-keeper severities (e.g.
+        # noc-graph-cache-stale is auto-recoverable, severity=warning).
+        any_high = any(i.get("severity") == "high" for i in issues)
+        prefix_char = "✗" if any_high else "⚠"
+        prefix_color = RED if any_high else YELLOW
+        print(f"  {prefix_color}{prefix_char} {len(issues)} eight-way-sync issue(s):{RESET}")
         for i in issues:
-            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
-        sys.exit(1)
+            sev_color = RED if i.get("severity") == "high" else YELLOW
+            print(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
+        sys.exit(1 if any_high else 0)
+    elif args.check_all_cache_freshness:
+        from tools.noctus.dev.compliance import check_all_cache_freshness
+        issues = check_all_cache_freshness()
+        if not issues:
+            print(f"  {GREEN}✓ all 8 keeper-mirror caches fresh (keeper-patterns / agent-context / auto-improvement / code-embeddings / noc-graph / kb-embeddings / corpus-embeddings / memory-embeddings).{RESET}")
+            sys.exit(0)
+        # Mixed severities; report all then exit non-zero if any HIGH.
+        any_high = any(i.get("severity") == "high" for i in issues)
+        prefix = RED if any_high else YELLOW
+        print(f"  {prefix}{'✗' if any_high else '⚠'} {len(issues)} all-cache-freshness issue(s):{RESET}")
+        for i in issues:
+            sev_color = RED if i.get("severity") == "high" else YELLOW
+            print(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
+        sys.exit(1 if any_high else 0)
     elif args.check_skills_listed_in_router:
         from tools.noctus.dev.compliance import check_skills_listed_in_router
         issues = check_skills_listed_in_router()

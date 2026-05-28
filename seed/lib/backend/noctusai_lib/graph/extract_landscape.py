@@ -2,7 +2,7 @@
 CHANGELOG.md + PROJECT-HISTORY.md.
 
 These are first-class methodology surfaces the architect/router-discipline +
-7-way-sync rules govern. Without them, the graph cannot answer "what's
+8-way-sync rules govern. Without them, the graph cannot answer "what's
 loaded into every session?" — exactly what fresh agents need to know.
 
 Each becomes a LANDSCAPE_DOC node + emits KB_POINTER edges to every `KB §`
