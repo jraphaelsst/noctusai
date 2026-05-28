@@ -7507,6 +7507,9 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_memory_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_all_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_eight_way_sync": "tests/test_eight_way_sync.py::TestEightWaySync",
+    # extractor-correctness keeper: full regression in test_graph_extractor_correctness.py;
+    # the keeper itself is a light floor-check subset of that suite.
+    "check_graph_extractor_corpus_sanity": "tests/test_graph_extractor_correctness.py::TestEdgeFloors",
 }
 
 
@@ -7875,6 +7878,12 @@ def check_all_products() -> tuple[int, list]:
     # full rebuild. Severity warning (advisory: orientation map degrades, not
     # blocks). KB § PATTERNS/architect/noc-graph.md.
     all_issues.extend(check_noc_graph_cache_freshness())
+    # 2026-05-28 (extractor-correctness-vs-mirror) — light corpus floor-checks
+    # on the noc-graph cache content (not just freshness). Catches the case where
+    # an extractor stops emitting a node/edge kind, producing a fresh-but-wrong
+    # cache. Paired with test_graph_extractor_correctness.py (full regression).
+    # KB § PATTERNS/common/extractor-correctness-vs-mirror.md.
+    all_issues.extend(check_graph_extractor_corpus_sanity())
     # 2026-05-26 (W2-E6 kb-baseline) — ratified-canonical layer over the
     # owns_kb vector signal. Surfaces when current findings diverge from
     # the latest ratified baseline by > threshold. Severity warning
@@ -9175,6 +9184,156 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     return issues
 
 
+def check_graph_extractor_corpus_sanity(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-28): light floor-checks on the noc-graph corpus
+    to surface a buggy extractor that produces a fresh-but-wrong cache.
+
+    Closes the residual logic-correctness gap named in
+    KB § PATTERNS/common/extractor-correctness-vs-mirror.md:
+    the structural mirror (``check_noc_graph_cache_freshness``) guarantees
+    ``source_sha`` invariant — up-to-date cache. THIS keeper checks the
+    CONTENT of the cache is sane — that each extractor is still emitting
+    the node/edge kinds it should. It is the always-on "did an extractor
+    break?" gate; the full regression harness lives at
+    ``mcp/noctusai/tests/test_graph_extractor_correctness.py``.
+
+    Checks (all warning severity — advisory, not blocking):
+      (a) Cache exists and is readable (precondition for the rest).
+      (b) Node-kind floors: MODULE > 100, FUNCTION > 100, CLASS > 100,
+          HARNESS_AGENT > 0, HARNESS_SKILL > 0, KB_PATTERN > 0.
+      (c) Edge-kind floors: defined_in > 1000, kb_pointer > 50.
+      (d) MCP-layer floors (read from live cache): semantic_neighbor > 20,
+          guarded_by > 10.
+
+    These are FLOOR-only checks — growth never fails them. Only a
+    stop-emitting regression fails them (e.g. an extractor silently begins
+    returning an empty list, or a kind-mapping rename breaks classification).
+
+    Severity ``warning`` — same tier as ``check_noc_graph_cache_freshness``;
+    the keeper surfaces the issue loudly but does not block a commit.
+
+    Silent skip:
+      - Non-noc tree (seed/mcp/products all absent).
+      - Cache absent (freshness keeper already surfaces this; no double-warn).
+
+    KB § PATTERNS/common/extractor-correctness-vs-mirror.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not any((root / r).is_dir() for r in ("seed", "mcp", "products")):
+        return issues
+
+    cache = _resolve_cache_path("noc-graph", root)
+    if not cache.exists():
+        # check_noc_graph_cache_freshness already fires for missing cache;
+        # no double-warn from this keeper.
+        return issues
+
+    cache_file_label = _cache_label(cache, root)
+
+    import sqlite3 as _sqlite3
+
+    try:
+        conn = _sqlite3.connect(str(cache))
+        conn.row_factory = _sqlite3.Row
+    except Exception as e:  # noqa: BLE001
+        issues.append({
+            "product": "<harness>", "file": cache_file_label,
+            "issue": f"cannot open noc-graph cache for sanity check: {e}",
+            "severity": "warning",
+            "symbol": "graph-extractor-cache-open-error",
+        })
+        return issues
+
+    def _node_count(kind: str) -> int:
+        try:
+            row = conn.execute(
+                "SELECT count(*) FROM noc_graph_nodes WHERE kind = ?", (kind,)
+            ).fetchone()
+            return row[0] if row else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _edge_count(kind: str) -> int:
+        try:
+            row = conn.execute(
+                "SELECT count(*) FROM noc_graph_edges WHERE kind = ?", (kind,)
+            ).fetchone()
+            return row[0] if row else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    try:
+        # (b) Node-kind floors
+        _NODE_FLOORS = [
+            ("module", 100, "extract_code.py: MODULE nodes"),
+            ("function", 100, "extract_code.py: FUNCTION nodes"),
+            ("class", 100, "extract_code.py: CLASS nodes"),
+            ("harness_agent", 1, "extract_harness.py: HARNESS_AGENT nodes"),
+            ("harness_skill", 1, "extract_harness.py: HARNESS_SKILL nodes"),
+            ("kb_pattern", 1, "extract_docs.py: KB_PATTERN nodes"),
+        ]
+        for kind, floor, label in _NODE_FLOORS:
+            count = _node_count(kind)
+            if count < floor:
+                issues.append({
+                    "product": "<harness>", "file": cache_file_label,
+                    "issue": (
+                        f"graph-extractor corpus sanity: {label} count {count} "
+                        f"< floor {floor} — extractor may have stopped emitting "
+                        f"this node kind "
+                        f"(KB § PATTERNS/common/extractor-correctness-vs-mirror.md)"
+                    ),
+                    "severity": "warning",
+                    "symbol": f"graph-extractor-node-floor-{kind}",
+                })
+
+        # (c) Edge-kind floors (build_graph layer)
+        _EDGE_FLOORS = [
+            ("defined_in", 1000, "extract_code.py: DEFINED_IN edges"),
+            ("kb_pointer", 50, "extract_harness/docs: KB_POINTER edges"),
+        ]
+        for kind, floor, label in _EDGE_FLOORS:
+            count = _edge_count(kind)
+            if count < floor:
+                issues.append({
+                    "product": "<harness>", "file": cache_file_label,
+                    "issue": (
+                        f"graph-extractor corpus sanity: {label} count {count} "
+                        f"< floor {floor} — extractor may have stopped emitting "
+                        f"this edge kind "
+                        f"(KB § PATTERNS/common/extractor-correctness-vs-mirror.md)"
+                    ),
+                    "severity": "warning",
+                    "symbol": f"graph-extractor-edge-floor-{kind}",
+                })
+
+        # (d) MCP-layer edge floors
+        _MCP_EDGE_FLOORS = [
+            ("semantic_neighbor", 20, "MCP refresh: SEMANTIC_NEIGHBOR edges (embedding layer)"),
+            ("guarded_by", 10, "MCP refresh: GUARDED_BY edges (keeper-patterns layer)"),
+        ]
+        for kind, floor, label in _MCP_EDGE_FLOORS:
+            count = _edge_count(kind)
+            if count < floor:
+                issues.append({
+                    "product": "<harness>", "file": cache_file_label,
+                    "issue": (
+                        f"graph-extractor corpus sanity: {label} count {count} "
+                        f"< floor {floor} — MCP-refresh layer may have stopped "
+                        f"injecting this edge kind. Run --refresh-noc-graph after "
+                        f"refreshing the embedding/keeper-patterns caches "
+                        f"(KB § PATTERNS/common/extractor-correctness-vs-mirror.md)"
+                    ),
+                    "severity": "warning",
+                    "symbol": f"graph-extractor-edge-floor-{kind}",
+                })
+    finally:
+        conn.close()
+
+    return issues
+
+
 def check_code_recurrence_drift(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26 post-close): surfaces when live code
     recurrence scan diverges from the latest ratified baseline by more
@@ -9673,6 +9832,10 @@ def check_eight_way_sync(repo_root: Path | None = None) -> list[dict]:
         ("commands-router", lambda: check_commands_listed_in_router(repo_root)),
         ("memory-md-index", lambda: check_memory_md_index(repo_root)),
         ("cache-freshness", lambda: check_all_cache_freshness(repo_root)),
+        # extractor logic-correctness leg: pairs with cache-freshness to close
+        # the residual gap (fresh ≠ correct). Warning severity — same tier.
+        # KB § PATTERNS/common/extractor-correctness-vs-mirror.md.
+        ("extractor-sanity", lambda: check_graph_extractor_corpus_sanity(repo_root)),
     ])
 
 

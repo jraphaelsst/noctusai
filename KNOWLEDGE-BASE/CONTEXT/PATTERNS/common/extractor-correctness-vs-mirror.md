@@ -33,9 +33,23 @@ Each cache has an extractor module (some pure Python, some seed-lib-backed). Eac
 | `code-embeddings.sqlite` | `code_embeddings.py` AST chunking | `test_code_embeddings.py` |
 | `corpus-embeddings.sqlite` | `corpus_embeddings.py` heterogeneous source enumerate | `test_corpus_embeddings.py` |
 | `memory-embeddings.sqlite` | `memory_embeddings.py` MEMORY.md + memory dir parse | `test_memory_embeddings.py` (TODO if missing) |
-| `noc-graph.sqlite` | `noc_graph_cache.py` + the `graph_build` extractors | `test_graph_*.py` family (build, edges, queries) |
+| `noc-graph.sqlite` | `noc_graph_cache.py` + the `graph_build` extractors | `test_graph_extractor_correctness.py` (6 categories, 44 tests) + `test_graph_*.py` family |
 
 When you add a new cache, you ship BOTH legs: (a) a `check_<name>_cache_freshness` keeper wired into `check_all_cache_freshness` (8-way structural), and (b) a per-extractor test file (residual logic).
+
+## noc-graph extractor-correctness gap — CLOSED (2026-05-28)
+
+The noc-graph row in the table above was the open gap named in this doc. Closed in `feat/extractor-correctness-tests`. The gap-closer ships two artifacts:
+
+**Test harness** (`mcp/noctusai/tests/test_graph_extractor_correctness.py`): 44 tests across 6 categories:
+1. **CoverageTests** — each extractor emits N>0 nodes of every expected kind (MODULE/CLASS/FUNCTION/METHOD/ROUTE/MCP_TOOL/COMPONENT/HOOK/HARNESS_AGENT/HARNESS_SKILL/HARNESS_COMMAND/PRODUCT/SEED/KB_PATTERN/KB_GUIDE/CLI_FLAG/LANDSCAPE_DOC)
+2. **NoOrphanTests** — no code-layer node has zero edges; harness nodes are wired
+3. **EdgeDirectionTests** — OWNS_KB source is HARNESS_AGENT; EXPOSES_TOOL source is MODULE; DEFINED_IN target is MODULE or CLASS; OWNS_KB target is a KB_* kind
+4. **RoundTripTests** — write JSON → read JSON → node/edge sets match exactly (catches serialization drift)
+5. **SourceShaStability** — compute_source_sha deterministic; harness-scope build deterministic (catches non-determinism)
+6. **ClusterSanity** — no unclustered nodes; ≥2 clusters; top-level kinds span multiple clusters
+
+**Keeper** (`check_graph_extractor_corpus_sanity`, warning severity): light floor-checks at pre-commit time — node kind floors (module > 100, function > 100, etc.) + edge kind floors (defined_in > 1000, kb_pointer > 50, semantic_neighbor > 20, guarded_by > 10). Composed into `check_eight_way_sync` as the `extractor-sanity` leg, pairing with `cache-freshness` to close both halves of the cache-trust contract. CLI: `--check-graph-extractor-corpus-sanity`.
 
 ## Composes with
 
