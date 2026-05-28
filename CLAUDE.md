@@ -83,7 +83,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 **Specialist subagents** (`.claude/agents/`): `architect` · `security` · `compliance-reviewer` (advisors — read-only, consulted) · `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (executors — worktree + commit-own-branch-only) · `skill-scout` (vendors skills in-home) · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy; no agent file). → `KB § 06-AGENTS.md` · `KB § PATTERNS/architect/dev-team.md`.
 
-**Procedure skills** (`.claude/skills/`, auto-trigger on phrases): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `skill-creator`.
+**Procedure skills** (`.claude/skills/`, auto-trigger on phrases): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `skill-creator`.
 
 **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/vector-status` (cache health overview) · `/baselines` (kb + code ratification status) · `/codification-radar` (s1/s2 → s3 promotion candidates) · `/cost-report` (vector-costs.ndjson analysis) · `/verify-pass` (verify-pending pass scaffolding) · `/refresh-caches` (orchestrated all-cache refresh).
 

@@ -46,7 +46,7 @@
 ## 4 · Specialist agents + procedure skills
 
 - **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the conversational session** (owns all git/merge/deploy).
-- **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `skill-creator` (+ `codify`).
+- **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `skill-creator` (+ `codify`).
 
 ## 5 · Conditional reads (only if the task is that)
 
