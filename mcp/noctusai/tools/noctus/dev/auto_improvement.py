@@ -51,8 +51,10 @@ from settings import REPO_ROOT
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-CACHE_DIR = REPO_ROOT / ".claude" / "cache"
-CACHE_PATH = CACHE_DIR / "auto-improvement.sqlite"
+from .cache_backend import cache_dir as _cache_dir, cache_path as _cache_path
+
+CACHE_DIR = _cache_dir()
+CACHE_PATH = _cache_path("auto-improvement")
 LEDGER_PATH = REPO_ROOT / "project-history" / "auto-improvement.ndjson"
 
 # Allowed enums (defensive; loud-fail on unknown values so typos don't grow stalely).

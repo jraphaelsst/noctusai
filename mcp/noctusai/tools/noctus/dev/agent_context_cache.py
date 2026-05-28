@@ -53,8 +53,10 @@ from pathlib import Path
 from settings import REPO_ROOT
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-CACHE_DIR = REPO_ROOT / ".claude" / "cache"
-CACHE_PATH = CACHE_DIR / "agent-context.sqlite"
+from .cache_backend import cache_dir as _cache_dir, cache_path as _cache_path
+
+CACHE_DIR = _cache_dir()
+CACHE_PATH = _cache_path("agent-context")
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 KB_DIR = REPO_ROOT / "KNOWLEDGE-BASE"
 

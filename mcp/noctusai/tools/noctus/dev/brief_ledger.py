@@ -37,8 +37,8 @@ from typing import Any
 
 def _ledger_path() -> Path:
     """Lazy REPO_ROOT lookup so test fixtures can monkeypatch."""
-    from settings import REPO_ROOT
-    return REPO_ROOT / ".claude" / "cache" / "brief-ledger.ndjson"
+    from .cache_backend import cache_dir
+    return cache_dir() / "brief-ledger.ndjson"
 
 
 def _now_iso() -> str:

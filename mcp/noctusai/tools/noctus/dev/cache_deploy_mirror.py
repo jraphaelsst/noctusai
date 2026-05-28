@@ -625,6 +625,373 @@ def mirror_all(
     }
 
 
+# ── Tier-2 PULL direction (remote pgvector → local SQLite) ──────────────────
+# Inverse of mirror — used by:
+#   - cache_backend.cache_path() on auto-pull-on-empty (fresh clone bootstrap).
+#   - `noctus.dev.cache_pull` MCP tool / `python cli.py --cache-pull`.
+# Schema knowledge is shared with the mirror direction via _TABLE_MAP.
+
+_LOCAL_SCHEMA_INIT: dict[str, list[str]] = {
+    # Per-cache CREATE TABLE statements for the LOCAL SQLite side. Each cache
+    # module already owns its DDL — these are minimal-shape mirrors used ONLY
+    # when bootstrapping a fresh sqlite from remote rows (so the destination
+    # schema exists before INSERT). Compatible with the real modules' DDL
+    # via `CREATE TABLE IF NOT EXISTS`.
+    "keeper-patterns": [
+        """CREATE TABLE IF NOT EXISTS keeper_patterns (
+            pattern_id TEXT PRIMARY KEY,
+            tier TEXT NOT NULL,
+            description TEXT NOT NULL,
+            test_locator TEXT,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL
+        )""",
+    ],
+    "agent-context": [
+        """CREATE TABLE IF NOT EXISTS agent_context (
+            agent_name TEXT NOT NULL,
+            section TEXT NOT NULL,
+            body TEXT NOT NULL,
+            bundle_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            PRIMARY KEY (agent_name, section)
+        )""",
+    ],
+    "auto-improvement": [
+        """CREATE TABLE IF NOT EXISTS auto_improvement (
+            event_id TEXT PRIMARY KEY,
+            ts TEXT NOT NULL,
+            target TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            stage TEXT,
+            note TEXT,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL
+        )""",
+    ],
+    "kb-embeddings": [
+        """CREATE TABLE IF NOT EXISTS kb_chunks (
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+        """CREATE TABLE IF NOT EXISTS kb_embeddings_json (
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            embedding_json TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+    ],
+    "code-embeddings": [
+        """CREATE TABLE IF NOT EXISTS code_chunks (
+            path TEXT NOT NULL,
+            symbol_name TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            PRIMARY KEY (path, symbol_name, chunk_idx)
+        )""",
+        """CREATE TABLE IF NOT EXISTS code_embeddings_json (
+            path TEXT NOT NULL,
+            symbol_name TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            embedding_json TEXT NOT NULL,
+            PRIMARY KEY (path, symbol_name, chunk_idx)
+        )""",
+    ],
+    "memory-embeddings": [
+        """CREATE TABLE IF NOT EXISTS memory_chunks (
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+        """CREATE TABLE IF NOT EXISTS memory_embeddings_json (
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            embedding_json TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+    ],
+    "corpus-embeddings": [
+        """CREATE TABLE IF NOT EXISTS corpus_chunks (
+            source_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            source_sha TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+        """CREATE TABLE IF NOT EXISTS corpus_embeddings_json (
+            path TEXT NOT NULL,
+            chunk_idx INTEGER NOT NULL,
+            embedding_json TEXT NOT NULL,
+            PRIMARY KEY (path, chunk_idx)
+        )""",
+    ],
+}
+
+
+def _init_local_schema(conn: sqlite3.Connection, cache_name: str) -> None:
+    """Ensure the destination SQLite has the tables we're about to INSERT into."""
+    ddls = _LOCAL_SCHEMA_INIT.get(cache_name, [])
+    for ddl in ddls:
+        conn.execute(ddl)
+    conn.commit()
+
+
+def _pull_simple_table(
+    local: sqlite3.Connection, pg_conn: Any,
+    sqlite_table: str, pg_table: str, columns: list[str],
+) -> int:
+    """Generic non-vector pull (agent-context, auto-improvement, keeper-patterns)."""
+    cur = pg_conn.cursor()
+    cols_sql = ", ".join(columns)
+    cur.execute(f"SELECT {cols_sql} FROM noctus_cache.{pg_table}")
+    rows = cur.fetchall()
+    cur.close()
+    if not rows:
+        return 0
+    placeholders = ", ".join(["?"] * len(columns))
+    # Replace prior content (TRUNCATE-equivalent).
+    local.execute(f"DELETE FROM {sqlite_table}")
+    local.executemany(
+        f"INSERT INTO {sqlite_table} ({cols_sql}) VALUES ({placeholders})",
+        [tuple(r) for r in rows],
+    )
+    local.commit()
+    return len(rows)
+
+
+def _pull_chunks_with_embedding(
+    local: sqlite3.Connection, pg_conn: Any,
+    *, chunks_table: str, embeddings_json_table: str, pg_table: str,
+    chunk_columns_local: list[str],
+    pg_select_cols: list[str],
+    embedding_pg_col_idx: int,
+    column_renames: dict[str, str] | None = None,
+) -> int:
+    """Pull a chunk + embedding cache (kb / code / memory / corpus).
+
+    Vectors come back as pgvector; we serialize to JSON for SQLite storage
+    (mirrors the local cache's `<name>_embeddings_json` table).
+    """
+    import json
+    cur = pg_conn.cursor()
+    cols_sql = ", ".join(pg_select_cols)
+    cur.execute(f"SELECT {cols_sql} FROM noctus_cache.{pg_table}")
+    rows = cur.fetchall()
+    cur.close()
+    if not rows:
+        return 0
+
+    renames_rev: dict[str, str] = {v: k for k, v in (column_renames or {}).items()}
+
+    local.execute(f"DELETE FROM {chunks_table}")
+    local.execute(f"DELETE FROM {embeddings_json_table}")
+
+    # Chunks insert (sans embedding).
+    chunk_cols = [c for i, c in enumerate(pg_select_cols) if i != embedding_pg_col_idx]
+    chunk_cols_local = [renames_rev.get(c, c) for c in chunk_cols]
+    placeholders = ", ".join(["?"] * len(chunk_cols_local))
+    chunk_rows = [
+        tuple(r[i] for i in range(len(pg_select_cols)) if i != embedding_pg_col_idx)
+        for r in rows
+    ]
+    local.executemany(
+        f"INSERT INTO {chunks_table} ({', '.join(chunk_cols_local)}) "
+        f"VALUES ({placeholders})",
+        chunk_rows,
+    )
+
+    # Embeddings JSON insert.
+    # PK columns for the json table = path + chunk_idx (+ optionally symbol_name for code).
+    has_symbol = "symbol_name" in chunk_cols_local
+    json_rows = []
+    for r in rows:
+        path = r[chunk_columns_local.index("path") if "path" in chunk_columns_local else 0]
+        # Use position in chunk_columns_local — same column order as in SELECT, sans embedding.
+        path_idx = chunk_columns_local.index("path")
+        path = chunk_rows[rows.index(r)][path_idx] if False else None  # not used
+        # Build via dict for clarity.
+        rowdict = dict(zip(chunk_columns_local, chunk_rows[rows.index(r)]))
+        emb = r[embedding_pg_col_idx]
+        # pgvector returns either str ("[1.0, 2.0]") OR list. Normalize.
+        if isinstance(emb, str):
+            emb_list = json.loads(emb)
+        else:
+            emb_list = list(emb)
+        if has_symbol:
+            json_rows.append((rowdict["path"], rowdict["symbol_name"],
+                              rowdict["chunk_idx"], json.dumps(emb_list)))
+        else:
+            json_rows.append((rowdict["path"], rowdict["chunk_idx"], json.dumps(emb_list)))
+    if has_symbol:
+        local.executemany(
+            f"INSERT INTO {embeddings_json_table} (path, symbol_name, chunk_idx, embedding_json) "
+            f"VALUES (?, ?, ?, ?)",
+            json_rows,
+        )
+    else:
+        local.executemany(
+            f"INSERT INTO {embeddings_json_table} (path, chunk_idx, embedding_json) "
+            f"VALUES (?, ?, ?)",
+            json_rows,
+        )
+    local.commit()
+    return len(rows)
+
+
+def pull_one_cache(
+    cache_name: str, *, dsn: str | None = None, repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Pull a single cache from prod Postgres → local SQLite. Inverse of mirror.
+
+    Returns: `{ok, cache, rows_pulled, target_path, error?}`.
+    """
+    if cache_name not in _TABLE_MAP:
+        return {"ok": False, "cache": cache_name,
+                "error": f"unknown cache; valid: {sorted(_TABLE_MAP)}"}
+    try:
+        from tools.noctus.dev.cache_backend_postgres import PostgresCacheBackend
+    except ImportError as e:
+        return {"ok": False, "cache": cache_name,
+                "error": f"PostgresCacheBackend unavailable: {e}"}
+    sqlite_target = cache_path(cache_name, repo_root)
+    sqlite_target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        backend = PostgresCacheBackend(dsn=dsn) if dsn else PostgresCacheBackend()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "cache": cache_name,
+                "error": f"postgres backend init failed: {e}"}
+
+    local = sqlite3.connect(str(sqlite_target))
+    local.row_factory = sqlite3.Row
+    # WAL — match the standard cache locking discipline.
+    try:
+        local.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass
+    _init_local_schema(local, cache_name)
+
+    try:
+        with backend.connect(cache_name) as pg_conn:
+            if cache_name == "keeper-patterns":
+                rows = _pull_simple_table(local, pg_conn, "keeper_patterns",
+                    "cache_keeper_patterns",
+                    ["pattern_id", "tier", "description", "test_locator",
+                     "source_sha", "cached_at"])
+            elif cache_name == "agent-context":
+                rows = _pull_simple_table(local, pg_conn, "agent_context",
+                    "cache_agent_context",
+                    ["agent_name", "section", "body", "bundle_sha", "cached_at"])
+            elif cache_name == "auto-improvement":
+                rows = _pull_simple_table(local, pg_conn, "auto_improvement",
+                    "cache_auto_improvement",
+                    ["event_id", "ts", "target", "kind", "stage", "note",
+                     "source_sha", "cached_at"])
+            elif cache_name == "kb-embeddings":
+                rows = _pull_chunks_with_embedding(local, pg_conn,
+                    chunks_table="kb_chunks",
+                    embeddings_json_table="kb_embeddings_json",
+                    pg_table="cache_kb_embeddings",
+                    chunk_columns_local=["path", "chunk_idx", "chunk_text",
+                                         "source_sha", "cached_at"],
+                    pg_select_cols=["path", "chunk_idx", "chunk_text",
+                                    "embedding", "source_sha", "cached_at"],
+                    embedding_pg_col_idx=3)
+            elif cache_name == "code-embeddings":
+                rows = _pull_chunks_with_embedding(local, pg_conn,
+                    chunks_table="code_chunks",
+                    embeddings_json_table="code_embeddings_json",
+                    pg_table="cache_code_embeddings",
+                    chunk_columns_local=["path", "symbol_name", "chunk_idx",
+                                         "chunk_text", "source_sha", "cached_at"],
+                    pg_select_cols=["path", "symbol", "chunk_idx", "chunk_text",
+                                    "embedding", "source_sha", "cached_at"],
+                    embedding_pg_col_idx=4,
+                    column_renames={"symbol_name": "symbol"})
+            elif cache_name == "memory-embeddings":
+                rows = _pull_chunks_with_embedding(local, pg_conn,
+                    chunks_table="memory_chunks",
+                    embeddings_json_table="memory_embeddings_json",
+                    pg_table="cache_memory_embeddings",
+                    chunk_columns_local=["path", "chunk_idx", "chunk_text",
+                                         "source_sha", "cached_at"],
+                    pg_select_cols=["path", "chunk_idx", "chunk_text",
+                                    "embedding", "source_sha", "cached_at"],
+                    embedding_pg_col_idx=3)
+            elif cache_name == "corpus-embeddings":
+                rows = _pull_chunks_with_embedding(local, pg_conn,
+                    chunks_table="corpus_chunks",
+                    embeddings_json_table="corpus_embeddings_json",
+                    pg_table="cache_corpus_embeddings",
+                    chunk_columns_local=["source_type", "path", "chunk_idx",
+                                         "chunk_text", "source_sha", "cached_at"],
+                    pg_select_cols=["source_type", "path", "chunk_idx",
+                                    "chunk_text", "embedding", "source_sha",
+                                    "cached_at"],
+                    embedding_pg_col_idx=4)
+            elif cache_name == "noc-graph":
+                # noc-graph schema is bespoke; full pull is feasible but the
+                # cache is cheaply rebuilt from local sources — skip for now,
+                # let the standard refresh repopulate.
+                rows = 0
+            else:
+                rows = 0
+    except Exception as e:  # noqa: BLE001
+        local.close()
+        return {"ok": False, "cache": cache_name, "error": str(e)[:200]}
+    finally:
+        try:
+            local.close()
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "cache": cache_name,
+        "rows_pulled": rows,
+        "target_path": str(sqlite_target),
+    }
+
+
+def pull_all(
+    *, only: list[str] | None = None, dsn: str | None = None,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Pull every cache (or `only=[...]`) from remote → local. Best-effort.
+
+    Per-cache failures are surfaced individually; the function returns
+    `ok=False` if ANY cache failed but does not roll others back.
+    """
+    targets = list(only) if only else list(_TABLE_MAP.keys())
+    results: dict[str, dict] = {}
+    failures: list[str] = []
+    total = 0
+    for name in targets:
+        r = pull_one_cache(name, dsn=dsn, repo_root=repo_root)
+        results[name] = r
+        if r.get("ok"):
+            total += r.get("rows_pulled", 0)
+        else:
+            failures.append(name)
+    return {
+        "ok": not failures,
+        "pulled": results,
+        "failures": failures,
+        "total_rows": total,
+        "ts": _now_iso(),
+    }
+
+
 # ── MCP registration ─────────────────────────────────────────────────────────
 def register(server) -> None:
     @server.tool(
@@ -636,7 +1003,7 @@ def register(server) -> None:
             "each cache mirrors as a single TRUNCATE+INSERT transaction "
             "(rollback on failure). Vectors transferred verbatim — NO "
             "re-embed cost. Idempotent: re-runs are safe. Use `only=[...]`"
-            " to filter; default = all 5 caches. KB § PATTERNS/devops/"
+            " to filter; default = all caches. KB § PATTERNS/devops/"
             "cache-deploy-mirror.md."
         ),
     )
@@ -646,6 +1013,23 @@ def register(server) -> None:
         dsn: str | None = None,
     ) -> dict:
         return mirror_all(confirm=confirm, only=only, dsn=dsn)
+
+    @server.tool(
+        name="noctus.dev.cache_pull",
+        description=(
+            "Pull prod Postgres+pgvector cache → local SQLite. Inverse of "
+            "cache_deploy_mirror. Used for fresh-machine bootstrap (no "
+            "OpenAI re-embed required). Auto-invoked by cache_backend on "
+            "missing local SQLite + opt-out via NOCTUS_DISABLE_AUTO_CACHE_PULL=1. "
+            "Pass only=[...] to filter; default = all caches. Vectors "
+            "transferred verbatim. KB § PATTERNS/common/cache-portable-architecture.md."
+        ),
+    )
+    def _pull(
+        only: list[str] | None = None,
+        dsn: str | None = None,
+    ) -> dict:
+        return pull_all(only=only, dsn=dsn)
 
     @server.tool(
         name="noctus.dev.init_prod_cache_schema",
@@ -664,5 +1048,7 @@ __all__ = [
     "init_prod_cache_schema",
     "mirror_one_cache",
     "mirror_all",
+    "pull_one_cache",
+    "pull_all",
     "register",
 ]

@@ -245,6 +245,8 @@ def main():
     parser.add_argument("--cleanup-stale-worktrees", action="store_true", help="Remove worktrees merged to origin/main (absorbed scripts/cleanup-stale-worktrees.sh). Dry-run unless --force. MCP: noctus.dev.cleanup_stale_worktrees.")
     parser.add_argument("--tmp-cleanup", action="store_true", help="Sweep retired engineer-dispatch patch artifacts from /tmp (patch-id-on-dev OR aged-out OR malformed). DRY-RUN unless --force. MCP: noctus.dev.tmp_cleanup.")
     parser.add_argument("--tmp-cleanup-max-age-days", type=int, default=14, help="With --tmp-cleanup: age threshold beyond which unmatched patches are retired (default 14).")
+    parser.add_argument("--cache-pull", action="store_true", help="Pull remote prod pgvector cache → local SQLite (inverse of cache_deploy_mirror). Bootstrap a fresh-clone / new-machine without paying ~30 min OpenAI re-embed. Pair --cache-pull-only to scope. MCP: noctus.dev.cache_pull. KB § PATTERNS/common/cache-portable-architecture.md.")
+    parser.add_argument("--cache-pull-only", metavar="NAMES", help="With --cache-pull: comma-separated subset (e.g. 'kb-embeddings,code-embeddings'). Default = all.")
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
@@ -1597,6 +1599,13 @@ def main():
     elif args.tmp_cleanup:
         from tools.noctus.dev.tmp_cleanup import tmp_cleanup
         r = tmp_cleanup(dry_run=not args.force, max_age_days=args.tmp_cleanup_max_age_days)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.cache_pull:
+        from tools.noctus.dev.cache_deploy_mirror import pull_all
+        only = [s.strip() for s in args.cache_pull_only.split(",")] if args.cache_pull_only else None
+        r = pull_all(only=only)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

@@ -34,8 +34,8 @@ from typing import Any
 def _ledger_path() -> Path:
     """Return the telemetry ledger path. Lazy import to avoid REPO_ROOT
     surfacing in test fixtures that monkeypatch REPO_ROOT after import."""
-    from settings import REPO_ROOT
-    return REPO_ROOT / ".claude" / "cache" / "cache-telemetry.ndjson"
+    from .cache_backend import cache_dir
+    return cache_dir() / "cache-telemetry.ndjson"
 
 
 def _now_iso() -> str:

@@ -22,11 +22,20 @@ from . import _embedding_corpus as _ec
 from ._embedding_corpus import MarkdownCorpus
 
 
-CACHE_DIR = REPO_ROOT / ".claude" / "cache"
-CACHE_PATH = CACHE_DIR / "corpus-embeddings.sqlite"
+from .cache_backend import cache_dir as _cache_dir, cache_path as _cache_path
+
+# Resolved lazily via cache_backend (Tier-1 persistent location:
+# <git-common-dir>/noctusai/cache/). Module-level constants are kept for
+# backward-compat; they hit the resolver on each module import (cheap,
+# memoized in cache_backend).
+CACHE_DIR = _cache_dir()
+CACHE_PATH = _cache_path("corpus-embeddings")
 
 
-SOURCE_TYPES = ("changelog", "template", "agent", "skill", "history")
+SOURCE_TYPES = (
+    "changelog", "template", "agent", "skill", "history",
+    "router", "topic", "orientation", "command",
+)
 
 
 def _enumerate_sources() -> list[tuple[str, Path, dict]]:
@@ -67,6 +76,45 @@ def _enumerate_sources() -> list[tuple[str, Path, dict]]:
                 items.append((
                     str(p.relative_to(REPO_ROOT)), p,
                     {"source_type": "skill"},
+                ))
+
+    # router — CLAUDE.md is the always-loaded behavioral router; the most-read
+    # methodology surface on the platform. Searching it is high-value.
+    router = REPO_ROOT / "CLAUDE.md"
+    if router.is_file():
+        items.append((
+            str(router.relative_to(REPO_ROOT)), router,
+            {"source_type": "router"},
+        ))
+
+    # topic — CLAUDE/<topic>.md (backend / frontend / projects / platform):
+    # the topical behavioral layer read by discipline.
+    topic_dir = REPO_ROOT / "CLAUDE"
+    if topic_dir.is_dir():
+        for p in sorted(topic_dir.glob("*.md")):
+            if p.is_file():
+                items.append((
+                    str(p.relative_to(REPO_ROOT)), p,
+                    {"source_type": "topic"},
+                ))
+
+    # orientation — CONTEXTUALIZE.md (the fresh-session entry point).
+    orient = REPO_ROOT / "CONTEXTUALIZE.md"
+    if orient.is_file():
+        items.append((
+            str(orient.relative_to(REPO_ROOT)), orient,
+            {"source_type": "orientation"},
+        ))
+
+    # command — .claude/commands/<name>.md (slash commands; user-invoked, but
+    # agents need to know what they do when the user asks).
+    cmd_dir = REPO_ROOT / ".claude" / "commands"
+    if cmd_dir.is_dir():
+        for p in sorted(cmd_dir.glob("*.md")):
+            if p.is_file():
+                items.append((
+                    str(p.relative_to(REPO_ROOT)), p,
+                    {"source_type": "command"},
                 ))
 
     history = REPO_ROOT / "project-history" / "PROJECT-HISTORY.md"

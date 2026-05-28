@@ -48,14 +48,19 @@ KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md.
 """
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Protocol, runtime_checkable
 
 from settings import REPO_ROOT
 from tools.noctus.dev.cache_backend_postgres import PostgresCacheBackend  # noqa: E402
+
+_log = logging.getLogger("noctus.dev.cache_backend")
 
 
 # ── Cache catalog (single source of truth for cache names + files) ───────────
@@ -70,7 +75,59 @@ _CACHE_FILES: dict[str, str] = {
     "noc-graph":        "noc-graph.sqlite",  # 8th — structured graph mirror
 }
 
-_CACHE_DIR_REL = ".claude/cache"
+# ── Tier-1 path resolution (worktree-shared persistent cache) ────────────────
+# Caches live at `<git-common-dir>/noctusai/cache/<file>.sqlite` — one
+# physical location per repo, automatically shared by every worktree (because
+# `git rev-parse --git-common-dir` resolves to the same path from every
+# worktree). Replaces the older `<worktree>/.claude/cache/` location, which
+# created an empty cache per fresh worktree and forced ~30 min full re-embed
+# on first commit. Legacy data is migrated once on first call (idempotent,
+# sentinel-gated, multi-worktree-aware).
+#
+# KB § PATTERNS/common/cache-portable-architecture.md.
+
+_LEGACY_CACHE_DIR_REL = ".claude/cache"
+_NEW_CACHE_SUBDIR = "noctusai/cache"          # under git common dir
+_LEGACY_MIGRATION_SENTINEL = ".migrated-from-claude-cache"
+_AUTO_PULL_SENTINEL = ".tier2-auto-pulled"
+_AUTO_PULL_OPT_OUT_ENV = "NOCTUS_DISABLE_AUTO_CACHE_PULL"
+_MIGRATED_ROOTS: set[Path] = set()
+_AUTO_PULLED_ROOTS: set[Path] = set()
+
+
+def _git_common_dir(repo_root: Path) -> Path:
+    """Return the directory git uses for shared state across worktrees.
+
+    For the primary tree: `<repo>/.git`. For a linked worktree: still
+    `<primary>/.git` (worktrees have a stub `.git` file pointing back).
+    `git rev-parse --git-common-dir` is the canonical resolver.
+
+    Falls back to `<repo_root>/.git` if git is unavailable (tests / etc).
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True, timeout=5,
+        )
+        path_str = out.stdout.strip()
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return repo_root / ".git"
+    common = Path(path_str)
+    if not common.is_absolute():
+        common = (repo_root / common).resolve()
+    return common
+
+
+def cache_dir(repo_root: Path | None = None) -> Path:
+    """Return the persistent shared cache directory for this repo.
+
+    Lives at `<git-common-dir>/noctusai/cache/`. ALL worktrees of this repo
+    resolve to the same path. Created lazily.
+    """
+    root = repo_root if repo_root is not None else REPO_ROOT
+    d = _git_common_dir(root) / _NEW_CACHE_SUBDIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def known_caches() -> list[str]:
@@ -78,12 +135,143 @@ def known_caches() -> list[str]:
     return list(_CACHE_FILES.keys())
 
 
-def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
-    """Resolve a cache name to its local SQLite file path.
+def _migrate_legacy_cache(repo_root: Path) -> None:
+    """One-time migration: copy legacy `.claude/cache/*.sqlite` from any worktree
+    → `<git-common-dir>/noctusai/cache/`. Sentinel-gated (file at the new
+    location); also memoized per-process for hot-path zero-cost.
 
-    Even when a remote backend is configured, the resolved local
-    path remains the fallback location — backends are free to use
-    it (sqlite does) or ignore it (postgres/supabase will).
+    Uses `copy2` (not `move`) so OLD code on un-pulled worktrees keeps working
+    against `.claude/cache/`. A future cleanup commit removes the legacy dirs
+    once everyone is on the new code.
+    """
+    if repo_root in _MIGRATED_ROOTS:
+        return
+    new_root = cache_dir(repo_root)
+    sentinel = new_root / _LEGACY_MIGRATION_SENTINEL
+    if sentinel.exists():
+        _MIGRATED_ROOTS.add(repo_root)
+        return
+
+    # Find every worktree's `.claude/cache/` to pick the newest file per cache.
+    worktrees: list[Path] = []
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, check=True, timeout=5,
+        )
+        for line in out.stdout.splitlines():
+            if line.startswith("worktree "):
+                worktrees.append(Path(line[len("worktree "):]))
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        worktrees = [repo_root]
+
+    copied_any = False
+    for cache_file in _CACHE_FILES.values():
+        new_path = new_root / cache_file
+        if new_path.exists():
+            continue
+        best_src: Path | None = None
+        best_mtime = -1.0
+        for wt in worktrees:
+            legacy = wt / _LEGACY_CACHE_DIR_REL / cache_file
+            if legacy.is_file():
+                m = legacy.stat().st_mtime
+                if m > best_mtime:
+                    best_mtime = m
+                    best_src = legacy
+        if best_src is None:
+            continue
+        # Copy the SQLite file + its WAL / SHM sidecars (if present).
+        for suffix in ("", "-wal", "-shm"):
+            src = best_src.with_name(best_src.name + suffix)
+            dst = new_root / (cache_file + suffix)
+            if src.is_file() and not dst.exists():
+                try:
+                    shutil.copy2(str(src), str(dst))
+                    copied_any = True
+                except (OSError, FileNotFoundError) as exc:
+                    _log.warning("cache migrate: %s → %s failed: %s", src, dst, exc)
+
+    try:
+        sentinel.touch()
+    except OSError:
+        pass
+    if copied_any:
+        _log.info("cache migrate: copied legacy .claude/cache → %s", new_root)
+    _MIGRATED_ROOTS.add(repo_root)
+
+
+def _auto_pull_enabled() -> bool:
+    """Tier-2 auto-pull (remote prod pgvector → local sqlite) opt-out check.
+
+    Default ON — on a fresh clone, missing local sqlite triggers a pull from
+    prod pgvector so a new machine reaches steady-state without paying
+    ~30 min OpenAI re-embed. `NOCTUS_DISABLE_AUTO_CACHE_PULL=1` opts out
+    (CI / offline / first-machine-without-tunnel / debugging).
+    """
+    return os.environ.get(_AUTO_PULL_OPT_OUT_ENV, "").strip().lower() not in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _try_auto_pull(cache_name: str, repo_root: Path) -> bool:
+    """If local cache is empty AND remote is reachable, pull remote → local.
+
+    Best-effort: silent failure leaves the cache empty (the standard refresh
+    flow then rebuilds locally). Sentinel + per-process memo so a missing
+    remote (no tunnel / no DSN) only costs ONE resolution attempt per process.
+
+    Returns True if a pull succeeded; False otherwise.
+    """
+    if not _auto_pull_enabled():
+        return False
+    if repo_root in _AUTO_PULLED_ROOTS:
+        return False
+    new_root = cache_dir(repo_root)
+    sentinel = new_root / _AUTO_PULL_SENTINEL
+    if sentinel.exists():
+        _AUTO_PULLED_ROOTS.add(repo_root)
+        return False
+    # Late import to avoid circular dep + keep cache_backend lean when
+    # the pull path is never exercised.
+    try:
+        from tools.noctus.dev.cache_deploy_mirror import pull_one_cache
+    except ImportError:
+        _AUTO_PULLED_ROOTS.add(repo_root)
+        return False
+    try:
+        result = pull_one_cache(cache_name, repo_root=repo_root)
+    except Exception as exc:  # remote unreachable, no DSN, schema mismatch — all fine
+        _log.info("cache auto-pull: %s skipped (%s)", cache_name, exc)
+        _AUTO_PULLED_ROOTS.add(repo_root)
+        return False
+    if result.get("ok"):
+        try:
+            sentinel.touch()
+        except OSError:
+            pass
+        _AUTO_PULLED_ROOTS.add(repo_root)
+        _log.info("cache auto-pull: %s pulled %d rows from remote",
+                  cache_name, result.get("rows_pulled", 0))
+        return True
+    _log.info("cache auto-pull: %s failed (%s)", cache_name, result.get("error"))
+    _AUTO_PULLED_ROOTS.add(repo_root)
+    return False
+
+
+def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
+    """Resolve a cache name to its persistent SQLite file path.
+
+    Path layout (see `KB § PATTERNS/common/cache-portable-architecture.md`):
+      `<git-common-dir>/noctusai/cache/<cache_name>.sqlite`
+
+    Side effects (idempotent, per-process memoized — zero-cost after first
+    call per repo_root):
+      1. Ensures the cache directory exists.
+      2. Migrates legacy `.claude/cache/` data once (copy, not move).
+      3. On a fresh clone with no local data, attempts a Tier-2 auto-pull
+         from the remote prod pgvector mirror (opt-out via
+         `NOCTUS_DISABLE_AUTO_CACHE_PULL=1`).
 
     Args:
       cache_name: must be in `known_caches()`.
@@ -98,7 +286,11 @@ def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
             f"valid: {sorted(_CACHE_FILES)}"
         )
     root = repo_root if repo_root is not None else REPO_ROOT
-    return root / _CACHE_DIR_REL / _CACHE_FILES[cache_name]
+    _migrate_legacy_cache(root)
+    path = cache_dir(root) / _CACHE_FILES[cache_name]
+    if not path.exists():
+        _try_auto_pull(cache_name, root)
+    return path
 
 
 # ── The Protocol ─────────────────────────────────────────────────────────────

@@ -94,7 +94,8 @@ def _now_iso() -> str:
 
 
 def cache_path(repo_root: Optional[Path] = None) -> Path:
-    return (repo_root or REPO_ROOT) / ".claude" / "cache" / "noc-graph.sqlite"
+    from .cache_backend import cache_path as _cp
+    return _cp("noc-graph", repo_root=repo_root)
 
 
 def _connect(cache_p: Path) -> sqlite3.Connection:
