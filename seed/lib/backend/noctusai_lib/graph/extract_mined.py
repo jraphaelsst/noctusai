@@ -168,6 +168,87 @@ def _pairs(items: list[str]) -> list[tuple[str, str]]:
 
 # ── External-injection path (preferred at the mcp boundary) ────────────────
 
+def ingest_semantic_neighbors(
+    graph: Graph,
+    pairs: list[tuple[str, str, float]],
+) -> None:
+    """Inject SEMANTIC_NEIGHBOR edges from pre-computed cosine pairs.
+
+    Args:
+        graph: the graph being assembled (nodes must already be populated).
+        pairs: list of ``(node_id_a, node_id_b, cosine_score)`` triples.
+               Canonical ordering: lower-id-source first (emit both directions
+               so graph is undirected in practice but stored as directed). The
+               caller (mcp boundary) is responsible for deduplication at the
+               pair level; the graph ``_dedup`` pass removes exact duplicates
+               at the edge level.
+
+    Source: kb-embeddings + code-embeddings + memory-embeddings +
+    corpus-embeddings caches, top-3 cosine per node, threshold >= 0.85.
+    Zero OpenAI calls — pure SQLite reads from the embedding caches.
+    """
+    node_ids = {n.id for n in graph.nodes}
+    added = 0
+    for id_a, id_b, score in pairs:
+        if id_a not in node_ids or id_b not in node_ids:
+            continue
+        # Emit both directions — the graph treats SEMANTIC_NEIGHBOR as undirected
+        # but stores directed edges. Canonical: lower-string-id is the source.
+        if id_a > id_b:
+            id_a, id_b = id_b, id_a
+        for src, tgt in ((id_a, id_b), (id_b, id_a)):
+            graph.add_edge(Edge(
+                source=src,
+                target=tgt,
+                kind=EdgeKind.SEMANTIC_NEIGHBOR,
+                confidence=min(score, 1.0),
+                weight=score,
+                meta=(("cosine", round(score, 4)),),
+            ))
+        added += 1
+    logger.debug(
+        "graph.extract_mined.ingest_semantic_neighbors: %d pairs → %d edges",
+        added, added * 2,
+    )
+
+
+def ingest_guarded_by_edges(
+    graph: Graph,
+    bindings: list[tuple[str, str]],
+) -> None:
+    """Inject GUARDED_BY edges: guarded_node --GUARDED_BY--> keeper_node.
+
+    Args:
+        graph: the graph being assembled.
+        bindings: list of ``(guarded_node_id, keeper_node_id)`` pairs.
+                  The caller (mcp boundary) resolves keeper-patterns → graph
+                  node ids. Bindings where either id is absent from the graph
+                  are silently skipped (additive layer — graph stays valid).
+
+    Source: keeper-patterns SQLite cache. Only keepers with a resolvable
+    path/locator (pointing at a specific file or node) emit edges; cross-
+    cutting keepers with no path target are skipped.
+    """
+    node_ids = {n.id for n in graph.nodes}
+    added = 0
+    for guarded_id, keeper_id in bindings:
+        if guarded_id not in node_ids or keeper_id not in node_ids:
+            continue
+        graph.add_edge(Edge(
+            source=guarded_id,
+            target=keeper_id,
+            kind=EdgeKind.GUARDED_BY,
+            confidence=1.0,
+            weight=1.0,
+            meta=(("source", "keeper-patterns-cache"),),
+        ))
+        added += 1
+    logger.debug(
+        "graph.extract_mined.ingest_guarded_by_edges: %d bindings → %d edges",
+        len(bindings), added,
+    )
+
+
 def ingest_mined_rows(graph: Graph, rows_by_scanner: dict[str, list[dict]]) -> None:
     """Idempotent ingestion of pre-collected mined rows.
 

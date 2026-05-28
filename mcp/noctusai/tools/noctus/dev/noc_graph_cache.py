@@ -35,10 +35,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT
 
@@ -231,6 +234,76 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
 
     # Rebuild — full repo scope is the canonical cache.
     graph = build_graph(root, scope="repo")
+
+    # R3 slice 1: SEMANTIC_NEIGHBOR edges (embedding-cosine, threshold=0.85).
+    # R3 slice 2: GUARDED_BY edges (keeper-patterns → keeper_rule nodes).
+    # Both are purely additive — a failure logs a warning and continues.
+    #
+    # Preferred path: delegate to the seed-side ingestors (canonical location).
+    # Fallback: use the MCP-local bridge which calls the same logic.
+    # This two-path approach handles the worktree-editable-install gap: the
+    # seed functions may not yet be visible (editable install points at primary
+    # checkout) but the MCP-side computation still works.
+    try:
+        from tools.noctus.graph.build import (
+            _compute_guarded_by_edges,
+            _compute_semantic_neighbors,
+        )
+        sem_pairs = _compute_semantic_neighbors(graph, root)
+        gb_bindings = _compute_guarded_by_edges(graph, root)
+
+        # Try seed-side ingestors first; fall back to inline edge injection.
+        try:
+            from noctusai_lib.graph.extract_mined import (
+                ingest_guarded_by_edges,
+                ingest_semantic_neighbors,
+            )
+            if sem_pairs:
+                ingest_semantic_neighbors(graph, sem_pairs)
+            if gb_bindings:
+                ingest_guarded_by_edges(graph, gb_bindings)
+        except ImportError:
+            # Seed functions not yet visible (worktree isolation or pre-merge).
+            # Inline the same edge-injection logic directly.
+            from noctusai_lib.graph.schema import Edge, EdgeKind
+            node_ids = {n.id for n in graph.nodes}
+            # SEMANTIC_NEIGHBOR — canonical ordering: lower-string-id first.
+            sem_seen: set[tuple[str, str]] = set()
+            for id_a, id_b, score in sem_pairs:
+                if id_a > id_b:
+                    id_a, id_b = id_b, id_a
+                key = (id_a, id_b)
+                if key in sem_seen:
+                    continue
+                sem_seen.add(key)
+                if id_a in node_ids and id_b in node_ids:
+                    for src, tgt in ((id_a, id_b), (id_b, id_a)):
+                        graph.add_edge(Edge(
+                            source=src, target=tgt,
+                            kind=EdgeKind.SEMANTIC_NEIGHBOR,
+                            confidence=min(score, 1.0),
+                            weight=score,
+                            meta=(("cosine", round(score, 4)),),
+                        ))
+            # GUARDED_BY
+            for guarded_id, keeper_id in gb_bindings:
+                if guarded_id in node_ids and keeper_id in node_ids:
+                    graph.add_edge(Edge(
+                        source=guarded_id, target=keeper_id,
+                        kind=EdgeKind.GUARDED_BY,
+                        confidence=1.0, weight=1.0,
+                        meta=(("source", "keeper-patterns-cache"),),
+                    ))
+        sem_count = sum(1 for e in graph.edges if e.kind.value == "semantic_neighbor")
+        gb_count = sum(1 for e in graph.edges if e.kind.value == "guarded_by")
+        logger.info(
+            "noc_graph_cache.refresh: R3 edges — SEMANTIC_NEIGHBOR=%d, GUARDED_BY=%d",
+            sem_count, gb_count,
+        )
+    except Exception as _r3_exc:
+        logger.warning(
+            "noc_graph_cache.refresh: R3 edge injection failed — %s", _r3_exc
+        )
 
     # Persist to SQLite (atomic replace).
     conn = _connect(cache_p)
