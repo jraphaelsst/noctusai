@@ -56,6 +56,36 @@ if _WORKTREE_SEED_LIB.exists():
             _spec.loader.exec_module(_mod)
             sys.modules["noctusai_lib.graph.extract_mined"] = _mod
 
+    # W3: noctusai_lib.components is a new package (not in the primary checkout).
+    # Force-load both the package __init__ and validation_signal from the worktree.
+    _wt_components_dir = _WORKTREE_SEED_LIB / "noctusai_lib" / "components"
+    if _wt_components_dir.exists() and "noctusai_lib.components" not in sys.modules:
+        # Register the package first (its __init__.py depends on validation_signal).
+        _vs_path = _wt_components_dir / "validation_signal.py"
+        _init_path = _wt_components_dir / "__init__.py"
+
+        if _vs_path.exists():
+            # Load validation_signal first so the __init__ import works.
+            _vs_spec = _ilu.spec_from_file_location(
+                "noctusai_lib.components.validation_signal",
+                str(_vs_path),
+            )
+            if _vs_spec and _vs_spec.loader:
+                _vs_mod = _ilu.module_from_spec(_vs_spec)
+                sys.modules["noctusai_lib.components.validation_signal"] = _vs_mod
+                _vs_spec.loader.exec_module(_vs_mod)
+
+        if _init_path.exists():
+            _pkg_spec = _ilu.spec_from_file_location(
+                "noctusai_lib.components",
+                str(_init_path),
+                submodule_search_locations=[str(_wt_components_dir)],
+            )
+            if _pkg_spec and _pkg_spec.loader:
+                _pkg_mod = _ilu.module_from_spec(_pkg_spec)
+                sys.modules["noctusai_lib.components"] = _pkg_mod
+                _pkg_spec.loader.exec_module(_pkg_mod)
+
 from tools.noctus.dev.products import list_products
 
 

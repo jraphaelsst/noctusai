@@ -264,6 +264,9 @@ def main():
     parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
+    parser.add_argument("--component-list", action="store_true", help="List all seed organs (reusable components) with derived validation status. Sort with --sort (consumers_desc|name|last_touched); filter with --filter-status (validated|emerging|shelfware|unknown, comma-separated). MCP: noctus.dev.component_list. KB § PATTERNS/architect/component-list-and-validation.md.")
+    parser.add_argument("--sort", default="consumers_desc", choices=["consumers_desc", "name", "last_touched"], help="Sort order for --component-list (default: consumers_desc).")
+    parser.add_argument("--filter-status", metavar="STATUSES", help="Comma-separated status filter for --component-list (e.g. 'shelfware' or 'validated,emerging').")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
     parser.add_argument("--lgpd-concern", help="Short label for the concern (e.g. 'patient-text-in-cache')")
@@ -1501,6 +1504,41 @@ def main():
             print(f"    wiring_snippet:")
             for line in data["wiring_snippet"].splitlines()[:5]:
                 print(f"      {line}")
+
+    elif getattr(args, "component_list", False):
+        from tools.noctus.dev.component_list import list_components
+        filter_statuses = (
+            [s.strip() for s in args.filter_status.split(",")]
+            if getattr(args, "filter_status", None)
+            else None
+        )
+        sort_order = getattr(args, "sort", "consumers_desc")
+        entries = list_components(sort=sort_order, filter_status=filter_statuses)
+        if args.json:
+            print(json.dumps([e.model_dump() for e in entries], indent=2, default=str))
+        else:
+            total = len(entries)
+            status_counts: dict[str, int] = {}
+            for e in entries:
+                status_counts[e.validation_status] = status_counts.get(e.validation_status, 0) + 1
+            print(f"  {BOLD}Component catalog{RESET} ({total} organs)")
+            parts = []
+            for s, n in sorted(status_counts.items()):
+                color = GREEN if s == "validated" else (YELLOW if s == "emerging" else (RED if s == "shelfware" else RESET))
+                parts.append(f"{color}{n} {s}{RESET}")
+            if parts:
+                print(f"    " + " · ".join(parts))
+            print("")
+            print(f"  {'Name':<32} {'Consumers':>10}  {'Status':<12}")
+            print(f"  {'-' * 32} {'-' * 10}  {'-' * 12}")
+            for entry in entries:
+                color = GREEN if entry.validation_status == "validated" else (
+                    YELLOW if entry.validation_status == "emerging" else (
+                    RED if entry.validation_status == "shelfware" else RESET))
+                print(
+                    f"  {entry.name:<32} {entry.consumers_count:>10}  "
+                    f"{color}{entry.validation_status:<12}{RESET}"
+                )
 
     elif args.lgpd_list:
         from tools.noctus.dev.lgpd import list_warnings

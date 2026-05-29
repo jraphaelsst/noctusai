@@ -26,6 +26,7 @@ def register_all(server) -> None:
     from . import catalog
     from . import component_bundle
     from . import check_framework_deps
+    from . import component_list
     from . import cache_deploy_mirror
     from . import cache_telemetry
     from . import cleanup_worktrees
@@ -125,6 +126,7 @@ def register_all(server) -> None:
     catalog.register(server)
     component_bundle.register(server)
     check_framework_deps.register(server)
+    component_list.register(server)
     cleanup_worktrees.register(server)
     code_baseline.register(server)
     code_embeddings.register(server)
