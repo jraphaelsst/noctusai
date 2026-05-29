@@ -360,35 +360,19 @@ def refresh(
         refreshed.append(rel)
 
     # Orphan prune (full passes only): drop rows for source files no longer on
-    # disk (e.g. a renamed/deleted module like test_seven_way_sync.py). A scoped
-    # refresh (`paths=...`) must NOT prune. Mirrors kb_embeddings.refresh — the
-    # vector DB MUST mirror the tree, else `check_..._freshness` keeps flagging.
+    # disk (e.g. the renamed test_seven_way_sync.py). Shared helper; excludes
+    # kind='organ' (organs live outside _CODE_ROOTS + own lifecycle). A scoped
+    # refresh (`paths=...`) must NOT prune.
     pruned: list[str] = []
     if not paths:
-        live_rels = {str(p.relative_to(root)) for p in all_files}
-        # Exclude kind='organ' rows: organs (W4) share code_chunks but are
-        # managed by register_organ and live OUTSIDE _CODE_ROOTS (e.g.
-        # seed/lib/frontend/**), so they're absent from `all_files` and would
-        # be falsely pruned here.
-        cached_rels = [
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT path FROM code_chunks WHERE COALESCE(kind,'') != 'organ'"
-            ).fetchall()
-        ]
-        for orphan in (set(cached_rels) - live_rels):
-            cur = conn.execute("SELECT rowid_alias FROM code_chunks WHERE path=?", (orphan,))
-            orphan_rowids = [r[0] for r in cur.fetchall()]
-            if orphan_rowids:
-                ph = ",".join("?" * len(orphan_rowids))
-                if _HAS_VEC:
-                    conn.execute(f"DELETE FROM code_vec WHERE rowid IN ({ph})", orphan_rowids)
-                else:
-                    conn.execute(
-                        f"DELETE FROM code_embeddings_json WHERE chunk_rowid IN ({ph})",
-                        orphan_rowids,
-                    )
-            conn.execute("DELETE FROM code_chunks WHERE path=?", (orphan,))
-            pruned.append(orphan)
+        pruned = _ec.prune_orphan_chunks(
+            conn,
+            chunks_table="code_chunks",
+            vec_table="code_vec",
+            json_table="code_embeddings_json",
+            live_rels={str(p.relative_to(root)) for p in all_files},
+            exclude_organ=True,
+        )
 
     conn.execute(
         "INSERT OR REPLACE INTO cache_meta(key,value) VALUES (?,?)",

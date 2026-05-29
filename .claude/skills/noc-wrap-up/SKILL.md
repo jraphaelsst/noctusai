@@ -1,7 +1,7 @@
 ---
 name: noc-wrap-up
 description: Use at end-of-task wrap moments — triggers "anything else?", "are we done?", "wrap up", "what's left?", "final check", "done?", "before we ship", "before I push". Honest 3-5 polish-item survey, never reflexive "all good". Born from the 2026-05-26 evening session that caught 11 silent test failures via this exact discipline.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-wrap-up — honest assessment before the wrap
@@ -19,7 +19,10 @@ version: 1.0.0
 
 2. **Name 3-5 polish items WITH rationale** — for each surfaced surface, write one line: `<item> — <why it matters now>`. If a survey returns clean, SAY SO ("no s2-memory entries opened this session") rather than skipping the survey line (silent-skip = silent-error shape).
 
-3. **Decide in-flight vs surface-with-destination** — clear-path polish items resolve THIS commit (in-flight-resolution rule); only genuinely-out-of-scope / needs-decision items get a named destination (`NOC-REMEDIATE[<class>]` marker, project followup row, or s2-memory entry). NEVER park a clear-path item with a vague "follow up later".
+3. **Classify each surfaced item, then DELIVER the clear-path ones IN-FLIGHT** — a wrap-up that only *lists* clear-path leftovers is parking work that should ship now (the in-flight-resolution rule applies to the wrap survey itself, not just mid-task). For each item:
+   - **Clear-path leftover-cleanup** (small, in-domain, no decision needed — an orphan-prune, a DRY extraction of code you just duplicated, a missed test, a stale-cache refresh) → **DELIVER it this wrap, same branch.** 🔴 Litmus: *if delivering it would take less than describing-it-as-a-residual did, you must deliver it.* Listing it instead is the miss.
+   - **Genuinely-hard / needs-decision** (a multi-step infra slice, a known rabbit-hole, anything needing the user's call) → PARK with a named destination (`NOC-REMEDIATE[<class>]` marker, project-followup row, roadmap entry, or s2-memory) — never a vague "follow up later".
+   The survey output should read "delivered X, Y in-flight; parked Z (because <hard/decision>)" — not "here are three residuals."
 
 4. **Present the survey, ask explicit go/no-go** — the user decides what's wrap-blocking vs ship-anyway. The survey is the gift; the decision stays the user's.
 
@@ -27,6 +30,7 @@ version: 1.0.0
 - "All good" is a **positive claim** that the 5 surveys ran clean — say WHICH surveys ran, not just the conclusion. Reflexive all-good without a survey = silent-error shape.
 - Wrap-up survey is NOT the same as the hygiene sweep (`noc-hygiene` runs hound/mole; `noc-wrap-up` checks session-specific debt). Both fire at end-of-work; this one is fast (~30s), `noc-hygiene` is slower.
 - Sibling discipline: when the user says "wrap up" + "ship to main" together, this skill runs FIRST, `noc-ship` runs after — the wrap survey is a pre-condition for the bless gate.
+- 🔴 **Surfacing ≠ resolving (the 2026-05-29 miss).** A wrap-up that *named* a markdown-corpus orphan-prune gap + a kb/code prune-duplication as "residuals" had already done the hard part (finding them) — both were clear-path and got delivered the next turn on request. That delivery should have happened IN the wrap, unprompted. Step 3 is not optional: deliver the clear-path ones before presenting the survey.
 
 ## Depth
 `KB § 01-PHILOSOPHY.md` (no silent errors · fix-on-contact · in-flight resolution) · `KB § PATTERNS/common/scoped-auto-improvement.md` · `KB § PATTERNS/common/methodology-codification-pipeline.md` · memory `feedback_honest_wrap_up_assessment.md` (the codified rule).

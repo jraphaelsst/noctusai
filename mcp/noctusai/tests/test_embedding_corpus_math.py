@@ -17,7 +17,65 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import sqlite3  # noqa: E402
+
+from tools.noctus.dev import _embedding_corpus as ec  # noqa: E402
 from tools.noctus.dev._embedding_corpus import cosine, top_k_similar  # noqa: E402
+
+
+# ── prune_orphan_chunks (shared orphan-prune across kb/code/markdown-corpus) ────
+
+
+class TestPruneOrphanChunks:
+    """The single orphan-prune helper all 3 embedding refreshers delegate to."""
+
+    def _make_conn(self, monkeypatch):
+        # Force the JSON-fallback branch so the test needs no sqlite-vec module.
+        monkeypatch.setattr(ec, "HAS_VEC", False)
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE c (rowid_alias INTEGER PRIMARY KEY, path TEXT, kind TEXT)")
+        conn.execute("CREATE TABLE j (chunk_rowid INTEGER, embedding TEXT)")
+        return conn
+
+    def _insert(self, conn, path, kind="file"):
+        cur = conn.execute("INSERT INTO c(path, kind) VALUES (?,?)", (path, kind))
+        conn.execute("INSERT INTO j(chunk_rowid, embedding) VALUES (?, ?)", (cur.lastrowid, "[]"))
+
+    def test_prunes_orphan_drops_rows_in_both_tables(self, monkeypatch):
+        conn = self._make_conn(monkeypatch)
+        self._insert(conn, "live.md")
+        self._insert(conn, "gone.md")
+        pruned = ec.prune_orphan_chunks(
+            conn, chunks_table="c", vec_table="v", json_table="j",
+            live_rels={"live.md"},
+        )
+        assert pruned == ["gone.md"]
+        assert [r[0] for r in conn.execute("SELECT path FROM c").fetchall()] == ["live.md"]
+        assert conn.execute("SELECT count(*) FROM j").fetchone()[0] == 1
+
+    def test_keeps_all_when_all_live(self, monkeypatch):
+        conn = self._make_conn(monkeypatch)
+        self._insert(conn, "a.md")
+        self._insert(conn, "b.md")
+        pruned = ec.prune_orphan_chunks(
+            conn, chunks_table="c", vec_table="v", json_table="j",
+            live_rels={"a.md", "b.md"},
+        )
+        assert pruned == []
+        assert conn.execute("SELECT count(*) FROM c").fetchone()[0] == 2
+
+    def test_exclude_organ_preserves_organ_rows(self, monkeypatch):
+        conn = self._make_conn(monkeypatch)
+        self._insert(conn, "real.py", kind="function")
+        # Organ row whose path is absent from live_rels — must NOT be pruned.
+        self._insert(conn, "seed/lib/frontend/Sidebar.tsx", kind="organ")
+        pruned = ec.prune_orphan_chunks(
+            conn, chunks_table="c", vec_table="v", json_table="j",
+            live_rels={"real.py"}, exclude_organ=True,
+        )
+        assert pruned == []  # organ excluded from candidates
+        kinds = {r[0] for r in conn.execute("SELECT kind FROM c").fetchall()}
+        assert "organ" in kinds
 
 
 # ── cosine ────────────────────────────────────────────────────────────────────

@@ -407,6 +407,58 @@ def _delete_rows_for_path(conn: sqlite3.Connection, corpus: MarkdownCorpus, rel:
     conn.execute(f"DELETE FROM {corpus.chunks_table} WHERE path=?", (rel,))
 
 
+def prune_orphan_chunks(
+    conn: sqlite3.Connection,
+    *,
+    chunks_table: str,
+    vec_table: str,
+    json_table: str,
+    live_rels: Iterable[str],
+    exclude_organ: bool = False,
+) -> list[str]:
+    """Delete rows for source paths absent from `live_rels` (the on-disk set).
+
+    The single source for orphan-pruning across all embedding caches (kb /
+    code / markdown-corpus) — formalized at N=3 per the recurrence rule.
+    Callers MUST invoke this ONLY on a full pass (no `paths=` scope), else a
+    scoped refresh would delete every out-of-scope row.
+
+    `exclude_organ=True` skips `kind='organ'` rows: W4 organs share the
+    `code_chunks` table but carry a bundle source_sha and live OUTSIDE the
+    tracked roots, so they're absent from `live_rels` and would be falsely
+    pruned. Returns the list of pruned paths.
+    """
+    organ_filter = " AND COALESCE(kind,'') != 'organ'" if exclude_organ else ""
+    base_filter = " WHERE COALESCE(kind,'') != 'organ'" if exclude_organ else ""
+    cached = [
+        r[0] for r in conn.execute(
+            f"SELECT DISTINCT path FROM {chunks_table}{base_filter}"
+        ).fetchall()
+    ]
+    live = set(live_rels)
+    pruned: list[str] = []
+    for orphan in (set(cached) - live):
+        rowids = [
+            r[0] for r in conn.execute(
+                f"SELECT rowid_alias FROM {chunks_table} WHERE path=?{organ_filter}",
+                (orphan,),
+            ).fetchall()
+        ]
+        if rowids:
+            ph = ",".join("?" * len(rowids))
+            if HAS_VEC:
+                conn.execute(f"DELETE FROM {vec_table} WHERE rowid IN ({ph})", rowids)
+            else:
+                conn.execute(
+                    f"DELETE FROM {json_table} WHERE chunk_rowid IN ({ph})", rowids
+                )
+        conn.execute(
+            f"DELETE FROM {chunks_table} WHERE path=?{organ_filter}", (orphan,)
+        )
+        pruned.append(orphan)
+    return pruned
+
+
 def refresh_markdown_corpus(
     corpus: MarkdownCorpus,
     *,
@@ -544,6 +596,18 @@ def refresh_markdown_corpus(
         if per_doc_ok:
             refreshed.append(rel)
 
+    # Orphan prune (full passes only) — drop rows for sources no longer on
+    # disk. Shared helper; scoped refreshes (`paths=`) never prune.
+    pruned: list[str] = []
+    if not paths:
+        pruned = prune_orphan_chunks(
+            conn,
+            chunks_table=corpus.chunks_table,
+            vec_table=corpus.vec_table,
+            json_table=corpus.json_table,
+            live_rels={rel for rel, _abs, _extras in sources},
+        )
+
     conn.commit()
     conn.close()
     _restore_usage()
@@ -578,6 +642,7 @@ def refresh_markdown_corpus(
         "skipped": skipped,
         "errors": errors,
         "rows_written": total_rows,
+        "pruned": pruned,
     }
 
 
