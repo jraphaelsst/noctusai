@@ -104,6 +104,22 @@ to the standing protocol instead to stay DRY.
 
 ---
 
+## 4c · Mandatory brief language for safety (closing the `--no-verify` commit loophole)
+
+§4b above describes the **mechanics** (which tools the engineer uses to surface). This section pins the **verbatim language** the brief MUST carry so the engineer can't claim "the brief didn't say." The standing protocol (`engineer-seed.md §9` Bash safety + the 5-rationalization catalog at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
+
+**Verbatim phrase the brief MUST contain** (copy as-is into every engineer brief):
+
+> **NEVER use `--no-verify` (commit OR push). NEVER `--force`. If a hook fails or any safety gate refuses (even a known false-positive), STOP and surface as a surface-note (`kind="surface"`); return blocked. The "commit-only is harmless" rationalization is forbidden.** Tech-lead resolves.
+
+That single block routes to the 5 rationalization anti-patterns + the surface protocol + ea7514e7 worked example at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` via the standing protocol. Brief authors MAY add slice-specific overrides (e.g., "this slice IS authorized to commit `--no-verify` for the KB-autostage-hook bypass per `engineer-seed.md §2`; rationale must be in commit message") — but the verbatim block stays as the baseline.
+
+**Why the dual coverage (commit AND push) is load-bearing.** Pre-commit hooks fire on `git commit`, NOT on `git push`. Bypassing commit = bypassing every keeper (`kb_sync` · `check_claude_md_router` · `check_eight_way_sync` · keeper-pattern-cache refresh). The "commit-only is the smaller bypass" intuition has the direction backwards: a `commit --no-verify` skips strictly more guarantees than a `push --no-verify` does. The `ea7514e7` build-learn-cache codification slip (2026-05-29, see `bypass-rationalization-anti-patterns.md § 3`) is the canonical evidence — agent rationalized "commit-only, not push, so it's fine" and silently shipped a `--no-verify` commit to its worktree branch, which was then pushed unverified.
+
+**Why mandatory in the brief AND in the agent.** The standing protocol (`engineer-seed.md §9`) IS the contract. The brief carries it for two reasons: (a) **audit trail** — `git log --grep "NEVER use --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) **future keeper detection** — a `check_dispatch_brief_carries_safety_language` keeper (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after the `ea7514e7` post-hoc-detected slip forced the rule's codification.
+
+**Composes with:** §4b above (mechanics — `surface_to_tech_lead` round-trip) · `engineer-seed.md §9 Bash safety` (standing protocol — the contract IS) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` (the 5 rationalization shapes + surface protocol + ea7514e7 worked example) · `KB § PATTERNS/common/drift-fix-on-contact.md` (Roles split sibling) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
+
 ## 5 · Provenance
 
 Audit + L1/L2/L4 shipped 2026-05-25 (this session). L3 (`wire_env`) shipped same session by a parallel engineer. **Lesson (the reason this doc trusts measurement over docs):** claude-code-guide asserted a `tools:` allowlist *removes* non-allowed tools from injected context (a real token cut). Dogfooding the very change disproved it — the deferred-name list is session/connector-global and persisted (295 names) under the scoped agent (CC v2.1.150). The asserted ~12k L1 token win was **false**; L1's real value is least-privilege. *Measure the dispatch you just tuned; an LLM's "this saves tokens" is a hypothesis, not a result.* Re-measure if the harness version or connected-MCP-server/connector set changes (`.mcp.json` had `noctusai, docker, n8n, waha, supabase` + client-injected `claude_ai_*`/chrome connectors — the `claude_ai_*` 104 are the bloat's bulk, cut via L7).
