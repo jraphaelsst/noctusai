@@ -45,28 +45,28 @@ class TestFrameworkEndpoints:
 # ==========================================================================
 
 class TestDevTeamAPISurfaceAuthBoundary:
-    """The four dev-team router groups (run/agents/metrics/configs) are
-    behind auth. The exact endpoint paths come from the routers' decorators
-    — this test only proves the auth middleware is active on each prefix
-    by hitting a representative endpoint per router."""
+    """The four dev-team router groups are behind auth. dev-team mounts its
+    own routers at /api/run, /api/metrics, /api/agents, /api/configs — NOT
+    under /api/team, which belongs to the seed Team-Management organ. Each
+    endpoint hit without a token must return a strict 401: a (401, 404)
+    disjunction is a false-green escape hatch — it passes even when the
+    route is absent, so it can't tell "auth works" from "route missing"."""
 
     def test_run_endpoint_requires_auth(self, client):
-        # POST /api/team/run is the canonical entrypoint for dispatching the
-        # multi-agent team. Without a token the seed's auth dep returns 401.
-        resp = client.raw().post("/api/team/run", json={"prompt": "hi"})
-        assert resp.status_code in (401, 404)  # 404 if router prefix differs
+        # POST /api/run dispatches the multi-agent team. `task` is a valid
+        # RunRequest field so the body parses and the auth dep fires → 401.
+        # (An unknown field would 422 on the StrictHttpModel before auth.)
+        resp = client.raw().post("/api/run", json={"task": "x"})
+        assert resp.status_code == 401
 
     def test_metrics_endpoint_requires_auth(self, client):
-        resp = client.raw().get("/api/team/metrics")
-        assert resp.status_code in (401, 404)
+        assert client.raw().get("/api/metrics").status_code == 401
 
     def test_agents_endpoint_requires_auth(self, client):
-        resp = client.raw().get("/api/team/agents")
-        assert resp.status_code in (401, 404)
+        assert client.raw().get("/api/agents").status_code == 401
 
     def test_configs_endpoint_requires_auth(self, client):
-        resp = client.raw().get("/api/team/configs")
-        assert resp.status_code in (401, 404)
+        assert client.raw().get("/api/configs").status_code == 401
 
 
 # ==========================================================================
