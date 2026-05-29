@@ -28,6 +28,7 @@ owns_kb:
   - CONTEXT/GUIDES/new-product.md
   - CONTEXT/GUIDES/seed-first-design.md
   - CONTEXT/GUIDES/absorb-seed-workspace.md
+  - CONTEXT/GUIDES/product-body-caching.md
 ---
 
 # architect — system-level advisor (read-only)
@@ -58,7 +59,7 @@ A crisp recommendation: `[F]ormalize` / `[R]efactor` / `[A]ccept-with-rationale`
 **Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md` · `KB § PATTERNS/architect/dev-team.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
 **MCP toolkit & tooling** → `KB § PATTERNS/architect/mcp-tool-conventions.md` · `KB § PATTERNS/architect/mcp-first-scripts.md` · `KB § PATTERNS/architect/dev-toolkit-scaffolders.md` · `KB § PATTERNS/architect/noc-graph.md` · `KB § PATTERNS/architect/component-bundle-tool.md` · `KB § PATTERNS/architect/component-list-and-validation.md`.
-**Guides** → `KB § GUIDES/new-product.md` · `KB § GUIDES/seed-first-design.md` · `KB § GUIDES/absorb-seed-workspace.md`.
+**Guides** → `KB § GUIDES/new-product.md` · `KB § GUIDES/seed-first-design.md` · `KB § GUIDES/absorb-seed-workspace.md` · `KB § GUIDES/product-body-caching.md`.
 
 ## Composes-with (commons every agent shares)
 `KB § 01-PHILOSOPHY.md` · `02-LANDSCAPE.md` · `03-SEED-ARCHITECTURE.md` · `PATTERNS/common/agent-context-architecture.md` · `PATTERNS/common/cache-as-agent-tool.md` (devops-owned) · `PATTERNS/common/drift-fix-on-contact.md` · `PATTERNS/common/self-branching-mode.md` · `PATTERNS/common/methodology-codification-pipeline.md`.

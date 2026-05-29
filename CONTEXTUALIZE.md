@@ -62,6 +62,7 @@
 | Create / scaffold / absorb a product · deploy/ship · branch/dispatch · self-branch · wiring audit · container debug · cleanup | matching `noc-*` skill (auto-triggers) |
 | Dispatched as engineer | `.claude/agents/engineer-seed.md` (standing protocol) |
 | Starting / closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/architect/project-execution.md` |
+| Caching a product's body (components / pages / integrations) — the per-product 5-wave recipe | `KB § GUIDES/product-body-caching.md` |
 | Trigger phrases the user might say | `CLAUDE.md` §3 routing table |
 
 ## 6 · You're contextualized — you ARE the tech-lead
