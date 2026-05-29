@@ -58,6 +58,7 @@ import {
   type UploadMetadata,
 } from "@/hooks/useUpload";
 import { useRecipients, type Recipient } from "@/hooks/useSettings";
+import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import { toast } from "sonner";
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -398,10 +399,79 @@ function MetadataFields({
   );
 }
 
+// ─── YouTube account selector ──────────────────────────────────────────
+/**
+ * Renders a "YouTube account" dropdown. Defaults to the user's default account.
+ * When no accounts exist, shows a CTA linking to /integrations.
+ */
+function YouTubeAccountPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (accountId: string) => void;
+  disabled?: boolean;
+}) {
+  const { data: accounts = [], isLoading } = useIntegrationAccounts("youtube");
+
+  // Auto-select default on first load
+  const defaultAccount = accounts.find((a) => a.is_default) ?? accounts[0];
+  if (!value && defaultAccount) {
+    onChange(defaultAccount.id);
+  }
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Conta YouTube</Label>
+        <div className="flex h-9 items-center text-xs text-muted-foreground">
+          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+          Carregando contas...
+        </div>
+      </div>
+    );
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Conta YouTube</Label>
+        <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          Nenhuma conta YouTube conectada.{" "}
+          <a href="/integrations" className="underline underline-offset-2 hover:text-foreground">
+            Conecte uma conta primeiro.
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor="yt-account">Conta YouTube</Label>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger id="yt-account">
+          <SelectValue placeholder="Selecionar conta..." />
+        </SelectTrigger>
+        <SelectContent>
+          {accounts.map((acc) => (
+            <SelectItem key={acc.id} value={acc.id}>
+              {acc.account_label}
+              {acc.is_default ? " (padrao)" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 // ─── Computador tab — file + code only ─────────────────────────────────
 function ComputerUploadTab({ onJobStarted }: { onJobStarted: (jobId: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [productCode, setProductCode] = useState("");
+  const [accountId, setAccountId] = useState("");
   const { uploadFromCode, pending } = useUploadMutations();
 
   const canSubmit = !!file && productCode.trim().length > 0 && !pending;
@@ -409,7 +479,7 @@ function ComputerUploadTab({ onJobStarted }: { onJobStarted: (jobId: string) => 
   const submit = async () => {
     if (!file) return;
     try {
-      const created = await uploadFromCode(file, productCode.trim());
+      const created = await uploadFromCode(file, productCode.trim(), accountId || undefined);
       toast.success("Envio iniciado");
       onJobStarted(created.job_id);
     } catch (err: any) {
@@ -420,6 +490,7 @@ function ComputerUploadTab({ onJobStarted }: { onJobStarted: (jobId: string) => 
   return (
     <div className="space-y-4">
       <UploadZone file={file} onFileChange={setFile} disabled={pending} />
+      <YouTubeAccountPicker value={accountId} onChange={setAccountId} disabled={pending} />
       <div className="grid gap-2">
         <Label htmlFor="computer-code">Código do Imóvel *</Label>
         <Input
@@ -458,6 +529,7 @@ function DriveUploadTab({
   const [driveUrl, setDriveUrl] = useState("");
   const [form, setForm] = useState<FormState>(emptyForm());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [accountId, setAccountId] = useState("");
   const { uploadFromDrive, pending } = useUploadMutations();
 
   useEffect(() => {
@@ -474,7 +546,11 @@ function DriveUploadTab({
 
   const submit = async () => {
     try {
-      const created = await uploadFromDrive(driveUrl.trim(), formToMetadata(form, [...selected]));
+      const created = await uploadFromDrive(
+        driveUrl.trim(),
+        formToMetadata(form, [...selected]),
+        accountId || undefined
+      );
       toast.success("Envio iniciado");
       onJobStarted(created.job_id);
     } catch (err: any) {
@@ -503,6 +579,7 @@ function DriveUploadTab({
           O arquivo precisa estar com permissao de acesso por link.
         </p>
       </div>
+      <YouTubeAccountPicker value={accountId} onChange={setAccountId} disabled={pending} />
       <Separator />
       <MetadataFields form={form} setForm={setForm} disabled={pending} />
       <div className="grid gap-2">

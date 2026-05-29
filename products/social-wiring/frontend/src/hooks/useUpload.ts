@@ -102,12 +102,16 @@ export function useUploadMutations() {
   );
 
   const uploadFromDrive = useCallback(
-    async (driveUrl: string, metadata: UploadMetadata): Promise<UploadJobCreated> => {
+    async (
+      driveUrl: string,
+      metadata: UploadMetadata,
+      accountId?: string,
+    ): Promise<UploadJobCreated> => {
       setPending(true);
       try {
         const created = await api.post<UploadJobCreated>(
           "/api/videos/upload-from-drive",
-          { drive_url: driveUrl, metadata },
+          { drive_url: driveUrl, metadata, ...(accountId ? { account_id: accountId } : {}) },
         );
         return created;
       } finally {
@@ -123,6 +127,7 @@ export function useUploadMutations() {
     async (
       file: File,
       productCode: string,
+      accountId?: string,
       privacyStatus: PrivacyStatus = "private",
     ): Promise<UploadJobCreated> => {
       setPending(true);
@@ -131,6 +136,7 @@ export function useUploadMutations() {
         formData.append("file", file);
         formData.append("product_code", productCode);
         formData.append("privacy_status", privacyStatus);
+        if (accountId) formData.append("account_id", accountId);
 
         const headers = await getAuthHeader();
         const response = await fetch(apiUrl("/api/videos/upload/from-code"), {

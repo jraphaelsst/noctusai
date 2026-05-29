@@ -8,7 +8,7 @@
  * Nav:
  *   Principal     · Dashboard / Criação de mídia / Email Marketing / YouTube
  *   WhatsApp      · Conexão / Monitor
- *   Configuração  · Configurações / Equipe
+ *   Configuração  · Configurações / Equipe / Integrações
  *
  * The former "Agente" / "Vídeos" / "Upload" entries are consolidated under
  * ONE "YouTube" page (Vídeos + Upload tabs; Agente is now Upload→Chat). The
@@ -24,6 +24,7 @@ import {
   Users,
   Home,
   Mail,
+  Plug,
   Settings as SettingsIcon,
   Settings2,
   Smartphone,
@@ -48,6 +49,7 @@ const Monitor = lazy(() => import("@/pages/Monitor"));
 const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
 const EmailMarketing = lazy(() => import("@/pages/EmailMarketing"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const Integrations = lazy(() => import("@/pages/Integrations"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -81,6 +83,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Integrações", href: "/integrations", icon: Plug, route: "integrations" },
     ],
   },
 ];
@@ -116,6 +119,7 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Integrações", href: "/integrations", icon: Plug },
     ],
   },
 ];
@@ -139,6 +143,7 @@ export default createProductApp({
     { path: "/monitor", component: Monitor },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
+    { path: "/integrations", component: Integrations },
   ],
   // /chat is public — the backend chat router is unauthenticated by
   // current product direction, so the frontend route matches that
