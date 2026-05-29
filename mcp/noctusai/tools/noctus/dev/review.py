@@ -93,6 +93,7 @@ def _detect(
         check_admin_endpoint_service_role_bypass,
         check_auth_session_mutation_on_shared_client,  # registration-drift fix 2026-05-25
         check_slowapi_with_pep563,
+        check_canonical_organ_consumption,             # products-consume-canonical-organs 2026-05-29
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -126,6 +127,7 @@ def _detect(
     # Global repo-root sweep — only when not scoped to a single product.
     if product_slug is None:
         issues.extend(check_out_of_contract_trees())
+        issues.extend(check_canonical_organ_consumption())  # products-consume-canonical-organs 2026-05-29
     return products, issues
 
 

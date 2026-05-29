@@ -7733,6 +7733,158 @@ def check_section_7_placeholder_consistency(repo_root: Path | None = None) -> li
     return issues
 
 
+# ── products-consume-canonical-organs (2026-05-29, Phase 2.1) ─────────────────
+# Products MUST consume canonical cached organs from `@noctusai/lib/...` —
+# no local re-implementations. Named-seam extensions allowed when the consumer
+# file carries `// @consumes-organ <Name>@<ver> +seam=<kind>`.
+# KB § PATTERNS/architect/products-consume-canonical-organs.md.
+#
+# Canonical organ set: Phase 1 seed pilot — LoginForm, ForgotPasswordPage,
+# AcceptInvitePage, ResourceManager, DigestCard. Any organ.yaml sidecar with
+# `validation_status: validated|emerging|canonical` is in scope.
+_CANONICAL_ORGANS: dict[str, str] = {
+    "LoginForm": "seed/lib/frontend/src/components/auth/LoginForm",
+    "ForgotPasswordPage": "seed/lib/frontend/src/pages/auth/ForgotPasswordPage",
+    "AcceptInvitePage": "seed/lib/frontend/src/pages/auth/AcceptInvitePage",
+    "ResourceManager": "seed/lib/frontend/src/components/resource/ResourceManager",
+    "DigestCard": "seed/lib/frontend/src/components/digest/DigestCard",
+}
+
+# Declaration header that exempts a local wrapper.
+_CONSUMES_ORGAN_RE = re.compile(
+    r"//\s*@consumes-organ\s+\S+@\S+\s+\+seam=\S+"
+)
+
+
+def _load_organ_registry(repo_root: Path) -> dict[str, str]:
+    """Return the canonical organ name → seed path registry.
+
+    Starts from the hard-coded Phase 1 set and EXTENDS with any
+    `*.organ.yaml` sidecar found under `seed/lib/frontend/src/` that
+    carries `validation_status: validated`, `emerging`, or `canonical`.
+
+    Returns a copy of `_CANONICAL_ORGANS` augmented with sidecar entries.
+    Never raises — missing sidecar dir is treated as empty extension.
+    """
+    registry: dict[str, str] = dict(_CANONICAL_ORGANS)
+    seed_fe = repo_root / "seed" / "lib" / "frontend" / "src"
+    if not seed_fe.exists():
+        return registry
+    # Minimal YAML parse: look for `name:` and `validation_status:` lines.
+    # Simple line-scan (not PyYAML) — organ.yaml files are small; fields of
+    # interest are always on their own lines without nesting.
+    _ACTIVE_STATUSES = {"validated", "emerging", "canonical"}
+    for yaml_file in seed_fe.rglob("*.organ.yaml"):
+        try:
+            lines = yaml_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read organ.yaml %s (%s)", yaml_file, exc)
+            continue
+        name_val: str | None = None
+        status_val: str | None = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("name:"):
+                name_val = stripped.split(":", 1)[1].strip().strip("'\"")
+            elif stripped.startswith("validation_status:"):
+                status_val = stripped.split(":", 1)[1].strip().strip("'\"")
+        if name_val and status_val and status_val in _ACTIVE_STATUSES:
+            if name_val not in registry:
+                try:
+                    parent = str(yaml_file.parent.relative_to(repo_root))
+                except ValueError:
+                    parent = str(yaml_file.parent)
+                registry[name_val] = parent
+    return registry
+
+
+def check_canonical_organ_consumption(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Products MUST consume canonical cached organs, not re-implement them.
+
+    Scans `products/*/frontend/src/**/*.{tsx,ts}` for declarations of canonical
+    organ names. A local `function LoginForm` / `const LoginForm =` / `export
+    function LoginForm` is a BLOCKING violation unless the file carries a
+    `// @consumes-organ <Name>@<ver> +seam=<kind>` declaration header (which
+    marks it as an approved named-seam extension).
+
+    Severity: `high` — a silent re-fork undoes the Phase 1 canonical gain and
+    splits bug-fix responsibility (canonical fixes don't reach the fork).
+
+    Known limitation: same-shape renames (e.g., `AuthForm` that's structurally
+    `LoginForm`) are not caught by name-only matching. Surface via
+    `scoped-improvement:` when found manually.
+
+    Stage-4 codification: `products-consume-canonical-organs` (2026-05-29).
+    KB § PATTERNS/architect/products-consume-canonical-organs.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products_dir = root / "products"
+    if not products_dir.exists():
+        return issues
+
+    registry = _load_organ_registry(root)
+
+    for product_path in sorted(products_dir.iterdir()):
+        if not product_path.is_dir() or product_path.name.startswith("."):
+            continue
+        fe_src = product_path / "frontend" / "src"
+        if not fe_src.exists():
+            continue
+        name = product_path.name
+
+        for ext in ("*.tsx", "*.ts"):
+            for src_file in fe_src.rglob(ext):
+                try:
+                    content = src_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug(
+                        "compliance: cannot read %s (%s)", src_file, exc
+                    )
+                    continue
+
+                # Check each canonical organ name.
+                for organ_name, seed_path in registry.items():
+                    # Match: function/const declaration (not import).
+                    decl_pattern = (
+                        r"(?:export\s+)?(?:function|const)\s+"
+                        + re.escape(organ_name)
+                        + r"\s*[=(]"
+                    )
+                    match = re.search(decl_pattern, content)
+                    if not match:
+                        continue
+
+                    # Local declaration found — check for exemption header.
+                    if _CONSUMES_ORGAN_RE.search(content):
+                        continue  # declared named-seam extension — ALLOWED
+
+                    try:
+                        rel = str(src_file.relative_to(root))
+                    except ValueError:
+                        rel = str(src_file)
+
+                    line_no = content[: match.start()].count("\n") + 1
+
+                    issues.append({
+                        "product": name,
+                        "file": rel,
+                        "issue": (
+                            f"line {line_no}: local declaration of canonical organ "
+                            f"`{organ_name}` — import from `@noctusai/lib` "
+                            f"(canonical: `{seed_path}`) instead, or add "
+                            f"`// @consumes-organ {organ_name}@<ver> +seam=<kind>` "
+                            "if this is an intentional named-seam extension. "
+                            "KB § PATTERNS/architect/products-consume-canonical-organs.md"
+                        ),
+                        "severity": "high",
+                    })
+
+    return issues
+
+
 def check_all_products() -> tuple[int, list]:
     """Run all compliance checks on all products. Returns (score, issues)."""
     all_issues = []
@@ -7938,6 +8090,11 @@ def check_all_products() -> tuple[int, list]:
     # icon: an `icone` that ProductIcon renders as an SVG (registered name) or
     # an emoji, never a bare lucide name that shows as text (the "Sprout" bug).
     all_issues.extend(check_product_icon_registered())
+    # products-consume-canonical-organs (2026-05-29, Phase 2.1) — hard rule:
+    # organ-shaped FE components must import from @noctusai/lib/..., not re-
+    # implement locally. Named-seam extensions allowed when declared.
+    # KB § PATTERNS/architect/products-consume-canonical-organs.md.
+    all_issues.extend(check_canonical_organ_consumption())
     all_issues.extend(check_detector_has_regression_test())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
@@ -8219,6 +8376,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/cache-auto-freshness.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
     "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
+    "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).

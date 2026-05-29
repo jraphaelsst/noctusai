@@ -180,6 +180,7 @@ def main():
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
+    parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync (two promotions back). Will be removed once external callers migrate.")
@@ -1072,6 +1073,18 @@ def main():
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)
+    elif args.check_canonical_organ_consumption:
+        from tools.noctus.dev.compliance import check_canonical_organ_consumption
+        issues = check_canonical_organ_consumption()
+        if not issues:
+            print(f"  {GREEN}✓ canonical-organ-consumption: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} canonical-organ-consumption issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
+        blocking = any(i.get("severity") in ("high", "critical") for i in issues)
+        sys.exit(1 if blocking else 0)
+
     elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
         from tools.noctus.dev.compliance import (
             check_skill_format, check_agent_format, check_agent_archetype_contract,
