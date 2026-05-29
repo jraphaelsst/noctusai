@@ -17,11 +17,32 @@ The seed-absorption discipline (`noc-absorb-product`) gains a sibling for compon
 
 ## §1 Scope
 
-- Phase 1 (this project): **seed pilot** — 5 canonical seed components registered as the first organs (auth trio `LoginForm` + `ForgotPasswordPage` + `AcceptInvitePage`, plus `ResourceManager`, plus `DigestCard`). Build the tooling that makes registration + query work. Prove the loop.
+- Phase 1 (this project): **seed pilot** — 5 canonical seed components registered as the first organs (auth trio `LoginForm` + `ForgotPasswordPage` + `AcceptInvitePage`, plus `ResourceManager`, plus `DigestCard`). Build the tooling that makes registration + query work. Prove the loop. Each registered organ ships its **build-learn-cache knowledge bundle** alongside source + tests (see §3a).
 - Phase 2 (NEXT project, not this one): **social-wiring pilot** — first product's organs cached (multi-account integrations CRUD is the obvious first; settings page is the second).
 - Phase 3+ (deferred per-product): every other product's organs cached one product at a time, methodically.
 
 Out of scope for Phase 1: BE-only organs (focus FE first), per-product overrides, manual override sidecar (start with derived-only).
+
+## §3a Build-Learn-Cache mindset (the loop applied to organs)
+
+Per the 2026-05-29 codification at `KB § PATTERNS/common/build-learn-cache-mindset.md`, every organ accumulates KNOWLEDGE during dev — not just at project close. The cache holds the artifact AND the journey. Each organ in this catalog carries 8 knowledge fields:
+
+| Field | What it carries |
+|---|---|
+| `known_facts` | What we discovered about this organ (behaviors, invariants, constraints) |
+| `errors_encountered` | Bugs hit during dev + the resolution + the patch SHA |
+| `drifts_surfaced` | Pre-existing drift surfaced by this organ's work (cite auto-improvement ndjson refs) |
+| `alternatives_considered` | Designs tried and abandoned + why |
+| `manual_validation_log` | `[{date, validator, finding, status}]` — user-provided feedback during the build |
+| `integration_test_status` | Latest run result + which integration tests cover this organ |
+| `e2e_test` | `{path, status, last_run, runs_in_ci}` — every organ ships at least one e2e test |
+| `bugs_fixed_during_dev` | Commit SHAs of in-flight fixes (the "we hit X and fixed it like Y" log) |
+
+**Validation is hybrid (automated + manual).** Automated tests and CI status alone don't make an organ validated — manual validation feedback (user reports "works for case A but fails when X") gets cached too. Both signals feed the `validation_status` derivation.
+
+**The loop runs during dev AND beyond.** Refactor, bug-fix, integration touch-up, deploy — each event APPENDS to the organ's knowledge log via `noctus.dev.organ_knowledge_append <name> <event>` (or equivalent). Knowledge never gets parked in transcripts or commit messages alone — those aren't queryable by intent.
+
+This extends `KB § PATTERNS/common/persistent-files-absorption.md` from "absorb at project close" to "absorb continuously per artifact."
 
 ## §2 Phases (this project = Phase 1)
 
@@ -30,9 +51,10 @@ Out of scope for Phase 1: BE-only organs (focus FE first), per-product overrides
 | W1 | Fix noc-graph re-export attribution | Honest consumer counts unblock everything downstream; the cache lies for components today because `@noctusai/lib/design-system/index.ts` re-exports break attribution. Same root-cause shape as the KB_CHAPTER extractor bug (yesterday). | `seed/lib/backend/noctusai_lib/graph/extract_code.py` (re-export resolution) · graph tests · noc-graph cache rebuild | TBD |
 | W2 | `noctus.dev.component_bundle <name>` tool | The "organ-in-a-box" return: `{source, types, tests, deps[], consumers[], wiring_snippet, validation_status}` — the packaged knowledge per organ. | NEW `mcp/noctusai/tools/noctus/dev/component_bundle.py` + tests + KB doc + INDEX | TBD |
 | W3 | `noctus.dev.component_list` tool + validation status derivation | Discoverability + sort by reuse. Derives `validated\|emerging\|shelfware` per component. | NEW `mcp/noctusai/tools/noctus/dev/component_list.py` + shared validation derivation in `noctusai_lib/.../validation_signal.py` + tests | TBD |
-| W4 | Register first 5 seed organs | Populates the catalog with the proven canonical set. Each gets a `validation_override.yaml` sidecar where derived signal isn't enough. Surfaces the `shelfware: PageSkeleton/LLMSpendBadge/FakeModeBadge/ErrorBoundary` honestly. | `seed/lib/frontend/src/<each>.organ.yaml` (sidecar) + KB doc § Phase-1-canonical-set | TBD |
+| W4 | Register first 5 seed organs + knowledge bundles | Populates the catalog with the proven canonical set + each organ ships its 8-field knowledge bundle (per §3a). Each gets an `organ.yaml` sidecar (source + tests + e2e + known_facts/errors/drifts/alternatives/manual_validation/integration). Surfaces the `shelfware: PageSkeleton/LLMSpendBadge/FakeModeBadge/ErrorBoundary` honestly. | `seed/lib/frontend/src/<each>.organ.yaml` (sidecar) + KB doc § Phase-1-canonical-set | TBD |
+| W5 | E2E test automation per organ + `noctus.dev.organ_knowledge_*` tools | Every registered organ ships at least one e2e test (Playwright or vitest+RTL+MSW pair). MCP tools `organ_knowledge_append <name> <event>` (write) + `organ_knowledge_query <name>` (read) so future builders see the full journey. Manual-validation entries logged via the same tool. | NEW `mcp/noctusai/tools/noctus/dev/organ_knowledge.py` + e2e tests per organ (Phase-1 set) + KB doc | TBD |
 
-W1 is the prerequisite for W2-W4. W2-W3-W4 are file-disjoint and run in parallel after W1 lands.
+W1 is the prerequisite for W2-W3. W2-W3-W4-W5 run in dependency order: W1 → W2+W3 (parallel) → W4 (registers using W2+W3) → W5 (e2e + knowledge tooling).
 
 ## §3 Seed-first analysis
 
@@ -57,8 +79,10 @@ Tech-lead writes per `feedback_dispatch_with_project_and_notes`.
 - W1: `noctus.graph.neighbors component:LoginForm edge_kinds=["consumes_component"]` returns ≥9 product nodes.
 - W2: `noctus.dev.component_bundle ResourceManager` returns the structured bundle in ≤1s.
 - W3: `noctus.dev.component_list sort=consumers_desc` lists the first 5 + correctly tags `shelfware` for the 4 zero-consumer components.
-- W4: 5 organ.yaml sidecars committed; KB doc lists the canonical set with derived + override status.
-- Project close: a fresh agent can answer "find me a reusable component for X" via `noctus.dev.component_bundle`/`component_list` without grep.
+- W4: 5 organ.yaml sidecars committed; KB doc lists the canonical set; each sidecar carries the 8 knowledge fields (per §3a), populated from the project's auto-improvement ndjson + commit history + manual validation log; derived + override status reconciled.
+- W5: each of the 5 organs has ≥1 e2e test (path recorded in sidecar `e2e_test.path`); `noctus.dev.organ_knowledge_append` writes a new event; `noctus.dev.organ_knowledge_query <name>` returns the accumulated journey.
+- Project close: a fresh agent can answer "find me a reusable component for X" via `noctus.dev.component_bundle`/`component_list` without grep AND can answer "what did we learn building Y" via `organ_knowledge_query` without reading commit logs.
+- **Validation co-loop**: orchestrator + user run manual validation together; findings cached in `manual_validation_log` per organ; the build-learn-cache loop is dogfooded on this very project.
 
 ## §6 ↔ §11 self-check (proactive at every phase close)
 
@@ -74,6 +98,7 @@ Run at end of W1, W2, W3, W4: `--check-eight-way-sync` + `--verify-kb-sync` + th
 
 - 2026-05-29: project filed; Phase 1 = seed pilot; FE-first; storage = extend noc-graph; validation = derived (no manual catalog rot). Architect scout pre-read at `task aa7fcf56...` informed the decisions.
 - 2026-05-29: validation signal definition pinned (end-to-end working code shipped reuse-mindset, NOT test-file-existence).
+- 2026-05-29: **Build-Learn-Cache mindset absorbed into project** (user-extended mid-flight). Added §3a + W5 + extended §5 acceptance. 8 knowledge fields per organ; hybrid manual+automated validation; e2e per organ; "the loop runs during dev AND beyond" (refactor/bugfix/integration/deploy continue appending). Codified at `KB § PATTERNS/common/build-learn-cache-mindset.md`.
 
 ## Composes with
 
