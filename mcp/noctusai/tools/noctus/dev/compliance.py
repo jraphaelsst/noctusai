@@ -8216,6 +8216,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/auto-author-scaffolds.md",
     "CONTEXT/PATTERNS/common/cache-auto-freshness.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
+    "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).

@@ -49,6 +49,7 @@ def register_all(server) -> None:
     from . import disk_usage
     from . import dispatch_preflight
     from . import engineer_brief_compose
+    from . import find_reusable_component
     from . import findings
     from . import orphan_branch_sweeper
     from . import product_centroid_drift
@@ -147,6 +148,7 @@ def register_all(server) -> None:
     doc_to_code_drift.register(server)
     engineer_brief_compose.register(server)
     engineer_output_linter.register(server)
+    find_reusable_component.register(server)
     findings.register(server)
     orphan_branch_sweeper.register(server)
     product_centroid_drift.register(server)

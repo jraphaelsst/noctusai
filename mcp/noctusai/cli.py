@@ -265,8 +265,11 @@ def main():
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
     parser.add_argument("--component-list", action="store_true", help="List all seed organs (reusable components) with derived validation status. Sort with --sort (consumers_desc|name|last_touched); filter with --filter-status (validated|emerging|shelfware|unknown, comma-separated). MCP: noctus.dev.component_list. KB § PATTERNS/architect/component-list-and-validation.md.")
+    parser.add_argument("--find-reusable-component", metavar="QUERY", help="Find reusable seed organs by semantic intent query. Embeds the query → cosine-top-K search over organ chunks in code-embeddings cache. Use --top-k N to control result count (default 5). Use --filter-status to narrow by validation_status. Falls back to keyword search when embedding provider unreachable. MCP: noctus.dev.find_reusable_component. KB § PATTERNS/architect/seed-organ-canonical-set.md")
+    parser.add_argument("--register-organ", metavar="NAME", help="Embed a named seed organ into the code-embeddings cache (chunk_kind='organ'). Idempotent. MCP: noctus.dev.register_organ.")
+    parser.add_argument("--register-all-canonical-organs", action="store_true", help="Register all 5 Phase-1 canonical seed organs (LoginForm/ForgotPasswordPage/AcceptInvitePage/ResourceManager/DigestCard). Idempotent. MCP: noctus.dev.register_all_canonical_organs.")
     parser.add_argument("--sort", default="consumers_desc", choices=["consumers_desc", "name", "last_touched"], help="Sort order for --component-list (default: consumers_desc).")
-    parser.add_argument("--filter-status", metavar="STATUSES", help="Comma-separated status filter for --component-list (e.g. 'shelfware' or 'validated,emerging').")
+    parser.add_argument("--filter-status", metavar="STATUSES", help="Comma-separated status filter for --component-list or --find-reusable-component (e.g. 'shelfware' or 'validated,emerging').")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
     parser.add_argument("--lgpd-concern", help="Short label for the concern (e.g. 'patient-text-in-cache')")
@@ -1539,6 +1542,52 @@ def main():
                     f"  {entry.name:<32} {entry.consumers_count:>10}  "
                     f"{color}{entry.validation_status:<12}{RESET}"
                 )
+
+    elif getattr(args, "find_reusable_component", None):
+        from tools.noctus.dev.find_reusable_component import find_reusable_component as _frc
+        filter_statuses = (
+            [s.strip() for s in args.filter_status.split(",")]
+            if getattr(args, "filter_status", None)
+            else None
+        )
+        top_k = getattr(args, "top_k", 5)
+        matches = _frc(args.find_reusable_component, top_k=top_k, filter_status=filter_statuses)
+        if args.json:
+            print(json.dumps([m.model_dump() for m in matches], indent=2, default=str))
+        else:
+            print(f"  {BOLD}find_reusable_component:{RESET} {args.find_reusable_component!r}")
+            print(f"  {top_k} requested · {len(matches)} returned")
+            print("")
+            if not matches:
+                print(f"  {YELLOW}No matches found.{RESET} Register organs first: --register-all-canonical-organs")
+            for m in matches:
+                color = GREEN if m.validation_status == "validated" else (
+                    YELLOW if m.validation_status == "emerging" else (
+                    RED if m.validation_status == "shelfware" else RESET))
+                print(f"  {BOLD}{m.name}{RESET} (score={m.score:.3f})")
+                print(f"    {color}{m.validation_status}{RESET} · {m.consumers_count} consumers · {m.path or 'path unknown'}")
+                print(f"    snippet: {m.snippet[:80].strip()!r}")
+
+    elif getattr(args, "register_organ", None):
+        from tools.noctus.dev.find_reusable_component import register_organ as _ro
+        result = _ro(args.register_organ)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            status_color = GREEN if result.get("ok") else RED
+            print(f"  {BOLD}register_organ:{RESET} {args.register_organ!r}")
+            print(f"    {status_color}{result.get('status', 'unknown')}{RESET} · sha={result.get('source_sha', '')[:12]} · rows={result.get('rows_written', 0)}")
+
+    elif getattr(args, "register_all_canonical_organs", False):
+        from tools.noctus.dev.find_reusable_component import register_all_canonical_organs as _raco
+        results = _raco()
+        if args.json:
+            print(json.dumps(results, indent=2, default=str))
+        else:
+            print(f"  {BOLD}register_all_canonical_organs{RESET}")
+            for r in results:
+                status_color = GREEN if r.get("ok") else RED
+                print(f"    {status_color}{r['name']:<28}{RESET} {r.get('status', 'unknown'):<20} sha={r.get('source_sha', '')[:12]}")
 
     elif args.lgpd_list:
         from tools.noctus.dev.lgpd import list_warnings

@@ -1,0 +1,278 @@
+"""Tests for organ registration (W4, seed-organs-cache).
+
+Covers:
+- test_register_organ_writes_yaml_sidecar: organ.yaml files exist for all 5 organs
+- test_register_organ_embeds_chunk: mock embed → verify cache write (chunk_kind=organ)
+- test_re_register_is_idempotent: same content → same source_sha → no re-embed
+- test_organ_yaml_has_8_knowledge_fields: every organ.yaml carries all 8 fields
+- test_shelfware_not_in_canonical: shelfware items not in canonical organs list
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch, call
+
+import pytest
+import yaml
+
+# Insert mcp/ package root so tool modules resolve.
+_MCP_ROOT = Path(__file__).resolve().parents[1]
+if str(_MCP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MCP_ROOT))
+
+from tools.noctus.dev.find_reusable_component import (
+    CANONICAL_ORGANS,
+    ORGAN_CHUNK_KIND,
+    SHELFWARE_ORGANS,
+    _find_organ_yaml,
+    _load_organ_yaml,
+    _organ_source_sha,
+    register_organ,
+)
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+# Resolve the repo root via settings (the same path REPO_ROOT uses at runtime).
+# The test file lives at mcp/noctusai/tests/ inside the worktree, so
+# parents[3] is the worktree root in a worktree checkout; in the primary
+# checkout it could vary. Use settings.REPO_ROOT when available, else fall back.
+try:
+    import settings as _settings
+    _REPO_ROOT: Path = _settings.REPO_ROOT
+except Exception:
+    # Fallback: climb from test file to mcp/ parent (3 levels) = repo root.
+    _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _find_organ_yaml_in_repo(name: str) -> Path | None:
+    """Search for <Name>.organ.yaml in the worktree (for existence tests)."""
+    return _find_organ_yaml(name, _REPO_ROOT)
+
+
+# ── Tests: sidecar existence ───────────────────────────────────────────────────
+
+
+class TestOrganYamlSidecarsExist:
+    """All 5 canonical organs must have a .organ.yaml sidecar committed."""
+
+    @pytest.mark.parametrize("name", CANONICAL_ORGANS)
+    def test_organ_yaml_exists(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        assert p is not None, (
+            f"{name}.organ.yaml not found. "
+            f"Searched under {_REPO_ROOT / 'seed' / 'lib' / 'frontend' / 'src'}. "
+            "W4 must commit a sidecar for each canonical organ."
+        )
+        assert p.exists(), f"{name}.organ.yaml path {p} does not exist"
+
+
+class TestOrganYamlHas8KnowledgeFields:
+    """Every organ.yaml must carry all 8 knowledge fields (§3a)."""
+
+    REQUIRED_FIELDS = [
+        "known_facts",
+        "errors_encountered",
+        "drifts_surfaced",
+        "alternatives_considered",
+        "manual_validation_log",
+        "integration_test_status",
+        "e2e_test",
+        "bugs_fixed_during_dev",
+    ]
+
+    @pytest.mark.parametrize("name", CANONICAL_ORGANS)
+    def test_all_8_fields_present(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found — sidecar existence tested separately")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        missing = [f for f in self.REQUIRED_FIELDS if f not in data]
+        assert not missing, (
+            f"{name}.organ.yaml missing fields: {missing}. "
+            "All 8 knowledge fields required per PROJECT.md §3a."
+        )
+
+    @pytest.mark.parametrize("name", CANONICAL_ORGANS)
+    def test_known_facts_has_at_least_2_entries(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        facts = data.get("known_facts", [])
+        assert isinstance(facts, list), f"{name}: known_facts must be a list"
+        assert len(facts) >= 2, (
+            f"{name}: known_facts has {len(facts)} entries; minimum 2 required per W4 brief."
+        )
+
+    @pytest.mark.parametrize("name", CANONICAL_ORGANS)
+    def test_required_structural_fields(self, name):
+        """name, path, phase, registered_at must be present."""
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        for field in ("name", "path", "phase", "registered_at"):
+            assert field in data, f"{name}.organ.yaml missing structural field: {field!r}"
+
+
+# ── Tests: register_organ (mock embed) ────────────────────────────────────────
+
+
+class TestRegisterOrganEmbedsChunk:
+    """register_organ must write a row with chunk_kind='organ' into the cache."""
+
+    def _make_temp_db(self, tmp_path: Path) -> Path:
+        cache_path = tmp_path / "code-embeddings.sqlite"
+        conn = sqlite3.connect(str(cache_path))
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS code_chunks (
+              rowid_alias INTEGER PRIMARY KEY AUTOINCREMENT,
+              path TEXT NOT NULL, chunk_idx INTEGER NOT NULL,
+              symbol_name TEXT NOT NULL, kind TEXT NOT NULL,
+              chunk_text TEXT NOT NULL, source_sha TEXT NOT NULL, cached_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS code_embeddings_json (
+              chunk_rowid INTEGER PRIMARY KEY, embedding TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        conn.close()
+        return cache_path
+
+    def test_register_organ_writes_row(self, tmp_path):
+        """register_organ writes a code_chunks row with kind='organ'."""
+        cache_path = self._make_temp_db(tmp_path)
+
+        # Fake embed vector
+        fake_vec = [0.1] * 1536
+
+        # Build a minimal bundle mock
+        fake_bundle = MagicMock()
+        fake_bundle.source = "// ResourceManager source"
+        fake_bundle.types = ["export interface ResourceColumn<T>"]
+        fake_bundle.tests = "// test source"
+        fake_bundle.wiring_snippet = "<ResourceManager />"
+
+        import tools.noctus.dev.find_reusable_component as _frc_mod
+        # bundle_component is imported inside _build_organ_chunk; patch at source module
+        import tools.noctus.dev.component_bundle as _cb_mod
+        original_cache = _frc_mod.CACHE_PATH
+        original_bundle = _cb_mod.bundle_component
+        try:
+            _frc_mod.CACHE_PATH = cache_path
+            _cb_mod.bundle_component = lambda *a, **kw: fake_bundle
+            # Patch embed_sync only — vector_costs is imported inside the function
+            # body so we let it run (it writes to a file; harmless in tests).
+            with patch("tools.noctus.dev.find_reusable_component._ec.embed_sync",
+                       return_value=fake_vec):
+                result = register_organ("ResourceManager", repo_root=tmp_path)
+        finally:
+            _frc_mod.CACHE_PATH = original_cache
+            _cb_mod.bundle_component = original_bundle
+
+        assert result["ok"] is True, f"Expected ok=True, got: {result}"
+        assert result["rows_written"] == 1
+        assert result["name"] == "ResourceManager"
+
+        # Verify DB row
+        conn = sqlite3.connect(str(cache_path))
+        row = conn.execute(
+            "SELECT kind, symbol_name FROM code_chunks WHERE kind=?",
+            (ORGAN_CHUNK_KIND,),
+        ).fetchone()
+        conn.close()
+        assert row is not None, "No organ row found in DB"
+        assert row[0] == ORGAN_CHUNK_KIND
+        assert row[1] == "ResourceManager"
+
+
+class TestReRegisterIsIdempotent:
+    """Re-registering with the same content must skip the embed (source_sha match)."""
+
+    def _make_temp_db_with_row(self, tmp_path: Path, sha: str) -> Path:
+        cache_path = tmp_path / "code-embeddings.sqlite"
+        conn = sqlite3.connect(str(cache_path))
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS code_chunks (
+              rowid_alias INTEGER PRIMARY KEY AUTOINCREMENT,
+              path TEXT NOT NULL, chunk_idx INTEGER NOT NULL,
+              symbol_name TEXT NOT NULL, kind TEXT NOT NULL,
+              chunk_text TEXT NOT NULL, source_sha TEXT NOT NULL, cached_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS code_embeddings_json (
+              chunk_rowid INTEGER PRIMARY KEY, embedding TEXT NOT NULL
+            );
+        """)
+        conn.execute(
+            "INSERT INTO code_chunks(path,chunk_idx,symbol_name,kind,chunk_text,source_sha,cached_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            ("seed/.../ResourceManager.tsx", 0, "ResourceManager", ORGAN_CHUNK_KIND, "chunk", sha, "2026-05-29"),
+        )
+        conn.commit()
+        conn.close()
+        return cache_path
+
+    def test_idempotent_skip(self, tmp_path):
+        """When source_sha matches, register_organ skips embed and returns status=already-current."""
+        fake_bundle = MagicMock()
+        fake_bundle.source = "// ResourceManager source"
+        fake_bundle.types = ["export interface ResourceColumn<T>"]
+        fake_bundle.tests = "// test source"
+        fake_bundle.wiring_snippet = "<ResourceManager />"
+
+        embed_call_count = []
+
+        import tools.noctus.dev.find_reusable_component as _frc_mod
+        import tools.noctus.dev.component_bundle as _cb_mod
+        original_bundle = _cb_mod.bundle_component
+        original_yaml = _frc_mod._find_organ_yaml
+
+        # First, compute the sha that would be generated with the fake bundle
+        try:
+            _cb_mod.bundle_component = lambda *a, **kw: fake_bundle
+            _frc_mod._find_organ_yaml = lambda *a, **kw: None
+            chunk = _frc_mod._build_organ_chunk("ResourceManager", tmp_path)
+        finally:
+            _cb_mod.bundle_component = original_bundle
+            _frc_mod._find_organ_yaml = original_yaml
+
+        if chunk is None:
+            pytest.skip("Could not build organ chunk — bundle_component patching needs adjustment")
+
+        sha = _organ_source_sha(chunk)
+        cache_path = self._make_temp_db_with_row(tmp_path, sha)
+
+        original_cache = _frc_mod.CACHE_PATH
+        try:
+            _frc_mod.CACHE_PATH = cache_path
+            _cb_mod.bundle_component = lambda *a, **kw: fake_bundle
+            _frc_mod._find_organ_yaml = lambda *a, **kw: None
+            with patch("tools.noctus.dev.find_reusable_component._ec.embed_sync",
+                       side_effect=lambda _: embed_call_count.append(1) or [0.0] * 1536):
+                result = register_organ("ResourceManager", force=False, repo_root=tmp_path)
+        finally:
+            _frc_mod.CACHE_PATH = original_cache
+            _cb_mod.bundle_component = original_bundle
+            _frc_mod._find_organ_yaml = original_yaml
+
+        assert result["status"] == "already-current", f"Expected already-current, got: {result['status']}"
+        assert result["rows_written"] == 0
+        assert len(embed_call_count) == 0, "embed_sync should NOT be called when sha matches"
+
+
+class TestShelfwareNotInCanonical:
+    """Shelfware items must NOT appear in CANONICAL_ORGANS."""
+
+    def test_shelfware_disjoint_from_canonical(self):
+        overlap = set(CANONICAL_ORGANS) & set(SHELFWARE_ORGANS)
+        assert not overlap, f"Overlap between canonical and shelfware: {overlap}"
+
+    def test_shelfware_count_is_4(self):
+        assert len(SHELFWARE_ORGANS) == 4

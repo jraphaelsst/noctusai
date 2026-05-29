@@ -1,0 +1,32 @@
+name: ResourceManager
+path: seed/lib/frontend/src/components/ResourceManager.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+validation_status: validated
+
+known_facts:
+  - "The canonical page-scoped CRUD component (KB § PATTERNS/product-internal-wiring.md). Formalizes the N=3 recurrence of hand-rolled list+create+edit+delete shells (e.g. core AdminPlans ~290 lines before absorption)."
+  - "Deliberately self-contained: plain `api` + local useState + sonner toasts — zero QueryClientProvider requirement. Products NOT wired for react-query use this; those that opt into TanStack Query use the sibling createCrudHooks."
+  - "Has colocated test file (ResourceManager.test.tsx) — the only seed component with a colocated test in /components/ (FakeModeBadge also has one). The test is the primary CI signal for this organ."
+  - "3 product consumers (exemplar: seed Example.tsx page). Lower consumer count than auth trio but the reference wiring pattern is canonical — the seed Example.tsx IS the wiring template."
+  - "Supports custom column renderers (ResourceColumn.render prop) and 7 field types (text/email/number/textarea/select/boolean/date) making it sufficient for most admin CRUD without forking."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "Commit 8f31dee2 (feat(core): page-scoped CRUD wiring via ResourceManager) represents the canonical adoption of this organ into core — demonstrating the reuse-by-reference pattern."
+
+alternatives_considered:
+  - "react-query variant createCrudHooks exists as an alternative for products that opt into TanStack Query — ResourceManager is the no-dependency default path."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

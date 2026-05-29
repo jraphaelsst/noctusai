@@ -1,0 +1,31 @@
+name: LoginForm
+path: seed/lib/frontend/src/design-system/components/LoginForm.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+validation_status: validated
+
+known_facts:
+  - "Used by 9 products (canonical auth surface — highest consumer count in seed lib); the auth trio entry point."
+  - "Ships dual-mode auth: Supabase client path (original) + HttpOnly-cookie session path (useSessionAuth=true, Wave-3 2026-05-20). The two paths cannot be mixed in one mount."
+  - "Zero external deps beyond React + sonner + supabase + lucide; uses plain useState (no react-hook-form dependency) — deliberately minimal to stay adoptable."
+  - "Core platform does NOT use this — Core has its own REST-based login. SSO-only products (ERP, PF) use session auth path."
+  - "Pairs with ForgotPasswordPage + AcceptInvitePage as the complete auth trio; all three ship the same brandIcon/brandTitle branding seam."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "W3 2026-05-20 platform-auth-modernization: dual-mode dep cookie-based FE was added (commit ca1cf5c0) — the sessionAuth path was the critical extension that prevented per-product auth forks."
+
+alternatives_considered: []
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

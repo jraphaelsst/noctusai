@@ -1,0 +1,33 @@
+name: AcceptInvitePage
+path: seed/lib/frontend/src/design-system/components/AcceptInvitePage.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+validation_status: validated
+
+known_facts:
+  - "8 product consumers; third in the auth trio. Handles the FULL invite acceptance flow: token validation → signup form → submission → success/error."
+  - "Does NOT use Supabase client — calls backend directly via fetch to the product's accept endpoint. The backend handles auth user creation from the invite record. This separates concerns: FE handles UX state machine, BE handles auth provisioning."
+  - "5-state machine: loading → form → submitting → success → error (type PageState). Token extracted from URL search params (?token=...) unless passed as prop."
+  - "The acceptEndpoint + apiBaseUrl props allow products to configure their own invite backend path without forking the component."
+  - "Zero external deps beyond React + lucide-react; no sonner, no Supabase, no router — the most portable of the auth trio."
+  - "Bug fixed 2026-05-26 (commit 06b5eeb6): team router /accept TypeError + integration test — this organ's backend counterpart had a TypeError that was fixed in-flight."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "Commit 06b5eeb6 (fix(seed): team router /accept TypeError + integration test) indicates the accept flow's BE counterpart had a TypeError during development — resolved same commit."
+
+alternatives_considered: []
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev:
+  - "06b5eeb6"
