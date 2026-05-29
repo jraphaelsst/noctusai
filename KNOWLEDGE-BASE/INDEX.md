@@ -89,6 +89,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── autonomous-operator-via-subagent.md
 │   │   │   ├── branching-and-merging.md
 │   │   │   ├── branching-dispatch.md
+│   │   │   ├── component-bundle-tool.md
 │   │   │   ├── dev-team.md
 │   │   │   ├── dev-toolkit-scaffolders.md
 │   │   │   ├── dispatch-engineer-tuning.md
@@ -226,6 +227,7 @@ KNOWLEDGE-BASE/
 | Accept-with-rationale catalog (durable home for every legitimate divergence on the platform — survives project folder deletion; how to add / retire entries) | `CONTEXT/PATTERNS/common/accept-with-rationale.md` |
 | Remediation markers — greppable in-code deferral for batch evaluation: the `NOC-REMEDIATE[<class>]: <what + why> — <date>` token (distinct from the ~1.7k noisy `TODO`s); a sanctioned NON-silent deferral channel (the marker is the named destination, satisfying defer-with-destination); NOT for fix-on-contact-able bugs, NEVER on an `except` (no error-suppression — the retired `# silent-ok` shape); batch sweep `grep -rn NOC-REMEDIATE` ∨ by class; recurrence `N≥3` ⇒ promote to a project/seed lift; Stage-4 candidate `noctus.dev.scan_remediation_markers` | `CONTEXT/PATTERNS/common/remediation-markers.md` |
 | AST-driven code edits (libcst for Python / ts-morph for TypeScript / tree-sitter cross-language; recipes for rename / find-callers / codemods; anti-patterns; boundary rule) | `CONTEXT/PATTERNS/common/ast.md` |
+| component-bundle-tool — `noctus.dev.component_bundle` returns the 8-field organ bundle (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched); AST-equivalent col-0-anchored type extraction; two fallback seams: W1 consumes_component edge (falls back to imports + warning) + W3 derive_validation_status (falls back to "unknown" + warning); CLI `--component-bundle <name>` | `CONTEXT/PATTERNS/architect/component-bundle-tool.md` |
 | MCP tool conventions (3-segment dotted naming `noctus.dev.* / noctus.business.* / google.* / openai.*`, Pydantic In/Out per tool, hierarchical registration, lazy `NoctusContext` for business-logic tools, settings shim, MCP-first principle) | `CONTEXT/PATTERNS/architect/mcp-tool-conventions.md` |
 | MCP-first scripts — `scripts/` specialization of MCP-first: new automation defaults to a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`), NOT a `scripts/*.sh\|*.py` one-off; three named structural carve-outs (`[carve:hook]` git-hook entry → thin dispatcher · `[carve:bootstrap]` pre-venv · `[carve:docker]` thin docker-orch), each requiring an accept-with-rationale entry; classification manifest §3 = durable single source of truth, parsed by `check_new_script_lacks_mcp_analog` (asserts every top-level `scripts/*.{sh,py}` has a bucket row — undecided new script = warning) | `CONTEXT/PATTERNS/architect/mcp-first-scripts.md` |
 | Seed workspace (sibling-of-noc consume-only workspace; symlinks all 8 noc surfaces; pre-commit hook + chmod + KB rule = three-layer "templates can't modify noc" defense; promotion manifest for additions; bootstrap script + workspace.py resolver + `noctus.dev.promote_from_seed_workspace` MCP tool) | `CONTEXT/PATTERNS/architect/seed-workspace.md` |

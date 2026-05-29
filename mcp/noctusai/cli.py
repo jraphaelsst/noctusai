@@ -263,6 +263,7 @@ def main():
     parser.add_argument("--deploy-image-confirm", action="store_true", help="With --deploy-image: actually perform the image swap (a production action). Without it, plan/dry-run only.")
     parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
+    parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
     parser.add_argument("--lgpd-flag", action="store_true", help="Record an LGPD concern in LGPD-WARNINGS.md. Requires --lgpd-concern, --lgpd-path, --lgpd-reason; --lgpd-mitigation optional. Does NOT block.")
     parser.add_argument("--lgpd-concern", help="Short label for the concern (e.g. 'patient-text-in-cache')")
@@ -1478,6 +1479,28 @@ def main():
               f"{dup_color}{summary['duplicate_candidates']} duplicate candidates{RESET}")
         if args.json:
             print(json.dumps(result, indent=2, default=str))
+
+    elif args.component_bundle:
+        from tools.noctus.dev.component_bundle import bundle_component
+        bundle = bundle_component(args.component_bundle)
+        if bundle is None:
+            print(f"  {RED}component not found:{RESET} {args.component_bundle!r}")
+            sys.exit(1)
+        data = bundle.model_dump()
+        if args.json:
+            print(json.dumps(data, indent=2, default=str))
+        else:
+            status_color = GREEN if data["validation_status"] == "validated" else YELLOW
+            print(f"  {BOLD}component_bundle:{RESET} {args.component_bundle}")
+            print(f"    validation_status: {status_color}{data['validation_status']}{RESET}")
+            print(f"    last_touched:      {data['last_touched'] or '(untracked)'}")
+            print(f"    types ({len(data['types'])}): {', '.join(data['types'][:3])}{'...' if len(data['types']) > 3 else ''}")
+            print(f"    deps  ({len(data['deps'])}): {', '.join(data['deps'][:3])}{'...' if len(data['deps']) > 3 else ''}")
+            print(f"    consumers ({len(data['consumers'])}): {', '.join(data['consumers'][:2])}{'...' if len(data['consumers']) > 2 else ''}")
+            print(f"    tests: {'yes' if data['tests'] else 'none'}")
+            print(f"    wiring_snippet:")
+            for line in data["wiring_snippet"].splitlines()[:5]:
+                print(f"      {line}")
 
     elif args.lgpd_list:
         from tools.noctus.dev.lgpd import list_warnings
