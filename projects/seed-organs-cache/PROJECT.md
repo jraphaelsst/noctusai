@@ -44,6 +44,26 @@ Per the 2026-05-29 codification at `KB § PATTERNS/common/build-learn-cache-mind
 
 This extends `KB § PATTERNS/common/persistent-files-absorption.md` from "absorb at project close" to "absorb continuously per artifact."
 
+## §3b Vectorization & embedding (cache-as-agent-tool requirement — LOAD-BEARING)
+
+The organ cache MUST be queryable by INTENT, not just by name. "Find me a reusable component for credentials list with multi-account picker" is the query shape that justifies the whole project. This requires each organ + its knowledge bundle to be EMBEDDED + INDEXED for vector-similarity search.
+
+**Embedding write path (W4 + W5 obligation):**
+- On organ registration (W4): the organ bundle (source + types + tests + the 8 knowledge fields concatenated as a structured chunk) is embedded via the existing `noctusai_lib.integrations.llm` OpenAI embedding pipeline and persisted to the `code-embeddings.sqlite` cache with `chunk_kind = "organ"` (a NEW chunk kind — extend the existing schema).
+- On every `noctus.dev.organ_knowledge_append` (W5): the knowledge log appends new content → the organ chunk is re-embedded (or the new event is appended as a sibling chunk with `parent_organ = <name>`) → the search index stays current automatically.
+- Cost ledger via `vector-costs.ndjson` per existing pattern.
+
+**Embedding read path (W4 — `noctus.dev.find_reusable_component`):**
+- Tool: `noctus.dev.find_reusable_component "<intent>" [--filter-status validated]`
+- Embeds the query via OpenAI → cosine-top-K vector search over `code-embeddings.sqlite WHERE chunk_kind='organ'` → optionally re-ranks by validation_status → returns top-K with the `component_bundle` shape from W2.
+- Falls back to graph keyword search if embedding provider is unreachable.
+
+**Why this lives in code-embeddings, not a 9th cache.** code-embeddings is sqlite-vec (fast cosine), the right shape for this query. Adding a 9th cache would force a sync-N+1 + re-embed-everything pass; extending an existing sqlite-vec cache with a new chunk_kind is the cheap path. Aligns with the architect's "extend, don't proliferate" recommendation.
+
+**The `organ_knowledge_append` re-embed contract**: when knowledge is appended, the embedding refresh runs INLINE (synchronous) — agents querying after a manual_validation_log entry MUST see the new content. This is the build-learn-cache loop's structural feedback closure: the cache reflects the journey AS IT HAPPENS, not at project close.
+
+**Source SHA invariant:** the organ chunk's `source_sha` includes a hash of (source + tests + knowledge bundle) — any of the 8 fields changes → re-embed. Reuses the 3-leg mirror contract.
+
 ## §2 Phases (this project = Phase 1)
 
 | # | Slice | Why | Files-to-modify (primary) | Status |
