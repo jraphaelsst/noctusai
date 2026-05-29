@@ -34,7 +34,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .extract_cli import walk_cli
-from .extract_code import CodeRoot, walk
+from .extract_code import BarrelResolver, CodeRoot, walk
 from .extract_docs import walk_findings, walk_kb, walk_projects
 from .extract_harness import walk_harness
 from .extract_history import walk_auto_improvement
@@ -85,9 +85,17 @@ def build_graph(
         return graph
 
     # L1: code walks (optionally scoped to `paths`)
+    # Build the barrel resolver once — maps @noctusai/lib/... symbol → canonical path.
+    seed_frontend_src = repo_root / "seed" / "lib" / "frontend" / "src"
+    barrel_resolver: BarrelResolver | None = None
+    if seed_frontend_src.exists():
+        barrel_resolver = BarrelResolver(seed_frontend_src, repo_root)
+    else:
+        logger.debug("graph.build: seed frontend src not found at %s — skipping barrel resolution", seed_frontend_src)
+
     code_roots = _resolve_code_roots(repo_root, scope)
     for root in code_roots:
-        walk(graph, root, repo_root=repo_root, only_paths=paths)
+        walk(graph, root, repo_root=repo_root, only_paths=paths, barrel_resolver=barrel_resolver)
 
     # L2: knowledge layers (after code so DOCUMENTS edges can resolve)
     if scope != "code-only":

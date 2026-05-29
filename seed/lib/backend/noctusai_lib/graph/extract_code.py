@@ -9,6 +9,25 @@ tool handles deeper parsing when needed).
 
 Emits nodes + edges into a ``Graph`` passed in by the orchestrator. Pure
 function over file paths; no I/O beyond reading the file.
+
+Re-export attribution (``consumes_component`` edge)
+----------------------------------------------------
+When a product TS file imports ``{ LoginForm }`` from ``"@noctusai/lib/design-system"``,
+the raw ``consumes_seed`` edge points at the barrel package path — not the
+canonical component file. The ``BarrelResolver`` class walks the barrel
+``index.ts`` files under ``seed/lib/frontend/src/`` and builds a
+``symbol → canonical_path`` map at graph-build time.
+
+For each named import from a known barrel path the extractor emits a second
+``consumes_component`` edge: ``consumer-module → component-node``, where the
+target is the canonical ``.tsx`` file that DEFINES the symbol (not the barrel
+re-export shim). The ``consumes_seed`` edge is also kept for package-level
+queries.
+
+Edge direction decision: ``consumer-module → component`` (forward direction,
+same polarity as ``IMPORTS``). Rationale: "who uses LoginForm?" is answered by
+incoming edges on the component node — the natural query is
+``graph.neighbors(component, incoming=True, edge_kinds=[CONSUMES_COMPONENT])``.
 """
 
 from __future__ import annotations
@@ -16,8 +35,9 @@ from __future__ import annotations
 import ast
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .schema import Confidence, Edge, EdgeKind, Graph, Node, NodeKind
 
@@ -32,6 +52,117 @@ _TS_SUFFIXES: frozenset[str] = frozenset({".ts", ".tsx"})
 _ROUTE_DECORATOR_RE = re.compile(
     r"^([A-Za-z_]\w*)\.(get|post|put|patch|delete|head|options|api_route)$"
 )
+
+# ── Barrel re-export resolution ────────────────────────────────────────────
+
+# Package alias → barrel index.ts path relative to seed/lib/frontend/src/
+# Order matters: more-specific paths first (so @noctusai/lib/design-system/components
+# is checked before @noctusai/lib/design-system).
+_BARREL_ALIASES: tuple[tuple[str, str], ...] = (
+    ("@noctusai/lib/design-system/components", "design-system/components/index.ts"),
+    ("@noctusai/lib/design-system/ai", "design-system/ai/index.ts"),
+    ("@noctusai/lib/design-system", "design-system/index.ts"),
+    ("@noctusai/lib/components", "components/index.ts"),
+    ("@noctusai/lib", "index.ts"),
+    ("noctusai-lib", "index.ts"),
+)
+
+# Regex to extract named exports FROM a barrel index.ts line:
+# e.g.  export { Foo, Bar } from "./some/path";
+# e.g.  export type { FooProps } from "./some/path";
+_BARREL_EXPORT_RE = re.compile(
+    r'^export\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["\']([^"\']+)["\']',
+    re.MULTILINE,
+)
+
+# Regex to extract named imports WITH their module path (full destructured form):
+# e.g.  import { LoginForm, useTheme } from "@noctusai/lib/design-system";
+_TS_NAMED_IMPORT_RE = re.compile(
+    r'^\s*import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["\']([^"\']+)["\']',
+    re.MULTILINE,
+)
+
+
+class BarrelResolver:
+    """Resolves named symbols imported from @noctusai barrel paths to canonical component paths.
+
+    Built once per graph-walk from the seed frontend barrel index.ts files.
+    Maps ``(barrel_alias_prefix, symbol_name)`` → repo-relative canonical path.
+
+    Skips ``export type { ... }`` entries (type-only re-exports don't produce
+    runtime component nodes).
+
+    Thread-safety: read-only after construction.
+    """
+
+    def __init__(self, seed_frontend_src: Path, repo_root: Path) -> None:
+        # symbol_name → set[canonical_repo_relative_path]
+        # Uses set because the same symbol could (rarely) be re-exported from
+        # multiple barrel entries; we emit one edge per resolved canonical path.
+        self._map: dict[str, set[str]] = {}
+        # Resolve both paths to eliminate symlinks (e.g. macOS /var → /private/var)
+        # so that relative_to() checks succeed across all platforms.
+        self._repo_root = repo_root.resolve()
+        self._seed_src = seed_frontend_src.resolve()
+        self._build()
+
+    def _build(self) -> None:
+        """Walk each known barrel, resolve relative paths to repo-relative."""
+        for _alias, barrel_rel in _BARREL_ALIASES:
+            barrel_abs = self._seed_src / barrel_rel
+            if not barrel_abs.exists():
+                logger.debug("barrel_resolver: barrel not found: %s", barrel_abs)
+                continue
+            try:
+                barrel_src = barrel_abs.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("barrel_resolver: cannot read barrel %s — %s", barrel_abs, exc)
+                continue
+            barrel_dir = barrel_abs.resolve().parent
+            for m in _BARREL_EXPORT_RE.finditer(barrel_src):
+                names_raw, rel_path = m.group(1), m.group(2)
+                # Resolve relative path against barrel's directory
+                if rel_path.startswith("."):
+                    target = (barrel_dir / rel_path).resolve()
+                else:
+                    # Not a relative path (e.g. re-exporting from a sub-barrel "./ai")
+                    target = (barrel_dir / rel_path).resolve()
+                # If the path has no extension, try .tsx then .ts
+                if not target.suffix:
+                    for ext in (".tsx", ".ts"):
+                        candidate = target.with_suffix(ext)
+                        if candidate.exists():
+                            target = candidate
+                            break
+                # Convert to repo-relative
+                try:
+                    canonical = target.relative_to(self._repo_root).as_posix()
+                except ValueError:
+                    logger.debug("barrel_resolver: cannot relativize %s", target)
+                    continue
+                # Parse symbol names from `{ Foo, Bar }` — strip type annotations
+                for raw_name in names_raw.split(","):
+                    sym = raw_name.strip().split(" as ")[0].strip()
+                    if not sym or sym.startswith("//"):
+                        continue
+                    if sym not in self._map:
+                        self._map[sym] = set()
+                    self._map[sym].add(canonical)
+
+        logger.debug("barrel_resolver: resolved %d symbols", len(self._map))
+
+    def resolve(self, import_path: str, symbol: str) -> set[str]:
+        """Return set of repo-relative canonical paths for ``symbol`` imported from ``import_path``.
+
+        Returns empty set if the import_path is not a known barrel alias or the
+        symbol is not found in any barrel.
+        """
+        if not any(import_path.startswith(alias) for alias, _ in _BARREL_ALIASES):
+            return set()
+        return self._map.get(symbol, set())
+
+    def is_barrel_import(self, import_path: str) -> bool:
+        return any(import_path.startswith(alias) for alias, _ in _BARREL_ALIASES)
 
 
 @dataclass(frozen=True)
@@ -57,12 +188,18 @@ def walk(
     *,
     repo_root: Path,
     only_paths: list[str] | None = None,
+    barrel_resolver: BarrelResolver | None = None,
 ) -> None:
     """Walk a root and emit nodes + edges into ``graph``.
 
     Skips ``node_modules``, ``__pycache__``, ``.venv``, ``dist``, ``build``.
     If ``only_paths`` is provided, ONLY visit files whose repo-relative
     posix path is in that allow-list (incremental rebuild mode).
+
+    ``barrel_resolver`` — if provided, resolves named imports from
+    ``@noctusai/lib/...`` barrel paths to canonical component nodes and emits
+    ``consumes_component`` edges. Pass ``None`` to skip re-export attribution
+    (backward-compatible default).
     """
     skip_dirs = {"node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".git"}
     allow: set[str] | None = set(only_paths) if only_paths else None
@@ -79,7 +216,7 @@ def walk(
         if suffix in _PYTHON_SUFFIXES:
             _extract_python(graph, path, root, repo_root=repo_root)
         elif suffix in _TS_SUFFIXES:
-            _extract_typescript(graph, path, root, repo_root=repo_root)
+            _extract_typescript(graph, path, root, repo_root=repo_root, barrel_resolver=barrel_resolver)
 
 
 def _iter_source_files(root: Path, skip_dirs: set[str]):
@@ -318,6 +455,65 @@ def _name_of(node: ast.AST) -> str | None:
 
 # ── TypeScript ────────────────────────────────────────────────────────────────
 
+
+def _emit_consumes_component_edges(
+    graph: Graph,
+    source: str,
+    consumer_module_id: str,
+    repo_root: Path,
+    barrel_resolver: BarrelResolver,
+) -> None:
+    """Emit ``consumes_component`` edges for named imports resolved through barrels.
+
+    For each ``import { Foo, Bar } from "@noctusai/lib/..."`` statement in
+    ``source``, resolves each named symbol through the barrel registry and
+    emits an edge ``consumer_module_id → code:<canonical_path>:SymbolName``.
+
+    The target node id mirrors the ``code_id(path, symbol, repo_root=repo_root)``
+    format so it joins with nodes already emitted by ``_extract_typescript``
+    when it processes the canonical component file.
+
+    Edge direction: consumer → component (same polarity as IMPORTS).
+    Querying "who consumes LoginForm?" = incoming edges on the component node.
+    """
+    for match in _TS_NAMED_IMPORT_RE.finditer(source):
+        names_raw, import_path = match.group(1), match.group(2)
+        if not barrel_resolver.is_barrel_import(import_path):
+            continue
+        for raw_name in names_raw.split(","):
+            # Strip inline type keyword, aliases (`Foo as LocalFoo`), whitespace
+            raw_name = raw_name.strip()
+            if not raw_name or raw_name.startswith("//"):
+                continue
+            # Strip leading `type ` keyword (some imports: { type FooProps, Bar })
+            if raw_name.startswith("type "):
+                continue
+            sym = raw_name.split(" as ")[0].strip()
+            if not sym:
+                continue
+            canonical_paths = barrel_resolver.resolve(import_path, sym)
+            for canonical in canonical_paths:
+                # Target = canonical module node (file level) + symbol suffix
+                # We emit two targets:
+                # 1. The symbol node (component:LoginForm) — most precise
+                # 2. The module node (file) — fallback when symbol wasn't yet
+                #    extracted (e.g. hooks or types defined in .ts not .tsx)
+                # We always emit (1); if the canonical path ends in .tsx and
+                # the symbol looks like a component, that node was likely
+                # created by the TS extractor — the join will succeed.
+                component_node_id = f"code:{canonical}:{sym}"
+                graph.add_edge(Edge(
+                    source=consumer_module_id,
+                    target=component_node_id,
+                    kind=EdgeKind.CONSUMES_COMPONENT,
+                    confidence=Confidence.EXTRACTED_LOW.value,
+                    meta=(
+                        ("symbol", sym),
+                        ("barrel", import_path),
+                        ("canonical", canonical),
+                    ),
+                ))
+
 _TS_IMPORT_RE = re.compile(
     r'^\s*import\s+(?:(?:type\s+)?(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?["\']([^"\']+)["\']',
     re.MULTILINE,
@@ -329,12 +525,24 @@ _TS_TOP_LEVEL_RE = re.compile(
 _TS_REACT_HOOK_RE = re.compile(r'^use[A-Z]\w*$')
 
 
-def _extract_typescript(graph: Graph, path: Path, root: CodeRoot, *, repo_root: Path) -> None:
+def _extract_typescript(
+    graph: Graph,
+    path: Path,
+    root: CodeRoot,
+    *,
+    repo_root: Path,
+    barrel_resolver: BarrelResolver | None = None,
+) -> None:
     """Parse one TS/TSX file via anchored regex over top-level declarations.
 
     Sound because the always-outline-able invariant guarantees parse-clean
     files. Misses nested declarations — intentional (mirrors
     ``outline_python``'s top-level-plus-methods discipline).
+
+    When ``barrel_resolver`` is provided and the file is NOT itself a barrel
+    index (to prevent circular self-attribution), named imports from
+    ``@noctusai/lib/...`` barrel paths are resolved to canonical component
+    nodes and a ``consumes_component`` edge is emitted for each resolved symbol.
     """
     try:
         source = path.read_text(encoding="utf-8")
@@ -372,6 +580,14 @@ def _extract_typescript(graph: Graph, path: Path, root: CodeRoot, *, repo_root: 
             confidence=Confidence.EXTRACTED.value,
         ))
 
+    # This file is itself a barrel shim if it's named index.ts and lives under
+    # seed/lib/frontend/src/ — skip consumes_component attribution to avoid
+    # circular barrel→component edges.
+    is_barrel_shim = (
+        path.name in ("index.ts", "index.tsx")
+        and "seed/lib/frontend/src" in rel
+    )
+
     # Imports
     for match in _TS_IMPORT_RE.finditer(source):
         target_module = match.group(1)
@@ -386,6 +602,10 @@ def _extract_typescript(graph: Graph, path: Path, root: CodeRoot, *, repo_root: 
             kind=edge_kind,
             confidence=Confidence.EXTRACTED.value,
         ))
+
+    # consumes_component edges: resolve named imports through barrel index.ts
+    if barrel_resolver is not None and not is_barrel_shim:
+        _emit_consumes_component_edges(graph, source, module_id, repo_root, barrel_resolver)
 
     # Top-level exports
     lines = source.split("\n")

@@ -12,7 +12,7 @@
 - **L2.5 history** — `project-history/auto-improvement.ndjson` events aggregated per-target: every node gains `ai_events` / `ai_last_stage` / `ai_last_ts` decorations; targets with ≥ 3 events get an AUTO_IMPROVEMENT_EVENT aggregate node.
 - **L3 mined (additive, confidence < 1.0)** — `MINED_RECURRENCE` edges from `noctus.hound.scan` + `scan_cross_product_helpers` + `scan_within_product_helpers` + `seed.scan_fusions`; injection via `noctusai_lib.graph.ingest_mined_rows(graph, rows_by_scanner)` at the mcp boundary (seed lib cannot import from mcp).
 
-**Edge taxonomy.** `imports` · `calls` · `inherits` · `decorates` · `mounts` · `consumes_seed` · `exports` · `kb_pointer` · `memory_link` · `documents` · `defined_in` · `belongs_to` · `contains` · **`auto_triggers`** · **`owns_kb`** (agent → KB) · **`invokes_skill`** · **`invokes_agent`** · **`exposes_tool`** (module → mcp_tool) · **`exposes_flag`** (cli.py → flag) · **`guarded_by`** · **`referenced_by_event`** · **`mirrors`** · **`mined_recurrence`** (L3) · **`semantic_neighbor`** (L3, planned via embedding caches).
+**Edge taxonomy.** `imports` · `calls` · `inherits` · `decorates` · `mounts` · `consumes_seed` · `exports` · `kb_pointer` · `memory_link` · `documents` · `defined_in` · `belongs_to` · `contains` · **`auto_triggers`** · **`owns_kb`** (agent → KB) · **`invokes_skill`** · **`invokes_agent`** · **`exposes_tool`** (module → mcp_tool) · **`exposes_flag`** (cli.py → flag) · **`guarded_by`** · **`referenced_by_event`** · **`mirrors`** · **`mined_recurrence`** (L3) · **`semantic_neighbor`** (L3, planned via embedding caches) · **`consumes_component`** (consumer-module → canonical component node, resolved through barrel re-exports — see §Re-export resolution below).
 
 **Inspiration.** [Graphify](https://graphify.net/) — noc-native equivalent, but derived 100% from sources we already author and trust (AST + durable prose), **no LLM-inference layer**. Where Graphify mines `INFERRED` edges from comments + docs via LLM, noc's rationale is already authored prose (KB patterns, accept-with-rationale, findings.md, MEMORY frontmatter, agent owns_kb, skill triggers) — so our equivalent of "inferred rationale edges" is `EXTRACTED` at confidence 1.0.
 
@@ -123,6 +123,35 @@ For ~24k nodes (full repo) physics stabilization takes ~3-5s; filter aggressivel
 `build_graph(repo_root, paths=[...rel...])` walks ONLY the listed files for L1 extraction. L2 (KB, harness, landscape, memory) is always re-extracted (cheap, bounded). Use case: pre-commit performance tuning when only a handful of code files change — the cache module can compute the affected files from git diff + pass them as `paths`.
 
 (Not yet wired into the pre-commit eager leg by default; the full-repo build is fast enough at current scale.)
+
+## Re-export resolution (`consumes_component` edge)
+
+**Bug shape (fixed, project W1).** Previously the TS extractor emitted only a `consumes_seed` edge pointing at the barrel package path (e.g. `pkg:@noctusai/lib/design-system`). Named symbols like `LoginForm` consumed by 9 products had ZERO graph attribution — same root-cause shape as the KB_CHAPTER extractor's stale-path check: the resolution rule was incomplete.
+
+**Fix: `BarrelResolver`.** Built once per graph-build, before the code-walk loop, from the `seed/lib/frontend/src/` tree. Walks every `index.ts` in the barrel whitelist; parses `export { Foo } from "./path"` lines to build a `symbol → canonical_repo_relative_path` map.
+
+**Barrel whitelist** (more-specific first):
+
+| Package alias | Barrel file |
+|---|---|
+| `@noctusai/lib/design-system/components` | `design-system/components/index.ts` |
+| `@noctusai/lib/design-system/ai` | `design-system/ai/index.ts` |
+| `@noctusai/lib/design-system` | `design-system/index.ts` |
+| `@noctusai/lib/components` | `components/index.ts` |
+| `@noctusai/lib` | `index.ts` |
+| `noctusai-lib` | `index.ts` |
+
+**Edge direction decision.** `consumer-module → component` (forward, same polarity as `IMPORTS`). Rationale: the natural query is "who uses LoginForm?" = incoming edges on the component node: `noctus.graph.neighbors component:<id> edge_kinds=["consumes_component"] incoming=True`. Reversed direction (component → consumer) would require inverting the traversal at every query site.
+
+**Circular-attribution guard.** Files named `index.ts` or `index.tsx` under `seed/lib/frontend/src/` are detected as barrel shims (`is_barrel_shim = True`) and skipped as edge sources — preventing barrel→component cycles. Only the original consumer file (a product page/component) becomes the edge source.
+
+**Target node ID format.** `code:<canonical_repo_relative_path>:<SymbolName>` — joins with the node already emitted by `_extract_typescript` when it processes the canonical `.tsx` file. Confidence: `EXTRACTED_LOW` (0.75) because regex-parsed import destructuring is anchored but not as strong as Python's `ast`.
+
+**Query example.**
+```
+noctus.graph.neighbors component:seed/lib/frontend/src/design-system/components/LoginForm.tsx:LoginForm edge_kinds=["consumes_component"]
+# → returns all 9 product Login.tsx consumer nodes
+```
 
 ## Deferred (destinations named)
 

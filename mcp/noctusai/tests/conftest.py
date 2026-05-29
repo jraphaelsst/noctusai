@@ -37,12 +37,26 @@ if _WORKTREE_SEED_LIB.exists():
     # checkout, not this worktree. For git-worktree isolation the two trees have
     # DIFFERENT files on disk (the worktree has our edits; primary does not).
     #
-    # Strategy: force-load the worktree's noctusai_lib.graph.extract_mined
-    # directly via importlib and register it in sys.modules OVER the primary
-    # copy. This gives tests the worktree's new symbols without disturbing any
-    # other part of the import system.
-    import importlib.util as _ilu
+    # Strategy: evict ALL cached noctusai_lib.* modules from sys.modules, then
+    # prepend the worktree seed lib to sys.path. The next import of any
+    # noctusai_lib.* module picks up the worktree copy. The editable-install
+    # MetaPathFinder only wins when sys.path doesn't have a plain-directory
+    # entry that already satisfies the import — prepending takes priority.
+    #
+    # This replaces the surgical per-module redirect that used importlib.util
+    # directly (which failed on relative imports inside build.py because
+    # spec_from_file_location doesn't set the package context for relative
+    # imports to resolve).
+    _to_evict = [k for k in sys.modules if k.startswith("noctusai_lib")]
+    for _k in _to_evict:
+        del sys.modules[_k]
+    if str(_WORKTREE_SEED_LIB) not in sys.path:
+        sys.path.insert(0, str(_WORKTREE_SEED_LIB))
 
+    # Legacy per-module redirect kept for extract_mined (the original worktree
+    # change) as a belt-and-suspenders check — it's now a no-op since the
+    # evict+prepend above handles it, but keep to avoid regressions.
+    import importlib.util as _ilu
     _wt_extract_mined_path = (
         _WORKTREE_SEED_LIB / "noctusai_lib" / "graph" / "extract_mined.py"
     )

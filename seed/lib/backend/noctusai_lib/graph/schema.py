@@ -77,7 +77,8 @@ class EdgeKind(str, Enum):
     INVOKES_AGENT = "invokes_agent"          # CLAUDE.md / orchestration → agent
     EXPOSES_TOOL = "exposes_tool"            # module → mcp_tool
     EXPOSES_FLAG = "exposes_flag"            # cli.py module → cli_flag
-    GUARDED_BY = "guarded_by"                # code/path → keeper_rule
+    GUARDED_BY = "guarded_by"               # code/path → keeper_rule
+    CONSUMES_COMPONENT = "consumes_component"  # consumer-module → component node (resolved through barrel re-exports)
     REFERENCED_BY_EVENT = "referenced_by_event"  # auto-improvement event → node
     MIRRORS = "mirrors"                      # cache → source surface
     # Mined / semantic — confidence < 1.0
