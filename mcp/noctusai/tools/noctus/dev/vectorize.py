@@ -72,7 +72,10 @@ def embed_text(text: str, namespace: str | None = None) -> dict:
     try:
         from noctusai_lib.integrations.llm import generate_embedding
         from noctusai_lib.integrations.llm.client import get_llm_config
-        vec = asyncio.run(generate_embedding(text))
+        from . import _embedding_corpus as _ec
+        # Capture the REAL provider token usage (ground truth for the ledger).
+        with _ec.capture_embedding_usage() as _usage:
+            vec = asyncio.run(generate_embedding(text))
         cfg = get_llm_config()
         result = {
             "ok": True,
@@ -85,6 +88,8 @@ def embed_text(text: str, namespace: str | None = None) -> dict:
             try:
                 from . import vector_costs as _vc
                 _estimated_tokens = max(1, len(text) // 4)
+                _actual_tokens = _usage.total_tokens if _usage.has_data else None
+                _actual_cost = _usage.cost_usd if _usage.has_data else None
                 _vc.log_refresh_batch(
                     namespace=namespace,
                     model=cfg.default_embedding_model,
@@ -93,6 +98,8 @@ def embed_text(text: str, namespace: str | None = None) -> dict:
                     estimated_tokens=_estimated_tokens,
                     provider=cfg.default_provider,
                     source_ref=None,
+                    actual_tokens=_actual_tokens,
+                    actual_cost_usd=_actual_cost,
                 )
             except Exception:  # noqa: BLE001 — never block the embed on logging failure
                 pass

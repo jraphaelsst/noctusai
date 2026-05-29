@@ -76,6 +76,101 @@ def embed_sync(text: str) -> list[float]:
     return asyncio.run(generate_embedding(text))
 
 
+# ── Real-usage capture ─────────────────────────────────────────────────────
+# The provider (openai_provider.generate_embedding) already records the REAL
+# `usage.total_tokens` from the API response via `record_usage`, which
+# dispatches a UsageEvent to `config.usage_sink`. The dev cost ledger
+# (vector-costs.ndjson) historically logged only a `len//4` ESTIMATE — useless
+# for calibrating real production cost. `capture_embedding_usage()` installs a
+# scoped sink that accumulates the ground-truth usage for every embed inside the
+# block (chaining to any pre-existing sink so production logging is untouched),
+# so refreshers can log `actual_tokens` + `actual_cost_usd` alongside the
+# estimate. KB § PATTERNS/common/vectorize-embed-cache-framework.md.
+
+
+class UsageAccumulator:
+    """Sums real provider usage across the embeds inside a capture block."""
+
+    def __init__(self) -> None:
+        self.calls: int = 0
+        self.total_tokens: int = 0
+        self.prompt_tokens: int = 0
+        self.cost_usd: float = 0.0
+
+    @property
+    def has_data(self) -> bool:
+        """True iff at least one embed reported a real token count."""
+        return self.calls > 0 and self.total_tokens > 0
+
+
+def install_capture_sink(acc: UsageAccumulator) -> Callable[[], None]:
+    """Install a chaining capture sink that feeds `acc`; return a restore fn.
+
+    Lower-level primitive for linear batch flows (kb/code refreshers) that
+    can't easily wrap their embed loop in a `with` block: call before the loop,
+    invoke the returned callable after it (ideally in a `finally`). The
+    capturing sink chains to any pre-existing sink so production logging is not
+    dropped. Returns a no-op restore when the LLM config is unavailable.
+    """
+    try:
+        from noctusai_lib.integrations.llm.client import get_llm_config
+        config = get_llm_config()
+    except Exception:
+        return lambda: None
+
+    prev_sink = getattr(config, "usage_sink", None)
+
+    class _CaptureSink:
+        async def record(self, event: Any) -> None:
+            try:
+                acc.calls += 1
+                acc.total_tokens += int(getattr(event, "total_tokens", 0) or 0)
+                acc.prompt_tokens += int(getattr(event, "prompt_tokens", 0) or 0)
+                acc.cost_usd += float(getattr(event, "cost_estimate_usd", 0.0) or 0.0)
+            finally:
+                # Chain to the previous sink so production usage logging is
+                # not dropped while we observe.
+                if prev_sink is not None:
+                    try:
+                        await prev_sink.record(event)
+                    except Exception:
+                        pass
+
+    config.usage_sink = _CaptureSink()
+
+    def _restore() -> None:
+        config.usage_sink = prev_sink
+
+    return _restore
+
+
+@contextmanager
+def capture_embedding_usage() -> Iterator[UsageAccumulator]:
+    """Capture the REAL provider usage for every embed within the block.
+
+    Installs a chaining UsageSink on the active LLM config for the duration,
+    accumulating `total_tokens` / `prompt_tokens` / `cost_estimate_usd` from
+    each `UsageEvent` the provider emits, then restores the previous sink.
+
+    Usage::
+
+        with capture_embedding_usage() as usage:
+            vec = embed_sync(text)        # or many embeds
+        log_refresh_batch(..., actual_tokens=usage.total_tokens,
+                          actual_cost_usd=usage.cost_usd)
+
+    Never raises from the sink path — capture is best-effort observability and
+    must not break the embed it observes. Degrades to `has_data == False` when
+    the LLM config is unavailable (e.g. fake provider with no usage).
+    """
+    acc = UsageAccumulator()
+    restore = install_capture_sink(acc)
+    try:
+        yield acc
+    finally:
+        restore()
+
+
 # ── Cosine ─────────────────────────────────────────────────────────────────
 def cosine(a: list[float], b: list[float]) -> float:
     """Pure-Python cosine similarity. ~10ms for 1536-D × 500 vectors."""

@@ -262,9 +262,12 @@ def register_organ(
     organ_data = _load_organ_yaml(name, root)
     component_path = organ_data.get("path", str(organ_yaml.relative_to(root)) if organ_yaml else f"seed/lib/frontend/src/{name}")
 
-    # Embed
+    # Embed — capture the REAL provider token usage (ground truth for the
+    # cost ledger, not the len//4 estimate).
+    usage = None
     try:
-        vec = _ec.embed_sync(chunk_text)
+        with _ec.capture_embedding_usage() as usage:
+            vec = _ec.embed_sync(chunk_text)
     except Exception as exc:
         conn.close()
         logger.error("find_reusable_component: embed failed for %r: %s", name, exc)
@@ -297,10 +300,13 @@ def register_organ(
     conn.commit()
     conn.close()
 
-    # Cost logging
+    # Cost logging — record the real token usage when the provider reported it,
+    # alongside the estimate (estimate-vs-actual drift calibrates future runs).
     try:
         from . import vector_costs as _vc
         estimated_tokens = len(chunk_text) // 4
+        actual_tokens = usage.total_tokens if (usage and usage.has_data) else None
+        actual_cost = usage.cost_usd if (usage and usage.has_data) else None
         _vc.log_refresh_batch(
             namespace="code-embeddings-organs",
             model="text-embedding-3-small",
@@ -309,6 +315,8 @@ def register_organ(
             estimated_tokens=estimated_tokens,
             provider="openai",
             source_ref=f"organ:{name}:{now[:10]}",
+            actual_tokens=actual_tokens,
+            actual_cost_usd=actual_cost,
         )
     except Exception as exc:
         logger.warning("find_reusable_component: vector_costs log failed: %s", exc)

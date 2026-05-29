@@ -13,12 +13,15 @@ The `project-history/vector-costs.ndjson` ledger records every refresh-batch tha
 1. **Read the ledger** — `project-history/vector-costs.ndjson`. Each row:
    ```
    {ts, namespace, model, provider, doc_count, chunk_count,
-    estimated_tokens, estimated_cost_usd, source_ref}
+    estimated_tokens, estimated_cost_usd,
+    actual_tokens, actual_cost_usd,        # provider ground truth (null on pre-2026-05-29 rows)
+    source_ref}
    ```
 
 2. **Compute aggregates**:
-   - **Lifetime total**: sum `estimated_cost_usd` across all rows.
-   - **Per-namespace**: sum + last-refresh-ts per namespace.
+   - **Lifetime total**: sum `actual_cost_usd` where present, else `estimated_cost_usd`.
+   - **Estimate-vs-actual drift**: where `actual_*` is present, compare to `estimated_*` — this is the calibration signal for projecting **future production** cost. A consistent ratio means the estimator can be trusted for un-instrumented projections; a wide gap means re-tune `len//4`.
+   - **Per-namespace**: sum + last-refresh-ts per namespace (report both estimated and actual columns).
    - **Per-day**: sum per `ts[:10]` (calendar day) for the last 7 days.
 
 3. **Surface findings**:

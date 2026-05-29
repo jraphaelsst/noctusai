@@ -31,10 +31,19 @@ NDJSON schema (one line per batch):
       "provider":             str ("openai"),
       "doc_count":            int,
       "chunk_count":          int,
-      "estimated_tokens":     int,
+      "estimated_tokens":     int,             # len//4 (or tiktoken) heuristic
       "estimated_cost_usd":   float,
-      "source_ref":           str | null   (e.g. "session:2026-05-26")
+      "actual_tokens":        int | null,      # provider ground truth (usage.total_tokens)
+      "actual_cost_usd":      float | null,    # real-token-derived cost
+      "source_ref":           str | null       (e.g. "session:2026-05-26")
     }
+
+Real vs. estimated
+    `actual_*` carry the provider's reported `usage.total_tokens`, captured via
+    `_embedding_corpus.capture_embedding_usage()`. They sit ALONGSIDE the
+    estimate so `report()`/`total()` expose estimate-vs-actual drift — the
+    signal that calibrates future production-cost estimates. Pre-existing rows
+    (and the fake provider, which reports no usage) read back as null.
 
 Depth: `KB § PATTERNS/common/vector-cost-tracking.md`.
 """
@@ -112,14 +121,29 @@ def log_refresh_batch(
     cost_estimate_usd: float | None = None,
     provider: str = "openai",
     source_ref: str | None = None,
+    actual_tokens: int | None = None,
+    actual_cost_usd: float | None = None,
 ) -> dict:
     """Append one NDJSON row to the vector-costs ledger.
 
     If `cost_estimate_usd` is None it is derived from `estimated_tokens` and
-    the built-in cost table. Returns `{ok, path, row}`.
+    the built-in cost table.
+
+    `actual_tokens` / `actual_cost_usd` carry the GROUND TRUTH from the
+    provider's API response (captured via `_embedding_corpus.capture_embedding_usage`).
+    When `actual_tokens` is given and `actual_cost_usd` is None, the cost is
+    derived from the real token count + the cost table. Both are recorded
+    ALONGSIDE the estimate so `report()` can surface estimate-vs-actual drift
+    (the signal that calibrates future production estimates). Older rows
+    without these fields read back as `None` — fully back-compatible.
+
+    Returns `{ok, path, row}`.
     """
     if cost_estimate_usd is None:
         cost_estimate_usd = estimate_cost(estimated_tokens, model)
+
+    if actual_tokens is not None and actual_cost_usd is None:
+        actual_cost_usd = estimate_cost(actual_tokens, model)
 
     row: dict = {
         "ts": _now_iso(),
@@ -130,6 +154,8 @@ def log_refresh_batch(
         "chunk_count": chunk_count,
         "estimated_tokens": estimated_tokens,
         "estimated_cost_usd": cost_estimate_usd,
+        "actual_tokens": actual_tokens,
+        "actual_cost_usd": actual_cost_usd,
         "source_ref": source_ref,
     }
     try:
@@ -199,7 +225,12 @@ def report(
 
     Returns a list of dicts ordered by period ascending:
       {period, namespace, doc_count, chunk_count, estimated_tokens,
-       estimated_cost_usd, batch_count}
+       estimated_cost_usd, actual_tokens, actual_cost_usd,
+       actual_batch_count, batch_count}
+
+    `actual_*` sum only rows that carry provider ground-truth (newer rows);
+    `actual_batch_count` is how many of the period's batches reported it, so a
+    consumer can tell partial-coverage periods from fully-instrumented ones.
 
     `group_by` accepts "day" | "week" | "month".
     """
@@ -217,6 +248,9 @@ def report(
                 "chunk_count": 0,
                 "estimated_tokens": 0,
                 "estimated_cost_usd": 0.0,
+                "actual_tokens": 0,
+                "actual_cost_usd": 0.0,
+                "actual_batch_count": 0,
                 "batch_count": 0,
             }
         b = buckets[key]
@@ -224,6 +258,10 @@ def report(
         b["chunk_count"] += int(row.get("chunk_count", 0))
         b["estimated_tokens"] += int(row.get("estimated_tokens", 0))
         b["estimated_cost_usd"] += float(row.get("estimated_cost_usd", 0.0))
+        if row.get("actual_tokens") is not None:
+            b["actual_tokens"] += int(row.get("actual_tokens") or 0)
+            b["actual_cost_usd"] += float(row.get("actual_cost_usd") or 0.0)
+            b["actual_batch_count"] += 1
         b["batch_count"] += 1
     return sorted(buckets.values(), key=lambda x: (x["period"], x["namespace"]))
 
@@ -236,7 +274,11 @@ def total(
 
     Returns:
       {namespace (None | str), since (None | str), doc_count, chunk_count,
-       estimated_tokens, estimated_cost_usd, batch_count, first_ts, last_ts}
+       estimated_tokens, estimated_cost_usd, actual_tokens, actual_cost_usd,
+       actual_batch_count, batch_count, first_ts, last_ts}
+
+    `actual_*` sum only rows carrying provider ground truth; `actual_batch_count`
+    reports how many batches were instrumented (vs the `batch_count` total).
     """
     rows = _read_ledger(namespace=namespace, since=since)
     out: dict = {
@@ -246,6 +288,9 @@ def total(
         "chunk_count": 0,
         "estimated_tokens": 0,
         "estimated_cost_usd": 0.0,
+        "actual_tokens": 0,
+        "actual_cost_usd": 0.0,
+        "actual_batch_count": 0,
         "batch_count": len(rows),
         "first_ts": None,
         "last_ts": None,
@@ -256,6 +301,10 @@ def total(
         out["chunk_count"] += int(row.get("chunk_count", 0))
         out["estimated_tokens"] += int(row.get("estimated_tokens", 0))
         out["estimated_cost_usd"] += float(row.get("estimated_cost_usd", 0.0))
+        if row.get("actual_tokens") is not None:
+            out["actual_tokens"] += int(row.get("actual_tokens") or 0)
+            out["actual_cost_usd"] += float(row.get("actual_cost_usd") or 0.0)
+            out["actual_batch_count"] += 1
         if row.get("ts"):
             ts_list.append(row["ts"])
     if ts_list:

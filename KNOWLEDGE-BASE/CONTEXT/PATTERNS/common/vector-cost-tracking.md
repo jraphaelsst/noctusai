@@ -32,11 +32,34 @@ One NDJSON line per refresh batch:
   "chunk_count":          48,
   "estimated_tokens":     21600,
   "estimated_cost_usd":   0.000432,
+  "actual_tokens":        21987,
+  "actual_cost_usd":      0.000440,
   "source_ref":           "session:2026-05-26"
 }
 ```
 
 `source_ref` is free-form — typically `"session:YYYY-MM-DD"` or a project slug.
+
+## Real vs. estimated (the ground-truth leg)
+
+`estimated_*` is the `len//4` (or `tiktoken`) heuristic computed BEFORE the call.
+`actual_*` is the provider's **reported** `usage.total_tokens` from the API
+response — the ground truth. It is captured by
+`_embedding_corpus.capture_embedding_usage()` (a context manager) or
+`install_capture_sink(acc)` (a begin/restore pair for linear batch loops), which
+installs a chaining `UsageSink` on the LLM config so every embed inside the
+block accumulates real usage. All 4 logging call sites (kb / code / organ /
+generic `vectorize.embed_text`) pass both. `report()` / `total()` sum `actual_*`
+separately (with `actual_batch_count` for partial-coverage periods) so you can
+read **estimate-vs-actual drift** — the calibration signal for projecting
+future production cost. Pre-2026-05-29 rows and the fake provider read back as
+`null` (fully back-compatible).
+
+> **Coverage gap (NOC-REMEDIATE[corpus-memory-cost-logging]):** the markdown
+> refreshers (`corpus` + `memory`, via `_embedding_corpus.refresh_markdown_corpus`)
+> do NOT yet call `log_refresh_batch` at all — their embed spend is unlogged.
+> Wiring them through the same capture is the follow-up that closes full
+> real-cost coverage.
 
 ## Cost table (USD / 1M tokens)
 

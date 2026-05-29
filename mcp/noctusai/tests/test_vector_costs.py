@@ -162,6 +162,47 @@ class TestLogRefreshBatch:
         )
         assert abs(r["row"]["estimated_cost_usd"] - 99.99) < 1e-6
 
+    def test_actual_fields_default_none_backcompat(self, tmp_ledger):
+        """Omitting actuals records explicit nulls — old readers stay happy."""
+        r = vc.log_refresh_batch(
+            namespace="kb-embeddings",
+            model="text-embedding-3-small",
+            doc_count=1,
+            chunk_count=1,
+            estimated_tokens=100,
+        )
+        assert r["row"]["actual_tokens"] is None
+        assert r["row"]["actual_cost_usd"] is None
+
+    def test_actual_cost_derived_from_actual_tokens(self, tmp_ledger):
+        """When actual_tokens given but actual_cost omitted, cost = table rate."""
+        r = vc.log_refresh_batch(
+            namespace="code-embeddings-organs",
+            model="text-embedding-3-small",
+            doc_count=1,
+            chunk_count=1,
+            estimated_tokens=250,        # the len//4 guess
+            actual_tokens=1_000_000,     # the ground-truth from the API
+        )
+        row = r["row"]
+        assert row["actual_tokens"] == 1_000_000
+        assert abs(row["actual_cost_usd"] - 0.02) < 1e-9  # $0.02 / 1M for 3-small
+        # The estimate is preserved alongside — drift is observable.
+        assert row["estimated_tokens"] == 250
+
+    def test_explicit_actual_cost_preserved(self, tmp_ledger):
+        r = vc.log_refresh_batch(
+            namespace="kb-embeddings",
+            model="text-embedding-3-small",
+            doc_count=1,
+            chunk_count=1,
+            estimated_tokens=100,
+            actual_tokens=512,
+            actual_cost_usd=0.00001234,
+        )
+        assert r["row"]["actual_tokens"] == 512
+        assert abs(r["row"]["actual_cost_usd"] - 0.00001234) < 1e-12
+
     def test_multiple_appends_accumulate(self, tmp_ledger):
         for i in range(3):
             vc.log_refresh_batch(

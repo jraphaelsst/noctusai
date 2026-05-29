@@ -185,6 +185,11 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
     errors: list[dict] = []
     total_rows = 0
 
+    # Capture the REAL provider token usage across the whole refresh batch
+    # (ground truth for the cost ledger, not the MAX_CHUNK_CHARS//4 estimate).
+    _usage = _ec.UsageAccumulator()
+    _restore_usage = _ec.install_capture_sink(_usage)
+
     for md in targets:
         rel = str(md.relative_to(KB_DIR))
         sha = _sha_file(md)
@@ -275,6 +280,7 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
     )
     conn.commit()
     conn.close()
+    _restore_usage()
     status = "in-sync" if not refreshed else ("rebuilt" if not errors else "partial")
 
     # ── Cost instrumentation (ADDITIVE — does not modify existing logic) ───────
@@ -284,6 +290,8 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
         try:
             from tools.noctus.dev import vector_costs as _vc
             _estimated_tokens = total_rows * (MAX_CHUNK_CHARS // 4)
+            _actual_tokens = _usage.total_tokens if _usage.has_data else None
+            _actual_cost = _usage.cost_usd if _usage.has_data else None
             _vc.log_refresh_batch(
                 namespace="kb-embeddings",
                 model="text-embedding-3-small",
@@ -292,6 +300,8 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
                 estimated_tokens=_estimated_tokens,
                 provider="openai",
                 source_ref=f"session:{_now_iso()[:10]}",
+                actual_tokens=_actual_tokens,
+                actual_cost_usd=_actual_cost,
             )
         except Exception as _vc_exc:  # noqa: BLE001
             import logging as _log
