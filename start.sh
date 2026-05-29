@@ -196,6 +196,32 @@ else
   # KB § PATTERNS/containerization.md § 6a.
   staggered_up() {
     local svcs=("$@") cores batch i wave deadline ready s st
+    # ----- self-heal stale containers BEFORE up -d -----
+    # A targeted product whose container exists but is `unhealthy` or
+    # `restarting` is STALE: Docker auto-resurrected it after a host sleep
+    # (seed compose ships `restart: unless-stopped`), or a bind-mount mtime
+    # storm (repo-wide git/cache ops while running) left `uvicorn --reload`
+    # thrashing. Plain `up -d` REUSES such a container (config unchanged ⇒ no
+    # recreate) and the boot-wave then HANGS waiting on health that never
+    # comes. Force-recreate JUST the stale ones from the already-cached image
+    # (seconds, NOT an image rebuild); healthy/`starting` containers are left
+    # untouched so warm reuse stays fast. A container that doesn't exist yet
+    # (fresh start) is skipped — nothing to heal.
+    # KB § PATTERNS/devops/containerization.md · skill noc-container-debug.
+    local stale=() _hs_status _hs_health
+    for s in "${svcs[@]}"; do
+      _hs_status="$(docker inspect -f '{{.State.Status}}' "dev-noctus-$s" 2>/dev/null || echo absent)"
+      [[ "$_hs_status" == "absent" ]] && continue
+      _hs_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "dev-noctus-$s" 2>/dev/null || echo none)"
+      if [[ "$_hs_status" == "restarting" || "$_hs_health" == "unhealthy" ]]; then
+        stale+=("$s")
+      fi
+    done
+    if [[ ${#stale[@]} -gt 0 ]]; then
+      echo "[docker] self-heal: container(es) obsoleto(s)/unhealthy detectado(s) — recriando ${stale[*]} (--force-recreate --no-build; imagem cacheada, NAO e rebuild)" >&2
+      docker "${PRODUCT_ARGS[@]}" up -d --force-recreate --no-build "${stale[@]}"
+    fi
+    # ----- end self-heal -----
     cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
     batch="${NOCTUS_BOOT_BATCH:-$(( cores / 2 > 1 ? cores / 2 : 2 ))}"
     if [[ ${#svcs[@]} -le $batch ]]; then
