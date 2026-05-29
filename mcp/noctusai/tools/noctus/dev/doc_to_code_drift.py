@@ -29,6 +29,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
+
+_cosine = _ec.cosine
+
 
 # Regex for the canonical referent shapes in KB docs:
 # - `check_<name>` (keeper names)
@@ -52,23 +57,6 @@ def _extract_referents(doc_text: str) -> set[str]:
         for match in pat.finditer(doc_text):
             out.add(match.group(1))
     return out
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-python cosine; reuse helper from kb_embeddings when available."""
-    try:
-        from . import kb_embeddings as kbe
-        return kbe._cosine(a, b)
-    except Exception:  # noqa: BLE001
-        import math
-        dot = na = nb = 0.0
-        for x, y in zip(a, b):
-            dot += x * y
-            na += x * x
-            nb += y * y
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
 def scan(

@@ -41,22 +41,12 @@ KB § PATTERNS/dispatch-engineer-tuning.md.
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
-# ── Cosine (pure-Python; no numpy dep) ──────────────────────────────────────
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-Python cosine similarity between two equal-length float lists."""
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
+
+_cosine = _ec.cosine
 
 
 def _centroid(vecs: list[list[float]]) -> list[float]:

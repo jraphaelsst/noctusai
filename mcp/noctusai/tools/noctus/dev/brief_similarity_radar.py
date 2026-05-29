@@ -24,22 +24,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-python cosine; reuse kb_embeddings helper if available."""
-    try:
-        from . import kb_embeddings as kbe
-        return kbe._cosine(a, b)
-    except Exception:  # noqa: BLE001
-        import math
-        dot = na = nb = 0.0
-        for x, y in zip(a, b):
-            dot += x * y
-            na += x * x
-            nb += y * y
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (math.sqrt(na) * math.sqrt(nb))
+_cosine = _ec.cosine
 
 
 def _embed(text: str) -> list[float] | None:

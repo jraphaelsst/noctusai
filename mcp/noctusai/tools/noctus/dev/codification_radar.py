@@ -27,11 +27,15 @@ KB § PATTERNS/common/scoped-auto-improvement.md § Codification radar.
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Any
 
 from settings import REPO_ROOT
+
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
+
+_cosine = _ec.cosine
 
 
 DEFAULT_THRESHOLD = 0.75
@@ -43,22 +47,6 @@ SUGGESTED_PROMOTION_STATUS = {
     ("s2-memory", 3): "s4-keeper",
     ("s3-kb", 2): "s4-keeper",
 }
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-Python cosine similarity — same shape as kb_embeddings._cosine."""
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
 def _suggested_next(entries: list[dict], cluster_size: int) -> str:

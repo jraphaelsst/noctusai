@@ -30,6 +30,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
+
+_cosine = _ec.cosine
+
 
 _SEED_MARKERS = ("products/seed/", "seed/lib/")
 _PRODUCT_PREFIX = "products/"
@@ -68,22 +73,6 @@ def _centroid(vecs: list[list[float]]) -> list[float] | None:
             out[i] += v[i]
     n = len(vecs)
     return [x / n for x in out]
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    try:
-        from . import kb_embeddings as kbe
-        return kbe._cosine(a, b)
-    except Exception:  # noqa: BLE001
-        import math
-        dot = na = nb = 0.0
-        for x, y in zip(a, b):
-            dot += x * y
-            na += x * x
-            nb += y * y
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
 def snapshot(record_to_ledger: bool = True) -> dict[str, Any]:

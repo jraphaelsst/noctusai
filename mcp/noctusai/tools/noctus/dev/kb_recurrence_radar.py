@@ -40,6 +40,11 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+# Canonical cosine — single source at _embedding_corpus (N=7 consolidation).
+from . import _embedding_corpus as _ec
+
+_cosine = _ec.cosine
+
 
 # Module-level in-session embedding cache: entry_sha → vector.
 # Survives across calls within one process; drops on restart.
@@ -50,24 +55,6 @@ def _entry_sha(entry: dict) -> str:
     """Stable hash of an entry's description — embedding cache key."""
     desc = entry.get("description", "")
     return hashlib.sha256(desc.encode("utf-8")).hexdigest()
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    """Pure-Python cosine. Reuse kb_embeddings's tuned version when available
-    (cleaner) with a local fallback so this module stays import-safe."""
-    try:
-        from . import kb_embeddings as kbe
-        return kbe._cosine(a, b)
-    except Exception:  # noqa: BLE001
-        import math
-        dot = na = nb = 0.0
-        for x, y in zip(a, b):
-            dot += x * y
-            na += x * x
-            nb += y * y
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
 def _embed(text: str) -> list[float] | None:

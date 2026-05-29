@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional, TypeVar
 
 
 # ── Knobs ──────────────────────────────────────────────────────────────────
@@ -87,6 +87,48 @@ def cosine(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+# ── Top-K similarity ranking ────────────────────────────────────────────────
+_T = TypeVar("_T")
+
+
+def top_k_similar(
+    query_vec: list[float],
+    candidates: Iterable[tuple[list[float], _T]],
+    *,
+    k: int = 5,
+    min_score: float = 0.0,
+) -> list[tuple[float, _T]]:
+    """Return the top-K ``(score, item)`` pairs ranked by cosine similarity.
+
+    Generic over the payload type ``T`` — consumers pass ``(vec, any_dict)``
+    pairs and get back ``(score, any_dict)`` pairs sorted high-to-low.
+
+    Parameters
+    ----------
+    query_vec:
+        The query embedding.
+    candidates:
+        Iterable of ``(vector, item)`` pairs.  ``item`` is opaque — returned
+        as-is alongside the score.
+    k:
+        Maximum number of results to return.
+    min_score:
+        Pairs with ``cosine(query_vec, vec) < min_score`` are excluded.
+        Defaults to 0.0 (includes all non-negative similarities).
+
+    Returns
+    -------
+    List of ``(score, item)`` tuples sorted by score descending, length ≤ k.
+    """
+    scored: list[tuple[float, _T]] = []
+    for vec, item in candidates:
+        score = cosine(query_vec, vec)
+        if score >= min_score:
+            scored.append((score, item))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return scored[:k]
 
 
 # ── Vector pack ────────────────────────────────────────────────────────────
@@ -521,7 +563,7 @@ def aggregate_source_sha(sources: Iterable[tuple[str, Path, dict]]) -> str:
 __all__ = [
     "EMBEDDING_DIM", "MAX_CHUNK_CHARS", "MIN_CHUNK_CHARS", "HAS_VEC",
     "now_iso", "sha_file",
-    "chunk_markdown", "embed_sync", "cosine", "pack_vec", "connect_cache",
+    "chunk_markdown", "embed_sync", "cosine", "top_k_similar", "pack_vec", "connect_cache",
     "meta_schema_sql", "vec_schema_sql", "json_fallback_schema_sql",
     "init_schema",
     "MarkdownCorpus", "refresh_markdown_corpus", "search_markdown_corpus",
