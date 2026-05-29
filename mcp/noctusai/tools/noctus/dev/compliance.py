@@ -8170,6 +8170,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/absorption-ships-consume-docs.md",
     "CONTEXT/PATTERNS/common/storage-hygiene.md",
     "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
+    "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
     "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
     "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
     "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",

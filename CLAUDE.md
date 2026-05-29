@@ -30,6 +30,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Fix-on-contact for pre-existing debt.** Surface-only = a silent-error one level up; fix in-flight then surface. → `KB § 01-PHILOSOPHY.md`
 - **Drift-fix-on-contact.** Git leftovers (untracked-at-root, orphan branches, uncommitted worktrees) + broken methodology pointers + stale process artifacts: PAUSE → resolve → surface-if-blocked → update docs the resolution touches → continue. Silent-skip = silent-error shape. → `KB § PATTERNS/common/drift-fix-on-contact.md` · skill `noc-self-branch`
 - **DRY — the recurrence rule.** N=2 → triage; N=3+ MUST formalize; shipping the 4th instance is forbidden. → `KB § PATTERNS/architect/project-execution.md` · skill `noc-hygiene`
+- **Repetitive procedure → skill at N≥2.** Same multi-step orient→act procedure repeats ⇒ codify as a `.claude/skills/noc-*` skill — DRY for procedures, sibling of code-DRY + methodology-codification pipeline. → `KB § PATTERNS/common/repetitive-task-skill-codification.md` · skill `skill-creator`
 - **Componentize everything.** If another product will need it, build it shared from day one. → `KB § 04-SHARED-LIBRARY.md`
 - **Reading & research discipline.** Whole-file reads waste budget; narrow-read + delegate breadth to Explore. → `KB § PATTERNS/common/agent-reading-discipline.md`
 - **Replication-to-seed symmetry.** The trigger is LANGUAGE — "per-product X" IS the slip; right count = zero. → `KB § PATTERNS/architect/project-execution.md` · agent `architect`
