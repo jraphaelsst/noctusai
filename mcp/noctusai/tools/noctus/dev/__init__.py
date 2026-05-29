@@ -23,6 +23,7 @@ def register_all(server) -> None:
     from . import brief_ledger
     from . import brief_similarity_radar
     from . import build
+    from . import canonical_test_audit
     from . import catalog
     from . import component_bundle
     from . import check_framework_deps
@@ -129,6 +130,7 @@ def register_all(server) -> None:
     build.register(server)
     cache_deploy_mirror.register(server)
     cache_telemetry.register(server)
+    canonical_test_audit.register(server)
     catalog.register(server)
     component_bundle.register(server)
     check_framework_deps.register(server)
