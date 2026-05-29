@@ -66,6 +66,28 @@ from noctusai_lib.config.deploy_config import require_prod_config
 require_prod_config(["PUBLIC_BASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_KEY"])
 ```
 
+### 3d · A COMPOSE-level knob — `${VAR:-default}` + the dev entry point sets dev
+
+Not every dev↔prod-divergent knob is read by Python — some live in
+`docker-compose.yml`. Same contract, compose layer: the field interpolates a
+**prod-safe default**, and the **dev entry point (`start.sh`) exports the dev
+value**. The default is prod-safe (not dev-safe) precisely because a raw
+`docker compose up` (no `start.sh`) must NOT silently ship a dev value to prod.
+
+```yaml
+# products/seed/docker-compose.yml (propagated to every product)
+restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}   # default = prod behaviour
+```
+```bash
+# start.sh — the DEV entry point opts dev out (so a host sleep / Docker relaunch
+# doesn't resurrect STALE dev containers; the 2026-05-29 stale-container drift).
+export NOCTUS_RESTART_POLICY="${NOCTUS_RESTART_POLICY:-no}"
+```
+Prod (no env, no `start.sh`) → `unless-stopped` (auto-restart, unchanged). Dev
+(`./start.sh`) → `no`. Verify with `NOCTUS_RESTART_POLICY=no docker compose
+config | grep restart` → `"no"`; unset → `unless-stopped`. See memory
+`feedback_dev_container_stale_reuse_drift`.
+
 ---
 
 ## 4 · The startup guard in the seed (Wave 2)

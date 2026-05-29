@@ -34,6 +34,15 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
   exit 1
 fi
 
+# Dev restart policy — the compose `restart:` is `${NOCTUS_RESTART_POLICY:-unless-stopped}`
+# (prod-safe default). LOCAL DEV opts out: containers must NOT auto-resurrect on a
+# host sleep / Docker Desktop relaunch (Docker restarts `unless-stopped` containers
+# in whatever STALE state they were in → start reuses them → boot hangs; the
+# 2026-05-29 stale-container drift). `./start.sh` is the dev entry point, so it sets
+# the dev value here. Override with `NOCTUS_RESTART_POLICY=unless-stopped ./start.sh`
+# if you want dev containers to survive reboots. KB § PATTERNS/devops/deploy-config-contract.md.
+export NOCTUS_RESTART_POLICY="${NOCTUS_RESTART_POLICY:-no}"
+
 # Product registry — format: "slug:Display Name:backend_port:frontend_port"
 # Single-container: the product is served on backend_port (API + SPA).
 # frontend_port is retained for the native legacy mode + the port sweeper;
