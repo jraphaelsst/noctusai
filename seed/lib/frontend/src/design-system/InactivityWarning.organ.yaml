@@ -1,0 +1,32 @@
+name: InactivityWarning
+path: seed/lib/frontend/src/design-system/InactivityWarning.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Session-expiry countdown modal. Shows a warning dialog when the user has been inactive, giving them a chance to extend before token expires. Uses the same throttled mousemove + interaction event pattern as useActivityRefresh."
+  - "tokenLifetimeMs (default 30 min) and warningBeforeMs (default 2 min) are configurable — the component is agnostic to the product's auth token lifetime. onExtend (refresh token) and onExpired (sign out / redirect) are product-provided callbacks."
+  - "2 consumers: therapy-platform/AuthProvider.tsx imports directly from @noctusai/lib/design-system/InactivityWarning (path import, not barrel). Wired alongside useActivityRefresh in AuthProvider as the canonical pattern per the source-file JSDoc."
+  - "Located at design-system/InactivityWarning.tsx (root of design-system, not in components/) — brief listed it under components/ but actual path is design-system/. This is a path drift to note."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "InactivityWarning.tsx lives at design-system/ root, not design-system/components/ as the brief suggested. The design-system root is used for hooks and top-level utilities; components/ is for presentational components. This placement is arguably a drift — InactivityWarning is presentational and should be in components/. NOC-REMEDIATE[path-cleanup]: move InactivityWarning.tsx to components/ in a follow-up migration — 2026-05-29."
+
+alternatives_considered:
+  - "Per-product inactivity logic existed before absorption. The two-timer approach (warn before expiry) and the shared interaction event listener pattern were designed to mirror useActivityRefresh exactly."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

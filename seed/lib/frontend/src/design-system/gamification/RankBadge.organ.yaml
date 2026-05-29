@@ -1,0 +1,32 @@
+name: RankBadge
+path: seed/lib/frontend/src/design-system/gamification/RankBadge.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Visually-tiered rank indicator: #1=gold (amber-400), #2=silver (slate-300), #3=bronze (orange-400), 4+=neutral muted. Follows the gamification rule (KB § 07-GAMIFICATION.md): subtle, tied to real business activity, no fake-positive scoring."
+  - "size prop ('sm'|'md'|'lg') controls dimensions; title prop passes through as HTML title attribute for no-TooltipProvider tooltip. Defaults to pt-BR tooltip 'Posição #N no ranking' when title is omitted."
+  - "2 consumers in products: erp-imobiliario/MetasAgentWidget.tsx and erp-imobiliario/MetasCharts.tsx (via @noctusai/lib/design-system). Below canonical threshold (needs 1 more consumer or a test)."
+  - "Pure rendering with no external deps beyond React — zero import from lucide or radix."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "RankBadge is in design-system/gamification/ — brief listed it there correctly. ScorePill is its functional sibling (color tiers match)."
+
+alternatives_considered:
+  - "Trophy or star icons were considered but the numeric badge approach was chosen per gamification rule: the rank number itself is the signal, not a decorative icon."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

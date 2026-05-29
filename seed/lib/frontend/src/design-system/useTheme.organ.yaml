@@ -1,0 +1,32 @@
+name: useTheme
+kind: hook
+path: seed/lib/frontend/src/design-system/useTheme.ts
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Dark/light theme toggle with localStorage persistence ('theme' key) and DOM sync (document.documentElement.classList.toggle('dark', ...)). Reads localStorage on init, so the correct theme is applied before first render."
+  - "initialTheme prop enables DB-driven theme override: when the product loads a user profile with a stored theme preference, passing it as initialTheme syncs the local state once on mount. onPersist callback writes back to DB on toggle."
+  - "5 consumers from @noctusai/lib/design-system in products — highest consumer count of the hooks in this set. Consumed by Header (which renders the toggle button), plus product-level usage for additional theme-aware logic."
+  - "Returns { theme, toggleTheme } as const — minimal surface. No context/provider required; each callsite manages its own state (appropriate since theme is stored in localStorage + DOM, not per-component)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "React context for theme was considered but rejected: localStorage+DOM is already the single source of truth, and a context adds complexity without benefit for a single boolean toggle."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

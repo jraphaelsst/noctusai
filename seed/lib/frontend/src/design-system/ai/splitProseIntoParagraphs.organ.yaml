@@ -1,0 +1,33 @@
+name: splitProseIntoParagraphs
+kind: helper
+path: seed/lib/frontend/src/design-system/ai/DigestCard.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Exported from DigestCard.tsx (co-located) and re-exported via design-system/ai/index.ts and design-system/index.ts barrel. Splits a prose string into paragraph arrays by double-newline or single-newline separators, trimming empty strings. Returns [] for null/undefined input."
+  - "3 consumers from @noctusai/lib/design-system: DigestCard uses it internally, and at least 2 product-level callers use it to pre-process prose before passing paragraphs to DigestCard (e.g. PF monthly narrative, Daily Life weekly review)."
+  - "Pure function — no React dependency, no side effects. Can be used in both component and non-component contexts."
+  - "Null-safe: splitProseIntoParagraphs(null) and splitProseIntoParagraphs(undefined) both return [] safely — consumers do not need to guard."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "splitProseIntoParagraphs is co-located in DigestCard.tsx rather than a dedicated file. This is acceptable while it has a single natural home but should move to a standalone helper file if it gains consumers outside the AI namespace."
+
+alternatives_considered:
+  - "prose.split('\\n\\n') inline at callsite was replaced by the helper to centralize null-safety and trimming logic — the DRY N=3 rule triggered the helper extraction."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

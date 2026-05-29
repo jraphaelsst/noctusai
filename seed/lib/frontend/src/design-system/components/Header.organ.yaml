@@ -1,0 +1,32 @@
+name: Header
+path: seed/lib/frontend/src/design-system/components/Header.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Full-featured header: hamburger toggle (mobile), user HoverCard (avatar/name/role/edit profile/change password), dark/light theme toggle, logout. Products pass user data and callbacks — zero product-specific imports in this component."
+  - "logoutBehavior prop distinguishes 'signout' (Core platform — actually signs out) vs 'redirect' (products — redirects to platformUrl without signing out, preserving SSO session). This seam is critical for cross-product navigation."
+  - "actions slot enables product-specific content (e.g. NotificationBell) without forking the component. variant prop ('default' | 'dark') controls the header bar color for products with dark sidebar that extends to the header."
+  - "5 import sites from @noctusai/lib/design-system in products (core Layout.tsx + 4 more) plus indirect consumption via createProductLayout — highest explicit import count of the shell trio."
+  - "No colocated unit test — emerging status pending colocated test."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product header components existed before absorption. The actions slot pattern replaced product-level forks by providing a clean injection point."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

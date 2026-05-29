@@ -1,0 +1,31 @@
+name: AIBadgeStack
+path: seed/lib/frontend/src/design-system/ai/AIBadgeStack.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Composes multiple AI badges into the single LayoutEnrichment.aiBadge slot. Each child null-renders when empty, so the entire stack collapses to nothing when no badge has content — zero visual noise for products with no active AI features."
+  - "The seed layout factory uses AIBadgeStack as the default aiBadge fill (DEFAULT_AI_BADGES). Products spread the defaults to add product-specific badges: aiBadge: <AIBadgeStack badges={[<DailyBriefBadge/>, ...DEFAULT_AI_BADGES]}/>."
+  - "Inline-flex with 8px gap matches the layout actions row spacing convention. Pure composition — no data fetching, no state."
+  - "1 explicit consumer via @noctusai/lib/design-system in products — emerging; consumed indirectly by all products that use createProductLayout with aiBadge slot."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Rendering badges directly as JSX siblings was rejected to avoid each product re-implementing the collapse-when-empty and gap logic."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

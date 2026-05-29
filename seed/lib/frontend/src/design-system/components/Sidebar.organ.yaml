@@ -1,0 +1,32 @@
+name: Sidebar
+path: seed/lib/frontend/src/design-system/components/Sidebar.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Generic, prop-driven sidebar with collapsible navigation groups via @radix-ui/react-collapsible. NavGroup[] data drives rendering — no product-specific imports. Products provide nav data; Sidebar handles all rendering including collapse/expand animations."
+  - "brandHref prop enables the brand logo/title to become a navigable link (e.g. back to Core dashboard) — backward-compatible default omits the link. This seam was added specifically for SSO multi-product nav."
+  - "Consumed by core/Layout.tsx (direct import from @noctusai/lib/design-system) and indirectly by all products via createProductLayout(). erp-imobiliario has a dedicated e2e test (sidebar.spec.ts) proving the Sidebar renders correctly in at least one product."
+  - "No colocated unit test — emerging status pending."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "erp-imobiliario has a legacy supabase-mocks.ts that references Sidebar in e2e fixtures — not a product-level fork, just e2e wiring."
+
+alternatives_considered:
+  - "Products previously authored per-product sidebar components; Sidebar was absorbed to eliminate replication. The standaloneItems prop covers nav items outside groups (e.g. Settings)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: "products/erp-imobiliario/frontend/e2e/tests/sidebar.spec.ts"
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

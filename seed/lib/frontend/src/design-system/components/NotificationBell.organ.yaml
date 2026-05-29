@@ -1,0 +1,32 @@
+name: NotificationBell
+path: seed/lib/frontend/src/design-system/components/NotificationBell.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Self-contained notification dropdown (no shadcn/ui deps) — intentionally avoids any UI primitive that might not be present in all products. Hook injection pattern: consumers pass a hooks object (useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas) rather than hard-wiring to a specific query client."
+  - "3 consumers from @noctusai/lib/design-system in products (erp-imobiliario re-exports it locally, therapy-platform uses via @noctusai/seed/infra, and at least one other direct consumer). Meets consumer threshold but lacks test."
+  - "Backed by the Notificacao type from seed/lib/frontend/src/notifications — the data shape is standardized. viewAllPath and onViewAll props enable per-product 'Ver todas' routing without forking."
+  - "footer slot allows product-specific content at the bottom of the dropdown without structural override."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "erp-imobiliario has a local NotificationBell.tsx that re-exports the shared one: `import { NotificationBell as SharedNotificationBell } from '@noctusai/lib/design-system'`. This is a backward-compat shim, not a fork — acceptable pattern."
+
+alternatives_considered:
+  - "Hard-coding react-query hooks directly was rejected because not all products use TanStack Query. The hook-injection pattern makes this consumable by any product regardless of data-fetching strategy."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

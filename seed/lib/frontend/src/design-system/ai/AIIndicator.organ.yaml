@@ -1,0 +1,31 @@
+name: AIIndicator
+path: seed/lib/frontend/src/design-system/ai/AIIndicator.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Drop-in component for surfacing AI outputs on any entity page. Auto-hides when refId is null OR no AI output exists — zero visual noise for entities without AI data. The most-recent output is shown by default; showAll renders all rows."
+  - "Backed by the ai_outputs standard router (/api/ai/outputs) shipped by ai-expansion Tier 2 Phase 3. Data shape: noctusai_lib.ai.outputs.AIOutput — keep ./types.ts in sync."
+  - "3 consumers from @noctusai/lib/design-system in products — meets consumer threshold. enableFeedback=true mounts AIFeedbackButtons next to each output row (off by default for backward compat with existing call sites)."
+  - "Composes ScorePill (for score display) and AIFeedbackButtons (when enableFeedback=true) internally. emptyFallback prop allows custom empty-state rather than null silence."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "MetaEventoIndicator in erp-imobiliario shows all rows and has product-specific logic — it is a product-level extension, not a fork. AIIndicator handles the simpler one-line case."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

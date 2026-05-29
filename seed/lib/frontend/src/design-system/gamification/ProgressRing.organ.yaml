@@ -1,0 +1,32 @@
+name: ProgressRing
+path: seed/lib/frontend/src/design-system/gamification/ProgressRing.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Circular SVG progress indicator. Values >100 are clamped for display but the label renders the real number — this is intentional for 'over-target' gamification scenarios (e.g. 120% of monthly quota)."
+  - "Color tiers deliberately match ScorePill: good/warn/bad thresholds share the same green/amber/red semantic. The two components are visual siblings for gamification dashboards."
+  - "size prop (pixel diameter, default 72) and strokeWidth prop (default 6) allow sizing from compact table cells to large KPI widgets. Inline-flex with column alignment centers the optional label below the ring."
+  - "2 consumers in products: erp-imobiliario/MetasCharts.tsx and one other — below canonical threshold without a test."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "ProgressRing is in design-system/gamification/ — brief listed it under design-system/components/. Actual path is gamification/, which is correct."
+
+alternatives_considered:
+  - "Recharts PieChart was considered but ProgressRing as a pure SVG component avoids the Recharts bundle weight for a simple progress indicator."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

@@ -1594,6 +1594,7 @@ def main():
                 print(f"    snippet: {m.snippet[:80].strip()!r}")
 
     elif getattr(args, "register_organ", None):
+        _ensure_llm_configured()
         from tools.noctus.dev.find_reusable_component import register_organ as _ro
         result = _ro(args.register_organ)
         if args.json:
@@ -1604,6 +1605,7 @@ def main():
             print(f"    {status_color}{result.get('status', 'unknown')}{RESET} · sha={result.get('source_sha', '')[:12]} · rows={result.get('rows_written', 0)}")
 
     elif getattr(args, "register_all_canonical_organs", False):
+        _ensure_llm_configured()
         from tools.noctus.dev.find_reusable_component import register_all_canonical_organs as _raco
         results = _raco()
         if args.json:

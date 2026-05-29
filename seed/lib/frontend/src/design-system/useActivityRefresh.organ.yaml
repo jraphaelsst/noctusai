@@ -1,0 +1,32 @@
+name: useActivityRefresh
+kind: hook
+path: seed/lib/frontend/src/design-system/useActivityRefresh.ts
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Two-tier activity model: (1) DIRECT INTERACTION (mousemove throttled 1x/sec, keydown, scroll, click, touchstart) resets the full timer; (2) PASSIVE PRESENCE (tab visible, window focused) only counts for readingTimeoutMs (default 3 min) after last direct interaction. After 3 min idle, passive presence alone stops triggering refreshes — protects unattended screens."
+  - "Multi-tab coordination via localStorage ('noctus_last_token_refresh'): only one tab actually calls the refresh API at a time. Offline-aware (navigator.onLine check). 30s failure backoff after failed refresh. Deduplication: skips if last refresh was <interval/2 ago."
+  - "2 explicit consumers via @noctusai/lib/design-system path import plus 2 via direct path import (therapy-platform AuthProvider, erp-imobiliario AuthProvider or equivalent). Canonical wiring: mount in product Layout or AuthProvider alongside InactivityWarning."
+  - "onRefresh callback is the only dependency — products pass their supabase.auth.refreshSession() call. No Supabase or auth-specific imports in the hook itself."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "setInterval with a fixed timer was replaced by the two-tier activity model after unattended-screen security review: a simple interval would keep refreshing even when a user walks away."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

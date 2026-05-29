@@ -79,9 +79,46 @@ CLI: `--find-reusable-component <query> [--top-k N] [--filter-status validated]`
      `--register-organ <name>`
      `--register-all-canonical-organs`
 
-## Phase-2 (next project — social-wiring pilot)
+## Phase 2 — emerging organs formalized 2026-05-29
 
-First product organs to register: multi-account integrations CRUD page + settings page from `social-wiring`. Pattern: build → validate → register → query. The loop proven here transfers directly.
+Architect scout surfaced 15 organs already canonical in practice. All ship `organ.yaml` + 8 knowledge fields + `organ_version: 1.0`. None have colocated tests → all are `emerging`. Derived via: consumers ≥ 3 ∧ has_test ∧ no NOC-REMEDIATE required for `canonical`.
+
+**Note on path corrections vs. brief:** ScorePill, RankBadge, ProgressRing are in `design-system/gamification/` (not `design-system/ai/` as initially listed). InactivityWarning is at `design-system/InactivityWarning.tsx` (root, not `components/`).
+
+### Components (kind: component, implicit)
+
+| Name | Path | Consumers | Status | Note |
+|---|---|---|---|---|
+| AppShell | `seed/lib/frontend/src/design-system/components/AppShell.tsx` | 5+ (1 direct + N via createProductLayout) | emerging | Layout wrapper; responsive sidebar; shell trio entry point |
+| Sidebar | `seed/lib/frontend/src/design-system/components/Sidebar.tsx` | 5+ (1 direct + N via createProductLayout) | emerging | Prop-driven collapsible nav; brandHref SSO seam |
+| Header | `seed/lib/frontend/src/design-system/components/Header.tsx` | 5 direct + N via createProductLayout | emerging | logoutBehavior seam; actions slot; variant prop |
+| ScorePill | `seed/lib/frontend/src/design-system/gamification/ScorePill.tsx` | 3 | emerging | Threshold-based color pill; null-safe; sibling to ProgressRing |
+| RankBadge | `seed/lib/frontend/src/design-system/gamification/RankBadge.tsx` | 2 | emerging | Gold/silver/bronze/neutral tier badge; gamification convention |
+| NotificationBell | `seed/lib/frontend/src/design-system/components/NotificationBell.tsx` | 3 | emerging | Hook-injection pattern; no shadcn dep; standardized Notificacao type |
+| LLMProviderSelector | `seed/lib/frontend/src/design-system/components/LLMProviderSelector.tsx` | 2 | emerging | Provider+model picker; stub/unconfigured labeling; presentational |
+| ProgressRing | `seed/lib/frontend/src/design-system/gamification/ProgressRing.tsx` | 2 | emerging | Circular SVG progress; over-100 clamped; color tiers match ScorePill |
+| AIBadgeStack | `seed/lib/frontend/src/design-system/ai/AIBadgeStack.tsx` | 1 direct + N via layout aiBadge slot | emerging | Badge composer; collapse-when-empty; layout aiBadge default |
+| AIFeedbackButtons | `seed/lib/frontend/src/design-system/ai/AIFeedbackButtons.tsx` | 1 direct + indirect via DigestCard+AIIndicator | emerging | Thumbs-up/down; UNIQUE(user_id, output_ref) idempotency; X3 cross-cutting |
+| AIIndicator | `seed/lib/frontend/src/design-system/ai/AIIndicator.tsx` | 3 | emerging | ai_outputs router surface; auto-hide; composites ScorePill+AIFeedbackButtons |
+| InactivityWarning | `seed/lib/frontend/src/design-system/InactivityWarning.tsx` | 2 | emerging | Session-expiry countdown modal; mirrors useActivityRefresh event model |
+
+### Hooks (kind: hook)
+
+| Name | Path | Consumers | Status | Note |
+|---|---|---|---|---|
+| useActivityRefresh | `seed/lib/frontend/src/design-system/useActivityRefresh.ts` | 4 (2 barrel + 2 direct path) | emerging | Two-tier activity; multi-tab localStorage; failure backoff |
+| useTheme | `seed/lib/frontend/src/design-system/useTheme.ts` | 5 | emerging | localStorage+DOM sync; initialTheme DB-override; onPersist callback |
+
+### Helpers (kind: helper)
+
+| Name | Path | Consumers | Status | Note |
+|---|---|---|---|---|
+| splitProseIntoParagraphs | `seed/lib/frontend/src/design-system/ai/DigestCard.tsx` | 3 | emerging | Co-located in DigestCard; null-safe; exported via ai/index.ts barrel |
+
+### Path drift surfaced
+
+- `InactivityWarning.tsx` at design-system root (not components/) — `NOC-REMEDIATE[path-cleanup]` logged in sidecar.
+- `splitProseIntoParagraphs` co-located in DigestCard.tsx — acceptable at N=3; should move to standalone file if consumers outside ai/ namespace emerge.
 
 ## Composes with
 

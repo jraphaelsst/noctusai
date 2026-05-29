@@ -1,0 +1,32 @@
+name: AppShell
+path: seed/lib/frontend/src/design-system/components/AppShell.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Canonical layout wrapper: dark sidebar + light content area with responsive off-canvas mobile sidebar. Every product Layout wires AppShell + Sidebar + Header as a trio — core imports them directly; other products consume via createProductLayout() factory which wires all three."
+  - "Props-driven: accepts sidebar (ReactNode), header (render-prop receiving onMenuToggle), and children. Mobile overlay is self-contained (no external dependency) — the only state is sidebarOpen boolean."
+  - "Consumer count: core/Layout.tsx (direct import) + adconnect/seed/therapy-platform/erp-imobiliario via createProductLayout (indirect) — 5+ products rely on this shell; direct @noctusai/lib import site is core only."
+  - "No test file exists — emerging status pending colocated test."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "adconnect/seed Dashboard.tsx mentions AppShell in a comment but does not import it directly — they consume via createProductLayout, which is the canonical pattern. Direct imports in non-core products would be a wiring drift."
+
+alternatives_considered:
+  - "Products previously authored per-product layout wrappers; AppShell was absorbed to eliminate this N=3+ replication. The createProductLayout factory further abstracts wiring so most products never import AppShell directly."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

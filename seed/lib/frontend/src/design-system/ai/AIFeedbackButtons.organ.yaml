@@ -1,0 +1,31 @@
+name: AIFeedbackButtons
+path: seed/lib/frontend/src/design-system/ai/AIFeedbackButtons.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Thumbs-up/down feedback widget (X3 cross-cutting — ai-expansion Phase 17, 2026-04-25). Click upserts a row in <schema>.ai_feedback; UNIQUE(user_id, output_ref) makes it idempotent. Second click on the same direction is no-op; opposite direction overwrites."
+  - "output_ref convention: 'ai_output:<uuid>' for indicators, 'digest:<service>:<period_token>' for digest narratives. The ref enables analytics correlation with prompt versions via optional prompt_version prop."
+  - "Optimistic UI: local optimisticRating state gives instant visual feedback before the mutation resolves. 'obrigado' toast on success (hideThankYou=true suppresses for tight surfaces)."
+  - "1 explicit consumer via @noctusai/lib/design-system — but consumed by DigestCard (which has 3 consumers) and AIIndicator (3 consumers) as a sub-component, giving it indirect wide reach."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Inline thumbs icons per-callsite were replaced by AIFeedbackButtons to ensure the idempotency logic and output_ref convention are not replicated."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

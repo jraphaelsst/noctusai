@@ -553,6 +553,33 @@ CANONICAL_ORGANS = [
     "DigestCard",
 ]
 
+# Phase 2 — emerging organs formalized 2026-05-29 (W2.3).
+# Sidecar ships organ_version + kind fields for hooks/helpers.
+PHASE_2_ORGANS = [
+    "AppShell",
+    "Sidebar",
+    "Header",
+    "ScorePill",
+    "RankBadge",
+    "NotificationBell",
+    "LLMProviderSelector",
+    "ProgressRing",
+    "AIBadgeStack",
+    "AIFeedbackButtons",
+    "AIIndicator",
+    "InactivityWarning",
+    "useActivityRefresh",
+    "useTheme",
+    "splitProseIntoParagraphs",
+]
+
+# Hooks and helpers within Phase 2 that carry kind=hook or kind=helper.
+PHASE_2_HOOKS_AND_HELPERS = [
+    "useActivityRefresh",
+    "useTheme",
+    "splitProseIntoParagraphs",
+]
+
 SHELFWARE_ORGANS = [
     "PageSkeleton",
     "LLMSpendBadge",
@@ -640,6 +667,8 @@ def register(server) -> None:
 __all__ = [
     "ReusableComponentMatch",
     "CANONICAL_ORGANS",
+    "PHASE_2_ORGANS",
+    "PHASE_2_HOOKS_AND_HELPERS",
     "SHELFWARE_ORGANS",
     "ORGAN_CHUNK_KIND",
     "register_organ",

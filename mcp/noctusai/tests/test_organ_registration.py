@@ -27,6 +27,8 @@ if str(_MCP_ROOT) not in sys.path:
 
 from tools.noctus.dev.find_reusable_component import (
     CANONICAL_ORGANS,
+    PHASE_2_ORGANS,
+    PHASE_2_HOOKS_AND_HELPERS,
     ORGAN_CHUNK_KIND,
     SHELFWARE_ORGANS,
     _find_organ_yaml,
@@ -276,3 +278,94 @@ class TestShelfwareNotInCanonical:
 
     def test_shelfware_count_is_4(self):
         assert len(SHELFWARE_ORGANS) == 4
+
+
+# ── Tests: Phase 2 organs (W2.3) ─────────────────────────────────────────────
+
+
+class TestPhase2OrganSidecarsExist:
+    """All 15 Phase-2 organs must have an .organ.yaml sidecar (W2.3)."""
+
+    @pytest.mark.parametrize("name", PHASE_2_ORGANS)
+    def test_organ_yaml_exists(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        assert p is not None, (
+            f"{name}.organ.yaml not found under seed/lib/frontend/src. "
+            "W2.3 must commit a sidecar for each Phase-2 organ."
+        )
+        assert p.exists(), f"{name}.organ.yaml path {p} does not exist"
+
+
+class TestPhase2OrganYamlFields:
+    """Phase-2 organ sidecars must carry all 8 knowledge fields + organ_version."""
+
+    REQUIRED_8_FIELDS = [
+        "known_facts",
+        "errors_encountered",
+        "drifts_surfaced",
+        "alternatives_considered",
+        "manual_validation_log",
+        "integration_test_status",
+        "e2e_test",
+        "bugs_fixed_during_dev",
+    ]
+
+    @pytest.mark.parametrize("name", PHASE_2_ORGANS)
+    def test_all_8_fields_present(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        missing = [f for f in self.REQUIRED_8_FIELDS if f not in data]
+        assert not missing, f"{name}.organ.yaml missing fields: {missing}"
+
+    @pytest.mark.parametrize("name", PHASE_2_ORGANS)
+    def test_organ_version_present(self, name):
+        """W2.3 introduces organ_version: '1.0' — all Phase-2 sidecars must carry it."""
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        assert "organ_version" in data, (
+            f"{name}.organ.yaml missing organ_version field (W2.3 contract)."
+        )
+        assert data["organ_version"] == "1.0", (
+            f"{name}.organ.yaml organ_version should be '1.0', got {data['organ_version']!r}"
+        )
+
+    @pytest.mark.parametrize("name", PHASE_2_ORGANS)
+    def test_known_facts_has_at_least_2_entries(self, name):
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        facts = data.get("known_facts", [])
+        assert isinstance(facts, list), f"{name}: known_facts must be a list"
+        assert len(facts) >= 2, (
+            f"{name}: known_facts has {len(facts)} entries; minimum 2 required."
+        )
+
+    @pytest.mark.parametrize("name", PHASE_2_HOOKS_AND_HELPERS)
+    def test_hooks_and_helpers_carry_kind_field(self, name):
+        """Hooks and helpers must carry kind='hook' or kind='helper' (W2.3 extension)."""
+        p = _find_organ_yaml(name, _REPO_ROOT)
+        if p is None:
+            pytest.skip(f"{name}.organ.yaml not found")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        assert "kind" in data, (
+            f"{name}.organ.yaml missing kind field. "
+            "Hooks must have kind='hook'; helpers must have kind='helper'."
+        )
+        assert data["kind"] in ("hook", "helper"), (
+            f"{name}.organ.yaml kind={data['kind']!r}; expected 'hook' or 'helper'."
+        )
+
+    def test_phase2_count_is_15(self):
+        """PHASE_2_ORGANS should list exactly 15 items."""
+        assert len(PHASE_2_ORGANS) == 15, (
+            f"Expected 15 Phase-2 organs, got {len(PHASE_2_ORGANS)}: {PHASE_2_ORGANS}"
+        )
+
+    def test_hooks_helpers_count_is_3(self):
+        """PHASE_2_HOOKS_AND_HELPERS should list exactly 3 items."""
+        assert len(PHASE_2_HOOKS_AND_HELPERS) == 3

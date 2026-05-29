@@ -1,0 +1,31 @@
+name: LLMProviderSelector
+path: seed/lib/frontend/src/design-system/components/LLMProviderSelector.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Provider + model picker for LLM configuration UIs. Two native selects side-by-side. Marks stub providers with '(STUB)' and unconfigured providers with '(sem chave)' — consumers get honest visibility into what is wired vs what is placeholder."
+  - "Purely presentational: takes current value + handlers + data lists from useLLMProviders()/useLLMModels() hooks. No internal data fetching — follows the hook-injection pattern for product agnosticism."
+  - "hideUnconfigured prop filters providers the org hasn't configured. credentialsHref prop links to Core API Keys page for org admins to configure their LLM keys without leaving the product."
+  - "2 consumers in products: therapy-platform/clinic/LLMPreferences.tsx and at least one other — below canonical threshold without a test."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Custom shadcn Select components were considered for richer styling but native selects were chosen for universal compatibility across all products without requiring shadcn-select to be installed."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

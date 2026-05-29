@@ -1,0 +1,32 @@
+name: ScorePill
+path: seed/lib/frontend/src/design-system/gamification/ScorePill.tsx
+phase: pilot-seed
+registered_at: "2026-05-29"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Small inline pill displaying a numeric score with threshold-based color tiering: green (≥80), amber (≥50), red (<50) by default. Thresholds are configurable per-callsite via the thresholds prop."
+  - "Null-safe: renders a muted '—' when value is null/undefined/NaN — no consumer needs to guard. This makes it safe for table cells where data may be loading."
+  - "3 consumers from @noctusai/lib/design-system in products: erp-imobiliario/MetaEventoIndicator.tsx, erp-imobiliario/MetasAgentWidget.tsx, and AIIndicator.tsx (which re-uses ScorePill for AI output scores). Meets consumer threshold but lacks test."
+  - "Consumed by AIIndicator internally — thus indirectly present on any product that uses AIIndicator."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "ScorePill is in design-system/gamification/ but brief listed it under design-system/ai/. Actual path is gamification/ — this is correct per KB § 07-GAMIFICATION.md (score visualization is gamification, not AI)."
+
+alternatives_considered:
+  - "Direct CSS badge could be used per-callsite — replaced by ScorePill at N=3 recurrence to ensure threshold logic and null-safety are not replicated."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
