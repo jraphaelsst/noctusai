@@ -233,7 +233,7 @@ fi
 STAGED_COMPLIANCE=$(git diff --cached --name-only 2>/dev/null | grep -E '^mcp/noctusai/tools/noctus/dev/compliance\.py$' || true)
 if [[ -n "$STAGED_COMPLIANCE" ]] && have_py; then
     echo "[pre-commit] compliance.py staged — refreshing keeper-pattern cache (mirror contract)..."
-    if ! "$PY" "$CLI" --refresh-keeper-cache; then
+    if ! "$PY" "$CLI" --refresh-keeper-cache --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] keeper-cache refresh FAILED — investigate before committing." >&2
         exit 1
     fi
@@ -248,7 +248,7 @@ fi
 STAGED_AGENT_OR_KB=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.claude/agents/.+\.md|KNOWLEDGE-BASE/.+\.md)$' || true)
 if [[ -n "$STAGED_AGENT_OR_KB" ]] && have_py; then
     echo "[pre-commit] agent.md or KB doc staged — refreshing agent-context cache (mirror contract)..."
-    if ! "$PY" "$CLI" --refresh-agent-context-cache; then
+    if ! "$PY" "$CLI" --refresh-agent-context-cache --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] agent-context-cache refresh FAILED — investigate before committing." >&2
         exit 1
     fi
@@ -308,7 +308,7 @@ fi
 STAGED_AUTO_IMPROVEMENT=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/auto-improvement\.ndjson$' || true)
 if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
     echo "[pre-commit] auto-improvement.ndjson staged — refreshing auto-improvement cache (mirror contract)..."
-    if ! "$PY" "$CLI" --refresh-auto-improvement-cache; then
+    if ! "$PY" "$CLI" --refresh-auto-improvement-cache --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] auto-improvement-cache refresh FAILED — investigate before committing." >&2
         exit 1
     fi
