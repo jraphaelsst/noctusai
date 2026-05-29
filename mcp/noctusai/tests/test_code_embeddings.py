@@ -229,6 +229,67 @@ class TestRefreshAndSearch:
         assert "mcp/stable.py" in result["skipped"]
         assert result["rows_written"] == 0
 
+    def test_full_refresh_prunes_orphan_rows(self, tmp_repo, fake_embed):
+        """A full pass drops rows for files no longer on disk (the orphan-prune
+        that fixes the perpetual `code-vector-orphan` freshness warning)."""
+        f = tmp_repo / "mcp" / "gone.py"
+        f.write_text(
+            "def gone():\n"
+            "    'docstring padding to clear the min-chunk size threshold'\n"
+            "    return 'bye' * 40\n"
+        )
+        ce.refresh(repo_root=tmp_repo)
+        assert "mcp/gone.py" in ce.list_files()
+        f.unlink()
+        result = ce.refresh(repo_root=tmp_repo)
+        assert "mcp/gone.py" in result.get("pruned", [])
+        assert "mcp/gone.py" not in ce.list_files()
+
+    def test_scoped_refresh_does_not_prune(self, tmp_repo, fake_embed):
+        """A scoped (`paths=`) refresh must NOT prune out-of-scope rows."""
+        (tmp_repo / "mcp" / "keep.py").write_text(
+            "def keep():\n"
+            "    'docstring padding to clear the min-chunk size threshold'\n"
+            "    return 'stay' * 40\n"
+        )
+        ce.refresh(repo_root=tmp_repo)
+        (tmp_repo / "mcp" / "other.py").write_text(
+            "def other():\n"
+            "    'docstring padding to clear the min-chunk size threshold'\n"
+            "    return 'new' * 40\n"
+        )
+        result = ce.refresh(repo_root=tmp_repo, paths=["mcp/other.py"])
+        assert result.get("pruned", []) == []
+        assert "mcp/keep.py" in ce.list_files()
+
+    def test_full_refresh_preserves_organ_rows(self, tmp_repo, fake_embed):
+        """Organ rows (kind='organ', often OUTSIDE _CODE_ROOTS) must survive a
+        full prune — they're managed by register_organ, not this refresh."""
+        # First refresh creates the schema via the extension-loading connection.
+        (tmp_repo / "mcp" / "real.py").write_text(
+            "def real():\n"
+            "    'docstring padding to clear the min-chunk size threshold'\n"
+            "    return 'x' * 40\n"
+        )
+        ce.refresh(repo_root=tmp_repo)
+        # Seed an organ row whose path is outside _CODE_ROOTS and not on disk.
+        conn = ce._connect()
+        conn.execute(
+            "INSERT INTO code_chunks(path,chunk_idx,symbol_name,kind,chunk_text,source_sha,cached_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            ("seed/lib/frontend/src/design-system/components/Sidebar.tsx", 0,
+             "Sidebar", "organ", "organ bundle text", "bundlesha", "2026-05-29"),
+        )
+        conn.commit()
+        conn.close()
+        result = ce.refresh(repo_root=tmp_repo, force=True)
+        # The organ row's path doesn't exist on disk, but it must NOT be pruned.
+        assert "seed/lib/frontend/src/design-system/components/Sidebar.tsx" not in result.get("pruned", [])
+        conn = ce._connect()
+        n = conn.execute("SELECT count(*) FROM code_chunks WHERE kind='organ'").fetchone()[0]
+        conn.close()
+        assert n == 1
+
     def test_force_rebuilds_anyway(self, tmp_repo, fake_embed):
         (tmp_repo / "mcp" / "f.py").write_text(
             "def f():\n"

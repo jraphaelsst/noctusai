@@ -114,7 +114,9 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
                 "exists."
             ),
         }
-    result = _ec.refresh_markdown_corpus(_CORPUS, force=force, paths=paths)
+    result = _ec.refresh_markdown_corpus(
+        _CORPUS, force=force, paths=paths, cost_namespace="memory-embeddings"
+    )
     # Write aggregate source_sha for freshness keeper.
     try:
         conn = sqlite3.connect(str(CACHE_PATH))

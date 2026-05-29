@@ -138,7 +138,9 @@ _CORPUS = MarkdownCorpus(
 
 
 def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
-    result = _ec.refresh_markdown_corpus(_CORPUS, force=force, paths=paths)
+    result = _ec.refresh_markdown_corpus(
+        _CORPUS, force=force, paths=paths, cost_namespace="corpus-embeddings"
+    )
     try:
         conn = sqlite3.connect(str(CACHE_PATH))
         conn.execute(

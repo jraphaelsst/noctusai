@@ -412,11 +412,17 @@ def refresh_markdown_corpus(
     *,
     force: bool = False,
     paths: Optional[list[str]] = None,
+    cost_namespace: Optional[str] = None,
 ) -> dict[str, Any]:
     """Re-populate the corpus's embeddings cache.
 
     Per-file `source_sha` skip when unchanged. Atomic per-doc — partial
     embed failure rolls back that doc's rows. Other corpora are unaffected.
+
+    When `cost_namespace` is given (e.g. ``"corpus-embeddings"`` /
+    ``"memory-embeddings"``), the REAL provider token usage is captured across
+    the whole batch and logged to the vector-costs ledger (estimate + actual).
+    Omit it to preserve the prior no-logging behaviour.
 
     Returns: ``{ok, status, refreshed, skipped, errors, rows_written}``.
     """
@@ -433,6 +439,11 @@ def refresh_markdown_corpus(
     skipped: list[str] = []
     errors: list[dict] = []
     total_rows = 0
+
+    # Capture the REAL provider token usage across the batch (ground truth for
+    # the cost ledger). No-op when cost_namespace is None.
+    _usage = UsageAccumulator()
+    _restore_usage = install_capture_sink(_usage) if cost_namespace else (lambda: None)
 
     sources = list(corpus.enumerate_sources())
     if paths:
@@ -535,6 +546,29 @@ def refresh_markdown_corpus(
 
     conn.commit()
     conn.close()
+    _restore_usage()
+
+    # Cost instrumentation — log real provider usage alongside the estimate.
+    # Opt-in via cost_namespace; skipped when nothing was embedded.
+    if cost_namespace and total_rows > 0:
+        try:
+            from . import vector_costs as _vc
+            _estimated_tokens = total_rows * (MAX_CHUNK_CHARS // 4)
+            _actual_tokens = _usage.total_tokens if _usage.has_data else None
+            _actual_cost = _usage.cost_usd if _usage.has_data else None
+            _vc.log_refresh_batch(
+                namespace=cost_namespace,
+                model="text-embedding-3-small",
+                doc_count=len(refreshed),
+                chunk_count=total_rows,
+                estimated_tokens=_estimated_tokens,
+                provider="openai",
+                source_ref=f"session:{now_iso()[:10]}",
+                actual_tokens=_actual_tokens,
+                actual_cost_usd=_actual_cost,
+            )
+        except Exception:  # noqa: BLE001 — never block refresh on logging
+            pass
 
     status = "refreshed" if refreshed else ("in-sync" if not errors else "errors")
     return {

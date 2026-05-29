@@ -9112,7 +9112,7 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
     kb_dir = root / "KNOWLEDGE-BASE"
-    cache = root / ".claude" / "cache" / "kb-embeddings.sqlite"
+    cache = _resolve_cache_path("kb-embeddings", root)
     if not kb_dir.is_dir() or not cache.exists():
         return issues
     # Query the cache directly via sqlite3 (avoid module import to keep
@@ -9137,7 +9137,7 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
         conn.close()
     except sqlite3.Error as e:
         issues.append({
-            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "product": "<harness>", "file": _cache_label(cache, root),
             "issue": f"kb-embeddings cache unreadable ({e}) — refresh via --refresh-kb-embeddings",
             "severity": "warning",
             "symbol": "kb-vector-cache-unreadable",
@@ -9148,7 +9148,7 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
         if not md.exists():
             # (a) orphan row — markdown deleted, cache still has it.
             issues.append({
-                "product": "<harness>", "file": str(cache.relative_to(root)),
+                "product": "<harness>", "file": _cache_label(cache, root),
                 "issue": (
                     f"kb-embeddings cache has rows for `{path}` but the "
                     f"markdown doesn't exist (orphan). Vector DB must mirror "
@@ -9202,15 +9202,22 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
-    cache = root / ".claude" / "cache" / "code-embeddings.sqlite"
+    cache = _resolve_cache_path("code-embeddings", root)
     tracked_roots = ("mcp", "noctusai_lib", "products/seed")
     if not any((root / r).is_dir() for r in tracked_roots) or not cache.exists():
         return issues
     try:
         conn = sqlite3.connect(str(cache))
         try:
+            # Exclude kind='organ' rows: organs (W4 seed-organs-cache) share the
+            # code_chunks table but store a BUNDLE source_sha (source+tests+
+            # knowledge), not the file-bytes sha this checker compares against,
+            # and they have their own lifecycle (register_organ /
+            # organ_knowledge_append), not --refresh-code-embeddings. Including
+            # them produced permanent false `code-vector-stale` on every organ.
             cur = conn.execute(
-                "SELECT path, source_sha FROM code_chunks GROUP BY path"
+                "SELECT path, source_sha FROM code_chunks "
+                "WHERE COALESCE(kind,'') != 'organ' GROUP BY path"
             )
             rows = list(cur.fetchall())
         except sqlite3.OperationalError:
@@ -9218,7 +9225,7 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
         conn.close()
     except sqlite3.Error as e:
         issues.append({
-            "product": "<harness>", "file": str(cache.relative_to(root)),
+            "product": "<harness>", "file": _cache_label(cache, root),
             "issue": (
                 f"code-embeddings cache unreadable ({e}) — refresh via "
                 "--refresh-code-embeddings"
@@ -9231,7 +9238,7 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
         src = root / path
         if not src.exists():
             issues.append({
-                "product": "<harness>", "file": str(cache.relative_to(root)),
+                "product": "<harness>", "file": _cache_label(cache, root),
                 "issue": (
                     f"code-embeddings cache has rows for `{path}` but the "
                     f"file doesn't exist (orphan). Refresh with "
@@ -9517,7 +9524,7 @@ def check_code_recurrence_drift(repo_root: Path | None = None) -> list[dict]:
     root = repo_root or REPO_ROOT
     if not (root / "mcp").is_dir():
         return issues
-    cache = root / ".claude" / "cache" / "code-embeddings.sqlite"
+    cache = _resolve_cache_path("code-embeddings", root)
     if not cache.exists():
         return issues
     try:
@@ -10079,7 +10086,7 @@ def check_kb_semantic_drift(repo_root: Path | None = None) -> list[dict]:
     root = repo_root or REPO_ROOT
     if not (root / "KNOWLEDGE-BASE").is_dir():
         return issues
-    cache = root / ".claude" / "cache" / "kb-embeddings.sqlite"
+    cache = _resolve_cache_path("kb-embeddings", root)
     if not cache.exists():
         return issues
     try:

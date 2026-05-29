@@ -274,6 +274,32 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
             total_rows -= len(per_doc_rowids)
             continue
         refreshed.append(rel)
+
+    # Orphan prune (full passes only): drop rows for docs no longer on disk
+    # (e.g. a renamed/deleted KB file). A scoped refresh (`paths=...`) must NOT
+    # prune — it only knows about its own subset. The vector DB MUST mirror the
+    # markdown; without this, incremental refresh left orphan rows (e.g. the
+    # seven-way-sync.md → eight-way-sync.md rename) for `check_..._freshness`
+    # to keep flagging.
+    pruned: list[str] = []
+    if not paths:
+        live_rels = {str(p.relative_to(KB_DIR)) for p in all_md}
+        cached_rels = [r[0] for r in conn.execute("SELECT DISTINCT path FROM kb_chunks").fetchall()]
+        for orphan in (set(cached_rels) - live_rels):
+            cur = conn.execute("SELECT rowid_alias FROM kb_chunks WHERE path=?", (orphan,))
+            orphan_rowids = [r[0] for r in cur.fetchall()]
+            if orphan_rowids:
+                ph = ",".join("?" * len(orphan_rowids))
+                if _HAS_VEC:
+                    conn.execute(f"DELETE FROM kb_vec WHERE rowid IN ({ph})", orphan_rowids)
+                else:
+                    conn.execute(
+                        f"DELETE FROM kb_embeddings_json WHERE chunk_rowid IN ({ph})",
+                        orphan_rowids,
+                    )
+            conn.execute("DELETE FROM kb_chunks WHERE path=?", (orphan,))
+            pruned.append(orphan)
+
     conn.execute(
         "INSERT OR REPLACE INTO cache_meta(key,value) VALUES (?,?)",
         ("populated_at", _now_iso()),
@@ -316,6 +342,7 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
         "skipped": skipped,
         "errors": errors,
         "rows_written": total_rows,
+        "pruned": pruned,
     }
 
 
