@@ -25,7 +25,7 @@ app = create_product_app(
         configs.router,
     ],
     version="0.1.0",
-    standard_routers=["health", "notificacoes"],
+    standard_routers=["health", "notificacoes", "team"],
     # Wire the agno engine readiness probe through the seed-native seam
     # at noctusai_seed.health. Surfaces in GET /_ready as the
     # "agno_ping" entry. See app/services/agno_health.py for the three
