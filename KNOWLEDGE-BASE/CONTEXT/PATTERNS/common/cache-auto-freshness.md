@@ -4,13 +4,23 @@
 
 Born 2026-05-26 — closes the staleness gaps surfaced after the v4.0-beta cycle made vector caches load-bearing.
 
+## Cache cadence — two tiers (2026-05-29)
+
+Caches split by refresh cost, NOT all-on-every-boundary:
+
+- **Structural caches** (keeper-patterns · agent-context · auto-improvement · **noc-graph**) — fast, local, **zero OpenAI**. Refresh on **pre-commit** (fix-on-contact) AND pre-push/post-merge/post-checkout. A methodology-surface change is reflected in these the moment it's committed. (noc-graph's semantic edges read the embedding caches via SQLite — `ingest_semantic_neighbors` makes zero OpenAI calls — so the graph rebuild is fast even though embeddings are deferred.)
+- **Embedding caches** (kb · code · corpus · memory) — OpenAI-backed, slow. Refresh on **pre-push + post-merge + post-checkout ONLY**, never on pre-commit. They're advisory (semantic-search enrichment) and self-heal at the next push/merge; refreshing them per-commit taxed the inner loop for no correctness gain (the correctness gates — kb_sync · router · 8-way-sync — stay synchronous regardless). Supersedes the 2026-05-27 "every cache every boundary" rule for the embedding tier (user mandate 2026-05-29).
+
+The 8-way-sync gate's `check_all_cache_freshness` leg checks every cache regardless of tier — so a stale cache is always surfaced; the tiering only decides WHERE it gets eagerly refreshed.
+
 ## The full coverage matrix
 
 | Mutation source | What used to happen | What happens now |
 |---|---|---|
-| Edit + commit (in-session) | ✅ pre-commit hook leg fires per affected cache | ✅ unchanged |
-| `git pull` brings in remote changes | ⚠️ cache stales until next query OR next commit | ✅ **post-merge hook** refreshes affected caches |
-| `git checkout <branch>` swap | ⚠️ cache stales for the new branch state | ✅ **post-checkout hook** refreshes affected caches |
+| Edit + commit (in-session) | ⚠️ embedding refresh on every commit taxed the loop | ✅ pre-commit refreshes the **structural** caches (incl. noc-graph) only — fix-on-contact, no OpenAI |
+| `git push` | ⚠️ (n/a) | ✅ **pre-push hook** refreshes ALL caches incl. the 4 embedding caches |
+| `git pull` brings in remote changes | ⚠️ cache stales until next query OR next commit | ✅ **post-merge hook** refreshes all affected caches (incl. embeddings) |
+| `git checkout <branch>` swap | ⚠️ cache stales for the new branch state | ✅ **post-checkout hook** refreshes all affected caches (incl. embeddings) |
 | Fresh clone | ✅ first query bootstraps (cache file missing → refresh) | ✅ unchanged |
 | Embedding provider fails | ✅ graceful-degrade; cache stays at previous state | ✅ unchanged |
 | Doc deleted (orphan row remains) | ⚠️ `check_*_canonical` keeper surfaces warning; not purged | ⚠️ same — see anti-pattern below |
