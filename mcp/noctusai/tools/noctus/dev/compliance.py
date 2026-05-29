@@ -8331,6 +8331,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
     "CONTEXT/PATTERNS/common/surface-and-resume-tooling.md",  # universal commons: every engineer uses surface_to_tech_lead when blocked (no single-agent ownership)
     "CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md",  # universal commons: 5 rationalization shapes + ea7514e7 worked example + closes --no-verify commit loophole, applies to every lens that commits (engineers + tech-lead)
+    "CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md",  # universal commons: bg-dispatched engineers SURFACE-don't-bypass auto-mode safety (no --no-verify/--force/destructive-shared-ops); applies to every dispatched lens, no single owner
     "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
     "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
     "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",

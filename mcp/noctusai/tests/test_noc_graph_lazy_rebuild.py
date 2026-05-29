@@ -146,22 +146,28 @@ class TestConcurrentReadsSafe:
 
         def _reader():
             try:
-                with (
-                    patch.object(ngc, "compute_source_sha", return_value="NEW"),
-                    patch.object(ngc, "get_cached_source_sha", return_value="OLD"),
-                    patch.object(ngc, "refresh", side_effect=_fake_refresh),
-                ):
-                    ngc._ensure_fresh_on_read()
-                    results.append(ngc.load_summary())
+                ngc._ensure_fresh_on_read()
+                results.append(ngc.load_summary())
             except Exception as exc:
                 errors.append(exc)
 
-        t1 = threading.Thread(target=_reader)
-        t2 = threading.Thread(target=_reader)
-        t1.start()
-        t2.start()
-        t1.join(timeout=10)
-        t2.join(timeout=10)
+        # Patch from the MAIN thread, wrapping the whole thread lifecycle.
+        # `unittest.mock.patch` is NOT thread-safe — patching a module global
+        # from inside overlapping worker threads nests save/restore incorrectly
+        # and leaks the mock past the `with` block (it leaked
+        # `compute_source_sha=NEW` into later tests under pytest-randomly). One
+        # patch context, entered + exited on the main thread, restores cleanly.
+        with (
+            patch.object(ngc, "compute_source_sha", return_value="NEW"),
+            patch.object(ngc, "get_cached_source_sha", return_value="OLD"),
+            patch.object(ngc, "refresh", side_effect=_fake_refresh),
+        ):
+            t1 = threading.Thread(target=_reader)
+            t2 = threading.Thread(target=_reader)
+            t1.start()
+            t2.start()
+            t1.join(timeout=10)
+            t2.join(timeout=10)
 
         assert not errors, f"Unexpected errors in reader threads: {errors}"
         assert len(results) == 2
@@ -211,3 +217,42 @@ class TestRefreshFailureReturnsStaleWithWarning:
             result = ngc.load_summary()
             assert isinstance(result, dict)
             assert result.get("present") is True
+
+
+class TestBuilderCodeIsInFreshnessCorpus:
+    """The graph BUILDER code is part of the source-hash corpus, so an extractor
+    change busts the aggregate sha and triggers an auto-rebuild on next read.
+
+    This locks in the "graph auto-wires after ANY update" guarantee: a future
+    refactor that moved the builder out of the hashed corpus (or narrowed
+    ``_source_files``) would silently break auto-rebuild — these tests fail loud
+    if that happens. KB § PATTERNS/architect/noc-graph.md.
+    """
+
+    @staticmethod
+    def _mini_repo(tmp_path: Path) -> Path:
+        builder = tmp_path / "seed" / "lib" / "backend" / "noctusai_lib" / "graph"
+        builder.mkdir(parents=True)
+        (builder / "extract_demo.py").write_text("def walk():\n    return 1\n")
+        return tmp_path
+
+    def test_builder_file_is_in_source_corpus(self, tmp_path):
+        repo = self._mini_repo(tmp_path)
+        rels = {p.relative_to(repo).as_posix() for p in ngc._source_files(repo)}
+        assert "seed/lib/backend/noctusai_lib/graph/extract_demo.py" in rels, (
+            "graph builder .py must be in the freshness corpus — else an extractor "
+            "change would NOT trigger an auto-rebuild and the graph would silently "
+            "drift from its own builder logic"
+        )
+
+    def test_editing_builder_changes_source_sha(self, tmp_path):
+        repo = self._mini_repo(tmp_path)
+        before = ngc.compute_source_sha(repo)
+        (repo / "seed" / "lib" / "backend" / "noctusai_lib" / "graph" / "extract_demo.py").write_text(
+            "def walk():\n    return 2  # changed\n"
+        )
+        after = ngc.compute_source_sha(repo)
+        assert before != after, (
+            "changing graph builder code must change the aggregate source sha so "
+            "_ensure_fresh_on_read rebuilds — the auto-wire guarantee"
+        )

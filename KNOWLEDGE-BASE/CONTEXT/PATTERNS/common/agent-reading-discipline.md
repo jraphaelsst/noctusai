@@ -13,7 +13,7 @@
 > **Sync rule.** This file's rules also surface as terse §1 bullets
 > in `CLAUDE.md` and as memory entries under `~/.claude/projects/`.
 > Update all three layers together; never just one (CLAUDE.md +
-> memory + this file = three-way sync). See
+> memory + this file = eight-way sync). See
 > `CONTEXT/01-PHILOSOPHY.md § Docs stay in sync`.
 
 ---

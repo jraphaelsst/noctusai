@@ -31,6 +31,7 @@ If the work fits in one session and one PR — it's a project, not a roadmap. Us
 | **Origin** | Captures the moment the roadmap was authored — the question or surfaced gap. Future-you needs the why. |
 | **Trigger conditions (T1–TN)** | The "when" of deferred phases. Each trigger names a SIGNAL that can be observed, not a feeling. |
 | **Phase 1 (SHIPPED)** + **Phase N (DEFERRED)** | Phase 1 lands in the same commit as the roadmap. Phase N is gated on triggers. Mixing them is a mis-shape. |
+| **Verify recipe (per slice)** | Every slice row carries a *verify-recipe* (live-state proof) alongside its test-recipe. Tests-green ≠ verified-in-production — the unit surface stops at module boundaries; the verify-recipe is the explicit live check (provider reachable, ndjson written, MCP round-trip, page shows real data). Empty = a positive "no live check needed" claim, not a skip. |
 | **Anti-goals** | Explicit non-goals — prevents scope creep at trigger fire. Often the gold of the roadmap. |
 | **Open questions** | The "we'll revisit at trigger time" list. NOT a TODO; an explicit deferral. |
 | **Decision log** | Append-only. Each entry is `YYYY-MM-DD: <decision>`. |

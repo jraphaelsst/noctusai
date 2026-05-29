@@ -83,7 +83,7 @@ PROJECT-END VERIFICATION CHECKLIST — runs once before folder archive (per § 1
   └─ 6. FINAL ABSORPTION SCAN sweep — capture what was absorbed vs what's deferred. Document in §11 close
           entry. Any new N=2+ patterns surfaced by THIS project's edits get a triage decision (formalize /
           refactor / accept-with-rationale) recorded in the close entry — not silently shipped.
-  └─ 7. Three-way sync: KB depth + CLAUDE.md pointer + memory entry — all in the same session.
+  └─ 7. Eight-way sync: KB depth + CLAUDE.md pointer + memory entry — all in the same session.
   └─ 8. End-of-work summary in the user-facing reply: applied items + deferred destinations + verification line.
 
 CLOSE PROJECT (only after the verification checklist is fully green)
@@ -495,9 +495,9 @@ When a project ships a *new behavioral rule* (or a small family of related rules
 
 ### The forward-stub pattern
 
-When Phase 1 authors a KB anchor that Phase 2 will extend, **leave a labeled placeholder section in the anchor for the future content**. Phase 2's three-way sync becomes a single edit (extend the stub) instead of authoring a separate file.
+When Phase 1 authors a KB anchor that Phase 2 will extend, **leave a labeled placeholder section in the anchor for the future content**. Phase 2's eight-way sync becomes a single edit (extend the stub) instead of authoring a separate file.
 
-Worked example: `methodology-extraction` Phase 1 created `KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-reading-discipline.md` with a populated `## Narrow-read first` section and a stub `## Explore-agent delegation` section pointing forward to Phase 2. Phase 2 replaced the stub body with the full rule — INDEX.md was already pointing at the file, no new entry required, three-way sync cost halved.
+Worked example: `methodology-extraction` Phase 1 created `KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-reading-discipline.md` with a populated `## Narrow-read first` section and a stub `## Explore-agent delegation` section pointing forward to Phase 2. Phase 2 replaced the stub body with the full rule — INDEX.md was already pointing at the file, no new entry required, eight-way sync cost halved.
 
 ### CLAUDE.md §1 bullet-weight discipline
 
@@ -607,7 +607,7 @@ Trivial restatements of "we did X" don't count — those go in §11 prose. The b
 **Cross-project learnings.** When a learning would benefit other projects, **also** route it appropriately:
 
 - Cross-cutting helper / pattern → `cross-product-absorption-catalog.md` (or follow-up seed-absorption project).
-- Methodology rule → three-way sync (KB + `CLAUDE/<topic>.md` + memory).
+- Methodology rule → eight-way sync (KB + `CLAUDE/<topic>.md` + memory).
 - Tooling defect → file a follow-up project (don't silently work around).
 
 The SQLite log is the **per-project record**; the catalog / KB / memory are the **cross-project** propagators.
@@ -927,7 +927,7 @@ Doc-backed by `CLAUDE.md` rule "Apply proposals inline, then delete — every de
 
 `noctus.dev.archive(mode="project")` **enforces** this: when the project carries a `findings.md` (the captured-lessons artifact), it refuses unless `learnings_absorbed=True`, returning a checklist (no `findings.md` ⇒ no captured lessons ⇒ no gate; learn-before-archive stays the behavioral rule regardless):
 1. Read `findings.md` + PROJECT.md §11 (lessons / slips / knowledge).
-2. Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory (three-way sync) — not only inside the folder.
+2. Confirm each DURABLE lesson persists in KB / CLAUDE.md / memory (eight-way sync) — not only inside the folder.
 3. Verify no durable doc links to this `projects/<slug>` path (inline the substance; cite code/dated facts, never the slug/archive path).
 4. Re-call with `learnings_absorbed=True`.
 

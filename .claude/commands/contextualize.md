@@ -12,13 +12,13 @@ The contextualization is **graph-shaped**: the noc-graph cache (8th keeper-mirro
 
 ## Protocol
 
-1. **Verify the graph cache is fresh** — `python mcp/noctusai/cli.py --check-noc-graph-cache-freshness`. If stale, run `--refresh-noc-graph` (full repo rebuild ~13s). If `$ARGUMENTS` includes `--force`, refresh unconditionally.
+1. **Verify the graph cache is fresh** — prefer the MCP tool `noctus.dev.noc_graph_status` (no subprocess; and the `noctus.graph.*` read tools auto-refresh a stale cache lazily on query). The CLI equivalent `python mcp/noctusai/cli.py --check-noc-graph-cache-freshness` also works from ANY interpreter — `cli.py` self-execs under the project venv (`mcp/noctusai/.venv`), so a bare host `python`/`python3` no longer crashes on a missing `pydantic`. If stale, run `noctus.graph.build` (or `--refresh-noc-graph`, full repo rebuild ~13s). If `$ARGUMENTS` includes `--force`, refresh unconditionally.
 
 2. **Pull the graph orientation** — call:
    - `noctus.graph.report` — counts + clusters + top packages + node breakdown by kind.
    - `noctus.dev.noc_graph_status` — cache state, kind breakdown, edge breakdown.
 
-3. **Surface the methodology fabric** (the layer fresh agents must hold):
+3. **Surface the methodology fabric** (the layer fresh agents must hold). An empty `query=""` with a `kinds` filter LISTS every node of that kind (raise `limit` past the default 20):
    - `noctus.graph.query "" kinds=["harness_agent"]` — list of specialist agents (with `owns_kb` edges to their KB territory).
    - `noctus.graph.query "" kinds=["harness_skill"]` — list of procedure skills (auto-trigger phrases).
    - `noctus.graph.query "" kinds=["harness_command"]` — list of user-invoked `/<name>` commands.
@@ -36,7 +36,7 @@ The contextualization is **graph-shaped**: the noc-graph cache (8th keeper-mirro
 Print a compact orientation report:
 - 1 line — graph state (node/edge count, fresh/stale, last refresh).
 - One block per anchor surface (agents / skills / commands / kb chapters) — names only, no descriptions (the agent pulls depth via `noctus.graph.explain <id>` on-demand).
-- "Hot drift surfaces" — node IDs from `noctus.graph.query "" kinds=["auto_improvement_event"]` (≥3 events on the same target).
+- "Hot drift surfaces" — the graph emits an `auto_improvement_event` node only at ≥3 events on the SAME target, so `noctus.graph.query "" kinds=["auto_improvement_event"]` is frequently empty. For the orientation-useful list of OPEN drift, query `noctus.dev.auto_improvement_query` and surface the not-yet-codified entries (`s1` / `s2-memory`).
 - "Read this next?" — best-guess pointer based on `$ARGUMENTS` (e.g. `/contextualize backend` → `CLAUDE/backend.md` + the relevant KB patterns; default → `CLAUDE.md` §1).
 
 ## Skip conditions

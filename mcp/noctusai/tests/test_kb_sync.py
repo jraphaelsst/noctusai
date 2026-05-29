@@ -402,6 +402,34 @@ def test_methodology_gap_suffix_resolvable_not_flagged(tmp_path):
     assert gaps == [], f"Expected no gaps on suffix-resolvable ref but got: {gaps}"
 
 
+def test_methodology_gap_path_qualified_wrong_dir_is_flagged(tmp_path):
+    """(c2) Regression for the fuzzy-path hole: a PATH-QUALIFIED ref whose full
+    path does NOT exist MUST be flagged even when its leaf filename exists at a
+    DIFFERENT path. The old basename fallback let mis-placed files pass silently
+    (the 2026-05-26 ssh-deploy-key-restrictions.md mis-placement —
+    feedback_kb_sync_fuzzy_path_match)."""
+    _mk_gap_tree(tmp_path)  # creates CONTEXT/PATTERNS/real.md
+    agent = tmp_path / ".claude" / "agents" / "wrongpath-agent.md"
+    # real.md lives at CONTEXT/PATTERNS/real.md, NOT under architect/. A
+    # path-qualified ref to the wrong dir must NOT resolve via the leaf.
+    agent.write_text("See `KB § PATTERNS/architect/real.md` for rules.\n")
+    gaps = methodology_reference_gaps(tmp_path)
+    assert any("architect/real.md" in g for g in gaps), (
+        f"Path-qualified ref to a wrong directory must be flagged, got: {gaps}"
+    )
+
+
+def test_methodology_gap_bare_filename_still_resolves_via_basename(tmp_path):
+    """(c3) The basename fallback is preserved for BARE single-segment refs
+    (the legacy `KB § branching.md` shorthand) — only path-qualified refs lost
+    the fallback. real.md exists; a bare `KB § real.md` must still resolve."""
+    _mk_gap_tree(tmp_path)
+    agent = tmp_path / ".claude" / "agents" / "bare-agent.md"
+    agent.write_text("See `KB § real.md` for the pattern.\n")
+    gaps = methodology_reference_gaps(tmp_path)
+    assert gaps == [], f"Bare-filename ref must still resolve, got: {gaps}"
+
+
 def test_methodology_gap_real_repo_zero_gaps():
     """(d) The REAL repo tree must produce zero hard gaps (no false
     positives on the live methodology surfaces)."""

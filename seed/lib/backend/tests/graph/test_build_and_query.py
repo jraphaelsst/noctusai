@@ -126,6 +126,48 @@ def test_graph_index_search_and_neighbors(tmp_path):
     assert nbr["subgraph"]["nodes"], "neighborhood should include linked nodes"
 
 
+def test_graph_index_empty_query_lists_all_nodes(tmp_path):
+    """An empty query is a LISTING request, not a no-op (contextualize fabric)."""
+    repo = _fixture_repo(tmp_path)
+    graph = build_graph(repo, scope="repo")
+    idx = GraphIndex(graph)
+
+    listed = idx.search("", limit=10_000)
+    assert len(listed) == len(graph.nodes), "empty query must enumerate every node"
+    labels = [n.label.lower() for n, _ in listed]
+    assert labels == sorted(labels), "empty-query listing must be label-sorted (stable)"
+
+    # kind filter still applies in listing mode — pick a kind present in the graph
+    a_kind = graph.nodes[0].kind
+    filtered = idx.search("", kinds=[a_kind], limit=10_000)
+    assert filtered, "kind-filtered empty query should return that kind's nodes"
+    assert all(n.kind == a_kind for n, _ in filtered)
+
+    # limit still caps listing output
+    assert len(idx.search("", limit=1)) == 1
+
+
+def test_walk_kb_chapters_reclassifies_under_context_prefix(tmp_path):
+    """Chapters survive the PATTERNS→CONTEXT reorg (kb:CONTEXT/0X-NAME.md)."""
+    from dataclasses import replace
+
+    from noctusai_lib.graph.extract_landscape import walk_kb_chapters
+    from noctusai_lib.graph.schema import Graph, Node, NodeKind
+
+    nodes = [
+        Node(id="kb:CONTEXT/01-PHILOSOPHY.md", label="01 — Philosophy", kind=NodeKind.KB_PATTERN),
+        Node(id="kb:07-GAMIFICATION.md", label="07 — Gamification", kind=NodeKind.KB_PATTERN),  # legacy root layout
+        Node(id="kb:CONTEXT/PATTERNS/common/foo.md", label="foo", kind=NodeKind.KB_PATTERN),  # NOT a chapter
+    ]
+    graph = Graph(nodes=nodes, edges=[])
+    walk_kb_chapters(graph, tmp_path, repo_root=tmp_path)
+
+    by_id = {n.id: n for n in graph.nodes}
+    assert by_id["kb:CONTEXT/01-PHILOSOPHY.md"].kind == NodeKind.KB_CHAPTER, "CONTEXT/-prefixed chapter must reclassify"
+    assert by_id["kb:07-GAMIFICATION.md"].kind == NodeKind.KB_CHAPTER, "legacy root-level chapter still reclassifies"
+    assert by_id["kb:CONTEXT/PATTERNS/common/foo.md"].kind == NodeKind.KB_PATTERN, "deep pattern must NOT become a chapter"
+
+
 def test_graph_serializers_write_files(tmp_path):
     repo = _fixture_repo(tmp_path)
     graph = build_graph(repo, scope="repo")

@@ -23,6 +23,41 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+
+def _reexec_under_venv() -> None:
+    """Self-heal the interpreter: re-exec under the project venv when needed.
+
+    The CLI's tools import `pydantic` / `noctusai_lib`, which live ONLY in the
+    project venv (``mcp/noctusai/.venv`` — the same interpreter the MCP server
+    runs under, per ``.mcp.json``). When the documented ``python
+    mcp/noctusai/cli.py …`` resolves to a bare host interpreter without those
+    deps, the CLI used to crash with ``ModuleNotFoundError: No module named
+    'pydantic'``. This guard transparently re-execs under the venv so the
+    documented command works regardless of which ``python`` is first on PATH.
+
+    No-op when the deps are already importable (we're under the venv, or a host
+    env that happens to have them). A sentinel env var prevents an exec loop if
+    even the venv is missing deps (fresh clone before ``pip install``), letting
+    the original import error surface honestly rather than spinning.
+    """
+    import os
+
+    if os.environ.get("_NOCTUS_CLI_REEXEC") == "1":
+        return  # already re-execed once — don't loop; let the real error show
+    try:
+        import pydantic  # noqa: F401 — canonical "real env is active" probe
+        return
+    except ImportError:
+        pass
+    venv_py = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
+    if not venv_py.exists():
+        return  # fresh clone before `pip install` — fall through to import error
+    os.environ["_NOCTUS_CLI_REEXEC"] = "1"
+    os.execv(str(venv_py), [str(venv_py), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+_reexec_under_venv()
+
 # Configure platform-standard logging BEFORE importing any tools/* module —
 # imports may attach loggers; the formatter must be in place when they fire.
 # Falls back to `logging.basicConfig` if `noctusai_lib` is not installed in

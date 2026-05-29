@@ -9,7 +9,7 @@
 
 ## Why this pattern exists
 
-The **engineer-brief-patch-file-first** pattern (see `KB § PATTERNS/common/dispatch-engineer-tuning.md` — the dispatch-tuning protocol the patch-file-first rule is part of; the standalone authority lives today as memory `feedback_engineer_brief_patch_file_first.md` — NOC-REMEDIATE[kb-doc-missing]: 2026-05-27, promote memory → KB doc so this composes-with cite resolves to a peer KB pattern, not a sibling protocol) instructs every dispatched engineer to write its diff to `/tmp/<slug>.patch` **BEFORE** attempting return-text generation. This survives the harness watchdog (~600s) killing the return — the architect can salvage the work from the patch file. The cost: `/tmp/*.patch` accumulates across many sessions, and macOS's passive `periodic` daily sweep (3-day TTL) is timer-based, not semantic.
+The **engineer-brief-patch-file-first** pattern (see `KB § PATTERNS/architect/dispatch-engineer-tuning.md` — the dispatch-tuning protocol the patch-file-first rule is part of; the standalone authority lives today as memory `feedback_engineer_brief_patch_file_first.md` — NOC-REMEDIATE[kb-doc-missing]: 2026-05-27, promote memory → KB doc so this composes-with cite resolves to a peer KB pattern, not a sibling protocol) instructs every dispatched engineer to write its diff to `/tmp/<slug>.patch` **BEFORE** attempting return-text generation. This survives the harness watchdog (~600s) killing the return — the architect can salvage the work from the patch file. The cost: `/tmp/*.patch` accumulates across many sessions, and macOS's passive `periodic` daily sweep (3-day TTL) is timer-based, not semantic.
 
 **Semantic policy:** a patch is *retired* (safe to delete) the moment we can prove its content landed OR the dispatch is old enough to be dead. That's our policy — not the OS clock's.
 
@@ -56,9 +56,9 @@ The sweep is bounded by design:
 
 ## Composes with
 
-- `KB § PATTERNS/common/dispatch-engineer-tuning.md` — the dispatch-tuning protocol the patch-file-first rule is part of (the *why* patches exist in `/tmp/`). The standalone authority lives as memory `feedback_engineer_brief_patch_file_first.md` today; NOC-REMEDIATE[kb-doc-missing] above tracks promoting it to a KB peer.
+- `KB § PATTERNS/architect/dispatch-engineer-tuning.md` — the dispatch-tuning protocol the patch-file-first rule is part of (the *why* patches exist in `/tmp/`). The standalone authority lives as memory `feedback_engineer_brief_patch_file_first.md` today; NOC-REMEDIATE[kb-doc-missing] above tracks promoting it to a KB peer.
 - `KB § PATTERNS/common/storage-hygiene.md` — sibling: worktree + branch cleanup.
-- `KB § PATTERNS/common/dispatch-engineer-tuning.md` — sibling: the dispatch protocol that produces these patches.
+- `KB § PATTERNS/architect/dispatch-engineer-tuning.md` — sibling: the dispatch protocol that produces these patches.
 - `KB § PATTERNS/common/scoped-auto-improvement.md` — the standing-sweep shape this follows.
 
 ## Why not just `find /tmp -mtime +N -delete`?

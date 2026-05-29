@@ -759,7 +759,7 @@ git push origin <master-tree-slug>:main   # orchestrator's fast-forward push
 - **Working agent.** Subagent spawned via Task (or the CLI agent acting as implementer). Holds narrow project/feature context. Owns: phase implementation, phase commits to branch, branch-to-branch push.
 - **Orchestrator.** CLI agent in the user's session-spanning conversation. Holds session-wide context (multiple projects, system-wide methodology, recent commits, parallel-agent activity). Owns: branch creation triggers (§13), final review pass after the working agent finishes, fast-forward push of branch tip to main.
 
-**Why the split.** The working agent rationalizes its design as it implements — that's how implementation works. Blind spots and integration concerns are easier to spot from outside the implementation context. The orchestrator's "fresh eyes" pass at merge time catches things like: scope creep, methodology slips that snuck past the working agent, missing three-way sync, missing improvements-block, KB pointers that didn't get updated, files staged by accident. It's a structural audit, not a content review.
+**Why the split.** The working agent rationalizes its design as it implements — that's how implementation works. Blind spots and integration concerns are easier to spot from outside the implementation context. The orchestrator's "fresh eyes" pass at merge time catches things like: scope creep, methodology slips that snuck past the working agent, missing eight-way sync, missing improvements-block, KB pointers that didn't get updated, files staged by accident. It's a structural audit, not a content review.
 
 **This is the GitHub PR model, made explicit.** The working agent = PR author; the orchestrator = maintainer who merges. GitHub institutionalizes this role separation — PRs require a reviewer, the reviewer is (typically) not the author, the merge button is gated on review approval. The pattern works in GitHub for the same reason it works here: implementer + integrator = two vantage points, structurally separated, integration risk caught at merge time rather than at next-session-start time.
 
@@ -785,7 +785,7 @@ Orchestrator (fresh-eyes pass):
   - re-runs verification: tests, KB sync, kb-counts
   - checks authorship: every commit on branch is the working agent's
   - checks scope: didn't drift from feature/project description
-  - checks methodology: 3-way sync done, improvements block filled, etc.
+  - checks methodology: 8-way sync done, improvements block filled, etc.
   ↓
 If clean → fast-forward push branch tip to main
 If issues → push back to working agent (or fix inline if trivial)
@@ -1900,7 +1900,7 @@ Don't finalize a multi-branch convergence **or** a phased-push while ANY chunk i
 
 ### 21.9 — The collision taxonomy is OPEN — new patterns get absorbed
 
-C1/C2/C3 is **¬ a closed set**. A new collision shape that doesn't cleanly fit ⇒ **learn from it → name it → absorb it** (new class ∨ subsection here + three-way sync), never force-fit into an existing class ∨ silently route around it. A collision pattern handled-but-uncodified is a lost hardening opportunity (silent-error shape). This is the **collision-domain instance** of the global always-hardening posture — the methodology is never finished; every surfaced pattern (incl. a *success* sequence worth reproducing) is a codification opportunity, watched-for continuously. → `KB § 01-PHILOSOPHY.md § Always-hardening — every surfaced pattern is a methodology-improvement opportunity`.
+C1/C2/C3 is **¬ a closed set**. A new collision shape that doesn't cleanly fit ⇒ **learn from it → name it → absorb it** (new class ∨ subsection here + eight-way sync), never force-fit into an existing class ∨ silently route around it. A collision pattern handled-but-uncodified is a lost hardening opportunity (silent-error shape). This is the **collision-domain instance** of the global always-hardening posture — the methodology is never finished; every surfaced pattern (incl. a *success* sequence worth reproducing) is a codification opportunity, watched-for continuously. → `KB § 01-PHILOSOPHY.md § Always-hardening — every surfaced pattern is a methodology-improvement opportunity`.
 
 ### 21.10 — C2-off-stale-base produces stale-dup conflicts (absorbed via §21.9, surfaced 2026-05-18 convergence)
 

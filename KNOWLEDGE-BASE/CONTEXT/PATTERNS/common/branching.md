@@ -120,7 +120,7 @@ Pick the row; route to its depth. Axis order: **write-vs-read first** (isolation
 The loop (s1 → s4):
 1. **Bump hit** during branching work — a collision / overlap / rework / contamination, **or a success worth reproducing**.
 2. **Capture in-flight** — append it to the project's `findings.md` the moment it is seen (¬ defer-to-retro). [[project-execution]] §2.13.
-3. **Promote at close** — fold the finding into the **§5 bump catalog** (a new row/class — the table is OPEN; never force-fit) + **three-way sync** (KB ↔ CLAUDE.md ↔ MEMORY, same session).
+3. **Promote at close** — fold the finding into the **§5 bump catalog** (a new row/class — the table is OPEN; never force-fit) + **eight-way sync** (KB ↔ CLAUDE.md ↔ MEMORY, same session).
 4. **Escalate if it qualifies** — deterministic predicate ∧ recurrence `N≥3` ⇒ Stage-4 keeper / preflight ([[methodology-codification-pipeline]]); otherwise it stays an s3 doc rule. *(Filed follow-up: a `task_branch` / `dispatch_preflight` guard that WARNs when a working-tree scan runs on a checkout with peer-uncommitted files under the scanned path — the §2 phantom-regression class, s3 → s4.)*
 
 **In-code sibling.** A bump too small / out-of-scope to fix in-flight is left as a greppable `NOC-REMEDIATE[<class>]` marker at the site (the in-code analogue of the `findings.md` capture) — swept + triaged in a later batch, never silent. → [[remediation-markers]].

@@ -301,6 +301,23 @@ if have_py; then
         echo "[pre-commit]   ↳ memory-embeddings refresh skipped."
 fi
 
+# ─── 9f. noc-graph cache auto-refresh (8th keeper-mirror; structured graph) ──
+# Parity with post-merge/post-checkout/pre-push: when ANY graph-input surface
+# is staged (code / KB / harness / landscape / cli / auto-improvement /
+# project-history) the graph nodes+edges MUST regenerate so orientation reads
+# never serve a stale structure. `--refresh-noc-graph` is only-stale
+# (per-aggregate-source-sha skip) so this is a no-op when nothing graph-shaped
+# changed. The graph BUILDER code itself lives under seed/ + mcp/ and is part
+# of that source corpus, so an extractor change busts the sha and rebuilds too.
+# Belt-and-suspenders with the lazy-on-read `_ensure_fresh_on_read` gate.
+# KB § PATTERNS/architect/noc-graph.md · KB § PATTERNS/common/cache-auto-freshness.md.
+STAGED_GRAPH_INPUT=$(git diff --cached --name-only 2>/dev/null | grep -E '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$' || true)
+if [[ -n "$STAGED_GRAPH_INPUT" ]] && have_py; then
+    echo "[pre-commit] Graph-input surface staged — refreshing noc-graph cache (only-stale)..."
+    "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 | sed 's/^/[pre-commit] noc-graph: /' || \
+        echo "[pre-commit]   ↳ noc-graph refresh skipped (advisory)."
+fi
+
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
 # Third in the keeper-mirror family. When the auto-improvement ndjson is
 # staged, the cache MUST refresh so consult-before-editing returns live

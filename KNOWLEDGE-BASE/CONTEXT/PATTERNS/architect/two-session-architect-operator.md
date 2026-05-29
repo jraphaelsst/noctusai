@@ -251,9 +251,9 @@ Why architect-only writes: memory is the durable rule layer. Two writers race on
 - **Operator runs `python mcp/noctusai/cli.py --verify-kb-sync`** when architect signals (via outbox-direction request, or pre-commit hook fires anyway).
 - Operator-spotted KB drift → outbox entry → architect edits.
 
-### 5.3 Three-way sync (KB / CLAUDE.md / memory)
+### 5.3 Eight-way sync (KB / CLAUDE.md / memory / agents / skills / commands / CONTEXTUALIZE.md / caches)
 
-Three-way sync (`KB § 01-PHILOSOPHY.md § Docs stay in sync`) stays in the architect's hands end-to-end. The operator's only role is running the verifier script and FF-merging the resulting commit.
+Eight-way sync (`KB § PATTERNS/common/eight-way-sync.md`) stays in the architect's hands end-to-end. The operator's only role is running the verifier script and FF-merging the resulting commit.
 
 ---
 
@@ -409,4 +409,4 @@ This pattern is **methodology-in-pilot** as of 2026-05-11. The first real run is
 - Carve-out rules (the strict git ownership may soften slightly if the smoke-test edge cases warrant).
 - `/loop` cadence (2 minutes is a first guess; may move to 1m or 5m).
 
-When the pilot proves the pattern, three-way sync the working agreement: this KB page (already created), CLAUDE.md §3 routing row (already pointing here), memory entry (new — `feedback_two_session_architect_operator.md`).
+When the pilot proves the pattern, eight-way sync the working agreement: this KB page (already created), CLAUDE.md §3 routing row (already pointing here), memory entry (new — `feedback_two_session_architect_operator.md`).

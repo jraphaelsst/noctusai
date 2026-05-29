@@ -30,7 +30,7 @@ The consume-side KB doc per lifted package is a **gate of the absorbing project*
 
 - The 10-gate absorption procedure (`KB § GUIDES/absorb-seed-workspace.md`) treats the consume-doc as part of the seed-reconcile gate — a lifted package is not "reconciled" until its `KB § INTEGRATIONS/<x>.md` exists.
 - The doc is authored from the package's actual `__init__.py` `__all__` (codebase-is-source-of-truth) — not from the absorbed repo's prose, which may describe a pre-absorption shape.
-- Three-way sync still applies: KB doc → `INDEX.md` row + `KB § INTEGRATIONS` map → CLAUDE.md Situation→read pointer → memory entry.
+- Eight-way sync still applies: KB doc → `INDEX.md` row + `KB § INTEGRATIONS` map → CLAUDE.md Situation→read pointer → memory entry.
 
 **The completeness test:** *"did this project lift code into the seed lib?"* → if yes, the consume-doc is in-scope for THIS project. Filing it as a follow-up is a deferral slip (see § 4).
 

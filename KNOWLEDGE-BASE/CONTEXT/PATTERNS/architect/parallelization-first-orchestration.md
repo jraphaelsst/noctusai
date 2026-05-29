@@ -97,7 +97,7 @@ When the work is **below the inline cutoff** OR the architect chooses inline for
 | React / TanStack Query / vite / hooks-in-dedicated-files / SSO callback | frontend-engineer | createProductApp factory, page-scoped CRUD, env.CORE_URL (no hand-roll), AST-first ts-morph, status_pagina gating |
 | Containers / CI / deploy / dev↔prod parity / base-image / sanitization / VPS ops | devops-engineer | single-container-per-product, container-first dev loop, deploy-config contract, source-of-truth chain, secrets discipline |
 | Webhook signatures / LGPD / LLM-bot defense / auth bypass / input validation | security (advisor lens) | threat-model first, verify-before-side-effect, no `VITE_` secrets, RLS per-org, keeper-runs |
-| Regression baseline / wiring audit / DRY recurrence / three-way sync verify | compliance-reviewer (advisor lens) | regression semantics, route-exists ≠ wired, replication-to-seed symmetry, `scan_*` sextet |
+| Regression baseline / wiring audit / DRY recurrence / eight-way sync verify | compliance-reviewer (advisor lens) | regression semantics, route-exists ≠ wired, replication-to-seed symmetry, `scan_*` sextet |
 | Seed architecture / orchestration / branching / dispatch / project shape / MCP toolkit | architect (self) | Phase-0 audit, 4-question practical decision test, replication-to-seed-symmetry at LANGUAGE time, parallelization-first |
 
 **Switch lens at task boundaries**, not within a task. A single backend task doesn't half-empersonate two specialists; it's wholly the backend-engineer's lens until commit. Then the next task may switch to compliance-reviewer for the verify pass, then to devops-engineer for the deploy wiring.

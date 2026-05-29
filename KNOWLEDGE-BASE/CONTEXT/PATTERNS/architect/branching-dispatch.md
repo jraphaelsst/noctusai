@@ -84,7 +84,7 @@ git merge --no-ff feat/<project>-<slice> -m "Merge feat/<project>-<slice>: <summ
 Resolve collisions/duplicates/conflicts in a **separate reconciliation commit** on `dev` — **keep the agents' original commits intact**. The history should honestly show the collision **and** the fix (no-silent-errors applied to git history). Example: pick one canonical file, port unique entries from the duplicate, fix cross-links, delete the stray.
 
 ### 8 · Verify ([noc] finish-the-session)
-Tests/builds green for touched code (`pytest` / `vite build`); KB sync (`--verify-kb-sync`) + symbology drift if docs changed; three-way sync for any methodology change. Report outcomes faithfully.
+Tests/builds green for touched code (`pytest` / `vite build`); KB sync (`--verify-kb-sync`) + symbology drift if docs changed; eight-way sync for any methodology change. Report outcomes faithfully.
 
 ### 9 · Salvage-before-delete, THEN clean up
 A worktree delete is the worktree analogue of archiving a project ⇒ it mirrors `archive`'s learn-before-archive ([[storage-hygiene]] § 2.3). **Before removing an engineer's worktree, the architect SALVAGES it** — the merge moved the *code* to `dev`, but the worktree's *durable knowledge* (engineer `findings.md` / return-notes / bugs found / follow-ups) is lost on delete unless extracted. Run the four-leg ritual:

@@ -22,14 +22,14 @@ Review code for quality, maintainability, standards + seed-compliance — indepe
 - **Seed-compliance scan.** `create_product_app` / `createProductApp` present + editable installs + no boilerplate routers on opt-in products + frontend wiring via the factories. → `KB § 03-SEED-ARCHITECTURE.md`
 - **Wiring audit.** `noctus.dev.scan_wiring`: route-exists ≠ wired; returns-real-data ∧ page-scoped CRUD. → `KB § PATTERNS/frontend/product-internal-wiring.md` (frontend-owned)
 - **DRY / recurrence at review time.** Verify the work didn't add the Nth duplicate (`scan_*` sextet); replication-to-seed-symmetry. → `KB § PATTERNS/architect/seed-absorption.md` (architect-owned)
-- **Three-way sync verification.** Any rule/behavior change lives in KB ↔ CLAUDE.md ↔ memory same session; `verify-kb-sync` green. → `KB § PATTERNS/common/claude-md-router-discipline.md`
+- **Eight-way sync verification.** Any rule/behavior change lives in KB ↔ CLAUDE.md ↔ memory same session; `verify-kb-sync` green. → `KB § PATTERNS/common/claude-md-router-discipline.md`
 - **Testing discipline.** No monkey-patching our own symbols (DI seam · `MockRequestBuilder.inserted_payloads` read-side · `patch.object` external only). Pytest is the oracle for segmented construction (grep-blindspot). → `KB § PATTERNS/compliance/testing.md`
 - **Silent-failure-from-missing-dep.** A test importing `X` where prod code does `try: import X / except ImportError` fails silently when `X` isn't declared in `requirements.txt`/`pyproject.toml` (lockstep). Sibling of boundary-contract-tests at the dep-declaration boundary; verify suite-green doesn't hide undeclared-dep failures. → `KB § PATTERNS/common/silent-test-failure-from-missing-dep.md`
 - **Verify on a clean `origin/dev` worktree.** A busy shared checkout yields phantom regressions (worktree-sensitivity). → `KB § PATTERNS/common/branching.md`
 - **Methodology codification pipeline ownership.** When a review surfaces an N≥2 recurrence or rule-gap, file the s1→s2→s3→s4 codification proposal — discipline → mechanism. → `KB § PATTERNS/common/methodology-codification-pipeline.md`
 
 ## Workflow
-1. **Compliance gate** (`noctus.dev.validate`, regression). 2. **Seed-compliance**. 3. **Wiring** (`scan_wiring`). 4. **DRY / recurrence** (`scan_*` sextet). 5. **Three-way sync**. 6. **Testing discipline**. 7. **Output**: pass/block recommendation + bundled proposal + file:line.
+1. **Compliance gate** (`noctus.dev.validate`, regression). 2. **Seed-compliance**. 3. **Wiring** (`scan_wiring`). 4. **DRY / recurrence** (`scan_*` sextet). 5. **Eight-way sync**. 6. **Testing discipline**. 7. **Output**: pass/block recommendation + bundled proposal + file:line.
 
 ## Output shape
 Pass/block recommendation + a bundled `noctus.dev.file_proposal` of captured improvements + file:line evidence. Never a code edit; never a commit; never a push.

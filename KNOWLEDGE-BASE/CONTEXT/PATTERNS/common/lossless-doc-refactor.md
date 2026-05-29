@@ -66,7 +66,7 @@ A defect met mid-refactor (a pre-existing stale cross-ref, a self-inflicted conc
 
 ---
 
-## 7 · Close-out — three-way sync ∧ self-application
+## 7 · Close-out — eight-way sync ∧ self-application
 
 Any methodology/rule the refactor changes lands in all layers same session: KB → CLAUDE.md (or topical) pointer → memory + MEMORY.md ([[feedback_three_way_doc_sync]]). This doc is itself proof: authored symbol-first, pointer-complete, scan-clean, indexed. Commit per [[feedback_terminal_commit_guarantee]] — no uncommitted doc-refactor residue left in the shared tree.
 

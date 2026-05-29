@@ -35,7 +35,7 @@ alpha   →   beta   →   rc   →   release
 
 This isn't a library that other code imports — noc is a methodology + platform. The version stamp tracks:
 
-1. **Methodology surface contract** (the 7-way sync state).
+1. **Methodology surface contract** (the 8-way sync state).
 2. **Keeper / compliance.py rules** (what's enforced as Stage-4).
 3. **MCP tool surface** (the noctus.dev.* + noctus.vps.* + noctus.seed.* fleet).
 4. **Agent + skill + command roster**.

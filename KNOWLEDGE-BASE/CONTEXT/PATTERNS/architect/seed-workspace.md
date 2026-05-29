@@ -12,7 +12,7 @@ A **seed workspace** is a sibling folder to `noctusai/` that gives an agent or d
 
 Three intended use cases:
 
-1. **Sandbox.** Throwaway experiments outside the monorepo while keeping noc's discipline (keeper, three-way sync, recurrence rule, seed-first, etc.). Agent operates by noc's rules; throwaway code never enters noc's git history.
+1. **Sandbox.** Throwaway experiments outside the monorepo while keeping noc's discipline (keeper, eight-way sync, recurrence rule, seed-first, etc.). Agent operates by noc's rules; throwaway code never enters noc's git history.
 2. **New-product staging.** Scaffold a new product against the symlinked `seed/` + `noctusai_lib/` so it is noc-compatible from line one. Promote when ready via the manifest.
 3. **Parallel agent.** Run two Claude Code sessions — one with cwd in noc, one in template. They share the same rule surface (CLAUDE.md, KB, `.claude/` settings, MCP toolkit) via symlinks, with isolated git histories, isolated `projects/`, isolated `products/`, and zero file-collision risk.
 
@@ -135,7 +135,7 @@ The *one* surface where inheritance does add weight is **memory entry bodies** �
 | Per-product memory entries | **Triage-at-decision-time** (`KB § PATTERNS/common/accept-with-rationale.md`). The accept catalog accumulates *across* products by design; trimming a product's entries hides the precedent that informs the next decision. |
 | Unrelated KB pattern docs (`PATTERNS/backend/whatsapp-chatbot-seed.md` if not used here) | **Pointer integrity.** KB pages cross-reference each other (`PATTERNS/backend/seed-fake-real-adapter.md` references `03-SEED-ARCHITECTURE.md`, etc.). Pruned pages leave dangling pointers that `noctus.dev.kb_sync` flags. |
 | Other products' code (`products/<other-slug>/`) | **Recurrence-rule scans.** `noctus.dev.scan_cross_product_helpers` + `scan_within_product_helpers` + `scan_service_line_recurrence` walk *every* product to detect N≥2/N≥3 patterns. Trim → blind to the very duplications the rule exists to catch. The whole DRY recurrence rule (`KB § PATTERNS/architect/project-execution.md § 2.7`) becomes silent. |
-| `CLAUDE/projects.md` / `CLAUDE/platform.md` | **Three-way sync.** Methodology rules live across three layers (KB + CLAUDE/topical + memory); pruning a topical file orphans the rules pointing into it. |
+| `CLAUDE/projects.md` / `CLAUDE/platform.md` | **Eight-way sync.** Methodology rules live across three layers (KB + CLAUDE/topical + memory); pruning a topical file orphans the rules pointing into it. |
 | Archived projects (`archive/projects/<date>/`) | **Phase-enrichment loop and historical rationale.** "Why did we decide X?" answers often live in archived `PROJECT.md` §11 change logs and `findings.md` files. Pruning makes the rationale unreachable; future seed-first analyses re-derive instead of inherit. |
 
 ### What IS legitimately product-specific (and gets *added*, not subtracted)

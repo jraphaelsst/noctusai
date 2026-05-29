@@ -94,8 +94,13 @@ def walk_kb_chapters(graph: Graph, kb_root: Path, *, repo_root: Path) -> None:
         if not node.id.startswith("kb:"):
             continue
         rel = node.id.removeprefix("kb:")
-        leaf = rel.split("/")[-1]
-        if "/" not in rel and _CHAPTER_FILENAME_RE.match(leaf):
+        parts = rel.split("/")
+        leaf = parts[-1]
+        # Chapters live at the KB root OR — post PATTERNS→CONTEXT reorg — under
+        # `CONTEXT/`. Accept both layouts losslessly so the reclassification
+        # survives the move (`kb:01-NAME.md` and `kb:CONTEXT/01-NAME.md`).
+        parent = parts[-2] if len(parts) >= 2 else ""
+        if parent in ("", "CONTEXT") and _CHAPTER_FILENAME_RE.match(leaf):
             # Replace the node in place (dataclass frozen → reconstruct).
             from dataclasses import replace
             idx = next(i for i, n in enumerate(graph.nodes) if n.id == node.id)

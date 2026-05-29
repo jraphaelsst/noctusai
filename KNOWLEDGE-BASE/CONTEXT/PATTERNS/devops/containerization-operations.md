@@ -378,7 +378,7 @@ Disciplined sequence (cuts re-work by an order of magnitude vs ad-hoc):
    alone (the SPA-race lesson §3.3).
 7. **Validate in a worktree**, not the primary (§3.9 — primary tree may
    carry stray state masking defects).
-8. **Three-way sync** — every codified rule lands in KB + CLAUDE.md
+8. **Eight-way sync** — every codified rule lands in KB + CLAUDE.md
    (or topical) + memory + MEMORY.md the **same session**.
 
 ---
@@ -392,7 +392,7 @@ This session's bumps all matched a single pattern:
 3. **Deeper investigation** (forced by recurrence or by §9a worktree
    validation) revealed a structural root.
 4. **Root fix** landed canonically + propagated.
-5. **Three-way sync** codified the lesson.
+5. **Eight-way sync** codified the lesson.
 
 The corollary: **a "quick fix" at the symptom layer almost always misses
 the root and recurs.** When in doubt, walk §1 (source-of-truth chain) and

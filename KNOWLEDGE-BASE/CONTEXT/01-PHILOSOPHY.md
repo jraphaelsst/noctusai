@@ -274,7 +274,7 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 1. **Methodology hits a gap.** Some case the rule didn't cover — a non-fast-forward push fails, a regex matches false-positive, a parallel agent's WIP blocks a switch.
 2. **Safety net catches the work.** `git merge` for the merging gap. The drive-by-exception clause for hook false-positives. `git stash` for switch blockers. The mechanical layer keeps the system working while the methodology learns.
 3. **Capture the learning.** Per `§ 2.11 Phase enrichment loop` — log to the SQLite tracker if the gap surfaced during a phase. Per `§ 2.7 Recurrence rule` — if N=2+ instances surface, formalize. The learning is durable, not narrative.
-4. **Update the methodology.** Three-way sync: KB body, CLAUDE pointer, memory entry. The gap closes structurally, not in conversation memory.
+4. **Update the methodology.** Eight-way sync — KB, CLAUDE.md, memory, and the other methodology surfaces (`KB § PATTERNS/common/eight-way-sync.md`). The gap closes structurally, not in conversation memory.
 5. **Future occurrences hit the updated methodology, not the gap.** The methodology covers a new case. The cycle is the platform learning to handle a class of failures it couldn't before.
 
 **Examples** (each one a real instance):
@@ -288,7 +288,7 @@ Before offering a scope estimate — options (A/B/C), session-size, time-box, "t
 - `§ 2.7 Recurrence rule` — when learnings become formalize-triggers (N=2 → triage; N=3+ → must formalize).
 - `§ 2.11 Phase enrichment loop` — where learnings get captured durably (SQLite tracker, log per phase, query before next).
 - `Triage at decision time` — what to do with a learning (formalize / refactor / accept-with-rationale).
-- `Three-way sync — KB ↔ CLAUDE ↔ memory move together` — how methodology updates land structurally, not just in agent memory.
+- `Eight-way sync — the methodology surfaces move together` — how methodology updates land structurally, not just in agent memory.
 - `No silent errors` — a failure that's silently absorbed isn't a learning; it's debt. The safety net catching the failure must be visible (commit message, change log, memory entry).
 
 **Anti-patterns:**
@@ -310,7 +310,7 @@ The safety-nets rule above is **reactive**: a net fires → capture → evolve. 
 
 **Standing duties (every turn, not on-demand).**
 - Treat each session as a methodology-mining pass: surfaced shapes get named + routed, not silently consumed.
-- **Open taxonomies, not closed ones.** Any classification we ship (collision classes C1/C2/C3, triage `[F]/[R]/[A]`, error families) is *self-extending by contract*: a new instance that doesn't fit → add the class + three-way sync, never force-fit or ignore. A taxonomy that can't grow is already stale.
+- **Open taxonomies, not closed ones.** Any classification we ship (collision classes C1/C2/C3, triage `[F]/[R]/[A]`, error families) is *self-extending by contract*: a new instance that doesn't fit → add the class + eight-way sync, never force-fit or ignore. A taxonomy that can't grow is already stale.
 - Successes are codified too — when something worked unusually well, capture *why* so it is reproducible, not luck.
 - **Explanation-as-signal (the teach-back listener).** A concept you had to *explain* to the user — especially a distinction ("how is X different from Y?", a "these sound similar" moment, any clarification the user needed) — is itself a surfaced pattern: it almost always marks a **doc gap, a naming/UX confusion, a missing abstraction, or a missing test**. The act of articulating it IS the signal. Capture it on the same rails as every other improvement (findings → proposal → memory/KB → keeper); never let the insight evaporate once the question is answered. Listen in BOTH directions — your own explanations *and* the user's confusion-shaped questions. Born 2026-05-21: explaining the Supabase **CLI vs our MCP vs managed MCP** distinction surfaced (and got) a missing "tooling map" section in `KB § MCP-SERVERS/supabase.md`.
 - The unifier: this principle is the umbrella; safety-nets (reactive capture), the codification pipeline (the mechanism), proactive MCP/AST bystander-flagging (two narrow surfaces), the recurrence rule (the N-threshold), and explanation-as-signal (the conversational surface) are all **special cases of it**.
@@ -714,7 +714,7 @@ project folder is already gone).
 
 **Durable ≠ only docs — CONFIGS / SCRIPTS / CI break, not just dangle (the highest-recurrence violation).** The form of this rule that keeps recurring (N≥3, hand-re-fixed every time) is NOT a doc pointer — it is a **CI workflow / `scripts/` entry / `.mcp.json` / compose file / Makefile that *executes* a path inside `projects/<slug>/`**. When the project is archived the path vanishes and the surface **breaks hard**: `.github/workflows/build-and-push.yml` ran `bash projects/production-deploy-migration/deploy/fleet/build-and-push.sh` → **exit 127 "No such file or directory"** the moment that project was archived (2026-05-24), red-lining GHCR image delivery for days. A doc pointer dangles *silently*; a config/script reference fails *loudly* in CI/deploy. So the rule is broader than its name: **every permanent surface — docs AND executable/config — must live in, and point only at, a durable home.** Durable homes: `scripts/infra/` (build/deploy orchestration — a `[carve:docker]` carve-out), `seed/` (shared code), KB (inlined substance). **Enforced, not just asserted:** `noctus.dev.archive(mode="project")` runs a deterministic **durable-refs gate** — it `git grep`s every tracked file outside `projects/` + `archive/` (and the sanctioned `project-history/` index) for `projects/<slug>/` and **REFUSES to archive** until each is relocated + its referrer updated (`allow_durable_refs=True` overrides only a vetted non-breaking mention). Test: `mcp/noctusai/tests/test_archive.py::TestDurableRefsGate`.
 
-## Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory
+## Docs stay in sync — eight-way sync across the methodology surfaces
 
 Every commit that changes behavior updates the relevant docs:
 - **`KB`** — `KNOWLEDGE-BASE/INDEX.md` (the catalog) + topical KB file (PHILOSOPHY, PATTERNS/*, GUIDES/*, CONTEXT/0x-*).
@@ -722,7 +722,7 @@ Every commit that changes behavior updates the relevant docs:
 - **`memory`** — the persistent feedback / project / reference file under `~/.claude/projects/.../memory/` + the `MEMORY.md` index entry.
 - `mcp/noctusai/README.md` when tooling changes.
 
-**Three-way sync is mandatory.** Any rule, methodology, or behavioral change lives in **all three layers simultaneously**: KB depth + CLAUDE.md pointer + memory entry. Updating one without the others creates drift the next agent can't see — KB has the long-form, CLAUDE.md has the rule-as-loaded-every-turn, memory has the persistent across-conversation framing. They are three views of the same rule, and they must agree.
+**Eight-way sync is mandatory.** Any rule, methodology, or behavioral change lives across **all eight first-class methodology surfaces simultaneously** — CLAUDE.md · MEMORY.md · `.claude/agents/` · KB · CONTEXTUALIZE.md · `.claude/skills/` · `.claude/commands/` · `.claude/cache/` — not only the original three (KB depth + CLAUDE.md pointer + memory entry). Updating one without the others creates drift the next agent can't see. This rule began life as "three-way sync" (KB ↔ CLAUDE.md ↔ memory) and grew as new always-on surfaces were added; the full contract + the per-surface enforcement lives at `KB § PATTERNS/common/eight-way-sync.md`.
 
 **Triggering events:**
 - A new `feedback_*.md` memory file is added → corresponding KB section + CLAUDE.md pointer must exist (or be created in the same session).
@@ -855,7 +855,7 @@ The `CLAUDE.md`-vs-`KB` split was already a methodology rule. This expanded vers
 
 ### How to apply
 
-- New behavioral rule → land KB anchor first; pointer in CLAUDE.md OR the appropriate `CLAUDE/<topic>.md` sub-file (universal vs. topical decision); memory file added with three-way sync.
+- New behavioral rule → land KB anchor first; pointer in CLAUDE.md OR the appropriate `CLAUDE/<topic>.md` sub-file (universal vs. topical decision); memory file added with eight-way sync.
 - New §1 bullet pushing >100 words → trim to ≤80; push the long-form into KB; pointer points to the new anchor.
 - New MCP server proposed → check the keep-list. If not on it, file a project requesting addition with rationale.
 - New bundled-skill use proposed → same drill.
@@ -864,7 +864,7 @@ The `CLAUDE.md`-vs-`KB` split was already a methodology rule. This expanded vers
 
 - `KB § PATTERNS/architect/project-execution.md § 2.8 Multi-phase rule shipments — forward-stub + bullet-weight discipline` — the ≤80-word rule + measurement discipline.
 - `KB § PATTERNS/common/agent-reading-discipline.md § Narrow-read first` — same per-turn-cost framing applied to file reads.
-- This file § Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory.
+- This file § Docs stay in sync — eight-way sync across the methodology surfaces.
 
 ---
 

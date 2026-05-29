@@ -32,8 +32,11 @@ def register(server) -> None:
         description=(
             "Search the knowledge graph by substring on label/id/path. "
             "Returns ranked matches. Optional `kinds=[NodeKind, ...]` filter "
-            "(e.g. `[\"mcp_tool\", \"kb_pattern\"]`). Run `noctus.graph.build` "
-            "first if `.noc-graph/graph.json` is missing."
+            "(e.g. `[\"mcp_tool\", \"kb_pattern\"]`). An EMPTY query "
+            "(`query=\"\"`) LISTS every node — combine with `kinds` to "
+            "enumerate all nodes of a kind (e.g. `query=\"\" "
+            "kinds=[\"harness_agent\"]`); raise `limit` to page past 20. "
+            "Run `noctus.graph.build` first if `.noc-graph/graph.json` is missing."
         ),
     )
     def _query(query: str, kinds: Optional[list[str]] = None, limit: int = 20) -> dict:

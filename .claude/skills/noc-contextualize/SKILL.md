@@ -25,7 +25,7 @@ If you are already working / already oriented, this is a NO-OP — skip it (re-r
 - "What's loaded into every session?" → `noctus.graph.neighbors landscape:CLAUDE.md depth=1`
 - "Which mcp tools live in module Y?" → `noctus.graph.neighbors code:<path> edge_kinds=["exposes_tool"]`
 - "What does flag `--refresh-X` do?" → `noctus.graph.query "--refresh" kinds=["cli_flag"]`
-- "Hot drift surfaces (≥3 auto-improvement events)" → `noctus.graph.query "" kinds=["auto_improvement_event"]`
+- "Hot drift surfaces" → `noctus.dev.auto_improvement_query` (canonical; surface the open `s1`/`s2-memory` entries). The graph kind `noctus.graph.query "" kinds=["auto_improvement_event"]` only materializes ≥3-events-on-one-target aggregates, so it is frequently empty.
 
 If the cache is stale → `python mcp/noctusai/cli.py --refresh-noc-graph` (full rebuild ~13s) or the post-merge / post-checkout / pre-push hook handles it automatically.
 

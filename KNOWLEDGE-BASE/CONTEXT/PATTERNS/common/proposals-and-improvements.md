@@ -177,7 +177,7 @@ When the formal-proposal path applies, the §4b apply-inline-then-delete mechani
 
 **Why this is the default**: filing a proposal file just to delete it the same session was ceremony. The `**Improvements:**` block + §11 entry IS the durable audit trail. Removing the proposal-file step recovers turn-time without losing the trail.
 
-**What does NOT change**: §4c end-of-work summary still runs. §6 ↔ §11 self-check still runs. Three-way sync (KB ↔ CLAUDE.md ↔ memory) still runs. Phase-by-phase cadence still holds (one phase, then pause for "continue") — auto-improvement applies to **closing the current phase**, ¬ user-permission to start the next.
+**What does NOT change**: §4c end-of-work summary still runs. §6 ↔ §11 self-check still runs. Eight-way sync (KB ↔ CLAUDE.md ↔ memory) still runs. Phase-by-phase cadence still holds (one phase, then pause for "continue") — auto-improvement applies to **closing the current phase**, ¬ user-permission to start the next.
 
 **Anti-pattern**: auto-applying an item that wasn't actually in-scope ("the agent decided"). The in-scope filter is load-bearing — if you're unsure whether an item is in-scope, defer it.
 

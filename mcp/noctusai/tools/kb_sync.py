@@ -387,8 +387,16 @@ def methodology_reference_gaps(root: Path) -> list[str]:
         for rel in kb_rel:
             if rel == ref or rel.endswith("/" + ref):
                 return True
-        # 3. Basename fallback
-        return ref.split("/")[-1] in kb_base
+        # 3. Basename fallback — ONLY for bare single-segment refs (the legacy
+        #    `KB § branching.md` / `KB § 01-PHILOSOPHY.md` shorthand). A
+        #    PATH-QUALIFIED ref (contains `/`) MUST resolve by exact/suffix path
+        #    (steps 1–2); falling back to the leaf here let a file living at the
+        #    WRONG path pass because its basename happened to match somewhere in
+        #    KB (the 2026-05-26 ssh-deploy-key-restrictions.md mis-placement —
+        #    KB § feedback_kb_sync_fuzzy_path_match in memory).
+        if "/" in ref:
+            return False
+        return ref in kb_base
 
     # Collect surfaces.
     surfaces: list[Path] = []

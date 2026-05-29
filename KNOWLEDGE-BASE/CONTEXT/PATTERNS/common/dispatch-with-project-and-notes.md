@@ -111,7 +111,7 @@ After all slices in §4a.1 are delivered + integrated:
 - **`KB § PATTERNS/architect/parallelization-first-orchestration.md`** — inline-empersonation rules (the tech-lead applies a lens when no subagent dispatch). Same §4a metadata applies — tech-lead reads their own §4a.1 row, switches discipline, applies + commits, then switches.
 - **`KB § PATTERNS/common/scoped-auto-improvement.md`** — the two-leg footer's ledger destination. Delivery notes also write to `project-history/auto-improvement.ndjson` (so codification radar + cache stay fed).
 - **`KB § PATTERNS/common/methodology-codification-pipeline.md`** — the s1→s2→s3→s4 contract. §4a.2 names which stages a slice is expected to touch.
-- **`KB § PATTERNS/architect/proposals-and-improvements.md`** — legacy phase-proposal protocol (kind="phase", end-of-phase bundle). Untouched by this pattern.
+- **`KB § PATTERNS/common/proposals-and-improvements.md`** — legacy phase-proposal protocol (kind="phase", end-of-phase bundle). Untouched by this pattern.
 
 ## Tooling
 

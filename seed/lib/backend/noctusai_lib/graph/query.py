@@ -36,12 +36,25 @@ class GraphIndex:
         kinds: list[NodeKind] | None = None,
         limit: int = 20,
     ) -> list[tuple[Node, float]]:
-        """Substring-match on label + id + path. Returns ranked (node, score)."""
+        """Substring-match on label + id + path. Returns ranked (node, score).
+
+        An empty/whitespace query is a LISTING request, not a no-op: it
+        enumerates every node (optionally ``kinds``-filtered), ordered by
+        label for stable output. This makes ``query="" kinds=[...]`` the
+        canonical "list every node of kind X" call the contextualize
+        protocol relies on for surfacing the methodology fabric.
+        """
         q_low = query.lower().strip()
-        if not q_low:
-            return []
-        results: list[tuple[Node, float]] = []
         kind_filter = {k.value for k in kinds} if kinds else None
+        if not q_low:
+            listed = [
+                (node, 1.0)
+                for node in self.graph.nodes
+                if not kind_filter or node.kind.value in kind_filter
+            ]
+            listed.sort(key=lambda pair: pair[0].label.lower())
+            return listed[:limit]
+        results: list[tuple[Node, float]] = []
         for node in self.graph.nodes:
             if kind_filter and node.kind.value not in kind_filter:
                 continue
