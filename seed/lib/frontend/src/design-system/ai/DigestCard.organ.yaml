@@ -1,30 +1,34 @@
 name: DigestCard
 path: seed/lib/frontend/src/design-system/ai/DigestCard.tsx
 phase: pilot-seed
-registered_at: "2026-05-29"
+registered_at: '2026-05-29'
 validation_status: validated
-
 known_facts:
-  - "Uniform container for AI-generated digest narratives across products. 3 consumers: PF monthly narrative, Daily Life weekly review, Core admin audit digest."
-  - "Renders 4 states: loading (skeleton), error (inline — does NOT break surrounding page), empty, and content (paragraphs + AIFeedbackButtons). Non-destructive error handling is explicit by design: digest is informational."
-  - "Integrates AIFeedbackButtons when outputRef is provided — the standard `digest:<service>:<period_token>` ref convention enables analytics correlation with prompt versions. Feedback wiring on day-one is preferred."
-  - "LGPD note embedded in source: digest narratives may contain personal data summaries (PF financial diary, Daily Life personal narrative). Consent guard lives at the BACKEND; the frontend renders whatever the backend returned with no additional gating."
-  - "Located in design-system/ai/ (not design-system/components/) — canonical namespace for AI-rendered output surfaces."
-
+- 'Uniform container for AI-generated digest narratives across products. 3 consumers:
+  PF monthly narrative, Daily Life weekly review, Core admin audit digest.'
+- 'Renders 4 states: loading (skeleton), error (inline — does NOT break surrounding
+  page), empty, and content (paragraphs + AIFeedbackButtons). Non-destructive error
+  handling is explicit by design: digest is informational.'
+- Integrates AIFeedbackButtons when outputRef is provided — the standard `digest:<service>:<period_token>`
+  ref convention enables analytics correlation with prompt versions. Feedback wiring
+  on day-one is preferred.
+- 'LGPD note embedded in source: digest narratives may contain personal data summaries
+  (PF financial diary, Daily Life personal narrative). Consent guard lives at the
+  BACKEND; the frontend renders whatever the backend returned with no additional gating.'
+- Located in design-system/ai/ (not design-system/components/) — canonical namespace
+  for AI-rendered output surfaces.
 errors_encountered: []
-
-drifts_surfaced: []
-
+drifts_surfaced:
+- 'W5 2026-05-29: render test authored to validate the 4 prop states; surfaced that
+  DigestCard transitively imports the infra singleton via AIFeedbackButtons->useAIFeedback->@noctusai/seed/infra
+  (Supabase client at module load). Isolatable by mocking the AIFeedbackButtons collaborator,
+  but blocked by the same lib-frontend vitest harness gap. NOC-REMEDIATE[harness-vitest-dual-react].'
 alternatives_considered: []
-
 manual_validation_log: []
-
 integration_test_status: unknown
-
 e2e_test:
   path: null
   status: pending
   last_run: null
   runs_in_ci: false
-
 bugs_fixed_during_dev: []

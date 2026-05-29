@@ -1,6 +1,6 @@
 # seed-organs-cache — the body layer of seed absorption
 
-> **Status:** PHASE 1 (seed pilot). Active.
+> **Status:** PHASE 1 (seed pilot). W1–W4 shipped; W5 tooling shipped 2026-05-29 (e2e-per-organ leg blocked on a pre-existing FE harness gap — scoped as a follow-up). Durable learnings → `KB § PATTERNS/common/build-learn-cache-mindset.md §7a` (NOT parked here — this file is archived).
 > **Slug:** `seed-organs-cache`
 > **Born:** 2026-05-29.
 > **Owner:** tech-lead (orchestrator).
@@ -72,7 +72,7 @@ The organ cache MUST be queryable by INTENT, not just by name. "Find me a reusab
 | W2 | `noctus.dev.component_bundle <name>` tool | The "organ-in-a-box" return: `{source, types, tests, deps[], consumers[], wiring_snippet, validation_status}` — the packaged knowledge per organ. | NEW `mcp/noctusai/tools/noctus/dev/component_bundle.py` + tests + KB doc + INDEX | TBD |
 | W3 | `noctus.dev.component_list` tool + validation status derivation | Discoverability + sort by reuse. Derives `validated\|emerging\|shelfware` per component. | NEW `mcp/noctusai/tools/noctus/dev/component_list.py` + shared validation derivation in `noctusai_lib/.../validation_signal.py` + tests | TBD |
 | W4 | Register first 5 seed organs + knowledge bundles | Populates the catalog with the proven canonical set + each organ ships its 8-field knowledge bundle (per §3a). Each gets an `organ.yaml` sidecar (source + tests + e2e + known_facts/errors/drifts/alternatives/manual_validation/integration). Surfaces the `shelfware: PageSkeleton/LLMSpendBadge/FakeModeBadge/ErrorBoundary` honestly. | `seed/lib/frontend/src/<each>.organ.yaml` (sidecar) + KB doc § Phase-1-canonical-set | TBD |
-| W5 | E2E test automation per organ + `noctus.dev.organ_knowledge_*` tools | Every registered organ ships at least one e2e test (Playwright or vitest+RTL+MSW pair). MCP tools `organ_knowledge_append <name> <event>` (write) + `organ_knowledge_query <name>` (read) so future builders see the full journey. Manual-validation entries logged via the same tool. | NEW `mcp/noctusai/tools/noctus/dev/organ_knowledge.py` + e2e tests per organ (Phase-1 set) + KB doc | TBD |
+| W5 | E2E test automation per organ + `noctus.dev.organ_knowledge_*` tools | Every registered organ ships at least one e2e test (Playwright or vitest+RTL+MSW pair). MCP tools `organ_knowledge_append <name> <event>` (write) + `organ_knowledge_query <name>` (read) so future builders see the full journey. Manual-validation entries logged via the same tool. | NEW `mcp/noctusai/tools/noctus/dev/organ_knowledge.py` + e2e tests per organ (Phase-1 set) + KB doc | **TOOLING SHIPPED** (append/query + inline re-embed + CLI + 14 tests). **e2e leg BLOCKED** on pre-existing `seed/lib/frontend` vitest harness gap (dual-React + jest-dom matchers; `ResourceManager.test.tsx` fails 6/6) → follow-up `NOC-REMEDIATE[harness-vitest-dual-react]`. |
 
 W1 is the prerequisite for W2-W3. W2-W3-W4-W5 run in dependency order: W1 → W2+W3 (parallel) → W4 (registers using W2+W3) → W5 (e2e + knowledge tooling).
 
@@ -119,6 +119,7 @@ Run at end of W1, W2, W3, W4: `--check-eight-way-sync` + `--verify-kb-sync` + th
 - 2026-05-29: project filed; Phase 1 = seed pilot; FE-first; storage = extend noc-graph; validation = derived (no manual catalog rot). Architect scout pre-read at `task aa7fcf56...` informed the decisions.
 - 2026-05-29: validation signal definition pinned (end-to-end working code shipped reuse-mindset, NOT test-file-existence).
 - 2026-05-29: **Build-Learn-Cache mindset absorbed into project** (user-extended mid-flight). Added §3a + W5 + extended §5 acceptance. 8 knowledge fields per organ; hybrid manual+automated validation; e2e per organ; "the loop runs during dev AND beyond" (refactor/bugfix/integration/deploy continue appending). Codified at `KB § PATTERNS/common/build-learn-cache-mindset.md`.
+- 2026-05-29 (W5): **organ_knowledge_append/query tooling SHIPPED** — the loop's read/write mechanism (8-field taxonomy by mutation shape: list-append / scalar-set / object-merge; inline `register_organ(force=True)` re-embed per §3b; MCP + CLI; 14 unit tests green; dogfooded on `ResourceManager` + `DigestCard` sidecars). Documented at `KB § build-learn-cache-mindset.md §7a` (durable; survives this project's archival). **e2e-per-organ leg deferred** — a render test authored for `DigestCard` surfaced that the `seed/lib/frontend` vitest harness is broken (dual-React `null useState` + jest-dom matchers unregistered); the existing `ResourceManager.test.tsx` fails 6/6 too. The harness fix (dedupe + `react-dom/client`/`react/jsx-runtime` subpath aliases + setup matcher registration) is its own infra slice that must land before the e2e leg + the `e2e_test` sidecar field. Tracked as `NOC-REMEDIATE[harness-vitest-dual-react]`.
 
 ## Composes with
 

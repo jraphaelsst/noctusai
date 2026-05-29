@@ -51,6 +51,7 @@ def register_all(server) -> None:
     from . import engineer_brief_compose
     from . import find_reusable_component
     from . import findings
+    from . import organ_knowledge
     from . import orphan_branch_sweeper
     from . import product_centroid_drift
     from . import scan_repetition_semantic
@@ -154,6 +155,7 @@ def register_all(server) -> None:
     engineer_output_linter.register(server)
     find_reusable_component.register(server)
     findings.register(server)
+    organ_knowledge.register(server)
     orphan_branch_sweeper.register(server)
     product_centroid_drift.register(server)
     scan_repetition_semantic.register(server)

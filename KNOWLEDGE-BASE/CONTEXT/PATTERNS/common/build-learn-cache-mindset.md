@@ -182,6 +182,19 @@ The recursive proof: **this KB doc itself is an artifact that should carry the e
 
 ---
 
+## 7a · The loop's read/write mechanism — `noctus.dev.organ_knowledge_*` (seed-organs-cache W5, SHIPPED 2026-05-29)
+
+The loop is only real if appending + querying knowledge is a one-call operation — otherwise the journey gets parked in transcripts. Two MCP tools (+ CLI mirrors) close it for organs (the seed-lib reusable components whose 8-field bundle lives in `<Name>.organ.yaml`):
+
+- **`noctus.dev.organ_knowledge_append <name> <field> <entry>`** — append/set a knowledge entry, then **re-embed inline**. The 8 fields split by mutation shape: LIST fields (`known_facts`, `errors_encountered`, `drifts_surfaced`, `alternatives_considered`, `manual_validation_log`, `bugs_fixed_during_dev`) push the entry; the SCALAR field (`integration_test_status`) sets it; the OBJECT field (`e2e_test`) merges a dict. Structured entries (a `manual_validation_log` dict, an `e2e_test` object) pass via `entry_json=true`.
+- **`noctus.dev.organ_knowledge_query <name>`** — return the accumulated journey (all 8 fields + metadata). Answers "what did we learn building X" without reading commit logs.
+
+**The re-embed contract (§3b W5 — LOAD-BEARING).** `organ_knowledge_append` calls `register_organ(name, force=True)` synchronously, so an agent querying `find_reusable_component` right after a `manual_validation_log` entry sees the new content immediately. The organ chunk's `source_sha` already hashes the knowledge bundle, so the re-embed is idempotent by construction. `re_embed=false` batches (skips the OpenAI leg). The append + write always lands even if the embed leg fails — the failure is surfaced in `embed_status`, never swallowed.
+
+**Known blocker — the e2e-per-organ leg (NOC-REMEDIATE[harness-vitest-dual-react]).** §3a says every organ ships ≥1 e2e test. That leg is blocked by a pre-existing `seed/lib/frontend` vitest harness gap (independent of W5): render tests fail with the dual-React "Cannot read properties of null (reading 'useState')" (`react-dom/client` resolves from `lib/frontend/node_modules` while the component gets the framework's react) AND jest-dom matchers aren't registered (`toBeInTheDocument` → "Invalid Chai property"). The existing `ResourceManager.test.tsx` — counted as W4 validation — fails 6/6 for the same reason. Fixing the harness (dedupe + subpath aliases for `react-dom/client`/`react/jsx-runtime` + setup-file matcher registration) is its own infra slice; the e2e tests + the `e2e_test` sidecar field follow it. The W5 tooling ships independently because the loop's read/write mechanism does not depend on the FE test harness.
+
+---
+
 ## 8 · Stage status
 
 - **Stage 1** (emergent) — surfaced by user 2026-05-29 ("build/refactor/bug-fix/etc.… every component / page / functionality / integration… known facts, errors, drifts, alternatives, manual validation, e2e, bugs fixed… cached alongside the artifact… not only during dev.").

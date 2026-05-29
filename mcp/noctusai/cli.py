@@ -304,6 +304,12 @@ def main():
     parser.add_argument("--find-reusable-component", metavar="QUERY", help="Find reusable seed organs by semantic intent query. Embeds the query → cosine-top-K search over organ chunks in code-embeddings cache. Use --top-k N to control result count (default 5). Use --filter-status to narrow by validation_status. Falls back to keyword search when embedding provider unreachable. MCP: noctus.dev.find_reusable_component. KB § PATTERNS/architect/seed-organ-canonical-set.md")
     parser.add_argument("--register-organ", metavar="NAME", help="Embed a named seed organ into the code-embeddings cache (chunk_kind='organ'). Idempotent. MCP: noctus.dev.register_organ.")
     parser.add_argument("--register-all-canonical-organs", action="store_true", help="Register all 5 Phase-1 canonical seed organs (LoginForm/ForgotPasswordPage/AcceptInvitePage/ResourceManager/DigestCard). Idempotent. MCP: noctus.dev.register_all_canonical_organs.")
+    parser.add_argument("--organ-knowledge-append", metavar="NAME", help="Append a knowledge entry to an organ's journey then re-embed inline. Requires --organ-field + --organ-entry; --organ-entry-json parses the entry as JSON (for manual_validation_log / e2e_test). --no-organ-re-embed to batch. MCP: noctus.dev.organ_knowledge_append. KB § PATTERNS/common/build-learn-cache-mindset.md")
+    parser.add_argument("--organ-knowledge-query", metavar="NAME", help="Return an organ's accumulated build-learn-cache journey (8 knowledge fields + metadata). MCP: noctus.dev.organ_knowledge_query.")
+    parser.add_argument("--organ-field", help="Knowledge field for --organ-knowledge-append (known_facts|errors_encountered|drifts_surfaced|alternatives_considered|manual_validation_log|integration_test_status|e2e_test|bugs_fixed_during_dev).")
+    parser.add_argument("--organ-entry", help="Knowledge entry value for --organ-knowledge-append (a string, or JSON when --organ-entry-json is set).")
+    parser.add_argument("--organ-entry-json", action="store_true", help="Parse --organ-entry as JSON before appending (for structured fields like manual_validation_log / e2e_test).")
+    parser.add_argument("--no-organ-re-embed", action="store_true", help="Skip the inline re-embed after --organ-knowledge-append (batch mode).")
     parser.add_argument("--sort", default="consumers_desc", choices=["consumers_desc", "name", "last_touched"], help="Sort order for --component-list (default: consumers_desc).")
     parser.add_argument("--filter-status", metavar="STATUSES", help="Comma-separated status filter for --component-list or --find-reusable-component (e.g. 'shelfware' or 'validated,emerging').")
     parser.add_argument("--improvements", metavar="PROJECT", help="Regenerate improvements.md next to the project file (run after ticking a phase header to [x]). Captures improvement opportunities discovered during each completed phase — NOT a preview of upcoming phases.")
@@ -1650,6 +1656,48 @@ def main():
             for r in results:
                 status_color = GREEN if r.get("ok") else RED
                 print(f"    {status_color}{r['name']:<28}{RESET} {r.get('status', 'unknown'):<20} sha={r.get('source_sha', '')[:12]}")
+
+    elif getattr(args, "organ_knowledge_append", None):
+        from tools.noctus.dev.organ_knowledge import organ_knowledge_append as _oka
+        field = getattr(args, "organ_field", None)
+        raw_entry = getattr(args, "organ_entry", None)
+        if not field or raw_entry is None:
+            print(f"  {RED}--organ-knowledge-append requires --organ-field and --organ-entry.{RESET}")
+            return
+        entry: object = raw_entry
+        if getattr(args, "organ_entry_json", False):
+            entry = json.loads(raw_entry)
+        # The re-embed leg touches OpenAI; ensure LLM is configured unless batching.
+        re_embed = not getattr(args, "no_organ_re_embed", False)
+        if re_embed:
+            _ensure_llm_configured()
+        result = _oka(args.organ_knowledge_append, field, entry, re_embed=re_embed)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            status_color = GREEN if result.get("ok") else RED
+            print(f"  {BOLD}organ_knowledge_append:{RESET} {args.organ_knowledge_append!r}.{field}")
+            print(f"    {status_color}{result.get('status', 'unknown')}{RESET} · action={result.get('action', '-')} · re_embedded={result.get('re_embedded', False)} · sha={result.get('source_sha', '')[:12]}")
+
+    elif getattr(args, "organ_knowledge_query", None):
+        from tools.noctus.dev.organ_knowledge import organ_knowledge_query as _okq, LIST_FIELDS, SCALAR_FIELDS, OBJECT_FIELDS
+        result = _okq(args.organ_knowledge_query)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            if not result.get("ok"):
+                print(f"  {RED}organ_knowledge_query: {result.get('status')}{RESET} — {args.organ_knowledge_query!r}")
+            else:
+                print(f"  {BOLD}{result['name']}{RESET} · {result.get('validation_status', 'unknown')} · {result.get('path', 'path unknown')}")
+                for k in sorted(LIST_FIELDS):
+                    vals = result.get(k) or []
+                    print(f"    {BOLD}{k}{RESET} ({len(vals)})")
+                    for v in vals:
+                        print(f"      - {str(v)[:100]}")
+                for k in sorted(SCALAR_FIELDS):
+                    print(f"    {BOLD}{k}{RESET}: {result.get(k)}")
+                for k in sorted(OBJECT_FIELDS):
+                    print(f"    {BOLD}{k}{RESET}: {result.get(k)}")
 
     elif args.lgpd_list:
         from tools.noctus.dev.lgpd import list_warnings
