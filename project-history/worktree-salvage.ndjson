@@ -84,3 +84,4 @@
 {"ts": "2026-05-28", "event": "worktree-sweep", "path": ".claude/worktrees/eight-way-sync-promotion", "branch": "feat/eight-way-sync-promotion", "sha": "f677d2664c7b34ba317ba9a4c7c3bbb36723d4d7", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-05-29T14:10:04.904878+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": []}
 {"ts": "2026-05-29", "event": "worktree-sweep", "path": ".claude/worktrees/start-sh-stale-container-selfheal", "branch": "feat/start-sh-stale-container-selfheal", "sha": "0062cb65a3dd58be9c424b3cd39d11085cac9c2f", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-05-29", "event": "worktree-sweep", "path": ".claude/worktrees/dev-restart-policy-seam", "branch": "feat/dev-restart-policy-seam", "sha": "bbc4586cadd3155ed1eeb96a4dcd1a19367ed6a9", "reason": "task_branch cleanup (learn-before-delete)"}
