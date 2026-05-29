@@ -1,32 +1,16 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuthStore } from '@noctusai/seed/infra';
-import { api } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
 import { resolveSSOContext } from "@noctusai/lib";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Member {
-  id: string;
-  nome: string;
-  email: string;
-  role: string;
-  org_role: string;
-  avatar_url?: string;
-  created_at: string;
-}
-
-interface Invitation {
-  id: string;
-  email: string;
-  role: string;
-  status: string;
-  created_at: string;
-  expires_at: string;
-}
+import {
+  type Member,
+  useCancelInvitation,
+  useInviteMember,
+  useRemoveMember,
+  useTeamInvitations,
+  useTeamMembers,
+} from "@/hooks/useTeam";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrador",
@@ -34,89 +18,58 @@ const ROLE_LABELS: Record<string, string> = {
   owner: "Proprietario",
 };
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export default function Equipe() {
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
 
-  const [members, setMembers] = useState<Member[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const membersQuery = useTeamMembers();
+  const invitationsQuery = useTeamInvitations();
+  const inviteMutation = useInviteMember();
+  const removeMutation = useRemoveMember();
+  const cancelInviteMutation = useCancelInvitation();
 
-  // Invite modal
+  const members = membersQuery.data ?? [];
+  const invitations = invitationsQuery.data ?? [];
+  const loading = membersQuery.isLoading || invitationsQuery.isLoading;
+
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
-  const [inviting, setInviting] = useState(false);
-
-  // Confirm remove
   const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
-  const [removing, setRemoving] = useState(false);
-
-  async function fetchData() {
-    try {
-      const [membersRes, invitesRes] = await Promise.all([
-        api.get<{ data: Member[] }>("/api/team"),
-        api.get<{ data: Invitation[] }>("/api/team/invitations").catch(() => ({ data: [] })),
-      ]);
-      setMembers(membersRes.data || []);
-      setInvitations(invitesRes.data || []);
-    } catch {
-      toast.error("Erro ao carregar dados da equipe");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (user) fetchData();
-  }, [user]);
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
-    setInviting(true);
     try {
-      await api.post("/api/team/invite", { email: inviteEmail, role: inviteRole });
+      await inviteMutation.mutateAsync({ email: inviteEmail, role: inviteRole });
       toast.success("Convite enviado com sucesso");
       setShowInviteModal(false);
       setInviteEmail("");
       setInviteRole("member");
-      fetchData();
     } catch (err: any) {
       toast.error("Erro ao enviar convite", {
         description: err?.message || err?.detail || "Tente novamente",
       });
-    } finally {
-      setInviting(false);
     }
   }
 
   async function handleRemoveMember() {
     if (!confirmRemove) return;
-    setRemoving(true);
     try {
-      await api.delete(`/api/team/${confirmRemove.id}`);
+      await removeMutation.mutateAsync(confirmRemove.id);
       toast.success("Membro removido");
       setConfirmRemove(null);
-      fetchData();
     } catch (err: any) {
       toast.error("Erro ao remover membro", {
         description: err?.message || "Tente novamente",
       });
-    } finally {
-      setRemoving(false);
     }
   }
 
   async function handleCancelInvite(inviteId: string) {
     try {
-      await api.delete(`/api/team/invitations/${inviteId}`);
+      await cancelInviteMutation.mutateAsync(inviteId);
       toast.success("Convite cancelado");
-      fetchData();
     } catch (err: any) {
       toast.error("Erro ao cancelar convite", {
         description: err?.message || "Tente novamente",
@@ -334,9 +287,9 @@ export default function Equipe() {
                 <button
                   type="submit"
                   className="inline-flex items-center gap-2 rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={inviting || !inviteEmail}
+                  disabled={inviteMutation.isPending || !inviteEmail}
                 >
-                  {inviting ? (
+                  {inviteMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Enviando...
@@ -377,9 +330,9 @@ export default function Equipe() {
               <button
                 className="inline-flex items-center gap-2 rounded-md bg-destructive px-6 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={handleRemoveMember}
-                disabled={removing}
+                disabled={removeMutation.isPending}
               >
-                {removing ? (
+                {removeMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Removendo...
