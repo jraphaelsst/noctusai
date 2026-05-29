@@ -172,11 +172,14 @@ KNOWLEDGE-BASE/
 │   │   ├── 06-THERAPY.md
 │   │   ├── 07-AUTH-SECURITY.md
 │   │   └── 08-DAILY-LIFE.md
-│   └── frontend/           ← per-product frontend details
-│       ├── 01-CORE.md
-│       ├── 02-ERP.md
-│       ├── 03-PF.md
-│       └── 04-THERAPY.md
+│   ├── frontend/           ← per-product frontend details
+│   │   ├── 01-CORE.md
+│   │   ├── 02-ERP.md
+│   │   ├── 03-PF.md
+│   │   └── 04-THERAPY.md
+│   └── PRODUCTS/           ← per-product design docs (multi-feature slices that don't belong in a single INTEGRATIONS/backend doc)
+│       └── social-wiring/
+│           └── INTEGRATIONS-MULTI-ACCOUNT.md ← multi-account integration credentials (integration_accounts table; seed-shape-vs-primitive-consume rule; YouTube OAuth v1; 3-step extension recipe)
 ├── INSTRUCTIONS/           ← agent development / skill design
 │   ├── 00-MASTER.md
 │   ├── 01-SKILLS.md
@@ -291,6 +294,7 @@ KNOWLEDGE-BASE/
 | Google integrations consume-side — Calendar/Maps/YouTube/Drive/Gmail (each exact `__all__` · resolver/credential-store factory injection · YouTube quota-cost-documented Protocol · Drive dual download+read Protocols · Gmail OAuth-only send+read v1 with `OAuthGmailCredentials`/`GmailCredentialResolver`/`make_gmail_client` · seed-ahead consumer status · cited social-wiring + mcp/google/tools/gmail consumers) | `CONTEXT/INTEGRATIONS/google.md` |
 | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
 | Image generation consume-side (`noctusai_lib.integrations.image_gen` exact `__all__` · `get_image_gen_adapter` factory · `FakeImageGenAdapter` deterministic-URL signal · `GeminiImageGenAdapter` lazy-SDK Real backend · renderer-agnostic Protocol · cited social-wiring/media_creation consumer; v1 Gemini-only — OpenAI/Stability/Replicate extension recipe documented) | `CONTEXT/INTEGRATIONS/image-gen.md` |
+| social-wiring multi-account integration credentials — product-local `integration_accounts` table + service (governs `feedback_seed_shape_vs_primitive_consume`: seed CredentialStore is single-row-per-(org,provider) ≠ multi-row, so product-local table consumes seed Fernet PRIMITIVE via `credential_vault.require_fernet`, no Protocol fork); v1 providers: youtube/google_drive/gmail/meta/n8n; WAHA excluded (whatsapp_connections is the existing solution); YouTube OAuth start/callback ships; 3-step recipe for adding new providers; REST surface under `/api/integrations/`; is_default atomic-set invariant; RLS org-scoped | `CONTEXT/PRODUCTS/social-wiring/INTEGRATIONS-MULTI-ACCOUNT.md` |
 | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
 | ERP backend | `CONTEXT/backend/02-ERP.md` |
 | PF backend | `CONTEXT/backend/03-PF.md` |
