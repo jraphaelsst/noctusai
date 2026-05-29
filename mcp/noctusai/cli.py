@@ -306,6 +306,18 @@ def main():
     parser.add_argument("--dispatch-budget-log", action="store_true", help="Append one dispatch token-budget row to project-history/dispatch-budget.ndjson. Requires --agent (existing flag), --budget-slug, --input-tokens, --output-tokens, --budget-model. Optional: --source-ref. MCP: noctus.dev.dispatch_budget_log. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
     parser.add_argument("--dispatch-budget-report", action="store_true", help="Aggregate the dispatch-budget ledger by (agent, model) within a rolling window. Optional --agent (existing flag), --budget-model, --window-days (default 7; 0=all-time). MCP: noctus.dev.dispatch_budget_report. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
     parser.add_argument("--dispatch-budget-summary", action="store_true", help="One-shot totals of the dispatch-budget ledger. Optional --agent (existing flag), --budget-model, --window-days (default 0=all-time). MCP: noctus.dev.dispatch_budget_summary. KB § PATTERNS/common/dispatch-budget-telemetry.md.")
+    parser.add_argument("--surface-to-tech-lead", action="store_true", help="File a structured surface note when blocked. Requires --surface-reason, --surface-proposal, --surface-state, --surface-attempted. Optional --worktree-path for explicit wt. MCP: noctus.dev.surface_to_tech_lead. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--surface-reason", metavar="REASON", help="With --surface-to-tech-lead: one-line summary of the blocker.")
+    parser.add_argument("--surface-proposal", metavar="MD", help="With --surface-to-tech-lead: proposal markdown (≤200 lines).")
+    parser.add_argument("--surface-state", metavar="MD", help="With --surface-to-tech-lead: current state markdown.")
+    parser.add_argument("--surface-attempted", metavar="MD", help="With --surface-to-tech-lead: attempted resolution markdown.")
+    parser.add_argument("--list-pending-surfaces", action="store_true", help="List surface notes awaiting tech-lead response. Pass --include-responded to see all. MCP: noctus.dev.list_pending_surfaces. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--include-responded", action="store_true", help="With --list-pending-surfaces: include already-responded surfaces.")
+    parser.add_argument("--respond-and-resume", metavar="SURFACE_ID", dest="respond_and_resume_id", help="Respond to a pending surface and compose ResumeBundle. Requires --surface-decision, --surface-rationale. Optional --surface-updated-brief. MCP: noctus.dev.respond_and_resume. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--surface-decision", metavar="DECISION", choices=["approve", "reject", "adapt"], help="With --respond-and-resume: approve | reject | adapt.")
+    parser.add_argument("--surface-rationale", metavar="MD", help="With --respond-and-resume: tech-lead rationale (required, durable knowledge).")
+    parser.add_argument("--surface-updated-brief", metavar="MD", help="With --respond-and-resume --surface-decision=adapt: the revised brief text.")
+    parser.add_argument("--dispatch-resume-brief", metavar="SURFACE_ID", dest="dispatch_resume_brief_id", help="Compose the full dispatch-ready brief for a responded surface. Pass verbatim to Agent() brief. MCP: noctus.dev.dispatch_resume_brief. KB § PATTERNS/common/surface-and-resume-tooling.md.")
     parser.add_argument("--budget-slug", metavar="SLUG", dest="budget_slug", help="With --dispatch-budget-log: branch/task slug (e.g. 'feat/r1-f11').")
     parser.add_argument("--input-tokens", metavar="N", type=int, dest="input_tokens", help="With --dispatch-budget-log: input token count.")
     parser.add_argument("--output-tokens", metavar="N", type=int, dest="output_tokens", help="With --dispatch-budget-log: output token count.")
@@ -1959,6 +1971,85 @@ def main():
         else:
             print(f"  {GREEN}✓ Dispatch budget summary ({count} dispatch(es)):{RESET}")
         print(json.dumps(result, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.surface_to_tech_lead:
+        from tools.noctus.dev.surface_to_tech_lead import surface_to_tech_lead as _stl
+        reason = getattr(args, "surface_reason", None) or ""
+        proposal = getattr(args, "surface_proposal", None) or ""
+        state = getattr(args, "surface_state", None) or ""
+        attempted = getattr(args, "surface_attempted", None) or ""
+        if not reason:
+            print(f"  {RED}Error:{RESET} --surface-reason is required with --surface-to-tech-lead")
+            sys.exit(2)
+        result = _stl(
+            reason=reason,
+            proposal_md=proposal,
+            current_state_md=state,
+            attempted_resolution_md=attempted,
+            worktree_path=getattr(args, "worktree_path", None),
+        )
+        if result.get("ok"):
+            print(f"  {GREEN}Surface filed:{RESET} {result['surface_id']}")
+            print(f"  Path: {result['surface_path']}")
+            print(f"  Exit marker: {result['exit_marker_msg']}")
+        else:
+            print(f"  {RED}Error:{RESET} {result.get('error')}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif args.list_pending_surfaces:
+        from tools.noctus.dev.list_pending_surfaces import list_pending_surfaces as _lps
+        include = getattr(args, "include_responded", False)
+        surfaces = _lps(include_responded=include)
+        if not surfaces:
+            print(f"  {YELLOW}(0 pending surfaces){RESET}")
+        else:
+            print(f"  {GREEN}{len(surfaces)} surface(s):{RESET}")
+            print(json.dumps(surfaces, indent=2, default=str))
+        sys.exit(0)
+
+    elif getattr(args, "respond_and_resume_id", None):
+        from tools.noctus.dev.respond_and_resume import respond_and_resume as _rar
+        surface_id = args.respond_and_resume_id
+        decision = getattr(args, "surface_decision", None)
+        rationale = getattr(args, "surface_rationale", None) or ""
+        updated_brief = getattr(args, "surface_updated_brief", None)
+        if not decision:
+            print(f"  {RED}Error:{RESET} --surface-decision (approve|reject|adapt) is required")
+            sys.exit(2)
+        if not rationale:
+            print(f"  {RED}Error:{RESET} --surface-rationale is required")
+            sys.exit(2)
+        result = _rar(
+            surface_id=surface_id,
+            decision=decision,
+            rationale_md=rationale,
+            updated_brief_md=updated_brief,
+        )
+        if result.get("ok"):
+            print(f"  {GREEN}Responded to surface:{RESET} {surface_id}")
+            print(f"  Decision: {result['decision']}")
+            print(f"  Response at: {result['response_path']}")
+            print(f"  Next: --dispatch-resume-brief {surface_id}")
+        else:
+            print(f"  {RED}Error:{RESET} {result.get('error')}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif getattr(args, "dispatch_resume_brief_id", None):
+        from tools.noctus.dev.dispatch_resume import dispatch_resume_brief as _drb
+        surface_id = args.dispatch_resume_brief_id
+        result = _drb(surface_id=surface_id)
+        if result.get("ok"):
+            print(f"  {GREEN}Resume brief composed:{RESET} surface_id={surface_id}")
+            print(f"  Worktree: {result['worktree_path']}")
+            print(f"  Decision: {result['decision']}")
+            print(f"\n--- BRIEF TEXT (pass verbatim to Agent() dispatch) ---")
+            print(result["brief_text"])
+        else:
+            print(f"  {RED}Error:{RESET} {result.get('error')}")
+            sys.exit(1)
         sys.exit(0)
 
     else:

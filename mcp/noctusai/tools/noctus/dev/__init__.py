@@ -101,6 +101,10 @@ def register_all(server) -> None:
     from . import version_guard
     from . import supabase_advisors
     from . import sync_seed_template
+    from . import surface_to_tech_lead
+    from . import list_pending_surfaces
+    from . import respond_and_resume
+    from . import dispatch_resume
     from . import task_branch
     from . import testing
     from . import three_way_sync
@@ -200,6 +204,10 @@ def register_all(server) -> None:
     version_guard.register(server)
     supabase_advisors.register(server)
     sync_seed_template.register(server)
+    surface_to_tech_lead.register(server)
+    list_pending_surfaces.register(server)
+    respond_and_resume.register(server)
+    dispatch_resume.register(server)
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)

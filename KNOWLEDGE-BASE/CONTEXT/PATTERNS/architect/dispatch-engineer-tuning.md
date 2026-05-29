@@ -78,6 +78,32 @@ The cache-first discipline is therefore **in the standing protocol**, not in eac
 
 **Future keeper** (s1 → s3 once recurrence flips it). A `check_dispatched_engineer_cache_first_reflex` keeper could audit engineer transcripts (the `/tmp/.../tasks/<agentId>.output` JSONL) for the first tool call: if the engineer opens `Bash grep` / `Glob` / a whole-file `Read` of an unfamiliar path BEFORE any `mcp__noctusai__noctus_dev_*_search` / `mcp__noctusai__noctus_graph_*`, surface a `scoped-improvement:` candidate. Not yet codified — surfaced here as the natural next mechanization once we have N≥2 measured drift instances.
 
+## 4b · Brief template safety section — surface-and-resume tool names
+
+Every engineer brief SHOULD include the following safety footer so the engineer knows the
+surface round-trip is one tool call away (not a manual process):
+
+```
+## Safety rules (non-negotiable)
+- Worktree isolation: stay in YOUR worktree, never the primary checkout.
+- Stage-only: `git add <explicit paths>` — never `-A` or `.`.
+- No commit, no push — architect-only.
+- 🔴 NEVER `--no-verify`. If a hook fails or you hit a genuine blocker:
+    call `noctus.dev.surface_to_tech_lead(reason, proposal_md, current_state_md, attempted_resolution_md)`
+    print the returned `exit_marker_msg` as your FINAL output line and stop.
+    Tech-lead responds via `noctus.dev.respond_and_resume` +
+    `noctus.dev.dispatch_resume_brief` — the round-trip is cheap + lossless.
+    KB § PATTERNS/common/surface-and-resume-tooling.md.
+```
+
+The tool names (`surface_to_tech_lead` / `respond_and_resume` / `dispatch_resume_brief`)
+are what make the round-trip ergonomic. Without them in the brief, engineers may not know
+the tools exist. Brief author rule: include this block OR reference `engineer-seed §1c`
+(which now contains the same pointer). Don't spell out the tool names PER dispatch — point
+to the standing protocol instead to stay DRY.
+
+---
+
 ## 5 · Provenance
 
 Audit + L1/L2/L4 shipped 2026-05-25 (this session). L3 (`wire_env`) shipped same session by a parallel engineer. **Lesson (the reason this doc trusts measurement over docs):** claude-code-guide asserted a `tools:` allowlist *removes* non-allowed tools from injected context (a real token cut). Dogfooding the very change disproved it — the deferred-name list is session/connector-global and persisted (295 names) under the scoped agent (CC v2.1.150). The asserted ~12k L1 token win was **false**; L1's real value is least-privilege. *Measure the dispatch you just tuned; an LLM's "this saves tokens" is a hypothesis, not a result.* Re-measure if the harness version or connected-MCP-server/connector set changes (`.mcp.json` had `noctusai, docker, n8n, waha, supabase` + client-injected `claude_ai_*`/chrome connectors — the `claude_ai_*` 104 are the bloat's bulk, cut via L7).

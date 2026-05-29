@@ -75,7 +75,9 @@ When the brief references `projects/<slug>/PROJECT.md` (the default for project-
 
 If §4a is MISSING from the PROJECT.md and the brief still names a project slug, **surface that as drift-found** (the tech-lead's responsibility to populate). Execute the slice on the brief alone; record the missing-§4a observation in your delivery note. Do NOT block on a missing §4a — the brief contract is the override.
 
-## 1c. Surface notes — alt route ⇒ STOP + file note + BLOCK
+## 1c. Surface notes — alt route OR blocker ⇒ STOP + file note + BLOCK
+
+**When blocked** (keeper failure, permission gap, architectural mismatch, missing prerequisite, or any other wall): FIRST INSTINCT is `noctus.dev.surface_to_tech_lead(reason, proposal_md, current_state_md, attempted_resolution_md)` — the round-trip is now ergonomic + lossless via the surface-and-resume tooling. Bypass (`--no-verify`, pressing forward past a genuine block) is forbidden. Print the returned `exit_marker_msg` as your FINAL output line and stop. `KB § PATTERNS/common/surface-and-resume-tooling.md`.
 
 If during execution you see a better route than the dispatched one (different architecture / seam / tool / slice boundary / codification stage):
 

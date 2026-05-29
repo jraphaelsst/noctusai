@@ -8172,6 +8172,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
     "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
+    "CONTEXT/PATTERNS/common/surface-and-resume-tooling.md",  # universal commons: every engineer uses surface_to_tech_lead when blocked (no single-agent ownership)
     "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
     "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
     "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",
