@@ -92,6 +92,12 @@ User-invocable version of the same orchestrator. See `.claude/commands/refresh-c
 - **DON'T** treat orphan rows as a blocker — keepers surface them as warnings; auto-purge would conflict with the "keepers surface, don't act" rule. Run `--refresh-kb-embeddings --force` if you need to clean.
 - **DON'T** rely on this hook chain for cross-machine sync of `.claude/cache/*` SQLite files — those are gitignored per-user; refresh on the new machine.
 
+## Cross-tree settle at integrate/cleanup (2026-05-30)
+
+The structural caches (noc-graph + auto-improvement) are **Tier-1 shared** across the primary tree + every worktree (`.git/noctusai/cache/`, per `cache-portable-architecture.md`). A `noctus.dev.task_branch` **integrate**/**cleanup** is a *cross-tree handoff* — the same shared cache is written from two working trees (the worktree's pre-integrate commit + the primary's at-rest state). The stored `aggregate_source_sha` can briefly reflect a transient tree-state the at-rest primary tree doesn't match → `check_all_cache_freshness` flags noc-graph stale right after an otherwise-clean integrate.
+
+`task_branch` closes this with `_settle_structural_caches()` at each success return: an **only-stale** (`force=False`, source-sha-guarded ⇒ no-op when coherent) + **best-effort** (a refresh failure NEVER fails the integrate/cleanup) in-process refresh of noc-graph + auto-improvement, surfaced as `cache_settle` in the result. The freshness keeper stays the net — this just settles the predictable cross-tree transient before control returns. NOT a leg-ordering bug (the pre-commit `auto_improvement.refresh()` only READS the ndjson; reordering legs is a no-op) and NOT a source-sha defect (`compute_source_sha` is deterministic). Symptom-targeted, not speculative.
+
 ## Deferred follow-ups (next session candidates)
 
 1. **Embedding-model version stamp**: cache rows don't currently record the model name. If the seed lib upgrades `text-embedding-3-small` → `4-small`, dim mismatch errors only surface at retrieve time. A `model:` column per row + a startup check would auto-trigger force-refresh on model change.
@@ -111,3 +117,4 @@ User-invocable version of the same orchestrator. See `.claude/commands/refresh-c
 
 - v4.0-beta (2026-05-26 morning): pre-commit hook leg 9b/9c/10 + per-cache freshness keepers were in place; assumed commit boundary covers freshness.
 - v4.0-beta (2026-05-26 evening): user observation surfaced the gap — `git pull` + branch switch don't fire pre-commit, leaving caches stale. This pattern + the hooks codify the closure.
+- 2026-05-30: user observation ("noc-graph shouldn't be stale — isn't it in the 8-way sync?") surfaced the cross-tree shared-cache transient at `task_branch` integrate/cleanup. Diagnosed (a leg-ordering hypothesis was disproven; source-sha is deterministic) → closed with the only-stale + best-effort `_settle_structural_caches()` settle leg above.

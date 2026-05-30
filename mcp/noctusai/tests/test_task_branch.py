@@ -1002,3 +1002,85 @@ def test_classify_dirty_files_on_git_failure_is_conservative():
     benign, real = T._classify_dirty_files(runner, "/wt")
     assert benign == []
     assert real == ["<git-status-failed>"]
+
+
+# ── structural-cache settle (cross-tree shared-cache coherence, 2026-05-30) ──
+
+def test_integrate_runs_settle_when_injected():
+    """integrate success calls the injected settle once + surfaces its report."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+    )
+    calls = []
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        settle=lambda: (calls.append(1) or {"noc_graph": {"ok": True, "status": "in-sync"}}),
+    )
+    assert res["status"] == "integrated"
+    assert calls == [1]  # settle fired exactly once, AFTER the verified FF-push
+    assert res["cache_settle"]["noc_graph"]["status"] == "in-sync"
+
+
+def test_cleanup_runs_settle_when_injected():
+    """cleanup success calls the injected settle once + surfaces its report."""
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
+    calls = []
+    res = T.task_branch(
+        action="cleanup", slug="x", confirm=True, run=fake,
+        primary_root="/repo", salvage_recorder=_capture_recorder(),
+        settle=lambda: (calls.append(1) or {"ok": True}),
+    )
+    assert res["status"] == "cleaned"
+    assert calls == [1] and res["cache_settle"] == {"ok": True}
+
+
+def test_settle_skipped_with_injected_runner_and_no_explicit_settle():
+    """Gating: an injected runner (test/custom context) must NOT trigger the real
+    settle — only the default production path (run is None) does. Keeps unit tests
+    from touching the real shared caches."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "integrated"
+    assert "cache_settle" not in res
+
+
+def test_settle_helper_is_only_stale_and_reports(monkeypatch):
+    """_settle_structural_caches refreshes each cache ONLY-STALE (force=False) and
+    returns an ok report."""
+    import tools.noctus.dev.noc_graph_cache as ng
+    import tools.noctus.dev.auto_improvement as ai
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(ng, "refresh",
+                        lambda force=False, **k: (seen.__setitem__("ng_force", force)
+                                                  or {"status": "in-sync", "source_sha": "s1"}))
+    monkeypatch.setattr(ai, "refresh",
+                        lambda force=False, **k: (seen.__setitem__("ai_force", force)
+                                                  or {"status": "in-sync", "source_sha": "s2"}))
+    rep = T._settle_structural_caches()
+    assert rep["noc_graph"] == {"ok": True, "status": "in-sync", "source_sha": "s1"}
+    assert rep["auto_improvement"] == {"ok": True, "status": "in-sync", "source_sha": "s2"}
+    assert seen["ng_force"] is False and seen["ai_force"] is False  # never force-rebuilds
+
+
+def test_settle_helper_swallows_refresh_failure(monkeypatch):
+    """A refresh that raises must NOT propagate — best-effort; the freshness keeper
+    stays the net."""
+    import tools.noctus.dev.noc_graph_cache as ng
+    import tools.noctus.dev.auto_improvement as ai
+
+    def boom(**k):
+        raise RuntimeError("cache locked")
+
+    monkeypatch.setattr(ng, "refresh", boom)
+    monkeypatch.setattr(ai, "refresh", lambda force=False, **k: {"status": "in-sync"})
+    rep = T._settle_structural_caches()  # must not raise
+    assert rep["noc_graph"]["ok"] is False and "cache locked" in rep["noc_graph"]["error"]
+    assert rep["auto_improvement"]["ok"] is True

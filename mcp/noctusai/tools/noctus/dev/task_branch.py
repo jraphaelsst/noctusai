@@ -395,6 +395,44 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
     return created, failed
 
 
+def _settle_structural_caches(verbose: bool = False) -> dict[str, Any]:
+    """Settle the Tier-1 SHARED structural caches against the at-rest primary
+    tree at the end of a cross-tree integrate/cleanup.
+
+    ``noc-graph`` (and ``auto-improvement``) live in the worktree-shared
+    ``.git/noctusai/cache/`` (cache-portable-architecture). During the
+    worktree↔primary handoff the SAME shared cache is written from two working
+    trees, so its stored ``aggregate_source_sha`` can briefly reflect a
+    transient tree-state the at-rest primary tree does not match — surfacing as
+    a noc-graph-stale warning right after a clean integrate. Both refreshes are
+    ONLY-STALE (source-sha guarded ⇒ a no-op when already coherent) and
+    BEST-EFFORT (a failure NEVER fails the integrate/cleanup; the
+    ``check_all_cache_freshness`` keeper stays the net). Returns a small report
+    for observability. See the s1 surface "noc-graph Tier-1 shared-cache
+    coherence after cross-tree integrate/cleanup" (2026-05-30).
+    """
+    report: dict[str, Any] = {}
+    try:
+        from tools.noctus.dev import noc_graph_cache as _ng
+        r = _ng.refresh(force=False)
+        report["noc_graph"] = {"ok": True, "status": r.get("status"),
+                               "source_sha": r.get("source_sha") or r.get("aggregate_source_sha")}
+    except Exception as e:  # best-effort: never block teardown on a cache refresh
+        if verbose:
+            logger.debug("task_branch settle: noc-graph refresh skipped: %s", e)
+        report["noc_graph"] = {"ok": False, "error": str(e)}
+    try:
+        from tools.noctus.dev import auto_improvement as _ai
+        r = _ai.refresh(force=False)
+        report["auto_improvement"] = {"ok": True, "status": r.get("status"),
+                                      "source_sha": r.get("source_sha")}
+    except Exception as e:
+        if verbose:
+            logger.debug("task_branch settle: auto-improvement refresh skipped: %s", e)
+        report["auto_improvement"] = {"ok": False, "error": str(e)}
+    return report
+
+
 def task_branch(
     action: str = "status",
     slug: str | None = None,
@@ -409,6 +447,7 @@ def task_branch(
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
     salvage_recorder: Callable[..., Any] | None = None,
+    settle: Callable[..., dict[str, Any]] | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
@@ -430,6 +469,12 @@ def task_branch(
     silent, never clobbered."""
     runner = run or _default_run_local
     fsops = fs or FsOps()
+    # End-of-integrate/cleanup structural-cache settle (see _settle_structural_caches).
+    # Explicit `settle` wins (test seam); otherwise run the real settle ONLY in the
+    # production path (default runner) — an injected `run` means a test/custom context
+    # that must not touch the real shared caches.
+    settle_fn = settle if settle is not None else (
+        _settle_structural_caches if run is None else None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -613,10 +658,16 @@ def task_branch(
                     benign_stashed = False
                 new_dev = _resolve(git, f"{remote}/{dev_branch}")
                 new_head = _resolve(git, branch)
-                return {**plan, "status": "integrated", "exit_code": 0, "attempts": attempt,
-                        "new_dev_sha": new_dev, "verified": new_dev == new_head,
-                        "message": (f"integrated {len(ahead)} commit(s) to {dev_branch} "
-                                    f"(attempt {attempt}). Tear down: action='cleanup' slug='{slug}'.")}
+                result = {**plan, "status": "integrated", "exit_code": 0, "attempts": attempt,
+                          "new_dev_sha": new_dev, "verified": new_dev == new_head,
+                          "message": (f"integrated {len(ahead)} commit(s) to {dev_branch} "
+                                      f"(attempt {attempt}). Tear down: action='cleanup' slug='{slug}'.")}
+                if settle_fn is not None:
+                    try:
+                        result["cache_settle"] = settle_fn()
+                    except Exception as e:  # best-effort — never fail a clean integrate
+                        result["cache_settle"] = {"ok": False, "error": str(e)}
+                return result
             # non-FF: a peer pushed between rebase and push → loop, re-fetch+rebase
             if verbose:
                 logger.debug("task_branch.integrate: push rejected (concurrent peer push) "
@@ -785,11 +836,17 @@ def task_branch(
                 "salvage_ledger": salvage_ledger,
                 "error": f"worktree removed but branch -d refused (unmerged?): "
                          f"{err.strip() or out.strip()}"}
-    return {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
-            "branch_deleted": True, "salvage_ledger": salvage_ledger,
-            "salvage_pushed": salvage_pushed,
-            "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
-                       f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."}
+    result = {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
+              "branch_deleted": True, "salvage_ledger": salvage_ledger,
+              "salvage_pushed": salvage_pushed,
+              "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
+                         f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."}
+    if settle_fn is not None:
+        try:
+            result["cache_settle"] = settle_fn()
+        except Exception as e:  # best-effort — never fail a completed teardown
+            result["cache_settle"] = {"ok": False, "error": str(e)}
+    return result
 
 
 def register(server) -> None:
