@@ -509,7 +509,13 @@ reclaims everything (base images preserved unless removed by hand).
 
 ---
 
-## 6a · Cold-boot CPU contention — the staggered wave boot
+## 6a · CPU contention — staggered waves on BOTH the build and boot legs
+
+> Two distinct CPU-storm surfaces, same root shape (N CPU-heavy jobs fired at
+> once) and same structural fix (cap concurrency with core-sized waves):
+> **(A)** the *boot* leg — N parallel cold `vite build`s (`staggered_up`,
+> original §6a, below); **(B)** the *build* leg — N parallel image builds
+> (`staggered_build`, added 2026-05-30). Read both; they are siblings.
 
 **The failure mode (observed 2026-05-19, the rule's provenance).** Bringing
 the **whole fleet up from cold** (`./start.sh`, or `docker compose -f
@@ -550,6 +556,46 @@ canonical+propagated (§3). Subsets at or below one wave (`≤ batch` slugs)
 skip staggering entirely (`up -d` straight through) — the contention only
 exists above a wave's worth of simultaneous cold builds.
 
+### 6a.B · Build-leg contention — `staggered_build()` (provenance 2026-05-30)
+
+**The failure mode.** `docker compose build` (BuildKit) builds **all target
+images in parallel** by default. Each product build runs `pip install` *plus*
+an npm/rollup frontend build — both CPU-heavy. Building the **whole fleet
+(10 images) at once on 8 cores drove load past 8× cores and crashed the IDE
+renderer** (the event that opened this section). A second, compounding cause
+made each individual build far heavier than it should be: an under-pinned
+`pydantic==2.9.0` conflicted with a newer transitive constraint, so pip's
+**backtracking resolver thrashed** on every build — the
+`realtime-dep-resolver-thrash` the fix branch was named for. The exact culprit:
+`supabase==2.9.1` pulls `realtime==2.30.1`, which requires
+`pydantic>=2.11.7,<3.0.0`; with pydantic hard-pinned to `2.9.0` (< 2.11.7) pip
+could not take current realtime/supabase, so it backtracked exhaustively
+through their older releases hunting a combination that accepts 2.9.0 — minutes
+of CPU per build, ×N parallel builds.
+
+**The two-part structural fix.**
+1. **Pin transitive-conflicting deps** (`pydantic 2.9.0 → 2.13.4` fleet-wide)
+   so pip resolves in one pass instead of backtracking. This makes each
+   *individual* build cheap. **All 12 backends move together** — the 10 product
+   `requirements.txt`, the `templates/product-seed` template, *and* the root
+   superset `requirements.txt` (the file CI backend-test jobs install). Leaving
+   the root behind would test CI against 2.9.0 while every image runs 2.13.4 — a
+   dev↔prod-parity drift (§ the platform's highest-recurrence failure class).
+2. **`staggered_build()` in `start.sh`** caps the *aggregate*: images build in
+   waves of `NOCTUS_BUILD_BATCH` (default `max(1, cores/4)` — **more
+   conservative than the boot batch's `cores/2`**, because an image build pins
+   CPU harder than a warm-restart vite build). A build has **no health signal**
+   to gate on (unlike boot), so waves simply serialize — each `compose build`
+   call blocks until its wave's images exist. Set `NOCTUS_BUILD_BATCH=1` for a
+   fully sequential build (safest/slowest). All three build call-sites route
+   through it: fleet `build` mode (`--no-cache --pull` via `$BUILD_FLAGS`),
+   normal fleet boot, and multi-slug subsets.
+
+**Why both legs matter.** Pinning alone removes the per-build thrash but 10
+cheap builds at once *still* oversubscribe; the wave cap alone leaves each
+build thrashing on the resolver. Together: each build is cheap **and** only a
+wave's worth run at once → load stays ≈ cores, never the 8×+ that crashes.
+
 ## 7 · Adding a new product
 
 `noctus.dev.scaffold_product` does it end-to-end:
@@ -588,6 +634,7 @@ maintain.
 | Docker Desktop "Containers" shows fewer products than are actually up (e.g. 1 row under `dev-noctusai-products` when 3+ ran) | **Docker Desktop is NOT the source of truth — `docker ps` is.** Two compounding causes: (1) during a *staggered* fleet boot (`staggered_up`, §6a) products come up in health-gated waves over many minutes — the missing ones genuinely don't exist *yet* (still building / not in a started wave); (2) the DD Containers view does **not** reliably live-refresh compose-project membership — it updates on its own poll, so even after containers exist the list can stay stale until you switch views/tabs or it re-polls. Always verify with `docker ps -a --filter label=com.docker.compose.project=dev-noctusai-products` or `docker compose ls`; treat the DD list as a lagging cache, never as ground truth. A group only renders once ≥1 of its containers exists *and* DD has polled. Recurring gotcha (≥5 occurrences) — do not re-diagnose; check `docker ps` first |
 | Docker Desktop unstable after an app update: `failed to solve: frontend grpc server closed unexpectedly`, `#N CANCELED`, `--force-recreate` not applied (config-hash unchanged), `up -d` hung at "Creating" with 0 containers | BuildKit/daemon wedge — *not* a compose/Dockerfile bug (`docker compose config` parses fine). Recovery: kill hung `docker`/`compose` procs → `pkill -x "Docker Desktop"; pkill -f com.docker.backend; open -a "Docker Desktop"` → wait for `docker info` ready → re-run `./start.sh`. **Safe**: fleet is ephemeral-by-design (§5.1) — containers regenerate, volumes + `noctus-net` persist, no data loss |
 | Whole fleet boots `unhealthy` simultaneously from cold, load far exceeds cores, all stuck at `vite … transforming` | Not a failure — N parallel first-boot `vite build`s oversubscribe CPU (§6a). Fixed structurally: `./start.sh` routes through `staggered_up()` (core-sized waves, health-gated). If seen via raw `docker compose up -d` (bypasses start.sh), either use `./start.sh` or wait — builds complete, just slowly; it self-accelerates as each finishes |
+| Load spikes to many× cores **during a fleet build** (not boot); IDE/renderer crashes; pip appears to hang "resolving" for minutes per product | Build-leg CPU storm (§6a.B) — `docker compose build` builds all images in parallel, each running pip + rollup; compounded if a dep is under-pinned (pip resolver backtracks). Fixed structurally: `./start.sh` routes builds through `staggered_build()` (waves of `NOCTUS_BUILD_BATCH`, default `cores/4`) **and** transitive-conflicting deps are pinned fleet-wide. If seen via raw `docker compose build` (bypasses start.sh), use `./start.sh` or set `NOCTUS_BUILD_BATCH=1`. Resolver thrash on a *new* dep ⇒ pin it (check `pip index versions <dep>` for a version satisfying all constraints) |
 | Container restart-loops `ModuleNotFoundError` | product imports a pkg only in root `requirements.txt` — declare it in the product's `requirements.txt` (each image installs only its own) |
 | `exec: "uvicorn": not found` | product `requirements.txt` doesn't pin uvicorn — add `uvicorn[standard]==…` |
 | Tunnel worked then `NXDOMAIN`, container "Up" | QUIC dropout — all composes pin `--protocol http2`; if seen, `docker compose --profile tunnel-<slug> up -d --force-recreate <slug>-tunnel` for a fresh URL |

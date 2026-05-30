@@ -177,6 +177,40 @@ else
     bash "$ROOT_DIR/scripts/infra/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
   }
 
+  # Build-time CPU-contention guard — the build-leg sibling of staggered_up.
+  # Plain `docker compose build` (BuildKit) builds ALL target images in
+  # PARALLEL; each product build runs `pip install` + an npm/rollup build,
+  # so N parallel builds oversubscribe CPU exactly like N cold vite builds
+  # do at boot. Observed 2026-05-30: a full-fleet build (10 images at once)
+  # drove load past 8x cores → IDE renderer crash. With deps pinned (pydantic
+  # et al.) pip no longer backtracks, so each individual build is cheap — but
+  # the AGGREGATE of N concurrent builds is still the storm. Build in waves to
+  # cap concurrency. The boot guard gates each wave on `healthy`; a build has
+  # no health signal, so we simply serialize wave-by-wave (each `compose build`
+  # call blocks until its wave's images are built). Tunable: NOCTUS_BUILD_BATCH
+  # (default cores/4, min 1 — more conservative than the cores/2 boot batch
+  # because a build pins CPU harder than a warm-restart vite build; set 1 for
+  # fully sequential, the safest/slowest option). Build flags (e.g.
+  # --no-cache --pull) arrive via $BUILD_FLAGS.
+  # KB § PATTERNS/devops/containerization.md § 6a.
+  staggered_build() {
+    local svcs=("$@") cores batch i wave
+    cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+    batch="${NOCTUS_BUILD_BATCH:-$(( cores / 4 > 1 ? cores / 4 : 1 ))}"
+    if [[ ${#svcs[@]} -le $batch ]]; then
+      docker "${PRODUCTS_COMPOSE[@]}" build ${BUILD_FLAGS:-} "${svcs[@]}"
+      return $?
+    fi
+    echo "[docker] build stagger: ${#svcs[@]} imagens em ondas de $batch (cores=$cores; override: NOCTUS_BUILD_BATCH)"
+    i=0
+    while [[ $i -lt ${#svcs[@]} ]]; do
+      wave=("${svcs[@]:i:batch}")
+      echo "[docker]   build onda: ${wave[*]}"
+      docker "${PRODUCTS_COMPOSE[@]}" build ${BUILD_FLAGS:-} "${wave[@]}" || return $?
+      i=$(( i + batch ))
+    done
+  }
+
   print_fleet_urls() {
     echo ""
     echo "============================================"
@@ -285,7 +319,7 @@ else
     echo "============================================"
     ensure_net
     build_bases
-    docker "${PRODUCTS_COMPOSE[@]}" build "${SUBSET[@]}"
+    staggered_build "${SUBSET[@]}"
     PRODUCT_ARGS=("${PRODUCTS_COMPOSE[@]}")
     staggered_up "${SUBSET[@]}"
     echo ""
@@ -337,18 +371,21 @@ else
   PRODUCT_ARGS=("${PRODUCTS_COMPOSE[@]}")
   [[ -n "$TUNNEL_PROFILE" ]] && PRODUCT_ARGS+=(--profile "$TUNNEL_PROFILE")
 
+  # Product slug list, computed before the build so staggered_build can
+  # wave over it (BuildKit otherwise builds all images at once → CPU storm).
+  ALL_SLUGS=()
+  for entry in "${PRODUCTS[@]}"; do ALL_SLUGS+=("${entry%%:*}"); done
+
   if [[ "$MODE" == "build" ]]; then
     echo "[docker] rebuild forcado (--no-cache --pull)..."
     bash "$ROOT_DIR/scripts/infra/build-base-images.sh" "${NOCTUS_IMAGE_TAG:-dev}"
-    docker "${PRODUCT_ARGS[@]}" build --no-cache --pull
+    BUILD_FLAGS="--no-cache --pull" staggered_build "${ALL_SLUGS[@]}"
   else
     echo "[docker] buildando imagens de produto (cache hit se ja construidas)..."
-    docker "${PRODUCT_ARGS[@]}" build
+    staggered_build "${ALL_SLUGS[@]}"
   fi
 
   echo "[docker] subindo dev-noctusai-products..."
-  ALL_SLUGS=()
-  for entry in "${PRODUCTS[@]}"; do ALL_SLUGS+=("${entry%%:*}"); done
   staggered_up "${ALL_SLUGS[@]}"
   # profile-gated tunnels aren't products → bring them up after the
   # staggered product boot (no-op for already-up products).
