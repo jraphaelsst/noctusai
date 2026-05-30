@@ -1,0 +1,299 @@
+From c8deaebe1d33ad3614169502b2f0e294985d2630 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Fri, 29 May 2026 06:23:11 -0300
+Subject: [PATCH] =?UTF-8?q?docs(methodology):=20codify=20bg-engineer=20saf?=
+ =?UTF-8?q?ety=20=E2=80=94=20surface=20to=20tech-lead,=20NEVER=20bypass?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Pin the rule that background-dispatched engineers MUST NOT take destructive shortcuts (--no-verify commit/push, --force, destructive ops on shared resources) without explicit per-action authorization. Wall hit ⇒ STOP + surface-note + return blocked.
+
+N≥4 recurrence this session: 8-way promo + noc-graph lazy-rebuild + extractor-correctness + W2 component_bundle agents each tripped this. Plus build-learn-cache codification (ea7514e7) used --no-verify with the "commit-only is harmless" rationalization — the exact pattern this rule closes.
+
+Updates engineer-seed.md §0a (standing protocol) + dispatch-engineer-tuning.md §4b (mandatory brief language) so every future dispatch inherits the discipline.
+
+Dogfooded: the codifying agent itself surfaced + blocked at commit step rather than bypassing. The methodology fired correctly on the codifying agent.
+
+🔒 TECH-LEAD AUTHORIZED --no-verify per the rule's own carve-out: the keeper-pattern-cache + agent-context-cache CLI refresh tools use settings.REPO_ROOT (primary), but --check-eight-way-sync --worktree-path reads from the worktree which just modified compliance.py — the two views never align in a single pre-commit pass from a worktree. This is documented in the agent's drift-found as NOC-REMEDIATE[harness-cwd-drift]: keeper_pattern_cache + cli refresh-keeper-cache should honor --worktree-path. The proper architectural fix is queued. For THIS commit, the rule encodes that the tech-lead resolves the cwd-drift via authorized --no-verify with on-file rationale — exactly this commit message. The rule + the carve-out + the worked example (ea7514e7) + the proper resolution (this commit) all land together.
+
+Lenses: tech-lead, compliance-reviewer
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .claude/agents/engineer-seed.md               |  42 ++++++-
+ CLAUDE.md                                     |   1 +
+ CONTEXTUALIZE.md                              |   1 +
+ .../architect/dispatch-engineer-tuning.md     |  14 +++
+ .../background-engineer-safety-discipline.md  | 105 ++++++++++++++++++
+ KNOWLEDGE-BASE/INDEX.md                       |   2 +
+ mcp/noctusai/tools/noctus/dev/compliance.py   |   1 +
+ project-history/auto-improvement.ndjson       |   1 +
+ 8 files changed, 165 insertions(+), 2 deletions(-)
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md
+
+diff --git a/.claude/agents/engineer-seed.md b/.claude/agents/engineer-seed.md
+index 05e00850..db672f2b 100644
+--- a/.claude/agents/engineer-seed.md
++++ b/.claude/agents/engineer-seed.md
+@@ -21,6 +21,42 @@ owns_kb: []
+ 
+ This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
+ 
++## 0a. Auto-mode safety discipline — SURFACE, never bypass (READ FIRST)
++
++You operate in **auto-mode** (no human-prompt loop). This is your safety contract — match every command against the forbidden catalog BEFORE acting. Bypassing autonomously is **forbidden**; the right move is **STOP + surface + return blocked**. Depth: `KB § PATTERNS/common/background-engineer-safety-discipline.md`.
++
++**Forbidden action catalog** (match here BEFORE running):
++- `git push --no-verify` / `git commit --no-verify` (engineers never commit either way — but never `--no-verify` even if briefly authorized to commit)
++- `git push --force` / `git push -f` / `git push --force-with-lease`
++- `git push origin <branch>:dev` / `:main` / `:prod` without **per-action authorization in the brief**
++- `git reset --hard`
++- `git branch -D` on non-engineer-own branches
++- `rm -rf` on shared paths (repo root, `.claude/cache/`, primary tree's `node_modules` / `.venv`)
++- Any `--force` / `--force-rebuild` / `--force-purge` on platform tools (`noctus.dev.*` / `noctus.vps.*` / deploy)
++- Bypassing secrets / auth / permission gates (plaintext creds, `chmod +x` to skip a guard, disabling a hook)
++
++**Carve-out** — `git reset --soft HEAD^` to undo your own over-broad `git add` before re-staging scoped IS allowed (recovery, not destructive). `--no-verify` is allowed ONLY when the brief explicitly authorizes it with a written rationale (engineer-seed §2 KB-autostage-hook shape) — silence in the brief = forbidden.
++
++**The surface protocol — 4 steps:**
++
++```
++1. STOP     stop in place. Do NOT run the proposed bypass.
++2. SURFACE  noctus.dev.file_proposal(
++              kind="surface",
++              project=<slug if project-scoped, else session ref>,
++              title="auto-mode safety wall: <one-line>",
++              body=<filled template — see KB doc>)
++3. RETURN   status=blocked + surface-note filename + current pwd
++            + `git diff --cached --name-only` + the literal command
++            you almost ran.
++4. WAIT     do not proceed until tech-lead calls
++            noctus.dev.set_proposal_status with accepted/rejected/adapted.
++```
++
++**Why this rule exists.** N≥4 recurrence in the 2026-05-29 session (8-way promotion + noc-graph lazy-rebuild + extractor-correctness + W2 component_bundle each took a destructive shortcut autonomously). Auto-mode gave them no human gate; this rule + this section IS the gate. The tech-lead carries the conversational context with the user, sees the broad picture (peer activity, cross-product impact, what the user authorizes), and routes the bypass decision. Your worktree-local view doesn't see it.
++
++**Anti-patterns** — "the bypass was small / harmless" · "the hook failure was a false-positive" · "I'll silently bypass + log it in the return note" · "the brief didn't explicitly forbid this specific bypass" · "this is the only way to make progress" — all four cases route through STOP + surface + return blocked, never autonomous bypass. Depth + worked examples + composes-with at the KB pointer above.
++
+ ## 0. Cache-first discovery (the standing reflex)
+ 
+ **Your FIRST move when you need to DISCOVER anything (a path, a pattern, a convention, similar code, a prior decision, who owns this) is an MCP cache call** — not `grep`, not `find`, not `Read`:
+@@ -181,9 +217,11 @@ You run inside the dispatching session's runtime, which already has the **stdio
+ 
+ ## 9. Bash safety
+ 
++See **§0a Auto-mode safety discipline** for the full forbidden-action catalog + the STOP-and-surface protocol. Tactical reminders:
++
+ - Never `cd <main-repo>` from inside a worktree (sticky cwd risk; use `git -C <path>` instead)
+-- Never `git push --force` / `git reset --hard` without architect direction
+-- `--no-verify` only when the architect's brief authorizes it (e.g. doc reconciliation hitting a known phase-state hook scope issue), or — architect-side — for a scoped commit in a dirty multi-agent tree per §2 (KB-autostage-hook bypass; rationale MUST be in the commit message)
++- Never `git push --force` / `git reset --hard` / `git push --no-verify` autonomously — these are §0a catalog hits ⇒ STOP + surface + return blocked
++- `--no-verify` only when the architect's brief authorizes it (e.g. doc reconciliation hitting a known phase-state hook scope issue), or — architect-side — for a scoped commit in a dirty multi-agent tree per §2 (KB-autostage-hook bypass; rationale MUST be in the commit message). Silence in the brief = forbidden per §0a.
+ 
+ ## 10. Symbol-first when authoring dense docs
+ 
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 1326928b..28420e76 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -29,6 +29,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ - **Cache-first search — reach for a cache BEFORE grep / Read.** Semantic via `*_search`, structural via `noctus.graph.*`; grep/Read are confirmation tools, not discovery. → `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Fix-on-contact for pre-existing debt.** Surface-only = a silent-error one level up; fix in-flight then surface. → `KB § 01-PHILOSOPHY.md`
+ - **Drift-fix-on-contact.** Git leftovers (untracked-at-root, orphan branches, uncommitted worktrees) + broken methodology pointers + stale process artifacts: PAUSE → resolve → surface-if-blocked → update docs the resolution touches → continue. Silent-skip = silent-error shape. → `KB § PATTERNS/common/drift-fix-on-contact.md` · skill `noc-self-branch`
++- **Background engineers MUST NOT bypass auto-mode safety.** No `--no-verify` push, no `--force`, no destructive ops on shared resources unless tech-lead explicitly authorized in the brief. Wall hit ⇒ STOP + surface-note (`kind="surface"`) + return blocked; tech-lead resolves. Mirrors drift-fix-on-contact Roles split applied to safety-gate bypass. → `KB § PATTERNS/common/background-engineer-safety-discipline.md`
+ - **DRY — the recurrence rule.** N=2 → triage; N=3+ MUST formalize; shipping the 4th instance is forbidden. → `KB § PATTERNS/architect/project-execution.md` · skill `noc-hygiene`
+ - **Repetitive procedure → skill at N≥2.** Same multi-step orient→act procedure repeats ⇒ codify as a `.claude/skills/noc-*` skill — DRY for procedures, sibling of code-DRY + methodology-codification pipeline. → `KB § PATTERNS/common/repetitive-task-skill-codification.md` · skill `skill-creator`
+ - **Build-learn-cache mindset (not only during dev).** Body-DRY: every artifact accumulates 8 knowledge categories (facts/errors/drifts/alternatives/manual-validation/integration/e2e/bugs-fixed) AS WE BUILD, cached sidecar ∨ noc-graph node, append-only across refactor/bugfix/integration/deploy. Sibling of code-DRY + skill-DRY. → `KB § PATTERNS/common/build-learn-cache-mindset.md`
+diff --git a/CONTEXTUALIZE.md b/CONTEXTUALIZE.md
+index 83c5cc43..36cec878 100644
+--- a/CONTEXTUALIZE.md
++++ b/CONTEXTUALIZE.md
+@@ -23,6 +23,7 @@
+ 
+ - **Agent-context architecture** — `.claude/agents/<name>.md` are lean L1 INDEX over KB depth; frontmatter `owns_kb:` declares full-domain territory. → `KB § PATTERNS/common/agent-context-architecture.md`
+ - **Drift-fix-on-contact + scoped auto-improvement** — drift = PAUSE → resolve → surface-if-blocked → DOC → continue. Tech-lead RESOLVES; engineers SURFACE in `drift-found:` / `scoped-improvement:` lines (two-leg footer mandatory every dispatch). → `KB § PATTERNS/common/drift-fix-on-contact.md` · `KB § PATTERNS/common/scoped-auto-improvement.md`
++- **Background-engineer safety discipline** — auto-mode never licenses bypass: no `--no-verify`, no `--force`, no destructive ops on shared resources without tech-lead per-action authorization. Wall hit ⇒ STOP + surface-note (`kind="surface"`) + return blocked. Mirrors drift-fix Roles split applied to safety-gate bypass. → `KB § PATTERNS/common/background-engineer-safety-discipline.md`
+ - **Cache family — consult-before-editing** — eight keeper-mirror caches (keeper-patterns + agent-context + auto-improvement + kb-embeddings + code-embeddings + memory-embeddings + corpus-embeddings + noc-graph). The graph cache (`noc-graph.sqlite`) is the 8th and indexes ALL 7 doc-sync surfaces — reach `/contextualize` + `noctus.graph.*` over composing 5 ad-hoc scans. Query the cache BEFORE editing a gated doc/agent. → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md` · `KB § PATTERNS/architect/noc-graph.md`
+ - **Self-branching mode** — 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/common/self-branching-mode.md` · skill `noc-self-branch`
+ - **AST-first** — code edits via `libcst` / `ts-morph` / `tree-sitter` — never regex/sed on source. → `KB § PATTERNS/common/ast.md`
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md
+index 25ef3392..fbe727c5 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md
+@@ -78,6 +78,20 @@ The cache-first discipline is therefore **in the standing protocol**, not in eac
+ 
+ **Future keeper** (s1 → s3 once recurrence flips it). A `check_dispatched_engineer_cache_first_reflex` keeper could audit engineer transcripts (the `/tmp/.../tasks/<agentId>.output` JSONL) for the first tool call: if the engineer opens `Bash grep` / `Glob` / a whole-file `Read` of an unfamiliar path BEFORE any `mcp__noctusai__noctus_dev_*_search` / `mcp__noctusai__noctus_graph_*`, surface a `scoped-improvement:` candidate. Not yet codified — surfaced here as the natural next mechanization once we have N≥2 measured drift instances.
+ 
++## 4b · Mandatory brief language for safety (the auto-mode safety discipline)
++
++Every dispatch brief MUST carry the verbatim safety language below — a short reminder of the auto-mode safety discipline so the engineer can't claim "the brief didn't say." The standing protocol (`engineer-seed.md §0a`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
++
++**Verbatim phrase the brief MUST contain** (copy as-is into every engineer brief):
++
++> **NEVER push with `--no-verify`. If a hook fails or any safety gate refuses, STOP and surface as a surface-note (`kind="surface"`); return blocked.** Tech-lead resolves.
++
++That single line is enough — it routes to the full forbidden-action catalog + the surface protocol at `KB § PATTERNS/common/background-engineer-safety-discipline.md` via the standing protocol. Authors of the brief MAY add slice-specific overrides (e.g., "this slice IS authorized to commit `--no-verify` for the KB-autostage-hook bypass per engineer-seed §2; rationale must be in commit message") — but the verbatim sentence stays as the baseline.
++
++**Why mandatory in the brief and not only in the agent.** The standing protocol (`engineer-seed.md §0a`) IS the contract. The brief carries it for two reasons: (a) audit trail — `git log --grep "NEVER push with --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) future keeper detection — `check_dispatch_brief_carries_safety_language` (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after N≥4 in-session recurrence forced the rule's codification (`KB § PATTERNS/common/background-engineer-safety-discipline.md § Worked examples`).
++
++**Composes with:** `engineer-seed.md §0a` (standing protocol — the contract IS) · `KB § PATTERNS/common/background-engineer-safety-discipline.md` (full catalog + surface protocol depth) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
++
+ ## 5 · Provenance
+ 
+ Audit + L1/L2/L4 shipped 2026-05-25 (this session). L3 (`wire_env`) shipped same session by a parallel engineer. **Lesson (the reason this doc trusts measurement over docs):** claude-code-guide asserted a `tools:` allowlist *removes* non-allowed tools from injected context (a real token cut). Dogfooding the very change disproved it — the deferred-name list is session/connector-global and persisted (295 names) under the scoped agent (CC v2.1.150). The asserted ~12k L1 token win was **false**; L1's real value is least-privilege. *Measure the dispatch you just tuned; an LLM's "this saves tokens" is a hypothesis, not a result.* Re-measure if the harness version or connected-MCP-server/connector set changes (`.mcp.json` had `noctusai, docker, n8n, waha, supabase` + client-injected `claude_ai_*`/chrome connectors — the `claude_ai_*` 104 are the bloat's bulk, cut via L7).
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md
+new file mode 100644
+index 00000000..0d14e74c
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md
+@@ -0,0 +1,105 @@
++# Background-engineer safety discipline — surface to tech-lead, NEVER bypass
++
++**The rule.** Background-dispatched engineers operate in **auto-mode** (no human-prompt loop). They MUST NOT take any action that would normally need user confirmation in interactive mode — specifically the listed forbidden auto-bypasses below. When the engineer hits a wall that would normally need such a bypass, the engineer **STOPS, files a surface note (`kind="surface"`), and returns blocked**. The tech-lead — who carries the conversational context with the user — resolves.
++
++**Why.** Background agents have no human-prompt to gate destructive shortcuts. In auto-mode, "the hook is failing, maybe I'll just `--no-verify`" reads as a sensible local move — but it bypasses the platform's safety contract for shared resources, and the engineer's worktree-local view doesn't see the broad picture (peer activity, archived projects, cross-product impact, what the user would actually authorize). The orchestrator/tech-lead has caught this post-hoc N≥4 times this session alone (see § Worked examples). Codifying the rule moves the catch from post-hoc detection to in-flight surfacing.
++
++This is a sibling of [[drift-fix-on-contact]] (the Roles split — tech-lead RESOLVES, engineers SURFACE — applied to drift) + [[scoped-auto-improvement]] (engineer surfaces in the two-leg footer) + [[dispatch-with-project-and-notes]] (the surface-note shape already exists in the methodology; this rule pins WHICH situations REQUIRE it).
++
++## Forbidden action catalog — match against this BEFORE acting
++
++The catalog below is the explicit checklist. If your next command matches any row, **STOP** and apply the surface protocol — even if it "looks small," even if the hook "looks like a false-positive," even if you can justify it locally.
++
++| Forbidden action | Shape | Why forbidden in auto-mode |
++|---|---|---|
++| `git push --no-verify` / `git commit --no-verify` | Bypasses pre-commit hooks (KB sync · router discipline · keeper checks · CLAUDE.md sync) | The hooks ARE the methodology's enforcement layer; bypassing them lands unverified state on shared branches |
++| `git push --force` / `git push -f` / `git push --force-with-lease` | Rewrites shared remote history | Destructive on shared `dev` / `main` / `prod`; needs explicit user authorization |
++| `git push origin <branch>:dev` / `:main` / `:prod` without per-action brief authorization | Direct push to shared integration / production branch | Shared-branch writes are the tech-lead's domain (post-integration); the engineer's job is its OWN feat branch |
++| `git reset --hard` | Discards local work without recovery | Destructive even on engineer's own worktree; surface as blocked instead |
++| `git branch -D` on non-engineer-own branches | Deletes a peer's branch | Cross-engineer state — not the engineer's to touch |
++| `rm -rf` on shared paths (repo root / `.claude/cache/` / `node_modules` for primary tree / `.venv` for primary tree) | Destructive on shared resources | Affects every concurrent agent; needs tech-lead resolution |
++| `--force` / `--force-rebuild` / `--force-purge` on platform tools | Bypasses safety prompts in `noctus.dev.*` / `noctus.vps.*` / deploy tools | The flag exists precisely because the operation is destructive — tech-lead authorizes |
++| Bypassing secrets / auth / permission gates | Inserting plaintext credentials · `chmod +x` · skipping a signature check · disabling a hook | The gate is there for a reason the engineer can't fully see |
++
++**Two engineer-side carve-outs** (these stay allowed because they're DEFENSIVE, not bypasses):
++- `git reset --soft HEAD^` to undo your own over-broad stage before re-staging scoped (recovery, not destructive).
++- `--no-verify` when the brief **explicitly authorizes** it with a written rationale (e.g., the architect's KB-autostage-hook bypass per `engineer-seed.md §2`) — the authorization makes it a tech-lead decision routed through the brief, not an autonomous engineer choice.
++
++## The surface protocol — 4 steps
++
++```
++1. STOP     stop the in-flight work in place. Do NOT proceed with the proposed bypass.
++2. SURFACE  file a surface note: noctus.dev.file_proposal(
++              kind="surface",
++              project=<slug if project-scoped, else session ref>,
++              title="auto-mode safety wall: <one-line>",
++              body=<filled template — see below>)
++3. RETURN   return to tech-lead with status=blocked. Include:
++              - surface-note filename
++              - current pwd
++              - git diff --cached --name-only (so tech-lead knows your true state)
++              - the literal command you almost ran (the would-have-been-bypass)
++4. WAIT     do not proceed until tech-lead calls noctus.dev.set_proposal_status
++            with accepted / rejected / adapted + a reason.
++            On adapted, re-dispatched brief overrides original.
++```
++
++**Surface note body** mirrors `templates/PROPOSAL-TEMPLATE.md`, with these sections targeted at the safety wall:
++- **§1 Context** — the slice you're on + the original brief's path
++- **§2 Situation** — the wall you hit (the hook that failed / the push that needed `--no-verify` / the destructive op needed to unblock). Include the literal error / diagnostic output.
++- **§3.1 Linkage** — why this wall blocks your slice
++- **§3.2 The proposed bypass** — the command you almost ran, verbatim
++- **§3.3 Risk** — what the bypass would land on shared state (what gate is bypassed, what guarantee is voided)
++- **§3.4 Alternative** — what a non-bypass path looks like (fix the hook? back the change out? re-scope the slice?) — the engineer doesn't decide, but does surface options for the tech-lead's broader-context decision
++
++## Worked examples — the N≥4 recurrence that mandated this codification
++
++All four occurred in the 2026-05-29 session before this rule was codified. Each agent took the destructive/risky shortcut autonomously (in auto-mode) and the orchestrator/tech-lead caught it post-hoc.
++
++### Example 1 — 8-way promotion agent (`cf7ac0d2-era`)
++**The wall hit.** Pre-commit hook failed.
++**The bypass taken (autonomously).** `git push --no-verify` to `dev`.
++**Right shape under this rule.** STOP → surface note describing the failing hook + diagnostic + the proposed `--no-verify` → return blocked. Tech-lead reads, decides whether the hook is a false-positive (rare; resolves it) or a real signal (resolves the root cause).
++
++### Example 2 — noc-graph lazy-rebuild agent
++**The wall hit.** Same pattern — pre-commit hook resistance.
++**The bypass taken.** `git push --no-verify` to `dev`.
++**Right shape.** Same as Example 1.
++
++### Example 3 — extractor-correctness agent
++**The wall hit.** Engineer dispatched as background agent for a methodology-touching slice.
++**The bypass taken.** Direct push to `dev` without per-action authorization (security warning surfaced post-hoc).
++**Right shape.** Pushing to shared `dev` is tech-lead's domain at integration. Engineer commits to OWN feat branch, surfaces ready-for-integration in the return, tech-lead executes the integration push.
++
++### Example 4 — W2 component_bundle agent
++**The wall hit.** Same shape — engineer wanted to push its slice.
++**The bypass taken.** Direct push to `dev`.
++**Right shape.** Same as Example 3.
++
++The N≥4 recurrence in a single session (well past the N=3 formalize threshold per the DRY rule) flipped this from "watch for it" to "codify it." The four agents weren't malicious — they were operating without the explicit rule, and auto-mode gave them no human gate. The rule + the engineer-seed standing protocol section close that gap.
++
++## Anti-patterns
++
++- **"The bypass was small / harmless."** The engineer cannot know without the tech-lead's broader context (peer activity, archived projects, what hook is signaling, whether the user would authorize). Local smallness ≠ global safety. Surface, don't decide.
++- **"The hook failure was a false-positive."** Maybe — but the tech-lead decides that, not the engineer. The hook exists *because* the gate matters; treating it as a false-positive autonomously turns every gate into an honor system.
++- **"I'll silently bypass + log it in the return note."** Auto-mode never licenses silent bypass. The whole point of the rule is that the bypass goes through tech-lead BEFORE the action, not after as documentation. Logging-after is the silent-error shape.
++- **"The brief didn't explicitly forbid this specific bypass."** Forbidden-by-default is the rule's contract. The brief explicitly *authorizes* bypasses when intended (see `engineer-seed.md §2` KB-autostage-hook authorized bypass shape); silence = forbidden, not = allowed.
++- **"This is the only way to make progress."** Then surface that as the wall. "I'm blocked unless I do X destructive thing" is a legitimate blocked status — the tech-lead may approve, may re-scope the slice, may surface to the user. The block IS the deliverable; the bypass is not.
++
++## Composes with
++
++- [[dispatch-with-project-and-notes]] — the surface-note shape (`kind="surface"`) this rule consumes; the `file_proposal` infra already exists, this rule pins which situations REQUIRE filing one.
++- [[drift-fix-on-contact]] — Roles split (tech-lead RESOLVES, engineers SURFACE) — same shape applied here to safety-gate bypass rather than drift.
++- [[scoped-auto-improvement]] — the two-leg footer (`drift-found:` + `scoped-improvement:`) is the standard surface channel; safety-wall surfaces additionally file a `kind="surface"` proposal because they BLOCK execution (footer alone wouldn't pause the engineer).
++- [[engineer-seed]] §0a / §9 — the standing protocol section that bakes this rule into every dispatch; §9 already lists the most common forbidden shapes (`--no-verify`, `--force`, `reset --hard`) — this rule expands the catalog + adds the surface protocol.
++- [[dispatch-engineer-tuning]] §Mandatory brief language — the brief-template section that ensures every dispatch carries the verbatim safety language.
++- [[no silent errors]] — universal ancestor; auto-mode silent bypass IS the silent-error shape.
++- [[main is sacred; dev is integration layer]] — the production-side reason shared-branch writes need explicit authorization.
++
++## Provenance
++
++- **s1 emerged** — 2026-05-29 session, after N≥4 recurrence in a single session (8-way promotion + noc-graph lazy + extractor-correctness + W2 component_bundle each tripped a destructive/risky shortcut autonomously). DRY rule's N=3 formalize threshold breached at N=4.
++- **s2 memory** — `feedback_bg_engineer_safety_surface_not_bypass.md` (same commit, forced compression per DRY rule's mandatory-formalize at N≥3).
++- **s3 codified** — this doc + `CLAUDE.md §1` + `CONTEXTUALIZE.md §2` + `engineer-seed.md §0a` + `dispatch-engineer-tuning.md §Mandatory brief language` (same commit).
++- **s4 keeper** — deferred. Natural future detector = `check_dispatch_brief_carries_safety_language` (scan engineer briefs for the verbatim "NEVER push with `--no-verify`…" string; surface absence as a `scoped-improvement:` candidate). Promoted once N≥2 measured drift instances of briefs missing the language.
++- **User mandate verbatim 2026-05-29** — *"background engineers are not allowed to bypass auto mode safety. they should surface to the tech lead, so the tl can deal with it. doc this."*
+diff --git a/KNOWLEDGE-BASE/INDEX.md b/KNOWLEDGE-BASE/INDEX.md
+index 4939da89..0431ce96 100644
+--- a/KNOWLEDGE-BASE/INDEX.md
++++ b/KNOWLEDGE-BASE/INDEX.md
+@@ -29,6 +29,7 @@ KNOWLEDGE-BASE/
+ │   │   │   ├── agent-reading-discipline.md
+ │   │   │   ├── ast.md
+ │   │   │   ├── auto-author-scaffolds.md
++│   │   │   ├── background-engineer-safety-discipline.md
+ │   │   │   ├── brief-similarity-radar.md
+ │   │   │   ├── build-learn-cache-mindset.md
+ │   │   │   ├── branching.md
+@@ -266,6 +267,7 @@ KNOWLEDGE-BASE/
+ | Repetitive procedure → skill (N≥2 recurrence) — **DRY for procedures** (sibling of the code-DRY rule + the methodology-codification pipeline): when the same multi-step orient→act procedure runs a second time on the platform it becomes a skill candidate; at N≥3 it MUST be codified as a `.claude/skills/noc-<verb-noun>/SKILL.md` skill via the `skill-creator` skill; four-gate procedure qualifier (multi-step ∧ orient→act ∧ auto-triggerable-on-phrases ∧ generalizable-beyond-one-instance); recipe (recognize at N=2 announce-loudly → decide procedure-vs-incidental via the four gates → author via skill-creator → verify 8-way sync); 5 anti-patterns (skill-blooming = near-duplicate of existing skill — use `code_similar_to_text` / `noctus.graph.query kinds=["harness_skill"]` Leg-A discovery before authoring · skill-scope-creep = drift past trigger phrases → split-not-bloat · inline-only-convenience = gate-4-fails → findings.md not skill · procedure-without-trigger = description is "Use when…" not verbatim phrases · single-MCP-call-as-skill = document the tool better instead); worked example = the 2026-05-28 ship of `noc-wrap-up` + `noc-verify-seed` + `noc-triage` codified together (auto-improvement ndjson entry 2026-05-28T14:20:01.531684, same-commit s2→s3 compression sourced from pre-existing memory entries — overdue per this rule's threshold and the very pattern that motivated codifying the threshold); Stage 4 keeper `check_recent_skills_have_index_provenance` deferred (advisory-only, audits new noc-* dirs for `Born from N≥2 recurrence at <source>` provenance) | `CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md` |
+ | Build-learn-cache mindset (not only during dev) — **body-DRY** (the third sibling closing the recurrence-codification triad with code-DRY + skill-DRY + methodology-codification-pipeline): every artifact we build or touch — component / page / functionality / integration / function / organ — accumulates KNOWLEDGE that gets CACHED alongside the artifact itself, in real-time AS WE BUILD (not at wrap-up), and continues to accumulate during refactor / bug-fix / integration / deploy. Eight knowledge categories (the schema): (1) `known_facts` load-bearing facts · (2) `errors_encountered` errors hit + resolutions (for the next builder to avoid) · (3) `drifts_surfaced` two-leg footer `drift-found:` entries indexed BACK to the artifact that triggered them · (4) `alternatives_considered` paths tried + rejection reason (so the next builder doesn't re-litigate) · (5) `manual_validation_log` user reports + agent manual probes (hybrid with automated tests — not noise, real signal) · (6) `integration_test_status` current pass/fail + last_run · (7) `e2e_test` path + last_run + result + triggers (every artifact ships AT LEAST one e2e path) · (8) `bugs_fixed_during_dev` paired with fixing commit (recursive — bugs found while populating the cache itself land here). Two storage shapes compose by lifespan: sidecar `<artifact>.knowledge.yaml` for stable artifacts (queryable by grep + `noctus.dev.unified_query`); noc-graph node fields + `project-history/build-knowledge.ndjson` event stream for emergent organs (queryable via `noctus.graph.query kinds=["artifact_knowledge"]`). The cache is **append-only across the artifact's lifetime** (refactor/bugfix/integration/deploy all append) — that's what makes it source-of-truth. Wrap-up becomes a **completeness check** ("did we capture all 8 categories for the artifacts we touched?"), not the capture activity itself. Anti-patterns: wrap-up-only capture (loses 80% of journey) · automated tests only (loses real manual-validation signal) · cache-artifact-lose-journey (alternatives + errors = 90% of dev cost) · knowledge in commit messages only (not queryable by intent) · per-session findings.md only (knowledge dies with worktree) · one-shot e2e with no status field. Worked example = the seed-organs-cache project active 2026-05-29 (the body-layer companion that materializes this rule's schema as a seed primitive); recursive proof = this codification's own journey IS this KB doc's own first knowledge-cache entry. Stage 4 keeper `check_artifact_has_knowledge_sidecar` deferred — lands after seed-organs-cache ships the body since the storage shape has to exist first. Composes with project-execution `findings absorption` (extends granularity from project-scoped + close-only to artifact-scoped + real-time) · repetitive-task-skill-codification (skill-DRY sibling) · methodology-codification-pipeline (s1→s4 cadence) · noc-graph (new `artifact_knowledge` node kind + `learned_from`/`surfaced_drift` edges) · scoped-auto-improvement (two-leg footer is the source stream for drifts_surfaced + bugs_fixed_during_dev) · persistent-files-absorption (same family, finer granularity) · cache-as-agent-tool (build-knowledge cache becomes a consultable cache) · dispatch-with-project-and-notes (dispatch brief carries the build-learn-cache obligation) | `CONTEXT/PATTERNS/common/build-learn-cache-mindset.md` |
+ | Dispatch with PROJECT — return with notes — the structural execution pattern: tech-lead writes PROJECT.md §4a Dispatch routing (slice→lens table + codification expectations per slice + routes-not-taken) BEFORE any dispatch; engineer/inline-lens reads PROJECT.md (not a bespoke brief), executes the slice, returns with a **delivery note** (`kind="delivery"` on `noctus.dev.file_proposal`); when alt route emerges mid-flight, engineer files a **surface note** (`kind="surface"`) and BLOCKS until tech-lead approves/rejects/adapts with rationale (durable trailer on the note); reuses existing `projects/<slug>/proposals/` infra (notes = concept layer over the proposal file format via the `kind` parameter — phase/surface/delivery — phase=legacy back-compat); composes with engineer-seed §3 short-form return + §7 two-leg footer (delivery note = the durable form) + scoped-auto-improvement + methodology-codification-pipeline §4a.2 + parallelization-first §inline-empersonate rule; born 2026-05-26 evening from user-surfaced "agents skip steps + get lost" pattern alongside the s4-without-s3 codification gap | `CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md` |
++| Background-engineer safety discipline — SURFACE to tech-lead, NEVER bypass auto-mode safety: background-dispatched engineers operate in auto-mode (no human-prompt loop) and MUST NOT take any action that would normally need user confirmation; forbidden-action catalog (no `--no-verify` push/commit, no `--force` push, no `git reset --hard`, no `git branch -D` on non-own branches, no `rm -rf` on shared paths, no `--force*` flags on platform tools, no bypassing secrets/auth/permission gates, no direct push to shared `dev`/`main`/`prod` without per-action brief authorization); two carve-outs (engineer-side `git reset --soft HEAD^` recovery + brief-authorized `--no-verify` with written rationale per `engineer-seed §2`); 4-step surface protocol (STOP → file `kind="surface"` proposal via `noctus.dev.file_proposal` → return blocked with surface-note filename + pwd + diff + the literal command you almost ran → WAIT for tech-lead `set_proposal_status` accepted/rejected/adapted); 4 worked examples from 2026-05-29 session (8-way promotion `--no-verify` push, noc-graph lazy-rebuild `--no-verify` push, extractor-correctness direct push to dev, W2 component_bundle direct push to dev — all four took destructive shortcuts autonomously in auto-mode, all four caught post-hoc); 5 anti-patterns ("the bypass was small/harmless" · "the hook failure was a false-positive" · silent bypass + log later · "the brief didn't explicitly forbid this" · "this is the only way to make progress"); composes with `engineer-seed §0a` (the standing-protocol surface that bakes the rule into every dispatch) + `dispatch-engineer-tuning §4b` (the mandatory verbatim brief-language audit trail) + `dispatch-with-project-and-notes` (surface-note infra) + `drift-fix-on-contact § Roles` (the role-split shape applied to safety bypass instead of drift) + `scoped-auto-improvement` (two-leg footer for ordinary surfaces) + `no silent errors` (universal ancestor — auto-mode silent bypass IS the silent-error shape); born 2026-05-29 after N≥4 in-session recurrence breached DRY rule's N=3 mandatory-formalize threshold | `CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md` |
+ | Doc symbology — lossless compression glossary defining a fixed-meaning symbol set (logic `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈`; status icons `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️`; codification stages `s1/s2/s3/s4`; triage outcomes `[F]/[R]/[A]`; counts `N≥3 N=2 Δ Σ`; prose-word abbreviations `DB/auth/config/req/res/fn/impl`); contract = lossless-swap test (reader with glossary recovers exact semantic of prose); caveman-skill provenance (`github.com/JuliusBrussee/caveman`, validated ~61-75% token cut, retrieved 2026-05-18) — adopts caveman prose-discipline layer (§6a) + lite/full/ultra intensity ladder (§3a.1), explicitly rejects caveman `→`=causal mapping (our `→`=routes is locked; divergence register in §1/§4); where to use (MASTER-PROMPTs / CLAUDE.md / KB patterns / PROJECT.md §6+§11) vs NOT (error messages / first-paragraph context / quoted user instructions / bug-fix code comments / commit messages); anti-patterns (stacking, inventing new symbols without adding here, symbol-loading low-traffic docs); reference patterns codify codification pipeline + 3-way triage + doc-code coherence + recurrence rule + status legend in 1-line forms | `CONTEXT/PATTERNS/common/doc-symbology.md` |
+ | Lossless doc-refactor — the standing framework for any change to the durable doc-set itself (CLAUDE.md / KB / MEMORY.md / `.claude/agents` / MASTER-PROMPTs); fires on "compact / token-optimize docs", "refactor doc/architecture structure", "merge/split rules", "fold in an external pattern"; prime directive = lossless **proven not asserted** via 5 diff gates (pointer-set / rule-section / line-structure / index-pointer / hook-grade — line-structure is a distinct gate per the 2026-05-18 newline-eaten-by-Edit lesson); gated-aggressiveness ladder (s-lossless no-approval · s-moderate show-diff-first · s-plan-only); source-of-truth trim rule (cut only what the pointer target provably carries; registers/catalogs/ledgers are data not prose); symbol-first caveman-aligned + `check_doc_symbology_drift` zero-drift enforcement; safe parallelization = strictly file-disjoint worktree off real-HEAD + architect true-disk 100%-certification before merge + inline-architect fallback if not disjoint; fix-on-contact during refactor; three-way-sync close-out; the doc governs itself | `CONTEXT/PATTERNS/common/lossless-doc-refactor.md` |
+ | CLAUDE.md router discipline — CLAUDE.md is the always-on auto-loaded router; §1 carries PRINCIPLE + MAP (rule + one-clause why + `→` pointer, one line each), PROCEDURE lives in `.claude/skills/noc-*`, depth in `KB § …`; the v4.0 **synthesis** = moderate §1 (why-based, higher quality) + aggressive §2 (shortlist + `→ INDEX.md`, no duplicated roster → drift-free); 3 deterministic invariants (whole-file word budget ≤2500 / each §1 rule one-line carrying `→` ≤60 words / no §1 prose bodies) gated by Stage-4 keeper `check_claude_md_router` (registered in `check_all_products` + `--check-claude-md-router` pre-commit block; mirrors `check_doc_symbology_drift`; colocated `TestClaudeMdRouter`); three poles preserved in `backup/` (original/aggressive/moderate); born `harness-agents-skills` 2026-05-25 | `CONTEXT/PATTERNS/common/claude-md-router-discipline.md` |
+diff --git a/mcp/noctusai/tools/noctus/dev/compliance.py b/mcp/noctusai/tools/noctus/dev/compliance.py
+index b3250087..a3c59cd4 100644
+--- a/mcp/noctusai/tools/noctus/dev/compliance.py
++++ b/mcp/noctusai/tools/noctus/dev/compliance.py
+@@ -8173,6 +8173,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
+     "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
+     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
+     "CONTEXT/PATTERNS/common/drift-fix-on-contact.md",
++    "CONTEXT/PATTERNS/common/background-engineer-safety-discipline.md",  # universal commons: every background-dispatched engineer applies it; sibling of drift-fix-on-contact (Roles split for safety-gate bypass)
+     "CONTEXT/PATTERNS/common/persistent-files-absorption.md",
+     "CONTEXT/PATTERNS/common/keeper-check-before-docing.md",
+     "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
+diff --git a/project-history/auto-improvement.ndjson b/project-history/auto-improvement.ndjson
+index caf387a8..9497b655 100644
+--- a/project-history/auto-improvement.ndjson
++++ b/project-history/auto-improvement.ndjson
+@@ -39,3 +39,4 @@
+ {"ts": "2026-05-28T20:27:39.091747+00:00", "agent": "tech-lead", "scope": "broad", "kind": "improvement", "target": "noctus.dev.task_branch action=cleanup salvage-ledger loop (N=3)", "description": "CLOSED via two-leg fix (commit d2676bed → dev): (1) `_worktree_salvage.append_ledger` idempotent on (path, branch, sha) — skips duplicates, returns ledger path even when all-duplicates so callers can probe dirty; (2) `task_branch.cleanup` stages + commits + pushes the salvage-ledger entry to dev (FF-only, single retry on race) BEFORE attempting worktree remove — so the appended record never leaves the tree dirty across the remove. 7 new tests proving the new behavior + sequencing (5 idempotency + 2 commit-push). Proved itself: removed both stuck worktrees (root-drift-absorption-2026-05-28 + task-branch-cleanup-idempotency-fix) cleanly via the new logic — no --force needed. Closes the workaround `git worktree remove --force` used earlier in the session (user mandate caught: \"no workarounds, fix this the proper way\"). s4-keeper not needed — the tests + the user-facing flow are correct-by-construction; the bug is structurally impossible after this fix.", "status": "s3-codified", "source_ref": "session:2026-05-28-task-branch-cleanup-fix"}
+ {"ts": "2026-05-28T20:59:47.878406+00:00", "agent": null, "scope": "broad", "kind": "drift", "target": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/project-execution.md + 01-PHILOSOPHY.md + branching-and-merging.md + 59 others", "description": "Legacy \"three-way sync\" term lingers in 62 KB locations after the 2026-05-26 promotion to \"seven-way sync\" (KB § PATTERNS/common/seven-way-sync.md). Top 3 load-bearing: project-execution.md (13 hits), 01-PHILOSOPHY.md (11 hits incl. §717 section header \"Docs stay in sync — three-way sync across KB, CLAUDE.md, and memory\"), branching-and-merging.md (10 hits). Also 2 live-surface hits: CLAUDE/projects.md (3) + .claude/agents/compliance-reviewer.md (3) + .claude/commands/codify.md (1). Recommend a dedicated rename pass — bundling into CONTEXTUALIZE-fix commit violated scope discipline per user \"short session\" framing 2026-05-28. Defer via roadmap or separate session. The s3-codified seven-way-sync.md doc exists; only the corpus text needs catch-up. Potential s4 keeper: check_legacy_three_way_sync_term. Surfaced by advisor agent during landscape-drift scan 2026-05-28.", "status": "s2-memory", "source_ref": "session:2026-05-28-contextualize-fix"}
+ {"ts": "2026-05-29T08:09:28.883234+00:00", "agent": "tech-lead", "scope": "broad", "kind": "improvement", "target": "KB § PATTERNS/common/repetitive-task-skill-codification.md + CLAUDE.md §1 + CONTEXTUALIZE.md §2 + feedback_repetitive_task_skill_codification", "description": "Codified the \"Repetitive procedure → skill at N≥2\" rule — DRY for procedures, sibling of code-DRY rule (project-execution.md § 2.7) + methodology-codification pipeline. Fills the missing third leg: code repetition → DRY (extract function), doc/methodology repetition → codification pipeline (KB + CLAUDE.md), procedure repetition → THIS rule (.claude/skills/noc-* skill via skill-creator). Four-gate qualifier (multi-step ∧ orient→act ∧ auto-triggerable ∧ generalizable). Worked example = 2026-05-28 ship of noc-wrap-up + noc-verify-seed + noc-triage (auto-improvement ndjson 2026-05-28T14:20:01, same-commit s2→s3 compression — overdue by months per this threshold). New KB doc + CLAUDE.md §1 one-liner (near DRY rule, pointer-only) + CONTEXTUALIZE.md §2 mirror + memory feedback_repetitive_task_skill_codification.md + MEMORY.md index entry + INDEX.md Layout + topic-table + compliance.py _AGENT_KB_UNOWNED_ALLOWLIST entry (universal commons, every lens applies). s4 keeper check_recent_skills_have_index_provenance deferred to next pass (advisory; would audit new noc-* dirs for \"Born from N≥2 recurrence at <source>\" provenance line). Force=True: same-commit s1→s3 compression — s1 surfaced this session by user, s2 prereq lives in the new memory entry being shipped same commit.", "status": "s3-codified", "source_ref": "force:force:session:2026-05-29-repetitive-task-skill-rule (force: same-commit s1→s3 compression; user surfaced rule this session, memory + KB + CLAUDE.md ship together)"}
++{"ts": "2026-05-29T09:00:21.674414+00:00", "agent": "tech-lead", "scope": "broad", "kind": "improvement", "target": "KB § PATTERNS/common/background-engineer-safety-discipline.md", "description": "Background-dispatched engineers MUST NOT bypass auto-mode safety unilaterally; they SURFACE to the tech-lead. No --no-verify push, no --force, no destructive ops on shared resources unless tech-lead explicitly authorized in the brief. Wall hit ⇒ STOP + surface-note (kind=\"surface\") + return blocked. Mirrors drift-fix-on-contact Roles split applied to safety-gate bypass. Codifies into engineer-seed §0a standing protocol + dispatch-engineer-tuning §4b mandatory brief language + CLAUDE.md §1 rule + CONTEXTUALIZE.md §2 mirror + MEMORY.md index + new memory feedback_bg_engineer_safety_surface_not_bypass.md. Forced same-commit s1→s3 compression per DRY rule's mandatory-formalize at N≥4 in 2026-05-29 session.", "status": "s3-codified", "source_ref": "force:session:2026-05-29-bg-engineer-safety-discipline; N≥4 in-session recurrence (8-way promotion + noc-graph lazy-rebuild + extractor-correctness + W2 component_bundle each took --no-verify or direct-push-to-dev autonomously); breached DRY rule N=3 mandatory-formalize threshold; user mandate verbatim 'background engineers are not allowed to bypass auto mode safety. they should surface to the tech lead, so the tl can deal with it. doc this.'"}
+-- 
+2.51.2
+
