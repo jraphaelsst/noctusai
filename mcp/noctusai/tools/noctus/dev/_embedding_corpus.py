@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional, TypeVar
 
 from .cache_backend import apply_locking_pragmas
+from ._llm_bootstrap import ensure_llm_configured
 
 
 # ── Knobs ──────────────────────────────────────────────────────────────────
@@ -139,15 +140,20 @@ def embed_sync(text: str) -> list[float]:
     """Sync-wrap the async `noctusai_lib.integrations.llm.generate_embedding`.
 
     Loop-safe (see `run_coro_blocking`): works both under the MCP server's
-    running loop and from the loop-free CLI. Caller MUST ensure
-    `configure_llm()` was called (the noctusai CLI's `_ensure_llm_configured`
-    helper does this for refresh/search paths).
+    running loop and from the loop-free CLI.
+
+    Self-configures the LLM (see `ensure_llm_configured`): the funnel satisfies
+    its OWN `configure_llm()` precondition instead of offloading it to callers,
+    so every embed path works in-process — CLI, the live MCP server, pre-push
+    hooks, tests. (Offloading it to callers was the source of the recurring
+    "LLM not configured" drift: only the CLI ran the bootstrap.)
 
     Proactively rate-limited (see `_throttle_embed`): consecutive embeds are
     spaced ≥ NOCTUS_EMBED_MIN_INTERVAL_MS apart so a full-corpus refresh paces
     itself under the OpenAI limit instead of relying on 429 backoff.
     """
     from noctusai_lib.integrations.llm import generate_embedding
+    ensure_llm_configured()
     _throttle_embed()
     return run_coro_blocking(generate_embedding(text))
 

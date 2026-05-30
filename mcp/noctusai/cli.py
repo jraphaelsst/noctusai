@@ -95,72 +95,21 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 
 
-_LLM_CONFIGURED = False
-
-
 def _ensure_llm_configured() -> bool:
-    """Lazily call `noctusai_lib.configure_llm()` with an env-driven key_provider.
+    """Configure the seed LLM client (idempotent) so CLI embed/search/chat
+    commands work without the operator having to `source .env` first.
 
-    Idempotent — only fires once per process. Returns True if config landed,
-    False if the LLM lib isn't importable (graceful-degrade for fresh clones
-    or no-key environments). Reads /repo/.env if `OPENAI_API_KEY` isn't
-    already in the process env so the operator doesn't have to `source .env`
-    before every CLI invocation.
+    Delegates to the SINGLE bootstrap shared with the embed funnel
+    (`tools.noctus.dev._llm_bootstrap.ensure_llm_configured`) — the
+    funnel-self-satisfies-preconditions fix. Keeping the .env-sourcing +
+    configure_llm logic in one place is why a CLI invocation and an in-process
+    MCP-server embed now behave identically. Returns False (graceful-degrade)
+    when the seed lib isn't importable.
+    KB § PATTERNS/common/funnel-self-satisfies-preconditions.md.
     """
-    global _LLM_CONFIGURED
-    if _LLM_CONFIGURED:
-        return True
-    import os
-    import subprocess
-    # Auto-source .env so OPENAI_API_KEY lands in os.environ. Two candidates:
-    # 1. The current repo root (parents[2] of this file).
-    # 2. The PRIMARY git worktree's repo root (when this is a linked worktree,
-    #    .env is gitignored and doesn't replicate — must read primary's copy).
-    if not os.environ.get("OPENAI_API_KEY"):
-        candidates: list[Path] = [Path(__file__).resolve().parents[2] / ".env"]
-        try:
-            wt_out = subprocess.run(
-                ["git", "worktree", "list", "--porcelain"],
-                capture_output=True, text=True, cwd=Path(__file__).resolve().parents[2],
-            )
-            for line in wt_out.stdout.splitlines():
-                if line.startswith("worktree "):
-                    primary = Path(line[len("worktree "):]) / ".env"
-                    if primary not in candidates:
-                        candidates.append(primary)
-                    break  # first line = primary
-        except (OSError, subprocess.SubprocessError):
-            pass
-        for env_file in candidates:
-            if not env_file.exists():
-                continue
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                k, v = k.strip(), v.strip().strip('"').strip("'")
-                if k and k not in os.environ:
-                    os.environ[k] = v
-            if os.environ.get("OPENAI_API_KEY"):
-                break
     try:
-        from noctusai_lib import LLMConfig
-        from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config
-        try:
-            get_llm_config()  # already configured?
-            _LLM_CONFIGURED = True
-            return True
-        except RuntimeError:
-            pass
-        config = LLMConfig(
-            key_provider=lambda provider, org_id=None: os.environ.get(
-                f"{provider.upper()}_API_KEY"
-            ),
-        )
-        configure_llm(config)
-        _LLM_CONFIGURED = True
-        return True
+        from tools.noctus.dev._llm_bootstrap import ensure_llm_configured
+        return ensure_llm_configured()
     except ImportError:
         return False
 
