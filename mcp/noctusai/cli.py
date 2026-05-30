@@ -217,6 +217,7 @@ def main():
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
+    parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync (two promotions back). Will be removed once external callers migrate.")
@@ -1137,6 +1138,18 @@ def main():
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         # severity=warning only — do NOT block commits (informational gate).
+        sys.exit(0)
+
+    elif args.check_dangling_remote_branches:
+        from tools.noctus.dev.compliance import check_dangling_remote_branches
+        issues = check_dangling_remote_branches()
+        if not issues:
+            print(f"  {GREEN}✓ dangling-remote-branches: 0 unique-aged remote branches.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} dangling-remote-branch finding(s) (advisory):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue'][:120]}")
+        # severity=warning only — advisory, never blocks commits.
         sys.exit(0)
 
     elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
