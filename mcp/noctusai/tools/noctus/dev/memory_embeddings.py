@@ -119,7 +119,10 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
     )
     # Write aggregate source_sha for freshness keeper.
     try:
-        conn = sqlite3.connect(str(CACHE_PATH))
+        # connect_cache applies WAL + busy_timeout — this is a WRITER, so without
+        # busy_timeout a concurrent refresh writer raises `database is locked`
+        # (WAL does not serialize writer-vs-writer). KB § PATTERNS/common/cache-locking-discipline.md.
+        conn = _ec.connect_cache(CACHE_PATH)
         conn.execute(
             "INSERT OR REPLACE INTO cache_meta(key, value) VALUES ('source_sha', ?)",
             (cache_source_sha(),),

@@ -245,3 +245,47 @@ class TestCacheUsesLockingHelper:
         # AND fails loudly if anyone re-introduces a raw WAL cache connection.
         from tools.noctus.dev.compliance import check_cache_uses_locking_helper
         assert check_cache_uses_locking_helper() == []
+
+    # ── Leg 2: the MISSING-pragma omission detector (2026-05-30 hardening) ──
+    # The original keeper only grepped the journal_mode=WAL literal, so a raw
+    # sqlite3.connect() that omitted the pragmas ENTIRELY was invisible — exactly
+    # the shape that caused the code-embed `database is locked`.
+    def test_bare_connect_without_helper_flagged(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            'import sqlite3\n'
+            'def get_source_sha(p):\n'
+            '    conn = sqlite3.connect(str(p))\n'
+            '    return conn.execute("SELECT 1").fetchone()\n')
+        issues = check_cache_uses_locking_helper(repo_root=tmp_path)
+        hits = [i for i in issues if i["symbol"] == "cache-connect-without-locking-helper"]
+        assert hits and all(i["severity"] == "high" for i in hits)
+        assert hits[0]["file"].endswith("newcache.py")
+
+    def test_connect_with_helper_in_same_fn_not_flagged(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            'from .cache_backend import apply_locking_pragmas\n'
+            'import sqlite3\n'
+            'def get_source_sha(p):\n'
+            '    conn = sqlite3.connect(str(p))\n'
+            '    apply_locking_pragmas(conn)\n'
+            '    return conn.execute("SELECT 1").fetchone()\n')
+        assert check_cache_uses_locking_helper(repo_root=tmp_path) == []
+
+    def test_delegating_fn_with_no_raw_connect_not_flagged(self, tmp_path):
+        # A freshness reader that delegates to _connect() holds no raw connect —
+        # the canonical compliant remediation. Must NOT be flagged.
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            'import sqlite3\n'
+            'def _connect():\n'
+            '    conn = sqlite3.connect("x")\n'
+            '    apply_locking_pragmas(conn)\n'
+            '    return conn\n'
+            'def get_source_sha(p):\n'
+            '    conn = _connect()\n'
+            '    return conn.execute("SELECT 1").fetchone()\n')
+        issues = check_cache_uses_locking_helper(repo_root=tmp_path)
+        # _connect() applies the helper; get_source_sha() has no raw connect.
+        assert [i for i in issues if i["symbol"] == "cache-connect-without-locking-helper"] == []

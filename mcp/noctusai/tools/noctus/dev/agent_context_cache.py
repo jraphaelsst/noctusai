@@ -393,7 +393,10 @@ def get_bundle_sha(agent_name: str) -> tuple[str, str | None]:
     cached: str | None = None
     if CACHE_PATH.exists():
         try:
-            conn = sqlite3.connect(str(CACHE_PATH))
+            # Reuse _connect() (WAL + busy_timeout) — a raw sqlite3.connect()
+            # here would skip busy_timeout and raise `database is locked` under
+            # writer contention. KB § PATTERNS/common/cache-locking-discipline.md.
+            conn = _connect()
             cur = conn.execute(
                 "SELECT value FROM cache_meta WHERE key=?",
                 (f"bundle_sha:{agent_name}",),

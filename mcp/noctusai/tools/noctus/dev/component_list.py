@@ -172,11 +172,15 @@ def _last_touched_for_path(path: str, repo_root: Path) -> str | None:
     """Look up the cached_at timestamp from noc_graph_files for a node path."""
     try:
         from tools.noctus.dev.noc_graph_cache import cache_path as _cp
+        from tools.noctus.dev.cache_backend import apply_locking_pragmas
         cache_p = _cp(repo_root)
         if not cache_p.exists():
             return None
         conn = sqlite3.connect(str(cache_p))
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout — uniform cache locking discipline (this reads the
+        # noc-graph cache, written by another module). KB § PATTERNS/common/cache-locking-discipline.md.
+        apply_locking_pragmas(conn)
         try:
             row = conn.execute(
                 "SELECT cached_at FROM noc_graph_files WHERE path = ?", (path,)

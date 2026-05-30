@@ -522,7 +522,11 @@ def get_source_sha(path: str, repo_root: Path | None = None) -> tuple[str, str |
     cached: str | None = None
     if CACHE_PATH.exists():
         try:
-            conn = sqlite3.connect(str(CACHE_PATH))
+            # Reuse the module's pragma-applying helper (WAL + busy_timeout) —
+            # a raw sqlite3.connect() here would skip busy_timeout and raise
+            # `database is locked` when the freshness keeper reads this while the
+            # pre-push refresh writer holds the cache. KB § PATTERNS/common/cache-locking-discipline.md.
+            conn = _connect()
             cur = conn.execute(
                 "SELECT DISTINCT source_sha FROM code_chunks WHERE path=? LIMIT 1",
                 (path,),

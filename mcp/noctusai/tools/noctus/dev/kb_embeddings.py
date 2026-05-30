@@ -434,7 +434,10 @@ def get_source_sha(path: str) -> tuple[str, str | None]:
     cached: str | None = None
     if CACHE_PATH.exists():
         try:
-            conn = sqlite3.connect(str(CACHE_PATH))
+            # Reuse the module's pragma-applying helper (WAL + busy_timeout) —
+            # a raw sqlite3.connect() here would skip busy_timeout and raise
+            # `database is locked` under writer contention. KB § PATTERNS/common/cache-locking-discipline.md.
+            conn = _connect()
             cur = conn.execute(
                 "SELECT DISTINCT source_sha FROM kb_chunks WHERE path=? LIMIT 1",
                 (path,),

@@ -463,6 +463,8 @@ def mirror_one_cache(
     backend = PostgresCacheBackend(dsn=dsn) if dsn else PostgresCacheBackend()
     local = sqlite3.connect(str(sqlite_path))
     local.row_factory = sqlite3.Row
+    # WAL + busy_timeout — match the standard cache locking discipline.
+    apply_locking_pragmas(local)
     try:
         with backend.connect(cache_name) as pg_conn:
             try:
@@ -591,6 +593,8 @@ def mirror_all(
             sqlite_table = _TABLE_MAP[name][0]
             try:
                 conn = sqlite3.connect(str(p))
+                # WAL + busy_timeout — match the standard cache locking discipline.
+                apply_locking_pragmas(conn)
                 row_count = conn.execute(f"SELECT COUNT(*) FROM {sqlite_table}").fetchone()[0]
                 conn.close()
                 plan[name] = {"status": "ready", "local_rows": row_count}

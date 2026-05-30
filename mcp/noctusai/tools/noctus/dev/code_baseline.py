@@ -83,7 +83,11 @@ def _code_corpus_sha(repo_root: Path | None = None) -> str:
         return ""
     h = hashlib.sha256()
     try:
+        from tools.noctus.dev.cache_backend import apply_locking_pragmas
         conn = sqlite3.connect(str(cache))
+        # WAL + busy_timeout — uniform cache locking discipline (this reads the
+        # code-embeddings cache, written by another module). KB § PATTERNS/common/cache-locking-discipline.md.
+        apply_locking_pragmas(conn)
         cur = conn.execute(
             "SELECT path, symbol_name, source_sha FROM code_chunks "
             "ORDER BY path, symbol_name"

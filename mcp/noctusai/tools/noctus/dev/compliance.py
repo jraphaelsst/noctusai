@@ -8963,6 +8963,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
     try:
         conn = sqlite3.connect(str(cache))
+        _apply_cache_lock(conn)
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
         row = cur.fetchone()
         conn.close()
@@ -9141,6 +9142,7 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
     # the keeper resilient to a partially-broken kb_embeddings module).
     try:
         conn = sqlite3.connect(str(cache))
+        _apply_cache_lock(conn)
         # Schema may be either the new dual-engine shape or the older
         # single-table shape — try the new first, fall back if needed.
         try:
@@ -9230,6 +9232,7 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
         return issues
     try:
         conn = sqlite3.connect(str(cache))
+        _apply_cache_lock(conn)
         try:
             # Exclude kind='organ' rows: organs (W4 seed-organs-cache) share the
             # code_chunks table but store a BUNDLE source_sha (source+tests+
@@ -9429,6 +9432,7 @@ def check_graph_extractor_corpus_sanity(repo_root: Path | None = None) -> list[d
     try:
         conn = _sqlite3.connect(str(cache))
         conn.row_factory = _sqlite3.Row
+        _apply_cache_lock(conn)
     except Exception as e:  # noqa: BLE001
         issues.append({
             "product": "<harness>", "file": cache_file_label,
@@ -9842,24 +9846,78 @@ _LOCKING_PRAGMA_EXEMPT = (
 )
 
 
+def _apply_cache_lock(conn) -> None:
+    """Apply WAL + busy_timeout to a cache connection opened inside this keeper
+    engine. The freshness checkers below read caches during the pre-commit /
+    `noctus.dev.validate` window, which can overlap a refresh writer — a default
+    busy_timeout=0 read raises `database is locked`. Lazy import keeps the hot
+    keeper path import-light (see the module-top accept-with-rationale).
+    KB § PATTERNS/common/cache-locking-discipline.md."""
+    from tools.noctus.dev.cache_backend import apply_locking_pragmas
+    apply_locking_pragmas(conn)
+
+
+def _is_sqlite_connect_call(node: ast.AST) -> bool:
+    """True for ``sqlite3.connect(...)`` / ``_sqlite3.connect(...)`` calls."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "connect"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in ("sqlite3", "_sqlite3")
+    )
+
+
+def _fn_calls_locking_helper(fn: ast.AST) -> bool:
+    """True iff the function body (incl. nested scopes) calls
+    ``apply_locking_pragmas`` anywhere — the canonical compliant shape paired
+    with every cache ``sqlite3.connect()``."""
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Name) and f.id == "apply_locking_pragmas":
+            return True
+        if isinstance(f, ast.Attribute) and f.attr == "apply_locking_pragmas":
+            return True
+    return False
+
+
 def check_cache_uses_locking_helper(repo_root: Path | None = None) -> list[dict]:
-    """Stage-4 keeper (2026-05-30): every SQLite cache connection MUST apply the
-    locking discipline via ``cache_backend.apply_locking_pragmas`` (WAL +
-    busy_timeout), NOT a raw inline ``PRAGMA journal_mode=WAL``.
+    """Stage-4 keeper (2026-05-30, omission-hardened 2026-05-30): every SQLite
+    cache connection MUST apply the locking discipline via
+    ``cache_backend.apply_locking_pragmas`` (WAL + busy_timeout).
 
-    A raw WAL pragma without the busy_timeout sibling is the writer-contention
-    regression fixed 2026-05-30: WAL removes reader↔writer contention but does
-    NOT serialize writer-vs-writer, so a contending writer raises
-    ``database is locked``. The single helper pairs both pragmas; inlining WAL
-    alone silently re-opens the gap (this is what guards the next new cache).
+    Two failure shapes, two legs:
 
-    Predicate: no ``journal_mode=WAL`` literal appears in
-    ``mcp/noctusai/tools/**/*.py`` outside the exempt files (the helper home +
-    this detector). Severity ``high`` — zero violations exist after the
-    2026-05-30 centralization, so any hit is a genuine regression.
+    Leg 1 — WRONG pragma (raw inline ``PRAGMA journal_mode=WAL``). WAL removes
+    reader↔writer contention but does NOT serialize writer-vs-writer, so a
+    contending writer raises ``database is locked``. The single helper pairs
+    both pragmas; inlining WAL alone silently re-opens the gap.
+
+    Leg 2 — MISSING pragma (a raw ``sqlite3.connect()`` whose enclosing function
+    never calls ``apply_locking_pragmas``). This is the shape the original
+    literal-grep keeper was BLIND to: a connection with default
+    ``busy_timeout=0`` and no WAL line is invisible to a ``journal_mode=WAL``
+    search, yet it is exactly what caused the 2026-05-30 code-embed lock
+    (``get_source_sha()`` opened a throwaway connection bypassing the module's
+    own ``_connect()``). A keeper that asserts the presence of the right pragma
+    must ALSO assert the absence of the bare form, or it has a blind spot.
+
+    Predicate (AST, per FunctionDef): a function containing a
+    ``sqlite3.connect(...)`` call MUST also contain an ``apply_locking_pragmas``
+    call. Functions that delegate to a helper (``_connect()`` /
+    ``connect_cache()``) hold no raw connect and are correctly ignored.
+    Severity ``high`` — zero violations exist after the 2026-05-30 sweep, so any
+    hit is a genuine regression.
+
+    Exempt: the helper's home (``cache_backend.py``) and this keeper's own
+    source (``compliance.py`` — self-AST-scanning is fragile, and it legitimately
+    holds the literal in remediation strings).
 
     Remediation: ``from .cache_backend import apply_locking_pragmas`` then
-    ``apply_locking_pragmas(conn)`` right after ``sqlite3.connect(...)``.
+    ``apply_locking_pragmas(conn)`` right after ``sqlite3.connect(...)`` — or
+    delegate to the module's ``_connect()`` / ``connect_cache()`` helper.
 
     Silent skip on a non-noc tree. KB § PATTERNS/common/cache-locking-discipline.md.
     """
@@ -9874,14 +9932,18 @@ def check_cache_uses_locking_helper(repo_root: Path | None = None) -> list[dict]
         if py.resolve() in exempt:
             continue
         try:
-            lines = py.read_text(encoding="utf-8").splitlines()
+            src = py.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        lines = src.splitlines()
+        rel = str(py.relative_to(root))
+
+        # Leg 1 — the WRONG-pragma form (raw journal_mode=WAL literal).
         for lineno, line in enumerate(lines, 1):
             if needle not in line or line.lstrip().startswith("#"):
                 continue
             issues.append({
-                "file": str(py.relative_to(root)),
+                "file": rel,
                 "line": lineno,
                 "issue": (
                     f"raw `PRAGMA {needle}` at line {lineno} — call "
@@ -9891,6 +9953,37 @@ def check_cache_uses_locking_helper(repo_root: Path | None = None) -> list[dict]
                 ),
                 "severity": "high",
                 "symbol": "cache-raw-wal-without-helper",
+            })
+
+        # Leg 2 — the MISSING-pragma form (raw sqlite3.connect() in a function
+        # that never applies the locking helper). The blind spot that let the
+        # 2026-05-30 code-embed lock through the original literal-only keeper.
+        try:
+            tree = ast.parse(src, filename=str(py))
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            connect_line = next(
+                (n.lineno for n in ast.walk(fn) if _is_sqlite_connect_call(n)),
+                None,
+            )
+            if connect_line is None or _fn_calls_locking_helper(fn):
+                continue
+            issues.append({
+                "file": rel,
+                "line": connect_line,
+                "issue": (
+                    f"`sqlite3.connect()` at line {connect_line} in `{fn.name}()` "
+                    "without `apply_locking_pragmas(conn)` — a default "
+                    "busy_timeout=0 connection raises `database is locked` under "
+                    "writer contention (the 2026-05-30 code-embed lock). Apply the "
+                    "helper or delegate to `_connect()` / `connect_cache()`. "
+                    "KB § PATTERNS/common/cache-locking-discipline.md"
+                ),
+                "severity": "high",
+                "symbol": "cache-connect-without-locking-helper",
             })
     return issues
 
@@ -9956,6 +10049,7 @@ def check_corpus_embeddings_cache_freshness(repo_root: Path | None = None) -> li
         return issues
     try:
         conn = sqlite3.connect(str(CACHE_PATH))
+        _apply_cache_lock(conn)
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
         row = cur.fetchone()
         conn.close()
@@ -10021,6 +10115,7 @@ def check_memory_embeddings_cache_freshness(repo_root: Path | None = None) -> li
         return issues
     try:
         conn = sqlite3.connect(str(CACHE_PATH))
+        _apply_cache_lock(conn)
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
         row = cur.fetchone()
         conn.close()
@@ -10345,6 +10440,7 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
     src_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
     try:
         conn = sqlite3.connect(str(cache))
+        _apply_cache_lock(conn)
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
         row = cur.fetchone()
         conn.close()

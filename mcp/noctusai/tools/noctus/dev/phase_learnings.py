@@ -75,6 +75,11 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    # WAL + busy_timeout — written concurrently across parallel phases; a default
+    # busy_timeout=0 connection raises `database is locked` under contention.
+    # KB § PATTERNS/common/cache-locking-discipline.md.
+    from tools.noctus.dev.cache_backend import apply_locking_pragmas
+    apply_locking_pragmas(conn)
     conn.executescript(_SCHEMA_SQL)
     return conn
 
