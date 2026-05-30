@@ -44,7 +44,7 @@ def _load_all_embeddings(repo_root: Path) -> list[tuple[str, str, list[float]]]:
     deduplicated at the (path, chunk_idx=0) level so only the first chunk of
     each symbol/doc contributes a representative vector.
     """
-    from tools.noctus.dev.cache_backend import cache_path as _cache_path
+    from tools.noctus.dev.cache_backend import apply_locking_pragmas, cache_path as _cache_path
 
     # (cache_name, chunks_table, json_table, path_col, extra_id_col_or_None)
     cache_configs = [
@@ -63,10 +63,7 @@ def _load_all_embeddings(repo_root: Path) -> list[tuple[str, str, list[float]]]:
                 continue
             conn = sqlite3.connect(str(p))
             conn.row_factory = sqlite3.Row
-            try:
-                conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.OperationalError:
-                pass
+            apply_locking_pragmas(conn)
             # Only chunk_idx=0 per path/symbol — representative vector only.
             sql = (
                 f"SELECT c.{path_col} AS id_path, c.chunk_idx, j.embedding "
@@ -198,7 +195,7 @@ def _compute_guarded_by_edges(graph, repo_root: Path) -> list[tuple[str, str]]:
        target (cross-cutting, no specific file) are skipped — no zero-target
        edges emitted.
     """
-    from tools.noctus.dev.cache_backend import cache_path as _cache_path
+    from tools.noctus.dev.cache_backend import apply_locking_pragmas, cache_path as _cache_path
     from noctusai_lib.graph.schema import Node, NodeKind
 
     node_index = {n.id: n for n in graph.nodes}
@@ -210,10 +207,7 @@ def _compute_guarded_by_edges(graph, repo_root: Path) -> list[tuple[str, str]]:
             return []
         conn = sqlite3.connect(str(kp))
         conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            pass
+        apply_locking_pragmas(conn)
         rows = conn.execute(
             "SELECT DISTINCT keeper_name, source_file FROM keeper_patterns "
             "WHERE scope='permanent' ORDER BY keeper_name"

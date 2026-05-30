@@ -130,3 +130,49 @@ class TestFactory:
         # Runtime-checkable Protocol — confirms SqliteCacheBackend satisfies.
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
         assert isinstance(be, cb.CacheBackend)
+
+
+class TestLockingPragmas:
+    """The cache-locking discipline: WAL + busy_timeout, applied uniformly.
+
+    Regression guard for the 2026-05-30 pre-push writer-contention incident —
+    WAL alone does not serialize writer-vs-writer, so a contending writer hit
+    `sqlite3.OperationalError: database is locked`. busy_timeout closes the gap.
+    """
+
+    def test_sets_wal_and_busy_timeout(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "t.sqlite"))
+        try:
+            cb.apply_locking_pragmas(conn)
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == cb.CACHE_BUSY_TIMEOUT_MS
+        finally:
+            conn.close()
+
+    def test_custom_timeout_honored(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "t.sqlite"))
+        try:
+            cb.apply_locking_pragmas(conn, timeout_ms=1234)
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1234
+        finally:
+            conn.close()
+
+    def test_default_timeout_is_positive(self):
+        # A zero/absent busy_timeout is the bug — must be a real wait window.
+        assert cb.CACHE_BUSY_TIMEOUT_MS > 0
+
+    def test_backend_connect_applies_busy_timeout(self, tmp_path):
+        # The backend's own connect() must carry the discipline end-to-end.
+        be = cb.SqliteCacheBackend(repo_root=tmp_path)
+        with be.connect("keeper-patterns") as conn:
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == cb.CACHE_BUSY_TIMEOUT_MS
+
+    def test_idempotent(self, tmp_path):
+        # Safe to call more than once on the same connection.
+        conn = sqlite3.connect(str(tmp_path / "t.sqlite"))
+        try:
+            cb.apply_locking_pragmas(conn)
+            cb.apply_locking_pragmas(conn)
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == cb.CACHE_BUSY_TIMEOUT_MS
+        finally:
+            conn.close()

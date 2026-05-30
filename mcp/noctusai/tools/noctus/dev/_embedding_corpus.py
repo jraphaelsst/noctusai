@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional, TypeVar
 
+from .cache_backend import apply_locking_pragmas
+
 
 # ── Knobs ──────────────────────────────────────────────────────────────────
 EMBEDDING_DIM = 1536      # OpenAI text-embedding-3-small.
@@ -239,10 +241,7 @@ def connect_cache(cache_path: Path) -> sqlite3.Connection:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(cache_path))
     conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass
+    apply_locking_pragmas(conn)
     if HAS_VEC:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)

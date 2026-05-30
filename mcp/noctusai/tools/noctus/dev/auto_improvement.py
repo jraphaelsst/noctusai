@@ -51,7 +51,11 @@ from settings import REPO_ROOT
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-from .cache_backend import cache_dir as _cache_dir, cache_path as _cache_path
+from .cache_backend import (
+    apply_locking_pragmas,
+    cache_dir as _cache_dir,
+    cache_path as _cache_path,
+)
 
 CACHE_DIR = _cache_dir()
 CACHE_PATH = _cache_path("auto-improvement")
@@ -82,12 +86,10 @@ def _connect() -> sqlite3.Connection:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(CACHE_PATH))
     conn.row_factory = sqlite3.Row
-    # WAL mode — readers don't block writers (2026-05-26 verify-pass
-    # discipline; applied uniformly across all keeper-mirror caches).
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass
+    # WAL + busy_timeout — readers don't block writers AND a contending writer
+    # waits instead of erroring (uniform locking discipline across keeper-mirror
+    # caches).
+    apply_locking_pragmas(conn)
     return conn
 
 

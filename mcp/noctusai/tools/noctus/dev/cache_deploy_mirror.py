@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from settings import REPO_ROOT
-from tools.noctus.dev.cache_backend import cache_path, known_caches
+from tools.noctus.dev.cache_backend import apply_locking_pragmas, cache_path, known_caches
 
 
 def _now_iso() -> str:
@@ -874,11 +874,8 @@ def pull_one_cache(
 
     local = sqlite3.connect(str(sqlite_target))
     local.row_factory = sqlite3.Row
-    # WAL — match the standard cache locking discipline.
-    try:
-        local.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass
+    # WAL + busy_timeout — match the standard cache locking discipline.
+    apply_locking_pragmas(local)
     _init_local_schema(local, cache_name)
 
     try:

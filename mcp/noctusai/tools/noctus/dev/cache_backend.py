@@ -63,6 +63,36 @@ from tools.noctus.dev.cache_backend_postgres import PostgresCacheBackend  # noqa
 _log = logging.getLogger("noctus.dev.cache_backend")
 
 
+# ── Cache-locking discipline (single source of truth) ────────────────────────
+# Default busy-wait before a contending writer raises "database is locked".
+CACHE_BUSY_TIMEOUT_MS = 5000
+
+
+def apply_locking_pragmas(
+    conn: sqlite3.Connection, *, timeout_ms: int = CACHE_BUSY_TIMEOUT_MS
+) -> None:
+    """Apply the cache-locking discipline to a freshly-opened SQLite connection.
+
+    Two pragmas, together:
+      - ``journal_mode=WAL`` — readers never block the single writer.
+      - ``busy_timeout`` — a CONTENDING writer waits up to ``timeout_ms`` for the
+        lock instead of immediately raising
+        ``sqlite3.OperationalError: database is locked``. WAL does NOT serialize
+        writer-vs-writer; this closes that gap. The Tier-1 caches are shared
+        across worktrees *and* the running MCP server, so concurrent writers are
+        real — observed as a pre-push embedding-refresh fan-out colliding with a
+        live MCP reader (2026-05-30).
+
+    Idempotent; the WAL leg's tmpfs/readonly failure is non-fatal.
+    See ``KB § PATTERNS/common/cache-locking-discipline.md``.
+    """
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        pass  # tmpfs / readonly fallback — non-fatal
+    conn.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
+
+
 # ── Cache catalog (single source of truth for cache names + files) ───────────
 _CACHE_FILES: dict[str, str] = {
     "keeper-patterns":  "keeper-patterns.sqlite",
@@ -436,10 +466,7 @@ class SqliteCacheBackend:
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            pass  # tmpfs / readonly fallback — non-fatal
+        apply_locking_pragmas(conn)
         try:
             yield conn
         finally:
