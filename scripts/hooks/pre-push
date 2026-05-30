@@ -94,10 +94,15 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         if [[ $agents -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-agent-context-cache    2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /'    || true; ran=1; fi
         if [[ $ndjson -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true; ran=1; fi
         if [[ $graph  -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-noc-graph              2>&1 | tail -1 | sed 's/^/[pre-push] noc-graph: /'        || true; ran=1; fi
-        # memory-embeddings is OUT-OF-REPO (the ~/.claude memory dir) so it can't be
-        # git-gated; it has its own post-merge/post-checkout triggers + the freshness
-        # keeper. Refreshed here only under explicit force.
-        if [[ -n "$force" ]]; then "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true; fi
+        # memory-embeddings is OUT-OF-REPO (the ~/.claude memory dir), so git CANNOT
+        # gate it on changed files the way the others are gated — and an agent that
+        # edits memory mid-session must never have to refresh it by hand (the
+        # manual-refresh anti-pattern). So run it EVERY push: the refresh is
+        # source_sha-guarded (re-embeds ONLY memory files whose sha changed → a cheap
+        # near-no-op dir-walk when nothing changed, self-healing when it did). This is
+        # memory's gate — its own content sha, since git can't be. No manual work.
+        echo "[pre-push] memory dir is out-of-repo → refreshing memory-embeddings (source_sha-guarded)"
+        "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true; ran=1
         [[ $ran -eq 0 ]] && echo "[pre-push] no embeddable/graph sources changed in this push — skipped all refreshes."
     fi
 fi
