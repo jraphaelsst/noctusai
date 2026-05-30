@@ -245,7 +245,7 @@ is proportional to (epoch gap) × (product surface).
   whole). This is why the divergent-arch and house-container rules fire on
   absorption only; the epoch-merge framing is their generalization.
 
-## Methodology codified by this flow (three-way-synced)
+## Methodology codified by this flow (eight-way-synced)
 
 - **Promotion-map automation** — every separately-developed seed-workspace
   auto-emits + drift-gates an absorption map (`noctus.dev.gen_promotions_index`,

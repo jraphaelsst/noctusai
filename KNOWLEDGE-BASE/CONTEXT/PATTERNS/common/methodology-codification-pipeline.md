@@ -27,7 +27,7 @@ Stage 2 is the *minimum viable persistence*. Without it the rule survives only a
 
 ### Stage 3 — Indexed (KB / CLAUDE.md)
 
-The rule earns a KB pattern document (rich-prose canonical) and a `CLAUDE.md` pointer (terse universal rule). It becomes visible to every agent that opens the repo. The three-way-sync rule (see `KB § 01-PHILOSOPHY.md § Docs stay in sync`) fires here: memory + KB + CLAUDE.md move together.
+The rule earns a KB pattern document (rich-prose canonical) and a `CLAUDE.md` pointer (terse universal rule). It becomes visible to every agent that opens the repo. The eight-way-sync rule (see `KB § PATTERNS/common/eight-way-sync.md`) fires here: all eight first-class methodology surfaces move together.
 
 At Stage 3 the rule is **descriptive**. It tells humans and agents what to do, but enforcement still depends on someone reading the doc and applying judgment in the right moment.
 
@@ -216,7 +216,7 @@ Always save the memory entry. Stage 1 → Stage 2 is the default — the cost is
 Promote when:
 - The rule applies beyond a single conversation or product.
 - Other agents would benefit from seeing it without your memory.
-- The KB-first / CLAUDE.md-pointer / three-way-sync routine is justified.
+- The KB-first / CLAUDE.md-pointer / eight-way-sync routine is justified.
 
 ### From Stage 3 → Stage 4 (when codification criteria are met)
 Promote when (all three):
@@ -370,7 +370,7 @@ When a new `check_*` function is added to `compliance.py` (or `hound/scan.py`, o
 
 ## 10. Related patterns
 
-- `KB § 01-PHILOSOPHY.md § Docs stay in sync` — the three-way-sync rule that powers Stage 2 ↔ Stage 3.
+- `KB § PATTERNS/common/eight-way-sync.md` — the eight-way-sync rule that powers Stage 2 ↔ Stage 3.
 - `KB § PATTERNS/architect/project-execution.md § 2.7 The recurrence rule` — the N=2/N=3 gate that drives Stage 3 → Stage 4 promotion.
 - `KB § PATTERNS/compliance/testing.md § Regression-test-the-detector` — every Stage 4 detector ships a colocated test, by rule.
 - `KB § PATTERNS/architect/seed-absorption.md § noctus.hound.scan` — the curatorial sibling of the keeper; the same pipeline, optimized for code-shape rules.
