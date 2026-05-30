@@ -156,12 +156,45 @@ def sweep(repo_root: Path | None = None) -> dict[str, Any]:
             "classification": cls, "suggestion": sugg,
         })
 
-    # Also include orphan-branch findings.
+    # Also include orphan-branch findings (local branches).
     try:
         from . import orphan_branch_sweeper as obs
         orphan_result = obs.scan(repo_root=repo_root)
     except Exception as e:  # noqa: BLE001
         orphan_result = {"ok": False, "error": str(e)[:200], "branches": []}
+
+    # Remote branch classification (P3.4 — remote-aware session-end sweep).
+    # Read-only advisory — reports integrated vs unique-aged; never auto-deletes.
+    remote_summary: dict = {"ok": False, "error": "not run"}
+    try:
+        from . import remote_branch_hygiene as rbh
+        remote_branches = rbh.classify_remote_branches(repo_root=repo_root)
+        integrated_remotes = [b["branch"] for b in remote_branches if b["verdict"] == "integrated"]
+        unique_remotes = [b for b in remote_branches if b["verdict"] == "unique"]
+        unique_aged = [
+            b for b in unique_remotes
+            if b.get("age_days") is not None and b["age_days"] > 7
+        ]
+        remote_summary = {
+            "ok": True,
+            "total": len(remote_branches),
+            "protected": sum(1 for b in remote_branches if b["verdict"] == "protected"),
+            "integrated_count": len(integrated_remotes),
+            "integrated_suggest_delete": integrated_remotes,
+            "unique_count": len(unique_remotes),
+            "unique_aged_count": len(unique_aged),
+            "unique_aged_suggest_salvage": [
+                {
+                    "branch": b["branch"],
+                    "age_days": b["age_days"],
+                    "subject": b["subject"],
+                    "unique_commits": b["unique_commits"],
+                }
+                for b in unique_aged
+            ],
+        }
+    except Exception as e:  # noqa: BLE001
+        remote_summary = {"ok": False, "error": str(e)[:200]}
 
     # Log sweep summary to ledger.
     try:
@@ -177,6 +210,8 @@ def sweep(repo_root: Path | None = None) -> dict[str, Any]:
                             if w["classification"] == "uncommitted-work"],
             "ahead_of_dev": [w["slug"] for w in wt_findings
                              if w["classification"] == "ahead-of-dev"],
+            "remote_integrated_count": remote_summary.get("integrated_count", 0),
+            "remote_unique_aged_count": remote_summary.get("unique_aged_count", 0),
         }
         with ledger.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -188,6 +223,7 @@ def sweep(repo_root: Path | None = None) -> dict[str, Any]:
         "sweep_ts": _now_iso(),
         "worktrees": wt_findings,
         "orphan_branches": orphan_result,
+        "remote_branches": remote_summary,
     }
 
 
@@ -196,15 +232,18 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.session_end_sweep",
         description=(
-            "Surface every .claude/worktrees/* and every local branch "
-            "diverged from origin/dev with a classification + suggestion. "
-            "User-invoked end-of-session cleanup orchestration (the "
-            "harness has no auto session-close hook). Worktree "
-            "classifications: safe-to-cleanup / uncommitted-work / "
-            "ahead-of-dev / unknown. Logs a sweep entry to "
-            "project-history/worktree-salvage.ndjson. Never auto-deletes; "
-            "always surfaces + suggests. "
-            "KB § CONTEXT/PATTERNS/common/session-end-sweep.md."
+            "Surface every .claude/worktrees/*, every local branch diverged "
+            "from origin/dev, AND every origin/* remote branch — with "
+            "classification + suggestion. User-invoked end-of-session cleanup "
+            "orchestration (the harness has no auto session-close hook). "
+            "Worktree classifications: safe-to-cleanup / uncommitted-work / "
+            "ahead-of-dev / unknown. Remote branch section: integrated "
+            "(suggest delete-integrated via noctus.dev.delete_integrated_remote) / "
+            "unique-aged (suggest salvage+triage). Squash-aware classification. "
+            "Logs a sweep entry to project-history/worktree-salvage.ndjson. "
+            "Never auto-deletes; always surfaces + suggests. "
+            "KB § CONTEXT/PATTERNS/common/session-end-sweep.md · "
+            "KB § CONTEXT/PATTERNS/common/learn-before-archive.md."
         ),
     )
     def _sweep() -> dict:

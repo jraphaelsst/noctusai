@@ -55,6 +55,8 @@ def register_all(server) -> None:
     from . import organ_knowledge
     from . import orphan_branch_sweeper
     from . import product_centroid_drift
+    from . import remote_branch_hygiene
+    from . import salvage_before_delete
     from . import scan_repetition_semantic
     from . import session_end_sweep
     from . import unified_query
@@ -160,6 +162,8 @@ def register_all(server) -> None:
     organ_knowledge.register(server)
     orphan_branch_sweeper.register(server)
     product_centroid_drift.register(server)
+    remote_branch_hygiene.register(server)
+    salvage_before_delete.register(server)
     scan_repetition_semantic.register(server)
     session_end_sweep.register(server)
     unified_query.register(server)
