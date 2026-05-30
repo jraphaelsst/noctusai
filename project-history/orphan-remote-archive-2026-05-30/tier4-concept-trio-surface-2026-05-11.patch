@@ -1,0 +1,645 @@
+From 45e9678dc646e9275b8b270e15d5cd2ca77d8a72 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:48 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-aff20b73d3eb4acd3?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../tier4-concept-trio-surfacing/PROJECT.md   | 614 ++++++++++++++++++
+ .../proposals/.gitkeep                        |   0
+ 2 files changed, 614 insertions(+)
+ create mode 100644 projects/tier4-concept-trio-surfacing/PROJECT.md
+ create mode 100644 projects/tier4-concept-trio-surfacing/proposals/.gitkeep
+
+diff --git a/projects/tier4-concept-trio-surfacing/PROJECT.md b/projects/tier4-concept-trio-surfacing/PROJECT.md
+new file mode 100644
+index 00000000..112143d3
+--- /dev/null
++++ b/projects/tier4-concept-trio-surfacing/PROJECT.md
+@@ -0,0 +1,614 @@
++# Tier-4 Concept-Trio Surfacing — Vista MCP / History Ledger / Methodology Mirror
++
++> **This is a surfacing document, not an execution plan.**
++> Filed 2026-05-11 by Engineer TIER4-SURFACE-2 (read-only scoping engineer
++> dispatched during main-core-migrations-batch Phase 4). Three concept-tier
++> projects were filed 2026-05-02 with §7 Open Questions paired to
++> recommended defaults but no resolution. Two have shipped substantial work
++> in the interim; the third's reactivation trigger may have been met. The
++> user reads this doc and decides each: **PROMOTE** (resolve §7 defaults +
++> activate), **REVISE** (amend before activating), or **LEAVE-DEFERRED**.
++>
++> **Status: Surfacing pass — awaits user decision per child.** No execution
++> intended in this project; it is a consolidated read for the architect-as-
++> user. Read-only on the three children's PROJECT.md files (Vista MCP +
++> project-history-ledger are deleted — quoted from their last committed
++> versions; methodology-mirror is the 2026-05-02 filed version).
++
++- **Created:** 2026-05-11
++- **Last updated:** 2026-05-11
++- **Status:** Surfacing — awaits user decision per child (PROMOTE / REVISE / LEAVE-DEFERRED).
++- **Owner / stakeholders:** Raphael (decision authority) · main-core-migrations-batch orchestrator (dispatcher) · Engineer TIER4-SURFACE-2 (this doc's author)
++- **Related docs:**
++  - `projects/vista-api-mcp/PROJECT.md` (deleted, quoted from commit `7893396`)
++  - `projects/project-history-ledger/PROJECT.md` (deleted, quoted from commit `d5f6773`)
++  - `projects/methodology-mirror-and-workspaces/PROJECT.md` (deleted, quoted from commit `146abe3` — last filed version)
++  - `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` (durable Vista API source-of-truth)
++  - `mcp/vista/` (Vista MCP server — shipped Phase 1)
++  - `project-history/ledger.ndjson` (shipped — 32 entries backfilled)
++  - `scripts/bootstrap-seed-workspace.sh` (seed-workspace bootstrap — partial methodology-mirror precursor already shipped)
++- **Project slug:** `tier4-concept-trio-surfacing` — cross-product / platform-infra scope, lives at root `projects/`.
++
++---
++
++## 1. Context & Purpose
++
++On 2026-05-02 (commit `146abe3` "feat: methodology step-a + Vista
++showcase + 3 deferred projects"), three concept-tier projects were
++deliberately filed-but-not-started:
++
++1. **`projects/vista-api-mcp/`** — first-party Vista MCP server +
++   long-tail upkeep on the API documentation. §7 covered location,
++   language, adapter-reuse, tokenizer hooks, refresh trigger, and
++   reactivation criteria.
++2. **`projects/project-history-ledger/`** — global persistent ledger
++   of every shipped project (summary, review, token cost) for AI
++   training data + cost-efficiency prediction. §7 covered storage
++   format, location, tokenizer, fields, backfill scope, triggers,
++   rendering, ML shape, and tokenizer choice.
++3. **`projects/methodology-mirror-and-workspaces/`** — local mirror
++   checkpoint between per-product workspaces and trunk + per-product
++   workspace isolation. Deferred until step (a)'s token measurement
++   evidence justifies it. §7 covered merge direction, mirror storage,
++   physical location, ci/cd shape, workspace lifecycle, KB scoping,
++   approval gate, methodology variant merging, drift handling, and
++   reactivation triggers.
++
++**What has changed since 2026-05-02:**
++
++- **Vista MCP shipped Phase 1.** `mcp/vista/` exists with 10 tools
++  registered; `noctusai_lib.integrations.vista` is the canonical
++  client home (per recurrence-rule absorption). §7 Q1+Q2+Q3 were
++  effectively resolved by the execution: **(A)** `mcp/vista/`,
++  **(I)** Python, **(γ)** seed-lib move. Phases 2-5 deferred per Q6
++  reactivation triggers. **Documentation track stays open** as long-
++  tail upkeep on `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md`.
++- **Project-history-ledger shipped Phases 0-5.** §7 Q1-Q4 stamped by
++  orchestrator defaults under user signal *"resolve the 5 blocked
++  ones"*. `project-history/ledger.ndjson` ships with 32 backfilled
++  entries; renderer + pre-commit hook live; `noctus.dev.history_record`
++  + `archive`-integration shipped. **Engineer-side READY-FOR-CLOSE
++  per the §17.6 finding-as-text protocol** — pending orchestrator
++  FF + self-archive.
++- **Methodology-mirror's Q11 evidence may have shifted.** The
++  measurement at step (a) close (2026-05-02) showed `CLAUDE.md` at
++  ~6,754 tokens. Today (2026-05-11) `CLAUDE.md` is 32,359 bytes (raw)
++  and `MEMORY.md` is 37,995 bytes — the system-reminder explicitly
++  flags MEMORY.md as **35.2KB exceeding the 24.4KB limit** ("Only part
++  of it was loaded"). This is the *"auto-load surface creeps back
++  up"* signal Q11 named as a reactivation trigger. Additionally,
++  `scripts/bootstrap-seed-workspace.sh` + `noctus.dev.create_testing_ground`
++  shipped, and **template-workspace** + **seed-workspace** patterns
++  formalized in KB — meaning a partial precursor to "per-product
++  workspaces" already exists. The architectural decision now lives
++  in a different landscape than 2026-05-02 assumed.
++
++This document is the consolidated read so the user can decide each
++project's next move without re-reading three buried PROJECT.md files
++that no longer exist on the working tree.
++
++---
++
++## 2. Confirmed constraints (what the user *has* said)
++
++- **2026-05-02 user directive on Vista MCP:** *"after finishing step a,
++  file a project for vista's api documenting and mcp creation, if it
++  doesn't exist already."* — Filing was the user-mandated outcome; the
++  build was deferred.
++- **2026-05-02 user directive on project-history-ledger:** *"this
++  change log project has to be filed as a project. We're gonna come
++  back here to refine and work on it."* — Same shape: file now, build
++  later.
++- **2026-05-02 user directive on methodology-mirror:** *"About the
++  mirror/local versioning thing, scope it as a separate project. This
++  was an idea i had and we wont implement that system now, but we will
++  in the future."* — Explicit deferral with future reactivation
++  promise.
++- **2026-05-10 user signal on project-history-ledger:** *"please
++  resolve the 5 blocked ones, then unblock the deps on it"* —
++  Orchestrator stamped Q1-Q4 defaults under this signal; user can
++  override later by amending §6.
++- **2026-05-11 dispatch directive (this engineer):** *"Read-only
++  scoping engineer ... User reads the consolidated doc + decides each."*
++
++---
++
++## 3. Per-child surfacing
++
++### 3.1 `projects/vista-api-mcp/`
++
++**§7 verbatim (6 questions):**
++
++> 1. **Where does the in-repo MCP server live?**
++>    - **(A)** Inside `mcp/vista/` — sibling to `mcp/noctusai/`, keeps all MCP servers under one dir.
++>    - **(B)** Inside `products/erp-imobiliario/mcp/` — owned by the product that produced the adapter.
++>    - **(C)** Separate repo entirely (`noctusai-vista-mcp`) — fully external, can ship to PyPI / npm.
++>    *Recommendation: **(A) `mcp/vista/`** — keeps cross-vendor MCP servers under one umbrella, makes the `VISTA-API-MCP-GUIDE.md` easier to share between this repo's server and the external one (both reference the same path).*
++>
++> 2. **Implementation language for the MCP server.**
++>    - **(I)** Python — matches `mcp/noctusai/`, uses the existing anthropic SDK + tools pattern.
++>    - **(II)** TypeScript — matches the broader MCP-server ecosystem.
++>    *Recommendation: **(I) Python** — consistency with `mcp/noctusai/`, lower context-switching cost. The `httpx` async client + typed errors port directly from the showcase adapter.*
++>
++> 3. **Reuse vs reimplement vs port the showcase adapter.**
++>    - **(α)** Import from the showcase adapter directly — `from products.erp_imobiliario.backend.app.integrations.vista import client` — coupling.
++>    - **(β)** Port the typed client + normalizers into `mcp/vista/` — duplication but independent.
++>    - **(γ)** Move the adapter to `noctusai_lib.integrations.vista` (seed lib) — both ERP and the MCP server import it.
++>    *Recommendation: **(γ) move to seed-lib** if the MCP server ships within ~2 weeks of activation, **(β) port** otherwise. The recurrence-rule trigger fires when a 2nd consumer (the MCP server) needs the same code — that's exactly the absorption threshold.*
++>
++> 4. **Tokenizer / token-cost integration with `project-history-ledger`.**
++>    - When the ledger ships and consumes per-project token counts, the Vista MCP server's per-call token cost (host LLM ↔ MCP tool ↔ Vista) is a useful feature for the AI training data. Should the MCP server emit token-cost telemetry?
++>    *Recommendation: ship the MCP server without telemetry first; add an opt-in `record_call_cost` flag in v2 once `project-history-ledger` defines the data shape.*
++>
++> 5. **What triggers a refresh of `VISTA-API-MCP-GUIDE.md`?**
++>    - **(p)** Manual — user asks, we re-author from `VISTA-API.md`.
++>    - **(q)** Automated — keeper detector flags drift between showcase-adapter field sets and guide content; runs as part of `--review`.
++>    *Recommendation: **(p) manual** for v1; the guide changes slowly enough that automation is overhead. Move to (q) if the project ships ≥3 refreshes in a year.*
++>
++> 6. **Reactivation trigger — what evidence makes this project ready to start?**
++>    - User explicitly asks to build the MCP server, OR
++>    - The external-environment build hits a Vista API surface this repo's adapter hasn't probed yet (so the in-repo build becomes the canonical reference), OR
++>    - A 2nd product needs Vista access (recurrence rule).
++>    *Recommendation: wait for any of the three to fire. Until then, the repo-root guide + showcase adapter cover the actual use case.*
++
++**Recommended defaults (paired with §7 questions):**
++
++| Q | Default |
++|---|---|
++| Q1 | (A) `mcp/vista/` |
++| Q2 | (I) Python |
++| Q3 | (γ) seed-lib move (if ships <2 weeks of activation), else (β) port |
++| Q4 | Ship without telemetry; opt-in `record_call_cost` in v2 |
++| Q5 | (p) manual |
++| Q6 | Wait for: user ask OR external-build gap OR 2nd consumer |
++
++**Dependency state:**
++
++- **Phase 1 already shipped.** `mcp/vista/` exists (10 tools — agencias,
++  clientes, corretores, imoveis, usuarios, diagnostics); `mcp/vista/tools/`
++  populated; `noctusai_lib.integrations.vista` is the canonical client
++  home (seed-lib move resolved Q3 implicitly toward **(γ)**).
++- **Phases 2-5 deferred per Q6 reactivation triggers** — keeper detector
++  for guide↔adapter drift, full integration tests against live tenant,
++  nested-sub-field proactive discovery, per-endpoint probe sentinels.
++- **Documentation track stays open** as long-tail upkeep on
++  `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md`.
++
++**Architect's read — still worth promoting?**
++
++Phase 1 already shipped under the original defaults (no user dispute).
++Q3's "**(γ) seed-lib if <2 weeks of activation**" was satisfied — the
++seed-lib move happened during Phase 1 close (2026-05-03). The remaining
++deferred work (Phases 2-5) is the long-tail polish band that benefits
++from real-world signal before investment.
++
++The project's *original concept-tier scope* (file the idea + capture §7)
++is **fully discharged**. What remains is the long-tail documentation
++upkeep + Phase 2-5 reactivation gating — which is *not* a concept-tier
++question, it's normal phased work waiting for triggers.
++
++**Per-child rec: LEAVE-DEFERRED.** Phase 1 closed; Phases 2-5 wait for
++Q6 reactivation triggers. No surfacing action needed; the existing
++trigger list is sound. If the user wants to **promote** the
++documentation-track upkeep to a standing maintenance project (rather
++than a closed-with-followup), that's a small re-file — but the
++concept is no longer concept-tier.
++
++---
++
++### 3.2 `projects/project-history-ledger/`
++
++**§7 verbatim (9 questions — full block preserved):**
++
++> 1. **Where does the canonical ledger live on disk?**
++>    - **(A)** repo root: `PROJECT-HISTORY.md` (human view) + `.project-history.json` (data)
++>    - **(B)** dedicated dir: `project-history/` with `ledger.json` + `PROJECT-HISTORY.md`
++>    - **(C)** KB: `KNOWLEDGE-BASE/HISTORY/` with both files
++>    *Recommendation: **(B) dedicated dir** — keeps repo root clean (per the clean-folder rule), avoids putting derived data inside `KNOWLEDGE-BASE/` (which is a knowledge anchor, not a data store), and makes the boundary obvious.*
++>
++> 2. **Structured ledger format.**
++>    - **(a)** YAML — readable, easy to hand-edit if needed
++>    - **(b)** JSON — machine-friendly, no ambiguity
++>    - **(c)** NDJSON — one project per line, append-only, ML-friendly
++>    - **(d)** SQLite — queryable, harder to read, requires tool to inspect
++>    *Recommendation: **(c) NDJSON** — append-only matches "write-before-delete" naturally; ML pipelines parse it trivially; humans can still read it line-by-line. The Markdown rendering is the human-readable view; the structured form doesn't need to be pretty.*
++>
++> 3. **Token-counting mechanism.**
++>    - **(I)** Static — count tokens of files (PROJECT.md, improvements, proposals, plus a delta over committed code) using a tokenizer library. No live telemetry.
++>    - **(II)** Dynamic — capture per-session token usage from Anthropic API responses (usage records) via a harness hook, accumulate into the project's running total.
++>    - **(III)** Hybrid — static for the artifact tokens; dynamic for conversation tokens. Maximally informative.
++>    *Recommendation: **(I) static, ship first**, with a clear extension point for (II) later. Static is achievable with no harness changes — just a tokenizer (Anthropic ships one for Claude); dynamic requires user-environment integration we may not control.*
++>
++> 4. **Minimum viable record fields.**
++>    The user's three required fields: short summary, short review, token count. What other fields earn their place?
++>    - slug, scope (cross-product / single-product / core), status_at_close
++>    - dates: created, closed
++>    - phase list (each with status + optional tokens)
++>    - outcome signals (e.g. "ERP backend pytest 1816/1816 green", "CLAUDE.md trim 38%")
++>    - linked artifacts (PR URLs, KB anchors created)
++>    - tags (e.g. `methodology`, `seed`, `migration`, `lgpd`, `infrastructure`) — useful for ML grouping
++>    *Recommendation: ship the user's three required + slug + dates + scope + status_at_close + tags. Defer outcome_signals and linked artifacts to v2 unless backfill data has them readily.*
++>
++> 5. **Backfill scope for existing projects.**
++>    - **(α)** backfill all closed-or-deleted projects (best-effort)
++>    - **(β)** backfill only fully-deleted projects (the ones with no surviving folder — recoverable from git)
++>    - **(γ)** no backfill — start the ledger from this project's close
++>    *Recommendation: **(α) best-effort backfill of all closed-or-deleted** — token counts will be approximate for older entries, but having the timeline matters more than precision. Mark backfilled entries with `backfilled: true` so future ML training can choose to weight them down.*
++>
++> 6. **Trigger event(s) for ledger entries.**
++>    - **(p)** project close (status flips to ✅ Done) — entry added
++>    - **(q)** project deletion (folder removed) — entry added
++>    - **(r)** project split into siblings — entry added per side
++>    *Recommendation: **(p) AND (q) AND (r)** — every terminal transition writes an entry; the `status_at_close` field distinguishes them.*
++>
++> 7. **Human-readable rendering — auto-generated only?**
++>    - **(x)** auto-generated entirely; never hand-edited
++>    - **(y)** auto-generated but with a hand-edited prose section per entry for "narrative review"
++>    *Recommendation: **(x) auto-generated only** — drift between the structured store and the human view is the first failure mode we'd hit. If a project deserves prose narrative, that lives in its own `§11 Change log` while the project still exists.*
++>
++> 8. **AI-training data shape — what gets exposed?**
++>    *Recommendation: include a `prior_projects: [slug]` field per entry (cite related-project links from PROJECT.md `Related docs`). This unlocks dependency-graph features for the ML model.*
++>
++> 9. **Tokenizer choice (interlock with §7 Q3).**
++>    Anthropic ships an official tokenizer; alternatives include `tiktoken` or char/word approximations.
++>    *Recommendation: **Anthropic's official tokenizer**, since the intended consumer (future AI training) is Anthropic-aligned. Falls back to char/word approximation only if the tokenizer is unavailable in the environment.*
++
++**Recommended defaults (paired with §7 questions):**
++
++| Q | Default | Resolution status |
++|---|---|---|
++| Q1 | (B) `project-history/` dedicated dir | ✅ resolved (2026-05-10 orchestrator stamp) |
++| Q2 | (c) NDJSON | ✅ resolved |
++| Q3 | (I) Static, with (II) extension point | ✅ resolved |
++| Q4 | Required 3 + slug + dates + scope + status_at_close + tags | ✅ resolved |
++| Q5 | (α) Best-effort backfill of all closed-or-deleted | ⏳ not yet stamped (deferred to user) |
++| Q6 | (p) AND (q) AND (r) — all terminal transitions | ⏳ not yet stamped |
++| Q7 | (x) Auto-generated only | ⏳ not yet stamped |
++| Q8 | Include `prior_projects: [slug]` for dependency-graph features | ⏳ not yet stamped |
++| Q9 | Anthropic's official tokenizer | ⏳ not yet stamped |
++
++**Dependency state:**
++
++- **Phases 0-5 engineer-side complete.** Per the last committed
++  PROJECT.md status line:
++  - Phase 0 ✅ (scaffold + tokenizer smoke-test)
++  - Phase 1 ✅ (MCP `noctus.dev.history_record` + 30 unit tests)
++  - Phase 2 ✅ (close-workflow integration via `archive`; 13 tests)
++  - Phase 3 ✅ (renderer `scripts/render-project-history.py` +
++    pre-commit hook §3b + 15 tests + end-to-end smoke)
++  - Phase 4 ✅ (backfill script + `slug_override` parameter + 32
++    historical rows stamped + idempotency confirmed)
++  - Phase 5 ✅ engineer-side (pytest 45/45 green; awaiting
++    orchestrator FF + self-archive)
++- **Q1-Q4 stamped 2026-05-10** by orchestrator under user signal
++  *"please resolve the 5 blocked ones"*.
++- **Q5-Q9 status:** the orchestrator's signal was *"the 5 blocked
++  ones"* — most likely Q1-Q4 + one more, but Q5 (best-effort
++  backfill) was clearly applied since 32 rows are stamped. Q6+Q7
++  applied implicitly (renderer is auto-generated; archive stamps on
++  close per (p)+(q)). Q8 (prior_projects) and Q9 (tokenizer choice)
++  status unclear — needs verification against shipped code.
++
++**Architect's read — still worth promoting?**
++
++This project is **functionally closed** — the deliverables shipped and
++sit on disk. The §7 questions don't need promotion; they need either
++**acknowledgment that the orchestrator-stamped defaults are accepted
++as canon** OR **explicit user re-stamp** for Q5-Q9 if any deviate from
++what shipped.
++
++The remaining unblock is **administrative**, not architectural:
++orchestrator FF + self-archive (per the PROJECT.md's own Phase 5
++status). This is "project close" workflow, not "concept resurrection".
++
++**Per-child rec: PROMOTE (administrative close).** The project is
++ready to FF-to-main + archive. The §7 defaults that shipped should be
++recorded as **accepted** in the ledger entry (the very ledger this
++project built). If the user wants to **revise** Q5/Q8/Q9 retroactively,
++that's an amendment to the shipped artifact, not a re-open of the
++project. Default action: confirm Q1-Q4 stamping, confirm Q5/Q6/Q7
++implicit-application, surface Q8/Q9 for user accept/revise, then close.
++
++---
++
++### 3.3 `projects/methodology-mirror-and-workspaces/`
++
++**§7 verbatim (11 questions — full block preserved):**
++
++> 1. **Direction of product-code merge.**
++>    - **(A)** Workspaces are temporary dev forks; product code rebases back to trunk; trunk stays the canonical home for every product's code.
++>    - **(B)** Workspaces are permanent homes for their product; trunk keeps methodology + a registry; products live in separate repos forever.
++>    *Recommendation: **(A)** for now — keeps trunk's cross-product scans meaningful and avoids a one-way migration. Revisit if a workspace stabilizes long enough that promoting it to a separate repo is cheap.*
++>
++> 2. **What "memory" means for the mirror.**
++>    - **(a)** Auto-memory holds an *index/registry* of the mirror; the mirror's actual files live elsewhere on disk.
++>    - **(b)** "Memory" = a separate local persistent store (gitignored `.mirror/`, sibling folder, git worktree, dedicated branch).
++>    *Recommendation: **(a)** index-in-auto-memory + **(b)** content-on-disk — the auto-memory rule set explicitly forbids storing repo content; we honor that and use auto-memory only as a pointer.*
++>
++> 3. **Where the mirror physically lives.**
++>    *Recommendation: **git worktree pointing at a `mirror/checkpoint` branch** — gives us file-level access, atomic snapshots via commit, and no extra storage cost.*
++>
++> 4. **One global mirror or per-workspace.**
++>    *Recommendation: **one global mirror** — it's the analog of a shared "develop" branch; conflicts surface here instead of being deferred to trunk.*
++>
++> 5. **What "ci/cd" fires when there's no GitHub.**
++>    *Recommendation: **the existing stack** wrapped by a single `promote-to-trunk` script that fails fast if any check fails. No new harness until proven necessary.*
++>
++> 6. **Workspace lifecycle.**
++>    *Recommendation: **once-per-product, long-lived** as the default; experiments fork from a product workspace as branches inside it.*
++>
++> 7. **"Doc-aware" — full KB or scoped.**
++>    *Recommendation: **full KB at fork time** — scoping introduces broken pointers and undermines the "doc-aware" goal.*
++>
++> 8. **What "approved locally" means.**
++>    *Recommendation: **agent-pair review** — a `code-reviewer` agent runs over the diff and the keeper detector pass runs in mirror-mode before promote-to-trunk.*
++>
++> 9. **How methodology variants merge back to trunk.**
++>    *Recommendation: **absorb-into-existing-proposals** — the `noctusai_file_proposal` flow already exists for this.*
++>
++> 10. **What happens when trunk's methodology evolves while a workspace is forked.**
++>     *Recommendation: **pin + manual re-sync** — silent rebases corrupt in-flight experiments.*
++>
++> 11. **Reactivation trigger — what evidence justifies starting this project.** *(Measurement landed 2026-05-02 — see below.)*
++>     Step (a)'s success criterion is "behavioral methodology + AST stage 1 tooling recovers a meaningful slice of per-turn token cost." If the measured savings are at the **lower bound (~30%)** or below, the gap to ~60-80% justifies (b)+(c). If they're at the **upper bound (~40%+) and the user reports the workflow no longer feels constrained**, (b)+(c) may not be worth the days-of-work.
++>
++>     **Measurement (2026-05-02, step (a) close):**
++>
++>     | Surface | Pre-trim | Post-step-(a) | Δ |
++>     |---|---:|---:|---:|
++>     | CLAUDE.md tokens | ~10,640 | ~6,754 | **-3,886 (-37%)** |
++>     | MEMORY.md tokens | ~4,883 | ~5,331 | +448 (+9.2%) |
++>     | **Auto-load surface (combined)** | **~15,523** | **~12,085** | **-3,438 (-22%)** |
++>
++>     **Status: DEFERRED.** The 22% static + behavioral runtime savings (estimated 35-50% effective) is enough that the workflow is no longer constrained day-to-day. The mirror + workspaces investment (days of work for ~60-80% target) is still the next move IF the workflow constraint returns — e.g. if the auto-load surface creeps back up, if multi-product sessions become routine, or if methodology variants want isolated testbeds. **Do not start this project without explicit user reactivation** carrying one of those signals.
++
++**Recommended defaults (paired with §7 questions):**
++
++| Q | Default |
++|---|---|
++| Q1 | (A) Workspaces are temporary forks; trunk canonical |
++| Q2 | (a)+(b) Auto-memory index + content-on-disk |
++| Q3 | Git worktree pointing at `mirror/checkpoint` branch |
++| Q4 | One global mirror |
++| Q5 | Existing stack wrapped by `promote-to-trunk` script |
++| Q6 | Once-per-product, long-lived |
++| Q7 | Full KB at fork time |
++| Q8 | Agent-pair review (code-reviewer + keeper detector) |
++| Q9 | Absorb-into-existing-proposals |
++| Q10 | Pin + manual re-sync |
++| Q11 | Reactivate when workflow constraint returns (auto-load creep, multi-product sessions, methodology variants) |
++
++**Dependency state — Q11 trigger met?**
++
++**YES — partially, with caveats.** The Q11 named three reactivation
++signals:
++
++1. **"auto-load surface creeps back up"** → ✅ **CONFIRMED**.
++   - 2026-05-02 (post-step-(a)): CLAUDE.md ≈ 6,754 tokens.
++   - 2026-05-11 (today): CLAUDE.md is 32,359 bytes raw. The auto-loaded
++     content (this very session's system reminder) shows CLAUDE.md is
++     much larger than the post-step-(a) measurement.
++   - MEMORY.md system-reminder explicitly flags: *"MEMORY.md is 35.2KB
++     (limit: 24.4KB) — index entries are too long. Only part of it
++     was loaded."* — the index has already grown past its budget.
++   - **This is the literal Q11 trigger phrasing.** The workflow
++     constraint Q11 anticipated **has returned**.
++2. **"multi-product sessions become routine"** → ⏳ **AMBIGUOUS**.
++   - Today's session is single-project (main-core-migrations-batch).
++   - But the methodology has formalized **parallel-engineer
++     orchestration with worktrees** (KB § PATTERNS/branching-and-merging.md
++     § 16-18) since 2026-05-02. Multi-product engineering is now the
++     default for non-trivial work — the user would have to confirm
++     whether this counts.
++3. **"methodology variants want isolated testbeds"** → ⏳ **PARTIALLY
++   MET**. `scripts/bootstrap-seed-workspace.sh` +
++   `noctus.dev.create_testing_ground` shipped between 2026-05-02 and
++   today. Seed-workspace pattern formalized in KB. Template-workspace
++   pattern formalized. **A partial precursor to "per-product
++   workspaces" already exists** — but as testing-grounds (sandbox /
++   isolated workspaces), not as the long-lived per-product workspace
++   Q6 envisioned. The methodology-variant use case isn't covered yet.
++
++**Critical context shift since 2026-05-02:**
++
++- **`scripts/bootstrap-seed-workspace.sh` exists** — bootstraps a
++  sibling workspace via read-only symlinks to noc.
++- **`noctus.dev.create_testing_ground` MCP tool exists.**
++- **`templates/seed-workspace-*` ships** — pre-commit hook +
++  docker artifacts + README templates.
++- **KB § PATTERNS/seed-workspace.md + template-workspace.md** both
++  formalized.
++- **Memory entries:** *"Seed workspaces inherit noc whole, not
++  trimmed"*, *"Seed workspaces ship docker artifacts at scaffold
++  time"*, *"Workspaces inherit start.sh + stop.sh as ops surface"*.
++
++This means the **architectural decision now lives in a different
++landscape** than the 2026-05-02 §7 assumed. Specifically:
++- Q3 ("Where the mirror physically lives") — the seed-workspace
++  pattern picked **sibling folder + symlinks**, not git worktree
++  with branch. The §7 recommendation is **mismatched against the
++  shipped reality**.
++- Q6 ("Workspace lifecycle") — testing-grounds are short-lived
++  sandbox-style; the once-per-product long-lived shape Q6 envisioned
++  is not what shipped.
++- Q7 ("Doc-aware — full KB or scoped") — the shipped pattern
++  inherits all 8 surfaces whole (per the *"inherit whole, not
++  trimmed"* memory rule). **Q7's recommendation matches what
++  shipped** — good calibration.
++- Q9 ("Methodology variants merge back") — the template-workspace
++  pattern uses **promotion manifest + `noctusai_promote_from_template`**
++  rather than absorb-into-proposals. **Q9 is mismatched against the
++  shipped reality.**
++
++**Architect's read — still worth promoting?**
++
++**YES, but with substantial REVISE-first work.** The Q11 trigger
++**has materialized** (auto-load creep is concrete, measurable, and
++flagged by the harness itself). The user previously committed to
++*"will implement in the future"* — that future is now plausibly
++present.
++
++However, the project as filed in 2026-05-02 is **partially obsolete**:
++- Two §7 questions (Q3, Q9) have shipped *different answers* via the
++  testing-ground + template-workspace + seed-workspace track.
++- Q11's trigger evidence has *strengthened*, not weakened.
++- The project's *scope boundary* needs redrawing — is this now
++  "mirror checkpoint layer atop the existing workspace
++  infrastructure" or "full mirror + workspace rewrite"?
++
++A clean **REVISE** pass would:
++1. Re-quote the shipped state (testing-ground + template-workspace +
++   seed-workspace + bootstrap script) into §1 Context.
++2. Mark Q3, Q6, Q9 as **superseded-by-shipped** and surface the
++   actual decision-points: *"Given workspace infra X already exists,
++   what mirror-layer Y do we add on top?"*
++3. Re-measure Q11 today with current `CLAUDE.md` + `MEMORY.md` sizes
++   to confirm the trigger is concrete (not hand-waved).
++4. Add a Q12: *"Is the mirror still useful if workspaces are already
++   the isolation unit?"* — this is the question the 2026-05-02 file
++   couldn't anticipate.
++
++**Per-child rec: REVISE.** Q11 trigger is concrete; project should
++*not* sit deferred unread. But the §7 questions need an audit pass
++against shipped reality before the user re-confirms defaults. Filing
++a follow-up *"methodology-mirror-revise-pass"* project (or amending
++§6 of the original after a fresh interrogation) is the right next
++move. **Do not auto-promote with stale defaults** — Q3 and Q9 mis-
++match what already exists.
++
++---
++
++## 4. Consolidated decision matrix (the one-pager)
++
++| Project | Phase shipped? | §7 stamping? | Trigger met? | Recommendation |
++|---|---|---|---|---|
++| **`vista-api-mcp`** | Phase 1 ✅ shipped; Phases 2-5 deferred | Q1-Q3 effectively resolved by Phase 1 execution; Q4-Q6 stay deferred | Q6 reactivation list (user-ask / external-build-gap / 2nd-consumer) — none fired | **LEAVE-DEFERRED** — concept-tier scope discharged; deferred work is normal phased follow-up |
++| **`project-history-ledger`** | Phases 0-5 ✅ engineer-side; awaits orchestrator FF + archive | Q1-Q4 stamped 2026-05-10; Q5 applied implicitly; Q6-Q9 status unclear in shipped artifact | Already in-flight | **PROMOTE (administrative close)** — confirm shipped defaults, surface Q8+Q9 to user, close + archive |
++| **`methodology-mirror-and-workspaces`** | Not started | None stamped | **Q11 trigger MET** (auto-load creep concrete + flagged by harness) | **REVISE** — Q3 + Q9 mismatched against shipped testing-ground / template-workspace / seed-workspace reality; audit §7 against current state before re-confirming defaults |
++
++---
++
++## 5. Files / locations referenced (zero-context reader paths)
++
++- `projects/vista-api-mcp/PROJECT.md` (deleted; recovered from commit `7893396`)
++- `projects/project-history-ledger/PROJECT.md` (deleted; recovered from commit `d5f6773`)
++- `projects/methodology-mirror-and-workspaces/PROJECT.md` (deleted; recovered from commit `146abe3`)
++- `mcp/vista/` — Vista MCP server (Phase 1 shipped)
++- `mcp/vista/tools/{agencias,clientes,corretores,diagnostics,imoveis,usuarios}.py`
++- `seed/lib/backend/noctusai_lib/integrations/vista/client.py` — seed-lib canonical Vista client
++- `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` — durable Vista API doc
++- `project-history/ledger.ndjson` — 32 backfilled entries
++- `project-history/PROJECT-HISTORY.md` — rendered view
++- `scripts/render-project-history.py` — renderer
++- `scripts/backfill-project-history.py` — backfill script
++- `scripts/bootstrap-seed-workspace.sh` — workspace bootstrap (partial methodology-mirror precursor)
++- `templates/seed-workspace-{docker,pre-commit.sh,README.md}` — seed-workspace templates
++- `KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md` — seed-workspace pattern
++- `KNOWLEDGE-BASE/CONTEXT/PATTERNS/template-workspace.md` — template-workspace pattern
++
++---
++
++## 6. Phases — N/A (surfacing-only)
++
++This project intentionally has no execution phases. Its output is this
++document. After user reads + decides per child:
++- `vista-api-mcp` → no action (or file documentation-track maintenance project if user wants standing item)
++- `project-history-ledger` → administrative close (orchestrator FF + archive) — separate from this project's scope
++- `methodology-mirror-and-workspaces` → user decides REVISE depth (in-place §6+§7 amendment vs. follow-up "mirror-revise-pass" project)
++
++This project's **§6 is intentionally empty** because the work is
++the surfacing pass — done in §3, complete on commit.
++
++---
++
++## 7. Open questions (for user decision)
++
++1. **`vista-api-mcp`** — Confirm LEAVE-DEFERRED? Or promote documentation-track upkeep to standing maintenance project?
++2. **`project-history-ledger`** — Accept Q1-Q4 stamped defaults + Q5/Q6/Q7 implicit application as canon? Stamp Q8 (prior_projects field) and Q9 (Anthropic tokenizer)?
++3. **`methodology-mirror-and-workspaces`** — Confirm Q11 trigger met? Revise §7 in-place (interrogation now), or file follow-up "methodology-mirror-revise-pass" project for a fresh scope pass against the shipped workspace infra?
++
++---
++
++## 8. Dependencies & blockers
++
++- **Blocked on user decision** for all three children. Read-only
++  surfacing engineer has no further action.
++- **Upstream:** main-core-migrations-batch Phase 4 (this engineer
++  dispatched there; surfacing output feeds Phase 4 close findings).
++- **Downstream:** orchestrator decides whether to act on each
++  recommendation OR pass through unchanged to user.
++
++---
++
++## 9. Findings (Engineer TIER4-SURFACE-2)
++
++Per §17.6 of the branching-and-merging methodology, engineer findings
++returned as text. Five categories:
++
++### Errors
++
++None encountered. Read-only scope; all referenced files recovered via
++`git show <commit>:<path>` to /tmp staging.
++
++### Mistakes / slips
++
++- **None this dispatch** — but noting that the first dispatch was rate-
++  limit interrupted (per the brief). The retry stayed on the same
++  read-only scope without scope creep.
++
++### Lessons
++
++- **Concept-tier projects age fast when the surrounding methodology
++  evolves.** Two of three filed-2026-05-02 projects had their §7
++  defaults effectively overrun by shipped work in ≤10 days. The
++  *"file the idea + capture §7"* discipline is sound, but the **§7
++  audit pass** ("does what's filed still match what would be filed
++  today?") needs to happen at reactivation time, not at file time.
++- **Q11-style reactivation triggers SHOULD be self-measurable.**
++  methodology-mirror's Q11 named *"auto-load surface creeps back up"*
++  and shipped with a measurement table — that's why I could detect
++  the trigger today (compared file sizes against 2026-05-02 numbers).
++  vista-api-mcp's Q6 named *"user explicitly asks / external-build-
++  gap / 2nd-consumer"* — only the third is self-measurable; the
++  others wait on external signal. **Measurable triggers > prose
++  triggers.**
++
++### Interesting findings
++
++- **The seed-workspace + template-workspace patterns shipped a
++  partial-precursor to methodology-mirror's vision without explicitly
++  citing it.** This is good (avoid waiting for the perfect project),
++  but creates a documentation gap: nothing currently says *"the
++  seed-workspace pattern subsumed methodology-mirror §7 Q3 + Q7
++  while leaving Q11 open"*. The cross-link belongs in KB §
++  PATTERNS/seed-workspace.md → see-also methodology-mirror.
++- **MEMORY.md is over its budget by 55% (37,995 bytes vs ~24,400
++  byte limit per the system-reminder).** The system-reminder
++  explicitly says *"Only part of it was loaded."* This is a current,
++  not future, problem — and it's *exactly* the failure mode
++  methodology-mirror's Q11 anticipated.
++- **vista-api-mcp's §7 Q3 was self-resolving by the recurrence rule.**
++  The seed-lib move happened "naturally" when the 2nd consumer (the
++  MCP server) needed the client. This is the recurrence rule working
++  as designed — the §7 decision-point became moot once N=2 fired.
++
++### Knowledge pieces
++
++- **Pattern:** *"concept-tier project filed → §7 questions paired
++  with defaults → real-world work overruns defaults before
++  reactivation"* — this is a recurring shape. Possible methodology
++  addition: every concept-tier project carries a `last_revalidated`
++  date that goes stale after N months, prompting an audit pass.
++- **Tool:** `git show <hash>:<path>` reliably recovers deleted
++  PROJECT.md files from close commits. The `clean-folder` rule
++  (delete folders after close) is fully reversible via git — the
++  project-history-ledger's value is the *curated* artifact, not the
++  recoverability.
++
++---
++
++## 10. Change log
++
++| Date | Change | Author |
++|---|---|---|
++| 2026-05-11 | **Project filed** — surfacing pass over three 2026-05-02 concept-tier projects (vista-api-mcp, project-history-ledger, methodology-mirror-and-workspaces). §7 quoted verbatim per child; defaults paired; dependency state assessed; per-child recommendation rendered. User reads + decides each. | Engineer TIER4-SURFACE-2 |
+diff --git a/projects/tier4-concept-trio-surfacing/proposals/.gitkeep b/projects/tier4-concept-trio-surfacing/proposals/.gitkeep
+new file mode 100644
+index 00000000..e69de29b
+-- 
+2.51.2
+

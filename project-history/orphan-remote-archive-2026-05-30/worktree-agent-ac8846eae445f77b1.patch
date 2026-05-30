@@ -1,0 +1,784 @@
+From ba7a6a5eb36ea10967edd15079606c206e5e7ae5 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:42 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-ac8846eae445f77b1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ mcp/noctusai/tests/test_propagate.py         | 132 +++++++
+ mcp/noctusai/tests/test_smoke_fleet.py       |  78 +++++
+ mcp/noctusai/tools/noctus/dev/propagate.py   | 347 +++++++++++++++++++
+ mcp/noctusai/tools/noctus/dev/smoke_fleet.py | 177 ++++++++++
+ 4 files changed, 734 insertions(+)
+ create mode 100644 mcp/noctusai/tests/test_propagate.py
+ create mode 100644 mcp/noctusai/tests/test_smoke_fleet.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/propagate.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/smoke_fleet.py
+
+diff --git a/mcp/noctusai/tests/test_propagate.py b/mcp/noctusai/tests/test_propagate.py
+new file mode 100644
+index 00000000..6ef50755
+--- /dev/null
++++ b/mcp/noctusai/tests/test_propagate.py
+@@ -0,0 +1,132 @@
++"""Colocated tests for noctus.dev.propagate.
++
++Byte-parity is proven against the REAL scripts/propagate-*.sh, not a
++re-implementation: build a temp repo (canonical products/seed/ + the real
++script copied in), run the MCP function AND the script against separate
++temp trees, assert the regenerated files are byte-identical.
++"""
++from __future__ import annotations
++
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev import propagate as P  # noqa: E402
++
++REPO = Path(__file__).resolve().parents[3]
++
++
++def _make_temp_repo(tmp_path: Path, kind: str) -> Path:
++    """Copy the real canonical seed file + the real propagate script into a
++    throwaway repo root so both the MCP fn and the .sh see identical input."""
++    root = tmp_path / "repo"
++    if kind == "composes":
++        canon_src = REPO / "products/seed/docker-compose.yml"
++        canon_dst = root / "products/seed/docker-compose.yml"
++        script_src = REPO / "scripts/propagate-composes.sh"
++    else:
++        canon_src = REPO / "products/seed/backend/Dockerfile"
++        canon_dst = root / "products/seed/backend/Dockerfile"
++        script_src = REPO / "scripts/propagate-dockerfiles.sh"
++    canon_dst.parent.mkdir(parents=True, exist_ok=True)
++    shutil.copy2(canon_src, canon_dst)
++    (root / "scripts").mkdir(parents=True, exist_ok=True)
++    shutil.copy2(script_src, root / "scripts" / script_src.name)
++    # propagate-composes.sh writes without mkdir-parent (relies on the
++    # product dir pre-existing in a real repo); the MCP fn creates it.
++    # Pre-create the product dirs so the .sh can run for the parity diff
++    # — content parity is what byte-parity proves.
++    for slug, _ in P.PRODUCTS:
++        (root / "products" / slug / "backend").mkdir(parents=True, exist_ok=True)
++    return root
++
++
++@pytest.mark.parametrize(
++    "kind,fn,out_tpl,script",
++    [
++        (
++            "composes",
++            P.propagate_composes,
++            "products/{slug}/docker-compose.yml",
++            "propagate-composes.sh",
++        ),
++        (
++            "dockerfiles",
++            P.propagate_dockerfiles,
++            "products/{slug}/backend/Dockerfile",
++            "propagate-dockerfiles.sh",
++        ),
++    ],
++)
++def test_byte_parity_with_script(tmp_path, kind, fn, out_tpl, script):
++    mcp_root = _make_temp_repo(tmp_path / "mcp", kind)
++    sh_root = _make_temp_repo(tmp_path / "sh", kind)
++
++    res = fn(repo_root=str(mcp_root))
++    assert res["ok"] is True
++    assert res["status"] == "written"
++    assert res["wrote"], "expected files written"
++
++    subprocess.run(
++        ["bash", str(sh_root / "scripts" / script)],
++        cwd=str(sh_root),
++        check=True,
++        capture_output=True,
++    )
++
++    for slug, _port in P.PRODUCTS:
++        rel = out_tpl.format(slug=slug)
++        mcp_out = (mcp_root / rel).read_bytes()
++        sh_out = (sh_root / rel).read_bytes()
++        assert mcp_out == sh_out, f"byte mismatch for {slug} ({kind})"
++
++
++@pytest.mark.parametrize(
++    "fn", [P.propagate_composes, P.propagate_dockerfiles]
++)
++def test_dry_writes_nothing(tmp_path, fn):
++    kind = "composes" if fn is P.propagate_composes else "dockerfiles"
++    root = _make_temp_repo(tmp_path, kind)
++    res = fn(dry=True, repo_root=str(root))
++    assert res["ok"] is True
++    assert res["mode"] == "dry"
++    assert res["status"] == "drift"  # nothing exists yet
++    assert res["wrote"] == []
++    assert len(res["planned_writes"]) == len(P.PRODUCTS)
++    # no PRODUCT files materialized (the seed canonical is the input, not
++    # a generated artifact — exclude it)
++    for slug, _ in P.PRODUCTS:
++        assert not (root / "products" / slug / "docker-compose.yml").exists()
++        assert not (root / "products" / slug / "backend" / "Dockerfile").exists()
++
++
++@pytest.mark.parametrize(
++    "fn", [P.propagate_composes, P.propagate_dockerfiles]
++)
++def test_check_detects_stale_then_in_sync(tmp_path, fn):
++    kind = "composes" if fn is P.propagate_composes else "dockerfiles"
++    root = _make_temp_repo(tmp_path, kind)
++    stale = fn(check=True, repo_root=str(root))
++    assert stale["status"] == "stale"
++    assert stale["exit_code"] == 1
++    assert len(stale["stale"]) == len(P.PRODUCTS)
++
++    fn(repo_root=str(root))  # write
++    fresh = fn(check=True, repo_root=str(root))
++    assert fresh["status"] == "in-sync"
++    assert fresh["exit_code"] == 0
++    assert fresh["stale"] == []
++
++
++@pytest.mark.parametrize(
++    "fn", [P.propagate_composes, P.propagate_dockerfiles]
++)
++def test_missing_canonical(tmp_path, fn):
++    res = fn(repo_root=str(tmp_path))
++    assert res["ok"] is False
++    assert "not found" in res["error"]
+diff --git a/mcp/noctusai/tests/test_smoke_fleet.py b/mcp/noctusai/tests/test_smoke_fleet.py
+new file mode 100644
+index 00000000..582cd92a
+--- /dev/null
++++ b/mcp/noctusai/tests/test_smoke_fleet.py
+@@ -0,0 +1,78 @@
++"""Colocated tests for noctus.dev.smoke_fleet.
++
++No real network — a stub fetcher is injected. Registry is parsed from the
++real start.sh (single source of truth, as the script does).
++"""
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev import smoke_fleet as SF  # noqa: E402
++
++REPO = Path(__file__).resolve().parents[3]
++
++
++def test_parse_registry_matches_start_sh():
++    reg = SF.parse_registry((REPO / "start.sh").read_text())
++    slugs = [r[0] for r in reg]
++    assert "core" in slugs and "seed" in slugs
++    # each entry is (slug, name, bport, fport)
++    core = next(r for r in reg if r[0] == "core")
++    assert core == ("core", "Core", "8000", "5173")
++
++
++def test_parse_registry_empty_block():
++    assert SF.parse_registry("no registry here") == []
++
++
++def test_all_healthy_exit_0():
++    res = SF.smoke_fleet(fetch_status=lambda url: "200", repo_root=str(REPO))
++    assert res["ok"] is True
++    assert res["status"] == "healthy"
++    assert res["exit_code"] == 0
++    assert res["failed"] == 0
++    assert res["passed"] == res["total"]
++    assert all(b["ok"] for b in res["backends"])
++    # frontend sample reported, not counted toward pass/fail
++    assert {f["slug"] for f in res["frontends"]} == {"core", "seed"}
++
++
++def test_one_backend_down_exit_1():
++    def fetcher(url: str) -> str:
++        return "FAIL" if ":8001/" in url else "200"
++
++    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(REPO))
++    assert res["status"] == "degraded"
++    assert res["exit_code"] == 1
++    assert res["failed"] == 1
++    assert res["passed"] == res["total"] - 1
++    down = [b for b in res["backends"] if not b["ok"]]
++    assert len(down) == 1 and down[0]["port"] == "8001"
++
++
++def test_non_200_counts_as_fail():
++    res = SF.smoke_fleet(fetch_status=lambda url: "503", repo_root=str(REPO))
++    assert res["status"] == "degraded"
++    assert res["exit_code"] == 1
++    assert res["failed"] == res["total"]
++
++
++def test_frontend_not_counted_toward_fail():
++    # frontends never serve 200 here, backends all 200 → still healthy
++    def fetcher(url: str) -> str:
++        return "200" if "/api/health" in url else "FAIL"
++
++    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(REPO))
++    assert res["status"] == "healthy"
++    assert res["exit_code"] == 0
++    assert all(not f["ok"] for f in res["frontends"])
++
++
++def test_missing_start_sh(tmp_path):
++    res = SF.smoke_fleet(fetch_status=lambda u: "200", repo_root=str(tmp_path))
++    assert res["ok"] is False
++    assert res["status"] == "error"
++    assert res["exit_code"] == 1
+diff --git a/mcp/noctusai/tools/noctus/dev/propagate.py b/mcp/noctusai/tools/noctus/dev/propagate.py
+new file mode 100644
+index 00000000..d8669634
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/propagate.py
+@@ -0,0 +1,347 @@
++"""noctus.dev.propagate — MCP exposure of the containerization codegen.
++
++MCP-first: `scripts/propagate-composes.sh` + `scripts/propagate-dockerfiles.sh`
++were bash one-offs wrapping a Python heredoc. This is a behaviour-preserving
++port — byte-identical regenerated output vs the scripts — of the
++containerization-single-container codegen: `products/seed/` is the canonical
++single-container shape, every product's `docker-compose.yml` /
++`backend/Dockerfile` is REGENERATED from it via TARGETED substitution
++(slug / port / per-product VITE / dev-team extras / erp pip toolchain only —
++the literal "seed" in `seed/lib`, `@noctusai/seed` is the SHARED seed tree
++and must NOT change).
++
++Two functions:
++  • `propagate_composes(dry=False, ...)` — seed compose → N product composes.
++  • `propagate_dockerfiles(dry=False, ...)` — seed backend Dockerfile → N
++    thin product Dockerfiles.
++
++Modes (mirrors the scripts' `[--check]`):
++  • default (`dry=False, check=False`) — the parity-faithful path: WRITE
++    every regenerated file. Returns the written set + ports.
++  • `dry=True` — report planned writes (which files WOULD change), write
++    NOTHING. The safe MCP default semantic; the scripts had no `--dry`.
++  • `check=True` — the scripts' `--check`: report STALE files (missing or
++    content-divergent vs canonical), write nothing, `status="stale"` if any.
++
++`check=True` implies no writes regardless of `dry`.
++"""
++from __future__ import annotations
++
++import pathlib
++from typing import Any
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++# slug → backend port. Mirrors vite.config.factory PRODUCT_MAP + start.sh.
++# Frozen verbatim from scripts/propagate-{composes,dockerfiles}.sh — the
++# scripts hardcode this identical list; parity requires the same set/order.
++PRODUCTS: list[tuple[str, str]] = [
++    ("core", "8000"),
++    ("erp-imobiliario", "8001"),
++    ("personal-finance", "8002"),
++    ("therapy-platform", "8003"),
++    ("daily-life", "8005"),
++    ("adconnect", "8007"),
++    ("dev-team", "8009"),
++    ("social-wiring", "8011"),
++]
++
++# ── compose substitution constants (verbatim from propagate-composes.sh) ──
++_C_VITE_SUPABASE = (
++    "      args:\n"
++    "        # Boot-critical Supabase vars — baked at build (Vite inlines\n"
++    "        # them; empty ⇒ blank-page throw). Backend URL stays runtime.\n"
++    "        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}\n"
++    "        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}\n"
++)
++_C_VITE_SEED = _C_VITE_SUPABASE + "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
++_C_VITE: dict[str, str] = {
++    "core": _C_VITE_SUPABASE + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n",
++    "erp-imobiliario": (
++        _C_VITE_SUPABASE
++        + "        VITE_CORE_API_URL: ${VITE_CORE_API_URL:-}\n"
++        "        VITE_CORE_URL: ${VITE_CORE_URL:-}\n"
++    ),
++}
++
++
++def _render_compose(canon: str, slug: str, port: str) -> str:
++    """Reproduce propagate-composes.sh substitutions EXACTLY, in order."""
++    s = canon
++    # tunnel target first (carries both slug + port)
++    s = s.replace("http://seed:8004", f"http://{slug}:{port}")
++    # container/image/tunnel-container names
++    s = s.replace("noctus-seed", f"noctus-{slug}")
++    # build dockerfile path
++    s = s.replace("products/seed/", f"products/{slug}/")
++    # tunnel profile
++    s = s.replace("tunnel-seed", f"tunnel-{slug}")
++    # tunnel SERVICE KEY (2-space indent) — before the bare seed: rule
++    s = s.replace("\n  seed-tunnel:\n", f"\n  {slug}-tunnel:\n")
++    # service key (2-space indent) + depends_on ref (6-space indent)
++    s = s.replace("\n  seed:\n", f"\n  {slug}:\n")
++    s = s.replace("\n      seed:\n", f"\n      {slug}:\n")
++    # ports + healthcheck port
++    s = s.replace("8004", port)
++    # per-product VITE args
++    s = s.replace(_C_VITE_SEED, _C_VITE.get(slug, _C_VITE_SEED))
++    # header note
++    s = s.replace(
++        "Canonical per-product compose fragment — SINGLE CONTAINER.",
++        f"{slug} compose — SINGLE CONTAINER (generated from "
++        f"products/seed/docker-compose.yml; edit there + re-propagate).",
++    )
++    return s
++
++
++# ── Dockerfile substitution constants (verbatim from propagate-dockerfiles.sh)
++_D_VITE_SUPABASE = (
++    "ARG VITE_SUPABASE_URL=\nENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}\n"
++    "ARG VITE_SUPABASE_PUBLISHABLE_KEY=\n"
++    "ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}\n"
++)
++_D_VITE_SEED = (
++    _D_VITE_SUPABASE + "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
++)
++_D_VITE: dict[str, str] = {
++    "core": _D_VITE_SUPABASE
++    + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n",
++    "erp-imobiliario": (
++        _D_VITE_SUPABASE
++        + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
++        "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
++    ),
++}
++_D_EXTRA_MARKER = (
++    "# {{BACKEND_EXTRA}} — product extras (e.g. dev-team: COPY dev_team +\n"
++    "# pip install -e /opt/dev_team). Seed has none.\n"
++)
++_D_DEVTEAM_EXTRA = (
++    "# dev-team: the agno engine, editable-installed alongside the product.\n"
++    "COPY dev_team /opt/dev_team\n"
++    "RUN --mount=type=cache,target=/root/.cache/pip pip install -e /opt/dev_team\n"
++)
++_D_PIP_RUN_SEED = (
++    "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
++    "    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
++    "    && pip install -r /tmp/req.clean.txt"
++)
++_D_PIP_RUN: dict[str, str] = {
++    "erp-imobiliario": (
++        "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
++        "    apt-get update \\\n"
++        "    && apt-get install -y --no-install-recommends gcc pkg-config libcairo2-dev \\\n"
++        "    && grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
++        "    && pip install -r /tmp/req.clean.txt \\\n"
++        "    && apt-get purge -y gcc pkg-config libcairo2-dev \\\n"
++        "    && apt-get autoremove -y \\\n"
++        "    && rm -rf /var/lib/apt/lists/*"
++    ),
++}
++
++
++def _render_dockerfile(canon: str, slug: str, port: str) -> str:
++    """Reproduce propagate-dockerfiles.sh substitutions EXACTLY, in order."""
++    s = canon
++    s = s.replace("products/seed/", f"products/{slug}/")
++    s = s.replace("PRODUCT_SLUG=seed", f"PRODUCT_SLUG={slug}")
++    s = s.replace("8004", port)
++    s = s.replace(_D_VITE_SEED, _D_VITE.get(slug, _D_VITE_SEED))
++    s = s.replace(_D_PIP_RUN_SEED, _D_PIP_RUN.get(slug, _D_PIP_RUN_SEED))
++    s = s.replace(
++        _D_EXTRA_MARKER,
++        _D_DEVTEAM_EXTRA if slug == "dev-team" else "# (no product extras)\n",
++    )
++    s = s.replace(
++        "seed — CANONICAL thin product image (the reference every product mirrors).",
++        f"{slug} — thin product image (generated from "
++        f"products/seed/backend/Dockerfile; edit there + re-propagate).",
++    )
++    s = s.replace('title="noctus-seed"', f'title="noctus-{slug}"')
++    return s
++
++
++def _resolve_root(repo_root: str | None, worktree_path: str | None) -> pathlib.Path:
++    """`repo_root` (explicit tree, mirrors the script's `cd $REPO_ROOT`)
++    wins; else a genuine git `worktree_path`; else `REPO_ROOT`."""
++    if repo_root is not None:
++        return pathlib.Path(repo_root)
++    if worktree_path:
++        return pathlib.Path(resolve_caller_root(worktree_path))
++    return pathlib.Path(REPO_ROOT)
++
++
++def _propagate(
++    *,
++    kind: str,
++    canon_rel: str,
++    out_rel_tpl: str,
++    renderer,
++    dry: bool,
++    check: bool,
++    repo_root: str | None,
++    worktree_path: str | None,
++) -> dict[str, Any]:
++    """Shared engine for both codegens. Mirrors the script loop exactly:
++    `check` reports STALE (no write); `dry` reports planned writes (no
++    write); default WRITES every regenerated file."""
++    root = _resolve_root(repo_root, worktree_path)
++    canon_path = root / canon_rel
++    if not canon_path.exists():
++        return {
++            "ok": False,
++            "kind": kind,
++            "error": f"canonical {canon_rel} not found at {canon_path}",
++            "executed": False,
++        }
++    canon = canon_path.read_text()
++
++    stale: list[str] = []
++    written: list[str] = []
++    planned: list[str] = []
++    for slug, port in PRODUCTS:
++        rendered = renderer(canon, slug, port)
++        out = root / out_rel_tpl.format(slug=slug)
++        rel = out_rel_tpl.format(slug=slug)
++        if check:
++            if not out.exists() or out.read_text() != rendered:
++                stale.append(rel)
++        elif dry:
++            if not out.exists() or out.read_text() != rendered:
++                planned.append(rel)
++        else:
++            out.parent.mkdir(parents=True, exist_ok=True)
++            out.write_text(rendered)
++            written.append(rel)
++
++    if check:
++        return {
++            "ok": True,
++            "kind": kind,
++            "mode": "check",
++            "status": "stale" if stale else "in-sync",
++            "stale": stale,
++            "exit_code": 1 if stale else 0,
++            "products": [s for s, _ in PRODUCTS],
++        }
++    if dry:
++        return {
++            "ok": True,
++            "kind": kind,
++            "mode": "dry",
++            "status": "drift" if planned else "in-sync",
++            "planned_writes": planned,
++            "wrote": [],
++            "products": [s for s, _ in PRODUCTS],
++        }
++    return {
++        "ok": True,
++        "kind": kind,
++        "mode": "write",
++        "status": "written",
++        "wrote": written,
++        "ports": {s: p for s, p in PRODUCTS},
++        "products": [s for s, _ in PRODUCTS],
++    }
++
++
++def propagate_composes(
++    dry: bool = False,
++    check: bool = False,
++    repo_root: str | None = None,
++    worktree_path: str | None = None,
++) -> dict[str, Any]:
++    """Regenerate every product's `docker-compose.yml` from the canonical
++    `products/seed/docker-compose.yml`. Byte-identical to
++    scripts/propagate-composes.sh. `check` mirrors its `--check`; `dry`
++    reports planned writes only (no `--dry` in the script — safer MCP
++    default, non-dry stays parity-faithful). `repo_root` overrides the
++    tree (mirrors the script's `cd $REPO_ROOT`)."""
++    return _propagate(
++        kind="composes",
++        canon_rel="products/seed/docker-compose.yml",
++        out_rel_tpl="products/{slug}/docker-compose.yml",
++        renderer=_render_compose,
++        dry=dry,
++        check=check,
++        repo_root=repo_root,
++        worktree_path=worktree_path,
++    )
++
++
++def propagate_dockerfiles(
++    dry: bool = False,
++    check: bool = False,
++    repo_root: str | None = None,
++    worktree_path: str | None = None,
++) -> dict[str, Any]:
++    """Regenerate every product's `backend/Dockerfile` from the canonical
++    `products/seed/backend/Dockerfile`. Byte-identical to
++    scripts/propagate-dockerfiles.sh. `check` mirrors its `--check`; `dry`
++    reports planned writes only (no `--dry` in the script — safer MCP
++    default, non-dry stays parity-faithful). `repo_root` overrides the
++    tree (mirrors the script's `cd $REPO_ROOT`)."""
++    return _propagate(
++        kind="dockerfiles",
++        canon_rel="products/seed/backend/Dockerfile",
++        out_rel_tpl="products/{slug}/backend/Dockerfile",
++        renderer=_render_dockerfile,
++        dry=dry,
++        check=check,
++        repo_root=repo_root,
++        worktree_path=worktree_path,
++    )
++
++
++def register(server) -> None:
++    @server.tool(
++        name="noctus.dev.propagate",
++        description=(
++            "Containerization codegen — regenerate per-product "
++            "docker-compose.yml / backend Dockerfile from the canonical "
++            "products/seed/ single-container shape (byte-identical to the "
++            "former scripts/propagate-{composes,dockerfiles}.sh). "
++            "`target='composes'|'dockerfiles'|'both'` (default 'both'). "
++            "`check=True` reports STALE files (status='stale', no write — "
++            "the scripts' --check, used by the pre-commit drift gate). "
++            "`dry=True` reports planned writes (no write). Default WRITES "
++            "every regenerated file. Pass worktree_path when called from "
++            "inside a git worktree. See KB § PATTERNS/containerization.md."
++        ),
++    )
++    def _propagate_tool(
++        target: str = "both",
++        dry: bool = False,
++        check: bool = False,
++        worktree_path: str | None = None,
++    ) -> dict:
++        if target == "composes":
++            return propagate_composes(dry=dry, check=check, worktree_path=worktree_path)
++        if target == "dockerfiles":
++            return propagate_dockerfiles(
++                dry=dry, check=check, worktree_path=worktree_path
++            )
++        c = propagate_composes(dry=dry, check=check, worktree_path=worktree_path)
++        d = propagate_dockerfiles(dry=dry, check=check, worktree_path=worktree_path)
++        return {
++            "ok": c["ok"] and d["ok"],
++            "target": "both",
++            "composes": c,
++            "dockerfiles": d,
++            "status": (
++                "stale"
++                if "stale" in (c.get("status"), d.get("status"))
++                else "drift"
++                if "drift" in (c.get("status"), d.get("status"))
++                else c.get("status")
++            ),
++        }
++
++
++__all__ = [
++    "propagate_composes",
++    "propagate_dockerfiles",
++    "PRODUCTS",
++    "register",
++]
+diff --git a/mcp/noctusai/tools/noctus/dev/smoke_fleet.py b/mcp/noctusai/tools/noctus/dev/smoke_fleet.py
+new file mode 100644
+index 00000000..33d4d73e
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/smoke_fleet.py
+@@ -0,0 +1,177 @@
++"""noctus.dev.smoke_fleet — MCP exposure of the post-fleet-up smoke test.
++
++MCP-first: `scripts/smoke-fleet.sh` was a bash one-off. Behaviour-preserving
++port: hit `/api/health` on every backend, sample the frontend (core + seed),
++aggregate pass/fail. The script's `exit 0` (every backend 200) / `exit 1`
++(≥1 failed) becomes `status="healthy"|"degraded"` + `exit_code` 0|1.
++
++Registry source = the `BEGIN_PRODUCTS_REGISTRY`…`END_PRODUCTS_REGISTRY`
++block in `start.sh` (single source of truth — same as the script's awk).
++Each entry is `slug:name:backend_port:frontend_port`.
++
++The HTTP layer is injectable (`fetch_status`) so the colocated test stubs
++it — no real network. Default fetcher uses urllib with the script's
++behaviour: any non-200 / connection error → "FAIL" (mirrors the script's
++`|| echo "FAIL"`).
++"""
++from __future__ import annotations
++
++import pathlib
++import re
++import urllib.error
++import urllib.request
++from typing import Any, Callable
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++# Frontend smoke sample — verbatim from smoke-fleet.sh
++# (`for entry in "core:5173" "seed:8100"`). slug → frontend port.
++FRONTEND_SAMPLE: list[tuple[str, str]] = [("core", "5173"), ("seed", "8100")]
++
++_REG_BEGIN = "# BEGIN_PRODUCTS_REGISTRY"
++_REG_END = "# END_PRODUCTS_REGISTRY"
++# matches `  "core:Core:8000:5173"` style registry lines
++_ENTRY_RE = re.compile(r'"([^"]+)"')
++
++
++def parse_registry(start_sh_text: str) -> list[tuple[str, str, str, str]]:
++    """Parse the start.sh PRODUCTS registry block — same single source of
++    truth the script's awk reads. Returns (slug, name, bport, fport)."""
++    out: list[tuple[str, str, str, str]] = []
++    capture = False
++    for line in start_sh_text.splitlines():
++        if line.startswith(_REG_BEGIN):
++            capture = True
++            continue
++        if line.startswith(_REG_END):
++            break
++        if not capture:
++            continue
++        m = _ENTRY_RE.search(line)
++        if not m:
++            continue
++        parts = m.group(1).split(":")
++        if len(parts) >= 4:
++            out.append((parts[0], parts[1], parts[2], parts[3]))
++    return out
++
++
++def _default_fetch_status(url: str) -> str:
++    """Mirror `curl -fsS -o /dev/null -w "%{http_code}" ... || echo FAIL`:
++    return the HTTP status string, or "FAIL" on any error / non-2xx."""
++    try:
++        req = urllib.request.Request(url, method="GET")
++        with urllib.request.urlopen(req, timeout=5) as resp:
++            return str(resp.status)
++    except urllib.error.HTTPError as exc:  # got a response, non-2xx
++        return str(exc.code)
++    except Exception:  # connection refused / timeout / DNS — script's FAIL
++        return "FAIL"
++
++
++def smoke_fleet(
++    host: str = "localhost",
++    fetch_status: Callable[[str], str] | None = None,
++    repo_root: str | None = None,
++    worktree_path: str | None = None,
++) -> dict[str, Any]:
++    """Hit /api/health on every backend + sample frontends; aggregate.
++
++    Preserves smoke-fleet.sh semantics exactly:
++      • backend OK ⇔ status == "200"; any other → fail, increment `fails`.
++      • `fails > 0` ⇒ exit 1 / status="degraded"; else exit 0 /
++        status="healthy".
++      • frontend sample (core:5173, seed:8100) is reported, NOT counted
++        toward pass/fail (the script only sums backend fails).
++      • empty registry ⇒ the script's `exit 1` + ERRO message.
++    """
++    fetch = fetch_status or _default_fetch_status
++    if repo_root is not None:
++        root = pathlib.Path(repo_root)
++    elif worktree_path:
++        root = pathlib.Path(resolve_caller_root(worktree_path))
++    else:
++        root = pathlib.Path(REPO_ROOT)
++    start_sh = root / "start.sh"
++    if not start_sh.exists():
++        return {
++            "ok": False,
++            "error": f"start.sh not found at {start_sh}",
++            "status": "error",
++            "exit_code": 1,
++        }
++    registry = parse_registry(start_sh.read_text())
++    if not registry:
++        return {
++            "ok": False,
++            "error": "PRODUCTS array vazio. start.sh ainda nao escaneado?",
++            "status": "error",
++            "exit_code": 1,
++        }
++
++    backends: list[dict[str, Any]] = []
++    fails = 0
++    for slug, _name, bport, _fport in registry:
++        url = f"http://{host}:{bport}/api/health"
++        status = fetch(url)
++        ok = status == "200"
++        if not ok:
++            fails += 1
++        backends.append(
++            {"slug": slug, "port": bport, "url": url, "status": status, "ok": ok}
++        )
++
++    frontends: list[dict[str, Any]] = []
++    for slug, fport in FRONTEND_SAMPLE:
++        url = f"http://{host}:{fport}"
++        status = fetch(url)
++        frontends.append(
++            {
++                "slug": slug,
++                "port": fport,
++                "url": url,
++                "status": status,
++                "ok": status == "200",
++            }
++        )
++
++    healthy = fails == 0
++    return {
++        "ok": True,
++        "status": "healthy" if healthy else "degraded",
++        "exit_code": 0 if healthy else 1,
++        "total": len(registry),
++        "passed": len(registry) - fails,
++        "failed": fails,
++        "backends": backends,
++        "frontends": frontends,
++    }
++
++
++def register(server) -> None:
++    @server.tool(
++        name="noctus.dev.smoke_fleet",
++        description=(
++            "Post-fleet-up smoke test (port of scripts/smoke-fleet.sh). "
++            "Hits /api/health on every backend in the start.sh PRODUCTS "
++            "registry + samples the core/seed frontends; aggregates "
++            "pass/fail. status='healthy' (every backend 200, exit 0) | "
++            "'degraded' (≥1 failed, exit 1). Run AFTER ./start.sh; "
++            "idempotent. Pass worktree_path when called from inside a git "
++            "worktree. See KB § PATTERNS/containerization.md."
++        ),
++    )
++    def _smoke_fleet(
++        host: str = "localhost",
++        worktree_path: str | None = None,
++    ) -> dict:
++        return smoke_fleet(host=host, worktree_path=worktree_path)
++
++
++__all__ = [
++    "smoke_fleet",
++    "parse_registry",
++    "FRONTEND_SAMPLE",
++    "register",
++]
+-- 
+2.51.2
+

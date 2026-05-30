@@ -1,0 +1,208 @@
+From 89049e3c7f764ba274f3448767878e8fc1dbfb74 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:27 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a64be0b9e9d3820ea?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../backend/tests/conftest.py                 | 29 ++-----
+ .../noctusai_lib/testing/pytest_plugin.py     | 35 ++++++++
+ .../tests/testing/test_pytest_plugin.py       | 86 +++++++++++++++++++
+ 3 files changed, 128 insertions(+), 22 deletions(-)
+ create mode 100644 seed/lib/backend/tests/testing/test_pytest_plugin.py
+
+diff --git a/products/therapy-platform/backend/tests/conftest.py b/products/therapy-platform/backend/tests/conftest.py
+index f3f7a80e..bdf16627 100644
+--- a/products/therapy-platform/backend/tests/conftest.py
++++ b/products/therapy-platform/backend/tests/conftest.py
+@@ -7,28 +7,13 @@ all shared classes for backwards compatibility (tests import from conftest).
+ Key difference from ERP/PF: no org_id. Instead, users have roles
+ (platform_admin, clinic_admin, therapist, patient) and optional clinic_id.
+ """
+-# MOCK-SELECT-PREDICATE-FIX follow-up: pre-populate Supabase env vars BEFORE
+-# `app.main` is imported by `noctusai_lib.testing.pytest_plugin` at session
+-# start. Without these defaults, BackgroundTask paths that call
+-# `app.database.get_core_client()` / `get_admin_client()` (e.g. `ai_pipeline.
+-# on_observation_change`, `process_session_end`) try to instantiate a real
+-# Supabase client and crash on "supabase_url is required", surfacing as test
+-# failures even though the test-fixture mock SHOULD have been used. The
+-# per-fixture `patch(...)` patches on `DatabaseModule.<method>` don't reach
+-# the bound-method bindings captured at module-import time. Setting these
+-# placeholder env vars lets `make_supabase_client` succeed; the actual data
+-# IO still routes through the mock via `patcher4/5/6` in
+-# `_make_client_context`. Tests asserting real network IO live under
+-# `tests/realdb/` and use their own env probe.
+-import os as _os
+-_os.environ.setdefault("SUPABASE_URL", "http://test.local")
+-# Supabase client validates the key as a JWT regex: header.body.signature
+-# (`^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$`). Plain "test"
+-# fails with "Invalid API key" at module-import. Use a minimal valid-shape
+-# placeholder. NO real secrets — this never reaches a real Supabase.
+-_FAKE_JWT = "aaa.bbb.ccc"
+-_os.environ.setdefault("SUPABASE_ANON_KEY", _FAKE_JWT)
+-_os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", _FAKE_JWT)
++# Supabase env placeholder pre-population (SUPABASE_URL /
++# SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY with JWT-shape values)
++# is now seeded at plugin module-load time by
++# `noctusai_lib.testing.pytest_plugin`. The plugin runs before this
++# conftest imports `app.main`, so `make_supabase_client` succeeds and
++# the test-fixture mocks (`patcher4/5/6` in `_make_client_context`)
++# handle the actual IO. See the plugin's docstring for the rationale.
+ 
+ import sys as _sys
+ from pathlib import Path as _Path
+diff --git a/seed/lib/backend/noctusai_lib/testing/pytest_plugin.py b/seed/lib/backend/noctusai_lib/testing/pytest_plugin.py
+index 4727e7d4..97f463b4 100644
+--- a/seed/lib/backend/noctusai_lib/testing/pytest_plugin.py
++++ b/seed/lib/backend/noctusai_lib/testing/pytest_plugin.py
+@@ -26,14 +26,49 @@ fails fast in non-product contexts.
+ caches the module). The cost is FastAPI app construction (~ms) which
+ happens anyway as soon as the first `client` fixture runs — this just
+ moves it earlier so unit tests get the catalog too.
++
++**Second responsibility — JWT-shape SUPABASE_* placeholder pre-population.**
++The plugin also seeds `SUPABASE_URL` / `SUPABASE_ANON_KEY` /
++`SUPABASE_SERVICE_ROLE_KEY` with safe placeholders at module-load time
++(via `os.environ.setdefault`) so the product's settings construction +
++Supabase client JWT-regex validation succeed during `app.main` import.
++This lifts the duplicate pre-population previously living in
++per-product `tests/conftest.py`. `setdefault` preserves any real env
++value (so realdb/CI runs are unaffected).
+ """
+ from __future__ import annotations
+ 
+ import importlib
+ import logging
++import os
+ 
+ logger = logging.getLogger(__name__)
+ 
++# ---------------------------------------------------------------------------
++# JWT-shape SUPABASE_* placeholder pre-population (lifted from per-product
++# conftests; was previously duplicated at `products/therapy-platform/backend/
++# tests/conftest.py` module-top by Engineer T's `ef01f57`).
++#
++# Why module-level (not inside pytest_configure):
++# Product `app/main.py` is imported from `pytest_configure` below, which
++# triggers settings construction. Settings read `SUPABASE_URL` /
++# `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` at attribute-access
++# time. The Supabase client also validates the key as a JWT regex
++# (`^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$`) — plain
++# "test" fails with "Invalid API key" at module-import. Setting these
++# placeholders at plugin module-load time guarantees they're present
++# before ANY `app.main` import (here OR in a product conftest).
++#
++# `setdefault` semantics: a real .env / CI secret wins; the placeholder
++# only fills the gap when the variable is genuinely unset. NO real
++# secrets — these never reach a real Supabase. Tests asserting real
++# network IO live under `tests/realdb/` and use their own env probe.
++# ---------------------------------------------------------------------------
++_FAKE_JWT = "aaa.bbb.ccc"
++os.environ.setdefault("SUPABASE_URL", "http://test.local")
++os.environ.setdefault("SUPABASE_ANON_KEY", _FAKE_JWT)
++os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", _FAKE_JWT)
++
+ 
+ def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
+     """Probe for `app.main` and import it to load the consent catalog.
+diff --git a/seed/lib/backend/tests/testing/test_pytest_plugin.py b/seed/lib/backend/tests/testing/test_pytest_plugin.py
+new file mode 100644
+index 00000000..e9b98818
+--- /dev/null
++++ b/seed/lib/backend/tests/testing/test_pytest_plugin.py
+@@ -0,0 +1,86 @@
++"""Tests for `noctusai_lib.testing.pytest_plugin`.
++
++Two responsibilities under test:
++
++1. **JWT-shape SUPABASE_* placeholder pre-population** at plugin
++   module-load time (so `app.main` imports during `pytest_configure`
++   don't crash on missing/invalid Supabase env). `setdefault` semantics
++   are verified to preserve real env values.
++
++2. **`pytest_configure` probe** silently no-ops when `app.main` is not
++   on the import path (the seed-lib's own test session, this one).
++"""
++from __future__ import annotations
++
++import importlib
++import os
++import re
++
++import pytest
++
++
++_JWT_RE = re.compile(r"^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$")
++
++
++def test_supabase_placeholders_set_at_plugin_load() -> None:
++    """After plugin module-load, the three SUPABASE_* env vars are present
++    and the key vars match the JWT shape the Supabase client validates.
++
++    This guards against the regression where a product `app.main` import
++    crashes on `supabase_url is required` or `Invalid API key` because
++    no `.env` is wired in test sessions.
++    """
++    # The plugin is auto-loaded via the `pytest11` entry point in
++    # `seed/lib/backend/pyproject.toml`. Force-import is also safe
++    # (idempotent on os.environ.setdefault).
++    importlib.import_module("noctusai_lib.testing.pytest_plugin")
++
++    assert "SUPABASE_URL" in os.environ
++    assert "SUPABASE_ANON_KEY" in os.environ
++    assert "SUPABASE_SERVICE_ROLE_KEY" in os.environ
++
++    # Keys must satisfy the supabase-py JWT regex (header.body.signature).
++    assert _JWT_RE.match(os.environ["SUPABASE_ANON_KEY"]), (
++        f"SUPABASE_ANON_KEY {os.environ['SUPABASE_ANON_KEY']!r} fails JWT shape"
++    )
++    assert _JWT_RE.match(os.environ["SUPABASE_SERVICE_ROLE_KEY"]), (
++        f"SUPABASE_SERVICE_ROLE_KEY {os.environ['SUPABASE_SERVICE_ROLE_KEY']!r} fails JWT shape"
++    )
++
++
++def test_setdefault_preserves_existing_values(monkeypatch: pytest.MonkeyPatch) -> None:
++    """`os.environ.setdefault` MUST NOT overwrite a real env value (real
++    Supabase credentials in CI / realdb runs).
++
++    Simulate the real-env case by setting a sentinel, re-importing the
++    plugin module fresh, and asserting the sentinel survived.
++    """
++    sentinel_url = "https://real-supabase.example.test"
++    sentinel_anon = "real.anon.key"
++    sentinel_service = "real.service.key"
++    monkeypatch.setenv("SUPABASE_URL", sentinel_url)
++    monkeypatch.setenv("SUPABASE_ANON_KEY", sentinel_anon)
++    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", sentinel_service)
++
++    # Re-import fresh so the module-level setdefault block re-runs.
++    import sys as _sys
++    _sys.modules.pop("noctusai_lib.testing.pytest_plugin", None)
++    importlib.import_module("noctusai_lib.testing.pytest_plugin")
++
++    assert os.environ["SUPABASE_URL"] == sentinel_url
++    assert os.environ["SUPABASE_ANON_KEY"] == sentinel_anon
++    assert os.environ["SUPABASE_SERVICE_ROLE_KEY"] == sentinel_service
++
++
++def test_pytest_configure_silent_noop_when_app_main_absent() -> None:
++    """In the seed-lib's own test session (this one), `app.main` does NOT
++    resolve. `pytest_configure` MUST silently no-op (the seed-lib's tests
++    are running right now — if it raised, this assertion would never run).
++    """
++    from noctusai_lib.testing import pytest_plugin
++
++    class _FakeConfig:
++        pass
++
++    # Should not raise — silent return path for ModuleNotFoundError.
++    pytest_plugin.pytest_configure(_FakeConfig())
+-- 
+2.51.2
+

@@ -1,0 +1,1095 @@
+From f7356492c64384c1822e2dd46053c2bf3e408d2a Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:41 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-ac3af9a51504dc17e?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ mcp/noctusai/tests/test_mole_tool.py  | 264 ++++++++--
+ mcp/noctusai/tools/noctus/dev/mole.py | 713 +++++++++++++++++++++++---
+ 2 files changed, 882 insertions(+), 95 deletions(-)
+
+diff --git a/mcp/noctusai/tests/test_mole_tool.py b/mcp/noctusai/tests/test_mole_tool.py
+index 94105e99..bdbc18c1 100644
+--- a/mcp/noctusai/tests/test_mole_tool.py
++++ b/mcp/noctusai/tests/test_mole_tool.py
+@@ -1,60 +1,256 @@
+-"""noctus.dev.mole — wrapper contract + safe-gate (subprocess mocked;
+-zero real filesystem mutation)."""
++"""noctus.dev.mole — native-Python port parity + safe-gate.
++
++Builds real temp filesystem / git trees and asserts the native
++implementation's scan/dry-run/sweep classifications match the
++`scripts/mole.sh` semantics it replaces. No subprocess-to-mole.sh; no
++monkey-patching of our own logic.
++"""
+ from __future__ import annotations
+ 
++import subprocess
+ import sys
+ from pathlib import Path
+-from types import SimpleNamespace
+-from unittest import mock
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from tools.noctus.dev import mole as mole_tool
+ 
+-_JSON = (
+-    '{"severity":"WARNING","artifacts_mb":120,"environments_mb":0,'
+-    '"worktrees_stale":7,"next_action":"worktrees: 7 stale → sweep"}'
+-)
+ 
++# ───────────────────────── git temp-tree helper ────────────────────────
++def _git(root: Path, *args: str) -> str:
++    return subprocess.run(
++        ["git", *args], cwd=str(root), capture_output=True, text=True
++    ).stdout
+ 
+-def _fake_proc(returncode=2, stdout=_JSON, stderr=""):
+-    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+ 
++def _init_repo(root: Path) -> None:
++    _git(root, "init", "-q", "-b", "main")
++    _git(root, "config", "user.email", "t@t.t")
++    _git(root, "config", "user.name", "t")
++    _git(root, "config", "commit.gpgsign", "false")
++    # Marker so resolve_caller_root accepts this as a valid caller root
++    # (the same gate engineer worktrees satisfy in production).
++    (root / ".noctusai-workspace").write_text("test\n")
++    (root / "README.md").write_text("seed\n")
++    _git(root, "add", "README.md")
++    _git(root, "commit", "-qm", "init")
++    # A self-referential 'origin/main' so merge-base checks resolve offline.
++    _git(root, "remote", "add", "origin", str(root))
++    _git(root, "fetch", "-q", "origin")
+ 
+-def test_scan_is_read_only_and_parses_json():
+-    with mock.patch("subprocess.run", return_value=_fake_proc()) as m:
+-        out = mole_tool.run_mole(mode="scan")
+-    argv = m.call_args[0][0]
+-    assert argv[2] == "scan" and "--force" not in argv and "--json" in argv
+-    assert out["ok"] and out["severity"] == "WARNING"
+-    assert out["worktrees_stale"] == 7
+-    assert out["executed_destructive"] is False
+-    assert "merged-to-main" in out["safe_gate"]
++
++# ─────────────────────────── artifacts scope ───────────────────────────
++def test_artifact_scope_matches_denylist_and_prune_rules(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    # Matched: __pycache__ anywhere outside prune set.
++    pc = root / "pkg" / "__pycache__"
++    pc.mkdir(parents=True)
++    (pc / "x.pyc").write_bytes(b"0" * 4096)
++    # Matched: products/*/frontend/dist.
++    dist = root / "products" / "p1" / "frontend" / "dist"
++    dist.mkdir(parents=True)
++    (dist / "bundle.js").write_bytes(b"0" * 4096)
++    # PRUNED: .venv at depth-1, node_modules, .claude/worktrees pycache.
++    venv_pc = root / "pkg" / ".venv" / "__pycache__"
++    venv_pc.mkdir(parents=True)
++    (venv_pc / "y.pyc").write_bytes(b"0" * 8192)
++    nm_pc = root / "node_modules" / "__pycache__"
++    nm_pc.mkdir(parents=True)
++    (nm_pc / "z.pyc").write_bytes(b"0" * 8192)
++    wt_pc = root / ".claude" / "worktrees" / "agent-x" / "__pycache__"
++    wt_pc.mkdir(parents=True)
++    (wt_pc / "w.pyc").write_bytes(b"0" * 8192)
++    # NOT a frontend dir → dist outside products/*/frontend/ is NOT matched.
++    stray_dist = root / "products" / "p1" / "backend" / "dist"
++    stray_dist.mkdir(parents=True)
++    (stray_dist / "s.js").write_bytes(b"0" * 4096)
++
++    found = {p.relative_to(root) for p in mole_tool._iter_artifact_dirs(root)}
++    assert Path("pkg/__pycache__") in found
++    assert Path("products/p1/frontend/dist") in found
++    assert Path("pkg/.venv/__pycache__") not in found
++    assert Path("node_modules/__pycache__") not in found
++    assert Path(".claude/worktrees/agent-x/__pycache__") not in found
++    assert Path("products/p1/backend/dist") not in found
+ 
+ 
+-def test_sweep_without_force_is_dry_run_never_destructive():
+-    with mock.patch("subprocess.run", return_value=_fake_proc()) as m:
+-        out = mole_tool.run_mole(mode="sweep", force=False)
+-    argv = m.call_args[0][0]
+-    assert "--force" not in argv  # the safe default — script dry-runs
++def test_scan_is_read_only_sweep_dry_run_deletes_nothing(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    pc = root / "pkg" / "__pycache__"
++    pc.mkdir(parents=True)
++    (pc / "x.pyc").write_bytes(b"0" * 4096)
++
++    out = mole_tool.run_mole(mode="scan", scope="artifacts", worktree_path=str(root))
++    assert out["ok"] and out["mode"] == "scan"
++    assert out["executed_destructive"] is False
++    assert out["dry_run"] is False
++    assert pc.exists(), "scan must never mutate the filesystem"
++
++    out = mole_tool.run_mole(
++        mode="sweep", scope="artifacts", force=False, worktree_path=str(root)
++    )
+     assert out["dry_run"] is True
+     assert out["executed_destructive"] is False
++    assert pc.exists(), "sweep without force must delete nothing"
++
+ 
++def test_sweep_with_force_removes_artifacts(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    pc = root / "pkg" / "__pycache__"
++    pc.mkdir(parents=True)
++    (pc / "x.pyc").write_bytes(b"0" * 4096)
+ 
+-def test_sweep_with_force_passes_force_flag():
+-    with mock.patch("subprocess.run", return_value=_fake_proc()) as m:
+-        out = mole_tool.run_mole(mode="sweep", scope="worktrees", force=True)
+-    argv = m.call_args[0][0]
+-    assert "--force" in argv and "--worktrees" in argv
++    out = mole_tool.run_mole(
++        mode="sweep", scope="artifacts", force=True, worktree_path=str(root)
++    )
+     assert out["executed_destructive"] is True
+     assert out["dry_run"] is False
++    assert not pc.exists(), "sweep --force removes regenerable artifacts"
++
++
++# ───────────────────────── environments scope ──────────────────────────
++def test_environments_is_advisory_and_never_swept(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    venv = root / ".venv"
++    venv.mkdir()
++    (venv / "lib.bin").write_bytes(b"0" * 4096)
++
++    out = mole_tool.run_mole(
++        mode="sweep", scope="environments", force=True, worktree_path=str(root)
++    )
++    assert out["ok"]
++    assert venv.exists(), "environments scope is NEVER swept even with force"
++    assert "NEVER auto-swept" in out["stderr_tail"]
++
++
++# ───────────────────── worktree classifier parity ──────────────────────
++def test_worktree_classifier_categories(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    wt_dir = root / ".claude" / "worktrees"
++    wt_dir.mkdir(parents=True)
++
++    # ORPHAN: on-disk agent-* dir, not git-registered.
++    orphan = wt_dir / "agent-orphan"
++    orphan.mkdir()
++    (orphan / "f.txt").write_text("x")
++
++    # STALE: registered worktree whose branch is merged to origin/main
++    # (created from main, no new commits → ancestor of origin/main).
++    stale = wt_dir / "agent-stale"
++    _git(root, "worktree", "add", "-q", "-b", "merged-br", str(stale))
++
++    # ACTIVE: registered worktree with an unmerged commit.
++    active = wt_dir / "agent-active"
++    _git(root, "worktree", "add", "-q", "-b", "wip-br", str(active))
++    (active / "new.txt").write_text("wip")
++    _git(active, "add", "new.txt")
++    _git(active, "commit", "-qm", "wip")
++
++    # STALE_DIRTY: merged branch but uncommitted file present.
++    dirty = wt_dir / "agent-dirty"
++    _git(root, "worktree", "add", "-q", "-b", "dirty-br", str(dirty))
++    (dirty / "untracked.txt").write_text("dirty")
++
++    recs = mole_tool._classify_worktrees(root)
++    by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
++
++    assert by_path.get("agent-orphan") == "ORPHAN"
++    assert by_path.get("agent-stale") == "STALE"
++    assert by_path.get("agent-active") == "ACTIVE"
++    assert by_path.get("agent-dirty") == "STALE_DIRTY"
++
++
++def test_scan_actionable_count_is_stale_orphan_phantom(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    wt_dir = root / ".claude" / "worktrees"
++    wt_dir.mkdir(parents=True)
++    (wt_dir / "agent-orphan").mkdir()
++    stale = wt_dir / "agent-stale"
++    _git(root, "worktree", "add", "-q", "-b", "m-br", str(stale))
++
++    actionable, tally, _recs = mole_tool._scan_worktrees(root)
++    assert tally["ORPHAN"] == 1 and tally["STALE"] == 1
++    assert actionable == tally["STALE"] + tally["ORPHAN"] + tally["PHANTOM"]
++
++
++def test_sweep_worktrees_force_removes_only_target_set(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    wt_dir = root / ".claude" / "worktrees"
++    wt_dir.mkdir(parents=True)
++
++    orphan = wt_dir / "agent-orphan"
++    orphan.mkdir()
++    (orphan / "f.txt").write_text("x")
++    stale = wt_dir / "agent-stale"
++    _git(root, "worktree", "add", "-q", "-b", "m-br", str(stale))
++    dirty = wt_dir / "agent-dirty"
++    _git(root, "worktree", "add", "-q", "-b", "d-br", str(dirty))
++    (dirty / "u.txt").write_text("dirty")
++
++    # Dry-run: nothing removed.
++    out = mole_tool.run_mole(
++        mode="sweep", scope="worktrees", force=False, worktree_path=str(root)
++    )
++    assert out["dry_run"] is True
++    assert orphan.exists() and stale.exists() and dirty.exists()
++
++    # Force: STALE + ORPHAN gone, STALE_DIRTY preserved.
++    out = mole_tool.run_mole(
++        mode="sweep", scope="worktrees", force=True, worktree_path=str(root)
++    )
++    assert out["executed_destructive"] is True
++    assert not orphan.exists(), "ORPHAN swept"
++    assert not stale.exists(), "STALE swept"
++    assert dirty.exists(), "STALE_DIRTY is NEVER auto-destroyed"
++
++
++# ───────────────────── severity / next_action parity ───────────────────
++def test_severity_grading_thresholds():
++    assert mole_tool._grade_severity(0, 0) == "OK"
++    assert mole_tool._grade_severity(2048, 0) == "WARNING"
++    assert mole_tool._grade_severity(0, 15) == "WARNING"
++    assert mole_tool._grade_severity(5120, 0) == "CRITICAL"
++    assert mole_tool._grade_severity(0, 30) == "CRITICAL"
++
++
++def test_next_action_priority_order():
++    assert "sweep --worktrees --force" in mole_tool._next_action(0, 30, 0)
++    assert "sweep --artifacts --force" in mole_tool._next_action(5120, 0, 0)
++    assert "sweep --worktrees --force" in mole_tool._next_action(0, 15, 0)
++    assert mole_tool._next_action(2048, 0, 0).endswith("sweep --artifacts")
++    assert "advisory" in mole_tool._next_action(0, 0, 3001)
++    assert mole_tool._next_action(0, 0, 0) == "ok — nothing to do"
++
++
++# ─────────────────────────── contract / shape ──────────────────────────
++def test_result_shape_unchanged_keys(tmp_path):
++    root = tmp_path
++    _init_repo(root)
++    out = mole_tool.run_mole(mode="scan", worktree_path=str(root))
++    for key in (
++        "ok", "mode", "scope", "executed_destructive", "dry_run",
++        "exit_code", "severity", "artifacts_mb", "environments_mb",
++        "worktrees_stale", "next_action", "safe_gate", "stderr_tail",
++    ):
++        assert key in out, f"result-shape key missing: {key}"
++    assert "merged-to-main" in out["safe_gate"]
+ 
+ 
+-def test_scope_all_emits_no_scope_flag():
+-    with mock.patch("subprocess.run", return_value=_fake_proc()) as m:
+-        mole_tool.run_mole(mode="scan", scope="all")
+-    argv = m.call_args[0][0]
+-    assert not any(a.startswith("--artifacts") for a in argv)
++def test_unresolvable_root_surfaces_error_never_silent(tmp_path):
++    # Bare dir: no .noctusai-workspace marker / no .git → resolve_caller_root
++    # rejects it. Must surface loudly (ok=False + error), never silently
++    # fall back to noc main or proceed.
++    out = mole_tool.run_mole(mode="scan", worktree_path=str(tmp_path))
++    assert out["ok"] is False
++    assert out["error"]
++    assert out.get("executed") is False
+ 
+ 
+ def test_registers_under_dotted_name():
+diff --git a/mcp/noctusai/tools/noctus/dev/mole.py b/mcp/noctusai/tools/noctus/dev/mole.py
+index 193c50a6..26b75e9f 100644
+--- a/mcp/noctusai/tools/noctus/dev/mole.py
++++ b/mcp/noctusai/tools/noctus/dev/mole.py
+@@ -1,24 +1,24 @@
+-"""noctus.dev.mole — MCP exposure of the storage-hygiene `mole`.
++"""noctus.dev.mole — storage-hygiene mole (native Python port).
+ 
+-MCP-first: `scripts/mole.sh` (+ the worktree-cleanup predicate it shares
+-with `scripts/cleanup-stale-worktrees.sh`) was bash-only. This wraps it
+-so an agent can scan/sweep storage waste — artifacts (regenerable
+-caches/builds), environments (venv/node_modules dup, advisory-only),
+-worktrees (stale `.claude/worktrees/agent-*/`).
++MCP-first: this is the NATIVE-Python implementation of the storage-hygiene
++`mole` (formerly a thin subprocess shim over `scripts/mole.sh`). An agent
++can scan/sweep storage waste — artifacts (regenerable caches/builds),
++environments (venv/node_modules dup, advisory-only), worktrees (stale
++`.claude/worktrees/agent-*/`).
+ 
+ Project cleanup is a DIFFERENT surface — already `noctus.dev.archive`.
+ 
+ ═══ SAFE-GATE (what makes a sweep safe to execute) ═══════════════════════
+-`scripts/mole.sh` is destructive only under `mode="sweep", force=True`.
+-Its classifier NEVER removes:
++Destructive ONLY under `mode="sweep", force=True`. The classifier NEVER
++removes:
+   • a worktree with uncommitted changes,
+   • a worktree whose branch is NOT merged-to-`main` — "merged" =
+     reachable from `origin/main` by SHA-ancestry OR all commits present
+     by PATCH-ID (our orchestrator FFs via cherry-pick → new SHA, same
+-    patch; the patch-id check covers that),
++    patch; the patch-id / `git cherry` check covers that),
+   • the main worktree, sibling/seed workspaces, `.env`, or migration
+     files.
+-Additional operator gate (NOT enforced by the script — caller's duty):
++Additional operator gate (NOT enforced here — caller's duty):
+   • Confirm NO other agent is mid-flight in a target worktree. A branch
+     can be patch-id-merged while an agent still has that worktree open;
+     sweeping it mid-flight destroys live work. `mode="scan"` first,
+@@ -26,83 +26,674 @@ Additional operator gate (NOT enforced by the script — caller's duty):
+ `mode="sweep"` WITHOUT `force=True` is a **dry-run** (lists what would
+ go, deletes nothing) — the safe default this tool returns by default.
+ ═════════════════════════════════════════════════════════════════════════
++
++Behaviour parity: this module reproduces `scripts/mole.sh` exactly —
++same artifact deny-list + prune rules, same advisory-only environments
++scope, same 6-category worktree taxonomy (`_classify_worktrees` →
++STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM), same
++shared-stash subtraction (THE-P11), same dead-pid auto-unlock, same
++self-skip, same severity grading + next_action thresholds, same JSON
++result shape. `scripts/cleanup-stale-worktrees.sh` shares the same
++predicate — keep them in sync.
+ """
+ from __future__ import annotations
+ 
+-import json
++import os
++import shutil
+ import subprocess
++from datetime import datetime, timezone
++from pathlib import Path
+ from typing import Any, Literal
+ 
+ from settings import REPO_ROOT
+ from workspace import resolve_caller_root
+ 
++# ── Severity thresholds (mirror disk-usage-monitor.sh exit-code semantics) ──
++ARTIFACT_WARNING_MB = 2048    # 2 GB
++ARTIFACT_CRITICAL_MB = 5120   # 5 GB
++WORKTREE_WARNING_COUNT = 15
++WORKTREE_CRITICAL_COUNT = 30
++
++# Patterns the artifact-scope matches (the deny-list of safe-to-wipe dirs).
++ARTIFACT_DIR_NAMES = (
++    "__pycache__",
++    ".pytest_cache",
++    ".ruff_cache",
++    ".mypy_cache",
++    ".tsbuildinfo",
++    "coverage",
++)
++# Frontend build outputs — only safe under products/*/frontend/.
++ARTIFACT_FRONTEND_BUILD_NAMES = ("dist", "build", ".next")
++
++_SAFE_GATE = (
++    "sweep deletes ONLY merged-to-main (SHA-ancestry|patch-id) "
++    "worktrees + regenerable artifacts; never uncommitted / "
++    "unmerged / main / siblings / .env / migrations. Caller MUST "
++    "also confirm no agent is mid-flight in a target worktree. "
++    "Run scan first; sweep needs force=True (else dry-run)."
++)
++
++
++# ───────────────────────────── git helpers ─────────────────────────────
++def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
++    return subprocess.run(
++        ["git", *args],
++        cwd=str(root),
++        capture_output=True,
++        text=True,
++        timeout=timeout,
++    )
++
++
++# ─────────────────────────── artifacts scope ───────────────────────────
++def _iter_artifact_dirs(root: Path):
++    """Yield artifact dirs honoring mole.sh prune rules.
++
++    Pruned: ./.claude/worktrees, ./*/.venv, ./*/*/.venv, ./venv,
++    ./node_modules. Frontend build names (dist/build/.next) only under
++    products/*/frontend/ and never inside node_modules.
++    """
++    prune_abs = {
++        root / ".claude" / "worktrees",
++        root / "venv",
++        root / "node_modules",
++    }
++
++    def _is_pruned(d: Path) -> bool:
++        for p in prune_abs:
++            if d == p or p in d.parents:
++                return True
++        # ./*/.venv and ./*/*/.venv  → any .venv at depth 1 or 2
++        if d.name == ".venv":
++            rel = d.relative_to(root)
++            if len(rel.parts) in (2, 3):
++                return True
++        return False
++
++    for name in ARTIFACT_DIR_NAMES:
++        for d in root.rglob(name):
++            if not d.is_dir():
++                continue
++            if _is_pruned(d):
++                continue
++            # Skip anything under a pruned ancestor (worktrees / venv / node_modules).
++            if any(
++                anc.name in ("node_modules",)
++                or anc == root / ".claude" / "worktrees"
++                or anc == root / "venv"
++                for anc in d.parents
++            ):
++                continue
++            if any(
++                anc.name == ".venv"
++                and len(anc.relative_to(root).parts) in (2, 3)
++                for anc in d.parents
++            ):
++                continue
++            yield d
++
++    products = root / "products"
++    if products.is_dir():
++        for name in ARTIFACT_FRONTEND_BUILD_NAMES:
++            # find ./products -maxdepth 4 -type d -name <name> | grep /frontend/
++            # | grep -v /node_modules/
++            for d in products.rglob(name):
++                if not d.is_dir():
++                    continue
++                rel = d.relative_to(products)
++                if len(rel.parts) > 4:
++                    continue
++                full = str(d)
++                if "/frontend/" not in full + "/":
++                    continue
++                if "/node_modules/" in full:
++                    continue
++                yield d
++
++
++def _scan_artifacts(root: Path) -> tuple[int, list[tuple[Path, int]]]:
++    entries: list[tuple[Path, int]] = []
++    total_kb = 0
++    for d in _iter_artifact_dirs(root):
++        mb_path = d
++        # du -sk gives KB; recompute in KB for parity with the script total.
++        kb = _du_kb(mb_path)
++        if kb <= 0:
++            continue
++        total_kb += kb
++        entries.append((d, kb))
++    return total_kb // 1024, entries
++
++
++def _du_kb(path: Path) -> int:
++    total_kb = 0
++    if path.is_file():
++        try:
++            return path.stat().st_size // 1024
++        except OSError:
++            return 0
++    for dirpath, _dirnames, filenames in os.walk(path, followlinks=False):
++        for fn in filenames:
++            fp = Path(dirpath) / fn
++            try:
++                if fp.is_symlink():
++                    continue
++                total_kb += fp.stat().st_size // 1024
++            except OSError:
++                continue
++    return total_kb
++
+ 
++def _sweep_artifacts(
++    root: Path, dry_run: bool, log_lines: list[str]
++) -> tuple[int, int, list[str]]:
++    removed_kb = 0
++    removed_count = 0
++    notes: list[str] = []
++    for d in list(_iter_artifact_dirs(root)):
++        kb = _du_kb(d)
++        if kb <= 0:
++            continue
++        if dry_run:
++            notes.append(f"[dry-run] would remove: {d} ({kb} KB)")
++        else:
++            try:
++                shutil.rmtree(d)
++                removed_kb += kb
++                removed_count += 1
++            except OSError:
++                continue
++    if not dry_run:
++        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++        log_lines.append(
++            f"{ts} artifacts: {removed_count} dirs / {removed_kb // 1024} MB"
++        )
++    return removed_count, removed_kb, notes
++
++
++# ─────────────────────────── environments scope ────────────────────────
++def _scan_environments(root: Path) -> tuple[int, list[tuple[Path, int]]]:
++    """Advisory-only: venv/.venv + product-level node_modules. NEVER swept."""
++    entries: list[tuple[Path, int]] = []
++    total_kb = 0
++    worktrees = root / ".claude" / "worktrees"
++
++    venvs: list[Path] = []
++    for name in (".venv", "venv"):
++        for d in root.rglob(name):
++            if not d.is_dir():
++                continue
++            if d == worktrees or worktrees in d.parents:
++                continue
++            venvs.append(d)
++    for d in sorted(venvs)[:50]:
++        kb = _du_kb(d)
++        if kb <= 0:
++            continue
++        total_kb += kb
++        entries.append((d, kb))
++
++    nm: list[Path] = []
++    for base in (root / "products", root / "seed"):
++        if not base.is_dir():
++            continue
++        for d in base.rglob("node_modules"):
++            if not d.is_dir():
++                continue
++            rel = d.relative_to(base)
++            if len(rel.parts) > 4:
++                continue
++            # grep -v /node_modules/  → exclude nested node_modules
++            if "node_modules" in [p for p in rel.parts[:-1]]:
++                continue
++            nm.append(d)
++    for d in sorted(nm)[:50]:
++        kb = _du_kb(d)
++        if kb <= 0:
++            continue
++        total_kb += kb
++        entries.append((d, kb))
++
++    return total_kb // 1024, entries
++
++
++# ──────────────────── worktree classification (parity) ─────────────────
++# SINGLE SOURCE OF TRUTH used by both scan + sweep. Mirrors the bash
++# `_classify_worktrees` + `_classify_emit_registered` exactly.
++#
++# Categories: STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM.
++# Record shape: (category, path:str, branch:str, reason:str).
++def _classify_worktrees(root: Path) -> list[tuple[str, str, str, str]]:
++    worktree_dir = root / ".claude" / "worktrees"
++    records: list[tuple[str, str, str, str]] = []
++
++    # Refresh origin/main once for accurate merge detection.
++    _git(root, "fetch", "origin", "main", "--quiet")
++
++    # Snapshot main repo stash hashes (THE-P11 shared-stash false positive).
++    main_stashes: set[str] = set()
++    sp = _git(REPO_ROOT, "stash", "list", "--pretty=%H")
++    if sp.returncode == 0:
++        main_stashes = {ln.strip() for ln in sp.stdout.splitlines() if ln.strip()}
++
++    seen_paths: set[str] = set()
++
++    # Pass 1: walk registered worktrees.
++    porcelain = _git(root, "worktree", "list", "--porcelain")
++    wt = ""
++    branch = ""
++    locked = False
++    lines = porcelain.stdout.splitlines() if porcelain.returncode == 0 else []
++
++    def _flush() -> None:
++        nonlocal wt, branch, locked
++        if wt and branch:
++            _classify_emit_registered(
++                root, worktree_dir, wt, branch, locked,
++                records, seen_paths, main_stashes,
++            )
++
++    for line in lines:
++        if line.startswith("worktree "):
++            _flush()
++            wt = line[len("worktree "):]
++            branch = ""
++            locked = False
++        elif line.startswith("branch "):
++            branch = line[len("branch refs/heads/"):]
++        elif line.startswith("locked"):
++            locked = True
++            # Auto-unlock dead-pid locks (THE-P11, 2026-05-12).
++            if "(pid " in line:
++                pid = line.split("(pid ", 1)[1].split(")", 1)[0].strip()
++                if pid and not _pid_alive(pid):
++                    if _git(root, "worktree", "unlock", wt).returncode == 0:
++                        locked = False
++        elif line == "":
++            if wt and branch:
++                _flush()
++                wt = ""
++                branch = ""
++                locked = False
++    _flush()
++
++    # Pass 2: on-disk agent-* dirs not in the seen set → ORPHAN.
++    if worktree_dir.is_dir():
++        for d in worktree_dir.iterdir():
++            if not d.is_dir():
++                continue
++            if not d.name.startswith("agent-"):
++                continue
++            if str(d) not in seen_paths:
++                records.append(
++                    (
++                        "ORPHAN",
++                        str(d),
++                        "-",
++                        "on-disk but not git-registered (safe to rm -rf)",
++                    )
++                )
++    return records
++
++
++def _pid_alive(pid: str) -> bool:
++    try:
++        os.kill(int(pid), 0)
++    except (ProcessLookupError, ValueError):
++        return False
++    except PermissionError:
++        return True
++    return True
++
++
++def _classify_emit_registered(
++    root: Path,
++    worktree_dir: Path,
++    wt: str,
++    branch: str,
++    locked: bool,
++    records: list[tuple[str, str, str, str]],
++    seen_paths: set[str],
++    main_stashes: set[str],
++) -> None:
++    # Filter: only agent-* worktrees under WORKTREE_DIR. Non-agent paths
++    # (main repo, sibling workspaces) ignored entirely.
++    agent_prefix = str(worktree_dir / "agent-")
++    if not wt.startswith(agent_prefix):
++        return
++
++    # Record we've seen this path BEFORE the self-skip — Pass 2 must not
++    # mis-flag the engineer's OWN worktree as ORPHAN.
++    seen_paths.add(wt)
++
++    # Skip the worktree we're running from (REPO_ROOT may == an agent worktree).
++    if wt == str(root):
++        return
++
++    # Merge check: ancestry OR patch-id (`git cherry`) equivalence. BEFORE
++    # the on-disk check so an unmerged phantom is ACTIVE not PHANTOM.
++    merged = False
++    if _git(
++        root, "merge-base", "--is-ancestor", branch, "origin/main"
++    ).returncode == 0:
++        merged = True
++    else:
++        cherry = _git(root, "cherry", "origin/main", branch)
++        plus_lines = sum(
++            1 for ln in cherry.stdout.splitlines() if ln.startswith("+")
++        )
++        log = _git(root, "log", "--oneline", f"origin/main..{branch}")
++        total = len([ln for ln in log.stdout.splitlines() if ln.strip()])
++        if total > 0 and plus_lines == 0:
++            merged = True
++
++    if not merged:
++        records.append(
++            (
++                "ACTIVE",
++                wt,
++                branch,
++                "branch has unmerged commits (work-in-progress)",
++            )
++        )
++        return
++
++    # On-disk check (after merge — only PHANTOM-classify merged ones).
++    if not Path(wt).is_dir():
++        records.append(
++            (
++                "PHANTOM",
++                wt,
++                branch,
++                "registered + merged but on-disk dir missing (safe to remove)",
++            )
++        )
++        return
++
++    # Merged. Check uncommitted / stashes / lock.
++    st = _git(Path(wt), "status", "--porcelain")
++    dirty = len([ln for ln in st.stdout.splitlines() if ln]) if st.returncode == 0 else 0
++
++    sl = _git(Path(wt), "stash", "list", "--pretty=%H")
++    if sl.returncode == 0:
++        wt_stashes = {ln.strip() for ln in sl.stdout.splitlines() if ln.strip()}
++        stashes = len(wt_stashes - main_stashes)
++    else:
++        stashes = 0
++
++    if dirty != 0:
++        records.append(
++            (
++                "STALE_DIRTY",
++                wt,
++                branch,
++                f"{dirty} uncommitted file(s) — INVESTIGATE before removing",
++            )
++        )
++    elif stashes != 0:
++        records.append(
++            (
++                "STALE_DIRTY",
++                wt,
++                branch,
++                f"{stashes} stash(es) — recover before removing",
++            )
++        )
++    elif locked:
++        records.append(
++            (
++                "STALE_LOCKED",
++                wt,
++                branch,
++                "locked (clean dir) — safe to unlock+remove after PID check",
++            )
++        )
++    else:
++        records.append(
++            (
++                "STALE",
++                wt,
++                branch,
++                "branch merged to origin/main; safe to remove",
++            )
++        )
++
++
++def _scan_worktrees(root: Path) -> tuple[int, dict[str, int], list[tuple[str, str, str, str]]]:
++    """Return (actionable_count, tally, records). Actionable = STALE+ORPHAN+PHANTOM."""
++    worktree_dir = root / ".claude" / "worktrees"
++    if not worktree_dir.is_dir():
++        return 0, {}, []
++    records = _classify_worktrees(root)
++    tally = {
++        "STALE": 0,
++        "STALE_LOCKED": 0,
++        "STALE_DIRTY": 0,
++        "ACTIVE": 0,
++        "ORPHAN": 0,
++        "PHANTOM": 0,
++    }
++    for cat, *_rest in records:
++        if cat in tally:
++            tally[cat] += 1
++    actionable = tally["STALE"] + tally["ORPHAN"] + tally["PHANTOM"]
++    return actionable, tally, records
++
++
++def _sweep_worktrees(
++    root: Path,
++    dry_run: bool,
++    records: list[tuple[str, str, str, str]],
++    log_lines: list[str],
++) -> tuple[int, int, int, int, list[str]]:
++    target = [r for r in records if r[0] in ("STALE", "ORPHAN", "PHANTOM")]
++    skipped = [
++        r for r in records if r[0] in ("STALE_LOCKED", "STALE_DIRTY", "ACTIVE")
++    ]
++    notes: list[str] = []
++    if not target:
++        return 0, 0, 0, len(skipped), notes
++    if dry_run:
++        for cat, path, branch, reason in target:
++            notes.append(f"[{cat}] {path} (branch: {branch}) — {reason}")
++        return 0, 0, len(target), len(skipped), notes
++
++    removed = 0
++    failed = 0
++    for cat, path, _branch, _reason in target:
++        if cat in ("STALE", "PHANTOM"):
++            if _git(root, "worktree", "remove", "--force", path).returncode == 0:
++                removed += 1
++            else:
++                # Lock raced between classify and act — do NOT rm -rf
++                # (KB § PATTERNS/storage-hygiene.md §2.3 — THE-P10 incident).
++                notes.append(
++                    f"WARN: git refused to remove {path} "
++                    "(lock raced between scan and sweep)"
++                )
++                failed += 1
++        elif cat == "ORPHAN":
++            try:
++                shutil.rmtree(path)
++                removed += 1
++            except OSError:
++                failed += 1
++    _git(root, "worktree", "prune")
++    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++    log_lines.append(
++        f"{ts} worktrees: removed={removed} failed={failed} "
++        f"targeted={len(target)} skipped={len(skipped)}"
++    )
++    return removed, failed, len(target), len(skipped), notes
++
++
++# ─────────────────────── severity / next_action ────────────────────────
++def _grade_severity(artifacts_mb: int, worktree_count: int) -> str:
++    if (
++        artifacts_mb >= ARTIFACT_CRITICAL_MB
++        or worktree_count >= WORKTREE_CRITICAL_COUNT
++    ):
++        return "CRITICAL"
++    if (
++        artifacts_mb >= ARTIFACT_WARNING_MB
++        or worktree_count >= WORKTREE_WARNING_COUNT
++    ):
++        return "WARNING"
++    return "OK"
++
++
++def _next_action(artifacts_mb: int, worktree_count: int, envs_mb: int) -> str:
++    if worktree_count >= WORKTREE_CRITICAL_COUNT:
++        return (
++            f"worktrees: {worktree_count} stale → "
++            "bash scripts/mole.sh sweep --worktrees --force"
++        )
++    if artifacts_mb >= ARTIFACT_CRITICAL_MB:
++        return (
++            f"artifacts: {artifacts_mb} MB → "
++            "bash scripts/mole.sh sweep --artifacts --force"
++        )
++    if worktree_count >= WORKTREE_WARNING_COUNT:
++        return (
++            f"worktrees: {worktree_count} stale → "
++            "bash scripts/mole.sh sweep --worktrees --force"
++        )
++    if artifacts_mb >= ARTIFACT_WARNING_MB:
++        return f"artifacts: {artifacts_mb} MB → bash scripts/mole.sh sweep --artifacts"
++    if envs_mb > 3000:
++        return (
++            f"environments: {envs_mb} MB (advisory — pnpm-workspace "
++            "candidate; see KB § PATTERNS/storage-hygiene.md §2.2)"
++        )
++    return "ok — nothing to do"
++
++
++# ──────────────────────────── public entry ─────────────────────────────
+ def run_mole(
+     mode: Literal["scan", "sweep"] = "scan",
+     scope: Literal["all", "artifacts", "environments", "worktrees"] = "all",
+     force: bool = False,
+     worktree_path: str | None = None,
+ ) -> dict[str, Any]:
+-    """Run `scripts/mole.sh <mode> [--scope] [--force] --json` and parse it.
++    """Native-Python storage-hygiene mole. Behaviour-identical to the
++    former `scripts/mole.sh` subprocess.
+ 
+     `force` is honored ONLY with `mode="sweep"` — and even then the
+-    script's own safe-gate (see module docstring) is the real guard.
+-    `scan` is always read-only. `sweep` without `force` is a dry-run.
++    safe-gate (see module docstring) is the real guard. `scan` is always
++    read-only. `sweep` without `force` is a dry-run.
+     """
+-    root = resolve_caller_root(worktree_path) if worktree_path else REPO_ROOT
+-    script = root / "scripts" / "mole.sh"
+-    if not script.exists():
++    try:
++        root = (
++            resolve_caller_root(worktree_path) if worktree_path else REPO_ROOT
++        )
++        root = Path(root)
++    except Exception as exc:  # noqa: BLE001 — surface, never silently fallback
++        return {"ok": False, "error": f"cannot resolve root: {exc}", "executed": False}
++
++    if not (root / ".git").exists():
+         return {
+             "ok": False,
+-            "error": f"mole.sh not found at {script}",
++            "error": f"not inside a git repo: {root}",
+             "executed": False,
+         }
+ 
+-    argv = ["bash", str(script), mode]
+-    if scope != "all":
+-        argv.append(f"--{scope}")
++    do_artifacts = scope in ("all", "artifacts")
++    do_environments = scope in ("all", "environments")
++    do_worktrees = scope in ("all", "worktrees")
++
+     will_delete = mode == "sweep" and force
+-    if will_delete:
+-        argv.append("--force")
+-    argv.append("--json")
++    dry_run = mode == "sweep" and not force
++
++    artifacts_mb = 0
++    environments_mb = 0
++    worktrees_actionable = 0
++    stderr_lines: list[str] = []
++    log_lines: list[str] = []
++    records: list[tuple[str, str, str, str]] = []
+ 
+     try:
+-        proc = subprocess.run(
+-            argv, cwd=str(root), capture_output=True, text=True, timeout=600
+-        )
++        if mode in ("scan",):
++            if do_artifacts:
++                artifacts_mb, art_entries = _scan_artifacts(root)
++                stderr_lines.append(
++                    f"ARTIFACTS: {len(art_entries)} dirs / {artifacts_mb} MB"
++                )
++            if do_environments:
++                environments_mb, env_entries = _scan_environments(root)
++                stderr_lines.append(
++                    f"ENVIRONMENTS (advisory): {len(env_entries)} / "
++                    f"{environments_mb} MB"
++                )
++            if do_worktrees:
++                worktrees_actionable, tally, records = _scan_worktrees(root)
++                stderr_lines.append(
++                    "WORKTREES: " + " ".join(f"{k}={v}" for k, v in tally.items())
++                )
++        elif mode == "sweep":
++            if do_artifacts:
++                rc, rkb, notes = _sweep_artifacts(root, dry_run, log_lines)
++                stderr_lines.extend(notes)
++                if not dry_run:
++                    stderr_lines.append(
++                        f"artifacts removed: {rc} dirs / {rkb // 1024} MB"
++                    )
++                # Re-scan for the result-shape size figure.
++                artifacts_mb, _ = _scan_artifacts(root)
++            if do_environments:
++                stderr_lines.append(
++                    "environments: NEVER auto-swept "
++                    "(see KB § PATTERNS/storage-hygiene.md §3.2)"
++                )
++                environments_mb, _ = _scan_environments(root)
++            if do_worktrees:
++                _, _tally, records = _scan_worktrees(root)
++                removed, failed, ntarget, nskip, notes = _sweep_worktrees(
++                    root, dry_run, records, log_lines
++                )
++                stderr_lines.extend(notes)
++                stderr_lines.append(
++                    f"worktrees: target={ntarget} skipped={nskip} "
++                    f"removed={removed} failed={failed}"
++                )
++                # Recompute actionable post-sweep for the result figure.
++                worktrees_actionable, _, _ = _scan_worktrees(root)
++        else:
++            return {
++                "ok": False,
++                "error": f"unknown mode: {mode}",
++                "executed": False,
++            }
+     except subprocess.TimeoutExpired:
+-        return {"ok": False, "error": "mole.sh timed out (600s)", "executed": False}
++        return {"ok": False, "error": "git operation timed out", "executed": False}
+ 
+-    parsed: dict[str, Any] = {}
+-    for line in reversed(proc.stdout.splitlines()):
+-        line = line.strip()
+-        if line.startswith("{") and line.endswith("}"):
+-            try:
+-                parsed = json.loads(line)
+-                break
+-            except json.JSONDecodeError:
+-                continue
++    # Persist sweep log (parity with $LOG_FILE append).
++    if log_lines:
++        try:
++            log_file = root / "scripts" / "mole-last-sweep.log"
++            with log_file.open("a", encoding="utf-8") as fh:
++                for ln in log_lines:
++                    fh.write(ln + "\n")
++        except OSError:
++            pass
++
++    severity = _grade_severity(artifacts_mb, worktrees_actionable)
++    na = _next_action(artifacts_mb, worktrees_actionable, environments_mb)
+ 
+     return {
+-        "ok": proc.returncode in (0, 1, 2, 3),
++        "ok": True,
+         "mode": mode,
+         "scope": scope,
+         "executed_destructive": will_delete,
+-        "dry_run": mode == "sweep" and not force,
+-        "exit_code": proc.returncode,
+-        "severity": parsed.get("severity"),
+-        "artifacts_mb": parsed.get("artifacts_mb"),
+-        "environments_mb": parsed.get("environments_mb"),
+-        "worktrees_stale": parsed.get("worktrees_stale"),
+-        "next_action": parsed.get("next_action"),
+-        "safe_gate": (
+-            "sweep deletes ONLY merged-to-main (SHA-ancestry|patch-id) "
+-            "worktrees + regenerable artifacts; never uncommitted / "
+-            "unmerged / main / siblings / .env / migrations. Caller MUST "
+-            "also confirm no agent is mid-flight in a target worktree. "
+-            "Run scan first; sweep needs force=True (else dry-run)."
+-        ),
+-        "stderr_tail": "\n".join(proc.stderr.splitlines()[-12:]),
++        "dry_run": dry_run,
++        "exit_code": 0,
++        "severity": severity,
++        "artifacts_mb": artifacts_mb,
++        "environments_mb": environments_mb,
++        "worktrees_stale": worktrees_actionable,
++        "next_action": na,
++        "safe_gate": _SAFE_GATE,
++        "stderr_tail": "\n".join(stderr_lines[-12:]),
+     }
+ 
+ 
+@@ -114,14 +705,14 @@ def register(server) -> None:
+             "`mode='scan'` (default, READ-ONLY) reports artifacts/env/"
+             "worktree waste + severity + next_action. `mode='sweep'` "
+             "removes it — but ONLY with `force=True`; without force it is "
+-            "a DRY-RUN. SAFE-GATE: the script never deletes uncommitted / "
+-            "unmerged / main / sibling / .env / migration content; it "
+-            "removes a worktree only when its branch is merged-to-main by "
+-            "SHA-ancestry OR patch-id. Caller's extra duty: confirm no "
+-            "other agent is mid-flight in a target worktree before "
+-            "force-sweeping. Project cleanup is the separate "
+-            "noctus.dev.archive tool. Pass worktree_path when called from "
+-            "inside a git worktree. See KB § PATTERNS/storage-hygiene.md."
++            "a DRY-RUN. SAFE-GATE: never deletes uncommitted / unmerged / "
++            "main / sibling / .env / migration content; removes a worktree "
++            "only when its branch is merged-to-main by SHA-ancestry OR "
++            "patch-id. Caller's extra duty: confirm no other agent is "
++            "mid-flight in a target worktree before force-sweeping. Project "
++            "cleanup is the separate noctus.dev.archive tool. Pass "
++            "worktree_path when called from inside a git worktree. See KB "
++            "§ PATTERNS/storage-hygiene.md."
+         ),
+     )
+     def _mole(
+-- 
+2.51.2
+

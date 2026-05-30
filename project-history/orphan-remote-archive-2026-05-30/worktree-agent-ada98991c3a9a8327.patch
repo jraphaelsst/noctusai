@@ -1,0 +1,47 @@
+From e421f5d0e8586cb4f0246eaafb2098b320e7cf95 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:45 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-ada98991c3a9a8327?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../noctusai_lib/testing/framework_test_suites.py      | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/seed/lib/backend/noctusai_lib/testing/framework_test_suites.py b/seed/lib/backend/noctusai_lib/testing/framework_test_suites.py
+index 39ea9b23..b0b9d515 100644
+--- a/seed/lib/backend/noctusai_lib/testing/framework_test_suites.py
++++ b/seed/lib/backend/noctusai_lib/testing/framework_test_suites.py
+@@ -60,6 +60,15 @@ class HealthCheckSuite:
+ # Team router — provided by seed framework
+ # ---------------------------------------------------------------------------
+ 
++#: Default org_id used by team-router suites. Matches the ``org_id`` claim
++#: stamped onto ``MockUser`` by every product's ``client`` fixture (the
++#: seed-shipped conftest pattern). Production ``GET /api/team`` filters via
++#: ``noctus_users.select("*").eq("org_id", org_id)`` — seeded rows MUST
++#: carry the same value or SELECT-predicate evaluation (introduced by the
++#: ``mock-select-predicate-filter-fix-2026-05-11`` parallel work) returns []
++#: and ``test_list_members_returns_data`` 200s with ``len(data) == 0``.
++_DEFAULT_ORG_ID = "test-org-123"
++
+ #: Default member fixture used by team-router suites. Override via class attr
+ #: if your product needs a different shape.
+ _DEFAULT_SAMPLE_MEMBER = {
+@@ -69,6 +78,7 @@ _DEFAULT_SAMPLE_MEMBER = {
+     "org_role": "member",
+     "avatar_url": None,
+     "created_at": "2026-01-01T00:00:00",
++    "org_id": _DEFAULT_ORG_ID,
+ }
+ 
+ #: Default user-id used in delete/no-auth probes.
+-- 
+2.51.2
+

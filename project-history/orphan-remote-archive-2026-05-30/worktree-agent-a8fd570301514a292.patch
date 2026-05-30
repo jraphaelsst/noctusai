@@ -1,0 +1,1366 @@
+From 60b867dfe784aeb7fd58bf08fe9d1e8df9b5ca7e Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:33 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a8fd570301514a292?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../tests/test_gen_promotions_index.py        | 103 +++
+ mcp/noctusai/tests/test_history.py            | 248 +++++++
+ mcp/noctusai/tools/noctus/dev/history.py      | 672 ++++++++++++++++++
+ mcp/noctusai/tools/noctus/dev/promotion.py    | 264 +++++++
+ 4 files changed, 1287 insertions(+)
+
+diff --git a/mcp/noctusai/tests/test_gen_promotions_index.py b/mcp/noctusai/tests/test_gen_promotions_index.py
+index 57408092..fcf72c90 100644
+--- a/mcp/noctusai/tests/test_gen_promotions_index.py
++++ b/mcp/noctusai/tests/test_gen_promotions_index.py
+@@ -176,3 +176,106 @@ def test_no_promotions_dir_is_noop_not_error(gen, tmp_path):
+     rc = gen.main(["--workspace", str(tmp_path)])
+     assert rc == 0
+     assert not (tmp_path / "PROMOTIONS.md").exists()
++
++
++# ---------------------------------------------------------------------------
++# Absorbed gen_promotions_index — byte-parity vs the former script
++# ---------------------------------------------------------------------------
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.promotion import gen_promotions_index  # noqa: E402
++
++
++class TestGenPromotionsIndexParity:
++    def test_byte_identical_to_old_script(self, gen, tmp_path):
++        """gen_promotions_index output == former gen-promotions-index.py."""
++        # Identically-NAMED workspace dirs on each side so the header's
++        # `# Promotion Manifest Index — {name}` token matches (the only
++        # workspace-identity-derived byte); isolates rendering-logic parity.
++        (tmp_path / "old" / "myws").mkdir(parents=True)
++        (tmp_path / "new" / "myws").mkdir(parents=True)
++        ws_old = _mk_ws(tmp_path / "old" / "myws")
++        ws_new = _mk_ws(tmp_path / "new" / "myws")
++        for ws in (ws_old, ws_new):
++            (ws / ".promotions" / "my-adapter.md").write_text(PENDING_MANIFEST)
++            (ws / ".promotions" / "done-thing.md").write_text(PROMOTED_MANIFEST)
++
++        gen.main(["--workspace", str(ws_old)])
++        res = gen_promotions_index(workspace_root=ws_new)
++
++        assert (ws_new / "PROMOTIONS.md").read_bytes() == (
++            ws_old / "PROMOTIONS.md"
++        ).read_bytes()
++        assert res["changed"] is True
++        assert res["drift"] is True
++        assert res["is_seed_workspace"] is True
++
++    def test_idempotent_and_check_mode(self, tmp_path):
++        ws = _mk_ws(tmp_path)
++        (ws / ".promotions" / "my-adapter.md").write_text(PENDING_MANIFEST)
++
++        r1 = gen_promotions_index(workspace_root=ws)
++        first = (ws / "PROMOTIONS.md").read_bytes()
++        r2 = gen_promotions_index(workspace_root=ws)
++        assert r1["changed"] is True and r2["changed"] is False
++        assert (ws / "PROMOTIONS.md").read_bytes() == first
++
++        rc = gen_promotions_index(workspace_root=ws, check=True)
++        assert rc["drift"] is False and rc["changed"] is False
++
++    def test_check_detects_drift_without_writing(self, tmp_path):
++        ws = _mk_ws(tmp_path)
++        (ws / ".promotions" / "my-adapter.md").write_text(PENDING_MANIFEST)
++        gen_promotions_index(workspace_root=ws)
++        before = (ws / "PROMOTIONS.md").read_bytes()
++        # Add a manifest WITHOUT regenerating → drift.
++        (ws / ".promotions" / "done-thing.md").write_text(PROMOTED_MANIFEST)
++        rc = gen_promotions_index(workspace_root=ws, check=True)
++        assert rc["drift"] is True
++        assert rc["changed"] is False
++        assert (ws / "PROMOTIONS.md").read_bytes() == before  # untouched
++
++    def test_stale_handwritten_marker_region_swapped(self, gen, tmp_path):
++        ws = _mk_ws(tmp_path)
++        (ws / ".promotions" / "my-adapter.md").write_text(PENDING_MANIFEST)
++        (ws / ".promotions" / "done-thing.md").write_text(PROMOTED_MANIFEST)
++        stale = (
++            "# Promotion Manifest Index — handcrafted\n\n"
++            "CUSTOM PROSE THE AUTHOR WANTS KEPT\n\n"
++            f"{gen.START_MARKER}\n## Pending\n- only-one-stale\n{gen.END_MARKER}\n"
++        )
++        (ws / "PROMOTIONS.md").write_text(stale)
++        gen_promotions_index(workspace_root=ws)
++        out = (ws / "PROMOTIONS.md").read_text()
++        assert "CUSTOM PROSE THE AUTHOR WANTS KEPT" in out
++        assert "only-one-stale" not in out
++        assert "`my-adapter`" in out and "`done-thing`" in out
++
++    def test_unparseable_manifest_surfaced(self, tmp_path):
++        ws = _mk_ws(tmp_path)
++        (ws / ".promotions" / "broken.md").write_text(BROKEN_MANIFEST)
++        res = gen_promotions_index(workspace_root=ws)
++        out = (ws / "PROMOTIONS.md").read_text()
++        assert "Needs attention" in out
++        assert "`.promotions/broken.md`" in out
++        assert res["is_seed_workspace"] is True
++
++    def test_no_promotions_dir_is_noop(self, tmp_path):
++        res = gen_promotions_index(workspace_root=tmp_path)
++        assert res["is_seed_workspace"] is False
++        assert res["changed"] is False
++        assert not (tmp_path / "PROMOTIONS.md").exists()
++
++    def test_repo_root_alias_resolves_workspace(self, gen, tmp_path):
++        ws = _mk_ws(tmp_path)
++        (ws / ".promotions" / "my-adapter.md").write_text(PENDING_MANIFEST)
++        res = gen_promotions_index(repo_root=ws)
++        assert res["changed"] is True
++        assert (ws / "PROMOTIONS.md").is_file()
++
++    def test_tool_registered_in_server(self):
++        from server import build_server
++
++        s = build_server()
++        assert "noctus.dev.gen_promotions_index" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tests/test_history.py b/mcp/noctusai/tests/test_history.py
+index eb14a3ee..fcade919 100644
+--- a/mcp/noctusai/tests/test_history.py
++++ b/mcp/noctusai/tests/test_history.py
+@@ -541,3 +541,251 @@ class TestMcpRegistration:
+         s = build_server()
+         manager = s._tool_manager
+         assert "noctus.dev.history_record" in manager._tools
++
++    def test_absorbed_render_and_backfill_tools_in_server_registry(self):
++        from server import build_server
++        s = build_server()
++        manager = s._tool_manager
++        assert "noctus.dev.render_project_history" in manager._tools
++        assert "noctus.dev.backfill_project_history" in manager._tools
++
++
++# ---------------------------------------------------------------------------
++# Absorbed render-project-history — byte-parity vs the former script
++# ---------------------------------------------------------------------------
++
++import importlib.util  # noqa: E402
++
++from tools.noctus.dev.history import (  # noqa: E402
++    BackfillError,
++    backfill_project_history,
++    render_project_history,
++)
++
++_REPO = Path(__file__).resolve().parents[3]
++
++
++def _load_old_script(rel: str, mod_name: str):
++    spec = importlib.util.spec_from_file_location(mod_name, _REPO / rel)
++    assert spec is not None and spec.loader is not None
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++def _ndjson(path: Path, records: list[dict]) -> None:
++    with path.open("w", encoding="utf-8") as fh:
++        for r in records:
++            fh.write(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n")
++
++
++def _rec(slug: str, closed: str, summary: str = "S.", total: int = 1000) -> dict:
++    return {
++        "slug": slug,
++        "scope": "cross-product",
++        "status_at_close": "shipped",
++        "dates": {"created": "2026-05-01", "closed": closed},
++        "phases": [],
++        "short_summary": summary,
++        "short_review": "Review body.",
++        "token_count": {
++            "project_doc_tokens": 100,
++            "improvements_tokens": 50,
++            "proposals_tokens": 25,
++            "code_delta_tokens": total - 175,
++            "total": total,
++            "tokenizer_used": "tiktoken-cl100k_base",
++        },
++        "outcome_signals": [],
++    }
++
++
++class TestRenderProjectHistoryParity:
++    def test_byte_identical_to_old_script(self, tmp_path: Path) -> None:
++        """render_project_history output == former render-project-history.py."""
++        old = _load_old_script(
++            "scripts/render-project-history.py", "old_render_ph"
++        )
++        recs = [
++            _rec("zeta", "2026-05-05", "Has | pipe."),
++            _rec("alpha", "2026-05-10", "Line one.\nLine two."),
++            _rec("alpha", "2026-05-02", "Earlier alpha."),
++        ]
++
++        ledger_a = tmp_path / "a.ndjson"
++        out_a = tmp_path / "OLD.md"
++        _ndjson(ledger_a, recs)
++        old.write_history(ledger_a, out_a)
++
++        ledger_b = tmp_path / "b.ndjson"
++        out_b = tmp_path / "NEW.md"
++        _ndjson(ledger_b, recs)
++        res = render_project_history(
++            repo_root=tmp_path, ledger_path=ledger_b, output_path=out_b
++        )
++
++        assert out_b.read_bytes() == out_a.read_bytes()
++        assert res["changed"] is True
++        assert res["drift"] is True
++        assert res["rows"] == 2  # alpha deduped
++
++    def test_idempotent_and_check_mode(self, tmp_path: Path) -> None:
++        ledger = tmp_path / "ledger.ndjson"
++        out = tmp_path / "PROJECT-HISTORY.md"
++        _ndjson(ledger, [_rec("a", "2026-05-10")])
++
++        r1 = render_project_history(
++            repo_root=tmp_path, ledger_path=ledger, output_path=out
++        )
++        first = out.read_bytes()
++        r2 = render_project_history(
++            repo_root=tmp_path, ledger_path=ledger, output_path=out
++        )
++        assert r1["changed"] is True and r2["changed"] is False
++        assert out.read_bytes() == first
++
++        rc = render_project_history(
++            repo_root=tmp_path, ledger_path=ledger, output_path=out, check=True
++        )
++        assert rc["drift"] is False and rc["changed"] is False
++
++    def test_check_mode_detects_drift_without_writing(
++        self, tmp_path: Path
++    ) -> None:
++        ledger = tmp_path / "ledger.ndjson"
++        out = tmp_path / "PROJECT-HISTORY.md"
++        _ndjson(ledger, [_rec("a", "2026-05-10")])
++        out.write_text("stale\n", encoding="utf-8")
++
++        rc = render_project_history(
++            repo_root=tmp_path, ledger_path=ledger, output_path=out, check=True
++        )
++        assert rc["drift"] is True
++        assert rc["changed"] is False
++        assert out.read_text(encoding="utf-8") == "stale\n"  # untouched
++
++    def test_invalid_ndjson_raises_with_line_number(
++        self, tmp_path: Path
++    ) -> None:
++        ledger = tmp_path / "ledger.ndjson"
++        good = _rec("good", "2026-05-10")
++        ledger.write_text(
++            json.dumps(good) + "\nnot-json\n" + json.dumps(good) + "\n",
++            encoding="utf-8",
++        )
++        out = tmp_path / "PROJECT-HISTORY.md"
++        with pytest.raises(ValueError) as exc:
++            render_project_history(
++                repo_root=tmp_path, ledger_path=ledger, output_path=out
++            )
++        assert "ledger.ndjson:2" in str(exc.value)
++
++    def test_empty_ledger_header_only(self, tmp_path: Path) -> None:
++        ledger = tmp_path / "ledger.ndjson"
++        ledger.touch()
++        out = tmp_path / "PROJECT-HISTORY.md"
++        render_project_history(
++            repo_root=tmp_path, ledger_path=ledger, output_path=out
++        )
++        body = out.read_text(encoding="utf-8")
++        assert body.startswith("# Project History\n")
++        assert "ledger is empty" in body.lower()
++        assert "| Date |" not in body
++
++
++class TestBackfillProjectHistoryParity:
++    def _archive(self, repo: Path, date: str, folder: str, body: str) -> None:
++        d = repo / "archive" / "projects" / date / folder
++        d.mkdir(parents=True)
++        (d / "PROJECT.md").write_text(body, encoding="utf-8")
++
++    def _seed_repo(self, tmp_path: Path) -> Path:
++        repo = tmp_path / "repo"
++        repo.mkdir(parents=True)
++        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
++        subprocess.run(
++            ["git", "config", "user.email", "t@t"], cwd=str(repo), check=True
++        )
++        subprocess.run(
++            ["git", "config", "user.name", "t"], cwd=str(repo), check=True
++        )
++        (repo / "project-history").mkdir(parents=True)
++        body = (
++            "# proj\n\n- **Created:** 2026-04-01\n\n"
++            "## 1. Context & Purpose\n\nThe real purpose line.\n\n"
++            "## 6. Phases\n\nPhase 0 — Scaffold ✅\n"
++        )
++        self._archive(repo, "2026-05-10", "01-alpha-thing", body)
++        self._archive(repo, "2026-05-11", "02-beta-thing", body)
++        return repo
++
++    def test_summary_and_ledger_shape_preserved(self, tmp_path: Path) -> None:
++        """backfill_project_history reproduces the former script's summary
++        dict + ledger-row shape.
++
++        The former ``scripts/backfill-project-history.py`` reused this
++        module's ``history_record`` and printed exactly this summary dict
++        (``backfill()`` return). Parity is asserted against that documented
++        contract (the old script itself can no longer run in a bare tmp
++        dir — it called ``history_record(worktree_path=...)`` which now
++        requires the seed-workspace marker; the absorbed function uses
++        ``repo_root=`` instead, a behaviour-preserving simplification of
++        the SAME ledger output).
++        """
++        repo = self._seed_repo(tmp_path / "side")
++        summary = backfill_project_history(repo_root=repo)
++
++        assert summary == {
++            "archives_seen": 2,
++            "stamped": 2,
++            "skipped_already_present": 0,
++            "ledger_lines_before": 0,
++            "ledger_lines_after": 2,
++            "ledger_path": "project-history/ledger.ndjson",
++            "dry_run": False,
++        }
++
++        rows = [
++            json.loads(ln)
++            for ln in (
++                repo / "project-history" / "ledger.ndjson"
++            ).read_text().strip().splitlines()
++        ]
++        assert {r["slug"] for r in rows} == {"alpha-thing", "beta-thing"}
++        for r in rows:
++            # NN- prefix stripped (slug_override), historical marker,
++            # cross-product default scope, created date from PROJECT.md,
++            # closed date = archive date-dir name, summary = §1 prose.
++            assert r["status_at_close"] == "historical"
++            assert r["scope"] == "cross-product"
++            assert r["dates"]["created"] == "2026-04-01"
++            assert r["dates"]["closed"] in {"2026-05-10", "2026-05-11"}
++            assert r["short_summary"] == "The real purpose line."
++
++    def test_idempotent_no_duplicate_rows(self, tmp_path: Path) -> None:
++        repo = self._seed_repo(tmp_path / "r")
++        s1 = backfill_project_history(repo_root=repo)
++        s2 = backfill_project_history(repo_root=repo)
++        assert s1["stamped"] == 2
++        assert s2["stamped"] == 0
++        assert s2["skipped_already_present"] == 2
++        assert s2["ledger_lines_after"] == s1["ledger_lines_after"]
++
++    def test_dry_run_does_not_write(self, tmp_path: Path) -> None:
++        repo = self._seed_repo(tmp_path / "r")
++        s = backfill_project_history(repo_root=repo, dry_run=True)
++        assert s["dry_run"] is True
++        assert s["would_stamp"] == 2
++        assert s["stamped"] == 0
++        assert not (repo / "project-history" / "ledger.ndjson").exists()
++
++    def test_missing_project_md_raises_backfill_error(
++        self, tmp_path: Path
++    ) -> None:
++        repo = tmp_path / "r"
++        (repo / "project-history").mkdir(parents=True)
++        (repo / "archive" / "projects" / "2026-05-10" / "01-bad").mkdir(
++            parents=True
++        )
++        with pytest.raises(BackfillError):
++            backfill_project_history(repo_root=repo)
+diff --git a/mcp/noctusai/tools/noctus/dev/history.py b/mcp/noctusai/tools/noctus/dev/history.py
+index a128d61f..66005430 100644
+--- a/mcp/noctusai/tools/noctus/dev/history.py
++++ b/mcp/noctusai/tools/noctus/dev/history.py
+@@ -521,6 +521,631 @@ def history_record(
+     }
+ 
+ 
++# ---------------------------------------------------------------------------
++# Ledger → PROJECT-HISTORY.md renderer.
++#
++# Absorbed from the former ``scripts/render-project-history.py`` (behaviour-
++# preserving — byte-identical output). Reads ``project-history/ledger.ndjson``
++# and emits the human-readable view at ``project-history/PROJECT-HISTORY.md``.
++# The renderer dedupes-by-slug-keep-latest by ``dates.closed`` and sorts
++# DESC by ``dates.closed`` (slug ASC tiebreak) so the rendered table is
++# idempotent. Invalid NDJSON raises ``ValueError`` with the line number —
++# no silent swallow per the no-silent-errors rule.
++# ---------------------------------------------------------------------------
++
++# The placeholder banner sits above the table in PROJECT-HISTORY.md. Its
++# wording warns hand-editors away — the table below is generated.
++_HISTORY_HEADER = (
++    "# Project History\n"
++    "\n"
++    "_Auto-generated by scripts/render-project-history.py — do not edit by hand._\n"
++    "_Source of truth: `project-history/ledger.ndjson` (see "
++    "`projects/project-history-ledger/PROJECT.md`)._\n"
++    "\n"
++)
++
++# Empty-ledger marker — the human-readable view still needs to render
++# stably when the ledger has zero rows (fresh repo / pre-Phase-2 state).
++_HISTORY_EMPTY_FOOTER = "_No project records yet — the ledger is empty._\n"
++
++# Table column headers + alignment. Order matches the §6 Phase 3 spec.
++_HISTORY_COLUMNS = [
++    ("Date", ":---"),
++    ("Slug", ":---"),
++    ("Scope", ":---"),
++    ("Status", ":---"),
++    ("Total Tokens", "---:"),
++    ("Short Summary", ":---"),
++]
++
++
++def _history_parse_ledger(ledger_path: Path) -> list[dict[str, Any]]:
++    """Parse the NDJSON ledger, raising on any malformed line.
++
++    Returns the list of records in file order (caller dedupes/sorts).
++
++    Raises:
++        ValueError: malformed JSON, with the line number quoted.
++        FileNotFoundError: ledger does not exist (caller may treat as empty).
++    """
++    if not ledger_path.exists():
++        raise FileNotFoundError(f"ledger not found: {ledger_path}")
++    records: list[dict[str, Any]] = []
++    with ledger_path.open("r", encoding="utf-8") as fh:
++        for lineno, raw in enumerate(fh, start=1):
++            stripped = raw.strip()
++            if not stripped:
++                # Blank lines are tolerated (trailing newline at EOF; no
++                # silent error — the line carries no data, so there's
++                # nothing to swallow).
++                continue
++            try:
++                rec = json.loads(stripped)
++            except json.JSONDecodeError as e:
++                raise ValueError(
++                    f"invalid NDJSON at {ledger_path}:{lineno}: {e.msg} "
++                    f"(line content: {stripped[:120]!r})"
++                ) from e
++            if not isinstance(rec, dict):
++                raise ValueError(
++                    f"NDJSON record at {ledger_path}:{lineno} is not a JSON "
++                    f"object: {type(rec).__name__}"
++                )
++            records.append(rec)
++    return records
++
++
++def _history_dedupe_latest_by_slug(
++    records: list[dict[str, Any]],
++) -> list[dict[str, Any]]:
++    """Collapse multi-stamping per slug → keep latest by ``dates.closed``.
++
++    Ties on ``dates.closed`` resolve to file order (later line wins) —
++    the ledger is append-only so a later line is the more recent event.
++
++    Records lacking a ``dates.closed`` are kept under the empty-string key
++    so they still surface in the rendered table (sorted last). They never
++    silently disappear.
++    """
++    by_slug: dict[str, dict[str, Any]] = {}
++    for rec in records:
++        slug = rec.get("slug", "")
++        if not slug:
++            # No slug → use a synthetic key per-record so the row still
++            # appears. Empty-slug rows are an upstream bug; we surface
++            # them rather than swallow.
++            slug = f"__no_slug__{id(rec)}"
++        closed = (rec.get("dates") or {}).get("closed", "")
++        prior = by_slug.get(slug)
++        if prior is None:
++            by_slug[slug] = rec
++            continue
++        prior_closed = (prior.get("dates") or {}).get("closed", "")
++        # Lexicographic comparison on ISO YYYY-MM-DD is correct DESC sort
++        # ordering; on tie, latest line (this `rec`) wins per append-only
++        # convention (later = newer).
++        if closed >= prior_closed:
++            by_slug[slug] = rec
++    return list(by_slug.values())
++
++
++def _history_row_sort_key(rec: dict[str, Any]) -> tuple:
++    """Sort key: closed-date DESC, then slug ASC (for stable idempotency)."""
++    closed = (rec.get("dates") or {}).get("closed") or ""
++    return closed
++
++
++def _history_sort_rows(
++    records: list[dict[str, Any]],
++) -> list[dict[str, Any]]:
++    """Sort DESC by ``dates.closed``, ASC by ``slug`` on tie. Stable."""
++    # First pass: ASC slug. Second pass: DESC closed. Python's `sorted`
++    # is stable so the slug order survives the second sort within each
++    # closed-date group.
++    by_slug = sorted(records, key=lambda r: r.get("slug", ""))
++    return sorted(by_slug, key=_history_row_sort_key, reverse=True)
++
++
++def _history_escape_cell(text: str) -> str:
++    """Make a string safe for a Markdown table cell.
++
++    Replaces newlines (would break the row) and escapes pipe characters
++    (would break the column). Keep the original content; just neutralize
++    the table-breaking chars.
++    """
++    if not text:
++        return ""
++    # Newlines → spaces; tabs → spaces; pipe → escaped pipe.
++    cleaned = text.replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
++    cleaned = cleaned.replace("|", "\\|")
++    # Collapse runs of spaces so the column stays tight.
++    while "  " in cleaned:
++        cleaned = cleaned.replace("  ", " ")
++    return cleaned.strip()
++
++
++def _history_format_tokens(rec: dict[str, Any]) -> str:
++    """Return the total-tokens cell as a stable string."""
++    tc = rec.get("token_count") or {}
++    total = tc.get("total", 0)
++    if not isinstance(total, (int, float)):
++        return str(total)
++    # Plain int formatting — no thousands-separators (locale-stable).
++    return str(int(total))
++
++
++def _history_render_table(records: list[dict[str, Any]]) -> str:
++    """Render the list of records into the Markdown table body.
++
++    Returns the table text (header row + separator + data rows), no
++    leading/trailing blank lines beyond the trailing newline.
++    """
++    if not records:
++        return ""
++    header = "| " + " | ".join(name for name, _ in _HISTORY_COLUMNS) + " |"
++    sep = "| " + " | ".join(align for _, align in _HISTORY_COLUMNS) + " |"
++    lines = [header, sep]
++    for rec in records:
++        closed = _history_escape_cell((rec.get("dates") or {}).get("closed") or "")
++        slug = _history_escape_cell(rec.get("slug", ""))
++        scope = _history_escape_cell(rec.get("scope", ""))
++        status = _history_escape_cell(rec.get("status_at_close", ""))
++        tokens = _history_format_tokens(rec)
++        summary = _history_escape_cell(rec.get("short_summary", ""))
++        lines.append(
++            f"| {closed} | {slug} | {scope} | {status} | {tokens} | {summary} |"
++        )
++    return "\n".join(lines) + "\n"
++
++
++def _history_render_body(ledger_path: Path) -> str:
++    """Compose the full PROJECT-HISTORY.md body from the ledger.
++
++    Returns the string to write. Trailing newline included.
++    """
++    try:
++        records = _history_parse_ledger(ledger_path)
++    except FileNotFoundError:
++        # An absent ledger is the "empty" case (fresh repo / scaffold).
++        # Phase 0 creates an empty marker file; absent file shouldn't
++        # crash the renderer or block commits.
++        records = []
++    deduped = _history_dedupe_latest_by_slug(records)
++    rows = _history_sort_rows(deduped)
++    if not rows:
++        return _HISTORY_HEADER + _HISTORY_EMPTY_FOOTER
++    return _HISTORY_HEADER + _history_render_table(rows)
++
++
++def render_project_history(
++    repo_root: Path | None = None,
++    *,
++    ledger_path: Path | None = None,
++    output_path: Path | None = None,
++    check: bool = False,
++    worktree_path: str | Path | None = None,
++) -> dict:
++    """Render ``project-history/ledger.ndjson`` → ``PROJECT-HISTORY.md``.
++
++    Behaviour-preserving absorption of ``scripts/render-project-history.py``
++    (byte-identical output). The renderer dedupes-by-slug-keep-latest by
++    ``dates.closed``, sorts DESC by ``dates.closed`` (slug ASC tiebreak),
++    and is idempotent (re-running on an unchanged ledger produces
++    byte-identical output).
++
++    Args:
++        repo_root: override (tests); else ``worktree_path`` else
++            ``REPO_ROOT``.
++        ledger_path: override (tests) — defaults to
++            ``<repo_root>/project-history/ledger.ndjson``.
++        output_path: override (tests) — defaults to
++            ``<repo_root>/project-history/PROJECT-HISTORY.md``.
++        check: if True, do NOT write; report whether the rendered output
++            differs from disk (``drift`` key in the result).
++        worktree_path: **Caller-aware path resolution.** When set AND
++            ``repo_root`` is None, paths resolve against the caller's
++            worktree root instead of the MCP server's startup workspace.
++
++    Returns:
++        ``{"ledger_path": str, "output_path": str, "changed": bool,
++        "drift": bool, "rows": int, "check": bool}`` — ``changed`` is the
++        write-side flag (False in check-mode or on no-op); ``drift`` is
++        True when the on-disk output differs from the freshly-rendered
++        content (the signal the pre-commit hook keys on).
++
++    Raises:
++        ValueError: malformed NDJSON line (line number quoted).
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++    ledger = ledger_path or (root / "project-history" / "ledger.ndjson")
++    output = output_path or (root / "project-history" / "PROJECT-HISTORY.md")
++
++    rendered = _history_render_body(ledger)
++    existing = output.read_text(encoding="utf-8") if output.exists() else ""
++    drift = rendered != existing
++
++    changed = False
++    if not check and drift:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++        changed = True
++
++    deduped = _history_dedupe_latest_by_slug(
++        _history_parse_ledger(ledger) if ledger.exists() else []
++    )
++    return {
++        "ledger_path": (
++            str(ledger.relative_to(root)) if root in ledger.parents else str(ledger)
++        ),
++        "output_path": (
++            str(output.relative_to(root)) if root in output.parents else str(output)
++        ),
++        "changed": changed,
++        "drift": drift,
++        "rows": len(deduped),
++        "check": check,
++    }
++
++
++# ---------------------------------------------------------------------------
++# Historical-archive backfill.
++#
++# Absorbed from the former ``scripts/backfill-project-history.py`` (behaviour-
++# preserving). Walks ``archive/projects/<date>/NN-<slug>/PROJECT.md`` and
++# appends one ledger row per archived project with
++# ``status_at_close="historical"``. Idempotent — re-running does NOT
++# duplicate ledger entries (idempotency key = ``(slug, dates.closed)`` over
++# historical rows only). Fail-loud — a missing PROJECT.md / malformed
++# archive folder name / malformed existing-ledger line raises
++# ``BackfillError`` with the path (no silent-skip).
++# ---------------------------------------------------------------------------
++
++
++class BackfillError(RuntimeError):
++    """Raised when an archive folder violates expected backfill structure.
++
++    Per the no-silent-errors rule: methodology slips at the data layer
++    surface here instead of silently truncating the historical ledger.
++    """
++
++
++# Pattern for archive folder names: ``NN-<slug>`` (e.g. ``01-archive-system``).
++_BACKFILL_NN_PREFIX_RE = re.compile(r"^(\d{2})-(.+)$")
++
++# Pattern for ``- **Created:** YYYY-MM-DD`` line in PROJECT.md.
++_BACKFILL_CREATED_RE = re.compile(
++    r"^\s*[-*]\s+\*\*Created:\*\*\s+(\d{4}-\d{2}-\d{2})\s*$",
++    re.MULTILINE,
++)
++
++
++def _backfill_strip_nn_prefix(folder_name: str) -> str:
++    """Return the bare slug from a ``NN-<slug>`` archive folder name.
++
++    Raises ``BackfillError`` if the folder doesn't match the expected
++    shape (callers should never reach this from a well-formed archive).
++    """
++    m = _BACKFILL_NN_PREFIX_RE.match(folder_name)
++    if not m:
++        raise BackfillError(
++            f"archive folder name doesn't match 'NN-<slug>' shape: {folder_name!r}"
++        )
++    return m.group(2)
++
++
++def _backfill_extract_created_date(project_md_text: str) -> str | None:
++    """Extract the ISO ``Created:`` date from a PROJECT.md body.
++
++    Returns ``None`` when no Created line is present (older historical
++    projects predate the convention; logged but not error).
++    """
++    m = _BACKFILL_CREATED_RE.search(project_md_text)
++    return m.group(1) if m else None
++
++
++def _backfill_derive_short_summary(project_md_text: str) -> str:
++    """Best-effort short summary from PROJECT.md.
++
++    Two-tier extraction:
++
++    1. **Primary:** first prose paragraph under ``## 1. Context & Purpose``
++       (skipping its own heading, sub-headings, blockquotes, and
++       metadata bullet lines).
++    2. **Fallback:** first non-heading/non-blockquote/non-bullet line
++       (matches ``archive._derive_default_summary`` shape).
++
++    Metadata bullet lines (``- **Created:** ...``, etc.) are explicitly
++    skipped — they are not project descriptions.
++    """
++    lines = project_md_text.splitlines()
++
++    # Tier 1: locate ``## 1. Context & Purpose`` heading; collect first
++    # prose paragraph after it.
++    context_heading = re.compile(r"^##\s+1\.\s+Context.*$", re.IGNORECASE)
++    next_section = re.compile(r"^##\s+\d+\.\s+")
++    in_section = False
++    for raw in lines:
++        if not in_section:
++            if context_heading.match(raw.strip()):
++                in_section = True
++            continue
++        line = raw.strip()
++        if not line:
++            continue
++        if line.startswith("#"):
++            # Heading inside §1 — bail only on a next major section.
++            if next_section.match(line):
++                break
++            continue
++        if line.startswith(">"):
++            continue
++        if line.startswith("- ") or line.startswith("* "):
++            continue  # metadata bullets, never the summary
++        return line
++
++    # Tier 2 fallback: archive.py-style derivation with metadata-skip.
++    metadata_bullet = re.compile(
++        r"^[-*]\s+\*\*(?:Created|Last updated|Status|Owner|Related|Project slug|Branch)"
++    )
++    for raw in lines:
++        line = raw.strip()
++        if not line:
++            continue
++        if line.startswith("#"):
++            continue
++        if line.startswith(">"):
++            continue
++        if metadata_bullet.match(line):
++            continue
++        if line.startswith("- ") or line.startswith("* "):
++            stripped = re.sub(r"^[-*]\s+", "", line)
++            if stripped:
++                return stripped
++            continue
++        return line
++    return "(no summary available)"
++
++
++def _backfill_scope_from_archive_path(
++    archive_project_dir: Path, repo: Path
++) -> str:
++    """Best-effort scope from the archive path.
++
++    Historical archives all live under ``archive/projects/<date>/NN-<slug>``
++    — we can't reliably tell from archive-only data whether a project
++    originated cross-product or single-product. Default to
++    ``cross-product`` (accurate for the majority shape).
++    """
++    return "cross-product"
++
++
++def _backfill_load_existing_keys(ledger_path: Path) -> set[tuple[str, str]]:
++    """Return ``{(slug, closed_date)}`` for existing historical rows.
++
++    Live close-stamps (status_at_close != 'historical') are excluded
++    from the idempotency key — historical backfill and live close-stamps
++    are orthogonal events that legitimately co-exist for the same slug.
++    """
++    keys: set[tuple[str, str]] = set()
++    if not ledger_path.exists():
++        return keys
++    with ledger_path.open("r", encoding="utf-8") as fh:
++        for lineno, raw in enumerate(fh, start=1):
++            stripped = raw.strip()
++            if not stripped:
++                continue
++            try:
++                rec = json.loads(stripped)
++            except json.JSONDecodeError as e:
++                raise BackfillError(
++                    f"existing ledger {ledger_path}:{lineno} is malformed: "
++                    f"{e.msg} — fix or remove this row before backfilling"
++                ) from e
++            if rec.get("status_at_close") != "historical":
++                continue
++            slug = rec.get("slug", "")
++            closed = (rec.get("dates") or {}).get("closed", "")
++            keys.add((slug, closed))
++    return keys
++
++
++def _backfill_discover_archives(archive_root: Path) -> list[Path]:
++    """Return sorted list of ``archive/projects/<date>/NN-<slug>/`` paths.
++
++    Each returned path is a project directory containing PROJECT.md.
++    Folders without PROJECT.md raise ``BackfillError`` (the archive
++    system guarantees PROJECT.md presence; absence is a data-integrity
++    issue, not a backfill skip).
++    """
++    projects_root = archive_root / "projects"
++    if not projects_root.is_dir():
++        return []
++    found: list[Path] = []
++    for date_dir in sorted(projects_root.iterdir()):
++        if not date_dir.is_dir():
++            continue
++        # Skip files (e.g. README.md) directly under projects/.
++        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_dir.name):
++            logger.debug(
++                "skipping non-date entry under archive/projects/: %s",
++                date_dir.name,
++            )
++            continue
++        for proj_dir in sorted(date_dir.iterdir()):
++            if not proj_dir.is_dir():
++                continue
++            project_md = proj_dir / "PROJECT.md"
++            if not project_md.exists():
++                raise BackfillError(
++                    f"archive folder missing PROJECT.md: {proj_dir} — "
++                    f"data-integrity issue, not a backfill skip"
++                )
++            found.append(proj_dir)
++    return found
++
++
++def _backfill_stamp_one(
++    archive_project_dir: Path,
++    repo: Path,
++    existing_keys: set[tuple[str, str]],
++    *,
++    dry_run: bool = False,
++) -> tuple[str, dict | None]:
++    """Stamp one archive's ledger row.
++
++    Returns a ``(outcome, result)`` tuple where outcome is one of
++    ``"stamped"`` / ``"skipped_existing"`` / ``"would_stamp"``.
++    """
++    date_dir_name = archive_project_dir.parent.name  # e.g. ``2026-05-10``
++    folder_name = archive_project_dir.name
++    canonical_slug = _backfill_strip_nn_prefix(folder_name)
++
++    # Idempotency check: this slug+close-date already historically stamped?
++    key = (canonical_slug, date_dir_name)
++    if key in existing_keys:
++        logger.info(
++            "skip (already-stamped): slug=%s closed=%s",
++            canonical_slug, date_dir_name,
++        )
++        return ("skipped_existing", None)
++
++    # Read PROJECT.md once; use for created-date extraction + summary
++    # derivation + review body. ``errors="replace"`` mirrors archive.py.
++    project_md_text = (archive_project_dir / "PROJECT.md").read_text(
++        encoding="utf-8", errors="replace"
++    )
++    created = _backfill_extract_created_date(project_md_text)
++    summary = _backfill_derive_short_summary(project_md_text)
++    # Review body — pass the full PROJECT.md so phase regex extraction
++    # in history_record gets material to work with.
++    review = project_md_text
++
++    scope = _backfill_scope_from_archive_path(archive_project_dir, repo)
++
++    if dry_run:
++        logger.info(
++            "[dry-run] would stamp: slug=%s closed=%s created=%s scope=%s "
++            "(summary[:60]=%r)",
++            canonical_slug, date_dir_name, created, scope, summary[:60],
++        )
++        return ("would_stamp", None)
++
++    # Mirror live close-stamp shape: pass archive_project_dir as
++    # ``project_path``; ``slug_override`` strips the NN- prefix so the
++    # ledger row matches canonical slug convention. ``repo_root``
++    # ensures the ledger lands in THIS repo's project-history dir.
++    result = history_record(
++        project_path=str(archive_project_dir),
++        status_at_close="historical",
++        summary_md=summary,
++        review_md=review,
++        scope=scope,
++        dates_created=created,
++        dates_closed=date_dir_name,
++        slug_override=canonical_slug,
++        repo_root=repo,
++    )
++    existing_keys.add(key)
++    logger.info(
++        "stamped: slug=%s closed=%s tokens=%d (line %d)",
++        canonical_slug,
++        date_dir_name,
++        result["record"]["token_count"]["total"],
++        result["line_count"],
++    )
++    return ("stamped", result)
++
++
++def backfill_project_history(
++    repo_root: Path | None = None,
++    *,
++    dry_run: bool = False,
++    worktree_path: str | Path | None = None,
++) -> dict:
++    """Walk ``archive/projects/`` and stamp every project's ledger row.
++
++    Behaviour-preserving absorption of ``scripts/backfill-project-history.py``.
++    Idempotent — re-running does NOT duplicate ledger entries (idempotency
++    key = ``(slug, dates.closed)`` over historical rows only). Fail-loud —
++    a missing PROJECT.md / malformed archive folder name / malformed
++    existing-ledger line raises ``BackfillError`` with the path.
++
++    Args:
++        repo_root: repo root (tests); else ``worktree_path`` else
++            ``REPO_ROOT``.
++        dry_run: walk + log what would be stamped, but don't write.
++        worktree_path: **Caller-aware path resolution.** When set AND
++            ``repo_root`` is None, paths resolve against the caller's
++            worktree root.
++
++    Returns the same summary dict the former script printed:
++        ``{"archives_seen", "stamped", "skipped_already_present",
++        "ledger_lines_before", "ledger_lines_after", "ledger_path",
++        "dry_run"[, "would_stamp"]}``.
++
++    Raises:
++        BackfillError: malformed archive folder / ledger line.
++    """
++    if repo_root is not None:
++        repo = repo_root
++    elif worktree_path is not None:
++        repo = resolve_caller_root(worktree_path)
++    else:
++        repo = REPO_ROOT
++
++    ledger_path = repo / "project-history" / "ledger.ndjson"
++    existing_keys = _backfill_load_existing_keys(ledger_path)
++    initial_count = (
++        sum(1 for _ in ledger_path.open("r", encoding="utf-8"))
++        if ledger_path.exists()
++        else 0
++    )
++
++    archive_root = repo / "archive"
++    archives = _backfill_discover_archives(archive_root)
++
++    stamped = 0
++    skipped = 0
++    would_stamp = 0
++    for proj_dir in archives:
++        outcome, _ = _backfill_stamp_one(
++            proj_dir, repo, existing_keys, dry_run=dry_run
++        )
++        if outcome == "stamped":
++            stamped += 1
++        elif outcome == "would_stamp":
++            would_stamp += 1
++        else:  # skipped_existing
++            skipped += 1
++
++    final_count = (
++        sum(1 for _ in ledger_path.open("r", encoding="utf-8"))
++        if ledger_path.exists()
++        else 0
++    )
++    summary = {
++        "archives_seen": len(archives),
++        "stamped": stamped,
++        "skipped_already_present": skipped,
++        "ledger_lines_before": initial_count,
++        "ledger_lines_after": final_count,
++        "ledger_path": (
++            str(ledger_path.relative_to(repo))
++            if repo in ledger_path.parents
++            else str(ledger_path)
++        ),
++        "dry_run": dry_run,
++    }
++    if dry_run:
++        summary["would_stamp"] = would_stamp
++    return summary
++
++
+ # ---------------------------------------------------------------------------
+ # FastMCP tool registration — see KB § PATTERNS/mcp-tool-conventions.md.
+ # ---------------------------------------------------------------------------
+@@ -574,9 +1199,56 @@ def register(server) -> None:
+             slug_override=slug_override,
+         )
+ 
++    @server.tool(
++        name="noctus.dev.render_project_history",
++        description=(
++            "Render project-history/ledger.ndjson → project-history/PROJECT-HISTORY.md "
++            "(the human-readable view). Dedupes-by-slug-keep-latest by dates.closed, "
++            "sorts DESC by dates.closed (slug ASC tiebreak), idempotent (re-render on "
++            "an unchanged ledger is byte-identical). Pass check=True to detect drift "
++            "without writing. Invalid NDJSON raises ValueError with the line number. "
++            "Run by the pre-commit hook when the ledger is staged/modified. Pass "
++            "worktree_path when called from inside a git worktree. See "
++            "projects/project-history-ledger/PROJECT.md § 6 Phase 3."
++        ),
++    )
++    def _render_project_history(
++        check: bool = False,
++        worktree_path: str | None = None,
++    ) -> dict:
++        return render_project_history(
++            check=check,
++            worktree_path=worktree_path,
++        )
++
++    @server.tool(
++        name="noctus.dev.backfill_project_history",
++        description=(
++            "Walk archive/projects/<date>/NN-<slug>/PROJECT.md and append one ledger "
++            "row per archived project with status_at_close='historical'. Idempotent "
++            "— re-running does NOT duplicate entries (idempotency key = (slug, "
++            "dates.closed) over historical rows only). Fail-loud — a missing "
++            "PROJECT.md / malformed archive folder / malformed existing-ledger line "
++            "raises BackfillError with the path (no silent-skip). Pass dry_run=True "
++            "to preview. Pass worktree_path when called from inside a git worktree. "
++            "See projects/project-history-ledger/PROJECT.md § 6 Phase 4."
++        ),
++    )
++    def _backfill_project_history(
++        dry_run: bool = False,
++        worktree_path: str | None = None,
++    ) -> dict:
++        return backfill_project_history(
++            dry_run=dry_run,
++            worktree_path=worktree_path,
++        )
++
+ 
+ __all__ = [
+     "history_record",
++    "render_project_history",
++    "backfill_project_history",
++    "BackfillError",
+     "register",
+     "HistoryRecord",
+     "HistoryDates",
+diff --git a/mcp/noctusai/tools/noctus/dev/promotion.py b/mcp/noctusai/tools/noctus/dev/promotion.py
+index 50257716..853f08b4 100644
+--- a/mcp/noctusai/tools/noctus/dev/promotion.py
++++ b/mcp/noctusai/tools/noctus/dev/promotion.py
+@@ -495,11 +495,252 @@ def promote_from_seed_workspace(
+     }
+ 
+ 
++# ---------------------------------------------------------------------------
++# Derived PROMOTIONS.md index generator.
++#
++# Absorbed from the former ``scripts/gen-promotions-index.py`` (behaviour-
++# preserving — byte-identical output). PROMOTIONS.md is a DERIVED artifact,
++# never hand-maintained: a hand-kept parallel index drifts (the
++# social-wiring-absorption W0.2 audit found a hand-written PROMOTIONS.md
++# listing only 7 of 14 manifests). This generator regenerates the index
++# from ``.promotions/*.md`` deterministically. It reuses ``parse_manifest``
++# (above) so the index and the ``promote_from_seed_workspace`` pipeline
++# never diverge on what a manifest means. Idempotent; only the marker
++# region is swapped (header/prose preserved); unparseable manifests are
++# surfaced under "Needs attention" rather than silently dropped.
++# ---------------------------------------------------------------------------
++
++_PROMO_START_MARKER = "<!-- promotions:start -->"
++_PROMO_END_MARKER = "<!-- promotions:end -->"
++# Manifest authors drop a copy of this file (one per promotable capability);
++# it is a template, never itself an index row.
++_PROMO_MANIFEST_TEMPLATE_NAME = "MANIFEST-TEMPLATE.md"
++_PROMO_SKIP_MANIFEST_NAMES = {_PROMO_MANIFEST_TEMPLATE_NAME}
++
++
++def _index_manifest_files(promotions_dir: Path) -> list[Path]:
++    if not promotions_dir.is_dir():
++        return []
++    return sorted(
++        p
++        for p in promotions_dir.glob("*.md")
++        if p.is_file() and p.name not in _PROMO_SKIP_MANIFEST_NAMES
++    )
++
++
++def _index_readiness(seed_first_analysis: str, body: str) -> str:
++    """Best-effort readiness signal pulled from the manifest text.
++
++    Looks for an explicit `readiness:`/`N=` marker; falls back to `—`.
++    Non-fatal: readiness is advisory metadata, not a contract.
++    """
++    hay = f"{seed_first_analysis}\n{body}"
++    m = re.search(r"readiness[:\s]+([^\n]+)", hay, re.IGNORECASE)
++    if m:
++        return m.group(1).strip()[:40]
++    m = re.search(r"\bN=\s*([0-9]+\+?)", hay)
++    if m:
++        return f"N={m.group(1)}"
++    return "—"
++
++
++def _index_build(workspace_root: Path) -> str:
++    """Build the full PROMOTIONS.md body (header + table between markers)."""
++    promotions_dir = workspace_root / PROMOTIONS_DIRNAME
++    name = workspace_root.name
++
++    pending: list[tuple[str, str, str]] = []
++    promoted: list[tuple[str, str, str, str]] = []
++    unparseable: list[tuple[str, str]] = []
++
++    for mf in _index_manifest_files(promotions_dir):
++        try:
++            m = parse_manifest(mf)
++        except (ValueError, Exception) as exc:  # noqa: BLE001 — surface, don't drop
++            unparseable.append((mf.name, str(exc).splitlines()[0][:120]))
++            continue
++        readiness = _index_readiness(m.seed_first_analysis, m.body)
++        if m.promoted_on == "not-yet":
++            pending.append((m.slug, m.intended_noc_destination, readiness))
++        else:
++            promoted.append(
++                (m.slug, m.intended_noc_destination, readiness, m.promoted_on)
++            )
++
++    lines: list[str] = []
++    lines.append(_PROMO_START_MARKER)
++    lines.append("")
++    lines.append(
++        f"_DERIVED — do not hand-edit. Regenerate with "
++        f"`python scripts/gen-promotions-index.py --workspace .`. "
++        f"Source of truth: `{PROMOTIONS_DIRNAME}/*.md`._"
++    )
++    lines.append("")
++    lines.append("## Pending")
++    lines.append("")
++    if pending:
++        lines.append("| slug | destination | readiness |")
++        lines.append("|---|---|---|")
++        for slug, dest, rd in sorted(pending):
++            lines.append(f"| `{slug}` | `{dest}` | {rd} |")
++    else:
++        lines.append("_(none)_")
++    lines.append("")
++    lines.append("## Promoted")
++    lines.append("")
++    if promoted:
++        lines.append("| slug | destination | readiness | promoted_on |")
++        lines.append("|---|---|---|---|")
++        for slug, dest, rd, on in sorted(promoted):
++            lines.append(f"| `{slug}` | `{dest}` | {rd} | {on} |")
++    else:
++        lines.append("_(none)_")
++    lines.append("")
++    if unparseable:
++        lines.append("## Needs attention (unparseable manifests)")
++        lines.append("")
++        lines.append("| manifest | error |")
++        lines.append("|---|---|")
++        for fname, err in sorted(unparseable):
++            lines.append(f"| `{PROMOTIONS_DIRNAME}/{fname}` | {err} |")
++        lines.append("")
++    lines.append(_PROMO_END_MARKER)
++
++    header = (
++        f"# Promotion Manifest Index — {name}\n"
++        f"\n"
++        f"Additions in this seed workspace that are candidates for promotion "
++        f"into noc. **This file is auto-derived from `{PROMOTIONS_DIRNAME}/*.md`** "
++        f"— the manifest directory is the single source of truth. Do not "
++        f"hand-maintain this index; a hand-kept parallel index drifts.\n"
++        f"\n"
++        f"Promote an entry with "
++        f"`noctus.dev.promote_from_seed_workspace`; regenerate this index with "
++        f"`python scripts/gen-promotions-index.py --workspace .` (the workspace "
++        f"pre-commit hook runs `--check` and refuses drift).\n"
++        f"\n"
++        f"See KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-workspace.md § Promotion manifest.\n"
++        f"\n"
++    )
++    return header + "\n".join(lines) + "\n"
++
++
++def _index_render(workspace_root: Path) -> str:
++    """Return the desired full PROMOTIONS.md content.
++
++    If an existing PROMOTIONS.md has the markers, only the marker region is
++    swapped (header/prose outside markers is preserved). Otherwise the file
++    is (re)written wholesale from the canonical template.
++    """
++    fresh = _index_build(workspace_root)
++    index_path = workspace_root / PROMOTIONS_INDEX
++    if not index_path.is_file():
++        return fresh
++    existing = index_path.read_text(encoding="utf-8")
++    if _PROMO_START_MARKER not in existing or _PROMO_END_MARKER not in existing:
++        return fresh
++    new_block = fresh[
++        fresh.index(_PROMO_START_MARKER) : fresh.index(_PROMO_END_MARKER)
++        + len(_PROMO_END_MARKER)
++    ]
++    pattern = re.compile(
++        re.escape(_PROMO_START_MARKER) + r".*?" + re.escape(_PROMO_END_MARKER),
++        re.DOTALL,
++    )
++    swapped = pattern.sub(lambda _m: new_block, existing, count=1)
++    if not swapped.endswith("\n"):
++        swapped += "\n"
++    return swapped
++
++
++def gen_promotions_index(
++    repo_root: Path | None = None,
++    *,
++    workspace_root: Path | None = None,
++    check: bool = False,
++    worktree_path: str | Path | None = None,
++) -> dict:
++    """Regenerate a seed-workspace's ``PROMOTIONS.md`` from ``.promotions/*.md``.
++
++    Behaviour-preserving absorption of ``scripts/gen-promotions-index.py``
++    (byte-identical output). PROMOTIONS.md is a DERIVED artifact, never
++    hand-maintained. Idempotent (regenerating twice → byte-identical;
++    only the marker region is swapped, header/prose preserved); unparseable
++    manifests are surfaced under "Needs attention" not silently dropped.
++
++    Args:
++        repo_root: alias for ``workspace_root`` (the seed-workspace dir
++            containing ``.promotions/``); kept for signature parity with
++            the sibling absorbed tools. ``workspace_root`` wins if both
++            are given.
++        workspace_root: explicit seed-workspace root (test seam).
++        check: if True, do NOT write; report whether PROMOTIONS.md would
++            change (``drift`` key in the result).
++        worktree_path: **Caller-aware path resolution.** When set AND
++            neither ``workspace_root`` nor ``repo_root`` is given, the
++            workspace root resolves against the caller's worktree.
++
++    Returns:
++        ``{"workspace": str, "index_path": str, "changed": bool,
++        "drift": bool, "check": bool, "is_seed_workspace": bool}``.
++        ``is_seed_workspace`` is False (and nothing is written) when the
++        target has no ``.promotions/`` directory — a no-op, not an error
++        (mirrors the former script's stderr-note exit-0 behaviour).
++    """
++    if workspace_root is not None:
++        ws_root = workspace_root
++    elif repo_root is not None:
++        ws_root = repo_root
++    elif worktree_path is not None:
++        ws_root = resolve_caller_root(worktree_path)
++    else:
++        ws_root = get_workspace_root()
++    ws_root = Path(ws_root).resolve()
++
++    promotions_dir = ws_root / PROMOTIONS_DIRNAME
++    index_path = ws_root / PROMOTIONS_INDEX
++    if not promotions_dir.is_dir():
++        logger.info(
++            "gen_promotions_index: no %s/ at %s — not a seed workspace "
++            "(or no manifests yet). Nothing to do.",
++            PROMOTIONS_DIRNAME, ws_root,
++        )
++        return {
++            "workspace": str(ws_root),
++            "index_path": str(index_path),
++            "changed": False,
++            "drift": False,
++            "check": check,
++            "is_seed_workspace": False,
++        }
++
++    desired = _index_render(ws_root)
++    current = (
++        index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
++    )
++    drift = desired != current
++
++    changed = False
++    if not check and drift:
++        index_path.write_text(desired, encoding="utf-8")
++        changed = True
++
++    return {
++        "workspace": str(ws_root),
++        "index_path": str(index_path),
++        "changed": changed,
++        "drift": drift,
++        "check": check,
++        "is_seed_workspace": True,
++    }
++
++
+ __all__ = [
+     "PromotionManifest",
+     "parse_manifest",
+     "promote_from_seed_workspace",
+     "list_promotions",
++    "gen_promotions_index",
+ ]
+ 
+ 
+@@ -542,3 +783,26 @@ def register(server) -> None:
+     )
+     def _list_promotions(worktree_path: str | None = None) -> dict:
+         return list_promotions(worktree_path=worktree_path)
++
++    @server.tool(
++        name="noctus.dev.gen_promotions_index",
++        description=(
++            "Regenerate a seed-workspace's derived PROMOTIONS.md from its "
++            "`.promotions/*.md` manifests (the single source of truth — a "
++            "hand-kept parallel index drifts). Idempotent; only the marker "
++            "region is swapped (header/prose preserved); unparseable manifests "
++            "are surfaced under 'Needs attention' not silently dropped. Pass "
++            "check=True to detect drift without writing (pre-commit / CI gate). "
++            "No `.promotions/` dir → no-op (is_seed_workspace=False), not an "
++            "error. Pass worktree_path when called from inside a git worktree. "
++            "See KB § PATTERNS/seed-workspace.md § Promotion manifest."
++        ),
++    )
++    def _gen_promotions_index(
++        check: bool = False,
++        worktree_path: str | None = None,
++    ) -> dict:
++        return gen_promotions_index(
++            check=check,
++            worktree_path=worktree_path,
++        )
+-- 
+2.51.2
+

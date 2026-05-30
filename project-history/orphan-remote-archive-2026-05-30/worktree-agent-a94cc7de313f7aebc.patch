@@ -1,0 +1,1022 @@
+From aa0ee5f51f954a9ea685e78f9c5650be3ee97eb9 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 22:09:04 -0300
+Subject: [PATCH 1/2] =?UTF-8?q?feat(keeper):=20add=204=20hygiene-complianc?=
+ =?UTF-8?q?e=20detectors=20=E2=80=94=20archive=20+=20dispatcher=20+=20bran?=
+ =?UTF-8?q?ch-orphan=20+=20gitignore?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Phase 1 of projects/keeper-housekeeping-upgrade/. Closes the residual housekeeping
+gap not covered by the keeper/hound/mole trio:
+
+- check_archive_staleness: flags archive/<bucket>/YYYY-MM-DD/ folders older than
+  D-1 (warning) / D-7 (high).
+- check_dispatcher_staleness: flags ## Pending entries in dispatcher-inbox.md that
+  sat >24h (warning) / >7d (high).
+- check_branch_orphan: flags local branches merged to origin/main AND >30d stale;
+  emits cap=10 + summary entry past 50.
+- check_gitignore_drift: flags expected transient paths missing from .gitignore
+  (initial list: dispatcher-outbox.md + scripts/mole-last-sweep.log +
+  scripts/archive-clean-last-sweep.log).
+
+All four wired into check_all_products() globals. Colocated regression suite at
+mcp/noctusai/tests/test_compliance_hygiene.py (19 tests, 4 test classes). Drive-by
+.gitignore patch closes the 3 drift findings this detector emits against current
+repo state.
+
+Tracking-shape decision for dispatcher-inbox.md: kept tracked (scaffold body stays
+in git, operator churn lives in the gitignored dispatcher-outbox.md).
+
+This is the first methodology rule promoted to Stage 4 of the codification pipeline
+with the pipeline explicitly named — see KB § PATTERNS/methodology-codification-pipeline.md.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .gitignore                                    |   9 +
+ mcp/noctusai/tests/test_compliance_hygiene.py | 309 ++++++++++++++
+ mcp/noctusai/tools/noctus/dev/compliance.py   | 391 ++++++++++++++++++
+ .../keeper-housekeeping-upgrade/PROJECT.md    | 164 ++++++++
+ 4 files changed, 873 insertions(+)
+ create mode 100644 mcp/noctusai/tests/test_compliance_hygiene.py
+ create mode 100644 projects/keeper-housekeeping-upgrade/PROJECT.md
+
+diff --git a/.gitignore b/.gitignore
+index c00052b9..6def4740 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -63,3 +63,12 @@ seed/lib/backend/noctusai_lib/_version_static.py
+ # `KB § PATTERNS/project-execution.md § 2.11 Phase enrichment loop`.
+ mcp/noctusai/data/
+ 
++# Coordination + log artifacts (per keeper-housekeeping-upgrade Phase 1).
++# `dispatcher-outbox.md` is operator-written output for the two-session split
++# (KB § PATTERNS/two-session-architect-operator.md); the two `*-last-sweep.log`
++# files are mole/archive transient run logs. Enforced by
++# `check_gitignore_drift` in `mcp/noctusai/tools/noctus/dev/compliance.py`.
++dispatcher-outbox.md
++scripts/mole-last-sweep.log
++scripts/archive-clean-last-sweep.log
++
+diff --git a/mcp/noctusai/tests/test_compliance_hygiene.py b/mcp/noctusai/tests/test_compliance_hygiene.py
+new file mode 100644
+index 00000000..312939a0
+--- /dev/null
++++ b/mcp/noctusai/tests/test_compliance_hygiene.py
+@@ -0,0 +1,309 @@
++"""Regression tests for the hygiene-compliance keeper detectors —
++`keeper-housekeeping-upgrade` Phase 1.
++
++Covers:
++  - `check_archive_staleness`
++  - `check_dispatcher_staleness`
++  - `check_branch_orphan`
++  - `check_gitignore_drift`
++
++Each detector gets a focused TestCheck<...> class. Tests use the
++`tmp_path` fixture for filesystem state; the branch-orphan suite
++shells out to `git` against an init'd tmp repo (no monkey-patching
++of our own code per the no-monkey-patch rule).
++"""
++import datetime as dt
++import subprocess
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.compliance import (  # noqa: E402
++    check_archive_staleness,
++    check_branch_orphan,
++    check_dispatcher_staleness,
++    check_gitignore_drift,
++)
++
++
++# ---------------------------------------------------------------------------
++# check_archive_staleness
++# ---------------------------------------------------------------------------
++
++
++class TestArchiveStaleness:
++    """`archive/<bucket>/YYYY-MM-DD/` folders older than D-2 → warning/high."""
++
++    def _mk_archive(self, tmp_path: Path, *dated_names: str, bucket: str = "projects") -> Path:
++        """Create `<tmp_path>/archive/<bucket>/<name>/` for each `<name>`."""
++        bucket_dir = tmp_path / "archive" / bucket
++        bucket_dir.mkdir(parents=True)
++        for name in dated_names:
++            (bucket_dir / name).mkdir()
++        return tmp_path
++
++    def test_today_and_yesterday_pass(self, tmp_path):
++        today = dt.date.today()
++        yesterday = today - dt.timedelta(days=1)
++        self._mk_archive(tmp_path, today.isoformat(), yesterday.isoformat())
++        issues = check_archive_staleness(tmp_path)
++        assert issues == [], f"today+yesterday must not flag, got: {issues}"
++
++    def test_two_days_ago_is_stale_warning(self, tmp_path):
++        old = dt.date.today() - dt.timedelta(days=2)
++        self._mk_archive(tmp_path, old.isoformat())
++        issues = check_archive_staleness(tmp_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "warning"
++        assert "2 days old" in issues[0]["issue"]
++
++    def test_past_seven_days_is_high(self, tmp_path):
++        old = dt.date.today() - dt.timedelta(days=14)
++        self._mk_archive(tmp_path, old.isoformat())
++        issues = check_archive_staleness(tmp_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "high"
++        assert "14 days old" in issues[0]["issue"]
++
++    def test_non_date_folder_ignored(self, tmp_path):
++        # README, "features", and other non-date-stamped buckets must not
++        # be flagged (only YYYY-MM-DD-named folders qualify).
++        self._mk_archive(tmp_path, "README.md", "not-a-date", bucket="seed-absorption")
++        # The "README.md" .mkdir() created an actual dir (not a file) but
++        # the name regex rejects it — that's the test point.
++        issues = check_archive_staleness(tmp_path)
++        assert issues == [], f"non-date names must not flag, got: {issues}"
++
++    def test_missing_archive_dir_no_issues(self, tmp_path):
++        # Fresh repo with no archive/ folder → silent pass.
++        issues = check_archive_staleness(tmp_path)
++        assert issues == []
++
++
++# ---------------------------------------------------------------------------
++# check_dispatcher_staleness
++# ---------------------------------------------------------------------------
++
++
++class TestDispatcherStaleness:
++    """`dispatcher-inbox.md` `## Pending` entries older than 24h → flagged."""
++
++    def _mk_inbox(self, tmp_path: Path, pending_block: str) -> Path:
++        # Note: avoid textwrap.dedent here — the embedded pending_block
++        # often has un-indented lines, breaking dedent's common-prefix
++        # heuristic. Use a literal newline-separated body.
++        content = (
++            "# Dispatcher Inbox\n"
++            "\n"
++            "## Pending\n"
++            f"{pending_block}\n"
++            "## Completed (last 24h)\n"
++        )
++        (tmp_path / "dispatcher-inbox.md").write_text(content)
++        return tmp_path
++
++    def test_fresh_entry_does_not_flag(self, tmp_path):
++        now = dt.datetime.now()
++        ts = now.strftime("%Y-%m-%dT%H:%M")
++        self._mk_inbox(tmp_path, f"\n### {ts} — FRESH-TASK\n- Type: dispatch\n")
++        issues = check_dispatcher_staleness(tmp_path)
++        assert issues == [], f"fresh entry must not flag, got: {issues}"
++
++    def test_entry_25h_old_is_warning(self, tmp_path):
++        old = dt.datetime.now() - dt.timedelta(hours=25)
++        ts = old.strftime("%Y-%m-%dT%H:%M")
++        self._mk_inbox(tmp_path, f"\n### {ts} — STALE-TASK\n- Type: dispatch\n")
++        issues = check_dispatcher_staleness(tmp_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "warning"
++        assert "STALE-TASK" in issues[0]["issue"]
++
++    def test_entry_eight_days_old_is_high(self, tmp_path):
++        old = dt.datetime.now() - dt.timedelta(days=8)
++        ts = old.strftime("%Y-%m-%dT%H:%M")
++        self._mk_inbox(tmp_path, f"\n### {ts} — ABANDONED\n")
++        issues = check_dispatcher_staleness(tmp_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "high"
++
++    def test_completed_entries_not_flagged(self, tmp_path):
++        """Old entries inside `## Completed (last 24h)` must not flag — only
++        `## Pending` is the active queue."""
++        old = dt.datetime.now() - dt.timedelta(days=3)
++        ts = old.strftime("%Y-%m-%dT%H:%M")
++        content = (
++            "# Dispatcher Inbox\n"
++            "\n"
++            "## Pending\n"
++            "\n"
++            "## Completed (last 24h)\n"
++            "\n"
++            f"### {ts} — DONE-OLD ✅\n"
++        )
++        (tmp_path / "dispatcher-inbox.md").write_text(content)
++        issues = check_dispatcher_staleness(tmp_path)
++        assert issues == [], f"completed entries must not flag, got: {issues}"
++
++    def test_no_inbox_file_no_issues(self, tmp_path):
++        # If `dispatcher-inbox.md` doesn't exist, the detector is silent
++        # (not every checkout uses the two-session pattern).
++        issues = check_dispatcher_staleness(tmp_path)
++        assert issues == []
++
++
++# ---------------------------------------------------------------------------
++# check_branch_orphan
++# ---------------------------------------------------------------------------
++
++
++def _run(cwd: Path, *args: str) -> str:
++    """Helper: run git in tmp repo, return stdout, raise on non-zero."""
++    return subprocess.run(
++        ["git", "-C", str(cwd), *args],
++        capture_output=True, text=True, check=True, timeout=15,
++    ).stdout
++
++
++class TestBranchOrphan:
++    """Branches merged to `origin/main` AND >30d stale → warning."""
++
++    def _init_repo_with_origin(self, tmp_path: Path) -> Path:
++        """Initialize a git repo + a 'origin' bare clone so we have
++        `origin/main` for the merged-check."""
++        repo = tmp_path / "repo"
++        origin = tmp_path / "origin.git"
++        repo.mkdir()
++        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, timeout=10)
++        # Identity required for commits on systems without global config.
++        _run(repo, "config", "user.email", "test@example.com")
++        _run(repo, "config", "user.name", "Test")
++        (repo / "README.md").write_text("hello\n")
++        _run(repo, "add", "README.md")
++        _run(repo, "commit", "-q", "-m", "initial")
++        subprocess.run(
++            ["git", "clone", "--bare", "-q", str(repo), str(origin)],
++            check=True, timeout=10,
++        )
++        _run(repo, "remote", "add", "origin", str(origin))
++        _run(repo, "fetch", "-q", "origin")
++        return repo
++
++    def test_no_branches_returns_empty(self, tmp_path):
++        repo = self._init_repo_with_origin(tmp_path)
++        issues = check_branch_orphan(repo)
++        assert issues == []
++
++    def test_fresh_merged_branch_does_not_flag(self, tmp_path):
++        repo = self._init_repo_with_origin(tmp_path)
++        # Create a merged branch with TODAY's commit date — fresh, must not flag.
++        _run(repo, "checkout", "-q", "-b", "feature-fresh")
++        (repo / "fresh.txt").write_text("x")
++        _run(repo, "add", "fresh.txt")
++        _run(repo, "commit", "-q", "-m", "fresh")
++        _run(repo, "checkout", "-q", "main")
++        _run(repo, "merge", "-q", "--no-ff", "-m", "merge fresh", "feature-fresh")
++        # Push main forward so origin/main sees the merge → branch is "merged".
++        _run(repo, "push", "-q", "origin", "main")
++        _run(repo, "fetch", "-q", "origin")
++        issues = check_branch_orphan(repo)
++        assert issues == [], f"fresh merged branch must not flag, got: {issues}"
++
++    def test_old_merged_branch_flags(self, tmp_path):
++        repo = self._init_repo_with_origin(tmp_path)
++        # Create a branch whose commit date is well past 30 days. Use
++        # GIT_COMMITTER_DATE + GIT_AUTHOR_DATE env to backdate.
++        _run(repo, "checkout", "-q", "-b", "feature-old")
++        (repo / "old.txt").write_text("y")
++        _run(repo, "add", "old.txt")
++        env_date = "2025-01-01T12:00:00"
++        subprocess.run(
++            ["git", "-C", str(repo), "commit", "-q", "-m", "old"],
++            env={"GIT_COMMITTER_DATE": env_date, "GIT_AUTHOR_DATE": env_date, "PATH": __import__("os").environ.get("PATH", "")},
++            check=True, timeout=10,
++        )
++        _run(repo, "checkout", "-q", "main")
++        _run(repo, "merge", "-q", "--no-ff", "-m", "merge old", "feature-old")
++        _run(repo, "push", "-q", "origin", "main")
++        _run(repo, "fetch", "-q", "origin")
++        issues = check_branch_orphan(repo)
++        assert any(i["file"].endswith("feature-old") for i in issues), issues
++        # All emitted should be warning by default (single orphan, <50 cap).
++        assert all(i["severity"] == "warning" for i in issues)
++
++    def test_unmerged_old_branch_not_flagged(self, tmp_path):
++        repo = self._init_repo_with_origin(tmp_path)
++        _run(repo, "checkout", "-q", "-b", "feature-unmerged")
++        (repo / "wip.txt").write_text("z")
++        _run(repo, "add", "wip.txt")
++        env_date = "2025-01-01T12:00:00"
++        subprocess.run(
++            ["git", "-C", str(repo), "commit", "-q", "-m", "wip"],
++            env={"GIT_COMMITTER_DATE": env_date, "GIT_AUTHOR_DATE": env_date, "PATH": __import__("os").environ.get("PATH", "")},
++            check=True, timeout=10,
++        )
++        # Do NOT merge; remain unmerged → must not flag even though old.
++        _run(repo, "checkout", "-q", "main")
++        issues = check_branch_orphan(repo)
++        assert not any(i["file"].endswith("feature-unmerged") for i in issues), issues
++
++
++# ---------------------------------------------------------------------------
++# check_gitignore_drift
++# ---------------------------------------------------------------------------
++
++
++class TestGitignoreDrift:
++    """`.gitignore` missing expected transient-coordination paths → warning."""
++
++    def test_all_expected_present_no_issues(self, tmp_path):
++        (tmp_path / ".gitignore").write_text(
++            "node_modules/\n"
++            "dispatcher-outbox.md\n"
++            "scripts/mole-last-sweep.log\n"
++            "scripts/archive-clean-last-sweep.log\n"
++        )
++        issues = check_gitignore_drift(tmp_path)
++        assert issues == [], f"all expected present must not flag, got: {issues}"
++
++    def test_all_expected_missing_flags_each(self, tmp_path):
++        (tmp_path / ".gitignore").write_text("node_modules/\n")
++        issues = check_gitignore_drift(tmp_path)
++        # All 3 paths missing → 3 warnings.
++        flagged = {i["issue"] for i in issues}
++        assert len(issues) == 3, f"expected 3 missing entries, got {len(issues)}: {issues}"
++        assert all(i["severity"] == "warning" for i in issues)
++        assert any("dispatcher-outbox.md" in msg for msg in flagged)
++        assert any("scripts/mole-last-sweep.log" in msg for msg in flagged)
++        assert any("scripts/archive-clean-last-sweep.log" in msg for msg in flagged)
++
++    def test_anchored_leading_slash_accepted(self, tmp_path):
++        # `.gitignore` users sometimes anchor with `/path/...`; the detector
++        # accepts both the bare form and the leading-slash form.
++        (tmp_path / ".gitignore").write_text(
++            "/dispatcher-outbox.md\n"
++            "/scripts/mole-last-sweep.log\n"
++            "/scripts/archive-clean-last-sweep.log\n"
++        )
++        issues = check_gitignore_drift(tmp_path)
++        assert issues == [], f"anchored form must be accepted, got: {issues}"
++
++    def test_no_gitignore_at_all_high_severity(self, tmp_path):
++        issues = check_gitignore_drift(tmp_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "high"
++        assert "no `.gitignore`" in issues[0]["issue"]
++
++    def test_comments_and_blanks_ignored(self, tmp_path):
++        (tmp_path / ".gitignore").write_text(
++            "# Comment\n"
++            "\n"
++            "dispatcher-outbox.md\n"
++            "  # whitespace-prefixed comment is also ignored after .strip()\n"
++            "scripts/mole-last-sweep.log\n"
++            "scripts/archive-clean-last-sweep.log\n"
++        )
++        issues = check_gitignore_drift(tmp_path)
++        # The whitespace-prefixed line starts with "#" after strip, so it's
++        # treated as a comment — all 3 expected paths present → no issues.
++        assert issues == [], f"comments must be ignored, got: {issues}"
+diff --git a/mcp/noctusai/tools/noctus/dev/compliance.py b/mcp/noctusai/tools/noctus/dev/compliance.py
+index 3e1919b5..3aaedf71 100644
+--- a/mcp/noctusai/tools/noctus/dev/compliance.py
++++ b/mcp/noctusai/tools/noctus/dev/compliance.py
+@@ -2991,6 +2991,392 @@ def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
+     return issues
+ 
+ 
++# ---------------------------------------------------------------------------
++# Hygiene-compliance detectors — shipped 2026-05-11 by
++# `keeper-housekeeping-upgrade` Phase 1. The keeper trio (keeper/hound/mole)
++# already covers compliance/curatorial/storage; these four detectors close
++# the residual housekeeping gap where transient coordination state, archive
++# residue, dead branches, and gitignore drift accumulate silently and only
++# get caught by ad-hoc user requests ("clean the archive", "kill old
++# branches"). Per the `feedback_archive_clean_trigger` + the dispatcher-
++# inbox/outbox + mole-last-sweep gitignore decisions logged 2026-05-11.
++#
++# All four are `<platform>` / `<root>` scoped and emit at `warning` severity
++# by default — they are housekeeping, not contract violations. Escalation
++# rules (e.g. archive entries >7d → high) live inline.
++# ---------------------------------------------------------------------------
++
++
++_ARCHIVE_DIR_NAME = "archive"
++_ARCHIVE_DATE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++_DISPATCHER_INBOX_FILENAME = "dispatcher-inbox.md"
++_DISPATCHER_HEADING_RE = re.compile(
++    r"^###\s+(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})\s+[—-]\s+(.+?)\s*$",
++    re.MULTILINE,
++)
++_DISPATCHER_PENDING_RE = re.compile(
++    r"^##\s+Pending\s*$.*?(?=^##\s+|\Z)",
++    re.MULTILINE | re.DOTALL,
++)
++
++# Paths that should be in .gitignore — transient coordination artifacts,
++# log files, and `dispatcher-outbox.md` (operator-written outcomes, see
++# KB § PATTERNS/two-session-architect-operator.md). Extend when new
++# transient surfaces land; the detector flags missing entries, not
++# extra entries.
++_EXPECTED_GITIGNORE_PATHS: tuple[str, ...] = (
++    "dispatcher-outbox.md",
++    "scripts/mole-last-sweep.log",
++    "scripts/archive-clean-last-sweep.log",
++)
++
++
++def _parse_iso_date(s: str):
++    """Parse `YYYY-MM-DD` → date object, returning None on failure.
++
++    Kept local + tiny rather than reaching for `dateutil` — these detectors
++    only ever see the ISO date format the archive + dispatcher conventions
++    pin.
++    """
++    import datetime as _dt
++
++    try:
++        return _dt.date.fromisoformat(s)
++    except ValueError:
++        return None
++
++
++def check_archive_staleness(repo_root: Path | None = None) -> list[dict]:
++    """Detect date-stamped folders under `archive/<bucket>/YYYY-MM-DD/` that
++    are older than D-2 (D = today, D-1 = yesterday).
++
++    Why: per `feedback_archive_clean_trigger` (memory 2026-05-XX), the
++    convention is "keep today + yesterday, delete D-2+". Users currently
++    invoke `bash scripts/archive-clean.sh --force` manually; this detector
++    surfaces accumulation so the keeper can recommend the sweep.
++
++    Folder shape recognized: `archive/<bucket>/YYYY-MM-DD/` where `<bucket>`
++    is any subdir (projects/, features/, seed-absorption/, …). Folders
++    whose name doesn't match the ISO-date pattern are ignored — they're
++    typically README.md siblings or non-date-stamped buckets.
++
++    Severity:
++      - `warning` for stale entries within the first week (D-2 to D-7).
++      - `high` past 7 days (a long-overlooked accumulation).
++    """
++    import datetime as _dt
++
++    issues: list[dict] = []
++    root = repo_root or REPO_ROOT
++    archive_dir = root / _ARCHIVE_DIR_NAME
++    if not archive_dir.exists() or not archive_dir.is_dir():
++        return issues
++
++    today = _dt.date.today()
++    # Keep today + yesterday only. Any folder dated < yesterday → flag.
++    # I.e. threshold is yesterday (today - 1d); folders with date < threshold
++    # are stale.
++    threshold = today - _dt.timedelta(days=1)
++
++    for bucket in sorted(archive_dir.iterdir()):
++        if not bucket.is_dir() or bucket.name.startswith("."):
++            continue
++        for dated in sorted(bucket.iterdir()):
++            if not dated.is_dir():
++                continue
++            if not _ARCHIVE_DATE_NAME_RE.match(dated.name):
++                continue
++            d = _parse_iso_date(dated.name)
++            if d is None:
++                continue
++            if d >= threshold:
++                continue
++            age_days = (today - d).days
++            try:
++                rel = str(dated.relative_to(root))
++            except ValueError:
++                rel = str(dated)
++            severity = "high" if age_days > 7 else "warning"
++            issues.append({
++                "product": "<root>",
++                "file": rel,
++                "issue": (
++                    f"Archive entry `{rel}` is {age_days} days old "
++                    f"(threshold: keep today + yesterday only). Run "
++                    f"`bash scripts/archive-clean.sh --force` to trim "
++                    f"entries older than D-1. Per "
++                    f"`feedback_archive_clean_trigger`."
++                ),
++                "severity": severity,
++            })
++    return issues
++
++
++def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
++    """Detect entries in `dispatcher-inbox.md` `## Pending` section that
++    were appended >24h ago and never moved to `## Completed`.
++
++    Why: per `KB § PATTERNS/two-session-architect-operator.md`, the
++    inbox is a coordination channel — entries that sit there past 24h
++    indicate the operator session is offline or the entry got missed.
++    The keeper surfaces accumulation so the architect notices.
++
++    Entry shape recognized: `### YYYY-MM-DDTHH:MM — <SHORT-NAME>` per
++    the inbox-format scaffold. Entries inside `## Completed` are ignored.
++
++    Severity:
++      - `warning` for 24h–72h-old pending entries.
++      - `high` past 7 days (operator session likely abandoned).
++    """
++    import datetime as _dt
++
++    issues: list[dict] = []
++    root = repo_root or REPO_ROOT
++    inbox = root / _DISPATCHER_INBOX_FILENAME
++    if not inbox.exists() or not inbox.is_file():
++        return issues
++
++    try:
++        content = inbox.read_text(encoding="utf-8")
++    except (OSError, UnicodeDecodeError) as exc:
++        logger.warning("compliance: cannot read %s (%s)", inbox, exc)
++        return issues
++
++    pending_match = _DISPATCHER_PENDING_RE.search(content)
++    if pending_match is None:
++        return issues
++    pending_block = pending_match.group(0)
++
++    now = _dt.datetime.now()
++
++    for m in _DISPATCHER_HEADING_RE.finditer(pending_block):
++        date_str, hour_str, min_str, label = m.groups()
++        d = _parse_iso_date(date_str)
++        if d is None:
++            continue
++        try:
++            ts = _dt.datetime.combine(
++                d,
++                _dt.time(hour=int(hour_str), minute=int(min_str)),
++            )
++        except ValueError:
++            continue
++        age = now - ts
++        age_hours = age.total_seconds() / 3600.0
++        if age_hours < 24:
++            continue
++        severity = "high" if age.days > 7 else "warning"
++        issues.append({
++            "product": "<platform>",
++            "file": _DISPATCHER_INBOX_FILENAME,
++            "issue": (
++                f"Dispatcher pending entry `{date_str}T{hour_str}:{min_str} "
++                f"— {label}` is {age_hours:.0f}h old. The architect/operator "
++                f"split expects pending entries to drain within 24h. Either "
++                f"resume operator session and consume the entry, or move it "
++                f"to `## Completed` with a `❌ stale` marker. Per "
++                f"`KB § PATTERNS/two-session-architect-operator.md`."
++            ),
++            "severity": severity,
++        })
++    return issues
++
++
++def check_branch_orphan(repo_root: Path | None = None) -> list[dict]:
++    """Detect local branches whose last commit is >30 days old AND that
++    are either merged to `origin/main` or otherwise abandonable.
++
++    Why: in practice the platform accumulates hundreds of branches from
++    per-engineer worktrees. Merged branches >30d are pure clutter; deleting
++    them keeps `git branch` output legible and lets `bootstrap-worktree.sh`
++    find a clean tree faster.
++
++    Implementation:
++      - `git for-each-ref --format='%(refname:short)|%(committerdate:iso8601)' refs/heads/`
++        to enumerate local branches + last-commit date.
++      - For each, check merged-to-`origin/main` via `git merge-base --is-ancestor`.
++      - Flag with appropriate severity. NEVER deletes — observation-only
++        per the keeper-observation-only methodology.
++
++    Severity:
++      - `warning` per merged branch >30d old.
++      - `high` only if the merged-orphan count surpasses 50 (signals
++        bulk cleanup needed).
++    """
++    import subprocess
++    import datetime as _dt
++
++    issues: list[dict] = []
++    root = repo_root or REPO_ROOT
++    if not (root / ".git").exists() and not (root / ".git").is_file():
++        # Not a git repo (or detached working tree without .git pointer) — skip.
++        return issues
++
++    try:
++        result = subprocess.run(
++            [
++                "git", "-C", str(root),
++                "for-each-ref",
++                "--format=%(refname:short)|%(committerdate:iso8601)",
++                "refs/heads/",
++            ],
++            capture_output=True,
++            text=True,
++            timeout=15,
++            check=False,
++        )
++    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
++        logger.warning("compliance: git unavailable for branch-orphan check (%s); skipping", exc)
++        return issues
++
++    if result.returncode != 0:
++        return issues
++
++    today = _dt.date.today()
++    stale_threshold_days = 30
++    orphans: list[tuple[str, int]] = []
++
++    for line in result.stdout.splitlines():
++        if "|" not in line:
++            continue
++        name, date_str = line.split("|", 1)
++        name = name.strip()
++        date_str = date_str.strip()
++        if not name or name in {"main", "master"}:
++            continue
++        # Parse the date portion only — committerdate:iso8601 looks like
++        # `2026-04-12 18:23:11 +0000`. Ignoring the time + tz is fine for
++        # day-granularity staleness checks.
++        date_only = date_str.split(" ", 1)[0]
++        d = _parse_iso_date(date_only)
++        if d is None:
++            continue
++        age_days = (today - d).days
++        if age_days < stale_threshold_days:
++            continue
++
++        # Check merged-to-origin/main. If origin/main isn't fetched, skip
++        # the merged-check (don't flag everything as orphan in that case).
++        try:
++            merged = subprocess.run(
++                ["git", "-C", str(root), "merge-base", "--is-ancestor", name, "origin/main"],
++                capture_output=True,
++                text=True,
++                timeout=5,
++                check=False,
++            )
++        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
++            continue
++        if merged.returncode != 0:
++            # Not merged — leave alone; this branch may still hold WIP.
++            continue
++        orphans.append((name, age_days))
++
++    if not orphans:
++        return issues
++
++    # Emit individual entries up to a small cap to keep keeper output legible,
++    # plus one summary line at higher severity if the count breaches 50.
++    cap = 10
++    for name, age_days in orphans[:cap]:
++        issues.append({
++            "product": "<platform>",
++            "file": f".git/refs/heads/{name}",
++            "issue": (
++                f"Branch `{name}` is {age_days} days stale AND merged to "
++                f"`origin/main`. Safe to delete: "
++                f"`git branch -d {name}` (or `-D` if local-only commits "
++                f"are reflog-recoverable). Bulk cleanup: "
++                f"`bash scripts/cleanup-stale-worktrees.sh` cleans "
++                f"merged-branch worktrees + their dirs."
++            ),
++            "severity": "warning",
++        })
++    remaining = len(orphans) - cap
++    if remaining > 0:
++        issues.append({
++            "product": "<platform>",
++            "file": ".git/refs/heads/",
++            "issue": (
++                f"+{remaining} more stale-merged branches not listed "
++                f"(total: {len(orphans)}). Bulk cleanup: "
++                f"`git for-each-ref --merged origin/main --format='%(refname:short)' refs/heads/ "
++                f"| xargs -n1 git branch -d`."
++            ),
++            "severity": "high" if len(orphans) > 50 else "warning",
++        })
++    return issues
++
++
++def check_gitignore_drift(repo_root: Path | None = None) -> list[dict]:
++    """Detect expected transient-coordination paths missing from `.gitignore`.
++
++    Why: the platform has a small set of transient artifacts that MUST
++    stay untracked (`dispatcher-outbox.md`, `scripts/mole-last-sweep.log`,
++    `scripts/archive-clean-last-sweep.log`). Without explicit gitignore
++    entries an absent-minded `git add .` commits them, polluting history
++    with operator-only state.
++
++    The expected-paths list is the source of truth (`_EXPECTED_GITIGNORE_PATHS`).
++    When a new transient artifact lands, extend the tuple + amend this
++    detector's regression test — the detector then catches the drift
++    automatically across every checkout.
++
++    Severity:
++      - `warning` per missing entry — drift, not a contract violation.
++    """
++    issues: list[dict] = []
++    root = repo_root or REPO_ROOT
++    gitignore = root / ".gitignore"
++    if not gitignore.exists() or not gitignore.is_file():
++        # No .gitignore at all is a separate (much louder) problem;
++        # surface as a single high-severity entry.
++        issues.append({
++            "product": "<root>",
++            "file": ".gitignore",
++            "issue": (
++                "Repository has no `.gitignore` at root — every transient "
++                "artifact path is at risk of being tracked. Create one with "
++                "the standard NoctusAI exclusions."
++            ),
++            "severity": "high",
++        })
++        return issues
++
++    try:
++        content = gitignore.read_text(encoding="utf-8")
++    except (OSError, UnicodeDecodeError) as exc:
++        logger.warning("compliance: cannot read %s (%s)", gitignore, exc)
++        return issues
++
++    # Strip comments + blank lines; normalize each pattern.
++    patterns: set[str] = set()
++    for raw in content.splitlines():
++        line = raw.strip()
++        if not line or line.startswith("#"):
++            continue
++        patterns.add(line)
++
++    for expected in _EXPECTED_GITIGNORE_PATHS:
++        # Accept both exact match + leading-slash anchored form.
++        if expected in patterns or f"/{expected}" in patterns:
++            continue
++        issues.append({
++            "product": "<root>",
++            "file": ".gitignore",
++            "issue": (
++                f"Expected transient path `{expected}` is missing from "
++                f"`.gitignore`. Append the literal pattern to keep "
++                f"operator-only state from being tracked. The expected-paths "
++                f"list lives in `_EXPECTED_GITIGNORE_PATHS` in "
++                f"`mcp/noctusai/tools/noctus/dev/compliance.py` — extend when "
++                f"new transient surfaces land."
++            ),
++            "severity": "warning",
++        })
++    return issues
++
++
+ # ---------------------------------------------------------------------------
+ # `check_detector_has_regression_test` — every keeper detector ships with a
+ # colocated regression test. Enforces the platform-wide testing methodology
+@@ -3277,6 +3663,11 @@ def check_all_products() -> tuple[int, list]:
+     all_issues.extend(check_silent_errors())
+     all_issues.extend(check_clean_folder_violations())
+     all_issues.extend(check_section_7_placeholder_consistency())
++    # Hygiene-compliance globals — `keeper-housekeeping-upgrade` Phase 1.
++    all_issues.extend(check_archive_staleness())
++    all_issues.extend(check_dispatcher_staleness())
++    all_issues.extend(check_branch_orphan())
++    all_issues.extend(check_gitignore_drift())
+     all_issues.extend(check_detector_has_regression_test())
+ 
+     platform_score = round(sum(scores) / len(scores)) if scores else 100
+diff --git a/projects/keeper-housekeeping-upgrade/PROJECT.md b/projects/keeper-housekeeping-upgrade/PROJECT.md
+new file mode 100644
+index 00000000..b4c5917d
+--- /dev/null
++++ b/projects/keeper-housekeeping-upgrade/PROJECT.md
+@@ -0,0 +1,164 @@
++# Keeper Housekeeping Upgrade — Project Document
++
++> **This is a living document, not a rigid checklist.** Revise phases, fold in optimizations, update the Change Log as we learn.
++
++- **Created:** 2026-05-11
++- **Last updated:** 2026-05-11
++- **Status:** Design locked → Phase 1 ready
++- **Owner / stakeholders:** joaoraphaelsst · architect
++- **Related docs:** `KB § PATTERNS/seed-absorption.md § noctus.hound.scan`, `KB § PATTERNS/storage-hygiene.md` (mole), `mcp/noctusai/tools/noctus/dev/compliance.py` (keeper detectors), `KB § PATTERNS/autonomous-operator-via-subagent.md`
++- **Project slug:** `keeper-housekeeping-upgrade` at `projects/keeper-housekeeping-upgrade/` *(cross-cutting platform work)*
++
++---
++
++## 1. Context & Purpose
++
++Operator tick 2 (2026-05-11) surfaced four hygiene-compliance gaps that no current module patrols: archive folder rotation drift, dispatcher inbox/outbox staleness, merged-but-not-deleted git branch orphans, gitignore drift on coordination/log files. The trio today — **keeper** (regulatory), **hound** (curatorial code hygiene), **mole** (custodial disk storage) — has clean boundaries but leaves a "workspace hygiene as compliance" axis uncovered. User's instinct: housekeeping non-compliance IS compliance non-compliance, and the keeper's "detect + propose, never modify" stance fits perfectly.
++
++**The win:** keeper grows a second compliance axis (hygiene) without becoming a fourth identity. Operator + architect get an active monitor that surfaces "your archive is stale" / "your inbox has 26 entries older than 24h" / "12 merged branches haven't been deleted" as proposals, exactly mirroring LGPD / webhook-pin findings.
++
++---
++
++## 2. Confirmed constraints
++
++- **Single identity, two axes** — *(user 2026-05-11: "Make this keeper upgrade. Not as a separate identity")*. Keeper hosts all compliance checks; hygiene is a new category, not a new module. Hound and mole stay in their lanes.
++- **Observation-only stance preserved** — *(`feedback_keeper_observation_only.md`)*. New detectors propose; never modify files. Mole + archive-clean remain the execution layer.
++- **Severity calibration** — *(`feedback_first_run_keeper_warning_triage`)*. New detectors emit `warning` severity by default.
++- **Regression-test-the-detector** — *(`feedback_regression_test_the_detector.md`)*. Every new `check_*` ships a colocated `Test<CamelCase>`. Non-negotiable.
++- **Three-way sync** — KB pattern doc + memory entry land together. CLAUDE.md routing pointer only if warranted.
++
++---
++
++## 3. Design principles
++
++1. **Hygiene is a compliance category, not a code-hygiene category.** Code DRY violations stay in hound. Workspace hygiene is the keeper's domain because the unit-of-judgment is "does the workspace honor its convention?" — same shape as "does this router honor webhook 5-pin?"
++2. **Each new detector emits a proposal pointing at the correct executor.** Keeper proposes; mole/scripts/engineer executes.
++3. **Reuse existing scaffolding.** New detectors mount into `compliance.py`'s global-checks bucket. No new MCP tool.
++4. **Default-on for all four.** Severity `warning` keeps them from the `error` floor.
++
++---
++
++## 3a. Seed-first analysis
++
++1. Identical-for-every-product? N/A — these are **repo-wide** checks, not per-product. They run in the global-checks bucket alongside existing `seed_version_propagation`, `phase_state_consistency`, `section_seven_placeholder_parity`.
++2. Data source product-specific? No — filesystem state of `archive/`, `dispatcher-*.md`, `git branch -a`, `.gitignore`.
++3. Placement product-specific? No — `mcp/noctusai/tools/noctus/dev/compliance.py` global-checks section.
++4. Visibility/permission uniform? Yes — keeper reports to architect.
++5. Seam exists in seed? Yes — the global-checks pattern.
++6. Default-on or opt-in? Default-on with `warning`.
++
++**Litmus — per-product code count: 0 lines.** ✅
++
++**Phase plan implications:** §6 works in `compliance.py` global-checks scope. No per-product walking.
++
++---
++
++## 4. Scope
++
++**In scope:**
++- Add 4 new `check_*` functions to `compliance.py` global-checks section: `check_archive_staleness`, `check_dispatcher_staleness`, `check_branch_orphan`, `check_gitignore_drift`.
++- 4 colocated regression tests.
++- Update `KB § PATTERNS/storage-hygiene.md` trio table to clarify keeper now covers hygiene-compliance.
++- Memory entry capturing the new compliance axis.
++- Drive-by: add `dispatcher-outbox.md` + `scripts/mole-last-sweep.log` + `scripts/archive-clean-last-sweep.log` (if exists) to `.gitignore`.
++
++**Out of scope:**
++- New `noctus.housekeeper.*` MCP namespace.
++- Mole expansion.
++- Hound expansion.
++- Automatic remediation. Keeper proposes; user/operator executes.
++
++---
++
++## 5. Files to touch
++
++- `mcp/noctusai/tools/noctus/dev/compliance.py`
++- `mcp/noctusai/tests/test_compliance_hygiene.py` (NEW)
++- `KNOWLEDGE-BASE/CONTEXT/PATTERNS/storage-hygiene.md`
++- `.gitignore`
++- `dispatcher-inbox.md` — engineer decides whether to untrack via `git rm --cached` + re-add as `dispatcher-inbox.template.md` (tracked, format-only) OR keep tracked + gitignore an alternate "live" path. Document the choice in §11.
++
++---
++
++## 6. Phase plan
++
++### Phase 1 — Detector scaffolding + tests (single engineer K, single PR)
++
++**1.1** Read `compliance.py` global-checks section end-to-end. Identify registration pattern (likely a list near `_detect_global` or similar).
++
++**1.2** Implement 4 `check_*` functions:
++
++| Detector | Trigger | Proposal text |
++|---|---|---|
++| `check_archive_staleness` | `archive/projects/<YYYY-MM-DD>/` folders older than D-2 (local time) | "Archive contains N stale folder(s); run `bash scripts/archive-clean.sh --force`." |
++| `check_dispatcher_staleness` | Entries in `dispatcher-inbox.md` or `dispatcher-outbox.md` with `### YYYY-MM-DDTHH:MM` timestamps >24h not under `## Completed (last 24h)` | "N dispatcher entries >24h not rotated; prune or escalate to dispatcher-archive." |
++| `check_branch_orphan` | `git for-each-ref` filtered to branches reachable from `origin/main` (SHA or patch-id), excluding `main` | "N branches merged but not deleted; `git branch -d <name>` (local) / `git push origin --delete <name>` (remote)." |
++| `check_gitignore_drift` | Known transient paths exist OR are tracked but should be ignored. Initial list: `dispatcher-outbox.md`, `scripts/mole-last-sweep.log`, `scripts/archive-clean-last-sweep.log`, anything under `.claude/worktrees/` | "N coordination/log files not gitignored; patch `.gitignore` + `git rm --cached` if tracked." |
++
++Each returns the existing `KeeperFinding` shape with `severity='warning'`, `category='hygiene'`, `detector_id='hygiene.<name>'`. Engineer reads `compliance.py` for the exact constructor.
++
++**1.3** Wire into the global-checks list. Verify `noctus.dev.review` (or equivalent CLI mode) fires all four.
++
++**1.4** Colocated tests in `mcp/noctusai/tests/test_compliance_hygiene.py`:
++- `TestArchiveStaleness` — temp `archive/projects/<3-days-ago>/`; assert detector fires + proposal mentions `--force`. Teardown cleans up.
++- `TestDispatcherStaleness` — temp inbox with 48h-old entry; assert fires.
++- `TestBranchOrphan` — mock `for-each-ref` output OR set up tmp git repo; assert fires on merged branch + skips unmerged.
++- `TestGitignoreDrift` — touch `dispatcher-outbox.md`; assert fires.
++
++Tests follow status+body assertion rule (`feedback_status_code_assertion_rule.md`): assert severity AND proposal body together.
++
++**1.5** Drive-by `.gitignore` patch: add `dispatcher-outbox.md`, `scripts/mole-last-sweep.log`, `scripts/archive-clean-last-sweep.log`. Decide and document the `dispatcher-inbox.md` tracking shape.
++
++### Phase 2 — KB + memory sync (architect post-Phase 1 merge)
++
++**2.1** Amend `KB § PATTERNS/storage-hygiene.md` trio table — add hygiene-compliance note to keeper row.
++
++**2.2** Memory entry: new compliance axis on the keeper.
++
++**2.3** §11 Change Log entry in this PROJECT.md.
++
++### Phase 3 — Project close (architect)
++
++Mark Status: Done. FF-merge to main (already merged per phase). Archive via `noctus.dev.archive`.
++
++---
++
++## 7. Open questions
++
++(none active — design locked with user 2026-05-11)
++
++---
++
++## 8. Risks & mitigations
++
++- **Detector noise** — fresh clone has zero state → all four pass silently. First real-world run surfaces real findings; user triages once. *Mitigation:* `warning` severity floor.
++- **Branch-orphan over-detection** — with 150+ commits today this list could be N=20+. *Mitigation:* proposal includes the count and a batch-delete one-liner.
++- **Dispatcher-staleness parser brittleness** — depends on heading format. *Mitigation:* test covers current format; format changes trigger parser update.
++
++---
++
++## 9. Success criteria
++
++- 4 new `check_*` functions in `compliance.py` with colocated tests.
++- `noctus.dev.review` global-mode surfaces real findings on this repo's state (≥1 from each detector — verified manually).
++- KB pattern doc updated; memory entry written.
++- 3 transient files gitignored; `dispatcher-inbox.md` tracking shape decided + documented.
++
++---
++
++## 10. Copy-paste commands
++
++```bash
++cd /Users/rapha/Documents/repository/NoctusAI/noctusai
++python -m pytest mcp/noctusai/tests/test_compliance_hygiene.py -v
++# Verify wiring (exact flag depends on cli.py):
++python mcp/noctusai/cli.py --review --globals-only
++bash scripts/verify-kb-sync.sh
++```
++
++---
++
++## 11. Change log
++
++- **2026-05-11** — Project filed. Design locked with user: "all 4 detectors in one pass". Engineer K dispatch authorized.
++- **2026-05-11** — Phase 1 shipped (Engineer K). 4 hygiene-compliance detectors landed in `mcp/noctusai/tools/noctus/dev/compliance.py` + colocated regression suite (`tests/test_compliance_hygiene.py`, 19 tests green) + drive-by `.gitignore` patch (dispatcher-outbox + 2 sweep logs). All wired into `check_all_products()` global-checks section. Real-repo live findings: archive=0, dispatcher=0, branch-orphan=0 (all 290 local branches are recent), gitignore-drift=3 (closed by the drive-by patch). Tracking-shape decision for `dispatcher-inbox.md`: **kept tracked as-is** (scaffold file with header docstring + section structure — keeping it in history lets fresh clones bootstrap the two-session pattern without an extra setup step; `dispatcher-outbox.md` is the operator-only churn surface and that one IS gitignored).
+-- 
+2.51.2
+
+
+From 1020e32ef98a697ebb512d9170266ed1b052f393 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:52 -0300
+Subject: [PATCH 2/2] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20sna?=
+ =?UTF-8?q?pshot=20=E2=80=94=20agent-a94cc7de313f7aebc?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ seed/framework/backend/noctusai_seed.egg-info/PKG-INFO    | 2 +-
+ seed/framework/backend/noctusai_seed.egg-info/SOURCES.txt | 7 +++++--
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/seed/framework/backend/noctusai_seed.egg-info/PKG-INFO b/seed/framework/backend/noctusai_seed.egg-info/PKG-INFO
+index 791c4898..6a2b6377 100644
+--- a/seed/framework/backend/noctusai_seed.egg-info/PKG-INFO
++++ b/seed/framework/backend/noctusai_seed.egg-info/PKG-INFO
+@@ -1,4 +1,4 @@
+-Metadata-Version: 2.4
++Metadata-Version: 2.1
+ Name: noctusai-seed
+ Version: 0.1.0
+ Summary: NoctusAI Seed Framework — structural bones for all products
+diff --git a/seed/framework/backend/noctusai_seed.egg-info/SOURCES.txt b/seed/framework/backend/noctusai_seed.egg-info/SOURCES.txt
+index 2fe79629..5d47cc97 100644
+--- a/seed/framework/backend/noctusai_seed.egg-info/SOURCES.txt
++++ b/seed/framework/backend/noctusai_seed.egg-info/SOURCES.txt
+@@ -1,21 +1,24 @@
+ pyproject.toml
+ noctusai_seed/__init__.py
+ noctusai_seed/_version.py
+-noctusai_seed/_version_static.py
+ noctusai_seed/ai_feedback_router.py
+ noctusai_seed/ai_router.py
+ noctusai_seed/app.py
+ noctusai_seed/config.py
+ noctusai_seed/database.py
+ noctusai_seed/dependencies.py
++noctusai_seed/health.py
+ noctusai_seed/llm_defaults.py
+ noctusai_seed/llm_router.py
+ noctusai_seed/rate_limit.py
+ noctusai_seed/routers.py
++noctusai_seed/scheduler_router.py
+ noctusai_seed.egg-info/PKG-INFO
+ noctusai_seed.egg-info/SOURCES.txt
+ noctusai_seed.egg-info/dependency_links.txt
+ noctusai_seed.egg-info/requires.txt
+ noctusai_seed.egg-info/top_level.txt
+ tests/test_ai_feedback_router.py
+-tests/test_build_standard_routers.py
+\ No newline at end of file
++tests/test_build_standard_routers.py
++tests/test_dependencies_deprecation.py
++tests/test_health.py
+\ No newline at end of file
+-- 
+2.51.2
+

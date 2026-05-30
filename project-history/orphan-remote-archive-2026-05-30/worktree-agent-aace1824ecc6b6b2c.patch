@@ -1,0 +1,1788 @@
+From 8215526458d816ec60f523d3d765c5cbbcbd5e0b Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 14:20:49 -0300
+Subject: [PATCH] =?UTF-8?q?wip(imobi-scheduling):=20Phase=209=20P0/P1=20?=
+ =?UTF-8?q?=E2=80=94=20cancel=20+=20reschedule=20service=20methods=20+=20t?=
+ =?UTF-8?q?ests=20(7=20red)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Engineer DDD stalled at watchdog timeout (600s) mid-debug. Substantial work
+landed in the worktree but never committed. Committing as WIP for finisher
+engineer DDD2 to pick up:
+
+Files (10):
+- migration 002_appointment_audit_columns.sql — new audit columns (status,
+  cancellation_reason, cancelled_at, cancelled_by, rescheduled_at, rescheduled_by)
+- 001_imobi_scheduling.sql — possibly amended for audit-column shape
+- services/scheduling.py — cancel_appointment + reschedule_appointment + new
+  calendar_event_canceler / calendar_event_updater seams
+- services/calendar.py + services/conversation.py + services/tool_registry.py
+  — wiring + tool registry additions
+- prompts/scheduling_bot.md — confirmation-flow prompt updates
+- tests/services/test_{conversation,scheduling,tool_registry}.py — 16 new tests;
+  7 failing in TestServiceCancelAppointment + TestServiceRescheduleAppointment
+
+Pytest baseline (Phase 8 close): 292 passed. Current: 308 collected / 301 pass
+/ 7 fail (all in the new cancel+reschedule test classes — DDD was debugging
+when watchdog fired).
+
+DDD2 task: fetch this branch, copy the 10 files into a fresh worktree, fix
+the 7 failing tests, close Phase 9.
+
+NOT FF-merged to main — finisher takes over from this commit.
+
+Co-Authored-By: Engineer DDD (stalled-mid-debug; salvaged by orchestrator)
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md        |   4 +-
+ .../backend/app/prompts/scheduling_bot.md     |  22 +
+ .../backend/app/services/calendar.py          |  95 +++
+ .../backend/app/services/conversation.py      |  16 +-
+ .../backend/app/services/scheduling.py        | 501 ++++++++++++++-
+ .../backend/app/services/tool_registry.py     | 207 ++++++-
+ .../migrations/001_imobi_scheduling.sql       |  14 +
+ .../002_appointment_audit_columns.sql         |  36 ++
+ .../tests/services/test_conversation.py       |   8 +-
+ .../backend/tests/services/test_scheduling.py | 576 ++++++++++++++++++
+ .../tests/services/test_tool_registry.py      |   8 +-
+ 11 files changed, 1477 insertions(+), 10 deletions(-)
+ create mode 100644 products/imobi-scheduling/backend/migrations/002_appointment_audit_columns.sql
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+index 9969d7a0..44d1e69e 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+@@ -41,8 +41,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Dev Team | 0 | 2 | 6 | 0 | 3 | 43 |
+ | Media Scheduling | 5 | 8 | 10 | 3 | 13 | 56 |
+ | YouTube Crawler | 0 | 0 | 7 | 0 | 3 | 0 |
+-| Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 185 |
+-| **Total** | **178** | **172** | **275** | **137** | **369** | **4,547** |
++| Imobi Scheduling | 3 | 8 | 8 | 1 | 16 | 199 |
++| **Total** | **178** | **172** | **275** | **137** | **369** | **4,561** |
+ <!-- kb-counts:end:inventory -->
+ 
+ ## Database
+diff --git a/products/imobi-scheduling/backend/app/prompts/scheduling_bot.md b/products/imobi-scheduling/backend/app/prompts/scheduling_bot.md
+index 34e4fd0d..b43cabb1 100644
+--- a/products/imobi-scheduling/backend/app/prompts/scheduling_bot.md
++++ b/products/imobi-scheduling/backend/app/prompts/scheduling_bot.md
+@@ -33,6 +33,15 @@ equipe de mídia e para o próprio corretor. Você TEM ferramentas para isso e D
+   no calendário e envia confirmações pelo WhatsApp para o corretor e a equipe. SÓ chame
+   após o corretor confirmar TODOS os detalhes (imóvel, serviços, data, horário) de forma
+   explícita.
++- `cancel_appointment(appointment_id, reason?)`: cancela um agendamento existente. SÓ
++  chame APÓS perguntar de forma explícita "Confirma o cancelamento do agendamento em
++  <data> <hora>?" e receber um SIM claro do corretor. Idempotente — cancelar de novo
++  retorna status informativo, não erro.
++- `reschedule_appointment(appointment_id, new_start_at, new_end_at)`: reagenda um
++  agendamento existente. SÓ chame APÓS perguntar de forma explícita "Confirma mover de
++  <horário antigo> para <horário novo>?" e receber um SIM claro. Re-valida o novo
++  horário antes de gravar; se conflitar, chame `propose_appointment` novamente para
++  sugerir alternativas.
+ 
+ ## REGRAS
+ 
+@@ -45,6 +54,19 @@ equipe de mídia e para o próprio corretor. Você TEM ferramentas para isso e D
+ - Após confirmar agendamento, mencione brevemente que o corretor e a equipe receberam
+   o link do calendário pelo WhatsApp.
+ 
++## CANCELAMENTO E REAGENDAMENTO — ETAPA DE CONFIRMAÇÃO OBRIGATÓRIA
++
++- Nunca invoque `cancel_appointment` nem `reschedule_appointment` sem antes fazer uma
++  pergunta de confirmação clara. O corretor precisa responder "sim" / "confirma" /
++  equivalente. Pedidos ambíguos ("acho que vou cancelar...") NÃO autorizam a chamada.
++- Reformule de forma simples antes de pedir a confirmação. Exemplo: "Quer cancelar
++  o agendamento de amanhã 10h no Aurora 2034? Posso prosseguir?"
++- Se o corretor pedir para reagendar mas não passar horário novo, chame
++  `propose_appointment` PRIMEIRO para sugerir candidatos; só depois peça a confirmação
++  e invoque `reschedule_appointment`.
++- Se a ferramenta retornar `conflict`, explique que aquele horário não está livre e
++  ofereça chamar `propose_appointment` para sugerir outros horários.
++
+ ## SERVIÇOS DISPONÍVEIS
+ 
+ `photos`, `videos`, `reels`, `virtual_tour`. "Pacote completo" = os quatro.
+diff --git a/products/imobi-scheduling/backend/app/services/calendar.py b/products/imobi-scheduling/backend/app/services/calendar.py
+index ffbdc138..b9247432 100644
+--- a/products/imobi-scheduling/backend/app/services/calendar.py
++++ b/products/imobi-scheduling/backend/app/services/calendar.py
+@@ -415,11 +415,106 @@ def create_calendar_event(
+     return module.adapter.create_event(target_calendar, event)
+ 
+ 
++# ---------------------------------------------------------------------------
++# Phase 9 — cancel + update wrappers
++# ---------------------------------------------------------------------------
++
++
++def cancel_calendar_event(
++    *,
++    event_id: str,
++    calendar_id: Optional[str] = None,
++) -> None:
++    """Delete a previously-created Calendar event.
++
++    Phase 9 wires this into ``SchedulingService.cancel_appointment`` as the
++    ``calendar_event_canceler`` seam. Failure during deletion is LOGGED but
++    NOT raised back through the service — the DB-side status flip to
++    ``cancelled`` must succeed even when Calendar deletion fails (the user
++    can clean up stale events manually; double-cancellation would leave the
++    DB in an inconsistent state).
++
++    Args:
++        event_id: The Google Calendar event id (``google_calendar_event_id``
++            on the appointment row).
++        calendar_id: Override default; falls back to module's
++            ``default_calendar_id``.
++
++    Raises:
++        RuntimeError: If the module is not configured.
++    """
++    module = get_calendar_module()
++    target_calendar = calendar_id or module.default_calendar_id
++    module.adapter.delete_event(target_calendar, event_id)
++
++
++def update_calendar_event(
++    *,
++    event_id: str,
++    summary: str,
++    start_at: Any,
++    end_at: Any,
++    timezone: str,
++    appointment_request_id: str,
++    description: Optional[str] = None,
++    location: Optional[str] = None,
++    attendee_emails: Optional[list[str]] = None,
++    calendar_id: Optional[str] = None,
++) -> CreatedEvent:
++    """Update a Calendar event (used by reschedule).
++
++    Same ``request_id`` derivation as ``create_calendar_event`` — the
++    seed adapters keep the existing event_id intact and mutate
++    start/end/description/etc. The ``EventInput.request_id`` is stamped on
++    the body so Fake-adapter tests can verify stability.
++
++    Args:
++        event_id: The existing event id to update.
++        summary / start_at / end_at / timezone / appointment_request_id /
++        description / location / attendee_emails: Same as
++        ``create_calendar_event``.
++        calendar_id: Override default; falls back to module's
++            ``default_calendar_id``.
++
++    Returns:
++        The seed's ``CreatedEvent`` value object reflecting the post-update
++        body (event_id + html_link + raw).
++
++    Raises:
++        RuntimeError: If the module is not configured.
++    """
++    module = get_calendar_module()
++    target_calendar = calendar_id or module.default_calendar_id
++
++    request_id = make_request_id(
++        appointment_request_id=appointment_request_id,
++        start_at_iso=start_at.isoformat(),
++    )
++    attendees = (
++        [EventAttendee(email=email) for email in attendee_emails]
++        if attendee_emails
++        else []
++    )
++    event = EventInput(
++        summary=summary,
++        start_at=start_at,
++        end_at=end_at,
++        timezone=timezone,
++        description=description,
++        location=location,
++        attendees=attendees,
++        request_id=request_id,
++    )
++    return module.adapter.update_event(target_calendar, event_id, event)
++
++
+ __all__ = [
+     "CalendarModule",
+     "SupabaseCalendarCredentialResolver",
++    "cancel_calendar_event",
+     "configure_calendar_module",
+     "create_calendar_event",
+     "get_calendar_module",
+     "make_request_id",
++    "update_calendar_event",
+ ]
+diff --git a/products/imobi-scheduling/backend/app/services/conversation.py b/products/imobi-scheduling/backend/app/services/conversation.py
+index d7ef31f8..22bbf1e1 100644
+--- a/products/imobi-scheduling/backend/app/services/conversation.py
++++ b/products/imobi-scheduling/backend/app/services/conversation.py
+@@ -80,7 +80,12 @@ from noctusai_lib.integrations.redis import (
+ from noctusai_lib.primitives.tasks import schedule_coro
+ 
+ from app.config import settings
+-from app.services.calendar import create_calendar_event, get_calendar_module
++from app.services.calendar import (
++    cancel_calendar_event,
++    create_calendar_event,
++    get_calendar_module,
++    update_calendar_event,
++)
+ from app.services.maps import get_maps_module
+ from app.services.scheduling import SchedulingService, build_rules
+ from app.services.tool_audit import make_supabase_audit_writer
+@@ -264,9 +269,16 @@ def configure_conversation_module(
+         )
+ 
+     calendar_factory = None
++    calendar_canceler = None
++    calendar_updater = None
+     try:
+         get_calendar_module()
+         calendar_factory = create_calendar_event
++        # Phase 9 — wire cancel + update seams too. Same module-level check;
++        # all three seams travel together (a configured Calendar module
++        # supports the full create/update/delete trio).
++        calendar_canceler = cancel_calendar_event
++        calendar_updater = update_calendar_event
+     except RuntimeError:
+         logger.info(
+             "Calendar module not configured; SchedulingService.confirm_appointment "
+@@ -279,6 +291,8 @@ def configure_conversation_module(
+         rules=build_rules(settings),
+         travel_lookup=travel_lookup,
+         calendar_event_factory=calendar_factory,
++        calendar_event_canceler=calendar_canceler,
++        calendar_event_updater=calendar_updater,
+     )
+ 
+     worker = ConversationWorker(
+diff --git a/products/imobi-scheduling/backend/app/services/scheduling.py b/products/imobi-scheduling/backend/app/services/scheduling.py
+index 81643ec1..cceb2042 100644
+--- a/products/imobi-scheduling/backend/app/services/scheduling.py
++++ b/products/imobi-scheduling/backend/app/services/scheduling.py
+@@ -63,7 +63,7 @@ from __future__ import annotations
+ import json
+ import logging
+ from dataclasses import dataclass
+-from datetime import date, datetime, time
++from datetime import date, datetime, time, timezone
+ from typing import Any, Callable, Optional
+ from uuid import UUID
+ from zoneinfo import ZoneInfo
+@@ -92,6 +92,22 @@ from noctusai_lib.domain.scheduling import (
+ # Phase 8 wires this from ``app.services.calendar.create_calendar_event``.
+ CalendarEventFactory = Callable[..., str]
+ 
++
++# CalendarEventCanceler: deletes a previously-created Calendar event by id.
++# Phase 9 wires this from ``app.services.calendar.cancel_calendar_event``.
++# Failure to delete is LOGGED but does NOT abort the DB-side cancellation
++# flip — the user-visible "cancelled" state must land even if the Calendar
++# side is unreachable (double-flip on the next retry would corrupt the DB).
++CalendarEventCanceler = Callable[..., None]
++
++
++# CalendarEventUpdater: updates a previously-created Calendar event's
++# start/end + summary metadata. Phase 9 wires this from
++# ``app.services.calendar.update_calendar_event``. On failure the service
++# LOGS + falls back to deleting + re-creating the event id (the consumer
++# decides; this module just routes through the seam).
++CalendarEventUpdater = Callable[..., Any]
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -225,6 +241,35 @@ class ConfirmationResult:
+     reason: Optional[str] = None
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class CancellationResult:
++    """Outcome of `cancel_appointment`. `cancelled=False` means the row
++    was not in a cancellable state (already cancelled / completed / not
++    found). ``calendar_deleted`` separates the DB-side flip from the
++    Calendar-side deletion — a True DB flip with False Calendar deletion
++    is reported, not raised (caller logs + user can clean stale event).
++    """
++
++    cancelled: bool
++    appointment_id: Optional[str] = None
++    calendar_deleted: bool = False
++    reason: Optional[str] = None
++
++
++@dataclass(frozen=True, slots=True)
++class RescheduleResult:
++    """Outcome of `reschedule_appointment`. ``rescheduled=False`` means
++    the new slot conflicts, the row was not in a reschedulable state,
++    or the property/lookup failed. ``calendar_updated`` separates the
++    DB-side flip from the Calendar-side update.
++    """
++
++    rescheduled: bool
++    appointment_id: Optional[str] = None
++    calendar_updated: bool = False
++    reason: Optional[str] = None
++
++
+ # ---------------------------------------------------------------------------
+ # SchedulingService — DB orchestration + tool-call handlers
+ # ---------------------------------------------------------------------------
+@@ -255,6 +300,8 @@ class SchedulingService:
+         extra_conflicts: list[Conflict] | None = None,
+         scorer: Scorer | None = None,
+         calendar_event_factory: CalendarEventFactory | None = None,
++        calendar_event_canceler: CalendarEventCanceler | None = None,
++        calendar_event_updater: CalendarEventUpdater | None = None,
+     ) -> None:
+         self._client = admin_client
+         self._org_id = str(org_id)
+@@ -272,6 +319,13 @@ class SchedulingService:
+         # never lands. None preserves the Phase 7 DB-only path used by
+         # the existing test suite + early-dev.
+         self._calendar_event_factory = calendar_event_factory
++        # Phase 9 seams — wired by lifespan from
++        # ``app.services.calendar.cancel_calendar_event`` +
++        # ``app.services.calendar.update_calendar_event``. When absent
++        # (test paths / pre-Phase-9 wiring), cancellation/reschedule
++        # operate on the DB row only.
++        self._calendar_event_canceler = calendar_event_canceler
++        self._calendar_event_updater = calendar_event_updater
+ 
+     # ------------------------------------------------------------------
+     # Tool: lookup_property
+@@ -536,6 +590,403 @@ class SchedulingService:
+             appointment_id=appt_id,
+         )
+ 
++    # ------------------------------------------------------------------
++    # Tool: cancel_appointment (Phase 9)
++    # ------------------------------------------------------------------
++
++    def cancel_appointment(
++        self,
++        *,
++        appointment_id: str,
++        reason: str | None = None,
++        requester_user_id: str | None = None,
++    ) -> CancellationResult:
++        """Cancel a previously-confirmed appointment.
++
++        Flow:
++
++          1. Fetch the appointment row by id; validate it's in
++             ``status='scheduled'`` (idempotent — already-cancelled rows
++             return ``cancelled=False`` with reason so the LLM can read
++             back a stable "already cancelled" payload).
++          2. Flip status to ``cancelled``; write cancellation audit columns
++             (``cancellation_reason``, ``cancelled_at``, ``cancelled_by``).
++          3. If the row carries a ``google_calendar_event_id`` AND a
++             ``calendar_event_canceler`` is wired, delete the Calendar
++             event. Failure LOGS but does NOT roll back the DB flip — a
++             stale Calendar event is recoverable; a desynced DB state
++             would corrupt future propose/confirm conflict re-checks.
++
++        Args:
++            appointment_id: UUID of the row to cancel.
++            reason: Free-text cancellation reason from the user.
++            requester_user_id: Optional UUID for the audit trail
++                (``cancelled_by``).
++
++        Returns:
++            `CancellationResult` — ``cancelled=True`` on success,
++            ``cancelled=False`` when row is missing / not in a
++            cancellable state. ``calendar_deleted`` reflects the Calendar
++            side outcome independently.
++        """
++        # Fetch the row to validate state + capture event id.
++        try:
++            response = (
++                self._scoped
++                .table("appointments")
++                .select("id, status, google_calendar_event_id, org_id")
++                .eq("id", appointment_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++        except Exception as exc:  # noqa: BLE001 — DB fetch surfaced loud.
++            logger.warning(
++                "Cancel fetch failed: appointment_id=%s err=%s",
++                appointment_id, exc,
++            )
++            return CancellationResult(
++                cancelled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment fetch failed: {exc}",
++            )
++
++        rows = response.data or []
++        if not rows:
++            return CancellationResult(
++                cancelled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment not found: {appointment_id!r}",
++            )
++
++        row = rows[0]
++        status = row.get("status")
++        if status != "scheduled":
++            # Idempotent: already-cancelled returns a stable "not cancelled
++            # again" signal; the LLM reads the reason and replies naturally.
++            return CancellationResult(
++                cancelled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment status is {status!r}; only 'scheduled' may be cancelled",
++            )
++
++        google_event_id = row.get("google_calendar_event_id")
++
++        # DB-side flip FIRST. Calendar delete follows + is best-effort.
++        now_iso = _now_utc_iso()
++        update_payload: dict[str, Any] = {
++            "status": "cancelled",
++            "cancellation_reason": reason,
++            "cancelled_at": now_iso,
++        }
++        if requester_user_id:
++            update_payload["cancelled_by"] = requester_user_id
++
++        try:
++            (
++                self._scoped
++                .table("appointments")
++                .update(update_payload)
++                .eq("id", appointment_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++        except Exception as exc:  # noqa: BLE001 — DB update surfaced loud.
++            logger.warning(
++                "Cancel DB update failed: appointment_id=%s err=%s",
++                appointment_id, exc,
++            )
++            return CancellationResult(
++                cancelled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment update failed: {exc}",
++            )
++
++        # Calendar delete (best-effort). The DB is already flipped — a
++        # failure here leaves a stale Calendar event but the booking is
++        # gone from the user's perspective.
++        calendar_deleted = False
++        if google_event_id and self._calendar_event_canceler is not None:
++            try:
++                self._calendar_event_canceler(event_id=google_event_id)
++                calendar_deleted = True
++            except Exception as exc:  # noqa: BLE001 — best-effort delete.
++                logger.warning(
++                    "Calendar event deletion failed (DB cancellation already landed): "
++                    "appointment_id=%s event_id=%s err=%s",
++                    appointment_id, google_event_id, exc,
++                )
++
++        return CancellationResult(
++            cancelled=True,
++            appointment_id=appointment_id,
++            calendar_deleted=calendar_deleted,
++        )
++
++    # ------------------------------------------------------------------
++    # Tool: reschedule_appointment (Phase 9)
++    # ------------------------------------------------------------------
++
++    def reschedule_appointment(
++        self,
++        *,
++        appointment_id: str,
++        new_start_at: datetime | str,
++        new_end_at: datetime | str,
++        requester_user_id: str | None = None,
++    ) -> RescheduleResult:
++        """Move a confirmed appointment to a new slot.
++
++        Flow:
++
++          1. Fetch the row by id; validate ``status='scheduled'``.
++          2. Re-validate the new slot against current bookings via the
++             same `DefaultConflict` rule used by `confirm_appointment` —
++             a conflict returns ``rescheduled=False`` with reason. The
++             row's OWN appointment is excluded from the conflict-check
++             interval list (otherwise it would conflict with itself).
++          3. Capture ``previous_start_at`` / ``previous_end_at`` for the
++             audit trail; update ``start_at`` / ``end_at`` + audit columns
++             (``rescheduled_at``, ``rescheduled_by``).
++          4. If the row carries a ``google_calendar_event_id`` AND a
++             ``calendar_event_updater`` is wired, update the Calendar
++             event. Same best-effort semantics as cancellation — failure
++             LOGS but does not roll back the DB-side update.
++
++        Args:
++            appointment_id: UUID of the row to reschedule.
++            new_start_at / new_end_at: New slot (tz-aware datetime or
++                ISO-8601 string; naïve strings are localized to the
++                rules timezone).
++            requester_user_id: Optional UUID for the audit trail
++                (``rescheduled_by``).
++
++        Returns:
++            `RescheduleResult` — ``rescheduled=True`` on success;
++            ``rescheduled=False`` on conflict / not-found / wrong-status.
++            ``calendar_updated`` reflects the Calendar side outcome.
++        """
++        new_start = _coerce_aware_datetime(new_start_at, self.rules.timezone)
++        new_end = _coerce_aware_datetime(new_end_at, self.rules.timezone)
++        if new_end <= new_start:
++            return RescheduleResult(
++                rescheduled=False,
++                appointment_id=appointment_id,
++                reason="new_end_at must be strictly after new_start_at",
++            )
++
++        # Fetch the row to validate state + capture event id + condo.
++        try:
++            response = (
++                self._scoped
++                .table("appointments")
++                .select(
++                    "id, status, google_calendar_event_id, condominium_id, "
++                    "property_id, start_at, end_at, appointment_request_id, "
++                    "media_crew_user_id, org_id"
++                )
++                .eq("id", appointment_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++        except Exception as exc:  # noqa: BLE001 — DB fetch surfaced loud.
++            logger.warning(
++                "Reschedule fetch failed: appointment_id=%s err=%s",
++                appointment_id, exc,
++            )
++            return RescheduleResult(
++                rescheduled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment fetch failed: {exc}",
++            )
++
++        rows = response.data or []
++        if not rows:
++            return RescheduleResult(
++                rescheduled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment not found: {appointment_id!r}",
++            )
++
++        row = rows[0]
++        status = row.get("status")
++        if status != "scheduled":
++            return RescheduleResult(
++                rescheduled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment status is {status!r}; only 'scheduled' may be rescheduled",
++            )
++
++        condo_id = str(row["condominium_id"])
++        google_event_id = row.get("google_calendar_event_id")
++        property_id = row.get("property_id")
++        appointment_request_id = row.get("appointment_request_id")
++
++        # Re-validate the new slot. Fetch existing intervals overlapping
++        # the new date, EXCLUDE the row's own current interval (or it
++        # collides with itself when the new slot overlaps the old one).
++        existing = self._fetch_existing_intervals(new_start.date())
++        # Filter out the row being moved — match by exact start/end + condo.
++        try:
++            current_start = _parse_aware_datetime(row["start_at"], self.rules.timezone)
++            current_end = _parse_aware_datetime(row["end_at"], self.rules.timezone)
++        except (KeyError, ValueError) as exc:
++            logger.warning(
++                "Reschedule could not parse current start/end: appointment_id=%s err=%s",
++                appointment_id, exc,
++            )
++            current_start = current_end = None  # type: ignore[assignment]
++
++        if current_start is not None and current_end is not None:
++            existing = [
++                interval for interval in existing
++                if not (
++                    interval.start == current_start
++                    and interval.end == current_end
++                    and interval.location_id == condo_id
++                )
++            ]
++
++        candidate = Slot(
++            start_at=new_start,
++            end_at=new_end,
++            duration_minutes=int((new_end - new_start).total_seconds() // 60),
++        )
++        ctx = SchedulingContext(
++            target_location_id=condo_id,
++            existing_intervals_sorted=sorted(existing, key=lambda i: i.start),
++            travel_lookup=self.engine.travel_lookup,
++            rules=self.rules,
++        )
++        for rule in self.engine.conflicts:
++            if rule.applies(candidate, ctx):
++                return RescheduleResult(
++                    rescheduled=False,
++                    appointment_id=appointment_id,
++                    reason="new slot conflicts with an existing appointment",
++                )
++
++        # DB-side flip FIRST. Capture previous_* columns for the audit.
++        now_iso = _now_utc_iso()
++        update_payload: dict[str, Any] = {
++            "start_at": new_start.isoformat(),
++            "end_at": new_end.isoformat(),
++            "rescheduled_at": now_iso,
++            "previous_start_at": row["start_at"],
++            "previous_end_at": row["end_at"],
++        }
++        if requester_user_id:
++            update_payload["rescheduled_by"] = requester_user_id
++
++        try:
++            (
++                self._scoped
++                .table("appointments")
++                .update(update_payload)
++                .eq("id", appointment_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++        except Exception as exc:  # noqa: BLE001 — DB update surfaced loud.
++            logger.warning(
++                "Reschedule DB update failed: appointment_id=%s err=%s",
++                appointment_id, exc,
++            )
++            return RescheduleResult(
++                rescheduled=False,
++                appointment_id=appointment_id,
++                reason=f"appointment update failed: {exc}",
++            )
++
++        # Calendar update (best-effort). The DB is already flipped.
++        calendar_updated = False
++        if google_event_id and self._calendar_event_updater is not None:
++            # Look up property + condo names for a refreshed event body.
++            condo_name = self._lookup_condo_name(condo_id)
++            try:
++                self._calendar_event_updater(
++                    event_id=google_event_id,
++                    summary=_build_calendar_summary_from_strings(
++                        property_code=self._lookup_property_code(property_id),
++                        condo_name=condo_name,
++                        services=None,
++                    ),
++                    start_at=new_start,
++                    end_at=new_end,
++                    timezone=str(self.rules.timezone),
++                    appointment_request_id=appointment_request_id or _fallback_request_id(
++                        property_id, new_start
++                    ),
++                    description=_build_calendar_description_from_strings(
++                        property_code=self._lookup_property_code(property_id),
++                        condo_name=condo_name,
++                        services=None,
++                    ),
++                    location=condo_name,
++                )
++                calendar_updated = True
++            except Exception as exc:  # noqa: BLE001 — best-effort update.
++                logger.warning(
++                    "Calendar event update failed (DB reschedule already landed): "
++                    "appointment_id=%s event_id=%s err=%s",
++                    appointment_id, google_event_id, exc,
++                )
++
++        return RescheduleResult(
++            rescheduled=True,
++            appointment_id=appointment_id,
++            calendar_updated=calendar_updated,
++        )
++
++    # ------------------------------------------------------------------
++    # Internal helpers for Phase 9 calendar refresh
++    # ------------------------------------------------------------------
++
++    def _lookup_condo_name(self, condo_id: str | None) -> Optional[str]:
++        """Best-effort condominium-name lookup for Calendar summary refresh."""
++        if not condo_id:
++            return None
++        try:
++            resp = (
++                self._scoped
++                .table("condominiums")
++                .select("id, name, org_id")
++                .eq("id", condo_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++            rows = resp.data or []
++            if rows:
++                return rows[0].get("name")
++        except Exception as exc:  # noqa: BLE001 — best-effort.
++            logger.warning(
++                "Condo name lookup failed during reschedule: condo_id=%s err=%s",
++                condo_id, exc,
++            )
++        return None
++
++    def _lookup_property_code(self, property_id: str | None) -> str:
++        """Best-effort property-code lookup for Calendar summary refresh."""
++        if not property_id:
++            return "(imóvel)"
++        try:
++            resp = (
++                self._scoped
++                .table("properties")
++                .select("id, code, org_id")
++                .eq("id", property_id)
++                .eq("org_id", self._org_id)
++                .execute()
++            )
++            rows = resp.data or []
++            if rows:
++                return str(rows[0].get("code") or "(imóvel)")
++        except Exception as exc:  # noqa: BLE001 — best-effort.
++            logger.warning(
++                "Property code lookup failed during reschedule: property_id=%s err=%s",
++                property_id, exc,
++            )
++        return "(imóvel)"
++
+     # ------------------------------------------------------------------
+     # Internal: fetch existing intervals from the appointments table
+     # ------------------------------------------------------------------
+@@ -676,6 +1127,50 @@ def _build_calendar_description(
+     return "\n".join(lines)
+ 
+ 
++def _build_calendar_summary_from_strings(
++    *,
++    property_code: str,
++    condo_name: str | None,
++    services: list[str] | None,
++) -> str:
++    """Reschedule-side summary builder.
++
++    The reschedule path doesn't have a `PropertyLookupResult` handy (the
++    property + condo are denormalized on the appointment row), so we accept
++    the raw strings + reuse the same shape ``_build_calendar_summary``
++    emits for `confirm_appointment`.
++    """
++    base = f"Visita técnica — {condo_name or '(condomínio)'} — {property_code}"
++    if services:
++        base = f"{base} ({', '.join(services)})"
++    return base
++
++
++def _build_calendar_description_from_strings(
++    *,
++    property_code: str,
++    condo_name: str | None,
++    services: list[str] | None,
++) -> str:
++    """Reschedule-side description builder. Same shape as ``_build_calendar_description``."""
++    lines = [
++        f"Imóvel: {property_code}",
++        f"Condomínio: {condo_name or '(não definido)'}",
++    ]
++    if services:
++        lines.append(f"Serviços: {', '.join(services)}")
++    lines.append("")
++    lines.append("Reagendado via Imobi Scheduling Bot (WhatsApp).")
++    return "\n".join(lines)
++
++
++def _now_utc_iso() -> str:
++    """Current wall-clock as ISO-8601 UTC. Centralized so tests can monkey-patch
++    a single call site if needed (no test does today; kept tight for the future).
++    """
++    return datetime.now(tz=timezone.utc).isoformat()
++
++
+ def _fallback_request_id(property_id: str | None, start: datetime) -> str:
+     """Synthesize a stable request-id when no ``appointment_request_id``
+     is supplied (Phase 9 will surface it for the full request lifecycle).
+@@ -687,10 +1182,14 @@ def _fallback_request_id(property_id: str | None, start: datetime) -> str:
+ 
+ 
+ __all__ = [
++    "CalendarEventCanceler",
+     "CalendarEventFactory",
++    "CalendarEventUpdater",
++    "CancellationResult",
+     "ConfirmationResult",
+     "ProposedSlot",
+     "PropertyLookupResult",
++    "RescheduleResult",
+     "SchedulingService",
+     "build_engine",
+     "build_rules",
+diff --git a/products/imobi-scheduling/backend/app/services/tool_registry.py b/products/imobi-scheduling/backend/app/services/tool_registry.py
+index def03137..c6c598ea 100644
+--- a/products/imobi-scheduling/backend/app/services/tool_registry.py
++++ b/products/imobi-scheduling/backend/app/services/tool_registry.py
+@@ -1,8 +1,8 @@
+ """LLM tool registry for the Imobi Scheduling bot.
+ 
+-Defines the three initial tools the bot's LLM tool-loop may call (per
+-PROJECT.md §6 Phase 6 / Phase 7 — `lookup_property`, `propose_appointment`,
+-`confirm_appointment`). Cancellation + reschedule tools land in Phase 9.
++Defines the five tools the bot's LLM tool-loop may call (per PROJECT.md
++§6 Phase 6 → 9): `lookup_property`, `propose_appointment`,
++`confirm_appointment`, `cancel_appointment`, `reschedule_appointment`.
+ 
+ **Wiring.** Each tool is shipped in two halves:
+ 
+@@ -153,6 +153,70 @@ TOOL_DESCRIPTORS: list[dict[str, Any]] = [
+             },
+         },
+     },
++    {
++        "type": "function",
++        "function": {
++            "name": "cancel_appointment",
++            "description": (
++                "Cancela um agendamento existente. SÓ chame após o corretor "
++                "confirmar explicitamente o cancelamento (use uma pergunta "
++                "de confirmação como 'Confirma o cancelamento do agendamento "
++                "em <data> <hora>?' ANTES de invocar esta ferramenta). "
++                "Idempotente — agendamentos já cancelados retornam status "
++                "informativo, não erro."
++            ),
++            "parameters": {
++                "type": "object",
++                "properties": {
++                    "appointment_id": {
++                        "type": "string",
++                        "description": "UUID do agendamento a ser cancelado.",
++                    },
++                    "reason": {
++                        "type": "string",
++                        "description": (
++                            "Motivo do cancelamento (texto livre vindo do "
++                            "corretor — resumido pelo modelo quando longo)."
++                        ),
++                    },
++                },
++                "required": ["appointment_id"],
++            },
++        },
++    },
++    {
++        "type": "function",
++        "function": {
++            "name": "reschedule_appointment",
++            "description": (
++                "Reagenda um agendamento existente para uma nova data/hora. "
++                "SÓ chame após o corretor confirmar EXPLICITAMENTE o novo "
++                "horário (use uma pergunta de confirmação como 'Confirma "
++                "mover o agendamento de <antigo> para <novo>?' ANTES de "
++                "invocar). Re-valida o novo horário contra outras reservas "
++                "antes de gravar — se conflitar, retorna conflict e sugere "
++                "chamar propose_appointment novamente."
++            ),
++            "parameters": {
++                "type": "object",
++                "properties": {
++                    "appointment_id": {
++                        "type": "string",
++                        "description": "UUID do agendamento a ser reagendado.",
++                    },
++                    "new_start_at": {
++                        "type": "string",
++                        "description": "Novo início (ISO 8601 com timezone — America/Sao_Paulo).",
++                    },
++                    "new_end_at": {
++                        "type": "string",
++                        "description": "Novo fim (ISO 8601 com timezone — America/Sao_Paulo).",
++                    },
++                },
++                "required": ["appointment_id", "new_start_at", "new_end_at"],
++            },
++        },
++    },
+ ]
+ 
+ 
+@@ -210,11 +274,39 @@ def _stub_confirm_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
+     }
+ 
+ 
++def _stub_cancel_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
++    """Phase 6/7/8 stub. Phase 9 replaces with the real cancellation flow."""
++    logger.info("[stub] cancel_appointment called with %s", arguments)
++    return {
++        "status": "not_implemented",
++        "tool": "cancel_appointment",
++        "message": (
++            "Cancel appointment is not yet wired. Phase 9 lands this."
++        ),
++        "echo": arguments,
++    }
++
++
++def _stub_reschedule_appointment(arguments: dict[str, Any]) -> dict[str, Any]:
++    """Phase 6/7/8 stub. Phase 9 replaces with the real reschedule flow."""
++    logger.info("[stub] reschedule_appointment called with %s", arguments)
++    return {
++        "status": "not_implemented",
++        "tool": "reschedule_appointment",
++        "message": (
++            "Reschedule appointment is not yet wired. Phase 9 lands this."
++        ),
++        "echo": arguments,
++    }
++
++
+ # Name → implementation map. Registry of record.
+ TOOL_IMPLEMENTATIONS: dict[str, ToolImpl] = {
+     "lookup_property": _stub_lookup_property,
+     "propose_appointment": _stub_propose_appointment,
+     "confirm_appointment": _stub_confirm_appointment,
++    "cancel_appointment": _stub_cancel_appointment,
++    "reschedule_appointment": _stub_reschedule_appointment,
+ }
+ 
+ 
+@@ -361,6 +453,113 @@ def _impl_confirm_appointment(
+     }
+ 
+ 
++def _impl_cancel_appointment(
++    arguments: dict[str, Any],
++    scheduling_service: "SchedulingService",
++) -> dict[str, Any]:
++    """Live `cancel_appointment` via `SchedulingService.cancel_appointment`.
++
++    The LLM tool-loop calls this AFTER the confirmation step is settled in
++    natural language — the system prompt enforces that requirement so we
++    don't need a separate confirmation seam here. The audit-writer captures
++    the call regardless of outcome.
++    """
++    appointment_id = str(arguments.get("appointment_id", "")).strip()
++    reason = arguments.get("reason")
++    if not appointment_id:
++        return {
++            "status": "failure",
++            "tool": "cancel_appointment",
++            "error": "Missing required argument: appointment_id",
++        }
++
++    result = scheduling_service.cancel_appointment(
++        appointment_id=appointment_id,
++        reason=reason if isinstance(reason, str) else None,
++    )
++    if not result.cancelled:
++        # Distinguish "already cancelled" (idempotent) from "real failure"
++        # by inspecting the reason; the LLM can read the natural-language
++        # hint back to the user.
++        reason_text = (result.reason or "").lower()
++        status = "already_cancelled" if "status is 'cancelled'" in reason_text else (
++            "not_found" if "appointment not found" in reason_text else "failure"
++        )
++        return {
++            "status": status,
++            "tool": "cancel_appointment",
++            "appointment_id": appointment_id,
++            "reason": result.reason or "(unknown)",
++        }
++    return {
++        "status": "success",
++        "tool": "cancel_appointment",
++        "appointment_id": appointment_id,
++        "calendar_deleted": result.calendar_deleted,
++    }
++
++
++def _impl_reschedule_appointment(
++    arguments: dict[str, Any],
++    scheduling_service: "SchedulingService",
++) -> dict[str, Any]:
++    """Live `reschedule_appointment` via `SchedulingService.reschedule_appointment`.
++
++    The system prompt enforces explicit user confirmation BEFORE this is
++    invoked — the LLM should ask "Confirma mover de X para Y?" and only
++    after a yes-response call this tool. Conflict re-validation runs on
++    the new slot (defends against propose→confirm-style races).
++    """
++    appointment_id = str(arguments.get("appointment_id", "")).strip()
++    new_start_at = arguments.get("new_start_at")
++    new_end_at = arguments.get("new_end_at")
++
++    if not appointment_id or not new_start_at or not new_end_at:
++        return {
++            "status": "failure",
++            "tool": "reschedule_appointment",
++            "error": (
++                "Missing required arguments: appointment_id, new_start_at, new_end_at"
++            ),
++        }
++
++    try:
++        result = scheduling_service.reschedule_appointment(
++            appointment_id=appointment_id,
++            new_start_at=new_start_at,
++            new_end_at=new_end_at,
++        )
++    except ValueError as exc:
++        return {
++            "status": "failure",
++            "tool": "reschedule_appointment",
++            "error": str(exc),
++        }
++
++    if not result.rescheduled:
++        reason_text = (result.reason or "").lower()
++        if "conflicts with" in reason_text:
++            status = "conflict"
++        elif "appointment not found" in reason_text:
++            status = "not_found"
++        else:
++            status = "failure"
++        return {
++            "status": status,
++            "tool": "reschedule_appointment",
++            "appointment_id": appointment_id,
++            "reason": result.reason or "(unknown)",
++        }
++    return {
++        "status": "success",
++        "tool": "reschedule_appointment",
++        "appointment_id": appointment_id,
++        "new_start_at": new_start_at,
++        "new_end_at": new_end_at,
++        "calendar_updated": result.calendar_updated,
++    }
++
++
+ def build_tool_handler(
+     scheduling_service: Optional["SchedulingService"] = None,
+ ) -> Callable[[ToolCall], ToolResult]:
+@@ -435,6 +634,8 @@ _LIVE_IMPLEMENTATIONS: dict[str, LiveToolImpl] = {
+     "lookup_property": _impl_lookup_property,
+     "propose_appointment": _impl_propose_appointment,
+     "confirm_appointment": _impl_confirm_appointment,
++    "cancel_appointment": _impl_cancel_appointment,
++    "reschedule_appointment": _impl_reschedule_appointment,
+ }
+ 
+ 
+diff --git a/products/imobi-scheduling/backend/migrations/001_imobi_scheduling.sql b/products/imobi-scheduling/backend/migrations/001_imobi_scheduling.sql
+index a57df5ef..fc917cb0 100644
+--- a/products/imobi-scheduling/backend/migrations/001_imobi_scheduling.sql
++++ b/products/imobi-scheduling/backend/migrations/001_imobi_scheduling.sql
+@@ -458,6 +458,20 @@ CREATE TABLE imobi_scheduling.appointments (
+     status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN (
+         'scheduled', 'completed', 'cancelled', 'no_show', 'rescheduled'
+     )),
++    -- Phase 9 — cancellation + reschedule audit columns.
++    -- ``cancellation_reason`` captures free-text rationale from the user
++    -- (LLM-summarized when long); ``cancelled_at`` + ``cancelled_by`` close
++    -- the LGPD "who/when" trail for the booking lifecycle. Reschedule
++    -- captures ``previous_start_at`` / ``previous_end_at`` so the audit
++    -- shows the slot that was moved away from + the new value (visible
++    -- in ``start_at`` / ``end_at``). ``rescheduled_by`` is the user ID.
++    cancellation_reason TEXT,
++    cancelled_at TIMESTAMPTZ,
++    cancelled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
++    rescheduled_at TIMESTAMPTZ,
++    rescheduled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
++    previous_start_at TIMESTAMPTZ,
++    previous_end_at TIMESTAMPTZ,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     CHECK (end_at > start_at)
+diff --git a/products/imobi-scheduling/backend/migrations/002_appointment_audit_columns.sql b/products/imobi-scheduling/backend/migrations/002_appointment_audit_columns.sql
+new file mode 100644
+index 00000000..a0a08d38
+--- /dev/null
++++ b/products/imobi-scheduling/backend/migrations/002_appointment_audit_columns.sql
+@@ -0,0 +1,36 @@
++-- ============================================================================
++-- Migration 002 — Phase 9 (cancellation + reschedule) appointment audit columns
++--
++-- Adds the cancellation + reschedule audit trail to ``appointments``. Mirrors
++-- the in-place edit in 001 so a fresh DB built from 001 alone reproduces the
++-- exact same shape this patch produces against a live DB sitting at the
++-- pre-Phase-9 schema state.
++--
++-- Convention (`KB § PATTERNS/database-rls.md § Single 001 migration`):
++--   - Greenfield: re-running 001 alone re-creates the columns; this file is
++--     a no-op (the ``IF NOT EXISTS`` guards make it safe to re-run).
++--   - Live: this patch is the only thing that needs to land on prod databases
++--     already past 001.
++--
++-- Columns added to ``imobi_scheduling.appointments``:
++--   - ``cancellation_reason TEXT``           — free-text rationale (LLM-summarized)
++--   - ``cancelled_at TIMESTAMPTZ``           — UTC timestamp when cancellation landed
++--   - ``cancelled_by UUID``                  — FK to ``imobi_scheduling.users`` (nullable)
++--   - ``rescheduled_at TIMESTAMPTZ``         — UTC timestamp when reschedule landed
++--   - ``rescheduled_by UUID``                — FK to ``imobi_scheduling.users`` (nullable)
++--   - ``previous_start_at TIMESTAMPTZ``      — captured before reschedule overwrites ``start_at``
++--   - ``previous_end_at TIMESTAMPTZ``        — captured before reschedule overwrites ``end_at``
++--
++-- RLS: inherits the existing ``appointments_*_org`` policies — no policy change.
++-- ============================================================================
++
++SET search_path = imobi_scheduling, public;
++
++ALTER TABLE imobi_scheduling.appointments
++    ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
++    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
++    ADD COLUMN IF NOT EXISTS cancelled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
++    ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ,
++    ADD COLUMN IF NOT EXISTS rescheduled_by UUID REFERENCES imobi_scheduling.users(id) ON DELETE SET NULL,
++    ADD COLUMN IF NOT EXISTS previous_start_at TIMESTAMPTZ,
++    ADD COLUMN IF NOT EXISTS previous_end_at TIMESTAMPTZ;
+diff --git a/products/imobi-scheduling/backend/tests/services/test_conversation.py b/products/imobi-scheduling/backend/tests/services/test_conversation.py
+index 29468414..1db68f72 100644
+--- a/products/imobi-scheduling/backend/tests/services/test_conversation.py
++++ b/products/imobi-scheduling/backend/tests/services/test_conversation.py
+@@ -191,7 +191,13 @@ class TestProcessorClosure:
+         # Tools threaded through.
+         assert call_kwargs["tools"] is not None
+         tool_names = {t["function"]["name"] for t in call_kwargs["tools"]}
+-        assert tool_names == {"lookup_property", "propose_appointment", "confirm_appointment"}
++        assert tool_names == {
++            "lookup_property",
++            "propose_appointment",
++            "confirm_appointment",
++            "cancel_appointment",
++            "reschedule_appointment",
++        }
+ 
+     def test_processor_tool_call_loop_audits_via_supabase(
+         self, admin_client, mock_openai_class,
+diff --git a/products/imobi-scheduling/backend/tests/services/test_scheduling.py b/products/imobi-scheduling/backend/tests/services/test_scheduling.py
+index c2bc1552..137eaf1e 100644
+--- a/products/imobi-scheduling/backend/tests/services/test_scheduling.py
++++ b/products/imobi-scheduling/backend/tests/services/test_scheduling.py
+@@ -22,6 +22,7 @@ already covers its math).
+ from __future__ import annotations
+ 
+ from datetime import date, datetime, time, timezone
++from typing import Any
+ from zoneinfo import ZoneInfo
+ 
+ import pytest
+@@ -749,3 +750,578 @@ class TestServiceConfirmAppointmentCalendarFactory:
+             p.get("google_calendar_event_id") == "caller-supplied-event-id"
+             for p in inserted
+         )
++
++
++# ---------------------------------------------------------------------------
++# Phase 9 — cancel_appointment
++# ---------------------------------------------------------------------------
++
++
++def _scheduled_appt_row(
++    *,
++    appt_id: str = "aaaaaaa1-0000-0000-0000-000000000001",
++    google_event_id: str | None = "evt-google-001",
++    start: datetime | None = None,
++    end: datetime | None = None,
++    status: str = "scheduled",
++) -> dict:
++    """Stand-in for an existing `appointments` row used by cancel/reschedule fetches."""
++    start = start or datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++    end = end or datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++    return {
++        "id": appt_id,
++        "org_id": ORG_ID,
++        "status": status,
++        "google_calendar_event_id": google_event_id,
++        "condominium_id": _condo_id(),
++        "property_id": "ppppppp1-0000-0000-0000-000000000001",
++        "start_at": start.isoformat(),
++        "end_at": end.isoformat(),
++        "appointment_request_id": None,
++        "media_crew_user_id": None,
++    }
++
++
++class TestServiceCancelAppointment:
++    """`SchedulingService.cancel_appointment` Phase 9 flow:
++
++      - flips ``status`` to ``cancelled`` + writes audit columns;
++      - calls the ``calendar_event_canceler`` for rows with a Calendar id;
++      - tolerates Calendar-side failures (DB flip still lands);
++      - idempotent on already-cancelled rows.
++    """
++
++    def test_returns_cancelled_true_and_updates_audit_columns(self):
++        from app.services.scheduling import (
++            CancellationResult,
++            SchedulingService,
++            build_rules,
++        )
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(data=[_scheduled_appt_row(appt_id=appt_id)]),  # fetch
++                MockSupabaseResponse(data=[]),                                       # update
++            ],
++        )
++
++        result = svc.cancel_appointment(
++            appointment_id=appt_id,
++            reason="cliente desistiu",
++        )
++        assert isinstance(result, CancellationResult)
++        assert result.cancelled is True
++        assert result.appointment_id == appt_id
++
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert len(updated) == 1
++        assert updated[0]["status"] == "cancelled"
++        assert updated[0]["cancellation_reason"] == "cliente desistiu"
++        assert updated[0]["cancelled_at"]  # truthy ISO string
++
++    def test_returns_not_found_when_row_missing(self):
++        from app.services.scheduling import SchedulingService, build_rules
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [MockSupabaseResponse(data=[])],
++        )
++        result = svc.cancel_appointment(
++            appointment_id="missing-uuid",
++            reason="whatever",
++        )
++        assert result.cancelled is False
++        assert "appointment not found" in (result.reason or "")
++        # No update fired.
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert updated == []
++
++    def test_idempotent_when_already_cancelled(self):
++        """Calling cancel on an already-cancelled row returns cancelled=False
++        with a stable reason (not an exception, not a second flip)."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [MockSupabaseResponse(
++                data=[_scheduled_appt_row(appt_id=appt_id, status="cancelled")]
++            )],
++        )
++        result = svc.cancel_appointment(
++            appointment_id=appt_id,
++            reason="re-cancel",
++        )
++        assert result.cancelled is False
++        assert "'cancelled'" in (result.reason or "")
++        # No update fired (second cancel is a no-op).
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert updated == []
++
++    def test_calls_calendar_canceler_when_wired(self):
++        """Successful DB cancel + a wired canceler → canceler invoked with event_id."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        calls: list[dict] = []
++
++        def _canceler(*, event_id: str) -> None:
++            calls.append({"event_id": event_id})
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++            calendar_event_canceler=_canceler,
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id="evt-zzz")]
++                ),
++                MockSupabaseResponse(data=[]),
++            ],
++        )
++        result = svc.cancel_appointment(
++            appointment_id=appt_id,
++            reason=None,
++        )
++        assert result.cancelled is True
++        assert result.calendar_deleted is True
++        assert calls == [{"event_id": "evt-zzz"}]
++
++    def test_tolerates_calendar_delete_failure(self):
++        """Calendar delete raises → DB cancellation still lands; ``calendar_deleted=False``."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        def _failing_canceler(*, event_id: str) -> None:
++            raise RuntimeError("calendar API down")
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++            calendar_event_canceler=_failing_canceler,
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id="evt-xxx")]
++                ),
++                MockSupabaseResponse(data=[]),
++            ],
++        )
++        result = svc.cancel_appointment(
++            appointment_id=appt_id,
++            reason=None,
++        )
++        assert result.cancelled is True
++        assert result.calendar_deleted is False
++        # DB update still landed.
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert len(updated) == 1
++        assert updated[0]["status"] == "cancelled"
++
++    def test_skips_calendar_when_event_id_absent(self):
++        """Row without a ``google_calendar_event_id`` → canceler is NOT called."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        calls: list[dict] = []
++
++        def _canceler(*, event_id: str) -> None:
++            calls.append({"event_id": event_id})
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++            calendar_event_canceler=_canceler,
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(appt_id=appt_id, google_event_id=None)]
++                ),
++                MockSupabaseResponse(data=[]),
++            ],
++        )
++        result = svc.cancel_appointment(appointment_id=appt_id)
++        assert result.cancelled is True
++        assert result.calendar_deleted is False
++        assert calls == []
++
++
++# ---------------------------------------------------------------------------
++# Phase 9 — reschedule_appointment
++# ---------------------------------------------------------------------------
++
++
++class TestServiceRescheduleAppointment:
++    """`SchedulingService.reschedule_appointment` Phase 9 flow:
++
++      - re-validates the new slot against current bookings (excluding the
++        row being moved);
++      - flips ``start_at`` / ``end_at`` + writes audit columns (previous_*,
++        rescheduled_at);
++      - calls the ``calendar_event_updater`` when wired;
++      - rejects conflicts + not-found + invalid state.
++    """
++
++    def test_returns_rescheduled_true_and_audit_columns(self):
++        from app.services.scheduling import (
++            RescheduleResult,
++            SchedulingService,
++            build_rules,
++        )
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(
++                        appt_id=appt_id, start=old_start, end=old_end,
++                    )]
++                ),
++                # The conflict-revalidation fetches the day's existing rows.
++                # Only the row being moved is in the day; the service filters
++                # it out before applying conflict rules.
++                MockSupabaseResponse(data=[_appt_row(
++                    start=old_start, end=old_end, appt_id=appt_id,
++                )]),
++                MockSupabaseResponse(data=[]),  # update
++            ],
++        )
++
++        result = svc.reschedule_appointment(
++            appointment_id=appt_id,
++            new_start_at="2026-05-15T14:00:00-03:00",
++            new_end_at="2026-05-15T15:30:00-03:00",
++        )
++        assert isinstance(result, RescheduleResult)
++        assert result.rescheduled is True
++        assert result.appointment_id == appt_id
++
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert len(updated) == 1
++        payload = updated[0]
++        assert payload["start_at"] == "2026-05-15T14:00:00-03:00"
++        assert payload["end_at"] == "2026-05-15T15:30:00-03:00"
++        # Previous-slot audit columns capture the old times.
++        assert payload["previous_start_at"] == old_start.isoformat()
++        assert payload["previous_end_at"] == old_end.isoformat()
++        assert payload["rescheduled_at"]  # truthy ISO string
++
++    def test_rejects_new_slot_conflict(self):
++        """A different appointment overlaps the new slot → rescheduled=False."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        # Another booking blocks the new slot.
++        blocker_start = datetime(2026, 5, 15, 14, 0, tzinfo=TZ_BR)
++        blocker_end = datetime(2026, 5, 15, 15, 30, tzinfo=TZ_BR)
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(
++                        appt_id=appt_id, start=old_start, end=old_end,
++                    )]
++                ),
++                MockSupabaseResponse(data=[
++                    _appt_row(start=old_start, end=old_end, appt_id=appt_id),
++                    _appt_row(
++                        start=blocker_start, end=blocker_end,
++                        appt_id="aaaaaaa2-0000-0000-0000-000000000002",
++                    ),
++                ]),
++            ],
++        )
++        result = svc.reschedule_appointment(
++            appointment_id=appt_id,
++            new_start_at="2026-05-15T14:00:00-03:00",
++            new_end_at="2026-05-15T15:30:00-03:00",
++        )
++        assert result.rescheduled is False
++        assert "conflicts" in (result.reason or "")
++        # No DB update fired.
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert updated == []
++
++    def test_returns_not_found_when_row_missing(self):
++        from app.services.scheduling import SchedulingService, build_rules
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [MockSupabaseResponse(data=[])],
++        )
++        result = svc.reschedule_appointment(
++            appointment_id="missing-uuid",
++            new_start_at="2026-05-15T14:00:00-03:00",
++            new_end_at="2026-05-15T15:30:00-03:00",
++        )
++        assert result.rescheduled is False
++        assert "appointment not found" in (result.reason or "")
++
++    def test_rejects_end_before_start(self):
++        from app.services.scheduling import SchedulingService, build_rules
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++        )
++        result = svc.reschedule_appointment(
++            appointment_id="any-uuid",
++            new_start_at="2026-05-15T15:30:00-03:00",
++            new_end_at="2026-05-15T14:00:00-03:00",
++        )
++        assert result.rescheduled is False
++        assert "strictly after" in (result.reason or "")
++
++    def test_calls_calendar_updater_when_wired(self):
++        """Successful reschedule + wired updater → updater invoked with event_id + new slot."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        calls: list[dict] = []
++
++        def _updater(**kwargs) -> Any:  # noqa: ANN401 — flexible kwargs accepted.
++            calls.append(kwargs)
++            return {"event_id": kwargs.get("event_id"), "ok": True}
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++            calendar_event_updater=_updater,
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(
++                        appt_id=appt_id,
++                        start=old_start, end=old_end,
++                        google_event_id="evt-rsv-001",
++                    )]
++                ),
++                MockSupabaseResponse(data=[_appt_row(
++                    start=old_start, end=old_end, appt_id=appt_id,
++                )]),
++                MockSupabaseResponse(data=[]),  # update
++            ],
++        )
++        # The reschedule helper looks up condo + property names for the summary refresh.
++        svc._scoped.set_sequential_responses(
++            "condominiums",
++            [MockSupabaseResponse(data=[_condo_row()])],
++        )
++        svc._scoped.set_sequential_responses(
++            "properties",
++            [MockSupabaseResponse(data=[_property_row()])],
++        )
++
++        result = svc.reschedule_appointment(
++            appointment_id=appt_id,
++            new_start_at="2026-05-15T14:00:00-03:00",
++            new_end_at="2026-05-15T15:30:00-03:00",
++        )
++        assert result.rescheduled is True
++        assert result.calendar_updated is True
++        assert len(calls) == 1
++        assert calls[0]["event_id"] == "evt-rsv-001"
++
++    def test_tolerates_calendar_update_failure(self):
++        """Calendar updater raises → DB-side reschedule still lands; ``calendar_updated=False``."""
++        from app.services.scheduling import SchedulingService, build_rules
++
++        def _failing_updater(**kwargs) -> Any:  # noqa: ANN401 — flexible kwargs accepted.
++            raise RuntimeError("calendar quota exhausted")
++
++        db = MockSupabaseClient(data=[])
++        svc = SchedulingService(
++            admin_client=db,
++            org_id=ORG_ID,
++            rules=build_rules(_settings_stub()),
++            calendar_event_updater=_failing_updater,
++        )
++        appt_id = "aaaaaaa1-0000-0000-0000-000000000001"
++        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        svc._scoped.set_sequential_responses(
++            "appointments",
++            [
++                MockSupabaseResponse(
++                    data=[_scheduled_appt_row(
++                        appt_id=appt_id,
++                        start=old_start, end=old_end,
++                        google_event_id="evt-fail-001",
++                    )]
++                ),
++                MockSupabaseResponse(data=[_appt_row(
++                    start=old_start, end=old_end, appt_id=appt_id,
++                )]),
++                MockSupabaseResponse(data=[]),
++            ],
++        )
++        svc._scoped.set_sequential_responses(
++            "condominiums",
++            [MockSupabaseResponse(data=[_condo_row()])],
++        )
++        svc._scoped.set_sequential_responses(
++            "properties",
++            [MockSupabaseResponse(data=[_property_row()])],
++        )
++
++        result = svc.reschedule_appointment(
++            appointment_id=appt_id,
++            new_start_at="2026-05-15T14:00:00-03:00",
++            new_end_at="2026-05-15T15:30:00-03:00",
++        )
++        assert result.rescheduled is True
++        assert result.calendar_updated is False
++        # DB update still landed.
++        updated = svc._scoped.table("appointments").updated_payloads
++        assert len(updated) == 1
++
++
++# ---------------------------------------------------------------------------
++# Phase 9 — calendar wrappers (cancel + update)
++# ---------------------------------------------------------------------------
++
++
++class TestCalendarCancelAndUpdateWrappers:
++    """`app.services.calendar.cancel_calendar_event` + `update_calendar_event`
++    route through the configured adapter's `delete_event` / `update_event`."""
++
++    def _wire_fake_module(self):
++        from noctusai_lib.integrations.google_calendar import FakeCalendarAdapter
++
++        from app.services import calendar as calendar_module
++
++        calendar_module._reset_for_tests()
++        adapter = FakeCalendarAdapter(supports_attendees=True)
++        calendar_module.configure_calendar_module(
++            admin_client=None,
++            org_id=ORG_ID,
++            default_calendar_id="primary",
++            adapter=adapter,
++        )
++        return adapter, calendar_module
++
++    def test_cancel_calendar_event_removes_from_fake(self):
++        from app.services.calendar import (
++            cancel_calendar_event,
++            create_calendar_event,
++        )
++
++        adapter, calendar_module = self._wire_fake_module()
++        start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        created = create_calendar_event(
++            summary="Visita técnica",
++            start_at=start,
++            end_at=end,
++            timezone="America/Sao_Paulo",
++            appointment_request_id="req-c-1",
++        )
++        # Event is on the fake before cancellation.
++        assert adapter.get_event("primary", created.event_id) is not None
++
++        cancel_calendar_event(event_id=created.event_id)
++
++        # After deletion, the fake no longer has the event.
++        assert adapter.get_event("primary", created.event_id) is None
++        calendar_module._reset_for_tests()
++
++    def test_update_calendar_event_mutates_start_and_end(self):
++        from app.services.calendar import (
++            create_calendar_event,
++            update_calendar_event,
++        )
++
++        adapter, calendar_module = self._wire_fake_module()
++        old_start = datetime(2026, 5, 15, 10, 0, tzinfo=TZ_BR)
++        old_end = datetime(2026, 5, 15, 11, 30, tzinfo=TZ_BR)
++        created = create_calendar_event(
++            summary="Visita técnica — Aurora — AP-2034",
++            start_at=old_start,
++            end_at=old_end,
++            timezone="America/Sao_Paulo",
++            appointment_request_id="req-u-1",
++        )
++
++        new_start = datetime(2026, 5, 15, 14, 0, tzinfo=TZ_BR)
++        new_end = datetime(2026, 5, 15, 15, 30, tzinfo=TZ_BR)
++        updated = update_calendar_event(
++            event_id=created.event_id,
++            summary="Visita técnica — Aurora — AP-2034",
++            start_at=new_start,
++            end_at=new_end,
++            timezone="America/Sao_Paulo",
++            appointment_request_id="req-u-1",
++        )
++        # Event id is preserved across the update.
++        assert updated.event_id == created.event_id
++
++        # The fake's stored body reflects the new times.
++        latest = adapter.get_event("primary", created.event_id)
++        assert latest is not None
++        assert latest.raw["start"]["dateTime"].startswith("2026-05-15T14:00:00")
++        assert latest.raw["end"]["dateTime"].startswith("2026-05-15T15:30:00")
++        calendar_module._reset_for_tests()
+diff --git a/products/imobi-scheduling/backend/tests/services/test_tool_registry.py b/products/imobi-scheduling/backend/tests/services/test_tool_registry.py
+index 4aea8667..9df0b80e 100644
+--- a/products/imobi-scheduling/backend/tests/services/test_tool_registry.py
++++ b/products/imobi-scheduling/backend/tests/services/test_tool_registry.py
+@@ -22,13 +22,15 @@ from app.services.tool_registry import (
+ 
+ 
+ class TestRegistryShape:
+-    """The Phase 6 initial registry has exactly three tools."""
++    """Phase 9 registry has the five tools (Phase 6 trio + Phase 9 cancel/reschedule)."""
+ 
+-    def test_three_tools_registered(self):
++    def test_five_tools_registered(self):
+         assert tool_names() == [
+             "lookup_property",
+             "propose_appointment",
+             "confirm_appointment",
++            "cancel_appointment",
++            "reschedule_appointment",
+         ]
+ 
+     def test_descriptors_match_implementations(self):
+@@ -136,6 +138,8 @@ class TestParameterSchema:
+             ("lookup_property", ["code"]),
+             ("propose_appointment", ["property_code", "requested_date", "time_window"]),
+             ("confirm_appointment", ["property_code", "services", "start_at", "end_at"]),
++            ("cancel_appointment", ["appointment_id"]),
++            ("reschedule_appointment", ["appointment_id", "new_start_at", "new_end_at"]),
+         ],
+     )
+     def test_required_parameters_present(self, tool_name, required_params):
+-- 
+2.51.2
+

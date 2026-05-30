@@ -1,0 +1,795 @@
+From feb6fe400c278f695ecf7a3bae279dad869c066b Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:47 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-afd4fa4f701649901?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../test_compliance_codification_batch.py     | 364 +++++++++++++++++-
+ mcp/noctusai/tools/noctus/dev/compliance.py   | 343 +++++++++++++++++
+ mcp/noctusai/tools/noctus/dev/review.py       |   4 +
+ 3 files changed, 708 insertions(+), 3 deletions(-)
+
+diff --git a/mcp/noctusai/tests/test_compliance_codification_batch.py b/mcp/noctusai/tests/test_compliance_codification_batch.py
+index ce55c1aa..b353c6ae 100644
+--- a/mcp/noctusai/tests/test_compliance_codification_batch.py
++++ b/mcp/noctusai/tests/test_compliance_codification_batch.py
+@@ -14,10 +14,12 @@ Detectors covered:
+   - `check_mcp_write_tool_worktree_arg`
+   - `check_pipefail_grep_q`
+   - `check_doc_tool_reference_drift`
++  - `check_llm_audit_wired` (added 2026-05-11, llm-tool-audit-rollout Phase 5)
++  - `check_register_feature_has_redaction` (added 2026-05-11, same phase)
+ 
+-The seventh detector from the project doc (`check_no_self_monkeypatch`)
+-was already codified prior to this batch; its regression suite lives in
+-`test_compliance.py::TestCheckNoSelfMonkeypatch`.
++The seventh detector from the Stage-4 codification batch
++(`check_no_self_monkeypatch`) was already codified prior to that batch;
++its regression suite lives in `test_compliance.py::TestCheckNoSelfMonkeypatch`.
+ """
+ import sys
+ from pathlib import Path
+@@ -27,10 +29,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ from tools.noctus.dev.compliance import (  # noqa: E402
+     check_auth_dep_anti_pattern,
+     check_doc_tool_reference_drift,
++    check_llm_audit_wired,
+     check_mcp_path_via_settings,
+     check_mcp_write_tool_worktree_arg,
+     check_no_silent_ok_comment,
+     check_pipefail_grep_q,
++    check_register_feature_has_redaction,
+ )
+ 
+ 
+@@ -584,3 +588,357 @@ class TestCheckDocToolReferenceDrift:
+         # positives on fresh checkouts).
+         issues = check_doc_tool_reference_drift(tmp_path)
+         assert issues == []
++
++
++# ---------------------------------------------------------------------------
++# check_llm_audit_wired
++# ---------------------------------------------------------------------------
++
++
++class TestCheckLlmAuditWired:
++    """LLM-dispatch call in services/workers/routers without colocated
++    `audit_hook`/`AuditRecord` reference → warning. Per
++    `KB § PATTERNS/llm-tool-audit.md` (llm-tool-audit-rollout Phase 5)."""
++
++    def _mk_service(
++        self,
++        tmp_path: Path,
++        py_content: str,
++        *,
++        product: str = "p1",
++        subdir: str = "services",
++        filename: str = "ai_service.py",
++    ) -> Path:
++        target = tmp_path / "products" / product / "backend" / "app" / subdir
++        target.mkdir(parents=True, exist_ok=True)
++        (target / filename).write_text(py_content)
++        return tmp_path / "products" / product
++
++    def test_flags_chat_completion_without_audit_reference(self, tmp_path):
++        content = (
++            "from noctusai_lib.integrations.llm import chat_completion\n\n"
++            "async def call_llm(prompt: str) -> str:\n"
++            "    raw = await chat_completion(model='gpt-4', prompt=prompt)\n"
++            "    return raw\n"
++        )
++        product_path = self._mk_service(tmp_path, content)
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "warning"
++        assert "chat_completion" in issues[0]["issue"] or "LLM call" in issues[0]["issue"]
++        assert issues[0]["product"] == "p1"
++
++    def test_flags_generate_embedding_without_audit(self, tmp_path):
++        content = (
++            "from noctusai_lib.integrations.llm import generate_embedding\n\n"
++            "async def embed(text: str):\n"
++            "    return await generate_embedding(text)\n"
++        )
++        product_path = self._mk_service(
++            tmp_path, content, filename="segmentation_service.py",
++        )
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++        # Each dispatch call line number is listed in the message.
++        assert "generate_embedding" not in issues[0]["issue"] or "line" in issues[0]["issue"]
++
++    def test_flags_transcribe_audio_without_audit(self, tmp_path):
++        content = (
++            "from noctusai_lib.integrations.llm import transcribe_audio\n\n"
++            "async def stt(audio_bytes: bytes):\n"
++            "    return await transcribe_audio(audio_bytes)\n"
++        )
++        product_path = self._mk_service(
++            tmp_path, content, filename="attachment_service.py",
++        )
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++
++    def test_flags_analyze_image_without_audit(self, tmp_path):
++        content = (
++            "from noctusai_lib.integrations.llm import analyze_image\n\n"
++            "async def vision(image_bytes: bytes):\n"
++            "    return await analyze_image(image_bytes)\n"
++        )
++        product_path = self._mk_service(
++            tmp_path, content, filename="attachment_service.py",
++        )
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++
++    def test_does_not_flag_when_audit_hook_imported(self, tmp_path):
++        content = (
++            "from noctusai_lib.integrations.llm import chat_completion\n"
++            "from app.services.audit_hook import build_audit_record, get_audit_writer\n\n"
++            "async def call_llm(prompt: str) -> str:\n"
++            "    raw = await chat_completion(model='gpt-4', prompt=prompt)\n"
++            "    writer = get_audit_writer()\n"
++            "    if writer:\n"
++            "        await writer(build_audit_record(prompt))\n"
++            "    return raw\n"
++        )
++        product_path = self._mk_service(tmp_path, content)
++        issues = check_llm_audit_wired(product_path)
++        assert issues == [], f"audit_hook imported → must not flag, got: {issues}"
++
++    def test_does_not_flag_when_audit_record_imported(self, tmp_path):
++        # Only AuditRecord (no audit_hook) — still counts as audit-wired.
++        content = (
++            "from noctusai_lib.integrations.llm import chat_completion\n"
++            "from noctusai_lib.domain.ai.tool_audit import AuditRecord\n\n"
++            "async def call_llm(prompt: str):\n"
++            "    raw = await chat_completion(model='gpt-4', prompt=prompt)\n"
++            "    record = AuditRecord(feature_key='x', arguments={}, result=raw)\n"
++            "    return raw\n"
++        )
++        product_path = self._mk_service(tmp_path, content)
++        issues = check_llm_audit_wired(product_path)
++        assert issues == [], f"AuditRecord imported → must not flag, got: {issues}"
++
++    def test_does_not_flag_file_without_llm_dispatch(self, tmp_path):
++        # A plain service with no LLM dispatch — silent.
++        content = (
++            "from app.db import get_db\n\n"
++            "async def list_things(db):\n"
++            "    return await db.table('things').select('*').execute()\n"
++        )
++        product_path = self._mk_service(tmp_path, content)
++        issues = check_llm_audit_wired(product_path)
++        assert issues == [], f"no LLM dispatch → must not flag, got: {issues}"
++
++    def test_does_not_flag_test_directory(self, tmp_path):
++        # tests/ files are out of scope — only services/workers/routers fire.
++        target = tmp_path / "products" / "p1" / "backend" / "tests"
++        target.mkdir(parents=True)
++        (target / "test_ai.py").write_text(
++            "from noctusai_lib.integrations.llm import chat_completion\n\n"
++            "def test_thing():\n"
++            "    chat_completion(model='x', prompt='y')\n"
++        )
++        product_path = tmp_path / "products" / "p1"
++        issues = check_llm_audit_wired(product_path)
++        assert issues == [], f"tests dir is out of scope, got: {issues}"
++
++    def test_flags_worker_dispatch(self, tmp_path):
++        # workers/ scope is in-contract too.
++        content = (
++            "from noctusai_lib.integrations.llm import chat_completion\n\n"
++            "async def run_worker():\n"
++            "    return await chat_completion(model='x', prompt='y')\n"
++        )
++        product_path = self._mk_service(
++            tmp_path, content, subdir="workers", filename="conversation_worker.py",
++        )
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++        assert "workers/conversation_worker.py" in issues[0]["file"]
++
++    def test_flags_router_dispatch(self, tmp_path):
++        content = (
++            "from fastapi import APIRouter\n"
++            "from noctusai_lib.integrations.llm import chat_completion\n\n"
++            "router = APIRouter()\n\n"
++            "@router.post('/ai')\n"
++            "async def call_ai(payload: dict):\n"
++            "    return await chat_completion(model='x', prompt=payload['p'])\n"
++        )
++        product_path = self._mk_service(
++            tmp_path, content, subdir="routers", filename="ai.py",
++        )
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++        assert "routers/ai.py" in issues[0]["file"]
++
++    def test_lists_each_dispatch_line(self, tmp_path):
++        # Multi-dispatch file gets ONE finding listing every call line.
++        content = (
++            "from noctusai_lib.integrations.llm import chat_completion\n\n"
++            "async def a():\n"
++            "    return await chat_completion(model='x', prompt='1')\n"
++            "async def b():\n"
++            "    return await chat_completion(model='x', prompt='2')\n"
++            "async def c():\n"
++            "    return await chat_completion(model='x', prompt='3')\n"
++        )
++        product_path = self._mk_service(tmp_path, content)
++        issues = check_llm_audit_wired(product_path)
++        assert len(issues) == 1, issues
++        # Three dispatch lines should be mentioned in the message.
++        for line_no in ("4", "6", "8"):
++            assert line_no in issues[0]["issue"], (
++                f"line {line_no} missing from message: {issues[0]['issue']}"
++            )
++
++    def test_missing_product_no_issues(self, tmp_path):
++        # Product path doesn't exist → silent.
++        issues = check_llm_audit_wired(tmp_path / "products" / "ghost")
++        assert issues == []
++
++
++# ---------------------------------------------------------------------------
++# check_register_feature_has_redaction
++# ---------------------------------------------------------------------------
++
++
++class TestCheckRegisterFeatureHasRedaction:
++    """`register_feature(...)` missing `redact_arguments=` or `redact_result=`
++    → warning. Per llm-tool-audit-rollout Phase 0 audit (N=35 calls, zero
++    redaction wiring before Phases 2-4). Detector closes the drift loop."""
++
++    def _mk_consent_file(
++        self,
++        tmp_path: Path,
++        py_content: str,
++        *,
++        product: str = "p1",
++    ) -> Path:
++        target = tmp_path / "products" / product / "backend" / "app" / "services"
++        target.mkdir(parents=True, exist_ok=True)
++        (target / "ai_consent_features.py").write_text(py_content)
++        return tmp_path / "products" / product
++
++    def test_flags_register_feature_missing_both_redactions(self, tmp_path):
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "register_feature(\n"
++            "    'p1.feature_a',\n"
++            "    title='A',\n"
++            "    rationale='Test feature without redaction.',\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert len(issues) == 1, issues
++        assert issues[0]["severity"] == "warning"
++        assert "redact_arguments=" in issues[0]["issue"]
++        assert "redact_result=" in issues[0]["issue"]
++        assert "p1.feature_a" in issues[0]["issue"]
++        assert issues[0]["product"] == "p1"
++
++    def test_flags_when_only_redact_arguments_present(self, tmp_path):
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "def _scrub_args(v): return {}\n\n"
++            "register_feature(\n"
++            "    'p1.feature_b',\n"
++            "    title='B',\n"
++            "    rationale='Half-wired feature.',\n"
++            "    redact_arguments=_scrub_args,\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert len(issues) == 1, issues
++        # The message should call out the missing kwarg explicitly.
++        assert "redact_result=" in issues[0]["issue"]
++        assert "redact_arguments=" not in issues[0]["issue"].split(":")[2] \
++            if issues[0]["issue"].count(":") >= 2 else True  # message structure
++
++    def test_flags_when_only_redact_result_present(self, tmp_path):
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "def _scrub_result(v): return {}\n\n"
++            "register_feature(\n"
++            "    'p1.feature_c',\n"
++            "    title='C',\n"
++            "    rationale='Other half-wired feature.',\n"
++            "    redact_result=_scrub_result,\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert len(issues) == 1, issues
++        assert "redact_arguments=" in issues[0]["issue"]
++
++    def test_allows_register_feature_with_both_redactions(self, tmp_path):
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "def _scrub_args(v): return {}\n"
++            "def _scrub_result(v): return {}\n\n"
++            "register_feature(\n"
++            "    'p1.feature_ok',\n"
++            "    title='OK',\n"
++            "    rationale='Properly wired feature.',\n"
++            "    redact_arguments=_scrub_args,\n"
++            "    redact_result=_scrub_result,\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert issues == [], (
++            f"both redaction kwargs present → must not flag, got: {issues}"
++        )
++
++    def test_allows_lambda_redactions(self, tmp_path):
++        # Inline lambdas are equally valid — the detector only checks for the
++        # keyword presence, not the callable shape.
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "register_feature(\n"
++            "    'p1.feature_lambda',\n"
++            "    title='L',\n"
++            "    rationale='Lambda-redacted feature.',\n"
++            "    redact_arguments=lambda v: {'k': 'v'},\n"
++            "    redact_result=lambda v: {'count': 0},\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert issues == [], (
++            f"lambda redactions are valid → must not flag, got: {issues}"
++        )
++
++    def test_flags_each_register_feature_separately(self, tmp_path):
++        # Two calls in same file, only one missing — exactly one finding.
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "def _scrub(v): return {}\n\n"
++            "register_feature(\n"
++            "    'p1.good',\n"
++            "    title='good',\n"
++            "    rationale='r',\n"
++            "    redact_arguments=_scrub,\n"
++            "    redact_result=_scrub,\n"
++            ")\n"
++            "register_feature(\n"
++            "    'p1.bad',\n"
++            "    title='bad',\n"
++            "    rationale='r',\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert len(issues) == 1, issues
++        assert "p1.bad" in issues[0]["issue"]
++        assert "p1.good" not in issues[0]["issue"]
++
++    def test_missing_consent_file_no_issues(self, tmp_path):
++        # No `ai_consent_features.py` at all (e.g. adconnect carve-out) → silent.
++        target = tmp_path / "products" / "p1" / "backend" / "app" / "services"
++        target.mkdir(parents=True)
++        product_path = tmp_path / "products" / "p1"
++        issues = check_register_feature_has_redaction(product_path)
++        assert issues == [], f"missing consent file → silent, got: {issues}"
++
++    def test_missing_product_path_no_issues(self, tmp_path):
++        issues = check_register_feature_has_redaction(tmp_path / "products" / "ghost")
++        assert issues == []
++
++    def test_handles_unparseable_feature_key_gracefully(self, tmp_path):
++        # Non-literal feature key — detector still fires, key shows as <unknown>.
++        content = (
++            "from noctusai_lib.domain.ai import register_feature\n\n"
++            "KEY = 'p1.dynamic'\n\n"
++            "register_feature(\n"
++            "    KEY,\n"
++            "    title='dyn',\n"
++            "    rationale='r',\n"
++            ")\n"
++        )
++        product_path = self._mk_consent_file(tmp_path, content)
++        issues = check_register_feature_has_redaction(product_path)
++        assert len(issues) == 1, issues
++        # Non-literal first arg → key surfaces as <unknown>; detector still
++        # fires (the redaction wiring itself is independent of how the key
++        # is sourced).
++        assert "<unknown>" in issues[0]["issue"]
+diff --git a/mcp/noctusai/tools/noctus/dev/compliance.py b/mcp/noctusai/tools/noctus/dev/compliance.py
+index b9d5521a..1fc66c31 100644
+--- a/mcp/noctusai/tools/noctus/dev/compliance.py
++++ b/mcp/noctusai/tools/noctus/dev/compliance.py
+@@ -4385,6 +4385,347 @@ def check_section_7_placeholder_consistency(repo_root: Path | None = None) -> li
+     return issues
+ 
+ 
++# ---------------------------------------------------------------------------
++# `check_llm_audit_wired` — flag product files dispatching LLM calls
++# (`chat_completion` / `generate_embedding` / `transcribe_audio` /
++# `analyze_image`) without a colocated reference to the seed audit primitive
++# (`audit_hook` import / `AuditRecord`). Per `KB § PATTERNS/llm-tool-audit.md`
++# every LLM-dispatch site MUST route through `make_audit_writer(...)` so the
++# call lands a row in `<product_schema>.tool_call_audits`. Missing wiring is
++# a silent observability hole (no LGPD-queryable trail).
++#
++# Scope: `products/*/backend/app/{services,workers,routers}/*.py`.
++# Carve-out: adconnect + dev-team are not LLM dispatchers (confirmed by
++# Phase 0 audit — no `chat_completion`/`OpenAI()` imports). The detector
++# fires on grep hits only; carve-out products naturally never trigger.
++# Severity: warning.
++#
++# N=7 recurrence formalization, 2026-05-11 (`llm-tool-audit-rollout`
++# Phase 5). Per CLAUDE.md "DRY — the recurrence rule" +
++# KB § PATTERNS/methodology-codification-pipeline.md.
++# ---------------------------------------------------------------------------
++
++
++# LLM-dispatch call surfaces the detector tracks. Any of these tokens appearing
++# as a CALL (not just an import or a docstring word) flags the file as an
++# LLM-dispatch site. The audit primitive is supposed to ring-fence every one
++# of these.
++_LLM_DISPATCH_CALL_NAMES: frozenset[str] = frozenset({
++    "chat_completion",
++    "generate_embedding",
++    "transcribe_audio",
++    "analyze_image",
++})
++
++# Tokens whose presence in the same file (as either an import or a name
++# reference) marks the file as audit-wired. We accept either token because
++# the canonical pattern (`audit_hook.py` provides `build_audit_record` +
++# `get_audit_writer`; module-level imports `AuditRecord`) shows up via at
++# least one. The check is intentionally permissive: a single `audit_hook`
++# import counts as wired even before the row-write line is added — the
++# follow-up wiring is a different concern.
++_LLM_AUDIT_REFERENCE_TOKENS: frozenset[str] = frozenset({
++    "audit_hook",
++    "AuditRecord",
++})
++
++
++def _llm_dispatch_call_lines(tree: ast.AST) -> list[int]:
++    """Return the line numbers of every LLM-dispatch CALL in the AST.
++
++    Matches both bare-name calls (`chat_completion(...)`) and attribute
++    calls (`integrations.chat_completion(...)`). Docstrings and import
++    statements are ignored — only `ast.Call` nodes whose function name
++    matches one of `_LLM_DISPATCH_CALL_NAMES`.
++    """
++    lines: list[int] = []
++    for node in ast.walk(tree):
++        if not isinstance(node, ast.Call):
++            continue
++        func = node.func
++        name = None
++        if isinstance(func, ast.Name):
++            name = func.id
++        elif isinstance(func, ast.Attribute):
++            name = func.attr
++        if name in _LLM_DISPATCH_CALL_NAMES:
++            lines.append(node.lineno)
++    return lines
++
++
++def _file_has_audit_reference(tree: ast.AST) -> bool:
++    """True if the file imports OR references any of the audit tokens.
++
++    We accept three shapes:
++      - `from app.services.audit_hook import ...` (ImportFrom)
++      - `import app.services.audit_hook` (Import)
++      - bare `audit_hook` / `AuditRecord` name reference anywhere
++      - attribute reference (`x.AuditRecord`, `audit_hook.write`)
++    """
++    for node in ast.walk(tree):
++        if isinstance(node, ast.ImportFrom):
++            module = node.module or ""
++            if any(tok in module for tok in _LLM_AUDIT_REFERENCE_TOKENS):
++                return True
++            for alias in node.names:
++                if alias.name in _LLM_AUDIT_REFERENCE_TOKENS:
++                    return True
++        elif isinstance(node, ast.Import):
++            for alias in node.names:
++                if any(tok in alias.name for tok in _LLM_AUDIT_REFERENCE_TOKENS):
++                    return True
++        elif isinstance(node, ast.Name):
++            if node.id in _LLM_AUDIT_REFERENCE_TOKENS:
++                return True
++        elif isinstance(node, ast.Attribute):
++            if node.attr in _LLM_AUDIT_REFERENCE_TOKENS:
++                return True
++    return False
++
++
++def check_llm_audit_wired(product_path: Path) -> list[dict]:
++    """Detect product files that dispatch an LLM call without colocated
++    audit-primitive wiring.
++
++    A file in `app/services/` / `app/workers/` / `app/routers/` that calls
++    `chat_completion(...)` / `generate_embedding(...)` / `transcribe_audio(...)`
++    / `analyze_image(...)` MUST also reference the audit primitive
++    (`audit_hook` import or `AuditRecord` name) in the same file. Otherwise
++    the LLM call's prompt + response flow through the system without a
++    queryable row in `<product>.tool_call_audits`.
++
++    Per `KB § PATTERNS/llm-tool-audit.md` — best-effort writer composed via
++    `make_audit_writer(...)`; per-feature redaction via `redact_arguments` +
++    `redact_result` kwargs on each `register_feature(...)`.
++
++    Scope: per-product, services/workers/routers only. adconnect + dev-team
++    are carved out by absence (no LLM dispatch in their backends).
++
++    Severity: warning.
++    """
++    issues: list[dict] = []
++    if not product_path.exists():
++        return issues
++
++    product_slug = product_path.name
++    candidate_dirs = [
++        product_path / "backend" / "app" / "services",
++        product_path / "backend" / "app" / "workers",
++        product_path / "backend" / "app" / "routers",
++    ]
++
++    for base in candidate_dirs:
++        if not base.exists():
++            continue
++        for path in base.glob("*.py"):
++            if path.name == "__init__.py":
++                continue
++            try:
++                content = path.read_text(encoding="utf-8")
++            except (UnicodeDecodeError, OSError) as exc:
++                logger.warning(
++                    "compliance: cannot read %s (%s), skipping", path, exc,
++                )
++                continue
++            try:
++                tree = ast.parse(content, filename=str(path))
++            except SyntaxError as exc:
++                logger.warning(
++                    "compliance: cannot parse %s (%s), skipping", path, exc,
++                )
++                continue
++
++            dispatch_lines = _llm_dispatch_call_lines(tree)
++            if not dispatch_lines:
++                continue
++            if _file_has_audit_reference(tree):
++                continue
++
++            try:
++                relative = str(path.relative_to(product_path.parent.parent))
++            except ValueError:
++                relative = str(path)
++
++            first_line = dispatch_lines[0]
++            issues.append({
++                "product": product_slug,
++                "file": relative,
++                "issue": (
++                    f"`{relative}` dispatches LLM call(s) at line(s) "
++                    f"{', '.join(str(n) for n in dispatch_lines)} "
++                    f"(`chat_completion` / `generate_embedding` / "
++                    f"`transcribe_audio` / `analyze_image`) but has no "
++                    f"colocated `audit_hook` import or `AuditRecord` "
++                    f"reference. Per `KB § PATTERNS/llm-tool-audit.md`, "
++                    f"every LLM-dispatch site MUST route through "
++                    f"`make_audit_writer(...)` so the call lands a row in "
++                    f"`<product>.tool_call_audits`. Missing wiring = silent "
++                    f"observability hole (no LGPD-queryable trail). FIX: "
++                    f"import `build_audit_record` + `get_audit_writer` from "
++                    f"`app.services.audit_hook` and wrap the dispatch — see "
++                    f"media-scheduling's `app/workers/conversation_worker.py` "
++                    f"or any Phase 2-4 adopter (mailing / erp-imobiliario / "
++                    f"daily-life / personal-finance / therapy-platform / "
++                    f"core) for the canonical shape. First dispatch at "
++                    f"line {first_line}."
++                ),
++                "severity": "warning",
++            })
++
++    return issues
++
++
++# ---------------------------------------------------------------------------
++# `check_register_feature_has_redaction` — flag `register_feature(...)`
++# calls in `app/services/ai_consent_features.py` that omit the LGPD
++# redaction kwargs (`redact_arguments=` AND `redact_result=`). Without both,
++# raw prompt + completion text lands in `tool_call_audits.arguments` /
++# `tool_call_audits.result`, which is an LGPD leak the audit primitive
++# explicitly defends against.
++#
++# Phase 0 audit (2026-05-11) surfaced N=35 register_feature calls across 6
++# products with zero redaction wiring — the highest-impact LGPD gap. Phases
++# 2-4 wired the redaction in every product; this detector closes the drift
++# loop so a future feature author can't silently ship without redaction.
++#
++# Severity: warning.
++# ---------------------------------------------------------------------------
++
++
++def _is_register_feature_call(node: ast.AST) -> bool:
++    """True iff the node is a `register_feature(...)` call (bare-name or
++    attribute form; we accept both)."""
++    if not isinstance(node, ast.Call):
++        return False
++    func = node.func
++    if isinstance(func, ast.Name) and func.id == "register_feature":
++        return True
++    if isinstance(func, ast.Attribute) and func.attr == "register_feature":
++        return True
++    return False
++
++
++def _register_feature_first_arg_key(call: ast.Call) -> str:
++    """Return the feature key string (first positional arg) or `<unknown>`.
++
++    `register_feature("daily_life.daily_brief", title=..., ...)` → "daily_life.daily_brief".
++    Returns "<unknown>" when the first arg is not a string literal (rare).
++    """
++    if call.args:
++        first = call.args[0]
++        if isinstance(first, ast.Constant) and isinstance(first.value, str):
++            return first.value
++    # Some adopters might wire feature_key= as a keyword; surface that too.
++    for kw in call.keywords:
++        if kw.arg in ("key", "feature_key") and isinstance(kw.value, ast.Constant):
++            value = kw.value.value
++            if isinstance(value, str):
++                return value
++    return "<unknown>"
++
++
++def check_register_feature_has_redaction(product_path: Path) -> list[dict]:
++    """Detect `register_feature(...)` calls missing LGPD redaction kwargs.
++
++    Scans `<product>/backend/app/services/ai_consent_features.py` (the
++    single canonical location for consent registrations). Every
++    `register_feature(...)` call MUST pass BOTH:
++
++      - `redact_arguments=<callable>` — scrubs PII from input args before
++        the AuditRecord is built.
++      - `redact_result=<callable>` — scrubs PII from the LLM completion
++        before the row is written.
++
++    The seed-lib `_safe_jsonable` fallback is a defensive coercion shim,
++    NOT a redaction strategy. Without explicit `redact_*` callables,
++    personal data (note bodies / clinic notes / mailing-list emails /
++    therapy transcripts) flows raw into `tool_call_audits.arguments` and
++    `tool_call_audits.result` — exactly what the audit primitive defends
++    against.
++
++    Surfaced by Phase 0 audit (2026-05-11): N=35 register_feature calls
++    across 6 products had zero redaction wiring before Phase 2-4 rollout.
++    Detector closes the drift loop so a future feature author cannot
++    silently re-introduce the gap.
++
++    Scope: per-product, `ai_consent_features.py` only — that's where
++    `register_feature(...)` legitimately lives. Other files calling
++    `register_feature` from outside the consent file are out of contract
++    and would surface separately.
++
++    Severity: warning.
++    """
++    issues: list[dict] = []
++    if not product_path.exists():
++        return issues
++
++    product_slug = product_path.name
++    consent_file = (
++        product_path / "backend" / "app" / "services" / "ai_consent_features.py"
++    )
++    if not consent_file.exists():
++        return issues
++
++    try:
++        content = consent_file.read_text(encoding="utf-8")
++    except (UnicodeDecodeError, OSError) as exc:
++        logger.warning(
++            "compliance: cannot read %s (%s), skipping", consent_file, exc,
++        )
++        return issues
++    try:
++        tree = ast.parse(content, filename=str(consent_file))
++    except SyntaxError as exc:
++        logger.warning(
++            "compliance: cannot parse %s (%s), skipping", consent_file, exc,
++        )
++        return issues
++
++    try:
++        relative = str(consent_file.relative_to(product_path.parent.parent))
++    except ValueError:
++        relative = str(consent_file)
++
++    for node in ast.walk(tree):
++        if not _is_register_feature_call(node):
++            continue
++        kwarg_names: set[str] = {kw.arg for kw in node.keywords if kw.arg}
++        has_args_redact = "redact_arguments" in kwarg_names
++        has_result_redact = "redact_result" in kwarg_names
++        if has_args_redact and has_result_redact:
++            continue
++        missing = []
++        if not has_args_redact:
++            missing.append("redact_arguments=")
++        if not has_result_redact:
++            missing.append("redact_result=")
++        feature_key = _register_feature_first_arg_key(node)
++        issues.append({
++            "product": product_slug,
++            "file": relative,
++            "issue": (
++                f"`{relative}:{node.lineno}` — `register_feature("
++                f"'{feature_key}', ...)` is missing required LGPD "
++                f"redaction kwarg(s): {' + '.join(missing)}. Per "
++                f"`KB § PATTERNS/llm-tool-audit.md`, every feature MUST "
++                f"declare per-feature `redact_arguments=<callable>` AND "
++                f"`redact_result=<callable>` so PII (note bodies / clinic "
++                f"notes / emails / transcripts) is scrubbed BEFORE the "
++                f"AuditRecord lands in `<product>.tool_call_audits`. The "
++                f"seed `_safe_jsonable` fallback is a coercion shim, NOT "
++                f"a redaction strategy. FIX: define a `_scrub_<feature>_*` "
++                f"helper that returns only structural fields (counters / "
++                f"status / prompt-version) and pass it as both kwargs — "
++                f"see mailing's `app/services/ai_consent_features.py` for "
++                f"the canonical lambdas, or daily-life's `_scrub_*` named "
++                f"helpers for the named-function shape."
++            ),
++            "severity": "warning",
++        })
++
++    return issues
++
++
+ def check_all_products() -> tuple[int, list]:
+     """Run all compliance checks on all products. Returns (score, issues)."""
+     all_issues = []
+@@ -4407,6 +4748,8 @@ def check_all_products() -> tuple[int, list]:
+             + check_function_search_path_pinned(d)
+             + check_admin_endpoint_service_role_bypass(d)
+             + check_slowapi_with_pep563(d)
++            + check_llm_audit_wired(d)
++            + check_register_feature_has_redaction(d)
+         )
+         all_issues.extend(issues)
+         penalties = {"critical": 25, "high": 10, "warning": 3}
+diff --git a/mcp/noctusai/tools/noctus/dev/review.py b/mcp/noctusai/tools/noctus/dev/review.py
+index 13f08c12..b81e6f9e 100644
+--- a/mcp/noctusai/tools/noctus/dev/review.py
++++ b/mcp/noctusai/tools/noctus/dev/review.py
+@@ -85,6 +85,8 @@ def _detect(
+         check_function_search_path_pinned,
+         check_admin_endpoint_service_role_bypass,
+         check_slowapi_with_pep563,
++        check_llm_audit_wired,
++        check_register_feature_has_redaction,
+     )
+ 
+     base = products_dir if products_dir is not None else PRODUCTS_DIR
+@@ -107,6 +109,8 @@ def _detect(
+         issues.extend(check_function_search_path_pinned(product_path))
+         issues.extend(check_admin_endpoint_service_role_bypass(product_path))
+         issues.extend(check_slowapi_with_pep563(product_path))
++        issues.extend(check_llm_audit_wired(product_path))
++        issues.extend(check_register_feature_has_redaction(product_path))
+     # Global repo-root sweep — only when not scoped to a single product.
+     if product_slug is None:
+         issues.extend(check_out_of_contract_trees())
+-- 
+2.51.2
+

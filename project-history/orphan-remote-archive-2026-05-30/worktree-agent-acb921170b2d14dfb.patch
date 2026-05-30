@@ -1,0 +1,581 @@
+From 231db4bdfcf860d67b7ddde3df4b822fd9100ee7 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:44 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-acb921170b2d14dfb?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../PATTERNS/agent-reading-discipline.md      | 179 +++++-------------
+ .../CONTEXT/PATTERNS/seed-absorption.md       | 176 +++++++++--------
+ 2 files changed, 130 insertions(+), 225 deletions(-)
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/agent-reading-discipline.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/agent-reading-discipline.md
+index 5c41d9d7..a55355cc 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/agent-reading-discipline.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/agent-reading-discipline.md
+@@ -12,8 +12,7 @@
+ >
+ > **Sync rule.** This file's rules also surface as terse §1 bullets
+ > in `CLAUDE.md` and as memory entries under `~/.claude/projects/`.
+-> Update all three layers together; never just one (CLAUDE.md +
+-> memory + this file = three-way sync). See
++> Three-way sync: `KB ↔ CLAUDE.md ↔ memory` — never just one. See
+ > `CONTEXT/01-PHILOSOPHY.md § Docs stay in sync`.
+ 
+ ---
+@@ -26,109 +25,53 @@ actually edit, cite, or reason about.
+ 
+ ### Trigger
+ 
+-Apply by default when **any** of these is true:
++Apply by default when **any** is true:
+ 
+-- The file is > 200 lines.
++- File > 200 lines.
+ - You don't know the exact line range you need.
+-- The file is named generically (e.g. `service.py`, `utils.ts`,
+-  `helpers.py`) and likely contains many unrelated symbols.
+-- You're orienting (first read of a session) rather than editing
+-  specifically.
++- File is named generically (e.g. `service.py`, `utils.ts`, `helpers.py`) ∧ likely contains many unrelated symbols.
++- You're orienting (first read of session) rather than editing specifically.
+ 
+ Skip the rule (read whole file) when **all** are true:
+ 
+-- The file is small (< 200 lines).
+-- You'll act on most of it (a full review, a complete rewrite, a
+-  migration body).
+-- The structure IS the content (a JSON config, a SQL migration with
+-  no nested logic, a `.env.example`).
++- File is small (< 200 lines).
++- You'll act on most of it (full review, complete rewrite, migration body).
++- Structure IS the content (JSON config, SQL migration with no nested logic, `.env.example`).
+ 
+ ### Behavior
+ 
+-Three concentric levels of detail, take the smallest that answers
+-the question:
+-
+-1. **Structure pass** — outline only. Until the AST outline tools
+-   land in Phase 3+4, use one of:
+-   - `Read` with `limit=80` to see imports + first declarations,
+-     then a second read at a deeper offset if needed.
+-   - `grep -n "^def \|^class \|^export \|^const \|^function "
+-     <path>` (or `rg --type py --type ts -n '^(def |class |export
+-     |const |function )' <path>`) to dump symbol names + line
+-     numbers.
+-   - `wc -l <path>` to size the file before deciding.
+-2. **Targeted body pass** — read 30-100 lines around the specific
+-   symbol you'll touch (`Read offset=<line> limit=80`).
+-3. **Whole-file pass** — only when the cost is justified by the
+-   work.
++Three concentric levels of detail; take the smallest that answers the question:
++
++1. **Structure pass** — outline only. Until AST outline tools land in Phase 3+4, use one of:
++   - `Read` with `limit=80` to see imports + first declarations, then a second read at deeper offset if needed.
++   - `grep -n "^def \|^class \|^export \|^const \|^function " <path>` (∨ `rg --type py --type ts -n '^(def |class |export |const |function )' <path>`) → dump symbol names + line numbers.
++   - `wc -l <path>` → size the file before deciding.
++2. **Targeted body pass** — read 30-100 lines around the specific symbol (`Read offset=<line> limit=80`).
++3. **Whole-file pass** — only when cost is justified by the work.
+ 
+ ### Why
+ 
+-Most edits need 1-2 functions. Reading a 600-line file whole pulls
+-in ~5,000-10,000 tokens of context that won't be referenced again
+-this turn — paid for in a smaller available window for the actual
+-reasoning. Phase 0 measurement of `methodology-extraction` (2026-05-02)
+-confirmed CLAUDE.md's auto-load surface alone is ~5-7K tokens
+-post-trim; whole-file reads of large modules can rival that on each
+-turn. The narrow-read rule recovers that headroom for thinking.
++Most edits need 1-2 functions. Reading a 600-line file whole pulls in ~5,000-10,000 tokens of context not referenced again this turn — paid for in a smaller window for actual reasoning. Phase 0 measurement of `methodology-extraction` (2026-05-02) confirmed CLAUDE.md's auto-load surface alone is ~5-7K tokens post-trim; whole-file reads of large modules can rival that per turn. The narrow-read rule recovers headroom for thinking.
+ 
+ ### Worked examples (from this repo)
+ 
+ - `products/erp-imobiliario/backend/app/services/vista_showcase_service.py`
+-  is 383 lines. Editing `IMOVEL_LIST_FIELDS` requires lines 47-76
+-  (~30 lines) — a `Read offset=40 limit=40` is enough; reading the
+-  whole file is wasteful.
+-- `seed/lib/frontend/src/api.ts` is hundreds of lines but the
+-  question "does `api.get` return `{data: T}` or `T`?" is answered
+-  by `grep -n "handleResponse\|return response.json" <path>` then a
+-  20-line targeted read of `handleResponse`.
+-- `mcp/noctusai/cli.py` has ~30 CLI flags. To answer "does it support
+-  `--review`?" a `grep -n -- "--review" cli.py` is one `grep` cheaper
+-  than a Read.
++  is 383 lines. Editing `IMOVEL_LIST_FIELDS` requires lines 47-76 (~30 lines) — a `Read offset=40 limit=40` is enough; reading the whole file is wasteful.
++- `seed/lib/frontend/src/api.ts` is hundreds of lines but the question "does `api.get` return `{data: T}` ∨ `T`?" is answered by `grep -n "handleResponse\|return response.json" <path>` then a 20-line targeted read of `handleResponse`.
++- `mcp/noctusai/cli.py` has ~30 CLI flags. To answer "does it support `--review`?" a `grep -n -- "--review" cli.py` is one `grep` cheaper than a Read.
+ 
+ ### Anti-pattern
+ 
+-Reading `Read <path>` with no offset/limit on every file the agent
+-encounters during exploration, regardless of size or relevance. The
+-default `Read` reads up to 2000 lines — that's cheap insurance feels
+-like, but the cost compounds across a multi-file investigation.
++Reading `Read <path>` with no offset/limit on every file the agent encounters during exploration, regardless of size ∨ relevance. The default `Read` reads up to 2000 lines — feels like cheap insurance, but cost compounds across a multi-file investigation.
+ 
+ ### Companion tooling
+ 
+-- ✅ **`noctus.dev.outline_python(path)`** (Phase 3 ship 2026-05-02) —
+-  returns a Python file's symbol tree (classes, functions, methods,
+-  module-level UPPER_SNAKE_CASE constants, imports) with line
+-  ranges. No bodies. Stdlib `ast`, no extra deps. CLI:
+-  `python mcp/noctusai/cli.py --outline-python <path>`.
+-  The structure pass on a Python file is now a single tool call —
+-  prefer it over the `grep -n "^def \|^class …"` heuristic when
+-  working with `.py` files.
+-- ✅ **`noctus.dev.outline_typescript(path)`** (Phase 4 ship 2026-05-02) —
+-  same `OutlineResult` shape for `.ts` / `.tsx`. Captures classes,
+-  interfaces, type aliases, top-level functions, arrow-fn consts
+-  (React components and hooks land here), methods inside classes,
+-  UPPER_SNAKE_CASE + plain consts, imports (multi-line collapsed).
+-  Regex-based — no Node spawn, no npm install, ~5ms per call. CLI:
+-  `python mcp/noctusai/cli.py --outline-typescript <path>`. The
+-  precision tradeoff against the TypeScript Compiler API is
+-  documented in the tool's module docstring; ~95% accuracy on
+-  prettier/eslint-formatted code is sufficient for narrow-read.
+-  Upgrade path to tree-sitter or Compiler API stays open if a
+-  downstream use case (e.g. AI-training feature extraction in
+-  `projects/project-history-ledger/`) needs higher precision.
++- ✅ **`noctus.dev.outline_python(path)`** (Phase 3 ship 2026-05-02) — returns a Python file's symbol tree (classes, functions, methods, module-level UPPER_SNAKE_CASE constants, imports) with line ranges. No bodies. Stdlib `ast`, no extra deps. CLI: `python mcp/noctusai/cli.py --outline-python <path>`. Structure pass on a Python file is now a single tool call — prefer it over `grep -n "^def \|^class …"` for `.py` files.
++- ✅ **`noctus.dev.outline_typescript(path)`** (Phase 4 ship 2026-05-02) — same `OutlineResult` shape for `.ts` / `.tsx`. Captures classes, interfaces, type aliases, top-level functions, arrow-fn consts (React components ∧ hooks), methods inside classes, UPPER_SNAKE_CASE + plain consts, imports (multi-line collapsed). Regex-based — no Node spawn, no npm install, ~5ms per call. CLI: `python mcp/noctusai/cli.py --outline-typescript <path>`. Precision tradeoff vs the TypeScript Compiler API documented in the tool's module docstring; ~95% accuracy on prettier/eslint-formatted code is sufficient for narrow-read. Upgrade path to tree-sitter ∨ Compiler API stays open for downstream use cases needing higher precision (e.g. AI-training feature extraction in `projects/project-history-ledger/`).
+ 
+ ### Detector (Phase 3 ship 2026-05-03 — `session-review-baseline`)
+ 
+-- ✅ **`noctus.dev.review_session`** — walks one Claude Code JSONL
+-  transcript and emits a body-free issue when a whole-file `Read`
+-  (no `offset` / `limit`) on a >200-line repo file was not preceded
+-  by an `outline_python` / `outline_typescript`. Severity is INFO
+-  (calibration on 5 real local sessions confirmed legitimate
+-  whole-file reads exist; the WARNING bump is gated on a future
+-  manual-ground-truth calibration). The detector lives at
+-  `mcp/noctusai/tools/session_review.py` and is wired into the
+-  static-axis `noctus.dev.review` family as a session-axis sibling.
+-  See `KB § 06-AGENTS.md § Session-axis review`.
++- ✅ **`noctus.dev.review_session`** — walks one Claude Code JSONL transcript ∧ emits a body-free issue when a whole-file `Read` (no `offset`/`limit`) on a >200-line repo file was not preceded by `outline_python` / `outline_typescript`. Severity: 🟢 INFO (calibration on 5 real local sessions confirmed legitimate whole-file reads exist; 🟡 WARNING bump gated on future manual-ground-truth calibration). Lives at `mcp/noctusai/tools/session_review.py`; wired into `noctus.dev.review` as a session-axis sibling. → `KB § 06-AGENTS.md § Session-axis review`.
+ 
+ ---
+ 
+@@ -143,82 +86,48 @@ symbol is already known.
+ 
+ Delegate when **any** is true:
+ 
+-- The question is *"where is X defined / which files reference Y"*
+-  and X / Y is the only thing known.
++- Question is *"where is X defined / which files reference Y"* ∧ X / Y is the only thing known.
+ - Answering needs ≥3 grep / find / glob calls in a row.
+-- The repo location of the relevant code is genuinely unknown
+-  (cross-product feature search, hunting an unfamiliar pattern).
+-- Broad audit: *"what frontend hooks call `/api/foo/*`"*, *"every
+-  place that imports `noctusai_lib.X`"*, *"all PROJECT.md files
+-  that mention slug Y"*.
++- Repo location of relevant code genuinely unknown (cross-product feature search, hunting unfamiliar pattern).
++- Broad audit: *"what frontend hooks call `/api/foo/*`"*, *"every place importing `noctusai_lib.X`"*, *"all PROJECT.md files mentioning slug Y"*.
+ 
+ Use direct tools (`Read`, `grep`, `find`) when **all** are true:
+ 
+-- The exact file path is known.
++- Exact file path is known.
+ - One symbol / one section / one file resolves the question.
+-- The lookup is fast (`grep -n <symbol> <path>` or
+-  `Read <path> offset=N limit=80`).
++- Lookup is fast (`grep -n <symbol> <path>` ∨ `Read <path> offset=N limit=80`).
+ 
+ ### Why
+ 
+-The Explore subagent runs in its own context window. It greps,
+-reads excerpts, and returns a synthesized digest — *the raw search
+-output never lands in the main conversation*. For breadth-3+ work
+-that's a cache-saving move (the digest is small; the equivalent raw
+-output would have flooded the main window). For a one-shot lookup
+-it's pure overhead — the subagent spin-up cost outweighs a single
+-`grep` you could run inline.
++The Explore subagent runs in its own context window. It greps, reads excerpts, ∧ returns a synthesized digest — *raw search output never lands in main conversation*. For breadth-3+ work that's a cache-saving move (the digest is small; equivalent raw output would have flooded the main window). For a one-shot lookup it's pure overhead — subagent spin-up cost outweighs a single inline `grep`.
+ 
+ ### The trigger is RESEARCH BREADTH, not product count
+ 
+-Phase 1 watch-out (carried over from the
+-`replication-to-seed-symmetry` rule): *the right framing is "3+
+-greps" or "open-ended discovery", NOT "this question touches N
+-products"*. A question that walks 3 directories of one product is a
+-delegate; a question that names one file in 5 products is direct.
++Phase 1 watch-out (carried from `replication-to-seed-symmetry`): *the right framing is "3+ greps" ∨ "open-ended discovery", NOT "this question touches N products"*. A question walking 3 directories of one product → delegate; a question naming one file in 5 products → direct.
+ 
+ ### Worked examples
+ 
+-- *"where is `create_product_app` defined and who imports it?"* →
+-  delegate (multi-file walking, broad symbol-usage audit).
+-- *"does `vista_showcase_service.py` use `_audit` on every error
+-  path?"* → direct (one known path, one targeted scan).
+-- *"audit every project's §3a Seed-first analysis section"* →
+-  delegate (cross-folder discovery, ~15 files).
+-- *"check whether `/api/vista-showcase/imoveis` returns the correct
+-  envelope shape"* → direct (one known router file).
+-- *"what frontend hooks read `result.data` from `api.get`?"* →
+-  delegate (cross-hook scan, would have been ≥3 greps + reads).
++- *"where is `create_product_app` defined ∧ who imports it?"* → delegate (multi-file walking, broad symbol-usage audit).
++- *"does `vista_showcase_service.py` use `_audit` on every error path?"* → direct (one known path, one targeted scan).
++- *"audit every project's §3a Seed-first analysis section"* → delegate (cross-folder discovery, ~15 files).
++- *"check whether `/api/vista-showcase/imoveis` returns the correct envelope shape"* → direct (one known router file).
++- *"what frontend hooks read `result.data` from `api.get`?"* → delegate (cross-hook scan, ≥3 greps + reads).
+ 
+ ### Anti-pattern
+ 
+-Delegating *"open `path/to/file.ts` and tell me what it does"* — a
+-direct `Read` is faster, cheaper, and the agent's understanding
+-isn't filtered through a digest.
++Delegating *"open `path/to/file.ts` and tell me what it does"* — direct `Read` is faster, cheaper, ∧ agent's understanding isn't filtered through a digest.
+ 
+ ### Companion tooling
+ 
+-- The Explore subagent (built-in `Agent` tool with
+-  `subagent_type=Explore`) is the canonical delegate.
+-- For `noctusai_*` MCP scans (`noctus.dev.scan_cross_product_helpers`,
+-  `noctus.dev.refs`, `noctus.dev.status`), the scan IS the digest —
+-  prefer the dedicated tool over delegating a generic Explore for
+-  the same question.
+-- After narrow-read (above) is fluent, "is this a delegate?" usually
+-  reduces to "does the structure pass say I need ≥3 more files?" —
+-  the two rules compound.
++- The Explore subagent (built-in `Agent` tool with `subagent_type=Explore`) is the canonical delegate.
++- For `noctusai_*` MCP scans (`noctus.dev.scan_cross_product_helpers`, `noctus.dev.refs`, `noctus.dev.status`), the scan IS the digest — prefer the dedicated tool over generic Explore for the same question.
++- After narrow-read (above) is fluent, "is this a delegate?" reduces to "does the structure pass say I need ≥3 more files?" — the two rules compound.
+ 
+ ---
+ 
+ ## See also
+ 
+-- `CLAUDE.md § Engineering Philosophy` — the terse bullets that point
+-  here.
+-- `CONTEXT/01-PHILOSOPHY.md § CLAUDE.md vs KNOWLEDGE-BASE` — the
+-  token-budget rule that motivates narrow-read at the
+-  philosophical level.
+-- `CONTEXT/PATTERNS/project-execution.md § 2.5 Phase 0 audits` —
+-  Phase 0 audits are the canonical site where narrow-read pays for
+-  itself; the audit reads many files briefly, never fully.
+-- `projects/methodology-extraction/PROJECT.md` — the active project
+-  shipping these rules + tools.
++- `CLAUDE.md § Engineering Philosophy` — terse bullets that point here.
++- `CONTEXT/01-PHILOSOPHY.md § CLAUDE.md vs KNOWLEDGE-BASE` — token-budget rule motivating narrow-read.
++- `CONTEXT/PATTERNS/project-execution.md § 2.5 Phase 0 audits` — Phase 0 audits are the canonical site where narrow-read pays for itself; the audit reads many files briefly, never fully.
++- `projects/methodology-extraction/PROJECT.md` — active project shipping these rules + tools.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-absorption.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-absorption.md
+index 48d1277c..2973ddc0 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-absorption.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/seed-absorption.md
+@@ -1,122 +1,118 @@
+ # Seed absorption — methodology + tools
+ 
+-> Removing duplicated content from products by lifting it into the seed framework. Diagnostic tools at `noctus.seed.*`; the absorption loop is **scan → evaluate → self-audit → absorb → re-scan → build-verify**. The methodology is the operational arm of the platform DRY recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`).
++> Remove duplicated content from products by lifting it into the seed framework. Diagnostic tools at `noctus.seed.*`; absorption loop is **scan → evaluate → self-audit → absorb → re-scan → build-verify**. Operational arm of the platform DRY recurrence rule (`KB § PATTERNS/project-execution.md § 2.7`).
+ 
+ ## When to absorb
+ 
+-Absorption is triggered by the **DRY recurrence rule** — once a content shape repeats across products, the cost of leaving it scattered exceeds the cost of lifting it.
++Triggered by the **DRY recurrence rule** — once a content shape repeats across products, the cost of leaving it scattered exceeds the cost of lifting it.
+ 
+-- **N=2 → triage time.** Inspect the two instances, decide one of three outcomes (per the universal rule):
+-  - **formalize** — lift to seed now (default if instances are byte-identical or near-identical).
+-  - **refactor** — align both to a shared shape, then formalize.
+-  - **accept-with-rationale** — catalog in `KB § PATTERNS/accept-with-rationale.md` if absorption cost > marginal duplication cost (e.g. trivial files of ≤5 lines that genuinely vary per product).
+-- **N=3+ → MUST formalize.** Silently shipping the 4th instance is forbidden. Minimum response when blocked: file a follow-up `seed-absorb-<short-name>` project, do not silently absorb seed-build into consumer scope.
+-- **Trivial files (≤5 lines)**: absorption complexity may exceed marginal gain — accept-with-rationale is OK, but the entry must name the tipping point ("when this grows past N=4 or 10 lines, lift").
++- **N=2 ⇒ triage time.** Inspect both instances, decide one outcome (per the universal rule):
++  - **`[F]` formalize** — lift to seed now (default if byte-identical or near-identical).
++  - **`[R]` refactor** — align both to a shared shape, then formalize.
++  - **`[A]` accept-with-rationale** — catalog in `KB § PATTERNS/accept-with-rationale.md` if absorption cost > marginal duplication cost (e.g. trivial files ≤5 lines that genuinely vary per product).
++- **N≥3 ⇒ MUST formalize.** Silently shipping the 4th instance is forbidden. Minimum response when blocked: file a follow-up `seed-absorb-<short-name>` project; do not silently absorb seed-build into consumer scope.
++- **Trivial files (≤5 lines)**: absorption complexity may exceed marginal gain — `[A]` accept-with-rationale OK, but entry must name the tipping point ("when this grows past N=4 ∨ 10 lines, lift").
+ 
+ The absorption-search standing duty (`KB § 06-AGENTS.md § Absorption-search sextet`) keeps the recurrence signal hot — every time you touch a product's services / routers / hooks / components, run the relevant scan modes before walking away.
+ 
+ ## The MCP tools (`noctus.seed.*`)
+ 
+-All seven tools live under the `noctus.seed.*` namespace and are exposed through the noctusai MCP server. They share a common `_filewalk` helper at `mcp/noctusai/tools/noctus/seed/_filewalk.py` — touch the skip lists in **both** `scan_repetition` and `audit_drift` if you change them (silent drift between the two scans is a known footgun).
++All seven tools live under `noctus.seed.*` namespace, exposed through the noctusai MCP server. They share a common `_filewalk` helper at `mcp/noctusai/tools/noctus/seed/_filewalk.py` — touch skip lists in **both** `scan_repetition` ∧ `audit_drift` if changing them (silent drift between scans is a known footgun).
+ 
+ ### `noctus.seed.scan_repetition`
+ 
+-Walks `products/*/` for files duplicated across N≥2 products at the same relative path. Per group, classifies each candidate as one of:
++Walks `products/*/` for files duplicated across N≥2 products at the same relative path. Per group, classifies each candidate:
+ 
+ - **`byte_identical`** — every product's copy is character-for-character the same. Lowest-friction absorption: move to seed + delete consumer copies, or move to seed + add re-export shims if direct deletion would break imports.
+-- **`near_identical`** — files share ≥0.95 similarity (line-based ratio). Indicates a shared backbone with small per-product variance — usually a candidate for the **factory** strategy (3 below) or **template + runtime substitution** (4 below).
+-- **`divergent`** — same path, different bodies. Either a false positive (truly per-product content), an absorption that already started but didn't finish, or a candidate that needs structural refactor before absorption.
++- **`near_identical`** — files share ≥0.95 similarity (line-based ratio). Shared backbone with small per-product variance — usually a candidate for **factory** (Strategy 3) ∨ **template + runtime substitution** (Strategy 4).
++- **`divergent`** — same path, different bodies. Either a false positive (truly per-product content), an absorption started-but-unfinished, or a candidate needing structural refactor before absorption.
+ 
+-Output schema (per group): `{rel_path, occurrences, products, classification, similarity, suggested_destination}`. The `suggested_destination` is a heuristic — *always* validate by running `list_capabilities` (next tool) before committing to a placement.
++Output schema (per group): `{rel_path, occurrences, products, classification, similarity, suggested_destination}`. The `suggested_destination` is a heuristic — *always* validate via `list_capabilities` (next tool) before committing placement.
+ 
+ ### `noctus.seed.list_capabilities`
+ 
+-Enumerates public exports from `noctusai_seed.*` (the framework backend + frontend factories) and `noctusai_lib.*` (the 6-layer library — `primitives` / `config` / `testing` / `integrations` / `domain` / `api`). Use **before** inventing a new helper to confirm the seed doesn't already ship it.
++Enumerates public exports from `noctusai_seed.*` (framework backend + frontend factories) ∧ `noctusai_lib.*` (the 6-layer library — `primitives` / `config` / `testing` / `integrations` / `domain` / `api`). Use **before** inventing a new helper to confirm seed doesn't already ship it.
+ 
+-This is the self-audit step in the loop — skipping it is how N=4-as-third-instance-of-N=3-already-absorbed slips happen. The output groups exports by module so you can scan for both *exact* and *near-name* matches (e.g. you're about to add `format_brl_currency`, the catalog already has `noctusai_lib.primitives.formatting.format_currency` accepting a `locale=`).
++Self-audit step in the loop — skipping it is how "N=4-as-third-instance-of-N=3-already-absorbed" slips happen. Output groups exports by module so you can scan for both *exact* and *near-name* matches (e.g. about to add `format_brl_currency`; catalog already has `noctusai_lib.primitives.formatting.format_currency` accepting `locale=`).
+ 
+ ### `noctus.seed.audit_drift`
+ 
+-For each file in `templates/product-seed/` (the canonical product-template tree), diffs each product's copy against the canonical and reports per-pair status: `identical` / `small_drift` (≤20 lines) / `large_drift` / `missing`. Surfaces re-sync candidates — a product whose copy of a templated file has drifted is either:
++For each file in `templates/product-seed/` (the canonical product-template tree), diffs each product's copy and reports per-pair status: `identical` / `small_drift` (≤20 lines) / `large_drift` / `missing`. A drifted product copy is either:
+ 
+-- **legitimately drifted** (per-product content was added; doesn't belong in the template) → factor the drift into a named seam, push the unchanged backbone back into the template,
++- **legitimately drifted** (per-product content was added; doesn't belong in template) → factor the drift into a named seam, push the unchanged backbone back into template.
+ - **silently divergent** (someone hot-fixed the consumer instead of the template) → re-sync the consumer, file the hot-fix's intent into a project for proper template-side absorption.
+ 
+-`audit_drift` complements `scan_repetition`: scan finds *new* absorption candidates from product-side N≥2 patterns; audit finds *regression* against the existing canonical template tree.
++`audit_drift` complements `scan_repetition`: scan finds *new* candidates from product-side N≥2 patterns; audit finds *regression* against existing canonical template tree.
+ 
+ ### `noctus.seed.absorb_file`
+ 
+-Mutation companion to `scan_repetition`. Lifts a duplicated file from products into the seed framework, deletes duplicate copies, and (optionally) rewrites product-side imports. Codifies **Strategy 2 — move + re-export** (most common absorption shape, validated in rounds A-D for textarea + 19 shadcn UI components + 3 trivial frontend configs).
++Mutation companion to `scan_repetition`. Lifts a duplicated file from products into seed framework, deletes duplicate copies, ∧ (optionally) rewrites product-side imports. Codifies **Strategy 2 — move + re-export** (most common absorption shape, validated rounds A-D: textarea + 19 shadcn UI components + 3 trivial frontend configs).
+ 
+ **Safety contract** — refuses (loudly, no on-disk change) when:
+-- The source product's copy doesn't exist.
+-- Other products' copies aren't byte-identical to the source (would silently destroy diverged content).
+-- The seed destination already exists with different content (would silently overwrite).
++- Source product's copy doesn't exist.
++- Other products' copies aren't byte-identical (would destroy diverged content).
++- Seed destination exists with different content (would overwrite).
+ 
+-**Idempotent** — running twice on an already-absorbed file is a no-op. Running with a partially-completed prior absorption (seed has the file, some products still have copies) finishes the job.
++**Idempotent** — twice on already-absorbed is no-op. Partial prior absorption (seed has the file, some products still have copies) → finishes the job.
+ 
+-**Pair with `audit_drift` after** — absorb_file moves the file but doesn't update the template at `templates/product-seed/`. Run `audit_drift` post-absorption to surface the template push-forward gap; update the template canonical to match the absorbed shape (re-export shim or factory call) so future scaffolds inherit it.
++**Pair with `audit_drift` after** — absorb_file moves the file but doesn't update template at `templates/product-seed/`. Run `audit_drift` post-absorption → surface template push-forward gap; update template canonical to match absorbed shape so future scaffolds inherit it.
+ 
+ ### `noctus.seed.specify_capability`
+ 
+-Pure-data planner — for the inverse direction. When the architect is about to ADD a new capability to the seed (factory, primitive, integration), this picks the right layer of the 6-layer `noctusai_lib` layout based on flags (`needs_io`, `framework_hook`, `pure_logic`, `test_only`) and returns:
++Pure-data planner for the inverse direction. When architect is about to ADD a new capability to seed (factory / primitive / integration), picks the right layer of the 6-layer `noctusai_lib` based on flags (`needs_io`, `framework_hook`, `pure_logic`, `test_only`) and returns:
+ - Suggested layer + reason.
+-- Canonical shape requirements — for `integrations`, that's the Protocol+Fake+Real+factory contract from `KB § PATTERNS/seed-fake-real-adapter.md`. For `api`, it's the deferred-config dep-factory pattern. For `primitives`, it's the no-IO discipline.
+-- Checklist whose first step is "run `list_capabilities` first" — the cross-check that prevents reinventing existing helpers.
+-- Import-path template + reference examples for the chosen layer.
++- Canonical shape — `integrations`: Protocol+Fake+Real+factory contract (→ `KB § PATTERNS/seed-fake-real-adapter.md`); `api`: deferred-config dep-factory pattern; `primitives`: no-IO discipline.
++- Checklist whose first step is "run `list_capabilities` first" — the cross-check preventing reinvention.
++- Import-path template + reference examples.
+ 
+ ### `noctus.seed.report`
+ 
+-Rollup that cross-references `scan_repetition` + `audit_drift` into a single prioritized triage queue. The composition unlocks leverage that neither tool surfaces alone — a file that is BOTH duplicated byte-identical across N≥3 products AND drifts vs the canonical template gives one absorption move that closes both gaps (lift to seed, push the template forward to match the absorbed shape).
++Rollup that cross-references `scan_repetition` + `audit_drift` into a single prioritized triage queue. Composition unlocks leverage neither tool surfaces alone — a file that is BOTH duplicated byte-identical across N≥3 products ∧ drifts vs canonical template gives one absorption move that closes both gaps (lift to seed; push template forward to match).
+ 
+ Priority bands, highest-leverage first:
+ 
+-- **P0** — byte_identical N≥3 AND template ships file AND ≥1 product drifts. One move resolves duplication + template convergence.
++- **P0** — byte_identical N≥3 ∧ template ships file ∧ ≥1 product drifts. One move resolves duplication + template convergence.
+ - **P1** — byte_identical N≥3, template-status irrelevant. Recurrence rule MUST formalize.
+-- **P2** — byte_identical N=2. Recurrence-rule triage time (formalize / refactor / accept-with-rationale).
++- **P2** — byte_identical N=2. Recurrence-rule triage time (`[F]`/`[R]`/`[A]`).
+ - **P3** — near_identical N≥2. Reconcile per-product variance, THEN absorb.
+ - **P4** — template ships file but ≥1 product is missing it. Push the missing product to inherit (no scan signal because no duplication exists yet).
+ - **P5** — divergent / large_drift. Likely intentional — review and catalog if so.
+ 
+-Output schema: `{scanned_products, items: [{priority, rel_path, rationale, suggested_action, suggested_destination, in_template, scan_classification, scan_occurrences, drift_status_per_product}], summary: {Pn_count, total_items, skipped_no_action, ...}, upstream: {scan_summary, audit_summary}}`. Items sorted by priority asc, then occurrence-count desc, then path. `max_items` caps the list; summary always reflects the pre-cap result.
+-
+-Read-only; composes the two upstream tools without re-implementing either.
++Output: `{scanned_products, items: [...], summary: {...}, upstream: {scan_summary, audit_summary}}`. Each item: `{priority, rel_path, rationale, suggested_action, suggested_destination, in_template, scan_classification, scan_occurrences, drift_status_per_product}`. Sorted by priority asc, then occurrence-count desc, then path. `max_items` caps list; summary reflects pre-cap result. Read-only; composes the two upstream tools.
+ 
+ ### `noctus.hound.scan` — the trio orchestrator
+ 
+-The keeper enforces compliance contracts (regulatory). The **hound** sniffs out cleanup candidates across the absorption + fusion + optimization trio and aggregates their findings into a single prioritized queue (curatorial). One call instead of three.
++The keeper enforces compliance contracts (regulatory). The **hound** sniffs out cleanup candidates across the absorption + fusion + optimization trio and aggregates findings into a single prioritized queue (curatorial). One call instead of three.
+ 
+-Each scope's full result is preserved verbatim under `scopes.<name>`; aggregated counts + LoC-savings + files-absorbable estimates land in `unified`; a plain-text `next_action` picks the highest-leverage scope to attack first using this priority ladder:
++Each scope's full result is preserved verbatim under `scopes.<name>`; aggregated counts + LoC-savings + files-absorbable estimates land in `unified`; a plain-text `next_action` picks the highest-leverage scope using this priority ladder:
+ 
+-1. **Absorption P0** (byte_identical N≥3 + template drifts) — one move closes both gaps.
+-2. **Optimization high-severity** (confirmed dead code) — safe to delete.
++1. **Absorption P0** (byte_identical N≥3 ∧ template drifts) — one move closes both gaps.
++2. **Optimization 🔴** (confirmed dead code) — safe to delete.
+ 3. **Absorption P1** (byte_identical N≥3) — recurrence rule MUST formalize.
+ 4. **Fusion subsume** (same-file or strong-overlap pairs) — collapse via mode/kind.
+-5. **Optimization warning-severity** (small single-call helpers + wrappers).
++5. **Optimization 🟡** (small single-call helpers + wrappers).
+ 6. Otherwise — codebase clean enough that no single scope dominates.
+ 
+-Per-scope params forward through (`absorption_min_products`, `fusion_min_score`, `fusion_scope`, `optimization_min_severity`, `max_per_scope`). Soft-fails per scope (errors[] populated, non-failed scopes still complete). Read-only.
+-
+-Lives at `mcp/noctusai/tools/noctus/hound/`. Parallels `noctus.seed.*` / `noctus.dev.*` / `noctus.team.*` as a sub-umbrella.
++Per-scope params forward through (`absorption_min_products`, `fusion_min_score`, `fusion_scope`, `optimization_min_severity`, `max_per_scope`). Soft-fails per scope (errors[] populated, non-failed scopes still complete). Read-only. Lives at `mcp/noctusai/tools/noctus/hound/`; parallels `noctus.seed.*` / `noctus.dev.*` / `noctus.team.*`.
+ 
+-**Structural-duplicate filter (2026-05-10).** `scan_repetition` skips empty-marker files (Python `__init__.py`, `.gitkeep`, empty configs) and already-absorbed re-export shims (`@import "@noctusai/seed/..."`, `import { X } from "../../seed/..."` followed by `export default X`, etc.) by default. The detector flags ANY content-bearing file ≤5 operative lines that mentions `seed/` / `@noctusai/seed` / `noctusai_seed` / `noctusai_lib` as a shim (the absorbed state, not a duplication candidate). Pass `skip_structural_duplicates=False` to disable. On the live tree this dropped P1 absorption candidates from 11 → 0 (all 11 had been false positives — empty package markers + already-absorbed config shims).
++**Structural-duplicate filter (2026-05-10).** `scan_repetition` skips empty-marker files (Python `__init__.py`, `.gitkeep`, empty configs) ∧ already-absorbed re-export shims by default. Detector flags ANY content-bearing file ≤5 operative lines mentioning `seed/` ∨ `@noctusai/seed` ∨ `noctusai_seed` ∨ `noctusai_lib` as a shim (absorbed state, not duplication candidate). `skip_structural_duplicates=False` disables. Live-tree: P1 absorption candidates dropped 11 → 0 (all 11 false positives — empty markers + already-absorbed shims).
+ 
+ ### `noctus.seed.scan_optimizations`
+ 
+-Third leg of the **absorption + fusion + optimization** trio. Operates at **intra-file scope** — opportunities to delete, inline, or collapse code WITHIN a single source file (complements absorption's cross-product file-level scope and fusion's cross-tool function-level scope).
++Third leg of the **absorption + fusion + optimization** trio. **Intra-file scope** — opportunities to delete, inline, ∨ collapse code WITHIN a single source file (complements absorption's cross-product file-level scope ∧ fusion's cross-tool function-level scope).
+ 
+ Six detectors:
+ 
+-- **`dead_function`** — module-level def with zero references in-file AND zero references in any sibling module. Cross-file false positives are filtered via a tree-wide reference pre-pass that collects every `Name` / `Attribute` / `ImportFrom` alias across every scanned `.py` (so `walk_files` in `_filewalk.py` is correctly recognized as live when sibling modules import it). Action: delete after grep verification.
+-- **`single_call_helper`** — private `_*` function called from exactly one place AND ≤ 25 LoC. Above 25 LoC, named helpers carry cognitive value even with one caller; under 3 LoC, savings are negligible. Severity: `warning` for ≤10 LoC (definitely inline), `info` for 11–25 LoC (judgment call). Realistic per-inline savings: ~3 LoC (def line + signature + return), NOT the full body.
+-- **`wrapper_only`** — function whose entire body is `return inner(*params)` without arg transformation. The function adds zero value; rename callers to use `inner` directly.
++- **`dead_function`** — module-level def with zero refs in-file ∧ zero refs in any sibling module. Cross-file false positives filtered via tree-wide reference pre-pass collecting every `Name`/`Attribute`/`ImportFrom` alias across each scanned `.py`. Action: delete after grep verification.
++- **`single_call_helper`** — private `_*` function called from exactly one place ∧ ≤25 LoC. Above 25 LoC, named helpers carry cognitive value; under 3 LoC, savings negligible. Severity: 🟡 ≤10 LoC (definitely inline), 🟢 11–25 LoC (judgment call). Realistic savings: ~3 LoC (def + signature + return), NOT the full body.
++- **`wrapper_only`** — body is `return inner(*params)` without arg transformation. Zero value; rename callers to use `inner` directly.
+ - **`verbose_tool_description`** — `@server.tool(description=...)` exceeding 240 chars. Agents pay this cost on every schema load.
+-- **`oversized_shim_docstring`** — FastMCP shim with a docstring > 2 lines. The impl function's docstring is the authoritative one; shim docstrings are duplication.
++- **`oversized_shim_docstring`** — FastMCP shim with docstring > 2 lines. The impl function's docstring is authoritative; shim docstrings duplicate.
+ - **`lone_constant`** — UPPER_SNAKE module-level constant referenced from exactly one place. Inline at the call site.
+ 
+-`min_severity` (default `info`) caps the queue: `high` keeps only highest-confidence; `warning` drops info-level judgment calls. Live-tree run on the `mcp/noctusai/tools/noctus` tree (51 files): **147 LoC of warning+ opportunities** (1 dead function + 46 small single-call helpers + 2 wrappers); **539 LoC including info-level** (lone constants + verbose descriptions + judgment-call helpers).
++`min_severity` (default `info`) caps the queue: 🔴 `high` only highest-confidence; 🟡 `warning` drops info-level. Live-tree (`mcp/noctusai/tools/noctus`, 51 files): **147 LoC warning+** (1 dead + 46 single-call + 2 wrappers); **539 LoC including info-level**.
+ 
+-The trio's distinct scopes:
++Trio's distinct scopes:
+ 
+ | System | Scope | Detects |
+ |---|---|---|
+@@ -126,97 +122,97 @@ The trio's distinct scopes:
+ 
+ ### `noctus.seed.scan_fusions`
+ 
+-Meta-detector for **MCP-tool fusion opportunities** — pairs of tools where a unifying rollup tool would unlock leverage (the same shape that motivated `report` itself). Static analysis of every tool registered under `mcp/noctusai/tools/noctus/**/*.py`; no runtime invocation.
++Meta-detector for **MCP-tool fusion opportunities** — pairs where a unifying rollup would unlock leverage (same shape that motivated `report` itself). Static analysis of every tool registered under `mcp/noctusai/tools/noctus/**/*.py`; no runtime invocation.
+ 
+ Four signals scored per pair:
+ 
+ - **Same-namespace prefix** (`noctus.dev.*` vs `noctus.team.*` etc.) — fixed bonus; cross-namespace fusions are rare.
+ - **Param-overlap** (Jaccard of input parameter names) — high overlap means callers feed the same arguments.
+-- **Return-key overlap** — Jaccard + saturation curve over absolute count of shared top-level dict keys parsed from each tool's docstring `Returns:` block. ≥3 shared keys = strong signal regardless of breadth (the canonical shape: both keyed by `slug` / `rel_path` / `phase_id`).
++- **Return-key overlap** — Jaccard + saturation curve over absolute count of shared top-level dict keys parsed from each tool's docstring `Returns:` block. ≥3 shared keys = strong signal regardless of breadth (canonical: both keyed by `slug` / `rel_path` / `phase_id`).
+ - **Description-noun overlap** — count of shared content nouns in `description=` blurbs (stopwords filtered).
+ 
+ Two **existing-fusion filters** keep the queue clean:
+-1. **Direct-import filter** — pair (A, B) where A's source imports B's module (or vice versa) is an existing rollup, not an opportunity.
+-2. **Transitive filter** — pair (A, B) where some third tool C imports BOTH is also an existing fusion (C is the rollup; the pair is its components). Keeps `scan_repetition + audit_drift` out of the queue once `report` ships.
++1. **Direct-import filter** — pair (A, B) where A's source imports B's module (∨ vice versa) is existing rollup, not opportunity.
++2. **Transitive filter** — pair (A, B) where some third tool C imports BOTH is also existing fusion (C is the rollup; the pair is its components). Keeps `scan_repetition + audit_drift` out of the queue once `report` ships.
+ 
+-Heuristic verb-form mutation detector marks each tool read-only or mutation. Word-boundary regex against verb forms (`absorbs`, `moves`, `deletes`, …) — bare nouns (`absorption`, `modification`) don't trip it. `require_both_read_only=True` (default) filters mixed pairs.
++Heuristic verb-form mutation detector marks each tool read-only ∨ mutation via word-boundary regex against verb forms (`absorbs`, `moves`, `deletes`, …); bare nouns don't trip it. `require_both_read_only=True` (default) filters mixed pairs.
+ 
+-Output schema: `{scanned_files, tools_indexed, pairs: [{tool_a, tool_b, score, signals: {same_namespace, param_overlap, param_intersection, return_keys_jaccard, return_keys_count, return_keys_intersection, description_nouns_intersection, both_read_only}, rationale, suggested_rollup_name}], summary: {pairs_above_threshold, pairs_returned, existing_fusions_skipped, score_distribution}}`. Pairs sorted by score desc.
++Output: `{scanned_files, tools_indexed, pairs: [...], summary: {pairs_above_threshold, pairs_returned, existing_fusions_skipped, score_distribution}}`. Each pair: `{tool_a, tool_b, score, signals: {same_namespace, param_overlap, param_intersection, return_keys_jaccard, return_keys_count, return_keys_intersection, description_nouns_intersection, both_read_only}, rationale, suggested_rollup_name}`. Pairs sorted by score desc.
+ 
+ Use when asking: *"what rollup tool should I build next?"* — the same role `scan_repetition` plays for *"what file should I absorb next?"*.
+ 
+ Together the eight tools form the absorption + extension + meta-tooling + optimization feedback loop:
+ - `scan_repetition` — finds duplicates that should be lifted.
+ - `list_capabilities` — confirms existing helpers before lifting / inventing.
+-- `audit_drift` — finds product↔template divergence post-absorption.
++- `audit_drift` — finds product ↔ template divergence post-absorption.
+ - `absorb_file` — executes the lift (Strategy 2).
+ - `specify_capability` — plans the deliberate addition.
+ - `report` — combines scan + audit into a single prioritized triage queue.
+-- `scan_fusions` — surfaces fusion opportunities at the tool layer (which composites should I build next?).
+-- `scan_optimizations` — surfaces intra-file dead code / single-use helpers / wrappers / verbose surfaces (what can I delete or inline within this file?).
++- `scan_fusions` — surfaces fusion opportunities at the tool layer ("which composites should I build next?").
++- `scan_optimizations` — surfaces intra-file dead code / single-use helpers / wrappers / verbose surfaces ("what can I delete or inline within this file?").
+ 
+-**Placeholder-noise filter (default-on, 2026-05-10).** The first drift-audit run (Gamma's 2026-05-10 report) surfaced that placeholder-substitution noise dominated the small-drift findings — every product's `{{PRODUCT_NAME}}` → `<actual name>` substitution counted as drift, drowning the real signal. `audit_drift` now substitutes the canonical mechanical placeholders (`{{PRODUCT_NAME}}`, `{{PRODUCT_SLUG}}`, `{{SCHEMA_NAME}}`, `{{BACKEND_PORT}}`, `{{FRONTEND_PORT}}`, `{{PRODUCT_ICON}}`) into the template using each product's resolved metadata BEFORE diffing — successful substitution no longer surfaces as drift. Per-product metadata is read best-effort from `start.sh` PRODUCTS array (display name + ports) + the seed-row migration in `products/core/backend/migrations/NNN_seed_<slug>_product.sql` (canonical name + icon), with slug-derived defaults as fallback. Pass `mask_placeholders=False` to disable and see raw diffs (debugging the substitution itself). On the live repo this flipped 30 (file, product) pairs from `small_drift` → `identical`.
++**Placeholder-noise filter (default-on, 2026-05-10).** Drift-audit's first run (Gamma 2026-05-10) surfaced placeholder-substitution noise dominating small-drift findings — every product's `{{PRODUCT_NAME}}` → `<actual name>` counted as drift. `audit_drift` now substitutes canonical mechanical placeholders (`{{PRODUCT_NAME}}`, `{{PRODUCT_SLUG}}`, `{{SCHEMA_NAME}}`, `{{BACKEND_PORT}}`, `{{FRONTEND_PORT}}`, `{{PRODUCT_ICON}}`) into the template using each product's resolved metadata BEFORE diffing. Per-product metadata read best-effort from `start.sh` PRODUCTS array (display name + ports) + seed-row migration in `products/core/backend/migrations/NNN_seed_<slug>_product.sql` (canonical name + icon); slug-derived defaults as fallback. `mask_placeholders=False` disables. Live repo: 30 (file, product) pairs flipped `small_drift` → `identical`.
+ 
+ ## Absorption strategies (with examples from rounds A-D, 2026-05-10)
+ 
+ ### Strategy 1 — Delete dead code (zero consumers)
+ 
+-The simplest absorption is no absorption — vestigial wrappers that nobody imports just get deleted.
++The simplest absorption is no absorption — vestigial wrappers nobody imports just get deleted.
+ 
+-- **Example:** `app/exceptions.py` shims (4 products). They re-exported from `noctusai_lib.primitives.exceptions` but had **zero** consumers — vestigial from an earlier consolidation. **Action:** delete all 4 wrappers; the canonical `noctusai_lib.primitives.exceptions` continues to ship the real shapes.
+-- **Example:** `frontend/src/pages/SSOCallback.tsx` wrappers (9 products). Unrouted (the seed `createProductApp` already auto-mounts `/sso` on line 253 of `seed/framework/frontend/src/app.tsx`). **Action:** push the env-var reading the wrappers were doing into the seed mount itself; delete 9 wrapper files.
++- **Example:** `app/exceptions.py` shims (4 products). Re-exported from `noctusai_lib.primitives.exceptions` but had **zero** consumers — vestigial from earlier consolidation. **Action:** delete all 4 wrappers; canonical `noctusai_lib.primitives.exceptions` continues shipping real shapes.
++- **Example:** `frontend/src/pages/SSOCallback.tsx` wrappers (9 products). Unrouted (seed `createProductApp` auto-mounts `/sso` on line 253 of `seed/framework/frontend/src/app.tsx`). **Action:** push env-var reading the wrappers were doing into seed mount itself; delete 9 wrapper files.
+ 
+-**When to use:** the duplication exists but nothing imports it (greppable: `grep -rn "from .exceptions" products/<name>/backend/app/` returns zero hits). Cheapest possible absorption — verify zero-consumer with grep, delete, build.
++**When to use:** duplication exists but nothing imports it (greppable: `grep -rn "from .exceptions" products/<name>/backend/app/` returns zero hits). Cheapest absorption — verify zero-consumer with grep, delete, build.
+ 
+ ### Strategy 2 — Move to seed + re-export
+ 
+-Move the canonical content into the seed package, then either rewrite consumer imports to point at the seed, or leave a thin re-export shim in each product (acceptable for one cycle if rewriting all imports atomically would balloon the change).
++Move canonical content into the seed package, then either rewrite consumer imports to point at the seed, ∨ leave a thin re-export shim in each product (acceptable for one cycle if rewriting all imports atomically would balloon the change).
+ 
+-- **Example:** 19 shadcn UI components shared by ERP + Therapy. **Action:** move canonicals to `seed/framework/frontend/src/components/ui/`; add a `package.json` `exports` field (`"./components/ui/*": "./src/components/ui/*"`); rewrite imports from `@/components/ui/X` → `@noctusai/seed/components/ui/X`. No re-export shims left behind — the import rewrite was small enough to do atomically.
++- **Example:** 19 shadcn UI components shared by ERP + Therapy. **Action:** move canonicals to `seed/framework/frontend/src/components/ui/`; add `package.json` `exports` (`"./components/ui/*": "./src/components/ui/*"`); rewrite imports `@/components/ui/X` → `@noctusai/seed/components/ui/X`. No re-export shims left behind — the import rewrite was small enough to do atomically.
+ 
+-**When to use:** byte-identical or trivially identical, and the consumer-side reference shape is uniform (all products import the same name). The re-export shim is a transitional aid, not the destination — it should be retired in the same cycle if you can.
++**When to use:** byte-identical ∨ trivially identical ∧ uniform consumer-side reference shape (all products import the same name). Re-export shim is transitional, not destination — retire in same cycle when possible.
+ 
+ ### Strategy 3 — Factory pattern for near-identicals
+ 
+-When most of the file is shared but a few values vary per product, lift the *shape* into a seed factory and have each product call it with its variance as parameters.
++When most of the file is shared but a few values vary per product, lift the *shape* into a seed factory; each product calls it with its variance as parameters.
+ 
+ - **Example:** `frontend/tailwind.config.ts` (11 products near-identical, only `./index.html` glob varied between products that ship vs. don't ship a top-level `index.html`). **Action:** `createTailwindConfig({ extraContent, extraPlugins })` factory in seed; each product's `tailwind.config.ts` becomes a 3-line call.
+ 
+-**Footgun:** factory deps must live where the factory does. If the seed factory `require()`s `tailwindcss-animate`, that dep must be installed in the seed package's `package.json`, not just per-product — `require()` resolves from the file containing the call. Same holds for Python factories that import optional vendor SDKs.
++**Footgun:** factory deps must live where the factory does. Seed factory `require()`ing `tailwindcss-animate` → that dep must be installed in seed package's `package.json`, not just per-product (`require()` resolves from the file containing the call). Same for Python factories importing optional vendor SDKs.
+ 
+-**When to use:** near-identical (≥0.95 similarity) and the variance is **finite + nameable** (a list of paths, a feature flag, an icon set). If the variance grows unbounded ("every product wants a different X"), the right pattern is dependency injection (Strategy 4 or a Protocol seam), not a wider factory signature.
++**When to use:** near-identical (≥0.95 similarity) ∧ **finite + nameable** variance (a list of paths, a feature flag, an icon set). Unbounded variance → dependency injection (Strategy 4 ∨ Protocol seam), not a wider factory signature.
+ 
+ ### Strategy 4 — Template + runtime substitution
+ 
+-When the per-product variance is purely a runtime value (a port, a hostname), lift the file as a *template* with placeholders and let the runtime substitute at startup.
++When per-product variance is purely runtime (port, hostname), lift as a *template* with placeholders; runtime substitutes at startup.
+ 
+-- **Example:** `frontend/nginx.conf` (3 products near-identical, only `listen <port>` varied). **Action:** seed-side `nginx.conf.template` with `${PORT}`; each product's `Dockerfile` `COPY`s the template to `/etc/nginx/templates/default.conf.template` + sets `ENV PORT=<port>`. The official `nginx:alpine` image substitutes templates from `/etc/nginx/templates/` at startup automatically — no runtime code change needed.
++- **Example:** `frontend/nginx.conf` (3 products near-identical, only `listen <port>` varied). **Action:** seed-side `nginx.conf.template` with `${PORT}`; each product's `Dockerfile` `COPY`s template to `/etc/nginx/templates/default.conf.template` + sets `ENV PORT=<port>`. Official `nginx:alpine` substitutes templates from `/etc/nginx/templates/` at startup automatically — no runtime code change needed.
+ 
+-**When to use:** the variance is environmental (port, host, log level, feature toggle) rather than structural (different routes, different middleware). If a downstream tool already does template substitution (nginx, envsubst, Helm), prefer that over hand-rolling a templater in our code.
++**When to use:** environmental variance (port, host, log level, feature toggle) rather than structural (different routes / middleware). Downstream tool already does template substitution (nginx, envsubst, Helm) → prefer that over hand-rolling.
+ 
+ ## Absorption loop (per-candidate)
+ 
+-This is the per-candidate workflow. It's the same shape whether you're absorbing one byte-identical file or running a multi-round campaign:
++Per-candidate workflow. Same shape whether absorbing one byte-identical file or running a multi-round campaign:
+ 
+-1. **Scan** — run `noctus.seed.scan_repetition`; pick a candidate. Default order: highest N first; ties broken by simplest absorption (byte_identical > near_identical > divergent; smaller LOC > larger).
+-2. **Evaluate** — read all instances; identify what (if anything) varies; pick a strategy from the four above. If strategy is unclear, walk through them in order — most candidates land on 1 or 2.
+-3. **Self-audit** — run `noctus.seed.list_capabilities`; confirm the seed doesn't already provide what you're about to add (skipping this is how the recurrence rule fires against itself).
+-4. **Absorb** — apply the strategy. Land the seed-side change first; then the consumer-side delete/rewrite; commit as one logical unit so a `git revert` would undo the whole absorption.
+-5. **Re-scan** — run `noctus.seed.scan_repetition` again; confirm the group disappeared (or shrank to a thin re-export wrapper that's structurally absorbed). If the group is unchanged, the absorption didn't take — investigate before moving on.
+-6. **Build verify** — at minimum 1 affected product per absorption: `cd products/<one>/frontend && npx vite build` (frontend) or `cd products/<one>/backend && pytest` (backend). For factories: build at least 2 products to confirm the factory works across the variance space.
++1. **Scan** → `noctus.seed.scan_repetition`; pick a candidate. Default order: highest N first; ties broken by simplest absorption (byte_identical > near_identical > divergent; smaller LOC > larger).
++2. **Evaluate** → read all instances; identify what (if anything) varies; pick a strategy from the four above. Unclear → walk in order; most land on 1 ∨ 2.
++3. **Self-audit** → `noctus.seed.list_capabilities`; confirm seed doesn't already provide it (skipping this is how the recurrence rule fires against itself).
++4. **Absorb** → apply the strategy. Land seed-side first; then consumer-side delete/rewrite; commit as one logical unit so `git revert` undoes the whole absorption.
++5. **Re-scan** → `noctus.seed.scan_repetition` again; confirm the group disappeared (∨ shrank to a thin structurally-absorbed re-export wrapper). Unchanged → absorption didn't take, investigate before moving on.
++6. **Build verify** — at minimum 1 affected product per absorption: `cd products/<one>/frontend && npx vite build` ∨ `cd products/<one>/backend && pytest`. For factories: ≥2 products to confirm the factory works across the variance space.
+ 
+ ## Safety rules
+ 
+-- **DON'T absorb when the per-product file genuinely has product-specific content.** "Looks similar" is not "should be one." If the variance is structural (different code paths per product), leave it scattered + accept-with-rationale; don't force a factory signature that obscures the divergence.
+-- **DON'T absorb something that's only N=1 yet.** Wait for the recurrence signal. Premature absorption builds a seed surface for a use case that may never materialize, and the seed becomes harder to learn for future contributors.
+-- **DON'T touch the `_filewalk` skip lists without updating BOTH scan_repetition + audit_drift.** The shared helper at `mcp/noctusai/tools/noctus/seed/_filewalk.py` feeds both tools — a one-sided change creates silent drift between them. There's a regression test on this; don't add `# silent-ok` to bypass.
+-- **ALWAYS verify via build, not just type-check.** TypeScript / mypy will catch most import errors but they miss `require()`-time module resolution failures, vite plugin loading failures, and runtime template substitution mistakes. The build is the oracle; static checks are a smoke test.
++- **¬ absorb when the per-product file genuinely has product-specific content.** "Looks similar" ≠ "should be one." Structural variance (different code paths per product) → leave scattered + `[A]` accept-with-rationale; don't force a factory signature that obscures divergence.
++- **¬ absorb something only N=1 yet.** Wait for the recurrence signal. Premature absorption builds a seed surface for a use case that may never materialize, and the seed becomes harder to learn for future contributors.
++- **¬ touch `_filewalk` skip lists without updating BOTH scan_repetition + audit_drift.** The shared helper at `mcp/noctusai/tools/noctus/seed/_filewalk.py` feeds both tools — a one-sided change creates silent drift. There's a regression test on this; don't add `# silent-ok` to bypass.
++- **ALWAYS verify via build, not just type-check.** TS / mypy catch most import errors but miss `require()`-time module resolution failures, vite plugin loading failures, and runtime template substitution mistakes. Build is the oracle; static checks are a smoke test.
+ 
+ ## Related
+ 
+-- **The inverse — `noctus.dev.delete_product`** — cascades through every registration surface (deactivate-row migration + `start.sh` + optional folder removal). Symmetry rule: every new scaffold registration surface MUST add a matching unregistration in `delete_product`. If absorption removes a product's need for a surface entirely, run `delete_product` on the product; don't leave half-registered ghosts.
+-- **Test hygiene** — when adding a new mutation tool (any `noctus.dev.*` or `noctus.seed.*` that writes), route writes through a `products_dir=` / `template_root=` test seam so the unit tests don't pollute real files. Regression-guard pattern at `TestScaffoldRespectsTestSeam` / `TestDeleteProductRespectsTestSeam` in `mcp/noctusai/tests/`.
+-- **Universal DRY recurrence rule** — `KB § PATTERNS/project-execution.md § 2.7` (the rule that triggers absorption).
+-- **Seed-first design checklist** — `KB § GUIDES/seed-first-design.md` (companion checklist to use *before* writing new product code, so absorption-after-the-fact doesn't have to fire).
+-- **Accept-with-rationale catalog** — `KB § PATTERNS/accept-with-rationale.md` (durable home for the "we know this is duplicated, here's why we kept it" entries).
+-- **Absorption-search sextet** — `KB § 06-AGENTS.md § Absorption-search sextet` (the in-product duplication scanners that complement `scan_repetition`'s cross-product view).
++- **The inverse — `noctus.dev.delete_product`** — cascades through every registration surface (deactivate-row migration + `start.sh` + optional folder removal). Symmetry rule: every new scaffold registration surface MUST add matching unregistration in `delete_product`. If absorption removes a product's need for a surface entirely, run `delete_product`; don't leave half-registered ghosts.
++- **Test hygiene** — when adding a new mutation tool (any `noctus.dev.*` ∨ `noctus.seed.*` that writes), route writes through a `products_dir=` / `template_root=` test seam so unit tests don't pollute real files. Regression-guard pattern at `TestScaffoldRespectsTestSeam` / `TestDeleteProductRespectsTestSeam` in `mcp/noctusai/tests/`.
++- **Universal DRY recurrence rule** → `KB § PATTERNS/project-execution.md § 2.7` (the rule that triggers absorption).
++- **Seed-first design checklist** → `KB § GUIDES/seed-first-design.md` (companion checklist to use *before* writing new product code, so absorption-after-the-fact doesn't have to fire).
++- **Accept-with-rationale catalog** → `KB § PATTERNS/accept-with-rationale.md` (durable home for "we know this is duplicated, here's why we kept it" entries).
++- **Absorption-search sextet** → `KB § 06-AGENTS.md § Absorption-search sextet` (in-product duplication scanners that complement `scan_repetition`'s cross-product view).
+-- 
+2.51.2
+

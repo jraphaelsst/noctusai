@@ -1,0 +1,166 @@
+From e7d44bab9225d9f746cf92d4af4826316227ffd0 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:31 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a7d550797b7494136?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ products/core/backend/app/routers/auth.py       |  9 +++++----
+ .../core/backend/app/routers/test_accounts.py   |  7 ++++---
+ seed/lib/backend/noctusai_lib/api/__init__.py   |  2 +-
+ .../noctusai_lib/api/rate_limit_policies.py     | 17 +++++++++++++++++
+ .../tests/api/test_rate_limit_policies.py       |  2 ++
+ 5 files changed, 29 insertions(+), 8 deletions(-)
+
+diff --git a/products/core/backend/app/routers/auth.py b/products/core/backend/app/routers/auth.py
+index 8ef9edf5..b87549cd 100644
+--- a/products/core/backend/app/routers/auth.py
++++ b/products/core/backend/app/routers/auth.py
+@@ -18,13 +18,14 @@ from app.dependencies import get_current_user
+ from app.rate_limit import limiter
+ from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
+ from noctusai_lib.api.product_urls import resolve_product_url
++from noctusai_lib.api.rate_limit_policies import DEFAULT_PRE_AUTH_STRICT_RL, DEFAULT_REGISTER_RL
+ 
+ logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/api/auth", tags=["Auth"])
+ 
+ 
+ @router.post("/signup")
+-@limiter.limit("10/minute")
++@limiter.limit(DEFAULT_REGISTER_RL)
+ async def signup(request: Request, body: SignupRequest):
+     """Register a new user and create their organization."""
+     db = get_admin_client()
+@@ -107,7 +108,7 @@ async def signup(request: Request, body: SignupRequest):
+ 
+ 
+ @router.post("/login")
+-@limiter.limit("10/minute")
++@limiter.limit(DEFAULT_REGISTER_RL)
+ async def login(request: Request, body: LoginRequest):
+     """Login with email/password. Returns Supabase session."""
+     client = create_client(settings.supabase_url, settings.supabase_anon_key)
+@@ -206,7 +207,7 @@ async def get_me(authorization: Optional[str] = Header(None)):
+ 
+ 
+ @router.post("/change-password")
+-@limiter.limit("5/minute")
++@limiter.limit(DEFAULT_PRE_AUTH_STRICT_RL)
+ async def change_password(
+     request: Request,
+     body: PasswordChange,
+@@ -245,7 +246,7 @@ async def change_password(
+ 
+ 
+ @router.post("/refresh")
+-@limiter.limit("10/minute")
++@limiter.limit(DEFAULT_REGISTER_RL)
+ async def refresh_token(request: Request, body: RefreshRequest):
+     """Exchange a refresh token for a new access token."""
+     client = create_client(settings.supabase_url, settings.supabase_anon_key)
+diff --git a/products/core/backend/app/routers/test_accounts.py b/products/core/backend/app/routers/test_accounts.py
+index d6efb846..98975bb0 100644
+--- a/products/core/backend/app/routers/test_accounts.py
++++ b/products/core/backend/app/routers/test_accounts.py
+@@ -27,13 +27,14 @@ from app.database import get_admin_client
+ from app.dependencies import get_current_admin
+ from app.rate_limit import limiter
+ from app.schemas.test_accounts import TestAccountCreate
++from noctusai_lib.api.rate_limit_policies import DEFAULT_PRE_AUTH_STRICT_RL
+ 
+ logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/api/admin/test-accounts", tags=["Test Accounts"])
+ 
+ 
+ @router.post("")
+-@limiter.limit("5/minute")
++@limiter.limit(DEFAULT_PRE_AUTH_STRICT_RL)
+ async def criar_test_account(request: Request, body: TestAccountCreate, authorization: Optional[str] = Header(None)):
+     """Create a test organization with a user, auto-grant all licenses, and unlimited subscription."""
+     await get_current_admin(authorization)
+@@ -126,7 +127,7 @@ async def criar_test_account(request: Request, body: TestAccountCreate, authoriz
+ 
+ 
+ @router.get("")
+-@limiter.limit("5/minute")
++@limiter.limit(DEFAULT_PRE_AUTH_STRICT_RL)
+ async def listar_test_accounts(request: Request, authorization: Optional[str] = Header(None)):
+     """List all test organizations."""
+     await get_current_admin(authorization)
+@@ -137,7 +138,7 @@ async def listar_test_accounts(request: Request, authorization: Optional[str] =
+ 
+ 
+ @router.delete("/{org_id}")
+-@limiter.limit("5/minute")
++@limiter.limit(DEFAULT_PRE_AUTH_STRICT_RL)
+ async def desativar_test_account(request: Request, org_id: str, authorization: Optional[str] = Header(None)):
+     """Deactivate a test organization: revoke licenses, cancel subscription, set category to 'normal'."""
+     await get_current_admin(authorization)
+diff --git a/seed/lib/backend/noctusai_lib/api/__init__.py b/seed/lib/backend/noctusai_lib/api/__init__.py
+index cd36debb..4bcadf07 100644
+--- a/seed/lib/backend/noctusai_lib/api/__init__.py
++++ b/seed/lib/backend/noctusai_lib/api/__init__.py
+@@ -18,7 +18,7 @@ contributes to a product's HTTP layer".
+ - `auth.py` — JWT + SSO factories, `verify_*` helpers
+ - `middleware.py` — correlation-ID middleware, request logger
+ - `rate_limit.py` — slowapi `create_limiter(...)` factory (Redis-backed when reachable, in-memory fallback)
+-- `rate_limit_policies.py` — canonical named policies (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL`); intent-encoded so per-product tuning lifts to one seed-side change
++- `rate_limit_policies.py` — canonical named policies (`DEFAULT_AI_RL` / `DEFAULT_AUTH_RL` / `DEFAULT_WEBHOOK_RL` / `DEFAULT_PORTAL_RL` / `DEFAULT_REGISTER_RL` / `DEFAULT_PRE_AUTH_STRICT_RL`); intent-encoded so per-product tuning lifts to one seed-side change. Register/OAuth/login/refresh use `DEFAULT_REGISTER_RL` (10/minute); change-password / forgot-password / admin-only test-account CRUD use `DEFAULT_PRE_AUTH_STRICT_RL` (5/minute).
+ - `app_factory.py` — `create_product_app(...)` companion shim
+ - `crud_safety.py` — `delete_with_existence_check` + `delete_or_404` (replaces the unreliable `.delete()` + `if not result.data` 404 shape)
+ - `schemas.py` — `StrictHttpModel` base (Pydantic `extra="forbid"`) for HTTP-boundary request/response shapes; defends against silent-drop misroutes (see `KB § PATTERNS/pydantic-strict-http.md`).
+diff --git a/seed/lib/backend/noctusai_lib/api/rate_limit_policies.py b/seed/lib/backend/noctusai_lib/api/rate_limit_policies.py
+index ca38b81e..b0b6ffd9 100644
+--- a/seed/lib/backend/noctusai_lib/api/rate_limit_policies.py
++++ b/seed/lib/backend/noctusai_lib/api/rate_limit_policies.py
+@@ -60,10 +60,27 @@ DEFAULT_WEBHOOK_RL: str = "30/minute"
+ # the per-token tenant scope is narrower than per-IP.
+ DEFAULT_PORTAL_RL: str = "30/minute"
+ 
++# Register / OAuth / login / refresh endpoints — pre-auth and session-
++# bootstrap flows where a stricter cadence than the default auth bucket
++# is intentional (account-creation spam, credential stuffing). Tightened
++# from `DEFAULT_AUTH_RL` (30/minute) to 10/minute. Active occupants:
++# core /signup /login /refresh, core /oauth/callback, therapy /register/*.
++DEFAULT_REGISTER_RL: str = "10/minute"
++
++# Pre-auth strict + admin-strict + password-management endpoints —
++# the most sensitive cadence: change-password, forgot-password (reset
++# email trigger), and admin-only test-account CRUD. 5/minute reflects
++# the brute-force-resistance + abuse-resistance posture. Stricter than
++# `DEFAULT_REGISTER_RL` because side-effect cost is higher (email send,
++# org creation, license grants).
++DEFAULT_PRE_AUTH_STRICT_RL: str = "5/minute"
++
+ 
+ __all__ = [
+     "DEFAULT_AI_RL",
+     "DEFAULT_AUTH_RL",
+     "DEFAULT_WEBHOOK_RL",
+     "DEFAULT_PORTAL_RL",
++    "DEFAULT_REGISTER_RL",
++    "DEFAULT_PRE_AUTH_STRICT_RL",
+ ]
+diff --git a/seed/lib/backend/tests/api/test_rate_limit_policies.py b/seed/lib/backend/tests/api/test_rate_limit_policies.py
+index 9a61a544..26781fc5 100644
+--- a/seed/lib/backend/tests/api/test_rate_limit_policies.py
++++ b/seed/lib/backend/tests/api/test_rate_limit_policies.py
+@@ -29,6 +29,8 @@ ALL_POLICIES = [
+     "DEFAULT_AUTH_RL",
+     "DEFAULT_WEBHOOK_RL",
+     "DEFAULT_PORTAL_RL",
++    "DEFAULT_REGISTER_RL",
++    "DEFAULT_PRE_AUTH_STRICT_RL",
+ ]
+ 
+ # slowapi accepts "<int>/<window>" or "<int> per <window>"; we standardize
+-- 
+2.51.2
+

@@ -1,0 +1,1996 @@
+From 73437876380c49637ca4a1cf7aef811532e9e64c Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:36 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-aab2f7e17478d682a?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ mcp/noctusai/tests/test_archive.py            |  97 +++++
+ .../tests/test_check_framework_deps.py        | 137 ++++++
+ mcp/noctusai/tests/test_cleanup_worktrees.py  | 166 ++++++++
+ mcp/noctusai/tests/test_disk_usage.py         | 122 ++++++
+ mcp/noctusai/tests/test_merge_debt.py         | 147 +++++++
+ mcp/noctusai/tools/noctus/dev/archive.py      | 192 ++++++++-
+ .../tools/noctus/dev/check_framework_deps.py  | 210 ++++++++++
+ .../tools/noctus/dev/cleanup_worktrees.py     | 392 ++++++++++++++++++
+ mcp/noctusai/tools/noctus/dev/disk_usage.py   | 215 ++++++++++
+ mcp/noctusai/tools/noctus/dev/merge_debt.py   | 192 +++++++++
+ 10 files changed, 1869 insertions(+), 1 deletion(-)
+ create mode 100644 mcp/noctusai/tests/test_check_framework_deps.py
+ create mode 100644 mcp/noctusai/tests/test_cleanup_worktrees.py
+ create mode 100644 mcp/noctusai/tests/test_disk_usage.py
+ create mode 100644 mcp/noctusai/tests/test_merge_debt.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/check_framework_deps.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/cleanup_worktrees.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/disk_usage.py
+ create mode 100644 mcp/noctusai/tools/noctus/dev/merge_debt.py
+
+diff --git a/mcp/noctusai/tests/test_archive.py b/mcp/noctusai/tests/test_archive.py
+index 70400452..7e02a751 100644
+--- a/mcp/noctusai/tests/test_archive.py
++++ b/mcp/noctusai/tests/test_archive.py
+@@ -12,10 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from tools.noctus.dev.archive import (
+     archive,
++    archive_clean,
+     _derive_default_summary,
+     _detect_mode,
+     _next_nn,
+     _today_str,
++    _yesterday_str,
+ )
+ 
+ 
+@@ -574,3 +576,98 @@ class TestDeriveDefaultSummary:
+     def test_falls_back_when_empty(self):
+         assert _derive_default_summary("# only-headings\n\n# more\n") == "(no summary available)"
+         assert _derive_default_summary("") == "(no summary available)"
++
++
++# ---------------------------------------------------------------------------
++# archive_clean — keep today+yesterday, classify D-2+ as stale.
++# Behaviour-preserving port of scripts/archive-clean.sh.
++# ---------------------------------------------------------------------------
++
++
++def _make_archive_date_dir(repo: Path, date: str) -> Path:
++    """Create archive/projects/<date>/ with a tracked file + commit."""
++    d = repo / "archive" / "projects" / date
++    d.mkdir(parents=True)
++    (d / "01-proj" ).mkdir()
++    (d / "01-proj" / "PROJECT.md").write_text(f"# proj {date}\n")
++    subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
++    subprocess.run(["git", "commit", "-q", "-m", f"archive {date}"], cwd=str(repo), check=True)
++    return d
++
++
++class TestArchiveCleanClassification:
++    def test_no_archive_projects_dir_is_nothing(self, tmp_path):
++        subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
++        result = archive_clean(repo_root=tmp_path)
++        assert result["status"] == "nothing"
++        assert result["stale"] == []
++        assert result["dry_run"] is True
++
++    def test_today_and_yesterday_are_kept(self, tmp_repo):
++        today = _today_str()
++        yesterday = _yesterday_str()
++        _make_archive_date_dir(tmp_repo, today)
++        _make_archive_date_dir(tmp_repo, yesterday)
++        result = archive_clean(repo_root=tmp_repo)
++        assert set(result["kept"]) == {today, yesterday}
++        assert result["stale"] == []
++        assert result["status"] == "nothing"
++
++    def test_old_date_is_stale(self, tmp_repo):
++        today = _today_str()
++        _make_archive_date_dir(tmp_repo, today)
++        _make_archive_date_dir(tmp_repo, "2020-01-01")
++        result = archive_clean(repo_root=tmp_repo)
++        assert today in result["kept"]
++        assert result["stale"] == ["archive/projects/2020-01-01"]
++        assert result["status"] == "dry_run"
++
++    def test_non_date_entries_skipped(self, tmp_repo):
++        (tmp_repo / "archive" / "projects" / "README.md").write_text("not a date")
++        (tmp_repo / "archive" / "projects" / "weird-folder").mkdir()
++        subprocess.run(["git", "add", "-A"], cwd=str(tmp_repo), check=True)
++        subprocess.run(["git", "commit", "-q", "-m", "noise"], cwd=str(tmp_repo), check=True)
++        result = archive_clean(repo_root=tmp_repo)
++        assert "README.md" in result["skipped"]
++        assert "weird-folder" in result["skipped"]
++        assert result["stale"] == []
++
++
++class TestArchiveCleanDryRunVsForce:
++    def test_dry_run_default_removes_nothing(self, tmp_repo):
++        _make_archive_date_dir(tmp_repo, _today_str())
++        old = _make_archive_date_dir(tmp_repo, "2019-06-15")
++        result = archive_clean(repo_root=tmp_repo)  # force defaults False
++        assert result["dry_run"] is True
++        assert result["removed"] == 0
++        assert old.exists(), "dry-run must NOT remove the stale folder"
++
++    def test_force_removes_stale_via_git_rm(self, tmp_repo):
++        _make_archive_date_dir(tmp_repo, _today_str())
++        old = _make_archive_date_dir(tmp_repo, "2019-06-15")
++        old2 = _make_archive_date_dir(tmp_repo, "2018-03-03")
++        result = archive_clean(repo_root=tmp_repo, force=True)
++        assert result["status"] == "removed"
++        assert result["removed"] == 2
++        assert not old.exists()
++        assert not old2.exists()
++
++    def test_force_preserves_keep_window(self, tmp_repo):
++        today = _today_str()
++        keep = _make_archive_date_dir(tmp_repo, today)
++        _make_archive_date_dir(tmp_repo, "2017-01-01")
++        archive_clean(repo_root=tmp_repo, force=True)
++        assert keep.exists(), "today's folder must survive a forced clean"
++
++    def test_force_with_no_stale_is_nothing(self, tmp_repo):
++        _make_archive_date_dir(tmp_repo, _today_str())
++        result = archive_clean(repo_root=tmp_repo, force=True)
++        assert result["status"] == "nothing"
++        assert result["removed"] == 0
++
++
++class TestArchiveCleanMcpRegistration:
++    def test_archive_clean_tool_in_server_registry(self):
++        from server import build_server
++        s = build_server()
++        assert "noctus.dev.archive_clean" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tests/test_check_framework_deps.py b/mcp/noctusai/tests/test_check_framework_deps.py
+new file mode 100644
+index 00000000..81f10198
+--- /dev/null
++++ b/mcp/noctusai/tests/test_check_framework_deps.py
+@@ -0,0 +1,137 @@
++"""Tests for the noctus.dev.check_framework_deps tool.
++
++Behaviour parity with scripts/check-framework-deps.py: the audit detects a
++product missing any FRAMEWORK_DEP; --fix borrows pinned versions from the
++erp-imobiliario donor; clean tree → exit 0.
++"""
++from __future__ import annotations
++
++import json
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.check_framework_deps import (
++    FRAMEWORK_DEPS,
++    check_framework_deps,
++)
++
++
++def _write_pkg(root: Path, slug: str, deps: dict, dev_deps: dict | None = None) -> None:
++    pdir = root / "products" / slug / "frontend"
++    pdir.mkdir(parents=True)
++    payload = {"name": slug, "dependencies": deps}
++    if dev_deps is not None:
++        payload["devDependencies"] = dev_deps
++    (pdir / "package.json").write_text(json.dumps(payload, indent=2))
++
++
++def _full_deps() -> dict:
++    return {d: "1.0.0" for d in FRAMEWORK_DEPS}
++
++
++class TestAuditClean:
++    def test_all_products_complete_is_clean(self, tmp_path):
++        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
++        _write_pkg(tmp_path, "therapy-platform", _full_deps())
++        result = check_framework_deps(repo_root=tmp_path)
++        assert result["status"] == "clean"
++        assert result["exit_code"] == 0
++        assert result["drift"] == {}
++        assert result["total_missing"] == 0
++        assert result["products_audited"] == 2
++
++    def test_deps_split_across_dependencies_and_devDependencies(self, tmp_path):
++        half = FRAMEWORK_DEPS[:6]
++        rest = FRAMEWORK_DEPS[6:]
++        _write_pkg(
++            tmp_path, "erp-imobiliario",
++            {d: "1.0.0" for d in half},
++            {d: "1.0.0" for d in rest},
++        )
++        result = check_framework_deps(repo_root=tmp_path)
++        assert result["status"] == "clean"
++
++
++class TestAuditDrift:
++    def test_missing_dep_detected_exit_1(self, tmp_path):
++        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
++        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
++        _write_pkg(tmp_path, "social-wiring", partial)
++        result = check_framework_deps(repo_root=tmp_path)
++        assert result["status"] == "drift"
++        assert result["exit_code"] == 1
++        assert result["drift"] == {"social-wiring": ["zustand"]}
++        assert result["total_missing"] == 1
++        assert result["fixed"] == 0
++
++    def test_multiple_products_multiple_missing(self, tmp_path):
++        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
++        _write_pkg(
++            tmp_path, "a-prod",
++            {d: "1.0.0" for d in FRAMEWORK_DEPS if d not in ("clsx", "sonner")},
++        )
++        _write_pkg(
++            tmp_path, "b-prod",
++            {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "react-dom"},
++        )
++        result = check_framework_deps(repo_root=tmp_path)
++        assert result["total_missing"] == 3
++        assert set(result["drift"]) == {"a-prod", "b-prod"}
++
++
++class TestFix:
++    def test_fix_borrows_donor_versions_and_writes(self, tmp_path):
++        donor_deps = {d: f"^{i}.0.0" for i, d in enumerate(FRAMEWORK_DEPS)}
++        _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
++        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "lucide-react"}
++        _write_pkg(tmp_path, "social-wiring", partial)
++
++        result = check_framework_deps(repo_root=tmp_path, fix=True)
++        assert result["status"] == "fixed"
++        assert result["exit_code"] == 0
++        assert result["fixed"] == 1
++
++        # The package.json on disk now lists lucide-react at the donor version.
++        pkg = json.loads(
++            (tmp_path / "products" / "social-wiring" / "frontend" / "package.json").read_text()
++        )
++        idx = FRAMEWORK_DEPS.index("lucide-react")
++        assert pkg["dependencies"]["lucide-react"] == f"^{idx}.0.0"
++        # And it sorts deps.
++        assert list(pkg["dependencies"]) == sorted(pkg["dependencies"])
++
++        # Re-audit → now clean.
++        re_audit = check_framework_deps(repo_root=tmp_path)
++        assert re_audit["status"] == "clean"
++
++    def test_fix_falls_back_to_star_when_donor_lacks_dep(self, tmp_path):
++        # Donor itself missing 'sonner' → fix uses "*".
++        donor_deps = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
++        _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
++        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
++        _write_pkg(tmp_path, "x-prod", partial)
++        result = check_framework_deps(repo_root=tmp_path, fix=True)
++        assert result["status"] == "fixed"
++        pkg = json.loads(
++            (tmp_path / "products" / "x-prod" / "frontend" / "package.json").read_text()
++        )
++        assert pkg["dependencies"]["sonner"] == "*"
++
++
++class TestMcpRegistration:
++    def test_register_callable(self):
++        from tools.noctus.dev.check_framework_deps import register
++        assert callable(register)
++
++    def test_register_wires_tool_onto_a_server(self):
++        """The module's own register() wires the tool. (Global build_server()
++        wiring lands when the architect adds check_framework_deps to
++        tools/noctus/dev/__init__.py per the integration recipe.)"""
++        from mcp.server.fastmcp import FastMCP
++
++        from tools.noctus.dev.check_framework_deps import register
++        s = FastMCP(name="t")
++        register(s)
++        assert "noctus.dev.check_framework_deps" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tests/test_cleanup_worktrees.py b/mcp/noctusai/tests/test_cleanup_worktrees.py
+new file mode 100644
+index 00000000..b2cc1a46
+--- /dev/null
++++ b/mcp/noctusai/tests/test_cleanup_worktrees.py
+@@ -0,0 +1,166 @@
++"""Tests for the noctus.dev.cleanup_stale_worktrees tool.
++
++Behaviour parity with scripts/cleanup-stale-worktrees.sh: merged-branch
++worktrees are stale; unmerged are active (kept); uncommitted work routes to
++`dirty` (force does NOT override); dry-run unless force=True.
++
++Builds real git repos + real `git worktree add` so the merge/ancestry/
++patch-id/dirty predicates exercise the real git plumbing (no monkey-patch
++of our own code — the no-workarounds rule).
++"""
++from __future__ import annotations
++
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.cleanup_worktrees import cleanup_stale_worktrees
++
++
++def _git(repo: Path, *args: str) -> str:
++    return subprocess.run(
++        ["git", *args], cwd=str(repo), check=True,
++        capture_output=True, text=True,
++    ).stdout
++
++
++@pytest.fixture
++def repo(tmp_path: Path) -> Path:
++    """A repo with `main`, an `origin/main` ref, and a .claude/worktrees dir.
++
++    `origin/main` is faked as a local ref so the tool's base-resolution
++    (`origin/main` then fallback `main`) resolves deterministically.
++    """
++    r = tmp_path / "noc"
++    r.mkdir()
++    _git(r, "init", "-q", "-b", "main")
++    _git(r, "config", "user.email", "t@t.t")
++    _git(r, "config", "user.name", "t")
++    (r / "f").write_text("base\n")
++    _git(r, "add", "f")
++    _git(r, "commit", "-qm", "base")
++    # Fake origin/main pointing at current main tip.
++    _git(r, "update-ref", "refs/remotes/origin/main", "HEAD")
++    (r / ".claude" / "worktrees").mkdir(parents=True)
++    return r
++
++
++def _add_worktree(repo: Path, name: str, branch: str) -> Path:
++    wt = repo / ".claude" / "worktrees" / name
++    _git(repo, "worktree", "add", "-q", "-b", branch, str(wt))
++    return wt
++
++
++class TestDryRunDefault:
++    def test_no_worktree_dir_status_nothing(self, tmp_path):
++        r = tmp_path / "empty"
++        r.mkdir()
++        subprocess.run(["git", "init", "-q"], cwd=str(r), check=True)
++        result = cleanup_stale_worktrees(repo_root=r)
++        assert result["status"] == "nothing"
++        assert result["stale"] == []
++        assert result["dry_run"] is True
++
++    def test_merged_worktree_is_stale_but_dry_run_keeps_it(self, repo):
++        # Branch with NO new commits beyond main → merge-base ancestor → merged.
++        wt = _add_worktree(repo, "agent-merged", "wt-merged")
++        result = cleanup_stale_worktrees(repo_root=repo)  # force defaults False
++        assert str(wt) in result["stale"]
++        assert result["dry_run"] is True
++        assert result["status"] == "dry_run"
++        assert result["removed"] == 0
++        assert wt.exists(), "dry-run must NOT remove the worktree"
++
++
++class TestMergePredicate:
++    def test_unmerged_branch_is_active_kept(self, repo):
++        wt = _add_worktree(repo, "agent-wip", "wt-wip")
++        # Add an unmerged commit on the worktree's branch.
++        (wt / "g").write_text("new\n")
++        _git(wt, "add", "g")
++        _git(wt, "commit", "-qm", "feat: unmerged work")
++        result = cleanup_stale_worktrees(repo_root=repo, force=True)
++        assert str(wt) in result["active"]
++        assert str(wt) not in result["stale"]
++        assert wt.exists(), "unmerged WIP worktree must be kept"
++
++    def test_cherry_picked_branch_detected_as_merged(self, repo):
++        wt = _add_worktree(repo, "agent-cp", "wt-cp")
++        (wt / "h").write_text("cp\n")
++        _git(wt, "add", "h")
++        _git(wt, "commit", "-qm", "feat: work to be cherry-picked")
++        # Cherry-pick that commit onto main (new SHA, same patch-id), then
++        # bump the fake origin/main ref.
++        sha = _git(wt, "rev-parse", "HEAD").strip()
++        _git(repo, "cherry-pick", sha)
++        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
++        result = cleanup_stale_worktrees(repo_root=repo)
++        assert str(wt) in result["stale"], (
++            "cherry-picked-to-main branch must classify as stale (patch-id)"
++        )
++
++
++class TestSafetyGates:
++    def test_dirty_worktree_routes_to_dirty_not_stale(self, repo):
++        wt = _add_worktree(repo, "agent-dirty", "wt-dirty")
++        # Branch is merged (no new commits) BUT has uncommitted work.
++        (wt / "uncommitted.txt").write_text("dirty\n")
++        result = cleanup_stale_worktrees(repo_root=repo, force=True)
++        dirty_paths = [d["path"] for d in result["dirty"]]
++        assert str(wt) in dirty_paths
++        assert str(wt) not in result["stale"]
++        assert wt.exists(), "force must NOT remove a dirty merged worktree"
++
++    def test_force_removes_clean_merged_worktree(self, repo):
++        wt = _add_worktree(repo, "agent-clean", "wt-clean")
++        assert wt.exists()
++        result = cleanup_stale_worktrees(repo_root=repo, force=True)
++        assert result["status"] == "removed"
++        assert result["removed"] >= 1
++        assert not wt.exists(), "force=True must remove a clean merged worktree"
++
++    def test_main_repo_never_classified(self, repo):
++        _add_worktree(repo, "agent-clean2", "wt-clean2")
++        result = cleanup_stale_worktrees(repo_root=repo, force=True)
++        assert str(repo) not in result["stale"]
++        assert str(repo) not in result["active"]
++        assert str(repo) == result["main"]
++
++    def test_non_agent_sibling_dir_never_stale(self, repo):
++        # A non-agent dir under worktrees/ must be ignored entirely.
++        sibling = repo / ".claude" / "worktrees" / "sibling-workspace"
++        sibling.mkdir()
++        (sibling / "x").write_text("y")
++        result = cleanup_stale_worktrees(repo_root=repo, force=True)
++        assert str(sibling) not in result["stale"]
++
++
++class TestOrphanDetection:
++    def test_orphan_agent_dir_classified_stale(self, repo):
++        # On-disk agent-* dir that git doesn't know about → orphan → stale.
++        orphan = repo / ".claude" / "worktrees" / "agent-orphan"
++        orphan.mkdir()
++        (orphan / "leftover").write_text("junk")
++        result = cleanup_stale_worktrees(repo_root=repo)
++        assert str(orphan) in result["stale"]
++
++
++class TestMcpRegistration:
++    def test_register_callable(self):
++        from tools.noctus.dev.cleanup_worktrees import register
++        assert callable(register)
++
++    def test_register_wires_tool_onto_a_server(self):
++        """The module's own register() wires the tool. (Global build_server()
++        wiring lands when the architect adds cleanup_worktrees to
++        tools/noctus/dev/__init__.py per the integration recipe.)"""
++        from mcp.server.fastmcp import FastMCP
++
++        from tools.noctus.dev.cleanup_worktrees import register
++        s = FastMCP(name="t")
++        register(s)
++        assert "noctus.dev.cleanup_stale_worktrees" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tests/test_disk_usage.py b/mcp/noctusai/tests/test_disk_usage.py
+new file mode 100644
+index 00000000..99eabeb7
+--- /dev/null
++++ b/mcp/noctusai/tests/test_disk_usage.py
+@@ -0,0 +1,122 @@
++"""Tests for the noctus.dev.check_disk_usage tool.
++
++Behaviour parity with scripts/disk-usage-monitor.sh: the 70/80/90 severity
++bands + exit-code 0/1/2/3 mapping + worktree-footprint enumeration.
++"""
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++from unittest import mock
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.disk_usage import _classify, check_disk_usage
++
++
++class TestClassifyBands:
++    """_classify reproduces the shell severity-classification block."""
++
++    def test_under_70_is_ok_exit_0(self):
++        sev, code, hint = _classify(69)
++        assert (sev, code) == ("OK", 0)
++        assert hint == ""
++
++    def test_70_is_caution_exit_1(self):
++        sev, code, hint = _classify(70)
++        assert (sev, code) == ("CAUTION", 1)
++        assert hint
++
++    def test_79_is_caution(self):
++        assert _classify(79)[:2] == ("CAUTION", 1)
++
++    def test_80_is_warning_exit_2(self):
++        assert _classify(80)[:2] == ("WARNING", 2)
++
++    def test_89_is_warning(self):
++        assert _classify(89)[:2] == ("WARNING", 2)
++
++    def test_90_is_critical_exit_3(self):
++        assert _classify(90)[:2] == ("CRITICAL", 3)
++
++    def test_100_is_critical(self):
++        assert _classify(100)[:2] == ("CRITICAL", 3)
++
++
++class TestCheckDiskUsageContract:
++    def test_returns_structured_dict(self, tmp_path):
++        result = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert set(result) >= {
++            "timestamp", "volume", "pct_used", "avail_gb", "total_gb",
++            "worktree_count", "worktree_size_bytes", "severity",
++            "exit_code", "status", "hint", "auto_clean_ran",
++            "auto_clean_result",
++        }
++        assert result["severity"] in ("OK", "CAUTION", "WARNING", "CRITICAL")
++        assert result["status"] == result["severity"]
++        assert result["exit_code"] in (0, 1, 2, 3)
++        assert result["pct_used"] >= 0
++        assert result["auto_clean_ran"] is False
++        assert result["auto_clean_result"] is None
++
++    def test_worktree_footprint_counted(self, tmp_path):
++        wt = tmp_path / ".claude" / "worktrees"
++        (wt / "agent-aaa").mkdir(parents=True)
++        (wt / "agent-bbb").mkdir(parents=True)
++        (wt / "not-an-agent").mkdir(parents=True)
++        (wt / "agent-aaa" / "f.txt").write_text("x" * 100)
++        result = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert result["worktree_count"] == 2  # only agent-* dirs
++        assert result["worktree_size_bytes"] >= 100
++
++    def test_no_worktree_dir_is_zero(self, tmp_path):
++        result = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert result["worktree_count"] == 0
++        assert result["worktree_size_bytes"] == 0
++
++    def test_band_mapping_via_mocked_usage(self, tmp_path):
++        """Mock shutil.disk_usage (external OS call) to drive each band
++        deterministically — no monkey-patching of our own code."""
++        Usage = mock.Mock()
++        # 85% used → WARNING / exit 2.
++        fake = mock.Mock(total=1000, used=850, free=150)
++        with mock.patch("tools.noctus.dev.disk_usage.shutil.disk_usage", return_value=fake):
++            r = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert r["pct_used"] == 85
++        assert r["severity"] == "WARNING"
++        assert r["exit_code"] == 2
++        assert "Cleanup REQUIRED" in r["hint"]
++
++    def test_critical_band_via_mock(self, tmp_path):
++        fake = mock.Mock(total=1000, used=950, free=50)
++        with mock.patch("tools.noctus.dev.disk_usage.shutil.disk_usage", return_value=fake):
++            r = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert r["severity"] == "CRITICAL"
++        assert r["exit_code"] == 3
++
++    def test_ok_band_via_mock(self, tmp_path):
++        fake = mock.Mock(total=1000, used=100, free=900)
++        with mock.patch("tools.noctus.dev.disk_usage.shutil.disk_usage", return_value=fake):
++            r = check_disk_usage(repo_root=tmp_path, target_path=tmp_path)
++        assert r["severity"] == "OK"
++        assert r["exit_code"] == 0
++        assert r["hint"] == ""
++
++
++class TestMcpRegistration:
++    def test_register_callable(self):
++        from tools.noctus.dev.disk_usage import register
++        assert callable(register)
++
++    def test_register_wires_tool_onto_a_server(self):
++        """The module's own register() wires the tool. (Global build_server()
++        wiring lands when the architect adds disk_usage to
++        tools/noctus/dev/__init__.py per the integration recipe.)"""
++        from mcp.server.fastmcp import FastMCP
++
++        from tools.noctus.dev.disk_usage import register
++        s = FastMCP(name="t")
++        register(s)
++        assert "noctus.dev.check_disk_usage" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tests/test_merge_debt.py b/mcp/noctusai/tests/test_merge_debt.py
+new file mode 100644
+index 00000000..5fae07c0
+--- /dev/null
++++ b/mcp/noctusai/tests/test_merge_debt.py
+@@ -0,0 +1,147 @@
++"""Tests for the noctus.dev.check_merge_debt tool.
++
++Behaviour parity with scripts/merge-debt-monitor.sh: the severity bands
++(OK / CAUTION≥25 commits / WARNING≥1 closed-project / CRITICAL≥3 closed OR
++≥60 commits) + exit-code 0/1/2/3 mapping, driven against synthetic
++ephemeral git repos so assertions are deterministic regardless of the live
++backlog.
++
++Distinct from the existing test_merge_debt_monitor.py (which invokes the
++shell script); this exercises the native Python port.
++"""
++from __future__ import annotations
++
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tools.noctus.dev.merge_debt import check_merge_debt
++
++
++def _git(repo: Path, *args: str) -> None:
++    subprocess.run(
++        ["git", *args], cwd=str(repo), check=True,
++        capture_output=True, text=True,
++    )
++
++
++@pytest.fixture
++def synthetic_repo(tmp_path: Path):
++    """Factory: build(n_commits, n_closed) shapes the origin/main..HEAD
++    range. `main` stands in for `origin/main` (the tool falls back to
++    `main` when the remote ref is absent — same as the shell script)."""
++
++    def build(n_commits: int, n_closed: int) -> Path:
++        repo = tmp_path / f"r_{n_commits}_{n_closed}"
++        repo.mkdir()
++        _git(repo, "init", "-q", "-b", "main")
++        _git(repo, "config", "user.email", "t@t.t")
++        _git(repo, "config", "user.name", "t")
++        (repo / "f").write_text("base\n")
++        _git(repo, "add", "f")
++        _git(repo, "commit", "-qm", "base")
++        _git(repo, "checkout", "-q", "-b", "feature")
++        made_closed = 0
++        for i in range(n_commits):
++            (repo / "f").write_text(f"c{i}\n")
++            _git(repo, "add", "f")
++            if made_closed < n_closed:
++                msg = (
++                    f"chore(archive): close proj-{i} — git mv to "
++                    f"archive/2026-05-17/0{i}"
++                )
++                made_closed += 1
++            else:
++                msg = f"feat: change {i}"
++            _git(repo, "commit", "-qm", msg)
++        return repo
++
++    return build
++
++
++def _keys() -> set[str]:
++    return {
++        "timestamp", "branch", "base", "commits_ahead",
++        "closed_projects_unmerged", "severity", "exit_code",
++        "status", "next_action",
++    }
++
++
++class TestContract:
++    def test_returns_structured_dict(self, synthetic_repo):
++        repo = synthetic_repo(n_commits=3, n_closed=0)
++        result = check_merge_debt(repo_root=repo)
++        assert set(result) == _keys()
++        assert result["status"] == result["severity"]
++        assert result["base"] in ("origin/main", "main")
++        assert result["branch"] == "feature"
++
++
++class TestSeverityBands:
++    def test_ok_band(self, synthetic_repo):
++        repo = synthetic_repo(n_commits=3, n_closed=0)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "OK"
++        assert r["exit_code"] == 0
++        assert r["commits_ahead"] == 3
++        assert r["closed_projects_unmerged"] == 0
++
++    def test_caution_on_commit_volume(self, synthetic_repo):
++        # 25 commits, zero closed → CAUTION (COMMITS_CAUTION=25).
++        repo = synthetic_repo(n_commits=25, n_closed=0)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "CAUTION"
++        assert r["exit_code"] == 1
++
++    def test_below_caution_threshold_is_ok(self, synthetic_repo):
++        repo = synthetic_repo(n_commits=24, n_closed=0)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "OK"
++
++    def test_warning_on_one_closed_project(self, synthetic_repo):
++        # A single closed project unmerged is WARNING regardless of commits.
++        repo = synthetic_repo(n_commits=4, n_closed=1)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "WARNING"
++        assert r["exit_code"] == 2
++        assert r["closed_projects_unmerged"] == 1
++
++    def test_critical_on_three_closed_projects(self, synthetic_repo):
++        repo = synthetic_repo(n_commits=6, n_closed=3)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "CRITICAL"
++        assert r["exit_code"] == 3
++        assert r["closed_projects_unmerged"] == 3
++
++    def test_critical_on_commit_volume(self, synthetic_repo):
++        # 60 commits, zero closed → CRITICAL (COMMITS_CRITICAL=60).
++        repo = synthetic_repo(n_commits=60, n_closed=0)
++        r = check_merge_debt(repo_root=repo)
++        assert r["severity"] == "CRITICAL"
++        assert r["exit_code"] == 3
++
++    def test_next_action_text_present(self, synthetic_repo):
++        repo = synthetic_repo(n_commits=4, n_closed=1)
++        r = check_merge_debt(repo_root=repo)
++        assert "phase-push" in r["next_action"]
++
++
++class TestMcpRegistration:
++    def test_register_callable(self):
++        from tools.noctus.dev.merge_debt import register
++        assert callable(register)
++
++    def test_register_wires_tool_onto_a_server(self):
++        """The module's own register() wires the tool. (Global build_server()
++        wiring lands when the architect adds merge_debt to
++        tools/noctus/dev/__init__.py per the integration recipe.)"""
++        from mcp.server.fastmcp import FastMCP
++
++        from tools.noctus.dev.merge_debt import register
++        s = FastMCP(name="t")
++        register(s)
++        assert "noctus.dev.check_merge_debt" in s._tool_manager._tools
+diff --git a/mcp/noctusai/tools/noctus/dev/archive.py b/mcp/noctusai/tools/noctus/dev/archive.py
+index e6070915..d60d85ce 100644
+--- a/mcp/noctusai/tools/noctus/dev/archive.py
++++ b/mcp/noctusai/tools/noctus/dev/archive.py
+@@ -22,8 +22,9 @@ from __future__ import annotations
+ 
+ import logging
+ import re
++import shutil
+ import subprocess
+-from datetime import datetime
++from datetime import datetime, timedelta
+ from pathlib import Path
+ from zoneinfo import ZoneInfo
+ 
+@@ -301,6 +302,174 @@ def archive(
+         "next_NN": nn,
+         "history": history_result,
+     }
++_ARCHIVE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++
++
++def _yesterday_str() -> str:
++    """Return yesterday's date in local TZ as YYYY-MM-DD.
++
++    Mirrors ``scripts/archive-clean.sh``'s local-time computation: the user
++    invokes archive cleanup on *local-day* boundaries; UTC shifted the keep
++    window forward by a day in the original 2026-05-12 incident.
++    """
++    return (datetime.now(tz=_LOCAL_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
++
++
++def archive_clean(
++    repo_root: Path | None = None,
++    *,
++    worktree_path: str | Path | None = None,
++    force: bool = False,
++) -> dict:
++    """Keep only today's + yesterday's ``archive/projects/<DATE>/`` folders.
++
++    Behaviour-preserving native port of ``scripts/archive-clean.sh``.
++    USER-INVOKED, NEVER AUTOMATIC (trigger phrases: "clean the archive" /
++    "archive cleanup"). Anything D-2 or older is stale; today + yesterday
++    are the recent-work window.
++
++    Safety (identical to the shell script):
++        * **Dry-run unless ``force=True``** — default lists stale folders
++          but removes nothing.
++        * Only operates on ``archive/projects/YYYY-MM-DD/`` folders. Never
++          touches ``archive/features/`` or ad-hoc ``archive/<date>_<time>_*``.
++        * Non-date entries (``README.md``, ``.gitkeep``) are skipped.
++        * Removal uses ``git rm -rf`` so deletions are tracked (recoverable
++          via ``git reset --hard`` pre-commit); falls back to filesystem
++          ``rmtree`` only for non-git-tracked content (mirrors the script).
++
++    Args:
++        repo_root: repo-root override (test seam). Wins over
++            ``worktree_path``.
++        worktree_path: caller-aware path resolution — when set, operates on
++            the caller's worktree (same contract as ``archive``).
++        force: when ``False`` (default) the call is a DRY-RUN — stale
++            folders are classified and returned but NOT removed. ``True``
++            performs the ``git rm -rf``.
++
++    Returns:
++        ```
++        {
++          "archive_dir": "archive/projects",       # relative to repo root
++          "keep_window": ["<yesterday>", "<today>"],
++          "kept": ["<date-folder>", ...],
++          "skipped": ["<non-date-entry>", ...],
++          "stale": ["archive/projects/<date>", ...],   # rel paths, D-2+
++          "dry_run": bool,                         # True == not force
++          "removed": int,                          # 0 when dry_run
++          "status": "ok" | "dry_run" | "removed" | "nothing",
++        }
++        ```
++        ``status`` semantics mirror the script's exit behaviour:
++        ``"nothing"`` — no ``archive/projects`` dir OR zero stale folders;
++        ``"dry_run"`` — stale folders found, ``force=False``;
++        ``"removed"`` — stale folders removed (``force=True``).
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++
++    archive_projects = (root / "archive" / "projects")
++    rel_archive_dir = "archive/projects"
++
++    if not archive_projects.is_dir():
++        return {
++            "archive_dir": rel_archive_dir,
++            "keep_window": [_yesterday_str(), _today_str()],
++            "kept": [],
++            "skipped": [],
++            "stale": [],
++            "dry_run": not force,
++            "removed": 0,
++            "status": "nothing",
++        }
++
++    today = _today_str()
++    yesterday = _yesterday_str()
++
++    kept: list[str] = []
++    skipped: list[str] = []
++    stale_dirs: list[Path] = []
++    stale_rel: list[str] = []
++
++    for child in sorted(archive_projects.iterdir()):
++        if not child.is_dir():
++            # Mirrors the shell `[ -d "$dir" ] || continue` (README.md etc.).
++            skipped.append(child.name)
++            continue
++        name = child.name
++        if not _ARCHIVE_DATE_RE.match(name):
++            skipped.append(name)
++            continue
++        if name == today or name == yesterday:
++            kept.append(name)
++        else:
++            stale_dirs.append(child)
++            stale_rel.append(f"{rel_archive_dir}/{name}")
++
++    if not stale_dirs:
++        return {
++            "archive_dir": rel_archive_dir,
++            "keep_window": [yesterday, today],
++            "kept": kept,
++            "skipped": skipped,
++            "stale": [],
++            "dry_run": not force,
++            "removed": 0,
++            "status": "nothing",
++        }
++
++    if not force:
++        return {
++            "archive_dir": rel_archive_dir,
++            "keep_window": [yesterday, today],
++            "kept": kept,
++            "skipped": skipped,
++            "stale": stale_rel,
++            "dry_run": True,
++            "removed": 0,
++            "status": "dry_run",
++        }
++
++    removed = 0
++    for d in stale_dirs:
++        rel = str(d.relative_to(root))
++        proc = subprocess.run(
++            ["git", "rm", "-rf", "-q", rel],
++            cwd=str(root),
++            capture_output=True,
++        )
++        if proc.returncode == 0:
++            removed += 1
++        else:
++            # Fallback for non-git-tracked content (mirrors the script's
++            # `rm -rf "$dir"` fallback). shutil.rmtree is the Python analogue.
++            try:
++                shutil.rmtree(d)
++                removed += 1
++            except OSError as exc:
++                logger.warning(
++                    "archive_clean: failed to remove stale folder %s (%s)",
++                    rel, exc,
++                )
++
++    logger.info(
++        "archive_clean: removed %d stale folder(s) (keep window %s + %s)",
++        removed, yesterday, today,
++    )
++    return {
++        "archive_dir": rel_archive_dir,
++        "keep_window": [yesterday, today],
++        "kept": kept,
++        "skipped": skipped,
++        "stale": stale_rel,
++        "dry_run": False,
++        "removed": removed,
++        "status": "removed",
++    }
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -352,3 +521,24 @@ def register(server) -> None:
+             review_md=review_md,
+             outcome_signals=outcome_signals,
+         )
++    @server.tool(
++        name="noctus.dev.archive_clean",
++        description=(
++            "Keep only today's + yesterday's archive/projects/<DATE>/ folders; "
++            "classify everything D-2-or-older as stale. USER-INVOKED, NEVER "
++            "AUTOMATIC (trigger phrases: 'clean the archive' / 'archive cleanup'). "
++            "DRY-RUN by default — pass force=True to actually git rm -rf the stale "
++            "folders (tracked removal; recoverable pre-commit via git reset --hard; "
++            "filesystem-rmtree fallback only for non-git-tracked content). Only "
++            "touches archive/projects/YYYY-MM-DD/ — never archive/features/ or "
++            "ad-hoc archive/<date>_<time>_* dirs; non-date entries are skipped. "
++            "Pass worktree_path when called from inside a git worktree. Behaviour-"
++            "preserving port of scripts/archive-clean.sh. See KB § PATTERNS/"
++            "project-execution.md § 11.2."
++        ),
++    )
++    def _archive_clean(
++        worktree_path: str | None = None,
++        force: bool = False,
++    ) -> dict:
++        return archive_clean(worktree_path=worktree_path, force=force)
+diff --git a/mcp/noctusai/tools/noctus/dev/check_framework_deps.py b/mcp/noctusai/tools/noctus/dev/check_framework_deps.py
+new file mode 100644
+index 00000000..f48812ed
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/check_framework_deps.py
+@@ -0,0 +1,210 @@
++"""`noctus.dev.check_framework_deps` — audit product frontend dep parity.
++
++Behaviour-preserving native port of ``scripts/check-framework-deps.py``.
++
++Why
++    Vite's ``resolve.dedupe`` (set in
++    ``seed/framework/frontend/vite.config.factory.ts``) forces ``FRAMEWORK_DEPS``
++    to resolve from each product's OWN ``node_modules``. If any framework dep
++    is imported by the seed source but missing from a product's
++    ``package.json``, the container ``npm run build`` fails with
++    ``Rollup failed to resolve import "<dep>"``. This tool audits every
++    ``products/*/frontend/package.json`` for parity and can auto-fix by
++    borrowing pinned versions from a known-clean donor product.
++
++The ``FRAMEWORK_DEPS`` list is the source of truth extracted from
++``vite.config.factory.ts`` — kept verbatim from the original script. Update
++it here if ``FRAMEWORK_DEPS`` evolves over there (the original script carried
++the same maintenance note).
++"""
++from __future__ import annotations
++
++import json
++import logging
++from pathlib import Path
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++logger = logging.getLogger(__name__)
++
++# Source of truth — extracted from seed/framework/frontend/vite.config.factory.ts.
++# Kept verbatim from scripts/check-framework-deps.py. Update if FRAMEWORK_DEPS
++# evolves over there.
++FRAMEWORK_DEPS: list[str] = [
++    "react", "react-dom", "react-router-dom",
++    "@tanstack/react-query", "zustand", "sonner",
++    "lucide-react",
++    "@radix-ui/react-tooltip", "@radix-ui/react-hover-card", "@radix-ui/react-collapsible",
++    "@supabase/supabase-js",
++    "clsx", "tailwind-merge",
++]
++
++# Default donor for --fix — a known-clean product (verbatim from the script).
++_DONOR_SLUG = "erp-imobiliario"
++
++
++def _audit(root: Path) -> tuple[dict[str, list[str]], int, int]:
++    """Return ({slug: [missing_deps]}, total_missing, product_count).
++
++    Identical logic to the original ``audit()``: iterate sorted
++    ``products/*/frontend/package.json``, union ``dependencies`` +
++    ``devDependencies``, collect FRAMEWORK_DEPS not present.
++    """
++    drift: dict[str, list[str]] = {}
++    total = 0
++    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
++    for pkg_path in pkg_paths:
++        slug = pkg_path.parent.parent.name
++        pkg = json.loads(pkg_path.read_text())
++        all_deps = {
++            **pkg.get("dependencies", {}),
++            **pkg.get("devDependencies", {}),
++        }
++        missing = [d for d in FRAMEWORK_DEPS if d not in all_deps]
++        if missing:
++            drift[slug] = missing
++            total += len(missing)
++    return drift, total, len(pkg_paths)
++
++
++def _fix(root: Path, drift: dict[str, list[str]]) -> int:
++    """Borrow missing deps from the donor product. Returns entries added.
++
++    Identical logic to the original ``fix()`` — versions sourced from the
++    donor's union deps (``"*"`` fallback), written back sorted with 4-space
++    indent + trailing newline.
++    """
++    if not drift:
++        return 0
++    donor = json.loads(
++        (root / "products" / _DONOR_SLUG / "frontend" / "package.json").read_text()
++    )
++    donor_deps = {
++        **donor.get("dependencies", {}),
++        **donor.get("devDependencies", {}),
++    }
++    fixed = 0
++    for slug, missing in drift.items():
++        pkg_path = root / "products" / slug / "frontend" / "package.json"
++        pkg = json.loads(pkg_path.read_text())
++        deps = pkg.setdefault("dependencies", {})
++        for m in missing:
++            deps[m] = donor_deps.get(m, "*")
++            fixed += 1
++        pkg["dependencies"] = dict(sorted(deps.items()))
++        pkg_path.write_text(json.dumps(pkg, indent=4) + "\n")
++    return fixed
++
++
++def check_framework_deps(
++    repo_root: Path | None = None,
++    *,
++    worktree_path: str | Path | None = None,
++    fix: bool = False,
++) -> dict:
++    """Audit every product frontend ``package.json`` for FRAMEWORK_DEPS parity.
++
++    Behaviour-preserving native port of ``scripts/check-framework-deps.py``.
++    ``fix=False`` (default) is the read-only audit (the script's exit-1-on-
++    drift becomes ``status="drift"``). ``fix=True`` mirrors ``--fix`` —
++    borrows missing pinned versions from the donor product and writes the
++    package.json files back.
++
++    Args:
++        repo_root: repo-root override (test seam). Wins over
++            ``worktree_path``.
++        worktree_path: caller-aware path resolution (same contract as the
++            sibling dev tools).
++        fix: when ``True``, auto-add missing deps from the donor product
++            (``erp-imobiliario``). Mirrors the script's ``--fix``.
++
++    Returns:
++        ```
++        {
++          "products_audited": int,
++          "drift": {"<slug>": ["<missing dep>", ...], ...},
++          "total_missing": int,
++          "fixed": int,                # entries written (0 unless fix=True)
++          "status": "clean"|"drift"|"fixed",
++          "exit_code": 0 | 1,          # verbatim shell exit (1 on drift, no fix)
++        }
++        ```
++        ``status``/``exit_code`` mirror the script's ``main()``: clean → 0;
++        drift + no fix → exit 1 (``status="drift"``); drift + fix → exit 0
++        (``status="fixed"``).
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++
++    drift, total, count = _audit(root)
++
++    if not drift:
++        logger.info(
++            "check_framework_deps: all %d products list every FRAMEWORK_DEP",
++            count,
++        )
++        return {
++            "products_audited": count,
++            "drift": {},
++            "total_missing": 0,
++            "fixed": 0,
++            "status": "clean",
++            "exit_code": 0,
++        }
++
++    fixed = 0
++    if fix:
++        fixed = _fix(root, drift)
++        logger.info(
++            "check_framework_deps: --fix added %d dep entries across %d product(s)",
++            fixed, len(drift),
++        )
++        return {
++            "products_audited": count,
++            "drift": drift,
++            "total_missing": total,
++            "fixed": fixed,
++            "status": "fixed",
++            "exit_code": 0,
++        }
++
++    logger.warning(
++        "check_framework_deps: %d missing FRAMEWORK_DEPS across %d product(s)",
++        total, len(drift),
++    )
++    return {
++        "products_audited": count,
++        "drift": drift,
++        "total_missing": total,
++        "fixed": 0,
++        "status": "drift",
++        "exit_code": 1,
++    }
++
++
++def register(server) -> None:
++    """Register the framework-deps audit MCP tool."""
++
++    @server.tool(
++        name="noctus.dev.check_framework_deps",
++        description=(
++            "Audit that every product's frontend package.json lists every "
++            "FRAMEWORK_DEP (the vite.config.factory.ts resolve.dedupe set). A "
++            "missing framework dep makes the product's container `npm run "
++            "build` fail with `Rollup failed to resolve import`. Read-only by "
++            "default (status=drift + exit_code 1 on drift); fix=True borrows "
++            "pinned versions from erp-imobiliario and rewrites package.json. "
++            "Port of scripts/check-framework-deps.py. Pass worktree_path when "
++            "called from inside a git worktree."
++        ),
++    )
++    def _check_framework_deps(
++        worktree_path: str | None = None,
++        fix: bool = False,
++    ) -> dict:
++        return check_framework_deps(worktree_path=worktree_path, fix=fix)
+diff --git a/mcp/noctusai/tools/noctus/dev/cleanup_worktrees.py b/mcp/noctusai/tools/noctus/dev/cleanup_worktrees.py
+new file mode 100644
+index 00000000..a1232dba
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/cleanup_worktrees.py
+@@ -0,0 +1,392 @@
++"""`noctus.dev.cleanup_stale_worktrees` — remove merged engineer worktrees.
++
++Behaviour-preserving native port of ``scripts/cleanup-stale-worktrees.sh``.
++
++Why this exists
++    Each ``Agent(isolation: "worktree")`` call creates a worktree at
++    ``.claude/worktrees/agent-<id>/`` (hydrated with node_modules + Python
++    venvs). The orchestrator FFs to main; the worktree stays on disk
++    ~880 MiB each. 75 stale worktrees = 67 GiB unrecoverable until cleanup.
++
++What "stale" means (identical predicate to the shell script + mole.sh)
++    An agent worktree whose branch is either:
++      (a) reachable from ``origin/main`` by SHA ancestry (true merge), OR
++      (b) all commits already present on ``origin/main`` by PATCH-ID
++          (cherry-pick — the orchestrator FFs via cherry-pick: new SHA, same
++          patch; ``git cherry`` is the patch-id equivalent).
++    Unmerged work-in-progress worktrees are KEPT.
++
++Safety (identical contract — the THE-P10 / THE-P11 lessons)
++    * Never removes the main worktree.
++    * Never removes sibling workspaces (paths NOT under
++      ``.claude/worktrees/agent-*``).
++    * Refuses to remove worktrees with uncommitted files or stashes —
++      surfaces them as ``dirty`` manual-review findings. ``force=True`` does
++      NOT override this (it only suppresses the interactive prompt).
++    * Shared-stash subtraction: linked worktrees share ``refs/stash`` with
++      main; main's stashes are subtracted before counting a worktree's WIP
++      (THE-P11 false-positive fix).
++    * Locked worktrees with a live PID are never destroyed; a lock held by a
++      DEAD pid is auto-unlocked (THE-P11 fix). Git's safe ``worktree remove
++      --force`` is used; a refusal surfaces the path as ``locked_skipped`` —
++      NEVER ``rm -rf`` a git-registered locked path (THE-P10 lesson). Only
++      TRUE orphans (on-disk dir git doesn't know about) get a direct rmtree.
++    * Always ``git worktree prune`` after removal.
++
++Dry-run unless ``force=True`` (the shell ``--dry-run``/``--force`` split;
++``interactive`` mode is not portable to a tool call — default is dry-run).
++"""
++from __future__ import annotations
++
++import logging
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++logger = logging.getLogger(__name__)
++
++
++def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
++    return subprocess.run(
++        ["git", *args],
++        cwd=str(root),
++        capture_output=True,
++        text=True,
++    )
++
++
++def _is_ancestor(root: Path, branch: str, base: str) -> bool:
++    """``git merge-base --is-ancestor branch base`` — SHA ancestry."""
++    return _git(root, "merge-base", "--is-ancestor", branch, base).returncode == 0
++
++
++def _all_commits_cherry_picked(root: Path, branch: str, base: str) -> bool:
++    """Patch-id equivalence: every commit on ``branch`` is on ``base``.
++
++    Mirrors the shell ``_all_commits_cherry_picked_to_main``: the branch
++    must have ≥1 commit and ZERO ``+`` lines in ``git cherry base branch``
++    (``+`` = genuinely unmerged; ``-`` = on base by patch-id).
++    """
++    cherry = _git(root, "cherry", base, branch)
++    if cherry.returncode != 0:
++        return False
++    plus_lines = sum(
++        1 for ln in cherry.stdout.splitlines() if ln.startswith("+")
++    )
++    log = _git(root, "log", "--oneline", f"{base}..{branch}")
++    total = len([ln for ln in log.stdout.splitlines() if ln.strip()])
++    return total > 0 and plus_lines == 0
++
++
++def _pid_alive(pid: int) -> bool:
++    """True if ``pid`` is a live process (mirrors the shell ``kill -0``)."""
++    try:
++        os.kill(pid, 0)
++    except ProcessLookupError:
++        return False
++    except PermissionError:
++        return True  # exists but not ours — still alive
++    except OSError:
++        return False
++    return True
++
++
++def _registered_worktrees(root: Path) -> list[tuple[str, str | None, bool, str]]:
++    """Parse ``git worktree list --porcelain``.
++
++    Returns [(path, branch_or_None, locked_bool, lock_reason), ...]. Mirrors
++    the shell's block parser (worktree / branch / locked lines, blank-line
++    separated).
++    """
++    out = _git(root, "worktree", "list", "--porcelain").stdout
++    entries: list[tuple[str, str | None, bool, str]] = []
++    wt: str | None = None
++    branch: str | None = None
++    locked = False
++    lock_reason = ""
++
++    def flush() -> None:
++        nonlocal wt, branch, locked, lock_reason
++        if wt is not None:
++            entries.append((wt, branch, locked, lock_reason))
++        wt = None
++        branch = None
++        locked = False
++        lock_reason = ""
++
++    for line in out.splitlines():
++        if line.startswith("worktree "):
++            flush()
++            wt = line[len("worktree "):]
++        elif line.startswith("branch "):
++            branch = line[len("branch refs/heads/"):]
++        elif line.startswith("locked"):
++            locked = True
++            lock_reason = line[len("locked"):].strip()
++        elif line == "":
++            flush()
++    flush()
++    return entries
++
++
++def cleanup_stale_worktrees(
++    repo_root: Path | None = None,
++    *,
++    worktree_path: str | Path | None = None,
++    force: bool = False,
++) -> dict:
++    """Classify + (when ``force``) remove merged-to-main agent worktrees.
++
++    Behaviour-preserving native port of
++    ``scripts/cleanup-stale-worktrees.sh``. **Dry-run unless
++    ``force=True``** — default classifies and returns the buckets but
++    removes nothing. ``force=True`` performs ``git worktree remove --force``
++    on the stale set (NEVER overrides the dirty/locked safety gates).
++
++    Args:
++        repo_root: repo-root override (test seam). Wins over
++            ``worktree_path``.
++        worktree_path: caller-aware path resolution (same contract as the
++            sibling dev tools).
++        force: ``False`` (default) → dry-run classification only; ``True``
++            → remove the stale set (safety gates still apply).
++
++    Returns:
++        ```
++        {
++          "main": "<repo root>",
++          "active": [...],          # unmerged — kept (WIP)
++          "dirty": [{"path": ..., "reason": ...}, ...],  # merged + work
++          "locked": [...],          # merged + lock held — manual review
++          "stale": [...],           # safe to auto-remove (merged + clean)
++          "removed": int,           # 0 when dry_run
++          "failed": int,
++          "locked_skipped": [...],  # git refused (lock/active) — never rm'd
++          "dry_run": bool,          # True == not force
++          "status": "nothing"|"dry_run"|"removed",
++        }
++        ```
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++
++    worktree_dir = root / ".claude" / "worktrees"
++
++    if not worktree_dir.is_dir():
++        return {
++            "main": str(root),
++            "active": [],
++            "dirty": [],
++            "locked": [],
++            "stale": [],
++            "removed": 0,
++            "failed": 0,
++            "locked_skipped": [],
++            "dry_run": not force,
++            "status": "nothing",
++        }
++
++    # Refresh main's tip (best-effort, read-only).
++    _git(root, "fetch", "origin", "main", "--quiet")
++
++    # Resolve comparison base: prefer origin/main, fall back to main.
++    base = "origin/main"
++    if _git(root, "rev-parse", "--verify", "--quiet", base).returncode != 0:
++        base = "main"
++
++    # Snapshot main-repo stashes for shared-stash subtraction (THE-P11).
++    main_stashes = set(
++        ln for ln in _git(
++            root, "stash", "list", "--pretty=%H"
++        ).stdout.splitlines() if ln.strip()
++    )
++
++    active: list[str] = []
++    dirty: list[dict] = []
++    locked: list[str] = []
++    stale: list[str] = []
++
++    agent_prefix = str(worktree_dir / "agent-")
++
++    def classify(wt: str, branch: str | None, is_locked: bool, lock_reason: str) -> None:
++        # Main repo or sibling workspace: ignore.
++        if wt == str(root):
++            return
++        if not wt.startswith(agent_prefix):
++            return
++        if branch is None:
++            return
++
++        # Auto-unlock dead-pid locks (THE-P11). "(pid N)" with a dead pid.
++        nonlocal_locked = is_locked
++        if is_locked and "(pid " in lock_reason:
++            try:
++                pid = int(lock_reason.split("(pid ")[1].split(")")[0])
++            except (IndexError, ValueError):
++                pid = None
++            if pid is not None and not _pid_alive(pid):
++                if _git(root, "worktree", "unlock", wt).returncode == 0:
++                    nonlocal_locked = False
++
++        # Merge predicate: ancestry OR patch-id equivalence.
++        merged = _is_ancestor(root, branch, base) or _all_commits_cherry_picked(
++            root, branch, base
++        )
++        if not merged:
++            active.append(wt)
++            return
++
++        wt_path = Path(wt)
++        # Merged + on-disk dir gone → PHANTOM, safe to remove.
++        if not wt_path.is_dir():
++            stale.append(wt)
++            return
++
++        # On-disk + merged. Check uncommitted / stashed / locked.
++        status = _git(wt_path, "status", "--porcelain")
++        n_dirty = len([ln for ln in status.stdout.splitlines() if ln.strip()])
++
++        wt_stashes = set(
++            ln for ln in _git(
++                wt_path, "stash", "list", "--pretty=%H"
++            ).stdout.splitlines() if ln.strip()
++        )
++        unique_stashes = len(wt_stashes - main_stashes)
++
++        if n_dirty != 0:
++            dirty.append({
++                "path": wt,
++                "reason": f"{n_dirty} uncommitted file(s) — INVESTIGATE before removing",
++            })
++        elif unique_stashes != 0:
++            dirty.append({
++                "path": wt,
++                "reason": f"{unique_stashes} stash(es) — recover before removing",
++            })
++        elif nonlocal_locked:
++            locked.append(wt)
++        else:
++            stale.append(wt)
++
++    for wt, branch, is_locked, lock_reason in _registered_worktrees(root):
++        classify(wt, branch, is_locked, lock_reason)
++
++    # Orphan detection: on-disk agent-* dir NOT in `git worktree list`.
++    registered_paths = {
++        e[0] for e in _registered_worktrees(root)
++    }
++    for child in sorted(worktree_dir.iterdir()):
++        if not child.is_dir() or not child.name.startswith("agent-"):
++            continue
++        if str(child) not in registered_paths:
++            stale.append(str(child))
++
++    # Dedupe stale (preserve order).
++    seen: set[str] = set()
++    stale = [p for p in stale if not (p in seen or seen.add(p))]
++
++    if not stale:
++        return {
++            "main": str(root),
++            "active": active,
++            "dirty": dirty,
++            "locked": locked,
++            "stale": [],
++            "removed": 0,
++            "failed": 0,
++            "locked_skipped": [],
++            "dry_run": not force,
++            "status": "nothing",
++        }
++
++    if not force:
++        return {
++            "main": str(root),
++            "active": active,
++            "dirty": dirty,
++            "locked": locked,
++            "stale": stale,
++            "removed": 0,
++            "failed": 0,
++            "locked_skipped": [],
++            "dry_run": True,
++            "status": "dry_run",
++        }
++
++    removed = 0
++    failed = 0
++    locked_skipped: list[str] = []
++    for wt in stale:
++        if _git(root, "worktree", "remove", "--force", wt).returncode == 0:
++            removed += 1
++            continue
++        # git refused. Distinguish locked/active (NEVER rm -rf — THE-P10)
++        # from true orphan (git doesn't know about it — safe rmtree).
++        registered_now = {e[0] for e in _registered_worktrees(root)}
++        if wt in registered_now:
++            locked_skipped.append(wt)
++            failed += 1
++        else:
++            try:
++                if Path(wt).exists():
++                    shutil.rmtree(wt)
++                removed += 1
++            except OSError as exc:
++                logger.warning(
++                    "cleanup_stale_worktrees: failed to rmtree orphan %s (%s)",
++                    wt, exc,
++                )
++                failed += 1
++
++    _git(root, "worktree", "prune")
++
++    logger.info(
++        "cleanup_stale_worktrees: %d removed, %d failed, %d locked-skipped",
++        removed, failed, len(locked_skipped),
++    )
++    return {
++        "main": str(root),
++        "active": active,
++        "dirty": dirty,
++        "locked": locked,
++        "stale": stale,
++        "removed": removed,
++        "failed": failed,
++        "locked_skipped": locked_skipped,
++        "dry_run": False,
++        "status": "removed",
++    }
++
++
++def register(server) -> None:
++    """Register the stale-worktree cleanup MCP tool."""
++
++    @server.tool(
++        name="noctus.dev.cleanup_stale_worktrees",
++        description=(
++            "Remove engineer worktrees whose branch is merged to "
++            "origin/main (SHA-ancestry OR patch-id/cherry-pick). DRY-RUN by "
++            "default — force=True actually removes. NEVER removes main, "
++            "sibling workspaces, or worktrees with uncommitted/stashed work "
++            "(force does NOT override safety gates); git-refused locked "
++            "paths are surfaced, never rm-rf'd (THE-P10). Shared-stash "
++            "subtraction + dead-pid auto-unlock (THE-P11). Port of "
++            "scripts/cleanup-stale-worktrees.sh. Pass worktree_path when "
++            "called from inside a git worktree."
++        ),
++    )
++    def _cleanup_stale_worktrees(
++        worktree_path: str | None = None,
++        force: bool = False,
++    ) -> dict:
++        return cleanup_stale_worktrees(
++            worktree_path=worktree_path, force=force,
++        )
+diff --git a/mcp/noctusai/tools/noctus/dev/disk_usage.py b/mcp/noctusai/tools/noctus/dev/disk_usage.py
+new file mode 100644
+index 00000000..bf06c24f
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/disk_usage.py
+@@ -0,0 +1,215 @@
++"""`noctus.dev.check_disk_usage` — warn before disk pressure becomes a lockout.
++
++Behaviour-preserving native port of ``scripts/disk-usage-monitor.sh``.
++
++Why this exists
++    2026-05-11 incident: data volume hit 100% mid-session (664 MiB free of
++    460 GiB) blocking Engineer III + the orchestrator's own Bash output
++    staging. Recovery via worktree sweep recovered 68 GiB. This monitor
++    catches the pressure BEFORE it locks the harness — at 70% (caution) and
++    80% (action-required).
++
++What it does
++    Reports current % used on the data volume + estimates the agent-worktree
++    footprint. The shell script's exit codes 0/1/2/3 are preserved verbatim
++    and surfaced as ``status`` + ``exit_code`` fields:
++
++        0  — under 70% (healthy)            → status "OK"
++        1  — 70-79% (CAUTION)               → status "CAUTION"
++        2  — 80-89% (WARNING)               → status "WARNING"
++        3  — 90-100% (CRITICAL)             → status "CRITICAL"
++
++Auto-clean
++    The shell ``--auto-clean`` flag (run ``cleanup-stale-worktrees.sh
++    --force`` when ≥70%) is preserved as ``auto_clean=True``, which delegates
++    to the sibling native tool ``cleanup_stale_worktrees`` (forced) rather
++    than shelling out — same effect, no script dependency. Default is
++    advisory-only (``auto_clean=False``).
++"""
++from __future__ import annotations
++
++import logging
++import shutil
++from datetime import datetime
++from pathlib import Path
++from zoneinfo import ZoneInfo
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++logger = logging.getLogger(__name__)
++
++# Matches sibling-tool / .env defaults (APP_TIMEZONE=America/Sao_Paulo).
++_LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
++
++# Thresholds — verbatim from scripts/disk-usage-monitor.sh.
++_PCT_CRITICAL = 90  # ≥90% → CRITICAL (exit 3)
++_PCT_WARNING = 80   # ≥80% → WARNING  (exit 2)
++_PCT_CAUTION = 70   # ≥70% → CAUTION  (exit 1)
++
++
++def _classify(pct_used: int) -> tuple[str, int, str]:
++    """(severity, exit_code, hint) for a usage percentage.
++
++    Bands + hint strings preserved verbatim from the shell script's
++    severity-classification block.
++    """
++    if pct_used >= _PCT_CRITICAL:
++        return (
++            "CRITICAL",
++            3,
++            "Harness lockout imminent. Manual recovery required NOW: "
++            "cleanup stale worktrees (force); docker system prune -a -f; "
++            "sudo purge",
++        )
++    if pct_used >= _PCT_WARNING:
++        return (
++            "WARNING",
++            2,
++            "Cleanup REQUIRED before new dispatches. Run the stale-worktree "
++            "sweep (force).",
++        )
++    if pct_used >= _PCT_CAUTION:
++        return (
++            "CAUTION",
++            1,
++            "Schedule a sweep soon. Run the stale-worktree cleanup.",
++        )
++    return ("OK", 0, "")
++
++
++def check_disk_usage(
++    repo_root: Path | None = None,
++    *,
++    worktree_path: str | Path | None = None,
++    target_path: str | Path | None = None,
++    auto_clean: bool = False,
++) -> dict:
++    """Report disk pressure on the data volume + agent-worktree footprint.
++
++    Behaviour-preserving native port of ``scripts/disk-usage-monitor.sh``.
++    Read-only by default; ``auto_clean=True`` mirrors the shell
++    ``--auto-clean`` flag.
++
++    Args:
++        repo_root: repo-root override (test seam). Wins over
++            ``worktree_path``.
++        worktree_path: caller-aware path resolution (same contract as the
++            sibling dev tools).
++        target_path: volume to measure. Defaults to ``/`` (the shell script
++            uses ``df -P /``). Test seam — point at a tmp path to assert the
++            stat plumbing without depending on the host's real disk.
++        auto_clean: when ``True`` and severity ≥ CAUTION, delegates to the
++            native ``cleanup_stale_worktrees(force=True)`` (the script
++            shelled out to ``cleanup-stale-worktrees.sh --force``). Default
++            ``False`` (advisory only).
++
++    Returns:
++        ```
++        {
++          "timestamp": "<YYYY-MM-DD HH:MM:SS>",
++          "volume": "<path measured>",
++          "pct_used": int,
++          "avail_gb": float,
++          "total_gb": int,
++          "worktree_count": int,
++          "worktree_size_bytes": int,
++          "severity": "OK"|"CAUTION"|"WARNING"|"CRITICAL",
++          "exit_code": 0|1|2|3,        # verbatim shell exit semantics
++          "status": same as severity,  # convenience alias
++          "hint": "<action string>",   # "" when OK
++          "auto_clean_ran": bool,
++          "auto_clean_result": <cleanup dict> | None,
++        }
++        ```
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++
++    volume = Path(target_path) if target_path is not None else Path("/")
++
++    usage = shutil.disk_usage(str(volume))
++    total = usage.total
++    used = usage.used
++    free = usage.free
++    # `df -P` capacity is ceil(used / total * 100); shutil gives exact bytes.
++    pct_used = int(round(used / total * 100)) if total else 0
++    avail_gb = round(free / 1024 / 1024 / 1024, 1)
++    total_gb = int(round(total / 1024 / 1024 / 1024))
++
++    # Agent-worktree footprint (the shell `du -sh .claude/worktrees`).
++    wtree_dir = root / ".claude" / "worktrees"
++    wtree_count = 0
++    wtree_size = 0
++    if wtree_dir.is_dir():
++        for child in wtree_dir.iterdir():
++            if child.is_dir() and child.name.startswith("agent-"):
++                wtree_count += 1
++        for p in wtree_dir.rglob("*"):
++            try:
++                if p.is_file() and not p.is_symlink():
++                    wtree_size += p.stat().st_size
++            except OSError:
++                continue
++
++    severity, exit_code, hint = _classify(pct_used)
++
++    auto_clean_ran = False
++    auto_clean_result: dict | None = None
++    if auto_clean and exit_code >= 1:
++        # Native delegation — the shell shelled out to
++        # cleanup-stale-worktrees.sh --force; we call the sibling tool.
++        from tools.noctus.dev.cleanup_worktrees import cleanup_stale_worktrees
++
++        auto_clean_result = cleanup_stale_worktrees(
++            repo_root=root, force=True,
++        )
++        auto_clean_ran = True
++        logger.info(
++            "check_disk_usage: auto-clean ran (severity=%s, removed=%s)",
++            severity, auto_clean_result.get("removed"),
++        )
++
++    return {
++        "timestamp": datetime.now(tz=_LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
++        "volume": str(volume),
++        "pct_used": pct_used,
++        "avail_gb": avail_gb,
++        "total_gb": total_gb,
++        "worktree_count": wtree_count,
++        "worktree_size_bytes": wtree_size,
++        "severity": severity,
++        "exit_code": exit_code,
++        "status": severity,
++        "hint": hint,
++        "auto_clean_ran": auto_clean_ran,
++        "auto_clean_result": auto_clean_result,
++    }
++
++
++def register(server) -> None:
++    """Register the disk-usage MCP tool (3-segment dotted naming)."""
++
++    @server.tool(
++        name="noctus.dev.check_disk_usage",
++        description=(
++            "Warn before disk pressure becomes a 100% harness lockout. "
++            "Reports data-volume %-used + agent-worktree footprint; preserves "
++            "scripts/disk-usage-monitor.sh exit semantics (≥70% CAUTION / "
++            "≥80% WARNING / ≥90% CRITICAL) as status+exit_code. Read-only by "
++            "default; auto_clean=True delegates to the native stale-worktree "
++            "sweep (force) when severity ≥ CAUTION. Pass worktree_path when "
++            "called from inside a git worktree."
++        ),
++    )
++    def _check_disk_usage(
++        worktree_path: str | None = None,
++        auto_clean: bool = False,
++    ) -> dict:
++        return check_disk_usage(
++            worktree_path=worktree_path, auto_clean=auto_clean,
++        )
+diff --git a/mcp/noctusai/tools/noctus/dev/merge_debt.py b/mcp/noctusai/tools/noctus/dev/merge_debt.py
+new file mode 100644
+index 00000000..a896d34d
+--- /dev/null
++++ b/mcp/noctusai/tools/noctus/dev/merge_debt.py
+@@ -0,0 +1,192 @@
++"""`noctus.dev.check_merge_debt` — warn before an unmerged-to-main backlog
++becomes a base-mismatch lockout.
++
++Behaviour-preserving native port of ``scripts/merge-debt-monitor.sh``.
++
++Why this exists
++    Long-lived feature branches accumulate large unmerged-to-``origin/main``
++    backlogs. Engineer Agent-worktrees fork stale ``origin/main``, so the
++    bigger the backlog the more often a dispatched engineer's base diverges
++    from the branch the work actually targets (the WORKTREE-BASE-DIVERGE
++    stop). The fix is a phased-push policy; this monitor is the CUSTODIAL
++    enforcement sibling of ``check_disk_usage`` — it makes the backlog
++    VISIBLE before it bites. Read-only — never mutates git state.
++
++What it computes (for the current branch vs origin/main)
++    * ``commits_ahead`` — ``git rev-list --count <base>..HEAD``.
++    * ``closed_projects_unmerged`` — commits in that range whose subject
++      matches the repo's project-close convention (the canonical
++      ``chore(archive): close <slug> — git mv to archive/...`` shape plus
++      generic fallbacks). A closed (shipped) project still sitting unmerged
++      on a feature branch is exactly the debt the phased-push policy targets.
++
++Exit codes / severity bands (verbatim from the shell — mirrors the
++disk-usage-monitor 0/1/2/3 semantics):
++    0  — OK       (≤1 closed-project unmerged AND < CAUTION commits)
++    1  — CAUTION  (commits-ahead ≥ COMMITS_CAUTION, still 0 closed-projects)
++    2  — WARNING  (≥1 closed-project unmerged)
++    3  — CRITICAL (≥ CLOSED_CRITICAL closed-projects OR ≥ COMMITS_CRITICAL commits)
++"""
++from __future__ import annotations
++
++import logging
++import re
++import subprocess
++from datetime import datetime
++from pathlib import Path
++from zoneinfo import ZoneInfo
++
++from settings import REPO_ROOT
++from workspace import resolve_caller_root
++
++logger = logging.getLogger(__name__)
++
++_LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
++
++# Thresholds — verbatim from scripts/merge-debt-monitor.sh.
++_COMMITS_CAUTION = 25   # CAUTION: backlog growing; plan a phased push soon.
++_COMMITS_CRITICAL = 60  # CRITICAL: stale-fork divergence near-certain.
++_CLOSED_CRITICAL = 3    # CRITICAL: 3+ shipped projects unmerged.
++
++# Project-close convention (derived from `git log` inspection — verbatim
++# from the shell CLOSE_RE). Canonical:
++#   `chore(archive): close <slug> — git mv to archive/...`
++_CLOSE_RE = re.compile(
++    r"chore\(archive\)|close .*— git mv to archive|: close "
++)
++
++
++def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
++    return subprocess.run(
++        ["git", *args],
++        cwd=str(root),
++        capture_output=True,
++        text=True,
++    )
++
++
++def check_merge_debt(
++    repo_root: Path | None = None,
++    *,
++    worktree_path: str | Path | None = None,
++) -> dict:
++    """Report the current branch's unmerged-to-origin/main backlog.
++
++    Behaviour-preserving native port of ``scripts/merge-debt-monitor.sh``.
++    Read-only — best-effort ``git fetch origin main`` (does not touch the
++    working tree or local branches), then pure ``git rev-list`` / ``git
++    log`` reads. No ``force`` arg — this monitor never mutates state (it is
++    custodial, surfaces only).
++
++    Args:
++        repo_root: repo-root override (test seam). Wins over
++            ``worktree_path``.
++        worktree_path: caller-aware path resolution (same contract as the
++            sibling dev tools).
++
++    Returns:
++        ```
++        {
++          "timestamp": "<YYYY-MM-DD HH:MM:SS>",
++          "branch": "<branch>",
++          "base": "origin/main" | "main",
++          "commits_ahead": int,
++          "closed_projects_unmerged": int,
++          "severity": "OK"|"CAUTION"|"WARNING"|"CRITICAL",
++          "exit_code": 0|1|2|3,        # verbatim shell exit semantics
++          "status": same as severity,  # convenience alias
++          "next_action": "<action string>",
++        }
++        ```
++    """
++    if repo_root is not None:
++        root = repo_root
++    elif worktree_path is not None:
++        root = resolve_caller_root(worktree_path)
++    else:
++        root = REPO_ROOT
++
++    branch = (
++        _git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "?"
++    )
++
++    # Best-effort refresh (read-only — does not touch working tree).
++    _git(root, "fetch", "origin", "main", "--quiet")
++
++    # Resolve comparison base: prefer origin/main, fall back to main.
++    base = "origin/main"
++    if _git(root, "rev-parse", "--verify", "--quiet", base).returncode != 0:
++        base = "main"
++
++    ahead_raw = _git(root, "rev-list", "--count", f"{base}..HEAD").stdout.strip()
++    try:
++        commits_ahead = int(ahead_raw)
++    except ValueError:
++        commits_ahead = 0
++
++    log_subjects = _git(
++        root, "log", "--format=%s", f"{base}..HEAD"
++    ).stdout.splitlines()
++    closed_unmerged = sum(
++        1 for s in log_subjects if _CLOSE_RE.search(s)
++    )
++
++    # Severity classification — verbatim from the shell.
++    if closed_unmerged >= _CLOSED_CRITICAL or commits_ahead >= _COMMITS_CRITICAL:
++        severity, exit_code = "CRITICAL", 3
++        next_action = (
++            f"phase-push NOW — {closed_unmerged} closed project(s) + "
++            f"{commits_ahead} commits unmerged; merge {branch} → main before "
++            f"any further dispatch"
++        )
++    elif closed_unmerged >= 1:
++        severity, exit_code = "WARNING", 2
++        next_action = (
++            f"phase-push before next dispatch — {closed_unmerged} closed "
++            f"(shipped) project(s) sitting unmerged on {branch}"
++        )
++    elif commits_ahead >= _COMMITS_CAUTION:
++        severity, exit_code = "CAUTION", 1
++        next_action = (
++            f"plan a phased push soon — {commits_ahead} commits ahead of "
++            f"{base} (stale-fork divergence risk rising)"
++        )
++    else:
++        severity, exit_code = "OK", 0
++        next_action = "ok — nothing to do"
++
++    logger.info(
++        "check_merge_debt: branch=%s ahead=%d closed=%d severity=%s",
++        branch, commits_ahead, closed_unmerged, severity,
++    )
++    return {
++        "timestamp": datetime.now(tz=_LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
++        "branch": branch,
++        "base": base,
++        "commits_ahead": commits_ahead,
++        "closed_projects_unmerged": closed_unmerged,
++        "severity": severity,
++        "exit_code": exit_code,
++        "status": severity,
++        "next_action": next_action,
++    }
++
++
++def register(server) -> None:
++    """Register the merge-debt monitor MCP tool."""
++
++    @server.tool(
++        name="noctus.dev.check_merge_debt",
++        description=(
++            "Warn before an unmerged-to-origin/main backlog becomes a "
++            "base-mismatch (WORKTREE-BASE-DIVERGE) lockout. Computes "
++            "commits-ahead + closed-projects-unmerged for the current branch "
++            "vs origin/main; preserves scripts/merge-debt-monitor.sh "
++            "thresholds (COMMITS_CAUTION=25 / COMMITS_CRITICAL=60 / "
++            "CLOSED_CRITICAL=3) + exit semantics (0/1/2/3) as "
++            "status+exit_code+next_action. Read-only (never mutates git). "
++            "Pass worktree_path when called from inside a git worktree."
++        ),
++    )
++    def _check_merge_debt(worktree_path: str | None = None) -> dict:
++        return check_merge_debt(worktree_path=worktree_path)
+-- 
+2.51.2
+

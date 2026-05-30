@@ -1,0 +1,120 @@
+From 26530256a8fe63a0f64998296b27c4a5be8a27ab Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 20:40:57 -0300
+Subject: [PATCH] fix(mailing-tests): add MOCK-SELECT predicate columns to 5
+ fixture rows
+
+Three test files' seed rows lacked the predicate columns their services filter on. Pre-MOCK-SELECT-PREDICATE-FIX the missing columns were ignored (SELECT returned the full seed); post-fix the .eq() predicates exclude the rows and tests fail with empty results.
+
+- test_campaign_service::test_aggregates_send_log_statuses: campaign_id=c1 added to all 7 send_log rows
+- test_contact_service::test_accepts_status_filter: org_id=ORG added to seed contact
+- test_send_service::TestQueueCampaignSends (3 tests): list_id=list1 added to every contact_list_members row
+
+Forward-compatible: passes pre- AND post-MOCK-SELECT-PREDICATE-FIX. Mailing baseline 214 pass + 1 pre-existing e2e fail preserved.
+
+Cross-product latent-scan surfaced: ERP (854 callsites), core (293), daily-life (123), adconnect (96), media-scheduling (28), dev-team/yt-crawler/imobi (0-2) are next-wave targets after MOCK-SELECT-PREDICATE-FIX merges.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../tests/services/test_campaign_service.py    | 17 ++++++++++-------
+ .../tests/services/test_contact_service.py     |  8 +++++++-
+ .../tests/services/test_send_service.py        | 18 ++++++++++++------
+ 3 files changed, 29 insertions(+), 14 deletions(-)
+
+diff --git a/products/mailing/backend/tests/services/test_campaign_service.py b/products/mailing/backend/tests/services/test_campaign_service.py
+index c22e4bdf..6d75d4cf 100644
+--- a/products/mailing/backend/tests/services/test_campaign_service.py
++++ b/products/mailing/backend/tests/services/test_campaign_service.py
+@@ -191,14 +191,17 @@ class TestCompleteCampaign:
+ class TestGetStats:
+     def test_aggregates_send_log_statuses(self):
+         db = MockSupabaseClient()
++        # MOCK-SELECT predicate filtering: service filters by campaign_id,
++        # so every seed row needs campaign_id="c1" or the .eq("campaign_id", ...)
++        # predicate excludes it from the aggregated result.
+         logs = [
+-            {"status": "sent"},
+-            {"status": "sent"},
+-            {"status": "queued"},
+-            {"status": "delivered"},
+-            {"status": "opened"},
+-            {"status": "bounced"},
+-            {"status": "failed"},
++            {"campaign_id": "c1", "status": "sent"},
++            {"campaign_id": "c1", "status": "sent"},
++            {"campaign_id": "c1", "status": "queued"},
++            {"campaign_id": "c1", "status": "delivered"},
++            {"campaign_id": "c1", "status": "opened"},
++            {"campaign_id": "c1", "status": "bounced"},
++            {"campaign_id": "c1", "status": "failed"},
+         ]
+         db.set_table_data("send_logs", logs)
+ 
+diff --git a/products/mailing/backend/tests/services/test_contact_service.py b/products/mailing/backend/tests/services/test_contact_service.py
+index 231f03e6..06db465c 100644
+--- a/products/mailing/backend/tests/services/test_contact_service.py
++++ b/products/mailing/backend/tests/services/test_contact_service.py
+@@ -37,7 +37,13 @@ class TestListContacts:
+ 
+     def test_accepts_status_filter(self):
+         db = MockSupabaseClient()
+-        db.set_table_data("contacts", [{"id": "c1", "status": "active"}])
++        # MOCK-SELECT predicate filtering: service filters by org_id+status,
++        # so the seed row needs org_id=ORG or the .eq("org_id", ...) predicate
++        # excludes it.
++        db.set_table_data(
++            "contacts",
++            [{"id": "c1", "org_id": ORG, "status": "active"}],
++        )
+ 
+         svc = ContactService(db, ORG)
+         data, total = svc.list_contacts(status="active")
+diff --git a/products/mailing/backend/tests/services/test_send_service.py b/products/mailing/backend/tests/services/test_send_service.py
+index f2612681..ec8f823a 100644
+--- a/products/mailing/backend/tests/services/test_send_service.py
++++ b/products/mailing/backend/tests/services/test_send_service.py
+@@ -26,9 +26,11 @@ class TestQueueCampaignSends:
+     def test_creates_send_log_rows_with_status_queued(self):
+         db = MockSupabaseClient()
+         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
++        # MOCK-SELECT predicate filtering: service filters list members by
++        # .eq("list_id", list_id), so every member needs list_id="list1".
+         db.set_table_data("contact_list_members", [
+-            {"contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
+-            {"contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "active"}},
++            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
++            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "active"}},
+         ])
+         db.set_table_data("send_logs", [])
+ 
+@@ -40,10 +42,12 @@ class TestQueueCampaignSends:
+     def test_skips_inactive_contacts(self):
+         db = MockSupabaseClient()
+         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
++        # MOCK-SELECT predicate filtering: service filters list members by
++        # .eq("list_id", list_id), so every member needs list_id="list1".
+         db.set_table_data("contact_list_members", [
+-            {"contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
+-            {"contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "unsubscribed"}},
+-            {"contact_id": "ct3", "contacts": {"id": "ct3", "email": "c@test.com", "nome": "C", "empresa": "Z", "status": "bounced"}},
++            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
++            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "unsubscribed"}},
++            {"list_id": "list1", "contact_id": "ct3", "contacts": {"id": "ct3", "email": "c@test.com", "nome": "C", "empresa": "Z", "status": "bounced"}},
+         ])
+         db.set_table_data("send_logs", [])
+ 
+@@ -55,8 +59,10 @@ class TestQueueCampaignSends:
+     def test_updates_campaign_total_recipients(self):
+         db = MockSupabaseClient()
+         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
++        # MOCK-SELECT predicate filtering: service filters list members by
++        # .eq("list_id", list_id), so every member needs list_id="list1".
+         db.set_table_data("contact_list_members", [
+-            {"contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
++            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
+         ])
+         db.set_table_data("send_logs", [])
+ 
+-- 
+2.51.2
+

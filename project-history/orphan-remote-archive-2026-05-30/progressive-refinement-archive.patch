@@ -1,0 +1,372 @@
+From 0d118f8de1678def5a26da662f42240a850ac6fb Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Sun, 3 May 2026 23:27:09 -0300
+Subject: [PATCH] docs(projects): file progressive-refinement-archive
+ [progressive-refinement-archive Phase 0]
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Filed after user "branch this:archiving projects and features phase
+by phase ... refined work being refined as it gets built. The idea
+is not just simply throw away what doesnt have utility anymore,
+we're gonna use them to create beautiful pieces of knowledge that
+we acquire along the way ... we also must optimize storage. ... Like
+as if they little cards structured with just the essential and it
+contains all the knowledge from that project's journey ... you got
+what i meant by knowledge, its the 'learned lessons' along the way."
+
+Implements the vision documented in KB § 11.2.1 (shipped vision-only
+2026-05-03 via archive-system project; this project ships the actual
+implementation).
+
+Key architectural insight: SQLite phase_learnings (shipped earlier
+today via Phase enrichment loop) is the source of truth for cards.
+Each per-phase learning IS a card. Distillation = SQL query +
+mechanical render. No LLM needed. PROJECT.md gets lean as work
+progresses (sub-task block + Improvements block removed; replaced
+by one-line breadcrumb pointing to archive.md §N). Companion
+archive.md grows rich phase-by-phase.
+
+5 phases planned: single-phase MCP tool (Phase 1), --all-pending
+sweep mode (Phase 2), methodology amendments + retire wish (Phase 3),
+dogfood (Phase 4 distills Phases 1-3; Phase 5 distills Phase 4 +
+archives the lean folder).
+
+Builds on:
+- KB § 11.2 file-level archive (shipped same day, commit c10b899).
+- KB § 2.11 phase enrichment loop SQLite tracker (shipped earlier
+  today, commit 2214c75).
+
+Branch progressive-refinement-archive from origin/main per the new
+"branch this" trigger order. Implementation pending user signal on
+phase-by-phase cadence.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../progressive-refinement-archive/PROJECT.md | 308 ++++++++++++++++++
+ .../proposals/.gitkeep                        |   0
+ 2 files changed, 308 insertions(+)
+ create mode 100644 projects/progressive-refinement-archive/PROJECT.md
+ create mode 100644 projects/progressive-refinement-archive/proposals/.gitkeep
+
+diff --git a/projects/progressive-refinement-archive/PROJECT.md b/projects/progressive-refinement-archive/PROJECT.md
+new file mode 100644
+index 00000000..3c9b2474
+--- /dev/null
++++ b/projects/progressive-refinement-archive/PROJECT.md
+@@ -0,0 +1,308 @@
++# progressive-refinement-archive — Project Document
++
++> **This is a living document, not a rigid checklist.**
++> As we build and learn, this project evolves. Revise phases, fold in optimizations, update §11.
++
++- **Created:** 2026-05-03
++- **Last updated:** 2026-05-03
++- **Status:** Filed → Phase 1 ready (implementation pending user signal on phase-by-phase cadence).
++- **Owner / stakeholder:** rapha (joaoraphaelsst@gmail.com)
++- **Related docs:** `KB § PATTERNS/project-execution.md § 11.2.1 Progressive refinement archiving` (the vision this project implements), `KB § PATTERNS/project-execution.md § 11.2 Archive system` (the file-level foundation shipped 2026-05-03), `KB § PATTERNS/project-execution.md § 2.11 Phase enrichment loop` (the SQLite phase_learnings store this project renders), `feedback_archive_system.md` (memory pointer for the foundation), `feedback_phase_enrichment_loop.md` (memory pointer for the learnings store).
++- **Project slug:** `progressive-refinement-archive` — cross-cutting / platform methodology + tooling project. Lives at root `projects/<slug>/`.
++- **Branch:** `progressive-refinement-archive` (per "branch this" trigger 2026-05-03).
++
++---
++
++## 1. Context & Purpose
++
++The file-level archive system shipped 2026-05-03 (`KB § PATTERNS/project-execution.md § 11.2`) replaces the auto-delete-on-close rule with auto-archive-on-close — closed projects/features move to `archive/projects/<today>/<NN>-<slug>/` via `git mv`. That preserves content + git history.
++
++But the user's vision goes further: the archive shouldn't preserve the **original tech-checklist**; it should preserve the **distilled knowledge** of the journey. **Knowledge cards** built from the per-phase learnings logged via `noctus.dev.phase_learning_log` (the SQLite tracker shipped earlier today). The PROJECT.md gets lean as work progresses; the archive grows rich; both travel together at close.
++
++User directives 2026-05-03 (combined):
++> *"what do you think about archiving projects and features phase by phase? whenever phases start to get done, blocks of the file is transported to the archived version of it? it get's lighter for future readings. And as pieces are taken out, they leave behind a one-line summary. So when projects get done, the archive gets a summarized step-by-step version of the project or the feature, of what was done and why, instead of the brute original checklist tech-file."*
++>
++> *"we also must optimize storage. ... Like as if they little cards structured with just the essential and it contains all the knowledge from that project's journey."*
++>
++> *"you got what i meant by knowledge, its the 'learned lessons' along the way."*
++
++The unifying insight (per §11.2.1): **learnings ARE the knowledge unit.** The platform already logs ≥1 non-obvious learning per phase via `noctus.dev.phase_learning_log` (per § 2.11 Phase enrichment loop). Each learning has structure: project, phase, kind (methodology / technical / process / tool / other), text. Cards = formatted learnings. Distillation = SQL query + render. No new authoring; no LLM summarization needed.
++
++The win:
++- Storage-optimized (lean PROJECT.md + dense card-shaped archive.md).
++- Browseable as a knowledge artifact (`grep -r <topic> archive/projects/*/*/archive.md`).
++- Future agents picking up similar work read the journey's lessons in compact form.
++- Leverages existing infrastructure (SQLite phase_learnings + file-level archive).
++
++---
++
++## 2. Confirmed constraints
++
++- **Cards are formatted learnings.** Source of truth = `mcp/noctusai/data/phase_learnings.db`. The renderer reads that table; doesn't re-author. *(Drives §3 principle 1 + §6 Phase 2.)*
++- **Per-phase distillation triggers at phase close** — after the per-phase commit lands. Fallback: PROJECT-close sweep (`--all-pending`) for skipped phases. *(Drives §6 Phase 3.)*
++- **PROJECT.md edited atomically** — the phase's sub-task block + Improvements block removed; one-line breadcrumb inserted. Companion `archive.md` appended with rendered cards. Both edits stage for the agent to commit (or commit inline). *(Drives §6 Phase 2 — edit-in-place tooling.)*
++- **No LLM summarization required.** Learnings were authored intentionally at phase close; rendering is mechanical. *(Drives §3 principle 2 — no LLM dependency in v1.)*
++- **Storage optimization is a side effect, not a goal.** The card shape happens to be compact; that's a feature, not the premise. The premise is knowledge artifact quality. *(Drives §3 principle 3.)*
++- **Builds on top of file-level archive.** The companion `archive.md` lives in `projects/<slug>/` during execution, then travels to `archive/projects/<today>/<NN>-<slug>/archive.md` via the existing § 11.2 close-gate. *(Drives §8 dependencies.)*
++
++---
++
++## 3. Design principles
++
++1. **SQLite phase_learnings is the single source of truth for cards.** The renderer queries; doesn't compose. If a phase has 0 learnings logged, it has 0 cards (and the breadcrumb says so — "0 cards · phase missed enrichment loop"). Per-phase enrichment-loop discipline (§ 2.11) becomes the input quality gate for this system.
++2. **Mechanical rendering, no LLM in v1.** Cards are formatted from structured DB rows. LLM-based summarization could enhance later (e.g. cross-phase synthesis, theme tagging) — out of v1 scope.
++3. **Card content > storage size.** The point is the journey's lessons in a compact form, not raw byte savings. Storage optimization is a happy side effect.
++4. **Atomic PROJECT.md edits.** The breadcrumb-swap operation (remove sub-task block + Improvements block; insert breadcrumb line) must be transactional. Markdown parsing required (consider `markdown-it-py` or `mistune`); regex on heading lines is too brittle.
++5. **Per-phase preferred; PROJECT-close sweep as fallback.** Live distillation matches the user's "as work progresses" framing. The sweep mode exists for missed phases, not as the default.
++6. **Idempotency.** Re-running `archive_phase` on a phase that's already been distilled should detect the existing breadcrumb and refuse (same shape as `noctus.dev.archive`'s already-archived guard).
++
++---
++
++## 3a. Seed-first analysis (REQUIRED — the seed is every product's skeleton)
++
++1. **Is the contract identical for every product?** N/A — this is platform-level methodology + tooling, not product code.
++2. **Is the data source product-specific?** N/A.
++3. **Is the placement product-specific?** N/A.
++4. **Is the visibility / permission rule the same?** N/A.
++5. **Does the seam already exist in seed?** No — this is dev-toolkit territory.
++6. **Default-on or opt-in?** **Default-on once landed.** Methodology applies platform-wide (every project/feature uses progressive refinement at close).
++
++**Litmus — per-product code count this design requires:** [x] **0 lines** in any `products/<x>/` tree. All work lands in `mcp/noctusai/`, `KNOWLEDGE-BASE/`, `CLAUDE/`, agent memory.
++
++**Phase plan implications:** §6 phases work in dev-toolkit + KB + CLAUDE. **No phase walks through products.** Correct shape.
++
++---
++
++## 4. Scope
++
++**In scope:**
++
++- Phase 1 — `mcp/noctusai/tools/noctus/dev/archive_phase.py` — MCP tool `noctus.dev.archive_phase` that:
++  - Queries `phase_learnings` for `(project_slug, phase_number)`.
++  - Renders the rows as cards in markdown (per §5.2 card format).
++  - Edits PROJECT.md atomically: removes phase sub-task block + Improvements block; inserts breadcrumb line.
++  - Appends rendered cards to companion `archive.md` (creates if missing).
++  - Idempotency guard: detects existing breadcrumb; refuses if phase already distilled.
++- Phase 2 — `--all-pending` sweep mode for the tool: distills every closed-but-undistilled phase in a project at once.
++- Phase 3 — Tests in `mcp/noctusai/tests/test_archive_phase.py` covering: render, breadcrumb-swap, archive.md append, missing-learnings case, idempotency, sweep mode.
++- Phase 4 — Methodology amendments: §11.2.1 of `project-execution.md` updated from "vision; deferred" to "shipped" with recipe references; CLAUDE/projects.md amended; new `feedback_progressive_refinement_archive.md` memory entry; delete `wish_implement_progressive_refinement_archive.md` + index update.
++- Phase 5 — Project close: dogfood the new tool on this project's own phases (each Phase 1-4 distilled into cards before close); orchestrator merge to main.
++
++**Out of scope (for now — with reason):**
++
++- **LLM-based card synthesis** (e.g. cross-phase theme detection, narrative summarization). v1 is mechanical; LLM enhancement is a future enhancement project.
++- **Card search tooling** (e.g. an MCP tool that searches across all archived projects' cards). v1 ships rendering; search is `grep` for now.
++- **Card export** (e.g. tag/kind aggregation across projects). Future enhancement.
++- **Backfilling cards for already-archived projects** (the projects archived today + tomorrow without progressive refinement). The existing PROJECT.md preserved in those archives is fine; backfill is low value + high effort.
++- **Hook integration** (auto-run `archive_phase` at phase commit via pre-commit hook). v1 is manual invocation; auto-trigger is a future enhancement.
++- **PROJECT.md schema validation** (formal markdown schema for §6 phase blocks). v1 uses heading-anchored parsing; schema validation is a hardening pass.
++
++---
++
++## 5. Architecture / Data Model
++
++### 5.1 The `archive.md` companion file
++
++Lives at `projects/<slug>/archive.md` during execution. Built up phase-by-phase as `archive_phase` runs. Travels with the project to `archive/projects/<today>/<NN>-<slug>/archive.md` via the § 11.2 close-gate.
++
++Header section (always present):
++
++```markdown
++# <project-slug> — Knowledge cards
++
++Distilled from per-phase learnings logged to `mcp/noctusai/data/phase_learnings.db` per
++`KB § PATTERNS/project-execution.md § 2.11 Phase enrichment loop` and rendered per
++`§ 11.2.1 Progressive refinement archiving`.
++```
++
++Per-phase section (appended on each `archive_phase` call):
++
++```markdown
++## Phase N — <title>
++
++Shipped: <date>. Commit: <hash>. <K> cards.
++
++### Card N.1 [<kind>]
++> <learning_text wrapped in blockquote>
++> _commit <hash> · learning id=<row_id>_
++
++### Card N.2 [<kind>]
++> ...
++```
++
++### 5.2 Card format (rendered per learning row)
++
++| Field in SQLite row | Mapping in card |
++|---|---|
++| `phase_number` | Section header level (`## Phase N`) |
++| `phase_title` | Section header text |
++| `learning_kind` | Card subheading tag `[<kind>]` |
++| `learning_text` | Blockquote body |
++| `shipped_at` (ISO timestamp) | Phase header "Shipped: <date>" line (date portion only) |
++| `created_by` | (omitted from rendered card; available via SQL query) |
++| `consumed_by_phase_number` | (omitted; consumption is a methodology concern, not knowledge content) |
++
++The `commit hash` for the card footer comes from `git log` querying the project's branch for the commit closest to `shipped_at` (heuristic) OR is passed explicitly as a tool parameter if the agent knows it.
++
++### 5.3 PROJECT.md breadcrumb format
++
++Where `### Phase N — <title> ✅` previously had sub-tasks + Improvements blocks below it, after distillation:
++
++```markdown
++### Phase N — <title> ✅ → archive.md §N · 2 cards (1 methodology, 1 technical) · commit 216cc1a
++```
++
++The breadcrumb line replaces the sub-task block. The phase header itself stays (status icon, title). Other phase content (the trailing prose like "Phase 6 dogfooded...") stays IF it's not a sub-task or Improvements bullet.
++
++### 5.4 MCP tool: `noctus.dev.archive_phase`
++
++```python
++def archive_phase(
++    project_slug: str,
++    phase_number: int | None = None,    # if None, requires --all-pending
++    all_pending: bool = False,           # sweep mode
++    project_md_path: str | None = None,  # default: projects/<slug>/PROJECT.md (or products/.../projects/<slug>/PROJECT.md)
++    archive_md_path: str | None = None,  # default: alongside PROJECT.md
++    commit_hash: str | None = None,      # explicit commit for the card footer; fallback to git log heuristic
++    repo_root: Path | None = None,       # tests
++) -> dict:
++    """Distill phase learnings to cards in archive.md; insert breadcrumb in PROJECT.md.
++
++    Returns:
++      {
++        "phases_distilled": [<int>, ...],         # phase numbers acted on
++        "cards_rendered": int,                     # total cards across phases acted on
++        "archive_md_path": "<relative path>",
++        "project_md_path": "<relative path>",
++      }
++    """
++```
++
++### 5.5 Markdown parsing approach
++
++Phase blocks in PROJECT.md follow a predictable structure: heading at `### Phase N — <title>`, content until next `### ` or `---`. The tool can:
++- Use `markdown-it-py` or `mistune` to AST-parse PROJECT.md, find the phase block, replace it.
++- OR string-based with anchored regex on `### Phase N` headings and section delimiters. Higher risk of edge-case bugs (nested code blocks with `### ` inside, etc.).
++
++Recommended: `markdown-it-py` (already in some Python environments; minimal dep) for safety. Investigate at Phase 1.
++
++---
++
++## 6. Implementation phases
++
++Branched-project workflow per `KB § PATTERNS/branching-and-merging.md § 11`. Phase commits go to the `progressive-refinement-archive` branch; final commit + push at close lands on branch; orchestrator-merges branch tip to main at project close. Per the new methodology this project itself implements: at phase close, `archive_phase` runs to distill THIS phase before next phase opens (eating its own dog food).
++
++### Phase 0 — File this project ✅
++
++- [x] Branch `progressive-refinement-archive` created from origin/main (per "branch this" trigger 2026-05-03).
++- [x] `projects/progressive-refinement-archive/PROJECT.md` filed (this file).
++- [x] `projects/progressive-refinement-archive/proposals/.gitkeep` created.
++- [x] Initial commit on branch.
++
++**Improvements:** _(captured live)_
++
++### Phase 1 — `noctus.dev.archive_phase` MCP tool — single-phase mode
++
++- [ ] Implement `mcp/noctusai/tools/noctus/dev/archive_phase.py` with single-phase path (no sweep yet).
++- [ ] Markdown parsing: investigate + commit to either `markdown-it-py` (recommended) or string-anchored regex.
++- [ ] Card rendering function (SQLite row → markdown card per §5.2).
++- [ ] Atomic PROJECT.md edit: remove phase block, insert breadcrumb (per §5.3).
++- [ ] `archive.md` lazy-create with header; append phase section.
++- [ ] Idempotency guard: if breadcrumb already present in PROJECT.md for `phase_number`, refuse.
++- [ ] Register in `mcp/noctusai/tools/noctus/dev/__init__.py` (module count 26 → 27).
++- [ ] Tests in `test_archive_phase.py` covering happy path + idempotency + missing-learnings.
++- [ ] Commit: `feat(mcp): noctus.dev.archive_phase — single-phase distillation [progressive-refinement-archive Phase 1]`.
++
++**Improvements:** _(captured live)_
++
++### Phase 2 — Sweep mode (`--all-pending`)
++
++- [ ] Add `all_pending=True` path: query SQLite for all distinct phases logged for `project_slug`; query PROJECT.md for which phases have breadcrumbs (already distilled); distill the difference.
++- [ ] Tests for sweep mode + correct skip of already-distilled phases.
++- [ ] Commit: `feat(mcp): noctus.dev.archive_phase --all-pending sweep mode [progressive-refinement-archive Phase 2]`.
++
++**Improvements:** _(captured live)_
++
++### Phase 3 — Methodology amendments + memory
++
++- [ ] Amend `KB § PATTERNS/project-execution.md § 11.2.1` from "vision; deferred" to "shipped" with recipe references + tool invocation examples.
++- [ ] Amend `CLAUDE/projects.md` archive bullet to mention progressive-refinement layer.
++- [ ] New memory entry `feedback_progressive_refinement_archive.md` (replaces wish entry).
++- [ ] Delete `wish_implement_progressive_refinement_archive.md` + remove from MEMORY.md (Wishes section).
++- [ ] Update `MEMORY.md` Project execution cluster with the new feedback entry.
++- [ ] `verify-kb-sync.sh` + `update-kb-counts.py --check` green.
++- [ ] Commit: `docs(kb+claude+memory): progressive refinement archive — shipped (3-way sync) [progressive-refinement-archive Phase 3]`.
++
++**Improvements:** _(captured live)_
++
++### Phase 4 — Dogfood: distill this project's own phases
++
++- [ ] Run `noctus.dev.archive_phase --project=progressive-refinement-archive --all-pending` on this project (Phases 1-3).
++- [ ] Verify: `projects/progressive-refinement-archive/PROJECT.md` is now lean (breadcrumbs replace sub-task blocks).
++- [ ] Verify: `projects/progressive-refinement-archive/archive.md` has 3 phase sections with cards.
++- [ ] Commit: `chore(projects): progressive-refinement-archive Phases 1-3 distilled to cards (canonical first dogfood) [progressive-refinement-archive Phase 4]`.
++
++**Improvements:** _(captured live)_
++
++### Phase 5 — Project close
++
++- [ ] Final verification: `verify-kb-sync.sh` green, KB counts green, MCP tests green.
++- [ ] Distill Phase 4's own cards via `noctus.dev.archive_phase --phase=4` (recursive dogfood).
++- [ ] Archive the (now-lean) project folder via `noctus.dev.archive(target_path="projects/progressive-refinement-archive", mode="project")` → `archive/projects/<today>/<NN>-progressive-refinement-archive/`.
++- [ ] Stage + commit: `chore(projects): progressive-refinement-archive close — archived to archive/projects/<today>/<NN>-progressive-refinement-archive/ [progressive-refinement-archive close]`.
++- [ ] Push branch.
++- [ ] **Orchestrator** fresh-eyes pass.
++- [ ] Orchestrator fast-forward push: `git push origin progressive-refinement-archive:main`.
++
++**Improvements:** _(captured live)_
++
++---
++
++## 7. Open questions
++
++- **Markdown parsing library or regex?** Recommendation: **`markdown-it-py`** — established Python markdown parser, minimal deps, AST-based. Decision before Phase 1 implementation starts.
++- **`commit_hash` for card footer — explicit param vs auto-derive?** Recommendation: **auto-derive via `git log` heuristic** (find commit closest to `shipped_at`) with explicit override. Most agents won't know the hash off-hand.
++- **What if a phase has 0 learnings logged?** Recommendation: **breadcrumb anyway, marked "0 cards · phase missed enrichment loop"** — visible failure, makes the slip discoverable. Don't refuse the operation.
++- **Should breadcrumb keep the phase's status icon?** Recommendation: **yes** — `### Phase N — <title> ✅ → archive.md §N · K cards · commit <hash>`. Status is part of the breadcrumb's information.
++
++---
++
++## 8. Dependencies & blockers
++
++- **File-level archive system shipped** — ✅ shipped 2026-05-03 (commit `c10b899`). This project builds on top.
++- **Phase enrichment loop shipped** — ✅ shipped earlier 2026-05-03 (commit `2214c75`). The SQLite phase_learnings DB this project queries is in place.
++- **No external blockers.** Internal methodology + tooling work; no code dependencies outside `mcp/noctusai/`.
++
++---
++
++## 9. Success criteria
++
++- [ ] `noctus.dev.archive_phase` ships, tested, registered in dev umbrella.
++- [ ] Per-phase mode + `--all-pending` sweep mode both work.
++- [ ] §11.2.1 of `project-execution.md` says "shipped" (not "vision; deferred").
++- [ ] `wish_implement_progressive_refinement_archive.md` deleted; `feedback_progressive_refinement_archive.md` added.
++- [ ] **This project's own close uses the system end-to-end** — `archive/projects/<today>/<NN>-progressive-refinement-archive/` contains a lean PROJECT.md + a card-rich archive.md.
++- [ ] All MCP tests green; full suite no regressions.
++
++---
++
++## 10. How to use this plan
++
++(Filled in per phase as the work progresses. Each phase commit + Improvements block per the standard project-execution methodology.)
++
++---
++
++## 11. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-03 | Project filed by claude-opus-4-7 after user "branch this:archiving projects and features phase by phase" trigger. Vision: knowledge cards rendered from SQLite phase_learnings; PROJECT.md gets lean as work progresses; archive.md grows rich. Builds on file-level archive (§11.2 shipped same day) + phase enrichment loop (SQLite tracker shipped same day). 5 phases planned; will dogfood the system on its own close (Phase 4 distills Phases 1-3, Phase 5 distills Phase 4 + archives the lean folder). | claude-opus-4-7 |
++
++---
++
++## 12. No-leftovers constraint
++
++- **Folder `projects/progressive-refinement-archive/` ARCHIVED on close** to `archive/projects/<today>/<NN>-progressive-refinement-archive/` per the file-level archive system. The folder will land in lean form (cards distilled out) plus an archive.md companion.
++- **Final orchestrator push to main** must include only this project's commits (`[progressive-refinement-archive ...]` bracketed).
++- **Wish entry retired**: `wish_implement_progressive_refinement_archive.md` deleted in Phase 3.
++- **No new untracked files** introduced by this project.
+diff --git a/projects/progressive-refinement-archive/proposals/.gitkeep b/projects/progressive-refinement-archive/proposals/.gitkeep
+new file mode 100644
+index 00000000..e69de29b
+-- 
+2.51.2
+

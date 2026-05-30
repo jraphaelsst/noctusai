@@ -1,0 +1,717 @@
+From 34b1c5ce4816d13dc4fcc465136b34b6480c688f Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:39 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-ab2fe1168b934ed04?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ CLAUDE.md                                     |   4 +
+ KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/google.md | 187 ++++++++++++++++++
+ KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md   | 123 ++++++++++++
+ .../CONTEXT/INTEGRATIONS/whatsapp.md          | 162 +++++++++++++++
+ KNOWLEDGE-BASE/INDEX.md                       |  11 +-
+ projects/gmail-seed-lift/PROJECT.md           | 135 +++++++++++++
+ 6 files changed, 621 insertions(+), 1 deletion(-)
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/google.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md
+ create mode 100644 projects/gmail-seed-lift/PROJECT.md
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 744ad61e..172124a6 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -120,6 +120,9 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
+ 
+ ### Integrations (KB depth — vendor references)
+ - Vista CRM REST API (auth, endpoints, error model, adapter contract, per-tenant calibration gap) → `KB § INTEGRATIONS/vista.md`
++- WhatsApp connector consume recipe (`noctusai_lib.integrations.whatsapp` Protocol+Fake+Real(WAHA/Meta)+factory; router seam; auth modes; product consumers) → `KB § INTEGRATIONS/whatsapp.md`
++- Meta Cloud API consume recipe (WhatsApp Cloud outbound text inside the whatsapp package; no standalone Graph-API client — flagged gap) → `KB § INTEGRATIONS/meta.md`
++- Google APIs consume recipe (google_calendar / google_maps / youtube / google_drive Protocol+Fake+Real+factory; Gmail gap → `gmail-seed-lift`) → `KB § INTEGRATIONS/google.md`
+ 
+ ### Per-product details — open only the product you're working on
+ - Backend specs → `KB § backend/{01-CORE, 02-ERP, 03-PF, 04-DATABASE, 05-AI-FEATURES, 06-THERAPY, 07-AUTH-SECURITY, 08-DAILY-LIFE}.md`
+@@ -159,6 +162,7 @@ Pointers into `CLAUDE/<topic>.md` and `KNOWLEDGE-BASE/`. Open *on-demand*. If no
+ | Touching gamified UI | `CLAUDE/frontend.md` + `KB § 07-GAMIFICATION.md` |
+ | Designing an agent / MCP / skill | `KB § INSTRUCTIONS/00-MASTER.md` |
+ | Touching Vista CRM (showcase adapter, future MCP server, endpoint surface, field-set calibration) | `KB § INTEGRATIONS/vista.md` |
++| Wiring WhatsApp / Meta Cloud / Google (Calendar·Maps·YouTube·Drive) on a product — which seed adapter, factory, auth modes; "is there a Meta Graph / Gmail client?" | `KB § INTEGRATIONS/{whatsapp,meta,google}.md` |
+ | User says "two sessions" / "second Claude" / "architect/operator split" / "run a second window" / wants the inbox+outbox coordination pattern | `KB § PATTERNS/two-session-architect-operator.md` (Session A = Architect, no git; Session B = Operator, owns ALL git + dispatch exec + tail sweeps; coordinate via gitignored `dispatcher-inbox.md` + `dispatcher-outbox.md` at repo root; setup recipe + `/loop` variant + 5-question pilot rubric) |
+ | Anything not listed | `KB § INDEX.md` |
+ 
+diff --git a/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/google.md b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/google.md
+new file mode 100644
+index 00000000..de3fbac4
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/google.md
+@@ -0,0 +1,187 @@
++# Google APIs — Consume-Side Recipe (NoctusAI)
++
++> **Purpose.** Authoritative consume-side reference for the four shipped
++> Google integration packages under `noctusai_lib.integrations`:
++> **`google_calendar`**, **`google_maps`**, **`youtube`**, **`google_drive`**.
++> A product engineer wiring any of them reads THIS doc. Each ships the full
++> Protocol+Fake+Real+factory shape per `KB § PATTERNS/seed-fake-real-adapter.md`
++> — products consume, never re-implement.
++>
++> **Source of truth:** the four packages' `__init__.py __all__`. Document
++> ONLY exported symbols (verify-the-seed-ships-it).
++>
++> **Gmail is NOT here.** `noctusai_lib.integrations.email` is a Resend-backed
++> digest/invitation sender, not a Gmail client. A real Gmail adapter is an
++> unfilled gap — tracked at `projects/gmail-seed-lift/PROJECT.md`.
++
++---
++
++## 1. `google_calendar` — Calendar v3
++
++### What ships
++
++| Symbol | Kind |
++|---|---|
++| `EventInput`, `EventAttendee`, `CreatedEvent` | value objects |
++| `CalendarAdapter` | **Protocol** — the consume seam |
++| `CalendarCredentialResolver` | **Protocol** — product-injected per-tenant credential lookup |
++| `CalendarCredentials`, `ServiceAccountCalendarCredentials`, `OAuthCalendarCredentials` | credential return shapes |
++| `FakeCalendarAdapter` | **Fake** — deterministic, mirrors Calendar v3 response shape |
++| `get_calendar_adapter(resolver=None, *, tenant_id=None)` | **Factory** |
++| `event_to_google_body`, `google_body_to_created_event`, `parse_google_datetime` | pure mappers |
++
++Real adapters (`GoogleCalendarServiceAccountAdapter`,
++`GoogleCalendarOAuthAdapter`) are **not in `__all__`** — they are selected
++*internally* by the factory from the credential kind. Consumers never
++import them directly; they inject a resolver.
++
++### Consume recipe + auth modes
++
++`resolver is None` → `FakeCalendarAdapter` (dev/test). With a resolver, the
++adapter kind is picked from `resolver.get_credentials(tenant_id)`:
++
++| Credentials returned | Adapter | Auth |
++|---|---|---|
++| `ServiceAccountCalendarCredentials` | service-account adapter | server-to-server; calendar owned/shared/DWD-delegated |
++| `OAuthCalendarCredentials` | OAuth adapter | user-delegated, refresh-token based |
++| `None` | `FakeCalendarAdapter` | safe dev/test fallback |
++
++Real product example —
++`products/imobi-scheduling/backend/app/services/calendar.py:60`:
++
++```python
++from noctusai_lib.integrations.google_calendar import (
++    CalendarAdapter, CalendarCredentials, CreatedEvent,
++    EventAttendee, EventInput,
++)
++# adapter obtained via get_calendar_adapter(resolver, tenant_id=...)
++```
++
++N=2 — `products/therapy-platform/backend/app/services/scheduling/service.py:39`
++(+ `credentials.py:19`, `calendar_sync.py:18`) consume the same surface
++(DRY already formalized at the seed). To drive the scheduling engine, see
++`KB § PATTERNS/scheduling-seed.md`. Google Cloud Console OAuth setup:
++`KB § GUIDES/google-oauth-setup.md`.
++
++---
++
++## 2. `google_maps` — Routes API v2
++
++### What ships
++
++| Symbol | Kind |
++|---|---|
++| `Coordinates`, `TravelEstimate` | value objects |
++| `RoutingAdapter` | **Protocol** |
++| `StaticRoutingAdapter` | **Fake** — deterministic dev/test fallback |
++| `GoogleMapsRoutingAdapter` | **Real** — live Routes API; takes an API key |
++| `get_routing_adapter(api_key=None)` | **Factory** — `api_key` set → real; else `StaticRoutingAdapter` |
++| `build_routes_request`, `parse_routes_response` | pure mappers |
++
++### Consume recipe + auth
++
++API-key auth only (no OAuth). Real product example —
++`products/imobi-scheduling/backend/app/services/maps.py:43`:
++
++```python
++from noctusai_lib.integrations.google_maps import (
++    Coordinates, RoutingAdapter, StaticRoutingAdapter, get_routing_adapter,
++)
++adapter = get_routing_adapter(api_key=settings.google_maps_api_key)
++```
++
++To plug into `noctusai_lib.domain.scheduling.SchedulingEngine`, build a
++product-side `TravelLookup` owning a `location_id → Coordinates` map and
++delegating `travel_minutes(...)` to `RoutingAdapter.travel_estimate(...)`
++— the mapping is product-specific so it stays consumer-side
++(`KB § PATTERNS/scheduling-seed.md`).
++
++---
++
++## 3. `youtube` — Data API v3
++
++### What ships
++
++| Symbol | Kind |
++|---|---|
++| `Channel`, `Video`, `Playlist`, `ListResult[T]` | value objects |
++| `YoutubeClient` | **Protocol** — quota-cost documented per method |
++| `FakeYoutubeClient` | **Fake** — tracks cumulative `quota_units_consumed`; `PAGE_SIZE=2` |
++| `RealYoutubeClient(api_key=, oauth_credentials=)` | **Real** — wraps `googleapiclient` |
++| `make_youtube_client(use_fake=False, api_key=, oauth_credentials=, fake_seed_data=None)` | **Factory** |
++
++### Consume recipe + auth
++
++API key OR `oauth_credentials`. **Quota math is the point of lifting this:**
++`search()` burns 100 units/page; `list_channel_videos()` is ~50× cheaper
++(~2 units / 50 videos via the channel auto-uploads playlist). The Protocol
++docstrings carry the costs — read them and pick the cheap path.
++
++```python
++from noctusai_lib.integrations.youtube import make_youtube_client
++yt = make_youtube_client(api_key=settings.google_api_key)
++```
++
++Current consumer is `youtube-crawler` (a separate workspace product —
++N=1 in `products/`). The seed lift landed ahead of a second consumer
++deliberately ("spread it throughout soon" — user-authorized).
++
++---
++
++## 4. `google_drive` — Drive v3 download
++
++### What ships
++
++| Symbol | Kind |
++|---|---|
++| `DriveFile` | value object (id/name/size_bytes/mime_type/md5_checksum) |
++| `DriveDownloader` | **Protocol** — `get_metadata` + `download` |
++| `FakeDriveDownloader` | **Fake** — `add_fake_file(...)` fixtures; writes seeded bytes |
++| `make_drive_downloader(use_fake=False, api_key=None, oauth_credentials=None, fake_seed_data=None)` | **Factory** |
++| `parse_drive_url(url_or_id)` | pure mapper — accepts `file/d/{id}`, `open?id=`, `uc?id=`, bare ids |
++
++`RealDriveDownloader` is **not in `__all__`** — selected internally by the
++factory.
++
++### Consume recipe + auth
++
++"Anyone with the link" files: `api_key` (cheaper, no consent) OR
++`oauth_credentials` with `drive.readonly`. Private files: OAuth required.
++The Protocol is auth-agnostic; the factory routes.
++
++```python
++from noctusai_lib.integrations.google_drive import (
++    make_drive_downloader, parse_drive_url,
++)
++drive = make_drive_downloader(api_key=settings.google_api_key)
++file_id = parse_drive_url(user_supplied_url)
++await drive.download(file_id, dest=tmp_path / file_id)
++```
++
++Current consumer: `youtube-crawler` upload pipeline (N=1).
++
++---
++
++## 5. Out-of-scope / gaps
++
++- **No Gmail client.** `noctusai_lib.integrations.email` is Resend digest +
++  invitation only. A `noctusai_lib.integrations.gmail` Protocol+Fake+Real+
++  factory does NOT exist — required before any `google.gmail.*` surface.
++  Tracked: `projects/gmail-seed-lift/PROJECT.md` (Filed, not started).
++- **Calendar/Drive real adapters are factory-internal** — not in `__all__`
++  by design; inject a resolver / pass credentials, never import the real
++  class.
++- **youtube + google_drive are N=1** (`youtube-crawler` only). Seed-lifted
++  ahead of the second consumer per explicit user authorization — not a
++  recurrence-rule violation.
++- Cross-provider OAuth model (scope auto-discovery, credential store,
++  token chains) is documented at `KB § INTEGRATIONS/oauth-patterns.md` —
++  read it before designing any new Google OAuth wiring.
++
++---
++
++## 6. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-17 | Initial consume-side authoring (`mcp-connector-expansion` Wave 1b). Closes social-wiring-absorption consume-doc debt. Surfaces verified against the four packages' `__init__.py __all__`; product consumers cited at exact `path:line` (imobi-scheduling calendar.py:60 + maps.py:43; therapy-platform scheduling/service.py:39). Gmail gap filed as `gmail-seed-lift`. | Claude Opus 4.7 |
+diff --git a/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md
+new file mode 100644
+index 00000000..21ffe0f4
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md
+@@ -0,0 +1,123 @@
++# Meta Cloud API — Consume-Side Recipe (NoctusAI)
++
++> **Purpose.** Authoritative consume-side reference for the seed Meta
++> integration. **Scope alert (verify-the-seed-ships-it):** there is **no
++> standalone `noctusai_lib.integrations.meta` package**. The only Meta
++> surface that ships today is the **Meta WhatsApp Cloud API outbound text
++> client**, which lives **inside** `noctusai_lib.integrations.whatsapp`
++> (`MetaCloudClient` / `FakeMetaCloudClient` / `get_meta_cloud_client`).
++> This doc documents what actually exists, not the broader Graph API.
++>
++> A product engineer wiring Meta WhatsApp sending reads THIS doc + the
++> sibling connector doc `KB § INTEGRATIONS/whatsapp.md`. The seed already
++> ships the full Fake+Real+factory shape — products consume, never
++> re-implement.
++>
++> **Source of truth:** `seed/lib/backend/noctusai_lib/integrations/whatsapp/meta_cloud_client.py`
++> + the package `__init__.py __all__`.
++
++---
++
++## 1. What ships
++
++| Symbol | Kind | Notes |
++|---|---|---|
++| `MetaCloudClient(phone_number_id, api_key, base_url=DEFAULT)` | **Real** | Async `send_text(phone, text) -> dict` only. POSTs to `{base_url}/{phone_number_id}/messages`. Raises `httpx.HTTPStatusError` on non-2xx — consumer catches + shapes. |
++| `FakeMetaCloudClient(phone_number_id=None, base_url=DEFAULT)` | **Fake** | Deterministic in-memory. Records `sent_messages`; returns canonical envelope `{"messaging_product": "whatsapp", "contacts": [...], "messages": [{"id": "fake-meta-<N>"}]}`. `clear()` resets between test cases. |
++| `get_meta_cloud_client(*, phone_number_id=None, api_key=None, base_url=META_CLOUD_DEFAULT_BASE_URL)` | **Factory** | `api_key` set → `MetaCloudClient`; else `FakeMetaCloudClient`. |
++| `META_CLOUD_DEFAULT_BASE_URL` | constant | `https://graph.facebook.com/v18.0`. |
++
++All four are re-exported from
++`noctusai_lib.integrations.whatsapp.__all__` — import from the **package**,
++not the submodule:
++
++```python
++from noctusai_lib.integrations.whatsapp import get_meta_cloud_client
++```
++
++There is **no Protocol class for Meta** — `MetaCloudClient` and
++`FakeMetaCloudClient` are structurally compatible (both expose
++`async send_text(phone, text) -> dict`); the factory returns the union
++type `MetaCloudClient | FakeMetaCloudClient`. The shared seam Protocol
++for WhatsApp at large is `WhatsAppClient` (see `KB § INTEGRATIONS/whatsapp.md`).
++
++---
++
++## 2. Consume recipe
++
++The `api_key`-set switch IS the configured-vs-not signal. Meta rejects all
++unauthenticated requests, so an unset key MUST route to the Fake —
++the factory enforces this; consumers never branch on environment.
++
++### Real product example
++
++`products/erp-imobiliario/backend/app/services/whatsapp_service.py:196`
++wraps the factory in a thin product-specific service (ERP-specific
++envelope parsing stays product-side; the HTTP/auth/body shaping lives
++in the seed `MetaCloudClient`):
++
++```python
++from noctusai_lib.integrations.whatsapp import get_meta_cloud_client
++
++client = get_meta_cloud_client(
++    phone_number_id=settings.meta_phone_number_id,
++    api_key=settings.meta_api_key,   # unset in dev → FakeMetaCloudClient
++)
++resp = await client.send_text(phone, body)   # phone = international digits-only
++```
++
++Mount any inbound webhook through the seed router seam — see
++`KB § INTEGRATIONS/whatsapp.md § 2b` (`create_whatsapp_webhook_router`,
++mounted via the seed app factory `routers=[...]` seam, not hand-written).
++
++**Recipient addressing differs from WAHA.** `MetaCloudClient.send_text`
++takes a **phone** (international digits-only, no `+`), NOT the WAHA
++`<digits>@c.us` chat-id. Do not pass `chat_id_for_phone(...)` output to
++the Meta client.
++
++---
++
++## 3. Auth modes
++
++| Mode | When | Shape |
++|---|---|---|
++| **System-user / app Bearer token** | `api_key` set | `Authorization: Bearer <api_key>` header (set by `MetaCloudClient._headers`). `phone_number_id` selects the sending WhatsApp Business number. |
++| **Fake (no auth)** | `api_key` unset | `FakeMetaCloudClient` — deterministic, no network. Dev/test default. |
++
++There is no OAuth flow in this client — the token is a long-lived
++Meta system-user / app access token resolved from product settings.
++Broader Meta OAuth (Pages / Ads / Instagram token chains, scope
++auto-discovery, post-consent introspection) is documented separately at
++`KB § INTEGRATIONS/oauth-patterns.md` (the cross-provider OAuth model) —
++but **no Graph-API client consuming that exists in the seed today**.
++
++Inbound webhook signature verification (Meta `X-Hub-Signature-256`) is
++the webhook layer's job — `KB § PATTERNS/webhook-signatures.md`
++(Hub-Signature shape) + the 5-pin verify-before-side-effect contract in
++`create_whatsapp_webhook_router`.
++
++---
++
++## 4. Out-of-scope / gaps
++
++- **WhatsApp Cloud outbound TEXT only.** No media send, no template
++  messages, no inbound parsing in `MetaCloudClient` itself — inbound lands
++  later under the shared `WhatsAppInboundMessage` shape
++  (`KB § PATTERNS/whatsapp-chatbot-seed.md §1`).
++- **No general Meta Graph API client.** There is NO Pages / Ads / Instagram
++  / Marketing-API / Insights client in the seed. If a product needs Graph
++  read (page insights, ad metrics, IG content) that is a **new seed module**
++  (`noctusai_lib.integrations.meta`) to be filed Protocol+Fake+Real+factory —
++  it does not exist yet. The brief-era framing "Meta = read-only v1, no
++  posting/ads" does NOT describe a shipped surface; only WhatsApp-send ships.
++- **No `meta` package.** Anything that imports
++  `from noctusai_lib.integrations.meta import ...` is wrong — the symbols
++  live under `...integrations.whatsapp`.
++
++---
++
++## 5. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-17 | Initial consume-side authoring (`mcp-connector-expansion` Wave 1b). Surface verified against `whatsapp/meta_cloud_client.py` + `whatsapp/__init__.py __all__`. **Finding surfaced:** no standalone `meta` package — the only Meta surface is WhatsApp Cloud outbound text inside the whatsapp package; doc documents the real shape and flags the absent Graph-API client as a gap. Consumer cited at `erp-imobiliario/.../whatsapp_service.py:196`. | Claude Opus 4.7 |
+diff --git a/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md
+new file mode 100644
+index 00000000..1cd18c05
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md
+@@ -0,0 +1,162 @@
++# WhatsApp Connector — Consume-Side Recipe (NoctusAI)
++
++> **Purpose.** Authoritative consume-side reference for the seed WhatsApp
++> connector `noctusai_lib.integrations.whatsapp`. A product engineer wiring
++> inbound/outbound WhatsApp reads THIS doc; the seed already ships the whole
++> Protocol+Fake+Real+factory shape — products consume, never re-implement.
++>
++> **Provider-neutral by design.** The public surface is named `WhatsApp*`,
++> not `Waha*` (legacy `Waha*` aliases preserved for the original consumer).
++> Two real backends ship: **WAHA** (self-hosted WhatsApp HTTP API) and
++> **Meta Cloud API** (Meta-hosted WhatsApp Business). Swapping backends does
++> not rename the public surface — see also `KB § INTEGRATIONS/meta.md` for the
++> Meta Cloud client specifics.
++>
++> **Lifted** 2026-05-03 from `whatsapp-google-scheduling/app/services/waha/`
++> via `projects/whatsapp-seed-absorption/`. Canonical wiring recipe (chatbot
++> framework + Redis buffer/worker) lives at `KB § PATTERNS/whatsapp-chatbot-seed.md`;
++> THIS doc is the connector-only consume contract.
++
++---
++
++## 1. What ships
++
++Verified against `seed/lib/backend/noctusai_lib/integrations/whatsapp/__init__.py`
++`__all__` — document ONLY exported symbols (verify-the-seed-ships-it).
++
++### Value objects / types
++
++| Symbol | Role |
++|---|---|
++| `WhatsAppInboundMessage` | Parsed inbound message (sender phone, text, media ref). |
++| `WhatsAppMedia` | Inbound media descriptor (resolve bytes via the client). |
++| `WhatsAppPayloadError` | Raised when the inbound webhook body is unparseable. |
++| `WhatsAppIgnoredEvent` | Non-message webhook event (status callbacks, etc.) — not an error; the router skips it. |
++| `WhatsAppClient` | **Protocol** — the consume seam. Code against this, never a concrete class. |
++| `WhatsAppSettings` | Pydantic settings model (base_url / api_key / session). |
++
++Legacy aliases (original consumer compat — same objects):
++`WahaInboundMessage`, `WahaMedia`, `WahaPayloadError`, `WahaIgnoredEvent`.
++
++### Parsing / shaping (pure functions)
++
++| Symbol | Behavior |
++|---|---|
++| `parse_waha_inbound_message(body)` | WAHA webhook JSON → `WhatsAppInboundMessage` (or raises `WhatsAppPayloadError` / signals `WhatsAppIgnoredEvent`). |
++| `chat_id_for_phone(phone)` | Phone → WAHA chat-id form (`<digits>@c.us`). |
++| `phone_from_chat_id(chat_id)` | Inverse of `chat_id_for_phone`. |
++| `build_send_text_body(...)` | Build the outbound send-text request body. |
++
++### Adapters
++
++| Symbol | Kind | When |
++|---|---|---|
++| `WahaClient` | **Real** (WAHA HTTP) | `base_url` set → real self-hosted WAHA server. Sync + async `send_text` + `download_media`. |
++| `MetaCloudClient` | **Real** (Meta Cloud) | `api_key` set → Meta-hosted Business API. See `KB § INTEGRATIONS/meta.md`. |
++| `FakeWahaClient` | **Fake** | Default. Bi-directional in-memory: records `sent_messages`, accepts `inject_text` / `inject_inbound`, serves pre-populated `media_bytes`. |
++| `FakeMetaCloudClient` | **Fake** | Default for the Meta path. |
++| `META_CLOUD_DEFAULT_BASE_URL` | constant | Default Meta Graph base URL. |
++
++### Factory + FastAPI
++
++| Symbol | Role |
++|---|---|
++| `get_whatsapp_client(*, base_url=None, api_key=None, session="default")` | WAHA factory. `base_url` set → `WahaClient`; else `FakeWahaClient`. Mirrors `google_calendar.get_calendar_adapter()` per `KB § PATTERNS/seed-fake-real-adapter.md`. |
++| `get_meta_cloud_client(*, phone_number_id=None, api_key=None, base_url=META_CLOUD_DEFAULT_BASE_URL)` | Meta Cloud factory. `api_key` set → `MetaCloudClient`; else `FakeMetaCloudClient`. |
++| `create_whatsapp_webhook_router(...)` | FastAPI router **factory** — builds the inbound-webhook receiver. |
++| `InboundHandler` | The callback Protocol the router invokes per parsed inbound message. |
++
++---
++
++## 2. Consume recipe
++
++The `base_url`-set / `api_key`-set switch IS the configured-vs-not signal —
++no env in dev/test → Fake, transparently. Consumers never branch on
++"is this a test"; they call the factory and inject credentials from settings.
++
++### 2a. Outbound (WAHA) — real product example
++
++`products/erp-imobiliario/backend/app/services/whatsapp_service.py:336` —
++the ERP wraps the WAHA factory in a thin product-specific service:
++
++```python
++from noctusai_lib.integrations.whatsapp import get_whatsapp_client
++
++client = get_whatsapp_client(
++    base_url=settings.waha_base_url,   # unset in dev → FakeWahaClient
++    api_key=settings.waha_api_key,
++    session=settings.waha_session,
++)
++await client.send_text(chat_id_for_phone(phone), body)
++```
++
++`products/therapy-platform/backend/app/services/whatsapp_therapy_service.py:63`
++consumes the same factory (N=2 — DRY-formalized at the seed already).
++
++### 2b. Inbound webhook — mount via the NAMED router seam
++
++The router is NOT hand-written per product. `imobi-scheduling` mounts the
++seed factory through the seed router seam
++(`products/imobi-scheduling/backend/app/routers/whatsapp_router.py:55`):
++
++```python
++from noctusai_lib.integrations.whatsapp import (
++    WhatsAppInboundMessage,
++    WhatsAppSettings,
++    create_whatsapp_webhook_router,
++)
++
++_seed_router = create_whatsapp_webhook_router(
++    settings=WhatsAppSettings(...),
++    handler=my_inbound_handler,        # implements InboundHandler
++)
++router.include_router(_seed_router, prefix="/api/webhooks/whatsapp")
++```
++
++The product router is registered via the seed app factory `routers=[...]`
++seam — `products/imobi-scheduling/backend/app/main.py:39`
++(`standard_routers=["health", "notificacoes", "team"]` + the custom
++whatsapp router). No `create_product_app` bypass.
++
++### 2c. Meta Cloud outbound
++
++`products/erp-imobiliario/backend/app/services/whatsapp_service.py:196`
++consumes `get_meta_cloud_client(...)`. Full Meta Cloud surface +
++auth-mode matrix in `KB § INTEGRATIONS/meta.md`.
++
++---
++
++## 3. Auth modes
++
++| Backend | Configured-signal | Auth shape |
++|---|---|---|
++| WAHA (`WahaClient`) | `base_url` non-empty | API key header against the self-hosted WAHA server (`api_key=` → request header). `session` selects the WAHA session. |
++| Meta Cloud (`MetaCloudClient`) | `api_key` non-empty | Bearer token (Meta system-user / app token); `phone_number_id` selects the sending number. Meta rejects all unauthenticated requests — unset key ⇒ `FakeMetaCloudClient`. |
++| Fake (either) | nothing set | No auth; deterministic in-memory. The dev/test default. |
++
++Inbound webhook signature verification is a separate concern — see
++`KB § PATTERNS/webhook-signatures.md` (Hub-Signature shape for Meta;
++WAHA shared-secret). `create_whatsapp_webhook_router` wires the
++verify-before-side-effect 5-pin contract.
++
++---
++
++## 4. Out-of-scope / gaps
++
++- **Provider-neutral, two backends only.** WAHA + Meta Cloud ship. Twilio /
++  other providers are NOT shipped — the Protocol is named to make adding one
++  non-breaking, but no adapter exists yet (N=1 if/when needed).
++- **Connector only.** Message buffering, debounce, the LLM dispatcher, and
++  the chatbot conversation loop are NOT in this package — they live in
++  `noctusai_lib.domain.chatbot` + the Redis worker. Wiring recipe:
++  `KB § PATTERNS/whatsapp-chatbot-seed.md`.
++- **No media transcription here.** Inbound audio/image bytes are resolved
++  via the client (`download_media`); transcription/vision is the LLM layer.
++
++---
++
++## 5. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-17 | Initial consume-side authoring (`mcp-connector-expansion` Wave 1b). Closes the social-wiring-absorption consume-doc debt: the connector was lifted to the seed but the consume recipe was never written. Surface verified against `whatsapp/__init__.py __all__`; product consumers cited at exact `path:line` (erp-imobiliario whatsapp_service, imobi-scheduling whatsapp_router, therapy-platform whatsapp_therapy_service). | Claude Opus 4.7 |
+diff --git a/KNOWLEDGE-BASE/INDEX.md b/KNOWLEDGE-BASE/INDEX.md
+index f8a40b34..e7e84ac5 100644
+--- a/KNOWLEDGE-BASE/INDEX.md
++++ b/KNOWLEDGE-BASE/INDEX.md
+@@ -68,7 +68,10 @@ KNOWLEDGE-BASE/
+ │   │   ├── deploy-workspace-online.md  ← "put X online" drill: verify docker artifacts → fill .env → docker compose up → verify; trigger phrases
+ │   │   └── google-oauth-setup.md       ← Google Cloud Console OAuth client + Calendar API + redirect URI + env wiring; first adopter therapy-platform; reusable for any future product
+ │   ├── INTEGRATIONS/       ← per-vendor integration references (auth, endpoints, error model, adapter contract)
+-│   │   └── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
++│   │   ├── vista.md        ← Vista CRM REST API — public docs + live-probe results + adapter contract folded into one
++│   │   ├── whatsapp.md     ← WhatsApp connector consume recipe — `noctusai_lib.integrations.whatsapp` Protocol+Fake+Real(WAHA/Meta)+factory; router seam; auth modes; product consumers
++│   │   ├── meta.md         ← Meta Cloud API consume recipe — WhatsApp Cloud outbound text client (lives inside the whatsapp package); no standalone Graph-API client (flagged gap)
++│   │   └── google.md       ← Google APIs consume recipe — google_calendar / google_maps / youtube / google_drive Protocol+Fake+Real+factory; Gmail gap → gmail-seed-lift
+ │   ├── backend/            ← per-product backend details
+ │   │   ├── 01-CORE.md
+ │   │   ├── 02-ERP.md
+@@ -154,6 +157,9 @@ KNOWLEDGE-BASE/
+ | Putting a workspace product online for testing — the "deploy" drill (verify docker artifacts → fill `.env` → `docker compose up` → verify); trigger phrases the agent should recognise | `CONTEXT/GUIDES/deploy-workspace-online.md` |
+ | Google Cloud Console OAuth setup — Calendar API (project + consent screen + Calendar API enablement + Web client + redirect URI registration + scopes + env-var wiring + smoke test + troubleshooting); first adopter therapy-platform per-therapist `/api/scheduling/gcal/*`; reusable for any future product needing user-delegated GCal | `CONTEXT/GUIDES/google-oauth-setup.md` |
+ | Vista CRM REST API (auth, query convention, response envelope, error hierarchy, endpoint inventory, adapter contract, per-tenant calibration gap) | `CONTEXT/INTEGRATIONS/vista.md` |
++| WhatsApp connector consume recipe (`noctusai_lib.integrations.whatsapp` — value objects / `WhatsAppClient` Protocol / WAHA+Meta Real / Fake / factory / `create_whatsapp_webhook_router` seam; auth modes; product consumers cited at path:line) | `CONTEXT/INTEGRATIONS/whatsapp.md` |
++| Meta Cloud API consume recipe (WhatsApp Cloud outbound text — `MetaCloudClient`/`FakeMetaCloudClient`/`get_meta_cloud_client` inside the whatsapp package; system-user Bearer auth; **no standalone Graph-API/Pages/Ads client — flagged gap**) | `CONTEXT/INTEGRATIONS/meta.md` |
++| Google APIs consume recipe (google_calendar / google_maps / youtube / google_drive — each Protocol+Fake+Real+factory; credential-resolver seam; auth modes; **Gmail is NOT here — gap tracked as `gmail-seed-lift`**) | `CONTEXT/INTEGRATIONS/google.md` |
+ | Core backend (routers, services, tables) | `CONTEXT/backend/01-CORE.md` |
+ | ERP backend | `CONTEXT/backend/02-ERP.md` |
+ | PF backend | `CONTEXT/backend/03-PF.md` |
+@@ -197,6 +203,9 @@ KNOWLEDGE-BASE/
+ | Adding any helper or function an agent might want to call (Claude Code / future bot / future product agent) | `CONTEXT/01-PHILOSOPHY.md § MCP-first` (default surface is `mcp/noctusai/`) |
+ | Designing a new agent / skill / MCP | `INSTRUCTIONS/00-MASTER.md` |
+ | Touching Vista CRM (adapter, MCP server, endpoint surface, field-set calibration) | `CONTEXT/INTEGRATIONS/vista.md` |
++| Wiring WhatsApp inbound/outbound on a product (WAHA or Meta Cloud; the `WhatsAppClient` seam, router factory, auth modes) | `CONTEXT/INTEGRATIONS/whatsapp.md` |
++| Wiring Meta WhatsApp Cloud sending (or asking "is there a Meta Graph/Pages/Ads client?") | `CONTEXT/INTEGRATIONS/meta.md` |
++| Wiring Google Calendar / Maps / YouTube / Drive on a product (or asking "is there a Gmail client?") | `CONTEXT/INTEGRATIONS/google.md` |
+ 
+ ---
+ 
+diff --git a/projects/gmail-seed-lift/PROJECT.md b/projects/gmail-seed-lift/PROJECT.md
+new file mode 100644
+index 00000000..01ac3686
+--- /dev/null
++++ b/projects/gmail-seed-lift/PROJECT.md
+@@ -0,0 +1,135 @@
++# gmail-seed-lift — Project Document
++
++> **This is a living document, not a rigid checklist.** As we build and learn,
++> this project document evolves. See `CLAUDE.md → Projects are living documents`.
++>
++> **STATUS: FILED — not started.** Surfaced as a gap by the
++> `mcp-connector-expansion` Wave 1b consume-doc authoring (2026-05-17).
++> No work has begun. Interrogate the user before drafting phases.
++
++- **Created:** 2026-05-17
++- **Last updated:** 2026-05-17
++- **Status:** Filed — not started (gap stub; no design lock; no phases run)
++- **Owner / stakeholders:** joaoraphaelsst@gmail.com
++- **Related docs:** `KB § INTEGRATIONS/google.md` (§5 names this gap) · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § PATTERNS/seed-fake-real-adapter.md` · `KB § PATTERNS/seed-lib-layout.md`
++- **Project slug:** `gmail-seed-lift` — location `projects/gmail-seed-lift/` (cross-product platform-infra: a new seed-lib integration package, not a single-product change). Intent = `seed-lift`.
++
++---
++
++## 1. Context & Purpose
++
++A consume-side audit (`mcp-connector-expansion` Wave 1b, 2026-05-17) found
++that **NoctusAI has no Gmail client in the seed library.**
++`noctusai_lib.integrations.email` is a **Resend-backed** digest +
++invitation sender (`send_product_invitation_email`, `send_digest`,
++`Digest`, `DigestSendResult`) — it is NOT a Gmail API client and shares
++no surface with one. The only Google-auth code that mentions "Gmail" is
++incidental OAuth-scope-example docstrings inside the `google_calendar`
++credential modules.
++
++Any future agent-exposed surface in the shape `google.gmail.*` (read a
++mailbox, send via Gmail, thread/label operations) requires a real seed
++adapter first: per the seed-first contract a product MUST NOT hand-roll a
++Gmail client. The gap is filed here so it is not silently rediscovered.
++
++**Win:** `noctusai_lib.integrations.gmail` ships Protocol+Fake+Real+factory
++mirroring `google_calendar` / `youtube` / `google_drive`, so the first
++Gmail-touching product (and the future `google.gmail.*` MCP surface)
++inherits it instead of forking.
++
++---
++
++## 2. User interrogation (Q → A)
++
++> **Not yet conducted.** Before drafting §6 phases, interrogate the user:
++> - Q: Which product drives the first Gmail need (read inbox / send / both)?
++> - Q: Auth mode — service-account + domain-wide delegation, or per-user
++>   OAuth (`gmail.readonly` / `gmail.send` scopes)?
++> - Q: Read scope (full message bodies — LGPD-sensitive) vs metadata-only?
++> - Q: Is this driven by a concrete project, or pre-emptive seed hardening?
++
++---
++
++## 3. Design principles
++
++1. Mirror the canonical Protocol+Fake+Real+factory shape exactly —
++   `KB § PATTERNS/seed-fake-real-adapter.md`. The Fake must exercise the
++   same code paths the Real does (it is an IO module → not exempt).
++2. Auth-agnostic Protocol; the factory routes api-key / OAuth /
++   service-account, the same way `google_drive` / `google_calendar` do.
++3. LGPD-first: Gmail bodies are personal data. Redaction + consent gating
++   are design inputs, not afterthoughts (`KB § PATTERNS/lgpd.md`).
++
++---
++
++## 3a. Seed-first analysis (REQUIRED)
++
++Six-question checklist (`KB § GUIDES/seed-first-design.md`):
++
++1. **Is the contract identical for every product?** YES — the Gmail API
++   contract is vendor-fixed; every consumer wants the same shapes.
++2. **Is the data source product-specific?** NO — uniform Gmail API; the
++   *credential resolution* is per-tenant (mirrors `CalendarCredentialResolver`).
++3. **Is the placement product-specific?** N/A — this is a seed-lib package,
++   not UI.
++4. **Is the visibility / permission rule the same?** YES — auth-token-gated
++   uniformly; LGPD redaction is a uniform seam.
++5. **Does the seam already exist in seed?** NO — new package
++   `noctusai_lib.integrations.gmail` needed. Adjacent precedent:
++   `google_calendar` (resolver Protocol + factory-internal real adapters),
++   `youtube`/`google_drive` (api_key | oauth factory).
++6. **Default-on or opt-in?** OPT-IN — only products that need Gmail
++   consume the factory; nothing is auto-wired.
++
++**Litmus — per-product code count:** **0 lines** of duplicated client code
++(the whole client lives in seed); a product supplies only a
++credential-resolver + settings (small section, like the calendar consumers).
++
++**Phase plan implications:** §6 phases (when drafted) MUST work entirely in
++`seed/lib/backend/noctusai_lib/integrations/gmail/` + colocated tests.
++**No per-product walk** — if a phase plan iterates products, the design is
++wrong; restart §3a.
++
++---
++
++## 4. Scope
++
++**In scope:**
++- New seed package `noctusai_lib.integrations.gmail`:
++  value objects (message / thread / label shapes), `GmailClient` Protocol,
++  `FakeGmailClient`, real adapter (factory-internal), factory, pure mappers.
++- Colocated tests mirroring `youtube` / `google_drive` test layout.
++- Add to `KB § INTEGRATIONS/google.md` §5 (flip gap → shipped) + three-way
++  sync when it lands.
++
++**Out of scope (for now — with reason):**
++- The `google.gmail.*` MCP tool surface — that is a LATER wave; the seed
++  adapter is the prerequisite (Part B of `mcp-connector-expansion`).
++- Specific product wiring — depends on the §2 interrogation outcome.
++- Push/watch (Pub/Sub) inbound — defer until a concrete product needs it.
++
++---
++
++## 5. Architecture / Data Model
++
++To be designed after the §2 interrogation. Anchor on the existing
++canonical precedents (do NOT re-invent):
++`seed/lib/backend/noctusai_lib/integrations/google_drive/`
++(factory + factory-internal Real + Fake + pure mapper) and
++`.../google_calendar/` (credential-resolver Protocol for per-tenant auth).
++
++---
++
++## 6. Implementation phases
++
++> **Not drafted.** Stub project — phases are authored only after the §2
++> interrogation locks scope + auth mode. Filed so the gap is durable and
++> discoverable, not to prescribe execution.
++
++---
++
++## 11. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-17 | Project filed as a gap stub by `mcp-connector-expansion` Wave 1b consume-doc authoring. No work started. `KB § INTEGRATIONS/google.md §5` points here. Awaiting user interrogation before phase design. | Claude Opus 4.7 |
+-- 
+2.51.2
+

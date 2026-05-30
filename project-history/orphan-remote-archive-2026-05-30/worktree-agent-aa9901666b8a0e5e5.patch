@@ -1,0 +1,803 @@
+From 6bdebe08d39c94dab0fc6f25a2bd77e3773baeba Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:35 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-aa9901666b8a0e5e5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../projects/daily-life-wiring/PROJECT.md     | 383 +++++-------------
+ .../PROJECT.md                                |  86 ++--
+ projects/llm-tool-audit-rollout/PROJECT.md    |  64 +--
+ 3 files changed, 170 insertions(+), 363 deletions(-)
+
+diff --git a/products/daily-life/projects/daily-life-wiring/PROJECT.md b/products/daily-life/projects/daily-life-wiring/PROJECT.md
+index 714a7215..b583ae21 100644
+--- a/products/daily-life/projects/daily-life-wiring/PROJECT.md
++++ b/products/daily-life/projects/daily-life-wiring/PROJECT.md
+@@ -94,23 +94,12 @@ deferred to §7 Open Questions surfaced at end-of-Phase-0.
+ 
+ ## 3. Design principles
+ 
+-How we're approaching *daily-life specifically* on top of the platform-wide
+-`CLAUDE.md` rules.
+-
+-1. **Smaller scope ⇒ tighter phases.** Daily-life is ~⅕ the size of
+-   therapy (7 routers vs. 38). Plan for 4-5 phases vs. therapy's 9. Do
+-   NOT inherit therapy's phase count out of mimicry.
+-2. **Pattern H decisions happen at Phase 0, not Phase 5.** PF's lesson
+-   §(b) #2: extend §5.4 with a "consumer count" column; orphans get
+-   routed to delete-or-wire decision **before** any code phase starts.
+-3. **Auth-factory absorption waits on seed adapter.** Do NOT consumer-
+-   side fork `make_get_current_user_org` in daily-life when PF+ERP+therapy
+-   have already filed the seed-real-adapter project. Use the
+-   manual-triple as-is until the seed ships. *(Verify-the-seed-ships-it
+-   discipline.)*
+-4. **EN/PT decision is user-driven, not auto-defaulted.** Daily-life is
+-   product-Portuguese; therapy was Pattern-A-mostly-English. Don't
+-   transplant therapy's default. Surface Q1 at end-of-Phase-0.
++How we're approaching *daily-life specifically* on top of platform-wide `CLAUDE.md` rules.
++
++1. **Smaller scope ⇒ tighter phases.** Daily-life ≈ ⅕ size of therapy (7 routers vs. 38). Plan 4-5 phases vs. therapy's 9. Do NOT inherit therapy's phase count out of mimicry.
++2. **Pattern H decisions happen at Phase 0, ¬ Phase 5.** PF's lesson §(b)#2: extend §5.4 with a "consumer count" column; orphans get routed to delete-or-wire decision **before** any code phase starts.
++3. **Auth-factory absorption waits on seed adapter.** Do NOT consumer-side fork `make_get_current_user_org` in daily-life when PF ∧ ERP ∧ therapy have already filed the seed-real-adapter project. Use manual-triple as-is until the seed ships. *(Verify-the-seed-ships-it discipline.)*
++4. **EN/PT decision is user-driven, ¬ auto-defaulted.** Daily-life is product-Portuguese; therapy was Pattern-A-mostly-English. Don't transplant therapy's default. Surface Q1 at end-of-Phase-0.
+ 5. **Tests land in the same phase as the code.** Three-layer.
+ 
+ ---
+@@ -120,37 +109,22 @@ How we're approaching *daily-life specifically* on top of the platform-wide
+ Run the six-question checklist (`KB § GUIDES/seed-first-design.md § The
+ seed-first checklist`):
+ 
+-1. **Is the contract identical for every product?** **NO for daily-life-specific
+-   wiring decisions** (the gap table is per-product), **YES for the auth-factory
+-   absorption** (already filed by PF as `make-get-current-user-org-factory`
+-   project — daily-life consumes when shipped).
+-2. **Is the data source product-specific?** **YES** — daily-life schema
+-   (`tarefas`, `metas`, `eventos`, `notas`, `sessoes_foco`, `checkins`,
+-   `metricas_produtividade`) is intrinsically product-bound.
+-3. **Is the placement product-specific?** **YES** — every Pattern A/E/H row
+-   names a daily-life backend router or hook.
+-4. **Is the visibility / permission rule the same?** **YES** — all daily-life
+-   routes use the same seed-issued `get_user_client(token)` pattern.
+-5. **Does the seam already exist in seed?** **PARTIAL**:
+-   - `create_product_app`, `create_dependencies`, `create_database_module`,
+-     `standard_routers` mounting — **YES, all consumed**.
++1. **Contract identical for every product?** **NO for daily-life-specific wiring decisions** (gap table is per-product), **YES for auth-factory absorption** (already filed by PF as `make-get-current-user-org-factory` project — daily-life consumes when shipped).
++2. **Data source product-specific?** **YES** — daily-life schema (`tarefas`, `metas`, `eventos`, `notas`, `sessoes_foco`, `checkins`, `metricas_produtividade`) is intrinsically product-bound.
++3. **Placement product-specific?** **YES** — every Pattern A/E/H row names a daily-life backend router ∨ hook.
++4. **Visibility / permission rule the same?** **YES** — all daily-life routes use the same seed-issued `get_user_client(token)` pattern.
++5. **Seam already exists in seed?** **PARTIAL**:
++   - `create_product_app`, `create_dependencies`, `create_database_module`, `standard_routers` mounting — **YES, all consumed**.
+    - `noctusai_lib.api.crud_safety.delete_or_404` — **YES, consumed by 3 routers**.
+-   - `noctusai_lib.domain.metas.*` — **YES, consumed** (PF's filed follow-up
+-     is now shipped per `KB § PATTERNS/metas-seed.md`).
+-   - `noctusai_lib.api.auth.make_get_current_user_org` factory — **NOT
+-     SHIPPED** (verify-the-seed-ships-it test fires; project filed by PF).
+-6. **Default-on or opt-in?** N/A (wiring project, not a seed-extension project).
++   - `noctusai_lib.domain.metas.*` — **YES, consumed** (PF's filed follow-up now shipped per `KB § PATTERNS/metas-seed.md`).
++   - `noctusai_lib.api.auth.make_get_current_user_org` factory — **NOT SHIPPED** (verify-the-seed-ships-it test fires; project filed by PF).
++6. **Default-on ∨ opt-in?** N/A (wiring project, ¬ a seed-extension project).
+ 
+ **Litmus — per-product code count this design requires:**
+ 
+-- [x] **A small section** — daily-life routes, hooks, and pages. *Acceptable
+-  for product-bounded data + UI wiring*; the Pattern-F auth-factory
+-  absorption is **0-lines-per-product** (waits on seed).
++- [x] **A small section** — daily-life routes, hooks, pages. *Acceptable for product-bounded data + UI wiring*; Pattern-F auth-factory absorption is **0-lines-per-product** (waits on seed).
+ 
+-**Phase plan implications:** §6 phases work **inside daily-life only**.
+-No "replicate across products" framing. The single cross-product touchpoint
+-(auth-factory) is gated on the existing seed follow-up project — daily-life
+-makes it N=4 but does not file a new project (PF already did).
++**Phase plan implications:** §6 phases work **inside daily-life only**. No "replicate across products" framing. Single cross-product touchpoint (auth-factory) is gated on existing seed follow-up project — daily-life makes it N=4 but does ¬ file a new project (PF already did).
+ 
+ ---
+ 
+@@ -158,30 +132,18 @@ makes it N=4 but does not file a new project (PF already did).
+ 
+ **In scope:**
+ 
+-- Every `daily-life` backend endpoint that a frontend hook calls. Phase 0
+-  inventory covers all of: `/api/tasks/*`, `/api/goals/*`, `/api/schedule/*`,
+-  `/api/notes/*`, `/api/metricas/*`, `/api/foco/*`, `/api/ai/*`.
+-- Pattern A (EN/PT path mismatch) decisions for `/api/metricas` and `/api/foco`
+-  — pending user input on §7 Q1.
+-- Pattern H (orphan) decisions for `/api/foco` × 5 endpoints and
+-  `POST /api/ai/weekly-review/send` — delete-or-wire choice surfaced at
+-  end-of-Phase-0.
+-- Hook/page corrections required if any Phase 1+ rename ripples to the
+-  frontend.
+-- Tests landing in the same phase as the code they cover.
+-- `noctus.dev.lgpd_flag` calls for any new endpoint aggregating
+-  personal data in shapes not previously flagged.
++- Every `daily-life` backend endpoint a frontend hook calls. Phase 0 inventory covers: `/api/tasks/*`, `/api/goals/*`, `/api/schedule/*`, `/api/notes/*`, `/api/metricas/*`, `/api/foco/*`, `/api/ai/*`.
++- Pattern A (EN/PT path mismatch) decisions for `/api/metricas` ∧ `/api/foco` — pending user input on §7 Q1.
++- Pattern H (orphan) decisions for `/api/foco` × 5 endpoints ∧ `POST /api/ai/weekly-review/send` — delete-or-wire choice surfaced at end-of-Phase-0.
++- Hook/page corrections required if any Phase 1+ rename ripples to frontend.
++- Tests landing in same phase as code they cover.
++- `noctus.dev.lgpd_flag` calls for any new endpoint aggregating personal data in shapes not previously flagged.
+ 
+ **Out of scope (for now — with reason):**
+ 
+-- **`make_get_current_user_org` seed real adapter** — filed by PF as
+-  `make-get-current-user-org-factory`; daily-life adopts when shipped.
+-  *(Verify-the-seed-ships-it.)*
+-- **DTO contract / `response_model` on all 35 routes** — defer to
+-  `daily-life-dto-contract` follow-up, mirror PF/therapy's accept-with-
+-  rationale.
+-- **Scheduler standard router** — PF filed `phase-5-scheduler-standard-
+-  router` proposal; daily-life does not have a per-product scheduler today.
++- **`make_get_current_user_org` seed real adapter** — filed by PF as `make-get-current-user-org-factory`; daily-life adopts when shipped. *(Verify-the-seed-ships-it.)*
++- **DTO contract / `response_model` on all 35 routes** — defer to `daily-life-dto-contract` follow-up, mirror PF/therapy's accept-with-rationale.
++- **Scheduler standard router** — PF filed `phase-5-scheduler-standard-router` proposal; daily-life lacks a per-product scheduler today.
+ - **New features** — no capability not already present as scaffolded UI.
+ - **Other products** — different slugs.
+ 
+@@ -330,84 +292,46 @@ Format: `✅` = wired correctly; `❌` = gap.
+ - [x] Deliverable: PROJECT.md §5.4 populated + §6 + §7 + §11
+ 
+ **Improvements:**
+-- The MCP `cli.py --review` keeper requires `mcp/noctusai/.venv` which
+-  isn't bootstrapped in ephemeral worktrees; either expand
+-  `bootstrap-worktree.sh` (preferred) or honor architect-runs-keeper-
+-  post-merge.
+-- PYTHONPATH override (`seed/lib/backend:seed/framework/backend`)
+-  required to run pytest from worktree — same shape as memory entry
+-  `feedback_migration_prelude_helpers.md`.
+-- Pre-existing `noctusai_seed.rate_limit` import in
+-  `app/rate_limit.py` works because the seed framework module ships it;
+-  verified at Phase 0.
+-
+-*Phase proposal filed at end-of-Phase-0:* deferred to architect (engineer
+-returns findings as text per §17.6.1).
++- MCP `cli.py --review` keeper requires `mcp/noctusai/.venv` ¬ bootstrapped in ephemeral worktrees; either expand `bootstrap-worktree.sh` (preferred) ∨ honor architect-runs-keeper-post-merge.
++- PYTHONPATH override (`seed/lib/backend:seed/framework/backend`) required to run pytest from worktree — same shape as memory entry `feedback_migration_prelude_helpers.md`.
++- Pre-existing `noctusai_seed.rate_limit` import in `app/rate_limit.py` works because seed framework module ships it; verified at Phase 0.
++
++*Phase proposal filed at end-of-Phase-0:* deferred to architect (engineer returns findings as text per §17.6.1).
+ 
+ ### Phase 1 — Pattern F (auth-factory absorption) + Pattern H (orphan deletes) ✅ (shipped 2026-05-11)
+ 
+ **Improvements:** none identified — clean Pattern F + Pattern H shipment per §6 plan.
+ 
+-Original Phase 1 (Pattern H + Pattern A) and Phase 2 (auth-factory) were
+-**collapsed** when the `make-get-current-user-org-factory` seed real
+-adapter shipped ahead of expectations. Engineer DL-P1 picked Q2 = Option A
+-(DELETE both orphans) per default-recommendation. Q1 (Pattern A EN/PT
+-rename) **deferred to Phase 2** per the brief scope split.
+-
+-- [x] Pattern F: 29 callsites refactored (manual triple → `Depends(get_current_user_org)`)
+-  in 6 routers (tasks/goals/schedule/notes/metrics/ai). AST-driven via libcst.
+-- [x] Pattern H Q2 = DELETE: `app/routers/focus.py` + 18 test cases + 5
+-  e2e focus 401 tests + 1 focus flow test + `POST /api/ai/weekly-review/send`
+-  + 2 paired ai tests. Frontend grep confirms 0 references survive.
++Original Phase 1 (Pattern H + Pattern A) ∧ Phase 2 (auth-factory) were **collapsed** when `make-get-current-user-org-factory` seed real adapter shipped ahead of expectations. Engineer DL-P1 picked Q2 = Option A (DELETE both orphans) per default-recommendation. Q1 (Pattern A EN/PT rename) **deferred to Phase 2** per brief scope split.
++
++- [x] Pattern F: 29 callsites refactored (manual triple → `Depends(get_current_user_org)`) in 6 routers (tasks/goals/schedule/notes/metrics/ai). AST-driven via libcst.
++- [x] Pattern H Q2 = DELETE: `app/routers/focus.py` + 18 test cases + 5 e2e focus 401 tests + 1 focus flow test + `POST /api/ai/weekly-review/send` + 2 paired ai tests. Frontend grep confirms 0 references survive.
+ - [x] `app/dependencies.py` wires `get_current_user_org` via seed factory.
+-- [x] Baseline pytest: 234 → 208 (delta −26 = removed orphan + factory tests).
++- [x] Baseline pytest: 234 → 208 (Δ tests = −26 from removed orphan + factory tests).
+ 
+ ### Phase 2 — Pattern A (EN-rename `/api/metricas` → `/api/metrics`) + Phase-1 stranded-reference cleanup ✅ (shipped 2026-05-11)
+ 
+ **Improvements:** none identified — clean Pattern A close. N=3 recurrence on bootstrap-worktree vite-build gap (tailwindcss-animate) → formalize threshold; pre-existing build failure verified via stash-clean-tree.
+ 
+-- [x] Q1 = Option B (EN-RENAME) per default-recommendation. With Q2's
+-  DELETE landing `/api/foco`, `/api/metricas` became the lone PT outlier
+-  in 5/6 EN routers → strong-precedent rename. AST-driven via libcst
+-  (string-literal-only codemod over the 3 .py files; 22 string sites
+-  rewritten across `app/routers/metrics.py` + `tests/routers/test_metrics_router.py`
+-  + `tests/integration/test_e2e_flows.py`). Frontend hook updated
+-  (`useDashboard.ts` `/api/metricas/resumo` → `/api/metrics/resumo`).
++- [x] Q1 = Option B (EN-RENAME) per default-recommendation. With Q2's DELETE landing `/api/foco`, `/api/metricas` became lone PT outlier in 5/6 EN routers → strong-precedent rename. AST-driven via libcst (string-literal-only codemod over 3 .py files; 22 string sites rewritten across `app/routers/metrics.py` + `tests/routers/test_metrics_router.py` + `tests/integration/test_e2e_flows.py`). Frontend hook updated (`useDashboard.ts` `/api/metricas/resumo` → `/api/metrics/resumo`).
+ - [x] Stranded-reference cleanup caught by Phase 2 read (Phase 1 left these):
+-  - `products/daily-life/MASTER-PROMPT.md`: removed `Focus` Domain row +
+-    removed `/api/ai/weekly-review/send` from AI-weekly-review row +
+-    removed `Foco` Pages row + renamed `/api/metricas` → `/api/metrics`
+-    in Metrics Domain row.
+-  - `products/daily-life/backend/app/services/weekly_review_service.py`
+-    module docstring: corrected the `POST /api/ai/weekly-review/send`
+-    trigger reference to the GET endpoint + flagged the historical
+-    deletion (Phase 1 retired the POST).
+-- [x] Frontend UI route `/metricas` (PT label) **preserved** — daily-life
+-  is product-Portuguese; the backend-rename rationale ("internal-facing
+-  technical paths") does NOT extend to user-facing UI labels.
+-- [x] DB table name `metricas_produtividade` **preserved** — data-model
+-  identifier, not API surface.
++  - `products/daily-life/MASTER-PROMPT.md`: removed `Focus` Domain row + removed `/api/ai/weekly-review/send` from AI-weekly-review row + removed `Foco` Pages row + renamed `/api/metricas` → `/api/metrics` in Metrics Domain row.
++  - `products/daily-life/backend/app/services/weekly_review_service.py` module docstring: corrected `POST /api/ai/weekly-review/send` trigger reference → GET endpoint + flagged historical deletion (Phase 1 retired the POST).
++- [x] Frontend UI route `/metricas` (PT label) **preserved** — daily-life is product-Portuguese; backend-rename rationale ("internal-facing technical paths") does ¬ extend to user-facing UI labels.
++- [x] DB table name `metricas_produtividade` **preserved** — data-model identifier, ¬ API surface.
+ - [x] Pytest 210/210 green (no delta from Phase 1 close).
+-- [x] **[DEFERRED-PRE-EXISTING]** **Pre-existing build gap (NOT introduced by Phase 2):** `npx vite build`
+-  fails on `tailwindcss-animate` resolution from the seed framework's
+-  `tailwind.config.factory.ts` — verified by stash-clean-tree reproduction.
+-  Belongs in the same `bootstrap-worktree.sh` follow-up surfaced by Q4 (PF lesson §(b)#1).
++- [x] **[DEFERRED-PRE-EXISTING]** **Pre-existing build gap (NOT introduced by Phase 2):** `npx vite build` fails on `tailwindcss-animate` resolution from seed framework's `tailwind.config.factory.ts` — verified by stash-clean-tree reproduction. Belongs in the same `bootstrap-worktree.sh` follow-up surfaced by Q4 (PF lesson §(b)#1).
+ 
+-### Phase 3 — Standard-router smoke + status-assertion sweep + optional `ai_outputs` mount
++### Phase 3 — Standard-router smoke + status-assertion sweep + optional `ai_outputs` mount 📋
+ 
+-Per PF lesson §(d)#4: dispatch the 5-test mount-shape smoke pattern for
+-seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (if
+-adopted in §7 Q3) `ai_outputs`.
++Per PF lesson §(d)#4: dispatch the 5-test mount-shape smoke pattern for seed-routed `health` / `notificacoes` / `team` / `ai_feedback` + (if adopted in §7 Q3) `ai_outputs`.
+ 
+-Per PF lesson §(b)#3: run `noctus.dev.scan_block_patterns
+-mode=status_assertion` over `tests/` corpus; either fix in this phase
+-or pin as TIER B baseline-no-regress.
++Per PF lesson §(b)#3: run `noctus.dev.scan_block_patterns mode=status_assertion` over `tests/` corpus; either fix in this phase ∨ pin as TIER B baseline-no-regress.
+ 
+-- [ ] Mount-smoke for each standard router (2 tests/router with status +
+-  body assertion).
++- [ ] Mount-smoke for each standard router (2 tests/router with status + body assertion).
+ - [ ] Status-assertion calibration pass on existing test corpus.
+ 
+-### Phase 4 — Final retrospective + commit/push gate
++### Phase 4 — Final retrospective + commit/push gate 📋
+ 
+ - [ ] Final build + pytest + keeper run (architect-side post-FF-merge).
+ - [ ] Phase-end proposal bundle.
+@@ -420,99 +344,44 @@ or pin as TIER B baseline-no-regress.
+ 
+ Surfaced at end of Phase 0 for user decision before Phase 1 dispatch.
+ 
+-1. **Q1 — EN/PT path policy for `/api/metricas` + `/api/foco`.**
+-   Daily-life is product-Portuguese (Tarefas / Metas / Notas / Agenda
+-   UI labels are PT). Therapy chose EN-rename for its 8 PT outliers
+-   (`alertas-crise` → `crisis-alerts`, etc.) on the grounds that
+-   *backend paths are technical infrastructure*, not user-facing copy.
+-   But daily-life backend is *already English-majority* (5 of 7
+-   routers: `/api/tasks`, `/api/goals`, `/api/schedule`, `/api/notes`,
+-   `/api/ai`) — `/api/metricas` and `/api/foco` are the only outliers.
+-   - **Option A (KEEP PT — recommend if cost-sensitive):** accept-with-
+-     rationale; document in `KB § PATTERNS/accept-with-rationale.md`
+-     as "daily-life backend is mixed EN/PT — internal-facing only;
+-     no external consumers."
+-   - **Option B (EN-RENAME — recommend if consistency-sensitive):**
+-     rename to `/api/metrics` + `/api/focus`. Cost: 1 line in
+-     `useDashboard.ts` + the new `useFoco.ts` (if Q2 wires); 1 line
+-     in `main.py`; rename 2 router prefixes; update 6 router-test
+-     files (search/replace).
+-   - **My recommendation:** Option B (EN-RENAME). Rationale: the
+-     majority precedent (5 of 7 already EN) + therapy's same
+-     decision + the rename cost is trivial. **But** the recommendation
+-     reverses if Q2 lands "delete `/api/foco`" — then `/api/metricas`
+-     becomes a single-router outlier and may not be worth the rename.
+-
+-2. **Q2 — Pattern H disposition for `/api/foco` (5 endpoints) +
+-   `POST /api/ai/weekly-review/send` (1 endpoint).**
+-   - `/api/foco`: no `Focus.tsx` page, no `useFoco.ts` hook. The router
+-     exists in `main.py`'s import list (`from app.routers import …
+-     focus, …`). The router was either (a) scaffolded ahead of a Focus
+-     page that never landed, or (b) intended for an AI-agent or
+-     scheduler caller that doesn't materialize in the codebase.
+-   - `POST /api/ai/weekly-review/send`: paired with the wired
+-     `GET /api/ai/weekly-review`. Likely intended to email the
+-     digest result to the user.
+-   - **Option A (DELETE both — recommend if the product owner
+-     hasn't planned the feature):** remove `app/routers/focus.py`,
+-     drop the `focus.router` import + the `focus` arg in `main.py`,
+-     delete `tests/routers/test_focus_router.py`. Remove
+-     `POST /api/ai/weekly-review/send` endpoint + its test.
+-   - **Option B (WIRE the focus feature):** author `Focus.tsx` page +
+-     `useFoco.ts` hook + `App.tsx` route + tests. Larger scope, may
+-     deserve its own dedicated `daily-life-focus-feature` project.
+-   - **Option C (HYBRID — defer focus, delete `/send`):** keep
+-     `/api/foco` (anticipating a future Focus page) but delete the
+-     orphan `/send` endpoint.
+-   - **My recommendation:** Option A. Rationale: per PF lesson
+-     §(b)#2, orphan-route ⇒ delete-or-wire at Phase 0, and a UI
+-     scaffold for Focus isn't anywhere in the repo (no design
+-     placeholder, no `// TODO Focus.tsx`). Deletion can be reverted
+-     with a single git revert when the feature ships.
+-
+-3. **Q3 — Should daily-life mount the `ai_outputs` seed standard router?**
+-   Current wiring: `standard_routers=["health", "notificacoes", "team",
+-   "ai_feedback"]` (no `ai_outputs`). Daily-life DOES produce structured
+-   LLM output (daily-brief + weekly-review) — surfacing the persisted
+-   outputs at `/api/ai-outputs` would let a future "history" UI surface
+-   them without per-product backend code.
+-   - **My recommendation:** add `ai_outputs` in Phase 3 alongside the
+-     mount-smoke tests. Low cost (one string in `main.py`); high optionality.
+-
+-4. **Q4 — Worktree-bootstrap expansion (cross-product methodology Q).**
+-   PF lesson §(b)#1 already named this; daily-life confirms recurrence.
+-   Should `bash scripts/bootstrap-worktree.sh` be expanded to install
+-   `mcp/noctusai/requirements.txt` so keeper runs from any worktree?
+-   - **My recommendation:** YES — file a separate one-engineer
+-     `bootstrap-worktree-mcp-deps` feature (lightweight, ≤2 files).
+-     Daily-life is the N=2 product (PF was N=1) — formalize.
++1. **Q1 — EN/PT path policy for `/api/metricas` + `/api/foco`.** Daily-life is product-Portuguese (Tarefas / Metas / Notas / Agenda UI labels are PT). Therapy chose EN-rename for its 8 PT outliers (`alertas-crise` → `crisis-alerts`) on grounds that *backend paths are technical infrastructure*, ¬ user-facing copy. But daily-life backend is *already English-majority* (5 of 7 routers: `/api/tasks`, `/api/goals`, `/api/schedule`, `/api/notes`, `/api/ai`) — `/api/metricas` ∧ `/api/foco` are the only outliers.
++   - **Option A (KEEP PT — recommend if cost-sensitive):** accept-with-rationale; document in `KB § PATTERNS/accept-with-rationale.md` as "daily-life backend is mixed EN/PT — internal-facing only; no external consumers."
++   - **Option B (EN-RENAME — recommend if consistency-sensitive):** rename to `/api/metrics` + `/api/focus`. Cost: 1 line in `useDashboard.ts` + new `useFoco.ts` (if Q2 wires); 1 line in `main.py`; rename 2 router prefixes; update 6 router-test files (search/replace).
++   - **My recommendation:** Option B (EN-RENAME). Rationale: majority precedent (5 of 7 already EN) + therapy's same decision + rename cost is trivial. **But** reverses if Q2 lands "delete `/api/foco`" — then `/api/metricas` becomes a single-router outlier ∧ may ¬ be worth the rename.
++
++2. **Q2 — Pattern H disposition for `/api/foco` (5 endpoints) + `POST /api/ai/weekly-review/send` (1 endpoint).**
++   - `/api/foco`: no `Focus.tsx` page, no `useFoco.ts` hook. Router exists in `main.py`'s import list (`from app.routers import … focus, …`). Either (a) scaffolded ahead of a Focus page that never landed, ∨ (b) intended for an AI-agent ∨ scheduler caller that doesn't materialize in the codebase.
++   - `POST /api/ai/weekly-review/send`: paired with the wired `GET /api/ai/weekly-review`. Likely intended to email the digest result to the user.
++   - **Option A (DELETE both — recommend if product owner hasn't planned the feature):** remove `app/routers/focus.py`, drop `focus.router` import + `focus` arg in `main.py`, delete `tests/routers/test_focus_router.py`. Remove `POST /api/ai/weekly-review/send` endpoint + its test.
++   - **Option B (WIRE the focus feature):** author `Focus.tsx` page + `useFoco.ts` hook + `App.tsx` route + tests. Larger scope, may deserve its own dedicated `daily-life-focus-feature` project.
++   - **Option C (HYBRID — defer focus, delete `/send`):** keep `/api/foco` (anticipating a future Focus page) but delete orphan `/send` endpoint.
++   - **My recommendation:** Option A. Rationale: per PF lesson §(b)#2, orphan-route ⇒ delete-or-wire at Phase 0, ∧ a UI scaffold for Focus isn't anywhere in the repo (no design placeholder, no `// TODO Focus.tsx`). Deletion reversible with a single git revert when the feature ships.
++
++3. **Q3 — Should daily-life mount the `ai_outputs` seed standard router?** Current wiring: `standard_routers=["health", "notificacoes", "team", "ai_feedback"]` (no `ai_outputs`). Daily-life DOES produce structured LLM output (daily-brief + weekly-review) — surfacing persisted outputs at `/api/ai-outputs` would let a future "history" UI surface them without per-product backend code.
++   - **My recommendation:** add `ai_outputs` in Phase 3 alongside mount-smoke tests. Low cost (one string in `main.py`); high optionality.
++
++4. **Q4 — Worktree-bootstrap expansion (cross-product methodology Q).** PF lesson §(b)#1 already named this; daily-life confirms recurrence. Should `bash scripts/bootstrap-worktree.sh` be expanded to install `mcp/noctusai/requirements.txt` so keeper runs from any worktree?
++   - **My recommendation:** YES — file a separate one-engineer `bootstrap-worktree-mcp-deps` feature (lightweight, ≤2 files). Daily-life is the N=2 product (PF was N=1) — formalize.
+ 
+ ---
+ 
+ ## 8. Dependencies & blockers
+ 
+-- **`make-get-current-user-org-factory` seed real adapter** — Phase 2 is
+-  gated on this shipping. Filed by PF as a follow-up project. If not
+-  shipped before daily-life Phase 2 dispatch, defer Phase 2 to
+-  post-seed-adapter and continue with Phase 3.
+-- **Worktree-venv** — `cli.py --review` cannot run from this worktree
+-  until `bootstrap-worktree.sh` is expanded (Q4). Workaround:
+-  architect runs keeper post-FF-merge from noc root.
++- **`make-get-current-user-org-factory` seed real adapter** — Phase 2 gated on shipping. Filed by PF as a follow-up project. If not shipped before daily-life Phase 2 dispatch, defer Phase 2 post-seed-adapter ∧ continue with Phase 3.
++- **Worktree-venv** — `cli.py --review` cannot run from this worktree until `bootstrap-worktree.sh` is expanded (Q4). Workaround: architect runs keeper post-FF-merge from noc root.
+ 
+ ---
+ 
+ ## 9. Success criteria
+ 
+-- All 234 backend tests pass (`PYTHONPATH=… pytest -q` from worktree, or
+-  default `pytest` from noc root).
++- All 234 backend tests pass (`PYTHONPATH=… pytest -q` from worktree, ∨ default `pytest` from noc root).
+ - `vite build` clean for `products/daily-life/frontend`.
+ - Keeper (`cli.py --review --product daily-life`) emits 0 issues.
+-- Every Pattern H row in §5.4.2 closed (delete or wire).
+-- Every Pattern A row in §5.4.2 closed (KEEP-PT-with-rationale or EN-rename).
++- Every Pattern H row in §5.4.2 closed (delete ∨ wire).
++- Every Pattern A row in §5.4.2 closed (KEEP-PT-with-rationale ∨ EN-rename).
+ - Auth-factory absorbed (Pattern F closed) — gated on §8 dependency.
+ - Standard-router mount-smoke tests landed (PF lesson §(d)#4).
+-- Phase 4 lessons file synthesized + filed at
+-  `archive/projects/YYYY-MM-DD/NN-daily-life-wiring/daily-life-wiring-lessons.md`.
++- Phase 4 lessons file synthesized + filed at `archive/projects/YYYY-MM-DD/NN-daily-life-wiring/daily-life-wiring-lessons.md`.
+ 
+ ---
+ 
+@@ -549,99 +418,37 @@ cat products/daily-life/projects/daily-life-wiring/PROJECT.md | sed -n '/Phase 1
+ ### 2026-05-11 — Phase 2 ✅ (Engineer DL-P2)
+ 
+ - Scope (per dispatch brief + default-recommendations on §7 open questions):
+-  - **Q1 = Option B (EN-RENAME)** applied. Rationale: Q2's DELETE landing
+-    in Phase 1 dropped `/api/foco`, leaving `/api/metricas` as the single
+-    PT outlier in 5/6 EN routers — the §7 recommendation's "majority
+-    precedent" condition strengthened.
+-  - **Q3 (mount `ai_outputs` standard router)** **DEFERRED to Phase 3**.
+-    The §7 "low cost (one string in main.py)" estimate was incomplete:
+-    the seed `create_ai_outputs_router` reads from a per-product
+-    `<schema>.ai_outputs` table that daily-life doesn't provision. Adding
+-    the mount without the migration would let the router's `try/except`
+-    silently return empty arrays — a no-silent-errors violation. Belongs
+-    in Phase 3 alongside the migration (cleaner-scoped focused brief).
++  - **Q1 = Option B (EN-RENAME)** applied. Rationale: Q2's DELETE landing in Phase 1 dropped `/api/foco`, leaving `/api/metricas` as the single PT outlier in 5/6 EN routers — §7 recommendation's "majority precedent" condition strengthened.
++  - **Q3 (mount `ai_outputs` standard router)** **DEFERRED to Phase 3**. The §7 "low cost (one string in main.py)" estimate was incomplete: seed `create_ai_outputs_router` reads from a per-product `<schema>.ai_outputs` table that daily-life doesn't provision. Mount without migration ⇒ router's `try/except` silently returns empty arrays — a no-silent-errors violation. Belongs in Phase 3 alongside migration (cleaner-scoped focused brief).
+ - **Pattern A close** (`/api/metricas` → `/api/metrics`):
+-  - libcst codemod over 3 .py files: 1 prefix-arg change in `metrics.py`
+-    + 15 URL strings in `tests/routers/test_metrics_router.py` (incl.
+-    module docstring) + 6 URL strings in `tests/integration/test_e2e_flows.py`
+-    = 22 string-literal sites rewritten.
+-  - `products/daily-life/frontend/src/hooks/useDashboard.ts` line 44 hook
+-    queryFn URL updated (single-character payload, Edit tool — string
+-    content, not structural code).
+-  - DB table `metricas_produtividade` preserved (data-model, not API).
+-  - Frontend UI route `/metricas` preserved (PT label; daily-life is
+-    product-Portuguese — backend-rename rationale does not extend to UI).
++  - libcst codemod over 3 .py files: 1 prefix-arg change in `metrics.py` + 15 URL strings in `tests/routers/test_metrics_router.py` (incl. module docstring) + 6 URL strings in `tests/integration/test_e2e_flows.py` = 22 string-literal sites rewritten.
++  - `products/daily-life/frontend/src/hooks/useDashboard.ts` line 44 hook queryFn URL updated (single-character payload, Edit tool — string content, ¬ structural code).
++  - DB table `metricas_produtividade` preserved (data-model, ¬ API).
++  - Frontend UI route `/metricas` preserved (PT label; daily-life is product-Portuguese — backend-rename rationale does ¬ extend to UI).
+ - **Stranded-reference cleanup** (Phase 1 missed these):
+-  - `products/daily-life/MASTER-PROMPT.md` Domain + Pages tables:
+-    removed Focus/`/api/foco` row, removed Foco/`/foco` page row,
+-    dropped `+ POST /api/ai/weekly-review/send` from the AI-weekly-review
+-    row, renamed `/api/metricas` → `/api/metrics`.
+-  - `products/daily-life/backend/app/services/weekly_review_service.py`
+-    module docstring: corrected the `POST .../send` trigger reference
+-    (endpoint retired Phase 1) → GET endpoint + historical note.
+-- **Tests**: 210/210 green (no delta from Phase 1 close; the rename is
+-  a string-substitution that the tests catch end-to-end via the route
+-  matcher).
+-- **Frontend build**: `npx vite build` fails on `tailwindcss-animate`
+-  module resolution from the seed framework's `tailwind.config.factory.ts`
+-  — verified via stash-clean-tree reproduction (failure existed BEFORE
+-  Phase 2's hook edit). NOT introduced by Phase 2; **same-shape** as the
+-  PF lesson §(b)#1 worktree-bootstrap gap; queue under §7 Q4.
+-- **Keeper**: not run from worktree (`mcp/noctusai/.venv` absent — same
+-  PF lesson §(b)#1). Architect runs post-FF-merge.
+-- **§5.4.2 gap table updated**: Patterns A / F / H all marked CLOSED with
+-  Phase pointers. Patterns E (response_model deferred) + B/C/D/G (0
+-  counts) unchanged.
+-- **§6 phase entries reshaped**: original Phase 1 (Pattern H+A) and
+-  Phase 2 (auth-factory) were collapsed when Pattern F shipped alongside
+-  H in Phase 1 (the seed real adapter landed early). Phase 2 = this work
+-  (Pattern A + Phase-1-stranded cleanup). Phase 3 = the original
+-  standard-router smoke + status-assertion sweep + (new) `ai_outputs`
+-  mount + migration.
+-- **Files modified** (this Phase): `products/daily-life/backend/app/routers/metrics.py`,
+-  `products/daily-life/backend/tests/routers/test_metrics_router.py`,
+-  `products/daily-life/backend/tests/integration/test_e2e_flows.py`,
+-  `products/daily-life/backend/app/services/weekly_review_service.py`,
+-  `products/daily-life/frontend/src/hooks/useDashboard.ts`,
+-  `products/daily-life/MASTER-PROMPT.md`,
+-  `products/daily-life/projects/daily-life-wiring/PROJECT.md`.
++  - `products/daily-life/MASTER-PROMPT.md` Domain + Pages tables: removed Focus/`/api/foco` row, removed Foco/`/foco` page row, dropped `+ POST /api/ai/weekly-review/send` from AI-weekly-review row, renamed `/api/metricas` → `/api/metrics`.
++  - `products/daily-life/backend/app/services/weekly_review_service.py` module docstring: corrected `POST .../send` trigger reference (endpoint retired Phase 1) → GET endpoint + historical note.
++- **Tests**: Δ tests = 210/210 green (no delta from Phase 1 close; rename is a string-substitution caught end-to-end via the route matcher).
++- **Frontend build**: `npx vite build` fails on `tailwindcss-animate` module resolution from seed framework's `tailwind.config.factory.ts` — verified via stash-clean-tree reproduction (failure existed BEFORE Phase 2's hook edit). NOT introduced by Phase 2; **same-shape** as PF lesson §(b)#1 worktree-bootstrap gap; queue under §7 Q4.
++- **Keeper**: ¬ run from worktree (`mcp/noctusai/.venv` absent — same PF lesson §(b)#1). Architect runs post-FF-merge.
++- **§5.4.2 gap table updated**: Patterns A / F / H all marked CLOSED with Phase pointers. Patterns E (response_model deferred) + B/C/D/G (0 counts) unchanged.
++- **§6 phase entries reshaped**: original Phase 1 (Pattern H+A) ∧ Phase 2 (auth-factory) collapsed when Pattern F shipped alongside H in Phase 1 (seed real adapter landed early). Phase 2 = this work (Pattern A + Phase-1-stranded cleanup). Phase 3 = original standard-router smoke + status-assertion sweep + (new) `ai_outputs` mount + migration.
++- Σ files = 7: `products/daily-life/backend/app/routers/metrics.py`, `products/daily-life/backend/tests/routers/test_metrics_router.py`, `products/daily-life/backend/tests/integration/test_e2e_flows.py`, `products/daily-life/backend/app/services/weekly_review_service.py`, `products/daily-life/frontend/src/hooks/useDashboard.ts`, `products/daily-life/MASTER-PROMPT.md`, `products/daily-life/projects/daily-life-wiring/PROJECT.md`.
+ 
+ ### 2026-05-11 — Phase 1 ✅ (Engineer DL-P1; merged 03e8db7)
+ 
+-- Pattern F adoption: 29 callsites in 6 routers (tasks/goals/schedule/notes/metrics/ai)
+-  refactored from the manual triple (`get_current_user` + `get_org_id` +
+-  `get_user_client`) to `Depends(get_current_user_org)`. Made possible
+-  by the `make-get-current-user-org-factory` seed real adapter shipping
+-  ahead of expectations — what PROJECT.md §6 had called Phase 2.
+-- Pattern H Q2 = Option A (DELETE both): removed `app/routers/focus.py`
+-  (5 endpoints) + `tests/routers/test_focus_router.py` (18 cases) + 5
+-  e2e focus 401 tests + 1 focus flow test; dropped
+-  `POST /api/ai/weekly-review/send` (1 endpoint) + 2 paired ai tests.
+-  GET `/api/ai/weekly-review` preserved for Dashboard widget.
+-- Pattern A NOT addressed in Phase 1 (out of brief scope) — deferred
+-  to Phase 2.
+-- Pytest: 234 → 208 (delta −26 from removed orphan + tests).
+-- Stranded references in `MASTER-PROMPT.md` + `weekly_review_service.py`
+-  module docstring missed at Phase 1 close; caught in Phase 2 cleanup.
++- Pattern F adoption: 29 callsites in 6 routers (tasks/goals/schedule/notes/metrics/ai) refactored from manual triple (`get_current_user` + `get_org_id` + `get_user_client`) → `Depends(get_current_user_org)`. Made possible by `make-get-current-user-org-factory` seed real adapter shipping ahead of expectations — what PROJECT.md §6 had called Phase 2.
++- Pattern H Q2 = Option A (DELETE both): removed `app/routers/focus.py` (5 endpoints) + `tests/routers/test_focus_router.py` (18 cases) + 5 e2e focus 401 tests + 1 focus flow test; dropped `POST /api/ai/weekly-review/send` (1 endpoint) + 2 paired ai tests. GET `/api/ai/weekly-review` preserved for Dashboard widget.
++- Pattern A NOT addressed in Phase 1 (out of brief scope) — deferred to Phase 2.
++- Δ tests = 234 → 208 (−26 from removed orphan + tests).
++- Stranded references in `MASTER-PROMPT.md` + `weekly_review_service.py` module docstring missed at Phase 1 close; caught in Phase 2 cleanup.
+ 
+ ### 2026-05-11 — Phase 0 ✅
+ 
+-- Discovery completed by engineer PPP, dispatched on a worktree branched
+-  off `3021dff`. Read-only audit; no code edits.
+-- 7 backend routers / 35 endpoints inventoried; 6 frontend hooks / 30
+-  unique frontend→backend calls inventoried; 4 migrations cross-checked
+-  (no schema drift); seed-lib import audit shows high hit rate (metas,
+-  digest, ai-consent, llm, crud_safety, responses, primitives.timeutil,
+-  primitives.parsing, api.auth.first_or_none all consumed).
+-- Gap table (§5.4.2) populated: 0 Pattern B/C/D/G; 2 Pattern A; all 35
+-  routes Pattern E; all 7 routers Pattern F (gated on seed adapter); 6
+-  endpoints Pattern H (5 in `/api/foco` + 1 `weekly-review/send`).
++- Discovery completed by engineer PPP, dispatched on a worktree branched off `3021dff`. Read-only audit; no code edits.
++- 7 backend routers / 35 endpoints inventoried; 6 frontend hooks / 30 unique frontend→backend calls inventoried; 4 migrations cross-checked (no schema drift); seed-lib import audit shows high hit rate (metas, digest, ai-consent, llm, crud_safety, responses, primitives.timeutil, primitives.parsing, api.auth.first_or_none all consumed).
++- Gap table (§5.4.2) populated: 0 Pattern B/C/D/G; 2 Pattern A; all 35 routes Pattern E; all 7 routers Pattern F (gated on seed adapter); 6 endpoints Pattern H (5 in `/api/foco` + 1 `weekly-review/send`).
+ - Pytest baseline: 234/234 green (with PYTHONPATH override; see §10).
+-- Keeper not run from this worktree — `mcp/noctusai/.venv` not bootstrapped
+-  (defer to architect post-FF-merge; see §7 Q4 + §8).
+-- Findings returned as text per §17.6.1 (harness blocks engineer Write
+-  for `findings.md` despite brief authorization — memory entry
+-  `feedback_findings_md_return_as_text.md` N=6 now). Five-category
+-  content included in engineer's report; architect to transcribe at
+-  fresh-eyes-merge time.
++- Keeper ¬ run from this worktree — `mcp/noctusai/.venv` not bootstrapped (defer to architect post-FF-merge; see §7 Q4 + §8).
++- Findings returned as text per §17.6.1 (harness blocks engineer Write for `findings.md` despite brief authorization — memory entry `feedback_findings_md_return_as_text.md` N=6 now). Five-category content included in engineer's report; architect to transcribe at fresh-eyes-merge time.
+ 
+diff --git a/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md b/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
+index 17830344..59bfb4b9 100644
+--- a/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
++++ b/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
+@@ -43,8 +43,8 @@ Decisions captured at scaffold time. Re-interrogate at reactivation if the world
+ 
+ ## 3. Design principles
+ 
+-1. **Smallest blast radius.** Don't refactor the pilot during rollout. The pilot's surfaces are stable; this project layers on production credentials + reachability only.
+-2. **Verify the seed ships it (still applies).** Before assuming any helper exists, check current state — the GCal adapters and `update_event` were added by other projects post-pilot; more may have shipped by the time this reactivates.
++1. **Smallest blast radius.** Don't refactor the pilot during rollout. Pilot surfaces stable ⇒ this project layers on production credentials + reachability only.
++2. **Verify the seed ships it (still applies).** Before assuming any helper exists, check current state — GCal adapters ∧ `update_event` were added by other projects post-pilot; more may have shipped by reactivation time.
+ 3. **AST-first** for any code edits to `App.tsx` / route tables / nav config (per `feedback_ast_first`).
+ 
+ ---
+@@ -53,35 +53,35 @@ Decisions captured at scaffold time. Re-interrogate at reactivation if the world
+ 
+ Required even for single-product scope (`feedback_seed_first_at_authoring_time`).
+ 
+-1. **Contract identical for every product?** Partially. The Google OAuth Console setup is per-product (each product has its own client) but the *steps* are identical — could be promoted to a runbook in `KB § GUIDES/` if a third product needs OAuth.
+-2. **Data source product-specific?** YES — the credentials live in `therapy.therapist_profiles.gcal_*` (encrypted via the migration-011 helpers).
+-3. **Placement product-specific?** YES — the route + nav additions are entirely in `products/therapy-platform/frontend/`.
++1. **Contract identical for every product?** Partially. Google OAuth Console setup is per-product (each product has its own client) but the *steps* are identical — promotable to a runbook in `KB § GUIDES/` if a third product needs OAuth.
++2. **Data source product-specific?** YES — credentials live in `therapy.therapist_profiles.gcal_*` (encrypted via migration-011 helpers).
++3. **Placement product-specific?** YES — route + nav additions are entirely in `products/therapy-platform/frontend/`.
+ 4. **Visibility / permission?** Therapist-only flow. Existing RLS + role guards cover.
+-5. **Seam exists in seed?** YES for the OAuth adapter + update_event; the consumer wiring is product-specific.
++5. **Seam exists in seed?** YES for OAuth adapter ∧ `update_event`; consumer wiring is product-specific.
+ 6. **Default-on or opt-in?** Opt-in (therapist must connect; no auto-mount).
+ 
+-**Per-product code count this project requires:** ~2 file edits (`App.tsx` route, nav config) + 1 docs file (the OAuth setup runbook). Zero seed touches expected.
++**Per-product code count this project requires:** ~2 file edits (`App.tsx` route, nav config) + 1 docs file (OAuth setup runbook). Zero seed touches expected.
+ 
+ ---
+ 
+ ## 4. Scope
+ 
+ **In scope:**
+-- `KB § GUIDES/` — write a copy-paste runbook for the Google Cloud Console OAuth client setup (project creation, OAuth consent screen, credentials, scopes, redirect URI). Reusable for any future product that adopts user-delegated GCal.
+-- Add `THERAPY_GOOGLE_CLIENT_ID` / `THERAPY_GOOGLE_CLIENT_SECRET` to the deployed env (manual; document in the runbook how + where).
+-- Live OAuth round-trip: connect a real Google account, verify `gcal_authorized_at` populates + `gcal_refresh_token_encrypted` round-trips through `therapy.encrypt_gcal_token` / `decrypt_gcal_token`.
+-- Live booking: book a real session from the UI; verify event appears in the therapist's connected calendar; manually add an event in GCal; verify slot generator excludes the window on next `/api/scheduling/candidates` call.
+-- Live re-auth: artificially push `gcal_authorized_at` to >7 days ago via SQL; verify the UI prompts re-OAuth.
++- `KB § GUIDES/` — copy-paste runbook for Google Cloud Console OAuth client setup (project creation, OAuth consent screen, credentials, scopes, redirect URI). Reusable for any future product that adopts user-delegated GCal.
++- Add `THERAPY_GOOGLE_CLIENT_ID` / `THERAPY_GOOGLE_CLIENT_SECRET` to deployed env (manual; document the how + where in runbook).
++- Live OAuth round-trip: connect real Google account, verify `gcal_authorized_at` populates ∧ `gcal_refresh_token_encrypted` round-trips through `therapy.encrypt_gcal_token` / `decrypt_gcal_token`.
++- Live booking: book a real session from UI; verify event appears in therapist's connected calendar; manually add an event in GCal; verify slot generator excludes the window on next `/api/scheduling/candidates` call.
++- Live re-auth: push `gcal_authorized_at` to >7 days ago via SQL ⇒ verify UI prompts re-OAuth.
+ - Frontend `App.tsx` route addition for `/therapist/agendamento` (or whatever path the wiring agent's nav consensus settles on).
+ - Therapist nav addition (link + icon).
+-- Any small fixes the live flow surfaces (likely: error-message polish on the OAuth-callback failure paths, friendly empty-state on no-slots, etc.).
++- Any small fixes the live flow surfaces (likely: error-message polish on OAuth-callback failure paths, friendly empty-state on no-slots).
+ 
+ **Out of scope:**
+ - Patient self-booking (deferred to its own project per pilot §7 Q2).
+ - Service-account adapter wiring for clinic-owned calendars (separate use case from per-therapist OAuth; ship if/when a clinic asks).
+-- Production rate-limiting / throttling on the OAuth endpoints (defer until evidence of abuse).
++- Production rate-limiting / throttling on OAuth endpoints (defer until evidence of abuse).
+ - LiveKit / video-room integration with the booked appointment (separate concern).
+-- `update_event`-triggered notification UX changes (the seed adapter sends `sendUpdates=all` already; if the UX needs more, file separately).
++- `update_event`-triggered notification UX changes (seed adapter sends `sendUpdates=all` already; if UX needs more, file separately).
+ 
+ ---
+ 
+@@ -99,39 +99,39 @@ The runbook in scope adds **one new doc** at `KB § GUIDES/google-oauth-setup.md
+ 
+ - [x] Verify pilot still passes: `pytest products/therapy-platform/backend/tests/services/test_scheduling_*.py tests/routers/test_scheduling_router.py -q` should be 34/34. **34/34 ✓**
+ - [x] Verify seed still passes: `pytest seed/lib/backend/tests/integrations/google_calendar/ -q` should be 32/32 (or higher if more landed). **32/32 ✓**
+-- [x] Verify the route + nav landscape: read `frontend/src/App.tsx` and the therapy-wiring project's gap-table (if published) to pick the right insertion point without collision. **No `/therapist/agendamento` or `/therapist/scheduling` route present; sister wiring agent works on `admin*` only — zero overlap.**
+-- [x] Confirm GCal real-adapter project is still closed and the `update_event` Protocol method is still present. **Confirmed — `types.py:78` (Protocol), `fake_adapter.py:66`, `oauth_adapter.py:116`, `service_account_adapter.py:116` all implement `update_event`; no open GCal real-adapter project.**
++- [x] Verify route + nav landscape: read `frontend/src/App.tsx` ∧ therapy-wiring project's gap-table (if published) → pick the right insertion point without collision. **No `/therapist/agendamento` ∨ `/therapist/scheduling` route present; sister wiring agent works on `admin*` only — zero overlap.**
++- [x] Confirm GCal real-adapter project still closed ∧ `update_event` Protocol method still present. **Confirmed — `types.py:78` (Protocol), `fake_adapter.py:66`, `oauth_adapter.py:116`, `service_account_adapter.py:116` all implement `update_event`; no open GCal real-adapter project.**
+ 
+ **Improvements:** none from this audit pass.
+ 
+ ### Phase 1 — OAuth credentials runbook + env wiring ✅ (2026-05-10)
+ 
+ - [x] Write `KB § GUIDES/google-oauth-setup.md` — copy-paste steps for Google Cloud Console OAuth client creation. Include: project creation, OAuth consent screen (External), Calendar API enablement, OAuth client ID (Web application), redirect URI registration, scopes (`.../auth/calendar`), credentials JSON download. **Shipped at `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` — 6 numbered steps + Troubleshooting table + "What lives where" file-map + "Reusing for another product" extension hint.**
+-- [x] Document the env-var placement (`THERAPY_GOOGLE_CLIENT_ID`, `THERAPY_GOOGLE_CLIENT_SECRET`) for both local dev (`.env` at repo root) and prod deploy (Render / wherever). **In Step 5 of the runbook.**
++- [x] Document env-var placement (`THERAPY_GOOGLE_CLIENT_ID`, `THERAPY_GOOGLE_CLIENT_SECRET`) for both local dev (`.env` at repo root) ∧ prod deploy (Render / wherever). **In Step 5 of the runbook.**
+ - [x] Add the doc to `KB § INDEX.md`. **Added to By-topic table + Layout tree; `bash scripts/verify-kb-sync.sh` clean.**
+ 
+-**Improvements:** the runbook's redirect-URI section notes that current shape routes to the *frontend* callback; if a future product flips to backend-callback shape, register the backend path. Captured as a flag in the runbook itself; no separate follow-up needed.
++**Improvements:** runbook's redirect-URI section notes current shape routes to *frontend* callback; if a future product flips to backend-callback shape, register the backend path. Captured as a flag in the runbook itself; no separate follow-up needed.
+ 
+ ### Phase 2 — Frontend route + nav ✅ (2026-05-10)
+ 
+-- [x] Add `<Route path="/therapist/agendamento" element={<Scheduling />} />` (path TBD) to `App.tsx`. Use AST tooling (`ts-morph`) for the import + JSX additions. **App uses config-driven `createProductApp({ roleRoutes: { terapeuta: { routes: [...] } } })` shape (NOT JSX `<Route>`); ts-morph script added `const TherapistScheduling = lazy(...)` import + `{ path: "/agendamento", component: TherapistScheduling }` route entry directly after `/agenda/disponibilidade`. Codemod at `/tmp/therapy-ast/add-scheduling-route-and-nav.mjs` (worktree-local, not committed).**
+-- [x] Add nav entry — link + icon — at the right spot in the therapist nav config. Mirror the established nav-pattern (probably `useTherapistNav` or similar). **Nav lives at `frontend/src/layouts.ts` `THERAPIST_NAV[0].items` ("consultorio" group). Inserted `{ name: "Agendamento", href: "/therapist/agendamento", icon: CalendarDays, route: "therapist-agendamento" }` directly after the existing Agenda entry — keeps scheduling adjacent to calendar.**
+-- [x] Cross-reference the wiring agent's Phase 0 gap-table to confirm zero collision. **Sister wiring agent's scope is `app/routers/admin*` + `app/services/admin*` (backend); my scope is frontend `App.tsx` + `layouts.ts` + KB doc — zero overlap. `git status --short` confirms only 4 files touched, all in my scope.**
+-- [x] `npx vite build` clean. **`✓ built in 22.58s` — clean. (Required installing `seed/framework/frontend` node_modules in the worktree first — the worktree didn't inherit them.)**
++- [x] Add `<Route path="/therapist/agendamento" element={<Scheduling />} />` (path TBD) to `App.tsx`. Use AST tooling (`ts-morph`) for import + JSX additions. **App uses config-driven `createProductApp({ roleRoutes: { terapeuta: { routes: [...] } } })` shape (NOT JSX `<Route>`); ts-morph script added `const TherapistScheduling = lazy(...)` import + `{ path: "/agendamento", component: TherapistScheduling }` route entry directly after `/agenda/disponibilidade`. Codemod at `/tmp/therapy-ast/add-scheduling-route-and-nav.mjs` (worktree-local, not committed).**
++- [x] Add nav entry — link + icon — at the right spot in therapist nav config. Mirror established nav-pattern (probably `useTherapistNav` or similar). **Nav lives at `frontend/src/layouts.ts` `THERAPIST_NAV[0].items` ("consultorio" group). Inserted `{ name: "Agendamento", href: "/therapist/agendamento", icon: CalendarDays, route: "therapist-agendamento" }` directly after the existing Agenda entry — keeps scheduling adjacent to calendar.**
++- [x] Cross-reference wiring agent's Phase 0 gap-table → confirm zero collision. **Sister wiring agent's scope is `app/routers/admin*` + `app/services/admin*` (backend); my scope is frontend `App.tsx` + `layouts.ts` + KB doc — zero overlap. `git status --short` confirms only 4 files touched, all in my scope.**
++- [x] `npx vite build` clean. **`✓ built in 22.58s` — clean. (Required installing `seed/framework/frontend` node_modules in worktree first — worktree didn't inherit them.)**
+ 
+-**Improvements:** ts-morph's `insertElement` defaulted to slightly non-canonical indentation (2 extra spaces on the inserted lines). Build accepts it (whitespace doesn't matter to TS) and prettier would normalize on a future format pass. Left as-is rather than running prettier (no prettier config wired in this product; cross-cutting change outside scope). Tracked as a findings item.
++**Improvements:** ts-morph's `insertElement` defaulted to slightly non-canonical indentation (2 extra spaces on inserted lines). Build accepts it (whitespace doesn't matter to TS) ∧ prettier would normalize on a future format pass. Left as-is rather than running prettier (no prettier config wired in this product; cross-cutting change outside scope). Tracked as a findings item.
+ 
+-### Phase 3 — Live OAuth + booking + re-auth QA
++### Phase 3 — Live OAuth + booking + re-auth QA 🔒 (blocked on user)
+ 
+-- [ ] User completes the runbook to spin up a real Google OAuth client; confirms env vars are set.
+-- [ ] Live connect: navigate to `/therapist/agendamento`, click "Conectar Google Calendar", complete the consent flow, verify the redirect lands on `/therapist/scheduling/gcal-callback` and the `connected: true` response shows.
++- [ ] User completes the runbook → spin up real Google OAuth client; confirms env vars set.
++- [ ] Live connect: navigate to `/therapist/agendamento` → click "Conectar Google Calendar" → complete consent flow → verify redirect lands on `/therapist/scheduling/gcal-callback` ∧ `connected: true` response shows.
+ - [ ] Verify DB state: `select gcal_authorized_at, length(gcal_refresh_token_encrypted) from therapy.therapist_profiles where user_id = ...;` — both columns populated.
+-- [ ] Live book: select a slot, enter a patient_id, click "Confirmar agendamento". Verify (a) `therapy.appointments` row inserted with `status='waiting'` + `google_event_id` set, (b) the event appears in the therapist's connected calendar.
+-- [ ] Live blackout: manually add a 1-hour event in the connected calendar, refresh `/candidates`, confirm the slot generator excludes the window.
+-- [ ] Live re-auth: `update therapy.therapist_profiles set gcal_authorized_at = now() - interval '8 days' where user_id = ...;` + reload page; confirm the re-auth banner appears and the connect flow restarts.
+-- [ ] Live reschedule: PATCH an appointment to a new slot; verify the GCal event MOVES (same event_id, new times) instead of being recreated.
++- [ ] Live book: select a slot → enter a patient_id → click "Confirmar agendamento". Verify (a) `therapy.appointments` row inserted with `status='waiting'` + `google_event_id` set, (b) event appears in therapist's connected calendar.
++- [ ] Live blackout: manually add a 1-hour event in connected calendar → refresh `/candidates` → confirm slot generator excludes the window.
++- [ ] Live re-auth: `update therapy.therapist_profiles set gcal_authorized_at = now() - interval '8 days' where user_id = ...;` + reload page; confirm re-auth banner appears ∧ connect flow restarts.
++- [ ] Live reschedule: PATCH an appointment to a new slot → verify GCal event MOVES (same event_id, new times) instead of being recreated.
+ 
+-### Phase 4 — Polish + close
++### Phase 4 — Polish + close 📋
+ 
+ - [ ] Capture any UX fixes the live flow surfaced; apply inline (apply-inline-then-delete proposals methodology).
+ - [ ] Final pytest + vite build.
+@@ -150,22 +150,22 @@ The runbook in scope adds **one new doc** at `KB § GUIDES/google-oauth-setup.md
+ 
+ ## 8. Dependencies & blockers
+ 
+-- **GCal real adapters** — already shipped (`projects/google-calendar-real-adapters/` closed 2026-05-03). No blocker.
+-- **`update_event` Protocol method** — added 2026-05-03 as a pilot-close improvement (this project's predecessor session). No blocker.
++- **GCal real adapters** ✅ already shipped (`projects/google-calendar-real-adapters/` closed 2026-05-03). No blocker.
++- **`update_event` Protocol method** ✅ added 2026-05-03 as a pilot-close improvement (this project's predecessor session). No blocker.
+ - **`therapy-platform-wiring` Phase 6 (therapist portal)** — may or may not have landed nav touches by reactivation time. If overlap, coordinate per `feedback_parallel_agent_collision_protocol`.
+-- **User availability for live QA** — Phase 3 cannot proceed without the user running the OAuth flow on a real Google account.
++- **User availability for live QA** 🔒 Phase 3 cannot proceed without user running OAuth flow on a real Google account.
+ 
+ ---
+ 
+ ## 9. Success criteria
+ 
+-- A therapist can navigate to the Scheduling page from the nav (no URL hand-typing required).
+-- The "Conectar Google Calendar" flow completes end-to-end with a real Google account.
+-- A booked session appears in the therapist's real Google Calendar with the right times.
++- Therapist can navigate to the Scheduling page from the nav (no URL hand-typing required).
++- "Conectar Google Calendar" flow completes end-to-end with a real Google account.
++- Booked session appears in therapist's real Google Calendar with the right times.
+ - Off-platform GCal events block the slot generator on the next candidates call.
+-- Re-auth banner appears at the 7-day mark and the connect flow restarts cleanly.
++- Re-auth banner appears at the 7-day mark ∧ connect flow restarts cleanly.
+ - Reschedule moves the GCal event in-place (same event_id, new times).
+-- `npx vite build` clean; `pytest products/therapy-platform/backend/tests/` green.
++- `npx vite build` clean ∧ `pytest products/therapy-platform/backend/tests/` green.
+ - KB sync: `bash scripts/verify-kb-sync.sh` clean after the runbook lands.
+ 
+ ---
+@@ -200,6 +200,6 @@ cd products/therapy-platform/frontend && npx vite build
+ 
+ | Date | Change | By |
+ |---|---|---|
+-| 2026-05-03 | **Project scaffolded** at `therapy-scheduling-pilot` close — bundles two deferrals (manual GCal QA setup + frontend routing/nav additions) into one follow-up per user instruction. Status: PARKED, awaits reactivation when therapist-facing rollout is wanted. Pilot's three improvements (`update_event` to seed Protocol, `updated_payloads` to MockSupabaseClient, in-place reschedule refactor) were applied inline before this scaffold and are validated by 34 pilot tests + 32 seed calendar tests + 7 mock-tracking tests, all green. | Claude Opus 4.7 |
+-| 2026-05-10 | **Reactivated by orchestrator** under user signal "resolve the 5 blocked ones, then unblock the deps on it". Engineer dispatched with the audit + runbook + route-and-nav scope as one brief — all agent-doable. The downstream live-QA round stays explicitly blocked on user (needs Google Cloud Console OAuth client + redirect URI + scopes + env-var population — no agent can do this); engineer's runbook deliverable lets user complete it in a few minutes after the engineer's branch lands. Status flipped from PARKED to EXECUTING. | claude-opus-4-7 |
+-| 2026-05-10 | **Phase 0+1+2 shipped** by engineer subagent. Phase 0: pilot regression 34/34 ✓, seed regression 32/32 ✓, no admin-router collision, GCal `update_event` Protocol confirmed. Phase 1: `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` written (6 steps + troubleshooting + reuse hint); INDEX.md updated; `verify-kb-sync.sh` clean. Phase 2: ts-morph codemod added `TherapistScheduling` lazy import + `/agendamento` route to `App.tsx` and "Agendamento" nav item to `THERAPIST_NAV[0].items` in `layouts.ts`; `npx vite build` clean in 22.58s (required installing seed/framework/frontend node_modules in worktree first). Phase 3 stays blocked on user — runbook is the unblocker. | claude-opus-4-7 (engineer subagent) |
++| 2026-05-03 | 📋 **Project scaffolded** at `therapy-scheduling-pilot` close — bundles two deferrals (manual GCal QA setup + frontend routing/nav additions) into one follow-up per user instruction. Status: PARKED, awaits reactivation when therapist-facing rollout is wanted. Pilot's three improvements (`update_event` to seed Protocol, `updated_payloads` to MockSupabaseClient, in-place reschedule refactor) applied inline before this scaffold ∧ validated by Δ tests = 34 pilot + 32 seed calendar + 7 mock-tracking, all green. | Claude Opus 4.7 |
++| 2026-05-10 | ⏳ **Reactivated by orchestrator** under user signal "resolve the 5 blocked ones, then unblock the deps on it". Engineer dispatched with audit + runbook + route-and-nav scope as one brief — all agent-doable. Downstream live-QA round stays 🔒 on user (needs Google Cloud Console OAuth client + redirect URI + scopes + env-var population — no agent can do this); engineer's runbook deliverable lets user complete it in a few minutes after engineer's branch lands. Status flipped PARKED → EXECUTING. | claude-opus-4-7 |
++| 2026-05-10 | ✅ **Phase 0+1+2 shipped** by engineer subagent. Phase 0 ✅: pilot regression 34/34 ✓, seed regression 32/32 ✓, no admin-router collision, GCal `update_event` Protocol confirmed. Phase 1 ✅: `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` written (6 steps + troubleshooting + reuse hint); INDEX.md updated; `verify-kb-sync.sh` clean. Phase 2 ✅: ts-morph codemod added `TherapistScheduling` lazy import + `/agendamento` route to `App.tsx` ∧ "Agendamento" nav item to `THERAPIST_NAV[0].items` in `layouts.ts`; `npx vite build` clean in 22.58s (required installing seed/framework/frontend node_modules in worktree first). Σ files = 4. Phase 3 stays 🔒 on user — runbook is the unblocker. | claude-opus-4-7 (engineer subagent) |
+diff --git a/projects/llm-tool-audit-rollout/PROJECT.md b/projects/llm-tool-audit-rollout/PROJECT.md
+index 0bf4957a..d1fff93a 100644
+--- a/projects/llm-tool-audit-rollout/PROJECT.md
++++ b/projects/llm-tool-audit-rollout/PROJECT.md
+@@ -40,30 +40,30 @@ Each unaudited LLM call is a silent observability hole: no row in `tool_call_aud
+ To be captured during interrogation at Phase 0 kickoff. Provisional from mailing-wiring Q7 discussion:
+ 
+ - **Best-effort contract preserved** — audit writer must never break the user-facing tool dispatch (per `_safe_jsonable` accept-with-rationale entry).
+-- **LGPD redaction is per-feature** — each `register_feature(...)` call declares its own `redact_arguments` + `redact_result` lambdas. No global default beyond "log nothing structured" if redaction is unspecified.
+-- **Cross-product scope** — at least mailing + therapy + ERP + PF need audit-writer adoption. The N count drives recurrence-rule fire.
++- **LGPD redaction is per-feature** — each `register_feature(...)` call declares its own `redact_arguments` ∧ `redact_result` lambdas. No global default beyond "log nothing structured" if redaction unspecified.
++- **Cross-product scope** — at least mailing ∧ therapy ∧ ERP ∧ PF need audit-writer adoption. N count drives recurrence-rule fire.
+ 
+ ---
+ 
+ ## 3. Design principles
+ 
+-1. **Seed-first.** Audit primitive lives in seed; per-product code is the registration + redaction + wiring only.
+-2. **No silent errors.** Each LLM call in each product either writes an audit row OR has an explicit `# accept-with-rationale: <reason>` inline pointer.
+-3. **LGPD-first.** Redaction wiring is required, not optional — the audit table holds personal-data-touching prompts.
+-4. **Per-product migration is mechanical.** The pattern is the same across all products; the rollout should follow a uniform recipe (Phase 1 ships the recipe, Phases 2+ apply it).
++1. **Seed-first.** Audit primitive lives in seed; per-product code is registration + redaction + wiring only.
++2. **No silent errors.** Each LLM call in each product either writes an audit row ∨ has an explicit `# accept-with-rationale: <reason>` inline pointer.
++3. **LGPD-first.** Redaction wiring required, ¬ optional — the audit table holds personal-data-touching prompts.
++4. **Per-product migration is mechanical.** Pattern is uniform across products; rollout follows a uniform recipe (Phase 1 ships the recipe; Phases 2+ apply it).
+ 
+ ---
+ 
+ ## 3a. Seed-first analysis (REQUIRED)
+ 
+ 1. **Is the contract identical for every product?** YES — `make_audit_writer(db, table_class)` + `AuditRecord` + per-feature redaction. Uniform shape.
+-2. **Is the data source product-specific?** PARTIAL — the audit ROWS land in per-product `<schema>.tool_call_audits` tables (data is product-specific), but the writer + record shapes are uniform.
++2. **Is the data source product-specific?** PARTIAL — audit ROWS land in per-product `<schema>.tool_call_audits` tables (data is product-specific), but writer + record shapes are uniform.
+ 3. **Is the placement product-specific?** PARTIAL — registration happens in `app/services/ai_consent_features.py` per product; writer wiring happens wherever the LLM tool dispatch lives.
+ 4. **Is the visibility / permission rule the same?** YES — RLS via service_role_bypass + org_id, uniform across products.
+-5. **Does the seam already exist in seed?** YES — fully shipped at `noctusai_lib.domain.ai.tool_audit`. Rollout = adoption, not seed-build.
++5. **Does the seam already exist in seed?** YES — fully shipped at `noctusai_lib.domain.ai.tool_audit`. Rollout ≡ adoption, ¬ seed-build.
+ 6. **Default-on or opt-in?** DEFAULT-ON — every `register_feature` call SHOULD wire a `make_audit_writer`; opt-out only via explicit accept-with-rationale.
+ 
+-**Litmus — per-product code count this design requires:** **~5 lines per product** (writer wiring in the LLM-dispatch entry + per-feature `redact_*` lambdas in `ai_consent_features.py`). Acceptable per the "product-specific data wiring around a seed-shaped container" litmus checkbox.
++**Litmus — per-product code count this design requires:** **~5 lines per product** (writer wiring in LLM-dispatch entry + per-feature `redact_*` lambdas in `ai_consent_features.py`). Acceptable per the "product-specific data wiring around a seed-shaped container" litmus checkbox.
+ 
+ ---
+ 
+@@ -72,17 +72,17 @@ To be captured during interrogation at Phase 0 kickoff. Provisional from mailing
+ **In scope:**
+ 
+ - Audit-writer adoption in mailing (7 calls), therapy (TBD count), ERP (TBD count), PF (TBD count). Phase 0 confirms counts.
+-- Per-product `tool_call_audits` table migration (additive 002+ migration per product) if the table is not already created.
++- Per-product `tool_call_audits` table migration (additive 002+ migration per product) if the table not already created.
+ - Per-feature LGPD redaction wiring via `register_feature(..., redact_arguments=..., redact_result=...)`.
+ - Tests: each product gets a smoke test confirming the writer fires + a redaction unit test confirming sensitive fields are scrubbed.
+-- Methodology: a uniform recipe captured at `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe`.
++- Methodology: uniform recipe captured at `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe`.
+ 
+ **Out of scope:**
+ 
+ - BI / dashboard surface on top of `tool_call_audits` (separate "audit observability" project).
+ - Backfill of historical LLM calls (no historical data exists; rows only appear after rollout).
+ - Cross-product `tool_call_audits` view (left for the BI surface project).
+-- The `_safe_jsonable` strict-mode flip (deferred per existing accept-with-rationale entry).
++- `_safe_jsonable` strict-mode flip (deferred per existing accept-with-rationale entry).
+ 
+ ---
+ 
+@@ -108,32 +108,32 @@ To be captured during interrogation at Phase 0 kickoff. Provisional from mailing
+ ## 6. Phase plan (revised post-Phase 0 — 2026-05-11)
+ 
+ - **Phase 0 — Discovery + cross-product gap audit.** ✅ **DONE 2026-05-11** (Engineer LLM-P0). Tabulated 7 products with LLM dispatch (mailing=7, therapy=4, erp=9, PF=3, daily-life=3, core=1, media-scheduling=1). Only media-scheduling has audit wiring (reference adopter). Zero products wire LGPD redaction. See §11 for the full table. **Improvements:** seed-lib should ship a `tool_call_audits.sql.template` (verified at `seed/lib/backend/noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template`) so per-product migrations call it via `noctusai_lib.sql` instead of inlining — pre-emptive lift since N=7 adopters guaranteed. Surfaced redaction-wiring N=0 across **all 35 `register_feature` calls** as the highest-impact gap (Q2 in §7 becomes mandatory).
+-- **Phase 1 — Recipe + reference-adoption parity** (reference = media-scheduling, already shipped). Document the per-product rollout in `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe` using media-scheduling's `audit_hook.py` + `models/tool_call_audit.py` + migration block as the canonical shape. No new product wiring this phase — just lock in the recipe.
+-- **Phase 2 — ERP rollout** (highest LLM-site count = 9 + 10 `register_feature` calls, biggest single-product win; full `ai_service.py` already in one file = surgical wrap point).
+-- **Phase 3 — Mailing rollout** (7 LLM sites + 7 `register_feature` calls; mailing-wiring M-4 was the originating gap — close it next).
+-- **Phase 4 — Therapy + PF + daily-life + core combined rollout** (smaller — 4+3+3+1 sites, 2+3+3+1 features). Same recipe; can ship in one phase as a sweep.
+-- **Phase 5 — Final keeper + close.** Run keeper + `noctus.hound.scan` to confirm no remaining LLM dispatches lack audit wiring. File a detector follow-up (`check_llm_audit_wired` + `check_register_feature_has_redaction`) so the codification-pipeline closes the drift loop. adconnect + dev-team explicitly carved out (no LLM dispatch).
++- **Phase 1 — Recipe + reference-adoption parity** (reference = media-scheduling, already shipped). Document per-product rollout in `KB § PATTERNS/llm-tool-audit.md § Per-product rollout recipe` using media-scheduling's `audit_hook.py` + `models/tool_call_audit.py` + migration block as canonical shape. No new product wiring this phase — just lock in the recipe.
++- **Phase 2 — ERP rollout** (highest LLM-site count = 9 + 10 `register_feature` calls; biggest single-product win; full `ai_service.py` already in one file ⇒ surgical wrap point).
++- **Phase 3 — Mailing rollout** (7 LLM sites + 7 `register_feature` calls; mailing-wiring M-4 was the originating gap → close it next).
++- **Phase 4 — Therapy + PF + daily-life + core combined rollout** (smaller — 4+3+3+1 sites, 2+3+3+1 features). Same recipe; ships in one phase as a sweep.
++- **Phase 5 — Final keeper + close.** Run keeper + `noctus.hound.scan` → confirm no remaining LLM dispatches lack audit wiring. File a detector follow-up (`check_llm_audit_wired` + `check_register_feature_has_redaction`) so codification-pipeline closes the drift loop. adconnect ∧ dev-team explicitly carved out (no LLM dispatch).
+ 
+ ---
+ 
+ ## 7. Open questions
+ 
+-**Q1 — Migration shape for `tool_call_audits` table.** Does each product own its own migration file, or does the seed-lib ship a SQL template (`noctusai_lib.sql.tool_call_audits_table(schema)`) that products invoke from their numbered migration?
+-- *Recommendation:* lift the migration template to seed-lib if N≥3 products need to add the table (recurrence rule). Otherwise inline per product.
++**Q1 — Migration shape for `tool_call_audits` table.** Does each product own its own migration file, or does seed-lib ship a SQL template (`noctusai_lib.sql.tool_call_audits_table(schema)`) that products invoke from their numbered migration?
++- *Recommendation:* N≥3 products need to add the table ⇒ lift migration template to seed-lib (recurrence rule). Otherwise inline per product.
+ 
+-**Q2 — Redaction defaults vs explicit-per-feature.** Should `register_feature(...)` require explicit `redact_*` args (TypeError if missing), or default to "log nothing structured" (current shape)?
+-- *Recommendation:* require explicit redaction args + add a `redact_passthrough()` helper for features that genuinely store no sensitive data — forces every feature author to think about LGPD. File as a seed-lib enhancement in Phase 1.
++**Q2 — Redaction defaults vs explicit-per-feature.** Should `register_feature(...)` require explicit `redact_*` args (TypeError if missing), ∨ default to "log nothing structured" (current shape)?
++- *Recommendation:* require explicit redaction args + add `redact_passthrough()` helper for features that genuinely store no sensitive data — forces every feature author to think about LGPD. File as seed-lib enhancement in Phase 1.
+ 
+ **Q3 — Audit row retention.** How long do `tool_call_audits` rows live? LGPD principle says "as long as the business reason justifies." For audit observability, 90 days is a common default.
+-- *Recommendation:* Phase 1 ships a per-product cron job (via `noctusai_lib.api.scheduler`) that prunes rows older than `audit_retention_days` (default 90). This is itself cross-product → seed-lib helper.
++- *Recommendation:* Phase 1 ships a per-product cron job (via `noctusai_lib.api.scheduler`) that prunes rows older than `audit_retention_days` (default 90). Itself cross-product → seed-lib helper.
+ 
+ ---
+ 
+ ## 8. Risks / tradeoffs
+ 
+-- **Writer back-pressure.** If the audit DB is slow, every LLM call gets slower. Mitigation: writer is best-effort + non-blocking (already shipped — `_safe_jsonable` + async write).
+-- **LGPD redaction misses.** A feature author forgets to redact a sensitive field → personal data leaks into the audit table. Mitigation: Q2 (require explicit redaction args) + per-product redaction unit tests.
+-- **Rollout duration.** 4 products × ~5 lines each + tests + redaction = ~2-3 sessions. Acceptable.
++- **Writer back-pressure.** Audit DB slow ⇒ every LLM call slower. Mitigation: writer is best-effort + non-blocking (already shipped — `_safe_jsonable` + async write).
++- **LGPD redaction misses.** A feature author forgets to redact a sensitive field ⇒ personal data leaks into the audit table. Mitigation: Q2 (require explicit redaction args) + per-product redaction unit tests.
++- **Rollout duration.** 4 products × ~5 lines each + tests + redaction ≈ 2-3 sessions. Acceptable.
+ 
+ ---
+ 
+@@ -160,9 +160,9 @@ python mcp/noctusai/cli.py --check-llm-audit-wired --worktree-path "$PWD"
+ 
+ ## 11. Change log
+ 
+-- **2026-05-11 — Filed (Engineer MAI-P2)**. Surfaced as Q7 in `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 (M-4 gap row); mailing-wiring scope excluded the rollout to keep the project focused. This project is the cross-product follow-up. Provisional design captured; Phase 0 discovery pending.
++- **2026-05-11 — 📋 Filed (Engineer MAI-P2)**. Surfaced as Q7 in `products/mailing/projects/mailing-wiring/PROJECT.md` Phase 0 (M-4 gap row); mailing-wiring scope excluded the rollout to keep the project focused. This project is the cross-product follow-up. Provisional design captured; Phase 0 discovery pending.
+ 
+-- **2026-05-11 — Phase 0 complete (Engineer LLM-P0 / LLM-AUDIT-DISCOVERY)**. Read-only cross-product gap audit shipped. Findings tabulated below.
++- **2026-05-11 — Phase 0 ✅ complete (Engineer LLM-P0 / LLM-AUDIT-DISCOVERY)**. Read-only cross-product gap audit shipped. Σ products audited = 9. Findings tabulated below.
+ 
+ ### Phase 0 — Per-product gap audit (2026-05-11)
+ 
+@@ -197,14 +197,14 @@ LLM-dispatch site count includes direct `noctusai_lib.integrations.llm.chat_comp
+ 
+ **Three structural findings beyond the per-product gap table:**
+ 
+-1. **ERP has 3 direct-OpenAI HTTP calls (`httpx.post → api.openai.com/v1/chat/completions`)** bypassing the seed `chat_completion` wrapper — this dodges seed cache + budget + (future) audit. Fix at Phase 2: refactor to `chat_completion` before wiring the audit writer (otherwise audit coverage is structurally incomplete).
+-2. **Zero products wire `redact_arguments=` / `redact_result=` in any `register_feature` call** (35 calls total across 6 products checked). The seed primitive `_safe_jsonable` is a defensive fallback, not a redaction strategy — current state means **PII flows raw into prompts and (when the audit writer lands) into `tool_call_audits.arguments`/`result`**. This is the highest-impact LGPD gap surfaced. Phase 1 recipe MUST require explicit redaction args per `register_feature` call (Q2 in §7 becomes mandatory, not optional).
+-3. **`tool_call_audits` migration recurrence = 7** (every product that needs the table). The seed template at `seed/lib/backend/noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template` exists; per-product migrations should call it via a `noctusai_lib.sql` helper (consistent with `prelude(schema)` + `updated_at_trigger(table)` pattern). Q1 in §7 resolves to **yes, lift to seed-lib helper** — N=7 ≥ recurrence threshold.
++1. **ERP has 3 direct-OpenAI HTTP calls (`httpx.post → api.openai.com/v1/chat/completions`)** bypassing seed `chat_completion` wrapper — dodges seed cache + budget + (future) audit. Fix at Phase 2: refactor to `chat_completion` before wiring audit writer (else audit coverage structurally incomplete).
++2. **Zero products wire `redact_arguments=` / `redact_result=` in any `register_feature` call** (35 calls total across 6 products checked). Seed primitive `_safe_jsonable` is a defensive fallback, ¬ a redaction strategy — current state means **PII flows raw into prompts ∧ (when audit writer lands) into `tool_call_audits.arguments`/`result`**. Highest-impact LGPD gap surfaced. Phase 1 recipe MUST require explicit redaction args per `register_feature` call (Q2 in §7 becomes mandatory, ¬ optional).
++3. **`tool_call_audits` migration recurrence = 7** (every product that needs the table). Seed template at `seed/lib/backend/noctusai_lib/domain/ai/migrations/tool_call_audits.sql.template` exists; per-product migrations should call it via `noctusai_lib.sql` helper (consistent with `prelude(schema)` + `updated_at_trigger(table)` pattern). Q1 in §7 resolves to **yes, lift to seed-lib helper** — N=7 ≥ recurrence threshold.
+ 
+ **Recommended Phase ordering (post-Phase 0):**
+ 
+ 1. Phase 1 — recipe + reference-adoption parity → **media-scheduling** (already shipped; just codify).
+ 2. Phase 2 — **erp-imobiliario** (highest LLM-site count = 9 + 3 direct-HTTP refactor + 10 register_feature calls; biggest single-product win).
+-3. Phase 3 — **mailing** (7 sites + 7 features; closes the originating M-4 gap).
+-4. Phase 4 — **therapy + personal-finance + daily-life + core combined** (sweep; 4+3+3+1 sites, 2+3+3+1 features).
++3. Phase 3 — **mailing** (7 sites + 7 features; closes originating M-4 gap).
++4. Phase 4 — **therapy ∨ personal-finance ∨ daily-life ∨ core combined** (sweep; 4+3+3+1 sites, 2+3+3+1 features).
+ 5. Phase 5 — keeper detectors (`check_llm_audit_wired` + `check_register_feature_has_redaction`) + close.
+-- 
+2.51.2
+

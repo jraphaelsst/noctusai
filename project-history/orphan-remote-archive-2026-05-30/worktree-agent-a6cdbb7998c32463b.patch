@@ -1,0 +1,735 @@
+From 4b3811cd888624faa5b06ed31f17cf35157ecea2 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 22:21:58 -0300
+Subject: [PATCH 1/2] test(erp): seed tenancy/filter columns in 29 fixtures
+ exposed by MockSupabaseClient predicate filtering
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Surfaced by MOCK-SELECT-PREDICATE-FIX (45be944): 29 ERP service tests across 13
+files seeded rows without the columns production SELECTs filter on. Pre-fix the
+.eq/.neq/.lt/.gte predicates were tracked-but-not-evaluated by the mock; once
+SELECT obeys them, the missing columns silently strip rows and tests fail with
+empty results, 404s, or off-by-N counts.
+
+Fix shape, per-file:
+- agenda_service: corretor_id + status (eq + neq)
+- banco_service: extrato_id + conciliado (TestAutoConciliar pair)
+- certidoes_service: tipo + org_id (TJSP cooldown helpers); tipo + status
+  (schedule_tjsp_for_org); id (delayed-tjsp re-fetch); consulta_id (resultados)
+- clientes_service: id (single-row toggle_archive)
+- contratos_service: status + data_vencimento (mark_overdue)
+- email_service: cliente_id (get_historico_cliente)
+- impostos_service: redistribute 2+2 rows across pendente/parcial
+- manutencao_service: status (in_) + data_previsao (mark_overdue)
+- marketing_service: campanha_id (get_campaign_stats trio) + created_at:NOW
+- metas_service: usuario_id (existing-metas dedup)
+- recorrencia_service: status=ativo (contratos_locacao filter)
+- relatorios_service: arquivado=False (conversao_funil filter)
+- seguros_service: status + data_vencimento (check_vencidos)
+
+Key lesson: PF's single-column tenancy fix doesn't generalize. ERP services use
+varied filter shapes (corretor_id, extrato_id+conciliado, status+data_vencimento,
+tipo+status+org_id, etc.) — scan ALL chain predicates per route before fixing.
+
+No production code touched. All 29 in-scope tests pass.
+
+Out of scope: 24 xml_feeds test failures + 940 collection errors all root-cause
+to a single missing `defusedxml` dep (in requirements.txt but missing from the
+runtime python3.11 env). Pre-existing infra gap, filed for separate fix.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../tests/services/test_agenda_service.py     | 19 +++++--
+ .../tests/services/test_banco_service.py      | 16 ++++--
+ .../tests/services/test_certidoes_service.py  | 50 +++++++++++++++----
+ .../tests/services/test_clientes_service.py   |  6 ++-
+ .../tests/services/test_contratos_service.py  | 10 +++-
+ .../tests/services/test_email_service.py      |  9 +++-
+ .../tests/services/test_impostos_service.py   | 17 +++++--
+ .../tests/services/test_manutencao_service.py | 11 +++-
+ .../tests/services/test_marketing_service.py  | 48 +++++++++++++-----
+ .../tests/services/test_metas_service.py      | 11 +++-
+ .../services/test_recorrencia_service.py      | 13 +++--
+ .../tests/services/test_relatorios_service.py | 30 ++++++-----
+ .../tests/services/test_seguros_service.py    | 10 +++-
+ 13 files changed, 195 insertions(+), 55 deletions(-)
+
+diff --git a/products/erp-imobiliario/backend/tests/services/test_agenda_service.py b/products/erp-imobiliario/backend/tests/services/test_agenda_service.py
+index ac5e402b..5690f465 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_agenda_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_agenda_service.py
+@@ -26,7 +26,18 @@ class TestCheckConflict:
+         assert result is None
+ 
+     def test_conflict_returns_first_event(self):
+-        conflicting = {"id": "evt-1", "titulo": "Visita", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"}
++        # `corretor_id` + `status` required on seed: production filters by
++        # `.eq("corretor_id", ...).neq("status", "cancelado")` plus time-range
++        # bounds. Pre-MOCK-SELECT-PREDICATE-FIX the predicates were tracked
++        # but unevaluated; once SELECT obeys them, missing columns drop the row.
++        conflicting = {
++            "id": "evt-1",
++            "corretor_id": "c-1",
++            "status": "agendado",
++            "titulo": "Visita",
++            "data_inicio": "2026-03-10T09:30:00",
++            "data_fim": "2026-03-10T10:30:00",
++        }
+         db = MockSupabaseClient(data=[conflicting])
+ 
+         from app.services.agenda_service import check_conflict
+@@ -56,9 +67,11 @@ class TestCheckConflict:
+         assert result is None
+ 
+     def test_multiple_conflicts_returns_first(self):
++        # `corretor_id` + `status` required on seed — same MOCK-SELECT shape as
++        # test_conflict_returns_first_event above.
+         conflicts = [
+-            {"id": "evt-1", "titulo": "Reuniao 1", "data_inicio": "2026-03-10T09:00:00", "data_fim": "2026-03-10T10:00:00"},
+-            {"id": "evt-2", "titulo": "Reuniao 2", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"},
++            {"id": "evt-1", "corretor_id": "c-1", "status": "agendado", "titulo": "Reuniao 1", "data_inicio": "2026-03-10T09:00:00", "data_fim": "2026-03-10T10:00:00"},
++            {"id": "evt-2", "corretor_id": "c-1", "status": "agendado", "titulo": "Reuniao 2", "data_inicio": "2026-03-10T09:30:00", "data_fim": "2026-03-10T10:30:00"},
+         ]
+         db = MockSupabaseClient(data=conflicts)
+ 
+diff --git a/products/erp-imobiliario/backend/tests/services/test_banco_service.py b/products/erp-imobiliario/backend/tests/services/test_banco_service.py
+index 5b5aa0d6..6426de2c 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_banco_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_banco_service.py
+@@ -225,10 +225,14 @@ class TestAutoConciliar:
+         """When movimentacoes and lancamentos match on tipo+valor+data, they should be reconciled."""
+         db = MockSupabaseClient()
+ 
++        # `extrato_id` + `conciliado` required on seed: production filters by
++        # `.eq("extrato_id", extrato_id).eq("conciliado", False)`. Pre-MOCK-
++        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
++        # SELECT obeys them, missing columns silently strip rows.
+         movs = [
+-            {"id": "m1", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+-            {"id": "m2", "tipo": "debito", "valor": 500.0, "data": "2026-01-20"},
+-            {"id": "m3", "tipo": "credito", "valor": 2000.0, "data": "2026-01-25"},  # no match
++            {"id": "m1", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
++            {"id": "m2", "extrato_id": "ext-1", "conciliado": False, "tipo": "debito", "valor": 500.0, "data": "2026-01-20"},
++            {"id": "m3", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 2000.0, "data": "2026-01-25"},  # no match
+         ]
+         lancs = [
+             {"id": "l1", "tipo": "receita", "valor": 1000.0, "data_vencimento": "2026-01-15", "status": "pendente"},
+@@ -250,9 +254,11 @@ class TestAutoConciliar:
+         """Two movimentacoes with the same signature should not both match the same lancamento."""
+         db = MockSupabaseClient()
+ 
++        # `extrato_id` + `conciliado` required on seed — same MOCK-SELECT shape
++        # as test_matching_logic above.
+         movs = [
+-            {"id": "m1", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+-            {"id": "m2", "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
++            {"id": "m1", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
++            {"id": "m2", "extrato_id": "ext-1", "conciliado": False, "tipo": "credito", "valor": 1000.0, "data": "2026-01-15"},
+         ]
+         lancs = [
+             {"id": "l1", "tipo": "receita", "valor": 1000.0, "data_vencimento": "2026-01-15", "status": "pendente"},
+diff --git a/products/erp-imobiliario/backend/tests/services/test_certidoes_service.py b/products/erp-imobiliario/backend/tests/services/test_certidoes_service.py
+index c89a1013..4dc4b7de 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_certidoes_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_certidoes_service.py
+@@ -782,9 +782,13 @@ class TestGetTjspLastRequestAt:
+ 
+     def test_with_previous_request(self):
+         """Has a previous TJSP request with api_requested_at → returns datetime."""
++        # `tipo` + `org_id` required on seed: production filters by
++        # `.eq("tipo", TJSP_TIPO).eq("org_id", org_id)`. Pre-MOCK-SELECT-
++        # PREDICATE-FIX the predicates were tracked-but-unevaluated; once
++        # SELECT obeys them, rows missing these columns are stripped.
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"api_requested_at": "2026-03-13T10:00:00+00:00"},
++            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": "2026-03-13T10:00:00+00:00"},
+         ])
+         result = _get_tjsp_last_request_at("org-001", mock_db)
+         assert result is not None
+@@ -801,9 +805,11 @@ class TestGetTjspLastRequestAt:
+     def test_survives_status_reset_on_reprocessing(self):
+         """api_requested_at is preserved even when status is reset to na_fila,
+         so the cooldown is still enforced after reprocessing."""
++        # `tipo` + `org_id` required on seed — same MOCK-SELECT shape as
++        # test_with_previous_request above.
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"api_requested_at": "2026-03-13T10:00:00+00:00", "status": "na_fila"},
++            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": "2026-03-13T10:00:00+00:00", "status": "na_fila"},
+         ])
+         result = _get_tjsp_last_request_at("org-001", mock_db)
+         assert result is not None
+@@ -825,10 +831,13 @@ class TestGetTjspRemainingCooldown:
+     def test_cooldown_active(self):
+         """Recent request → positive seconds remaining."""
+         from datetime import datetime, timezone, timedelta
++        # `tipo` + `org_id` required on seed — same MOCK-SELECT shape as
++        # TestGetTjspLastRequestAt above (this test calls the same helper
++        # internally through `_get_tjsp_remaining_cooldown`).
+         mock_db = MockSupabaseClient()
+         five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"api_requested_at": five_min_ago},
++            {"tipo": TJSP_TIPO, "org_id": "org-001", "api_requested_at": five_min_ago},
+         ])
+         result = _get_tjsp_remaining_cooldown("org-001", mock_db)
+         # Should be ~40 min remaining (45 - 5)
+@@ -870,9 +879,13 @@ class TestScheduleTjspForOrg:
+     def test_creates_task_for_queued_item(self):
+         """Queued item → schedules coroutine via the seed helper."""
+         import app.services.certidoes_service as svc
++        # `tipo` + `status` required on seed: production filters by
++        # `.eq("tipo", TJSP_TIPO).eq("status", "na_fila").eq("org_id", org_id)`.
++        # Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated;
++        # once SELECT obeys them, rows missing `tipo`/`status` are stripped.
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"id": "res-1", "consulta_id": "c-1", "org_id": "org-001"},
++            {"id": "res-1", "tipo": TJSP_TIPO, "status": "na_fila", "consulta_id": "c-1", "org_id": "org-001"},
+         ])
+ 
+         svc._tjsp_scheduled_tasks.pop("org-001", None)
+@@ -919,9 +932,14 @@ class TestDelayedTjspProcess:
+     async def test_processes_item_when_still_queued(self):
+         """Item is na_fila → processes it."""
+         import app.services.certidoes_service as svc
++        # `id` required on seed: `_delayed_tjsp_process` re-fetches via
++        # `.eq("id", resultado_id)`. Pre-MOCK-SELECT-PREDICATE-FIX the
++        # predicate was tracked-but-unevaluated; once SELECT obeys it, the
++        # missing `id` strips the row and the helper skips with "no longer
++        # na_fila", never calling _process_single_tjsp_item.
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"status": "na_fila"},
++            {"id": "res-1", "status": "na_fila"},
+         ])
+ 
+         resultado = {"id": "res-1", "consulta_id": "c-1", "org_id": "org-001"}
+@@ -974,11 +992,16 @@ class TestDelayedTjspProcess:
+ class TestScheduleAllPendingTjsp:
+     def test_schedules_per_org(self):
+         """Scans for queued items and schedules one task per org."""
++        # `tipo` + `status` required on each seed row: production filters by
++        # `.eq("tipo", TJSP_TIPO).eq("status", "na_fila")` before grouping by
++        # org. Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-
++        # unevaluated; once SELECT obeys them, rows missing these columns
++        # are stripped and zero orgs land in the set.
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_resultados", [
+-            {"org_id": "org-001"},
+-            {"org_id": "org-001"},
+-            {"org_id": "org-002"},
++            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-001"},
++            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-001"},
++            {"tipo": TJSP_TIPO, "status": "na_fila", "org_id": "org-002"},
+         ])
+ 
+         with patch("app.services.certidoes_service.schedule_tjsp_for_org") as mock_schedule:
+@@ -1009,8 +1032,13 @@ class TestProcessarConsultaTjspQueue:
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_consultas", CONSULTA_CPF)
+ 
++        # `consulta_id` required on each seed row: production filters by
++        # `.eq("consulta_id", consulta_id)`. Pre-MOCK-SELECT-PREDICATE-FIX the
++        # predicate was tracked-but-unevaluated; once SELECT obeys it, rows
++        # missing `consulta_id` are stripped and zero resultados feed the
++        # parallel-process loop.
+         resultados = [
+-            {"id": f"res-{i}", "tipo": c["tipo"], "status": "pendente"}
++            {"id": f"res-{i}", "consulta_id": "consulta-001", "tipo": c["tipo"], "status": "pendente"}
+             for i, c in enumerate(CERTIDOES_CONFIG)
+         ]
+         mock_db.set_table_data("certidao_resultados", resultados)
+@@ -1039,8 +1067,10 @@ class TestProcessarConsultaTjspQueue:
+         mock_db = MockSupabaseClient()
+         mock_db.set_table_data("certidao_consultas", CONSULTA_CPF)
+ 
++        # `consulta_id` required on each seed row — same MOCK-SELECT shape as
++        # test_tjsp_queued_when_cooldown_active above.
+         resultados = [
+-            {"id": f"res-{i}", "tipo": c["tipo"], "status": "pendente"}
++            {"id": f"res-{i}", "consulta_id": "consulta-001", "tipo": c["tipo"], "status": "pendente"}
+             for i, c in enumerate(CERTIDOES_CONFIG)
+         ]
+         mock_db.set_table_data("certidao_resultados", resultados)
+diff --git a/products/erp-imobiliario/backend/tests/services/test_clientes_service.py b/products/erp-imobiliario/backend/tests/services/test_clientes_service.py
+index c97d4dd6..5ce551b1 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_clientes_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_clientes_service.py
+@@ -261,7 +261,11 @@ class TestToggleArchive:
+ 
+         db = MockSupabaseClient()
+         # First call (select): returns current state
+-        db.set_table_data("clientes", {"arquivado": False, "nome": "João"})
++        # `id` required on seed: production filters by `.eq("id", cliente_id)`
++        # then `.single()`. Pre-MOCK-SELECT-PREDICATE-FIX predicates were
++        # tracked-but-unevaluated; once SELECT obeys them, missing `id` makes
++        # the SELECT 404 and `toggle_archive` returns (None, False).
++        db.set_table_data("clientes", {"id": "c1", "arquivado": False, "nome": "João"})
+ 
+         svc = ClientesService(db, "user-1")
+ 
+diff --git a/products/erp-imobiliario/backend/tests/services/test_contratos_service.py b/products/erp-imobiliario/backend/tests/services/test_contratos_service.py
+index 45466586..b6a43650 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_contratos_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_contratos_service.py
+@@ -331,7 +331,15 @@ class TestMarkOverdue:
+ 
+     @pytest.mark.asyncio
+     async def test_overdue_records_are_updated(self):
+-        db = MockSupabaseClient(data=[{"id": "p1"}, {"id": "p2"}])
++        # `status` + `data_vencimento` required on seed: production filters by
++        # `.eq("status", "pendente").lt("data_vencimento", today)`. Pre-MOCK-
++        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
++        # SELECT obeys them, missing columns silently strip rows.
++        past = "2000-01-01"
++        db = MockSupabaseClient(data=[
++            {"id": "p1", "status": "pendente", "data_vencimento": past},
++            {"id": "p2", "status": "pendente", "data_vencimento": past},
++        ])
+ 
+         from app.services.contratos_service import ContratosService
+         svc = ContratosService(db, "u1")
+diff --git a/products/erp-imobiliario/backend/tests/services/test_email_service.py b/products/erp-imobiliario/backend/tests/services/test_email_service.py
+index a50b49fa..f03ab558 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_email_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_email_service.py
+@@ -163,7 +163,14 @@ class TestEnviar:
+ class TestGetHistoricoCliente:
+ 
+     def test_returns_list(self):
+-        db = MockSupabaseClient(data=[{"id": "e1"}, {"id": "e2"}])
++        # `cliente_id` required on seed: production filters by
++        # `.eq("cliente_id", cliente_id)`. Pre-MOCK-SELECT-PREDICATE-FIX
++        # predicates were tracked-but-unevaluated; once SELECT obeys them,
++        # missing `cliente_id` silently strips rows.
++        db = MockSupabaseClient(data=[
++            {"id": "e1", "cliente_id": "client-1"},
++            {"id": "e2", "cliente_id": "client-1"},
++        ])
+ 
+         from app.services.email_service import EmailService
+         svc = EmailService(db, "user-1")
+diff --git a/products/erp-imobiliario/backend/tests/services/test_impostos_service.py b/products/erp-imobiliario/backend/tests/services/test_impostos_service.py
+index 51584a81..a935f781 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_impostos_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_impostos_service.py
+@@ -187,13 +187,24 @@ class TestCheckVencidos:
+ 
+     @pytest.mark.asyncio
+     async def test_overdue_records_counted(self):
+-        db = MockSupabaseClient(data=[{"id": "i1"}, {"id": "i2"}])
++        # Production runs TWO SELECTs (status=pendente + status=parcial)
++        # each with `.lt("data_vencimento", today)`. Pre-MOCK-SELECT-PREDICATE-
++        # FIX both queries returned the same 2 rows (predicates tracked-but-
++        # unevaluated), totalling 4. Post-fix each predicate must literally
++        # match — seed 2 pendente + 2 parcial rows (4 distinct), each with a
++        # past `data_vencimento` so `.lt("data_vencimento", today)` passes.
++        past = "2000-01-01"
++        db = MockSupabaseClient(data=[
++            {"id": "i1", "status": "pendente", "data_vencimento": past},
++            {"id": "i2", "status": "pendente", "data_vencimento": past},
++            {"id": "i3", "status": "parcial", "data_vencimento": past},
++            {"id": "i4", "status": "parcial", "data_vencimento": past},
++        ])
+ 
+         from app.services.impostos_service import ImpostosService
+         svc = ImpostosService(db, "u1")
+ 
+         count = await svc.check_vencidos()
+ 
+-        # The mock returns 2 records for both pendente and parcial queries,
+-        # so 4 total (2+2) get updated
++        # 2 pendente + 2 parcial overdue rows, all past data_vencimento.
+         assert count == 4
+diff --git a/products/erp-imobiliario/backend/tests/services/test_manutencao_service.py b/products/erp-imobiliario/backend/tests/services/test_manutencao_service.py
+index 23c9106d..b30f7fa4 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_manutencao_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_manutencao_service.py
+@@ -199,7 +199,16 @@ class TestMarkOverdue:
+ 
+     @pytest.mark.asyncio
+     async def test_overdue_records_are_escalated(self):
+-        db = MockSupabaseClient(data=[{"id": "o1"}, {"id": "o2"}, {"id": "o3"}])
++        # `status` + `data_previsao` required on seed: production filters by
++        # `.in_("status", ["aberto", "em_andamento"]).lt("data_previsao", today)`.
++        # Pre-MOCK-SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated;
++        # once SELECT obeys them, missing columns silently strip rows.
++        past = "2000-01-01"
++        db = MockSupabaseClient(data=[
++            {"id": "o1", "status": "aberto", "data_previsao": past},
++            {"id": "o2", "status": "em_andamento", "data_previsao": past},
++            {"id": "o3", "status": "aberto", "data_previsao": past},
++        ])
+ 
+         from app.services.manutencao_service import ManutencaoService
+         svc = ManutencaoService(db, "u1")
+diff --git a/products/erp-imobiliario/backend/tests/services/test_marketing_service.py b/products/erp-imobiliario/backend/tests/services/test_marketing_service.py
+index c255cb3f..17f7985d 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_marketing_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_marketing_service.py
+@@ -1,10 +1,18 @@
+ """
+ Unit tests for marketing_service — campaign stats aggregation and alert matching.
+ """
++from datetime import datetime, timezone
++
+ import pytest
+ 
+ from tests.conftest import MockSupabaseClient
+ 
++# `process_alerts` filters ativos by `.gte("created_at", cutoff)` where cutoff
++# is 7 days ago. Use "now" so seed rows always satisfy the predicate regardless
++# of when the test runs (pre-MOCK-SELECT-PREDICATE-FIX the predicate was
++# tracked-but-unevaluated, so the column was absent).
++_NOW_ISO = datetime.now(timezone.utc).isoformat()
++
+ 
+ # ---------------------------------------------------------------------------
+ # get_campaign_stats
+@@ -26,13 +34,17 @@ class TestGetCampaignStats:
+         assert stats["erro"] == 0
+ 
+     def test_all_statuses_counted(self):
++        # `campanha_id` required on each seed row: production filters by
++        # `.eq("campanha_id", campanha_id)`. Pre-MOCK-SELECT-PREDICATE-FIX
++        # predicates were tracked-but-unevaluated; once SELECT obeys them,
++        # missing `campanha_id` silently strips rows.
+         rows = [
+-            {"status": "pendente"},
+-            {"status": "enviado"},
+-            {"status": "enviado"},
+-            {"status": "aberto"},
+-            {"status": "clicado"},
+-            {"status": "erro"},
++            {"campanha_id": "camp-1", "status": "pendente"},
++            {"campanha_id": "camp-1", "status": "enviado"},
++            {"campanha_id": "camp-1", "status": "enviado"},
++            {"campanha_id": "camp-1", "status": "aberto"},
++            {"campanha_id": "camp-1", "status": "clicado"},
++            {"campanha_id": "camp-1", "status": "erro"},
+         ]
+         db = MockSupabaseClient(data=rows)
+ 
+@@ -47,9 +59,11 @@ class TestGetCampaignStats:
+         assert stats["erro"] == 1
+ 
+     def test_unknown_status_ignored(self):
++        # `campanha_id` required on seed — same MOCK-SELECT shape as
++        # test_all_statuses_counted above.
+         rows = [
+-            {"status": "pendente"},
+-            {"status": "desconhecido"},
++            {"campanha_id": "camp-1", "status": "pendente"},
++            {"campanha_id": "camp-1", "status": "desconhecido"},
+         ]
+         db = MockSupabaseClient(data=rows)
+ 
+@@ -62,7 +76,10 @@ class TestGetCampaignStats:
+         assert stats["enviado"] == 0
+ 
+     def test_missing_status_defaults_to_pendente(self):
+-        rows = [{"foo": "bar"}]
++        # `campanha_id` required on seed — same MOCK-SELECT shape as
++        # test_all_statuses_counted above. The `foo: bar` quirk is preserved
++        # to exercise the "missing status defaults to pendente" branch.
++        rows = [{"campanha_id": "camp-1", "foo": "bar"}]
+         db = MockSupabaseClient(data=rows)
+ 
+         from app.services.marketing_service import get_campaign_stats
+@@ -101,11 +118,16 @@ class TestProcessAlerts:
+         assert result == []
+ 
+     def test_keyword_match(self):
++        # `created_at` required on each ativo seed row: production filters by
++        # `.gte("created_at", cutoff)` (cutoff = now − 7d). Pre-MOCK-SELECT-
++        # PREDICATE-FIX the gte predicate was tracked-but-unevaluated; once
++        # SELECT obeys it, rows without `created_at` are stripped (gte against
++        # None returns False).
+         db = MockSupabaseClient()
+         db.set_table_data("ativos", [
+             {"id": "imv-1", "tipo_imovel": "apartamento", "cidade": "Curitiba",
+              "bairro": "Batel", "valor": 600000, "titulo_anuncio": "Apt Batel",
+-             "natureza": "imovel", "status": "ativo"},
++             "natureza": "imovel", "status": "ativo", "created_at": _NOW_ISO},
+         ])
+         db.set_table_data("clientes", [
+             {"id": "cli-1", "nome": "Joao", "email": "joao@test.com",
+@@ -155,14 +177,16 @@ class TestProcessAlerts:
+         assert result == []
+ 
+     def test_multiple_matches(self):
++        # `created_at` required on each ativo seed row — same MOCK-SELECT shape
++        # as test_keyword_match above.
+         db = MockSupabaseClient()
+         db.set_table_data("ativos", [
+             {"id": "imv-1", "tipo_imovel": "casa", "cidade": "Curitiba",
+              "bairro": "Centro", "valor": 300000, "titulo_anuncio": "Casa Centro",
+-             "natureza": "imovel", "status": "ativo"},
++             "natureza": "imovel", "status": "ativo", "created_at": _NOW_ISO},
+             {"id": "imv-2", "tipo_imovel": "apartamento", "cidade": "Curitiba",
+              "bairro": "Batel", "valor": 600000, "titulo_anuncio": "Apt Batel",
+-             "natureza": "imovel", "status": "ativo"},
++             "natureza": "imovel", "status": "ativo", "created_at": _NOW_ISO},
+         ])
+         db.set_table_data("clientes", [
+             {"id": "cli-1", "nome": "Pedro", "email": "p@test.com",
+diff --git a/products/erp-imobiliario/backend/tests/services/test_metas_service.py b/products/erp-imobiliario/backend/tests/services/test_metas_service.py
+index 8176ca8a..a24f6416 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_metas_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_metas_service.py
+@@ -197,8 +197,13 @@ class TestCriarMetasHoje:
+             "meta_pretendida": 100,
+             "ativo": True,
+         }]
+-        # One meta already exists for "diaria"
++        # One meta already exists for "diaria". `usuario_id` required on seed:
++        # production filters existing metas by `.eq("usuario_id", user_id)`.
++        # Pre-MOCK-SELECT-PREDICATE-FIX the predicate was tracked-but-unevaluated;
++        # once SELECT obeys it, rows without `usuario_id` are stripped → all 4
++        # metas get inserted (instead of skipping the existing diaria).
+         existing = [{
++            "usuario_id": "user-1",
+             "tipo": "diaria",
+             "categoria": "ligacoes",
+             "data_prazo": _period_end_date("diaria", ref).isoformat(),
+@@ -329,8 +334,10 @@ class TestCriarMetasHoje:
+             "meta_pretendida": 100,
+             "ativo": True,
+         }]
++        # `usuario_id` required on each seed row — same MOCK-SELECT shape as
++        # test_skips_existing_metas above.
+         existing = [
+-            {"tipo": tipo, "categoria": "ligacoes", "data_prazo": _period_end_date(tipo, ref).isoformat()}
++            {"usuario_id": "user-1", "tipo": tipo, "categoria": "ligacoes", "data_prazo": _period_end_date(tipo, ref).isoformat()}
+             for tipo in ["diaria", "semanal", "mensal", "anual"]
+         ]
+         db = self._make_db(configs=configs, existing_metas=existing)
+diff --git a/products/erp-imobiliario/backend/tests/services/test_recorrencia_service.py b/products/erp-imobiliario/backend/tests/services/test_recorrencia_service.py
+index d56c8dd4..609827b2 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_recorrencia_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_recorrencia_service.py
+@@ -90,9 +90,14 @@ class TestGerarAlugueisMes:
+         """Contracts that already have a lancamento for the reference month are skipped."""
+         db = MockSupabaseClient()
+ 
++        # `status` required on seed: production filters contratos_locacao by
++        # `.eq("status", "ativo")`. Pre-MOCK-SELECT-PREDICATE-FIX the predicate
++        # was tracked-but-unevaluated; once SELECT obeys it, rows without
++        # `status` are stripped and total_contratos collapses to 0.
+         contratos = [
+             {
+                 "id": "c-aaa-1111",
++                "status": "ativo",
+                 "valor_aluguel": 2500.0,
+                 "dia_vencimento": 10,
+             },
+@@ -143,10 +148,12 @@ class TestGerarAlugueisMes:
+         """Mix of contracts: some already generated, some new."""
+         db = MockSupabaseClient()
+ 
++        # `status` required on each seed row — same MOCK-SELECT shape as
++        # test_skips_already_generated above.
+         contratos = [
+-            {"id": "c-111", "valor_aluguel": 1000.0, "dia_vencimento": 5},
+-            {"id": "c-222", "valor_aluguel": 2000.0, "dia_vencimento": 10},
+-            {"id": "c-333", "valor_aluguel": 3000.0, "dia_vencimento": 15},
++            {"id": "c-111", "status": "ativo", "valor_aluguel": 1000.0, "dia_vencimento": 5},
++            {"id": "c-222", "status": "ativo", "valor_aluguel": 2000.0, "dia_vencimento": 10},
++            {"id": "c-333", "status": "ativo", "valor_aluguel": 3000.0, "dia_vencimento": 15},
+         ]
+         db.set_table_data("contratos_locacao", contratos)
+ 
+diff --git a/products/erp-imobiliario/backend/tests/services/test_relatorios_service.py b/products/erp-imobiliario/backend/tests/services/test_relatorios_service.py
+index 44a600fd..8f11e300 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_relatorios_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_relatorios_service.py
+@@ -138,16 +138,20 @@ class TestConversaoFunil:
+     def test_all_stages_present(self):
+         db = MockSupabaseClient()
+ 
++        # `arquivado` required on each seed row: production filters by
++        # `.eq("arquivado", False)`. Pre-MOCK-SELECT-PREDICATE-FIX the
++        # predicate was tracked-but-unevaluated; once SELECT obeys it, rows
++        # without `arquivado` are stripped and the funnel collapses to empty.
+         clientes = [
+-            {"id": "c-1", "etapa_atual": "qualificacao"},
+-            {"id": "c-2", "etapa_atual": "qualificacao"},
+-            {"id": "c-3", "etapa_atual": "qualificacao"},
+-            {"id": "c-4", "etapa_atual": "qualificacao"},
+-            {"id": "c-5", "etapa_atual": "visitas"},
+-            {"id": "c-6", "etapa_atual": "visitas"},
+-            {"id": "c-7", "etapa_atual": "proposta"},
+-            {"id": "c-8", "etapa_atual": "negociacao"},
+-            {"id": "c-9", "etapa_atual": "fechado"},
++            {"id": "c-1", "arquivado": False, "etapa_atual": "qualificacao"},
++            {"id": "c-2", "arquivado": False, "etapa_atual": "qualificacao"},
++            {"id": "c-3", "arquivado": False, "etapa_atual": "qualificacao"},
++            {"id": "c-4", "arquivado": False, "etapa_atual": "qualificacao"},
++            {"id": "c-5", "arquivado": False, "etapa_atual": "visitas"},
++            {"id": "c-6", "arquivado": False, "etapa_atual": "visitas"},
++            {"id": "c-7", "arquivado": False, "etapa_atual": "proposta"},
++            {"id": "c-8", "arquivado": False, "etapa_atual": "negociacao"},
++            {"id": "c-9", "arquivado": False, "etapa_atual": "fechado"},
+         ]
+         db.set_table_data("clientes", clientes)
+ 
+@@ -224,10 +228,12 @@ class TestConversaoFunil:
+         """All clients in one stage, none elsewhere."""
+         db = MockSupabaseClient()
+ 
++        # `arquivado` required on each seed row — same MOCK-SELECT shape as
++        # test_all_stages_present above.
+         db.set_table_data("clientes", [
+-            {"id": "c-1", "etapa_atual": "visitas"},
+-            {"id": "c-2", "etapa_atual": "visitas"},
+-            {"id": "c-3", "etapa_atual": "visitas"},
++            {"id": "c-1", "arquivado": False, "etapa_atual": "visitas"},
++            {"id": "c-2", "arquivado": False, "etapa_atual": "visitas"},
++            {"id": "c-3", "arquivado": False, "etapa_atual": "visitas"},
+         ])
+ 
+         from app.services.relatorios_service import conversao_funil
+diff --git a/products/erp-imobiliario/backend/tests/services/test_seguros_service.py b/products/erp-imobiliario/backend/tests/services/test_seguros_service.py
+index 5a6b5ff1..da80d237 100644
+--- a/products/erp-imobiliario/backend/tests/services/test_seguros_service.py
++++ b/products/erp-imobiliario/backend/tests/services/test_seguros_service.py
+@@ -154,7 +154,15 @@ class TestCheckVencidos:
+         assert count == 0
+ 
+     def test_expired_policies_are_counted(self):
+-        db = MockSupabaseClient(data=[{"id": "s1"}, {"id": "s2"}])
++        # `status` + `data_vencimento` required on seed: production filters by
++        # `.eq("status", "ativo").lt("data_vencimento", today)`. Pre-MOCK-
++        # SELECT-PREDICATE-FIX predicates were tracked-but-unevaluated; once
++        # SELECT obeys them, missing columns silently strip rows.
++        past = "2000-01-01"
++        db = MockSupabaseClient(data=[
++            {"id": "s1", "status": "ativo", "data_vencimento": past},
++            {"id": "s2", "status": "ativo", "data_vencimento": past},
++        ])
+ 
+         from app.services.seguros_service import SegurosService
+         svc = SegurosService(db, "u1")
+-- 
+2.51.2
+
+
+From 5976feb84c27ecbf8c36f6f3aa774580afdf5b3c Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 22:21:58 -0300
+Subject: [PATCH 2/2] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20sna?=
+ =?UTF-8?q?pshot=20=E2=80=94=20agent-a6cdbb7998c32463b?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ findings.md | 88 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 88 insertions(+)
+
+diff --git a/findings.md b/findings.md
+index 8a67766a..e41b3adc 100644
+--- a/findings.md
++++ b/findings.md
+@@ -324,3 +324,91 @@ knowledge pieces. Append in-the-moment; synthesise at project close.
+   per-context behavior. The fragility tax is the upstream-rename
+   risk — mitigated by a regression test that drives the synthetic
+   call shape.
++
++---
++
++## ERP-LATENT-FIX — MOCK-SELECT predicate fix (2026-05-11)
++
++### Errors
++- **`set_table_data` with a dict-shape payload masks the missing-id
++  bug differently from the list-shape.** `set_table_data("clientes",
++  {"arquivado": False, "nome": "João"})` wraps the dict to `[dict]`
++  via `_data = copy.deepcopy([data])` in `MockRequestBuilder.__init__`
++  — so the SELECT predicate-filter DOES evaluate and DOES strip the
++  row when `.eq("id", "c1")` finds no matching `id` key. Initial
++  read of `_filtered_rows` ("non-list → return as-is") missed the
++  earlier __init__ list-wrap. Fix: read the init carefully + don't
++  assume `_filtered_rows`'s dict short-circuit fires.
++- **Defusedxml dep gap is NOT a MOCK-SELECT issue.** 940 collection
++  ERRORs + 24 xml_feeds FAILs all root-cause to `ModuleNotFoundError:
++  defusedxml` (in `requirements.txt` but not installed in the
++  runtime python3.11). Out of MOCK-SELECT scope; surfaced as
++  architect-followup at end-of-report.
++
++### Mistakes / slips
++- **First pass conflated "53 FAILED" with "53 latent-fix candidates".**
++  Initial scan suggested all 53 failed tests were predicate-filter
++  victims. Closer look: 24 were defusedxml-blocked (xml_feeds_service
++  tests). Actual MOCK-SELECT scope was 29 tests across 13 files —
++  ~55% of the apparent count. Lesson: classify by ROOT CAUSE before
++  scoping, not by failure-LIST length.
++
++### Lessons
++- **The PF reference fix shape applies cleanly to ERP, but the
++  tenancy columns differ.** PF's predicate filter is uniformly
++  `eq("org_id", self.org_id)` — single-key fix. ERP services use
++  more varied filters: `corretor_id` (agenda), `extrato_id`+`conciliado`
++  (banco), `id` (clientes), `status`+`data_vencimento` (contratos /
++  seguros / impostos), `tipo`+`status`+`org_id` (certidoes TJSP),
++  `campanha_id` (marketing), `usuario_id` (metas existing-check),
++  `status` (recorrencia), `arquivado` (relatorios funnel). One-key
++  vs many-key product-specific tenancy: scan the production SELECT
++  for ALL `.eq()`/`.neq()`/`.lt()`/`.gte()` calls along the chain
++  and add EVERY column that gates row inclusion.
++- **Tests asserting "mock returns 2 rows for both queries so 4
++  total" rely on ignore-filter quirk.** `test_overdue_records_counted`
++  expected `count==4` because the unfiltered mock returned the same
++  2 rows for BOTH the pendente AND parcial SELECTs. Under predicate
++  filtering each query matches only the rows with its own status —
++  need to seed 2+2 distinct rows. Fix shape: read the test's
++  assertion → if it counts queries × shared-rows, redistribute rows
++  across the queries.
++
++### Interesting findings
++- **`gte("created_at", cutoff)` requires the seed row to have a
++  `created_at` newer than cutoff — use NOW, not a fixed past date.**
++  `marketing_service.process_alerts` filters ativos by `gte
++  (created_at, now - 7d)`. Pinning to a fixed ISO date risks the
++  cutoff drifting past the seed date over time. Better: compute
++  `_NOW_ISO = datetime.now(timezone.utc).isoformat()` once at module
++  load.
++- **`_delayed_tjsp_process` has a finally block that calls
++  `schedule_tjsp_for_org` regardless of the early-return path** —
++  so `test_skips_item_no_longer_queued` and
++  `test_chains_next_item_after_completion` pass by accident under
++  predicate filtering (the early-return strips the seeded row, but
++  the finally still fires the mock). Only the assertion on
++  `_process_single_tjsp_item.assert_called_once()` actually breaks.
++  Test-of-the-finally is more robust than test-of-the-mainline here.
++
++### Knowledge pieces
++- **MOCK-SELECT latent-fix shape, ERP-specific:**
++  1. Run pytest; group failures by file.
++  2. For each failing test, open the production code and grep all
++     `.eq()`/`.neq()`/`.in_()`/`.lt()`/`.gt()`/`.gte()`/`.lte()`
++     calls along the SELECT chain.
++  3. Add EVERY filtered column to the seed row. Use sentinel values
++     that satisfy the predicate (past date for `.lt(today)`, "ativo"
++     for `eq("status", "ativo")`, matching id for `.eq("id", X)`).
++  4. For tests asserting cross-query row reuse, redistribute rows
++     across the now-filtered queries.
++  5. Forward-compatibility: extra columns on a seed row never break
++     the pre-fix "ignore filter" semantics. Safe to ship even before
++     MOCK-SELECT-PREDICATE-FIX is merged.
++- **defusedxml import-time blocker presents as 940 collection errors
++  in pytest** because `app.services.xml_feeds` is imported via
++  `app.services.__init__.py` → cascades through every router test
++  that touches `app.main`. Pre-existing dep gap (the package IS in
++  `requirements.txt`); separate from any MOCK-SELECT work. Diagnostic
++  pattern: `pytest --tb=line ... | grep ModuleNotFoundError | sort
++  -u` → if ALL errors share one root, it's a dep gap, not a test bug.
+-- 
+2.51.2
+

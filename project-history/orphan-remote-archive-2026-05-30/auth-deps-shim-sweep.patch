@@ -1,0 +1,605 @@
+From a621292a21133902debb273557da5c9bc4be4b4e Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Sun, 10 May 2026 14:23:37 -0300
+Subject: [PATCH] =?UTF-8?q?project(auth-deps-shim-sweep):=20rationalize=20?=
+ =?UTF-8?q?AdConnect's=20custom-JWT=20shim=20=E2=80=94=20delete=20dead-cod?=
+ =?UTF-8?q?e=20dependencies.py=20+=20carve-out=20doc=20+=2010=20unit=20tes?=
+ =?UTF-8?q?ts=20+=20latent=20bug=20fix?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Phase 0 audit confirmed the orchestrator's "shim" was products/adconnect/backend/app/auth_deps.py — a legitimate custom-JWT auth realm (NOT in seed/), used by 7 routers, coexisting with the seed's Supabase realm for standard routers. Renaming and "deleting" both ruled out; the actual rationalization target was the adjacent dead-code app/dependencies.py.
+
+Phase 1: deleted app/dependencies.py (zero importers; create_product_app builds its own deps internally; eliminated 422-trap surface for ProductDependencies.get_org_id/get_user_role/get_user_client). Expanded app/auth_deps.py docstring to document the two-realm split + N=1 carve-out from canonical Supabase factories + AdConnect MVP Phase 1 forward compat.
+
+Phase 2: 10 direct unit tests for get_current_user + require_role (no token / invalid / wrong role / valid / multi-allowed). Status-code-assertion rule applied. **Surfaced + fixed a latent bug**: app/security.py referenced settings.jwt_expires_minutes which didn't exist on SeedSettings — POST /auth/login and POST /auth/register would have raised AttributeError on first distributor login. Added field with default 60 + rationale comment.
+
+Phase 3 / three-way sync: KB § PATTERNS/backend.md gained a Custom-JWT carve-out (AdConnect — N=1) subsection + migration history entry; memory feedback_auth_factory_pattern.md updated; CLAUDE.md pointer unchanged (already aimed at amended section). verify-kb-sync.sh → OK.
+
+Verification:
+- products/adconnect/backend tests: 41 passed (was 31; +10).
+- seed/framework/backend deprecation tests: 4 passed (no regression).
+- KB sync: ✓.
+
+Closes the immediate rationalization. Cross-product rollout (PF/Therapy/ERP/...) remains tracked under predecessor's seed-auth-deps-cross-product-rollout follow-up; AdConnect explicitly NOT part of that rollout (custom-JWT carve-out documented).
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md    |  32 +++
+ products/adconnect/backend/app/auth_deps.py   |  38 ++-
+ products/adconnect/backend/app/config.py      |  15 +-
+ .../adconnect/backend/app/dependencies.py     |  18 --
+ .../backend/tests/routers/test_auth_deps.py   | 155 ++++++++++++
+ .../adconnect-mvp-implementation/PROJECT.md   |   2 +-
+ projects/auth-deps-shim-sweep/PROJECT.md      | 232 ++++++++++++++++++
+ 7 files changed, 467 insertions(+), 25 deletions(-)
+ delete mode 100644 products/adconnect/backend/app/dependencies.py
+ create mode 100644 products/adconnect/backend/tests/routers/test_auth_deps.py
+ create mode 100644 projects/auth-deps-shim-sweep/PROJECT.md
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md
+index 4b3d3e93..cd2a9ce6 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/backend.md
+@@ -137,6 +137,32 @@ the right client.
+   pass `response_model=None` explicitly on 204 routes (see "204
+   response model gotcha" below).
+ 
++### Custom-JWT carve-out (AdConnect — N=1)
++
++The factories above (`make_get_current_user`, `make_get_current_user_org`,
++`make_require_role`) all assume **Supabase as the JWT validator** — their
++inner path calls `admin.auth.get_user(token)`. That fits 9 of the 10
++products. **AdConnect deviates legitimately** — its B2B distributors log in
++with email/password issued by AdConnect, not via Supabase SSO, so
++`products/adconnect/backend/app/auth_deps.py` ships a **custom-JWT realm**
++(HS256 minted by `app/security.create_token` against `app/data/store.users`)
++that **coexists** with the Supabase realm used by the standard routers
++(health/team/notificacoes). The two realms validate disjoint signatures and
++mount on disjoint URL prefixes — no conflict.
++
++**N=1 = no formalization.** Per the recurrence rule, a single deviation stays
++product-local; if a 2nd custom-JWT product appears the absorption target is
++`make_custom_jwt_user(jwt_secret, jwt_algorithm, user_resolver)` factory in
++`noctusai_lib.api.auth`. Until then, AdConnect is the documented carve-out.
++
++**Why this lives in the KB doc:** future agents reading `KB § PATTERNS/backend.md`
++to wire auth on a product / route need to know the canonical pattern HAS a
++deviation. Without this paragraph, an agent encountering AdConnect's
++`auth_deps.py` would (a) think it's a leftover shim and try to delete it, or
++(b) try to "unify" it against the Supabase factories and break the distributor
++login flow. The orchestrator's first-read of the file in 2026-05-10 hit
++exactly that trap — surfaced by `auth-deps-shim-sweep` Phase 0.
++
+ ### Migration history
+ 
+ - 2026-05-04: `make_get_current_user_org` shipped to
+@@ -146,6 +172,12 @@ the right client.
+   YouTube Crawler product end-to-end; Phase 2 added the
+   frame-aware deprecation warning. Cross-product rollout (PF /
+   Therapy / ERP / etc.) deferred to a follow-up project.
++- 2026-05-10: `auth-deps-shim-sweep` rationalized AdConnect's
++  custom-JWT realm — deleted dead-code `app/dependencies.py` (zero
++  importers; FastAPI-broken trap surface), added 10 direct unit
++  tests for `app/auth_deps.py`, surfaced + fixed a latent
++  `settings.jwt_expires_minutes` AttributeError in `create_token`,
++  documented the carve-out (this subsection).
+ 
+ ## SSO
+ 
+diff --git a/products/adconnect/backend/app/auth_deps.py b/products/adconnect/backend/app/auth_deps.py
+index 8855f71f..009061a1 100644
+--- a/products/adconnect/backend/app/auth_deps.py
++++ b/products/adconnect/backend/app/auth_deps.py
+@@ -1,10 +1,38 @@
+ """
+-AdConnect domain authentication dependencies.
++AdConnect domain authentication dependencies — the custom-JWT realm.
+ 
+-AdConnect uses its own JWT-based auth (not Supabase). These dependencies are
+-used by the domain routers (products, cart, orders, rewards, sellout, financial,
+-distributors, admin). The framework's standard routers (health, team, notificacoes)
+-use Supabase auth via dependencies.py — they coexist without conflict.
++AdConnect runs **two auth realms** simultaneously:
++
++1. **Custom-JWT realm (this module).** Domain routers (auth, products, cart,
++   orders, rewards, sellout, financial, distributors, admin) authenticate via
++   HS256 JWT minted by ``app/security.create_token()`` against the in-memory
++   ``app/data/store.users`` (seeded by ``_seed_users()`` in ``app/routers/auth.py``).
++   This realm exists because B2B distributors log in with email/password issued
++   by AdConnect, NOT via Supabase SSO.
++
++2. **Supabase realm (the seed framework).** Standard routers mounted by
++   ``create_product_app(..., standard_routers=["health", "team", "notificacoes"])``
++   use the seed's ``ProductDependencies`` (Supabase-backed). Their tests live in
++   ``tests/integration/test_e2e_flows.py`` (TestAuthBoundary suite).
++
++The two realms coexist without conflict because they mount on disjoint URL
++prefixes and validate disjoint token-issuer signatures (custom HS256 vs.
++Supabase JWT). **Don't unify them** — the realms serve different login flows.
++
++**N=1 across the platform.** No other product has custom-JWT auth; the seed
++factories (``noctusai_lib.api.auth.make_get_current_user`` /
++``make_get_current_user_org`` / ``make_require_role``) all assume Supabase as
++the validator. If a 2nd custom-JWT product ever appears, the recurrence rule
++fires and the pattern formalizes into seed (``make_custom_jwt_user`` factory).
++Until then, AdConnect is the documented carve-out — see
++``KB § PATTERNS/backend.md § Auth — canonical pattern`` for the canonical
++(Supabase) pattern this module deliberately deviates from.
++
++**See also:** ``products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md``
++Phase 1 will decide whether AdConnect migrates to SSO (Option A — this module
++gets deleted) or finalizes custom-JWT (Option B — this module gains a real
++``adconnect.users`` table backing). This module's current shape supports either
++outcome without churning consumers.
+ """
+ from __future__ import annotations
+ 
+diff --git a/products/adconnect/backend/app/config.py b/products/adconnect/backend/app/config.py
+index 357cd870..dcb7fee9 100644
+--- a/products/adconnect/backend/app/config.py
++++ b/products/adconnect/backend/app/config.py
+@@ -8,9 +8,22 @@ from noctusai_seed import ProductSettings
+ 
+ 
+ class SeedSettings(ProductSettings):
+-    """AdConnect specific settings. No extras — just the framework baseline."""
++    """AdConnect specific settings.
++
++    Domain auth realm (custom-JWT, see ``app/auth_deps.py``) needs a token
++    expiration window — ``jwt_secret`` itself is inherited from the seed's
++    ``ProductSettings``. The Supabase realm (standard routers) doesn't use
++    this field.
++    """
+ 
+     cors_origins: str = "http://localhost:8007,http://localhost:8130,http://localhost:5173,http://localhost:3000"
+ 
++    # Custom-JWT (HS256) expiration window for AdConnect's domain auth realm.
++    # Surfaced as a latent bug by `auth-deps-shim-sweep` Phase 2: `app/security.py`
++    # referenced this field but it didn't exist on settings, so /auth/login
++    # would have raised AttributeError in production. 60 minutes mirrors the
++    # commonly-shipped default for B2B distributor sessions; tune via env var.
++    jwt_expires_minutes: int = 60
++
+ 
+ settings = SeedSettings()
+diff --git a/products/adconnect/backend/app/dependencies.py b/products/adconnect/backend/app/dependencies.py
+deleted file mode 100644
+index fa8ed27e..00000000
+--- a/products/adconnect/backend/app/dependencies.py
++++ /dev/null
+@@ -1,18 +0,0 @@
+-"""
+-Dependencies for AdConnect.
+-
+-Thin wrapper around the seed framework's ProductDependencies.
+-Kept for backward compatibility with tests and any imports.
+-"""
+-from noctusai_seed import create_dependencies, create_database_module
+-from noctusai_lib.api.auth import first_or_none, resolve_sso_role  # noqa: F401
+-from app.config import settings
+-
+-_db = create_database_module(settings, schema="adconnect")
+-_deps = create_dependencies(_db)
+-
+-get_current_user = _deps.get_current_user
+-get_user_role = _deps.get_user_role
+-get_org_id = _deps.get_org_id
+-get_user_client = _deps.get_user_client
+-get_admin_client = _deps.get_admin_client
+diff --git a/products/adconnect/backend/tests/routers/test_auth_deps.py b/products/adconnect/backend/tests/routers/test_auth_deps.py
+new file mode 100644
+index 00000000..af594925
+--- /dev/null
++++ b/products/adconnect/backend/tests/routers/test_auth_deps.py
+@@ -0,0 +1,155 @@
++"""Direct unit tests for AdConnect's custom-JWT auth shim
++(``products/adconnect/backend/app/auth_deps.py``).
++
++Coverage rationale (per ``auth-deps-shim-sweep`` Phase 2):
++
++The custom-JWT auth realm previously had only INDIRECT coverage via
++domain-router tests and the seed framework's standard-router AuthBoundary
++suite (which covers the *Supabase* realm, not custom-JWT). The 401/403 paths
++of ``get_current_user`` + ``require_role`` were untested. This file closes the
++gap.
++
++Status-code-assertion rule applies (every body-asserting test ALSO asserts
++``.status_code`` — see ``KB § PATTERNS/testing.md``).
++"""
++from __future__ import annotations
++
++import pytest
++from fastapi import Depends, FastAPI
++from fastapi.testclient import TestClient
++
++from app.auth_deps import get_current_user, require_role
++from app.security import create_token
++
++
++def _build_app() -> FastAPI:
++    """Minimal app exposing both auth-shim deps for direct exercise.
++
++    We don't import AdConnect's full `app.main` here because that mounts the
++    seed framework + standard routers + every domain router — too much
++    machinery for a unit test of the shim itself. A fresh `FastAPI()` with
++    just the two probe endpoints is the right blast-radius.
++    """
++    app = FastAPI()
++
++    @app.get("/probe/current")
++    def probe_current(user: dict = Depends(get_current_user)) -> dict:
++        return {"sub": user.get("sub"), "role": user.get("role")}
++
++    @app.get("/probe/admin")
++    def probe_admin(user: dict = Depends(require_role("admin"))) -> dict:
++        return {"sub": user.get("sub"), "role": user.get("role")}
++
++    @app.get("/probe/multi")
++    def probe_multi(user: dict = Depends(require_role("admin", "customer"))) -> dict:
++        return {"sub": user.get("sub"), "role": user.get("role")}
++
++    return app
++
++
++@pytest.fixture
++def shim_client() -> TestClient:
++    return TestClient(_build_app())
++
++
++# ---------------------------------------------------------------------------
++# get_current_user — 401 paths
++# ---------------------------------------------------------------------------
++
++
++def test_get_current_user_missing_bearer_returns_401(shim_client: TestClient) -> None:
++    """No Authorization header at all → 401."""
++    resp = shim_client.get("/probe/current")
++    assert resp.status_code == 401, resp.text
++    assert resp.json()["detail"] == "Missing bearer token"
++
++
++def test_get_current_user_empty_bearer_returns_401(shim_client: TestClient) -> None:
++    """Authorization header without a token → 401 (HTTPBearer rejects empty)."""
++    resp = shim_client.get("/probe/current", headers={"Authorization": "Bearer "})
++    assert resp.status_code == 401, resp.text
++
++
++def test_get_current_user_invalid_signature_returns_401(shim_client: TestClient) -> None:
++    """Token signed with the wrong secret → 401 (jwt.PyJWTError path)."""
++    import jwt as pyjwt
++
++    bogus = pyjwt.encode({"sub": "user-x", "role": "customer"}, "wrong-secret", algorithm="HS256")
++    resp = shim_client.get("/probe/current", headers={"Authorization": f"Bearer {bogus}"})
++    assert resp.status_code == 401, resp.text
++    assert resp.json()["detail"] == "Invalid or expired token"
++
++
++def test_get_current_user_malformed_token_returns_401(shim_client: TestClient) -> None:
++    """Garbage in the token slot → 401 (jwt.PyJWTError on decode)."""
++    resp = shim_client.get(
++        "/probe/current",
++        headers={"Authorization": "Bearer not-a-jwt-at-all"},
++    )
++    assert resp.status_code == 401, resp.text
++    assert resp.json()["detail"] == "Invalid or expired token"
++
++
++# ---------------------------------------------------------------------------
++# get_current_user — happy path
++# ---------------------------------------------------------------------------
++
++
++def test_get_current_user_valid_token_returns_claims(shim_client: TestClient) -> None:
++    """Token signed with the AdConnect secret + valid claims → 200 with claims."""
++    token = create_token({"sub": "user-1", "role": "customer", "email": "c@example.com"})
++    resp = shim_client.get("/probe/current", headers={"Authorization": f"Bearer {token}"})
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["sub"] == "user-1"
++    assert body["role"] == "customer"
++
++
++# ---------------------------------------------------------------------------
++# require_role — gates
++# ---------------------------------------------------------------------------
++
++
++def test_require_role_no_token_returns_401(shim_client: TestClient) -> None:
++    """``require_role`` chains through ``get_current_user`` first — missing
++    token must surface as 401, not 403. Confirms the chain order."""
++    resp = shim_client.get("/probe/admin")
++    assert resp.status_code == 401, resp.text
++
++
++def test_require_role_wrong_role_returns_403(shim_client: TestClient) -> None:
++    """Valid token with role NOT in the allowed set → 403."""
++    token = create_token({"sub": "user-1", "role": "customer"})
++    resp = shim_client.get("/probe/admin", headers={"Authorization": f"Bearer {token}"})
++    assert resp.status_code == 403, resp.text
++    assert resp.json()["detail"] == "Role not allowed"
++
++
++def test_require_role_correct_role_passes(shim_client: TestClient) -> None:
++    """Valid token with role IN the allowed set → 200."""
++    token = create_token({"sub": "user-2", "role": "admin"})
++    resp = shim_client.get("/probe/admin", headers={"Authorization": f"Bearer {token}"})
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["role"] == "admin"
++
++
++def test_require_role_multi_allowed_set(shim_client: TestClient) -> None:
++    """``require_role("admin", "customer")`` accepts either role."""
++    token_a = create_token({"sub": "u-a", "role": "admin"})
++    token_c = create_token({"sub": "u-c", "role": "customer"})
++
++    resp_a = shim_client.get("/probe/multi", headers={"Authorization": f"Bearer {token_a}"})
++    assert resp_a.status_code == 200, resp_a.text
++    assert resp_a.json()["role"] == "admin"
++
++    resp_c = shim_client.get("/probe/multi", headers={"Authorization": f"Bearer {token_c}"})
++    assert resp_c.status_code == 200, resp_c.text
++    assert resp_c.json()["role"] == "customer"
++
++
++def test_require_role_missing_role_claim_returns_403(shim_client: TestClient) -> None:
++    """Token missing the ``role`` claim entirely → 403 (user.get returns None,
++    None not in allowed-set)."""
++    token = create_token({"sub": "u-norole"})
++    resp = shim_client.get("/probe/admin", headers={"Authorization": f"Bearer {token}"})
++    assert resp.status_code == 403, resp.text
+diff --git a/products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md b/products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md
+index 89a31a9f..3c5e4462 100644
+--- a/products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md
++++ b/products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md
+@@ -201,7 +201,7 @@ products/adconnect/backend/
+     main.py                  → create_product_app(...) — UNCHANGED (already correct)
+     config.py                → SeedSettings — UNCHANGED unless adding settings (e.g. NFE_PROVIDER_API_KEY)
+     database.py              → create_database_module(settings, "adconnect") — UNCHANGED
+-    dependencies.py          → create_dependencies(db) — UNCHANGED
++    dependencies.py          → DELETED 2026-05-10 by `auth-deps-shim-sweep` project (was dead-code re-export of deprecated ProductDependencies methods; zero importers; create_product_app builds its own deps internally). app/database.py covers what routers actually need.
+     rate_limit.py            → create_product_limiter(settings) — UNCHANGED
+     auth_deps.py             → reused if SSO; REPLACED if collapsing custom JWT
+     security.py              → REMOVED if collapsing custom JWT (currently scaffolded for password hashing)
+diff --git a/projects/auth-deps-shim-sweep/PROJECT.md b/projects/auth-deps-shim-sweep/PROJECT.md
+new file mode 100644
+index 00000000..dc611aca
+--- /dev/null
++++ b/projects/auth-deps-shim-sweep/PROJECT.md
+@@ -0,0 +1,232 @@
++# auth-deps-shim-sweep — Project Document
++
++> **This is a living document.** Update phases / change log as you build.
++>
++> **Project slug:** `auth-deps-shim-sweep` — lives at `projects/auth-deps-shim-sweep/` (cross-cutting; touches a product + KB).
++
++- **Created:** 2026-05-10
++- **Last updated:** 2026-05-10
++- **Status:** All phases ✅ — engineer-side close complete; architect FF-merge pending
++- **Owner / stakeholders:** rapha (user) · architect-agent · engineer-agent (this branch)
++- **Related docs:**
++  - `KB § PATTERNS/backend.md § Auth — canonical pattern` (target for any reference / amendment)
++  - `seed/lib/backend/noctusai_lib/api/auth.py` (canonical `make_get_current_user` / `make_get_current_user_org` / `make_require_role`)
++  - `seed/framework/backend/noctusai_seed/dependencies.py` (deprecated `ProductDependencies` class with frame-aware DeprecationWarning)
++  - `archive/projects/2026-05-06/01-seed-auth-deps-hardening/PROJECT.md` (predecessor — landed factory + deprecation warning)
++  - `products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md` (Phase 6/8 trigger)
++  - `products/adconnect/backend/app/auth_deps.py` (the SHIM — local custom-JWT auth, the actual subject of this sweep)
++
++---
++
++## 1. Context & Purpose
++
++AdConnect MVP Phase 6/8 surfaced a **deprecated-shape `auth_deps` shim** that the orchestrator initially marked for sweeping deletion. Closer examination during the project close determined the shim has GENUINE VALUE — it implements AdConnect's **product-local custom-JWT auth** (NOT the Supabase-based seed auth). The architect re-targeted the project from "delete it" to "rationalize and possibly extend."
++
++**The actual surface** (Phase 0 audit confirmed):
++
++- `products/adconnect/backend/app/auth_deps.py` — 40-line product-local file. Exposes `get_current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer))` + `require_role(*roles)` factory. Validates a HS256 JWT minted by `app/security.create_token()` against the in-memory `data/store.users`. **7 routers depend on it** (financial, admin, rewards, sellout, auth, orders, distributors).
++- `products/adconnect/backend/app/dependencies.py` — 18-line file that re-exports the deprecated `ProductDependencies` Supabase methods (`get_current_user`, `get_user_role`, `get_org_id`, `get_user_client`, `get_admin_client`). **Zero consumers** — every router imports from `..auth_deps`, never from `..dependencies`. **Dead-code trap** — exposes the FastAPI-broken methods (`get_org_id` / `get_user_role` / `get_user_client`) for future code to wire into `Depends(...)` and trigger the 422-query-param bug.
++
++**The win:** the project rationalizes both files — keep `auth_deps.py` as the canonical custom-JWT auth surface (not a "shim", a real product seam), and either delete the dead-code `dependencies.py` or shrink it to the parts AdConnect actually uses (admin-client, core-client, schema setup).
++
++**Why the orchestrator's first read said "delete":** the file is named `auth_deps.py` (legacy filename pattern from before the seed factory existed) and lives alongside a deprecated `dependencies.py`. The architect's re-targeting recognizes that the *file's content* is legitimate (custom JWT, brand+distributor login, role gating) — the *naming* and the *coexistence with a dead-code dependencies.py* are what looked like a shim.
++
++---
++
++## 2. Confirmed constraints
++
++- **AdConnect uses custom JWT, not Supabase auth, for distributor + brand-admin login** — `app/auth.py` POST /auth/login mints a HS256 token via `app/security.create_token`; users live in the in-memory `app/data/store.users` (seeded by `_seed_users()`). The AdConnect MVP project's Phase 1 *might* migrate to SSO (Option A) or keep custom-JWT (Option B) — that decision is OUT OF SCOPE here. *(Constraint: don't presume the SSO migration; AdConnect MVP Phase 1 hasn't run yet.)*
++- **Standard routers (health, team, notificacoes) use Supabase auth via the seed framework** — `app/main.py` calls `create_product_app(..., standard_routers=["health", "notificacoes", "team"])`. These mount their own `make_get_current_user` from the seed factory (via `app/dependencies.py`'s `_db = create_database_module(settings, schema="adconnect")`). **Two auth realms coexist** in AdConnect — domain (custom JWT) + standard (Supabase). The Supabase realm is exercised by `tests/integration/test_e2e_flows.py:TestAuthBoundary`. *(Constraint: any change must preserve both realms.)*
++- **Don't touch the deprecated `ProductDependencies` class itself** — `seed/framework/backend/noctusai_seed/dependencies.py` already has the frame-aware DeprecationWarning (Phase 2 of `seed-auth-deps-hardening`, 2026-05-06). Cross-product rollout / deletion is a separate follow-up project. *(Constraint: stay in AdConnect's lane.)*
++- **Cross-cutting → root projects/** — slug = `auth-deps-shim-sweep`, lives at `projects/auth-deps-shim-sweep/`. Even though the only product touched is AdConnect, the project also rationalizes the canonical-pattern doc (KB) and may amend it. *(Per `KB § PATTERNS/project-execution.md §1 and §8`.)*
++- **Engineer commits per phase locally; pushes to `auth-deps-shim-sweep` branch at phase close** — never pushes to main. Final merge is the orchestrator's. *(Per the orchestrator role-split rule.)*
++
++---
++
++## 3. Design principles
++
++1. **Naming reflects the contract.** `auth_deps.py` named in the era before the seed-factory pattern existed; the file is fine but the *name* communicates "shim" / "leftover". Consider renaming to `app/jwt_auth.py` or `app/domain_auth.py` to make the realm explicit. **Decision deferred to Phase 1** — see §7 Open Questions.
++2. **Dead-code traps are debt, even when they pass tests.** `app/dependencies.py` re-exports the FastAPI-broken `ProductDependencies.get_org_id` / `get_user_role` / `get_user_client` — none of AdConnect's code uses them, but a future agent reading the file might wire them via `Depends(...)` and hit the 422 trap. Either delete the trap or scope down the export to the safe surface (admin/core/user clients).
++3. **Two-realm coexistence is OK; document it.** AdConnect's domain (custom JWT) + standard (Supabase) auth split is intentional and tested. The README / module docstrings should make this explicit so future readers don't try to "unify" them.
++4. **Tests over warnings as the safety net.** A keeper-detector that flags `Depends(<broken_method>)` (planned but not built) is the third defense layer. This project doesn't build the keeper, but it eliminates the *one product* that exposes the trap surface to FastAPI's solver.
++
++---
++
++## 3a. Seed-first analysis (REQUIRED)
++
++Run the six-question checklist (`KB § GUIDES/seed-first-design.md § The seed-first checklist`):
++
++1. **Is the contract identical for every product?** **NO** — AdConnect uniquely uses custom-JWT for its domain auth (because B2B distributors log in via email/password, not Supabase SSO). Every other product uses Supabase. The seed already provides Supabase auth; AdConnect's local `auth_deps.py` is the *correct* placement for the deviation.
++2. **Is the data source product-specific?** **YES** — the in-memory `data/store.users` and the JWT secret in `app/config` are AdConnect-only. Brand admin / customer roles are AdConnect-only.
++3. **Is the placement product-specific?** **YES** — domain-bound (custom JWT for B2B distributor login).
++4. **Is the visibility / permission rule the same?** **NO** — AdConnect uses `role in ("admin", "customer")` from JWT claims; other products use Supabase user_metadata.role / SSO resolution.
++5. **Does the seam already exist in seed?** **PARTIALLY** — the seed has `make_get_current_user` (Supabase JWT validator) and `make_require_role` (role gate factory). Both assume Supabase as the validator. AdConnect's `decode_token` from `app/security` is the equivalent for HS256-self-minted tokens. **There is NO seed seam for "custom-JWT auth"** — and Phase 0 sees N=1 (only AdConnect needs it). **Recurrence rule outcome: no formalization at N=1; revisit if a 2nd custom-JWT product appears.**
++6. **Default-on or opt-in?** **OPT-IN** — most products inherit Supabase auth from the seed; AdConnect is the explicit opt-out.
++
++**Litmus — per-product code count this design requires:**
++
++- [x] **A small section** — AdConnect has ~40 lines of custom-JWT auth in `app/auth_deps.py`. Acceptable because the deviation is product-specific (B2B distributor email/password vs. SSO). Per-product count for OTHER products = 0 (they inherit Supabase from the seed factory).
++
++**Phase plan implications:** §6 phases work in **AdConnect only** — no per-product walk. The seed-side action (if any) is documenting the carve-out in KB so future products with similar needs find the pattern.
++
++---
++
++## 4. Scope
++
++**In scope:**
++- **Phase 0** — Audit `app/auth_deps.py` + `app/dependencies.py` + every consumer router. Per-consumer triage table.
++- **Phase 1** — Rationalize `app/dependencies.py`: shrink to the actually-used surface (admin/core clients) OR delete it. Document the dual-realm split in `app/auth_deps.py` module docstring.
++- **Phase 2** — Add tests covering `auth_deps.py`'s 401 (no token), 401 (invalid token), 403 (wrong role) paths. Currently no direct unit tests for the shim — coverage comes only via integration flows.
++- **Phase 3** — Project close. Synthesize `findings.md`. Three-way sync if any methodology amendments. Archive via `noctus.dev.archive`.
++
++**Out of scope (deferred):**
++- **AdConnect MVP Phase 1's auth swap (Option A: SSO inherit / Option B: custom-JWT finalized).** That decision lives in `products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md`. *(Reason: scope discipline; this project rationalizes the existing surface, doesn't change auth strategy.)*
++- **Cross-product rollout of `make_get_current_user_org`** — every product that defines its own `get_current_user_org` (PF, Therapy, Mailing, ERP, Daily Life) should consume the seed factory. Tracked elsewhere as `seed-auth-deps-cross-product-rollout`. *(Reason: scope discipline; this project is AdConnect-only.)*
++- **Deletion of `ProductDependencies.get_org_id` / `get_user_role` / `get_user_client`** — pending the 1+ release deprecation window per the predecessor project. *(Reason: cross-product impact.)*
++- **Renaming `auth_deps.py` to `jwt_auth.py` / `domain_auth.py`** — deferred to Phase 1 decision; acceptable to keep the name if module docstring clarifies. *(Reason: rename touches 7 routers; only worth doing if the rename communicates better than a docstring.)*
++- **Building the keeper-detector for `Depends(<broken_method>)`** — separate project. *(Reason: cross-cutting AST tooling, not AdConnect-specific.)*
++
++---
++
++## 5. Architecture / Data Model
++
++### Files touched
++
++- `products/adconnect/backend/app/auth_deps.py` — module docstring expanded (dual-realm context); behavior unchanged.
++- `products/adconnect/backend/app/dependencies.py` — shrunk to the actually-used surface OR deleted. Phase 1 decision.
++- `products/adconnect/backend/tests/test_auth_deps.py` — NEW. Direct unit tests for `get_current_user` + `require_role`.
++- `KB § PATTERNS/backend.md § Auth — canonical pattern` — append a "Custom-JWT carve-out (AdConnect)" subsection documenting the two-realm pattern. Three-way sync (KB + CLAUDE.md pointer audit + memory check).
++
++### Per-consumer triage table (FROM PHASE 0)
++
++| Consumer | Imports | Realm | Triage |
++|---|---|---|---|
++| `app/routers/auth.py` | `get_current_user` | custom-JWT (login + /me) | **accept-with-rationale** — `auth.py` IS the custom-JWT realm; no migration target. |
++| `app/routers/financial.py` | `get_current_user` | custom-JWT | **accept-with-rationale** — domain router; uses distributor JWT. |
++| `app/routers/admin.py` | `require_role("admin")` | custom-JWT | **accept-with-rationale** — brand admin gate via JWT. |
++| `app/routers/rewards.py` | `get_current_user` | custom-JWT | **accept-with-rationale** — distributor scope. |
++| `app/routers/sellout.py` | `get_current_user, require_role` | custom-JWT | **accept-with-rationale** — same. |
++| `app/routers/orders.py` | `get_current_user, require_role` | custom-JWT | **accept-with-rationale** — same. |
++| `app/routers/distributors.py` | `get_current_user, require_role` | custom-JWT | **accept-with-rationale** — same. |
++| `app/dependencies.py` | (re-exports `ProductDependencies` methods; **zero importers**) | — | **REFACTOR** — shrink to admin/core clients OR delete. Phase 1 action. |
++
++**Net:** 7 of 8 surfaces are kept-as-is (the custom-JWT realm is legitimate); 1 surface (`dependencies.py`) is the dead-code trap and gets shrunk/deleted.
++
++### Boundaries
++
++- **Don't touch the seed framework's `ProductDependencies` class** — already deprecated; cross-product rollout deferred.
++- **Don't migrate AdConnect routers from custom-JWT to Supabase** — that's the AdConnect MVP Phase 1 decision, not this project.
++
++---
++
++## 6. Implementation phases
++
++### Phase 0 — Audit ✅
++
++- [x] Map every consumer of `auth_deps` + `ProductDependencies` across `seed/` + `products/`.
++- [x] Read the canonical-pattern KB section + `make_get_current_user_org` factory.
++- [x] Read the `seed-auth-deps-hardening` archive (predecessor) to inherit reasoning.
++- [x] Read AdConnect's `app/main.py`, `app/dependencies.py`, `app/security.py`, `app/auth_deps.py`, plus 2 consumer routers (`auth.py`, `orders.py`).
++- [x] Confirm dual-realm split (custom-JWT for domain routers + Supabase for standard_routers).
++- [x] Confirm `app/dependencies.py` has ZERO consumers (no `from app.dependencies` / `from .dependencies` / `from ..dependencies` anywhere in `products/adconnect/backend/`).
++- [x] Build per-consumer triage table (see §5).
++- [x] Run `noctus.dev.scan_within_product_helpers` + `noctus.dev.scan_cross_product_helpers` for AdConnect to surface any auth-related N=2/N=3 recurrences.
++
++**Improvements:**
++- The misleading filename `auth_deps.py` is N=1 (only AdConnect has this name). The other 9 products use `dependencies.py`. Renaming would unify the convention but at the cost of churning 7 router imports. **Defer to §7 Q1.**
++- The dead-code `app/dependencies.py` exists because every product *should* have a `dependencies.py` per the seed convention — but in AdConnect's case nothing imports from it. Two options: (a) shrink to the parts AdConnect actually mounts (the standard-routers / Supabase realm), (b) delete entirely and let `app/main.py` build `_db = create_database_module(...)` itself. Option (a) is safer; the standard-routers DO need a Supabase client at startup via `create_product_app`'s internals, even if no domain router imports the deps module.
++- AdConnect has NO direct unit tests for `get_current_user` / `require_role`. Coverage comes from integration tests (which are the standard-routers' Supabase-realm tests, NOT the custom-JWT domain). The custom-JWT realm's 401/403 paths are untested. **Phase 2 closes this.**
++- `app/security.py:verify_password` swallows `bcrypt.ValueError` and logs a WARNING — that's correct per the no-`# silent-ok` rule (the warning IS the surfaced signal). No change needed.
++
++**Audit conclusion:** no per-consumer migration needed; the only mechanical change is rationalizing `app/dependencies.py`. The §6 phase plan stands as drafted (Phase 1 = rationalize the dead-code file; Phase 2 = unit tests for the shim; Phase 3 = close).
++
++### Phase 1 — Rationalize `app/dependencies.py` + document dual-realm split ✅
++
++- [x] Confirmed `app/dependencies.py` is dead code: `create_product_app` builds its own `deps = create_dependencies(db)` internally (`seed/framework/backend/noctusai_seed/app.py:160-161`); zero importers across `products/adconnect/backend/`; `app/database.py` covers what routers actually need.
++- [x] **Decision: delete (not shrink).** No legitimate consumer; preserving it as a dead-code re-export keeps the FastAPI-broken `ProductDependencies.get_org_id` / `get_user_role` / `get_user_client` 422-trap surface available to future agents reaching for `Depends(...)`. Deletion is the cleanest defense.
++- [x] `git rm products/adconnect/backend/app/dependencies.py` (Phase 1 commit).
++- [x] Expanded `app/auth_deps.py` module docstring to document the two-realm split (custom-JWT for domain routers + Supabase for standard routers), the N=1 carve-out from the canonical Supabase-based seed factories, and the AdConnect MVP Phase 1 forward-compatibility note (this module's shape supports either Option A delete or Option B finalize without churning consumers).
++- [x] Updated `products/adconnect/projects/adconnect-mvp-implementation/PROJECT.md §5.3` to reflect the deletion (was "UNCHANGED" — now annotated with deletion rationale).
++- [x] `pytest products/adconnect/backend/tests/` — 31/31 green (deletion verified non-breaking).
++
++**Improvements:**
++- The canonical-pattern KB doc could grow a "Custom-JWT carve-out (AdConnect)" subsection so future agents reading the doc find the deviation explicitly. **Deferred to Phase 3** (project close) so the section can reference the synthesized findings + cite this project as the absorption rationale.
++- The seed's `ProductDependencies` class is still importable via `noctusai_seed.dependencies.ProductDependencies` and the deprecated methods can still be wired into `Depends(...)` from any other product. Cross-product cleanup is the predecessor's deferred follow-up (`seed-auth-deps-cross-product-rollout`); this project doesn't change cross-product scope.
++- `app/database.py` retains the `noqa`-style re-exports (`get_supabase_client = _db.get_client` etc.). These have legitimate consumers (conftest.py patches), so no cleanup there.
++
++### Phase 2 — Direct unit tests for the shim ✅
++
++- [x] `products/adconnect/backend/tests/routers/test_auth_deps.py` created — 10 tests covering: missing bearer (401), empty bearer (401), invalid signature (401), malformed token (401), valid token returns claims (200), `require_role` no-token (401 — chain-order test), `require_role` wrong role (403), `require_role` correct role (200), `require_role` multi-allowed-set (admin + customer both pass), `require_role` missing role claim (403).
++- [x] Status-code-assertion rule applied — every body-asserting assert pairs with `assert resp.status_code == ...`.
++- [x] **Latent bug surfaced + fixed.** `app/security.py:33` referenced `settings.jwt_expires_minutes`, but `SeedSettings` (`app/config.py`) didn't define it — `POST /auth/login` and `POST /auth/register` would have raised `AttributeError` in production the first time a distributor logged in. Added `jwt_expires_minutes: int = 60` to `SeedSettings` with rationale comment. **This is the highest-leverage finding of this project** — the indirect coverage from existing tests never exercised `create_token`, so the bug was invisible. Direct unit tests caught it on first run.
++- [x] Run pytest — 41/41 green (was 31/31; +10 new tests). `cd products/adconnect/backend && PYTHONPATH=... pytest -q` → `41 passed, 1 warning in 3.73s`.
++
++**Improvements:**
++- Built a tiny throwaway `_build_app()` in the test file that mounts probe endpoints exercising both deps. Cleaner blast-radius than importing `app.main` (which would mount the full domain + standard routers stack). **No improvement to file** — pattern is correct as-is.
++- `jwt_expires_minutes` default = 60 minutes mirrors common B2B session length but is a guess; a future tuning pass should validate against AdConnect's UX expectations (refresh-token vs. re-login). **Deferred to AdConnect MVP Phase 1** — that's where the auth strategy is finalized.
++- The 10 new tests skip `register` / `login` HTTP-level flow (they exercise the deps, not the full POST shape). The existing integration suite covers the standard routers' Supabase realm but NOT custom-JWT login HTTP. **Coverage gap noted, not closed here** — `tests/routers/test_auth_router.py` is in the AdConnect MVP Phase 1 plan (line 339) so the gap closes when that phase runs.
++
++### Phase 3 — Close ✅
++
++- [x] Findings synthesized in the engineer's final return text (5 categories: errors / mistakes-slips / lessons / interesting-findings / knowledge-pieces). The harness rejected `findings.md` as a written file (engineer subagent default) — content surfaced in the final report instead, per the architect-review intent.
++- [x] **Three-way sync done.** KB amended (`KB § PATTERNS/backend.md § Custom-JWT carve-out (AdConnect — N=1)` added + migration history extended); memory updated (`feedback_auth_factory_pattern.md` AdConnect carve-out paragraph); CLAUDE.md pointer already correctly aimed at the amended section (no CLAUDE.md edit needed). `bash scripts/verify-kb-sync.sh` → `✓ KB sync OK`.
++- [x] No deferred items requiring an end-of-project proposal — the methodology-shaped finding (latent `jwt_expires_minutes` bug) was applied inline; the documentation surface was applied inline; the cross-product rollout (PF/Therapy/ERP/etc.) is already filed as the predecessor's deferred follow-up `seed-auth-deps-cross-product-rollout` and unchanged by this project. No new follow-up needed.
++- [x] Verification snapshot:
++  - `cd products/adconnect/backend && PYTHONPATH=... pytest -q` → **41 passed, 1 warning in 3.73s** (was 31; +10 from `test_auth_deps.py`).
++  - `cd seed/framework/backend && PYTHONPATH=... pytest tests/test_dependencies_deprecation.py -q` → **4 passed, 1 warning** (deprecation tests untouched — confirmed no seed-side regression).
++  - `bash scripts/verify-kb-sync.sh` → **KB sync OK**.
++- [x] §11 ↔ §6 self-check: every flipped phase has its sub-tasks ticked.
++- [ ] Final commit + push to branch `auth-deps-shim-sweep` — engineer's last action before returning.
++- [ ] Archive via `noctus.dev.archive` — orchestrator's responsibility post-merge.
++
++---
++
++## 7. Open questions
++
++1. **Should `auth_deps.py` be renamed to `jwt_auth.py` / `domain_auth.py` for clarity?** — Recommendation: **keep the name + expand the docstring**. Renaming churns 7 router imports for marginal benefit; the docstring carries the realm signal. Decided in Phase 1.
++2. **Should `app/dependencies.py` be shrunk or deleted?** — Recommendation: **shrink to `_db` + admin/core clients**. Deletion risks subtle breakage of `create_product_app`'s internal Supabase-client lookup if it does any module-import side-effect. Verify in Phase 1 step 1.
++3. **Should the KB canonical-pattern doc grow a "Custom-JWT carve-out" subsection?** — Recommendation: **yes, brief paragraph**. Future agents reading the canonical pattern need to know AdConnect deviates legitimately. Phase 1 step 3 OR Phase 3 close.
++
++---
++
++## 8. Dependencies & blockers
++
++- **None external.** This project is fully workspace-local. AdConnect's tests don't require live Supabase (they mock via `MockSupabaseClient`).
++- **Predecessor project landed:** `seed-auth-deps-hardening` (archived 2026-05-06) shipped `make_get_current_user_org`, the deprecation warning, and the canonical-pattern KB section. Re-using its work, not duplicating.
++
++---
++
++## 9. Success criteria
++
++- All Phase 0-3 sub-tasks ticked, phase headers flipped to ✅.
++- AdConnect backend tests stay green: `cd products/adconnect/backend && pytest -q`.
++- Seed framework tests stay green: `cd seed/framework/backend && pytest -q` (deprecation warning tests untouched).
++- `app/dependencies.py` is either shrunk to its actually-used surface OR deleted (Phase 1 decision).
++- `app/auth_deps.py` module docstring documents the two-realm split.
++- Direct unit tests added for `get_current_user` + `require_role` (no token / invalid token / wrong role / valid token paths).
++- `findings.md` synthesized into a curated artifact at close.
++- The project folder is archived via `noctus.dev.archive` after the final commit + push.
++
++---
++
++## 10. How to use this plan
++
++- **Single source of truth for progress.** Update as you work.
++- **Live-tick tasks.** Flip `- [ ]` → `- [x]` the moment a task is done.
++- **Phase-by-phase.** Engineer is in auto-mode; phases proceed without the per-phase pause unless a hard block surfaces.
++- **Branching.** Branch `auth-deps-shim-sweep` is pre-created from `origin/main`. Each phase is a commit on the branch. Orchestrator handles main merge.
++- **Findings.** Append to `findings.md` in-the-moment for surprises. Synthesize at close.
++- **Improvements.** Capture during steps in each phase's `**Improvements:**` block. File ONE proposal at project close (not per-phase) since the project is small (3 phases).
++- **Three-way sync.** If any rule/methodology evolves during this project, update KB + CLAUDE.md (or topical) + memory same session.
++- **No silent errors.** Quote commands; no unverified "verification ✓"; ambiguity → escalate.
++
++---
++
++## 11. Change log
++
++| Date | Change | By |
++|---|---|---|
++| 2026-05-10 | Initial project drafted from `templates/PROJECT-TEMPLATE.md`. Phase 0 audit completed inline (the template's §3a + §5 + Phase 0 sub-tasks all reflect actual evidence from reading the codebase, not assumptions). Per-consumer triage table built. Critical finding: the orchestrator's "shim" is `products/adconnect/backend/app/auth_deps.py` (legitimate custom-JWT auth, NOT in seed/) and the actual rationalization target is the dead-code `app/dependencies.py`. Phase 0 ✅. | Claude Opus 4.7 (1M ctx) |
++| 2026-05-10 | Phase 1 ✅ — `app/dependencies.py` deleted (dead code; zero importers; `create_product_app` builds its own deps; verified by 31/31 green tests post-deletion). `app/auth_deps.py` docstring expanded to document the dual-realm split + N=1 carve-out + AdConnect MVP Phase 1 forward compat. AdConnect MVP project's §5.3 layout note updated. | Claude Opus 4.7 (1M ctx) |
++| 2026-05-10 | Phase 2 ✅ — `tests/routers/test_auth_deps.py` added (10 tests; status-code-assertion rule applied). **Latent bug surfaced + fixed:** `app/security.py:33` referenced `settings.jwt_expires_minutes` which didn't exist on `SeedSettings` — `POST /auth/login` and `POST /auth/register` would have raised AttributeError on first distributor login. Added field with default 60 minutes + rationale comment. Tests: 41/41 (was 31; +10). | Claude Opus 4.7 (1M ctx) |
++| 2026-05-10 | Phase 3 ✅ — Three-way sync: `KB § PATTERNS/backend.md` grew "Custom-JWT carve-out (AdConnect — N=1)" subsection + migration history entry; memory `feedback_auth_factory_pattern.md` AdConnect carve-out paragraph appended; CLAUDE.md pointer unchanged (already correct). `bash scripts/verify-kb-sync.sh` → KB sync OK. AdConnect 41/41, seed deprecation tests 4/4. Project ready to merge. | Claude Opus 4.7 (1M ctx) |
+-- 
+2.51.2
+

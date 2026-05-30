@@ -1,0 +1,79 @@
+From db1e4e903ed3d038f2e579c9a5ab1bc2693532cb Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Tue, 12 May 2026 01:10:25 -0300
+Subject: [PATCH] =?UTF-8?q?docs(therapy-scheduling-pilot-rollout):=20Phase?=
+ =?UTF-8?q?=203=20partial=20=E2=80=94=20creds=20populated=20+=20smoke=20gr?=
+ =?UTF-8?q?een?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+§6 Phase 3 sub-step 1 ✅ (credentials populated to root .env from
+~/Downloads/client_secret_2_*.json; smoke via uvicorn :8003 + direct
+_build_authorize_url import confirms AliasChoices wiring loads).
+
+Live-QA sub-steps 2-7 remain ⏳ blocked on user: GCP OAuth client's
+registered redirect URIs don't include therapy's frontend callback —
+user must add http://localhost:5173/therapist/scheduling/gcal-callback
+in GCP Console before consent step succeeds with anything but
+redirect_uri_mismatch.
+
+§11 + Improvements block document the runbook-staleness (env-var
+naming) + multi-client-id observation for future polish.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../PROJECT.md                                | 25 +++++++++++--------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md b/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
+index 17830344..6fa2e9fa 100644
+--- a/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
++++ b/products/therapy-platform/projects/therapy-scheduling-pilot-rollout/PROJECT.md
+@@ -5,8 +5,8 @@
+ > **Write for a zero-context reader.** §1 inlines the situation; §10 commands are copy-paste ready.
+ 
+ - **Created:** 2026-05-03
+-- **Last updated:** 2026-05-10
+-- **Status:** ⏳ **BLOCKED ON USER (Phase 3) — Phases 0+1+2 SHIPPED 2026-05-10** by engineer subagent. Pilot regression 34/34 ✓, seed regression 32/32 ✓, vite build clean. Runbook live at `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` — user follows it to create the Google Cloud Console OAuth client + populate `THERAPY_GOOGLE_CLIENT_ID` + `THERAPY_GOOGLE_CLIENT_SECRET` env vars. After credentials are wired, the user runs the §6.Phase 3 live-QA checklist (connect / book / blackout / re-auth / reschedule) and either reports clean or files small follow-up fixes per §6.Phase 4.
++- **Last updated:** 2026-05-12
++- **Status:** ⏳ **Phase 3 PARTIAL — credentials populated + smoke green 2026-05-12; live-QA sub-steps still BLOCKED ON USER (browser-driven OAuth consent)** by engineer subagent THER-P3. GCP OAuth client_id+secret reused from `~/Downloads/client_secret_2_*.json` (May 7 client, project `gen-lang-client-0907920966`) → root `.env` `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`. Smoke (uvicorn :8003 + `_build_authorize_url` import) returned a valid `authorize_url` containing the client_id — settings.AliasChoices wiring confirmed. **Remaining blocker (sub-step 2 onward):** the GCP client's registered redirect URIs are `http://localhost:8140/oauth/google/callback` + `http://localhost:8010/api/youtube/oauth/callback`; therapy frontend sends `http://localhost:5173/therapist/scheduling/gcal-callback`. User must add the therapy redirect URI in GCP Console (Credentials → OAuth 2.0 Client ID `313073479474-…` → Authorised redirect URIs → save) before the consent step will succeed. After that, live-QA sub-steps 2-7 (connect / DB state / book / blackout / re-auth / reschedule) are user-driven per §6.Phase 3 checklist.
+ - **Owner / stakeholders:** rapha (joaoraphaelsst@gmail.com)
+ - **Project slug:** `therapy-scheduling-pilot-rollout` — single-product (therapy) scope; lives at `products/therapy-platform/projects/<slug>/`. Intent `rollout` per `KB § PATTERNS/project-execution.md §8` (the pilot code is shipped; this project lands the production-readiness pieces).
+ - **Related docs:**
+@@ -121,15 +121,19 @@ The runbook in scope adds **one new doc** at `KB § GUIDES/google-oauth-setup.md
+ 
+ **Improvements:** ts-morph's `insertElement` defaulted to slightly non-canonical indentation (2 extra spaces on the inserted lines). Build accepts it (whitespace doesn't matter to TS) and prettier would normalize on a future format pass. Left as-is rather than running prettier (no prettier config wired in this product; cross-cutting change outside scope). Tracked as a findings item.
+ 
+-### Phase 3 — Live OAuth + booking + re-auth QA
++### Phase 3 — Live OAuth + booking + re-auth QA ⏳ (2026-05-12 — credentials in, live sub-steps user-driven)
+ 
+-- [ ] User completes the runbook to spin up a real Google OAuth client; confirms env vars are set.
+-- [ ] Live connect: navigate to `/therapist/agendamento`, click "Conectar Google Calendar", complete the consent flow, verify the redirect lands on `/therapist/scheduling/gcal-callback` and the `connected: true` response shows.
+-- [ ] Verify DB state: `select gcal_authorized_at, length(gcal_refresh_token_encrypted) from therapy.therapist_profiles where user_id = ...;` — both columns populated.
+-- [ ] Live book: select a slot, enter a patient_id, click "Confirmar agendamento". Verify (a) `therapy.appointments` row inserted with `status='waiting'` + `google_event_id` set, (b) the event appears in the therapist's connected calendar.
+-- [ ] Live blackout: manually add a 1-hour event in the connected calendar, refresh `/candidates`, confirm the slot generator excludes the window.
+-- [ ] Live re-auth: `update therapy.therapist_profiles set gcal_authorized_at = now() - interval '8 days' where user_id = ...;` + reload page; confirm the re-auth banner appears and the connect flow restarts.
+-- [ ] Live reschedule: PATCH an appointment to a new slot; verify the GCal event MOVES (same event_id, new times) instead of being recreated.
++- [x] **User completes the runbook to spin up a real Google OAuth client; confirms env vars are set.** ✅ Credentials sourced from `~/Downloads/client_secret_2_313073479474-nd8ujp9p5lvoijj566vpbtic50f17hcl.apps.googleusercontent.com.json` (newer May 7 client; project `gen-lang-client-0907920966`); populated into root `.env` as `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET` (resolved by `TherapySettings.therapy_google_client_id` via `AliasChoices("THERAPY_GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID")` per `app/config.py:45-52`). Smoke confirmed: uvicorn on :8003 boots clean; `_build_authorize_url(settings.therapy_google_client_id, ...)` returns valid Google consent URL with client_id present. *Caveat:* GCP client's authorized redirect URIs are `http://localhost:8140/oauth/google/callback` + `http://localhost:8010/api/youtube/oauth/callback` — therapy sends `http://localhost:5173/therapist/scheduling/gcal-callback`. **User must add the therapy redirect URI in GCP Console before consent step succeeds** (Credentials → OAuth 2.0 Client ID `313073479474-…` → Authorised redirect URIs → save).
++- [ ] Live connect: navigate to `/therapist/agendamento`, click "Conectar Google Calendar", complete the consent flow, verify the redirect lands on `/therapist/scheduling/gcal-callback` and the `connected: true` response shows. **Pending user — browser-driven; blocked on the redirect-URI registration above.**
++- [ ] Verify DB state: `select gcal_authorized_at, length(gcal_refresh_token_encrypted) from therapy.therapist_profiles where user_id = ...;` — both columns populated. **Pending sub-step 2.**
++- [ ] Live book: select a slot, enter a patient_id, click "Confirmar agendamento". Verify (a) `therapy.appointments` row inserted with `status='waiting'` + `google_event_id` set, (b) the event appears in the therapist's connected calendar. **Pending sub-step 2.**
++- [ ] Live blackout: manually add a 1-hour event in the connected calendar, refresh `/candidates`, confirm the slot generator excludes the window. **Pending sub-step 2.**
++- [ ] Live re-auth: `update therapy.therapist_profiles set gcal_authorized_at = now() - interval '8 days' where user_id = ...;` + reload page; confirm the re-auth banner appears and the connect flow restarts. **Pending sub-step 2.**
++- [ ] Live reschedule: PATCH an appointment to a new slot; verify the GCal event MOVES (same event_id, new times) instead of being recreated. **Pending sub-step 2.**
++
++**Improvements:**
++- The runbook (`KB § GUIDES/google-oauth-setup.md`) documents `THERAPY_GOOGLE_CLIENT_ID` / `THERAPY_GOOGLE_CLIENT_SECRET` as the env-var names, but the platform-wide convention added 2026-05-11 (`app/config.py:39-42` comment block) is to use root-`.env` `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` with per-product prefix as an override. Both work via the AliasChoices wiring; the runbook is slightly stale — its Step 5 should note the platform-wide default. Captured here as a Phase 4 polish item (one-line edit; defer to a future docs pass since no current consumer is hitting the gap).
++- The two `client_secret_*.json` files in `~/Downloads/` represent two distinct GCP OAuth clients (May 2 + May 7) sharing the same client_id but different secrets and redirect_uris. The May 7 (`_2`) variant was chosen because it matches the existing `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8140/oauth/google/callback` line already in root `.env`. The May 2 variant only registered `http://localhost:8000/oauth/google/callback`. If multiple products end up sharing one client, the redirect_uri list grows monotonically — the runbook should flag this; tracked here.
+ 
+ ### Phase 4 — Polish + close
+ 
+@@ -203,3 +207,4 @@ cd products/therapy-platform/frontend && npx vite build
+ | 2026-05-03 | **Project scaffolded** at `therapy-scheduling-pilot` close — bundles two deferrals (manual GCal QA setup + frontend routing/nav additions) into one follow-up per user instruction. Status: PARKED, awaits reactivation when therapist-facing rollout is wanted. Pilot's three improvements (`update_event` to seed Protocol, `updated_payloads` to MockSupabaseClient, in-place reschedule refactor) were applied inline before this scaffold and are validated by 34 pilot tests + 32 seed calendar tests + 7 mock-tracking tests, all green. | Claude Opus 4.7 |
+ | 2026-05-10 | **Reactivated by orchestrator** under user signal "resolve the 5 blocked ones, then unblock the deps on it". Engineer dispatched with the audit + runbook + route-and-nav scope as one brief — all agent-doable. The downstream live-QA round stays explicitly blocked on user (needs Google Cloud Console OAuth client + redirect URI + scopes + env-var population — no agent can do this); engineer's runbook deliverable lets user complete it in a few minutes after the engineer's branch lands. Status flipped from PARKED to EXECUTING. | claude-opus-4-7 |
+ | 2026-05-10 | **Phase 0+1+2 shipped** by engineer subagent. Phase 0: pilot regression 34/34 ✓, seed regression 32/32 ✓, no admin-router collision, GCal `update_event` Protocol confirmed. Phase 1: `KNOWLEDGE-BASE/CONTEXT/GUIDES/google-oauth-setup.md` written (6 steps + troubleshooting + reuse hint); INDEX.md updated; `verify-kb-sync.sh` clean. Phase 2: ts-morph codemod added `TherapistScheduling` lazy import + `/agendamento` route to `App.tsx` and "Agendamento" nav item to `THERAPIST_NAV[0].items` in `layouts.ts`; `npx vite build` clean in 22.58s (required installing seed/framework/frontend node_modules in worktree first). Phase 3 stays blocked on user — runbook is the unblocker. | claude-opus-4-7 (engineer subagent) |
++| 2026-05-12 | **Phase 3 partial — credentials populated + smoke green** by engineer subagent THER-P3. User signaled GCP Console setup exists + authorized credential population. Search located OAuth client JSON at `~/Downloads/client_secret_2_313073479474-nd8ujp9p5lvoijj566vpbtic50f17hcl.apps.googleusercontent.com.json` (May 7 client, project `gen-lang-client-0907920966`); populated root `.env` `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET` (git-ignored — confirmed via `git check-ignore` and `git status` clean post-edit). Smoke: started therapy backend via uvicorn on :8003; `from app.config import settings; from app.routers.scheduling import _build_authorize_url` produced valid Google consent URL containing client_id (auth-gated `GET /api/scheduling/gcal/authorize` HTTP endpoint requires JWT — bypassed by direct config + builder import per runbook intent at line 135). New sub-blocker surfaced: GCP client's authorized redirect URIs (`http://localhost:8140/oauth/google/callback` + youtube callback) don't include therapy's `http://localhost:5173/therapist/scheduling/gcal-callback` — user must register it in GCP Console for live consent to succeed. Live-QA sub-steps 2-7 stay blocked on user (browser-driven). | claude-opus-4-7 (engineer subagent THER-P3) |
+-- 
+2.51.2
+

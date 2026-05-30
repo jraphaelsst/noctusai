@@ -1,0 +1,198 @@
+From f65c47e3865367cf148d1e1ac7d7a1384ce222a4 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:22 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a1aba84fe75553f29?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md     | 22 +++++++++----------
+ KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md      | 22 +++++++++----------
+ KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md       | 22 +++++++++----------
+ KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md |  6 ++---
+ 4 files changed, 36 insertions(+), 36 deletions(-)
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md b/KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md
+index 21dadce5..2cbaffc5 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/backend/01-CORE.md
+@@ -1,26 +1,26 @@
+ # 01 — Core Backend Context
+ 
+ > Path: `products/core/backend/app/` · Port: 8000 · 23 routers · 8 services · 31 test files · 392 test fns
+-> Standard backend patterns (auth, responses, exceptions, N+1): see `../PATTERNS/backend.md`.
++> Standard backend patterns (auth, responses, exceptions, N+1) → `../PATTERNS/backend.md`.
+ 
+ ## Core-Specific Auth
+ 
+ | Function | Purpose |
+ |----------|---------|
+-| `get_current_user(authorization)` | Validates Bearer token via Supabase Auth → `(user, token)` |
+-| `get_current_admin(authorization)` | Same + checks `noctus_users.role == "admin"` (403 if not) |
+-| `get_current_user_with_permissions(authorization)` | Fetches org_role + role permissions |
+-| `create_sso_token(user_id, org_id, ...)` | Short-lived JWT for product access (5 min) |
+-| `verify_sso_token(token)` | Validates SSO token structure and expiry |
++| `get_current_user(authorization)` | Validates Bearer via Supabase → `(user, token)` |
++| `get_current_admin(authorization)` | Same ∧ `noctus_users.role=="admin"` ⇒ 403 ¬admin |
++| `get_current_user_with_permissions(authorization)` | Fetches org_role + perms |
++| `create_sso_token(user_id, org_id, ...)` | Short JWT, product access (5min) |
++| `verify_sso_token(token)` | Validates SSO structure ∧ expiry |
+ 
+ ## Routers (23)
+ 
+-**Auth & Identity**: auth, oauth, sso, onboarding
+-**Org & Team**: organizations, team, roles
+-**Products & Licensing**: products, licenses
++**Auth/Identity**: auth, oauth, sso, onboarding
++**Org/Team**: organizations, team, roles
++**Products/Licensing**: products, licenses
+ **Billing**: plans, subscriptions, billing (Stripe checkout/webhook/portal), entitlements
+ **Admin**: api_keys, analytics, test_accounts, audit_logs
+-**Communication**: notifications, webhooks, settings
++**Comms**: notifications, webhooks, settings
+ 
+ ## Services (8)
+ 
+@@ -28,4 +28,4 @@ audit, billing, email (Resend), entitlements, notifications, permissions, stripe
+ 
+ ## Permission Model
+ 
+-**System roles** (org_id IS NULL): owner, admin, member, viewer. **Granular permissions**: `team:manage`, `billing:manage`, `settings:manage`, `products:access`, `*`, etc. Custom roles per-organization with any combination.
++**System roles** (org_id IS NULL): owner, admin, member, viewer. **Granular perms**: `team:manage`, `billing:manage`, `settings:manage`, `products:access`, `*`, etc. Custom per-org roles ⇒ any combo.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md b/KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md
+index e7599d3b..12455a03 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md
++++ b/KNOWLEDGE-BASE/CONTEXT/backend/02-ERP.md
+@@ -1,37 +1,37 @@
+ # 02 — ERP Backend Context
+ 
+ > Path: `products/erp-imobiliario/backend/app/` · Port: 8001 · 48 routers · 41 services · 100 test files · 1,506 test fns
+-> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting): see `../PATTERNS/backend.md`.
++> Standard backend patterns (auth, responses, exceptions, DELETE pre-checks, search, N+1, rate limiting) → `../PATTERNS/backend.md`.
+ 
+ ## Overview
+ 
+-Full real estate CRM backend. Handles property management, client CRM, sales funnel, AI-powered matching, financial operations, WhatsApp messaging, digital signatures, PDF generation, Meta Ads integration, and compliance reporting.
++Full real estate CRM backend. Property management, client CRM, sales funnel, AI matching, financial ops, WhatsApp, e-signatures, PDF gen, Meta Ads, and compliance reporting.
+ 
+ ## Router Groups (48)
+ 
+ - **Core Domain**: ativos, clientes, funil, metas, condominios, profiles
+-- **AI & Matching**: ai (descriptions, lead scoring, price suggestions), matching (property↔permuta)
++- **AI ∧ Matching**: ai (descriptions, lead scoring, price suggestions), matching (property↔permuta)
+ - **Real Estate Ops**: locacoes, vistorias, contratos, propostas, chaves, assinaturas
+ - **Financial**: financeiro, comissoes, banco, impostos, manutencao, seguros
+-- **Marketing & Portals**: marketing, portais, portal_cliente, portal_externo, site_imoveis, emails, whatsapp
+-- **Analytics & Compliance**: relatorios, bi, dimob, analise_credito, gamificacao, certidoes
++- **Marketing ∧ Portals**: marketing, portais, portal_cliente, portal_externo, site_imoveis, emails, whatsapp
++- **Analytics ∧ Compliance**: relatorios, bi, dimob, analise_credito, gamificacao, certidoes
+ - **Organization**: filiais, distribuicao, campo, agenda, documentos
+ - **Integrations**: storage, pdf, jobs, recorrencia, notificacoes, whatsapp_webhook, meta_api
+ - **Logging**: action_log, atividades
+ 
+ ## ERP-Specific Patterns
+ 
+-**Org ID extraction**: Use `get_org_id(user)` from `dependencies.py` — never inline `user.user_metadata.get("org_id")`. Raises 400 if missing.
++**Org ID extraction**: `get_org_id(user)` from `dependencies.py` — never inline `user.user_metadata.get("org_id")`. Missing ⇒ 400.
+ 
+-**Webhook HMAC**: `whatsapp_webhook.py` verifies HMAC-SHA256 via `x-hub-signature` header when org's `webhook_secret` is configured.
++**Webhook HMAC**: `whatsapp_webhook.py` verifies HMAC-SHA256 via `x-hub-signature` header when org's `webhook_secret` is set.
+ 
+-**Production safety**: `jwt_secret` defaults empty — raises `RuntimeError` at startup if empty in production. Portal endpoints scope all queries by `org_id` from JWT.
++**Prod safety**: `jwt_secret` defaults empty ⇒ `RuntimeError` at startup in prod. Portal endpoints scope all queries by `org_id` from JWT.
+ 
+ ## Legacy Data
+ 
+-264 migrated imóveis from old Django platform. Markers: `titulo_anuncio LIKE '[MOCK]%'`. See `../02-LANDSCAPE.md` for details.
++264 migrated imóveis from old Django platform. Markers: `titulo_anuncio LIKE '[MOCK]%'`. Details → `../02-LANDSCAPE.md`.
+ 
+ ## Test Patterns
+ 
+-- **DELETE tests**: Must provide mock data with matching ID for pre-check. Add separate `test_delete_not_found` with empty data → 404.
+-- **Search tests**: Mock `.or_()` is no-op — tests verify endpoint accepts `busca` and returns 200, not filtered count.
++- **DELETE tests**: provide mock data ∧ matching ID for pre-check. Separate `test_delete_not_found` w/ empty data ⇒ 404.
++- **Search tests**: Mock `.or_()` is no-op — tests verify endpoint accepts `busca` ∧ returns 200, ¬filtered count.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md b/KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md
+index ae9455e5..08567efc 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md
++++ b/KNOWLEDGE-BASE/CONTEXT/backend/03-PF.md
+@@ -1,31 +1,31 @@
+ # 03 — Personal Finance Backend Context
+ 
+ > Path: `products/personal-finance/backend/app/` · Port: 8002 · 14 routers · 16 services · ~40 test files · 584 passed + 10 skipped
+-> Schema: `personal-finance` · Standard backend patterns: see `../PATTERNS/backend.md`.
++> Schema: `personal-finance` · Standard backend patterns → `../PATTERNS/backend.md`.
+ 
+ ## Overview
+ 
+-Personal finance tracker for **organizations** — companies use it as a financial management tool, individuals use it via single-member "personal" orgs (same data model, same RLS). Multi-account transaction management, budgets, recurring transactions, investment portfolio tracking, stock watchlists with real-time quotes (yfinance), financial reports, and dashboard analytics.
++Personal finance tracker for **organizations** — companies use it as a financial management tool, individuals use it via single-member "personal" orgs (same data model, same RLS). Multi-account transaction mgmt, budgets, recurring transactions, investment portfolio tracking, stock watchlists with real-time quotes (yfinance), financial reports, and dashboard analytics.
+ 
+-## Org scoping (uniform with ERP / Therapy / AdConnect post 2026-05-03)
++## Org scoping (uniform w/ ERP / Therapy / AdConnect post 2026-05-03)
+ 
+-Every PF operational table is `org_id NOT NULL REFERENCES public.organizations(id)` + `created_by UUID NULL` audit field. RLS is uniform: `org_id = public.current_org_id()` (parents direct, child tables traverse via parent IN-subquery). No NULL branches, no PF-local helper. The platform `public.current_org_id()` reads `(auth.jwt() ->> 'org_id')::uuid` from the JWT claim.
++Every PF op table is `org_id NOT NULL REFERENCES public.organizations(id)` + `created_by UUID NULL` audit field. RLS uniform: `org_id = public.current_org_id()` (parents direct, children traverse via parent IN-subquery). ¬NULL branches, ¬PF-local helper. Platform `public.current_org_id()` reads `(auth.jwt() ->> 'org_id')::uuid` from JWT claim.
+ 
+-**Personal-org bootstrap.** Solo users land in a single-member `is_personal=true` `public.organizations` row, auto-created at first-PF-login if missing via `noctusai_lib.domain.org.ensure_personal_org` (seed-shared with therapy / future products). PF wraps it in `app/services/onboarding_service.ensure_pf_personal_org` which threads the `Pessoal — {email}` template and seeds the 19 default categorias (`PF_DEFAULT_CATEGORIAS`) into the new org. Categorias are per-org seeded copies (every org owns its 19 starter rows + can rename/delete freely) — not platform globals.
++**Personal-org bootstrap.** Solo users land in a single-member `is_personal=true` `public.organizations` row, auto-created at first-PF-login if missing via `noctusai_lib.domain.org.ensure_personal_org` (seed-shared w/ therapy + future products). PF wraps it in `app/services/onboarding_service.ensure_pf_personal_org` — threads `Pessoal — {email}` template ∧ seeds 19 default categorias (`PF_DEFAULT_CATEGORIAS`) into new org. Categorias = per-org seeded copies (every org owns its 19 starter rows ∧ can rename/delete) — ¬platform globals.
+ 
+-History: this layout shipped via `pf-org-scoping-migration` (Phase 1+2 flipped 12 op tables from user-scoped to org-scoped 2026-05-03). Migration `001_personal_finance.sql` was rewritten in the same project to declare the deployed truth instead of the original fictional shape.
++History: shipped via `pf-org-scoping-migration` (Phase 1+2 flipped 12 op tables user→org-scoped 2026-05-03). Migration `001_personal_finance.sql` rewritten in same project to declare deployed truth vs. original fictional shape.
+ 
+-## Router Groups (14)
++## Routers (14)
+ 
+ - **Core**: contas (multi-type accounts), transacoes, categorias, operacoes (batch import/categorize)
+-- **Planning**: orcamentos (budget limits per category), metas (savings/debt goals), recorrentes (salary/rent/subscriptions)
++- **Planning**: orcamentos (per-category budget limits), metas (savings/debt goals), recorrentes (salary/rent/subscriptions)
+ - **Investments**: carteira (portfolios), ativos (positions), watchlist (yfinance quotes), cotacoes (real-time prices), patrimonio (net worth)
+ - **Analytics**: dashboard (summary/charts), relatorios (monthly/category/cash flow)
+ 
+ ## PF-Specific
+ 
+-**Scheduler** (`app/scheduler.py`): APScheduler processes due recurring transactions automatically, creating corresponding transacoes.
++**Scheduler** (`app/scheduler.py`): APScheduler processes due recurring transactions auto → corresponding transacoes.
+ 
+-**Org ID extraction**: routers call `get_current_user_org(authorization)` from `app/dependencies.py` → `Service(db, org_id)`. Every service constructor is `__init__(self, db_client, org_id: str)`; queries filter by `org_id`; inserts populate `org_id` from the constructor and `created_by` from the current user when audit attribution matters.
++**Org ID extraction**: routers call `get_current_user_org(authorization)` from `app/dependencies.py` → `Service(db, org_id)`. Every service ctor `__init__(self, db_client, org_id: str)`; queries filter by `org_id`; inserts populate `org_id` from ctor ∧ `created_by` from current user when audit attribution matters.
+ 
+-**Real-DB tests**: Auto-skip when `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` not set. Use `ClientOptions(schema="personal-finance")`.
++**Real-DB tests**: Auto-skip if `SUPABASE_URL` ∨ `SUPABASE_SERVICE_ROLE_KEY` unset. Use `ClientOptions(schema="personal-finance")`.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md b/KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md
+index 4583c20c..7b974bb9 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/backend/04-DATABASE.md
+@@ -1,7 +1,7 @@
+ # 04 — Database Context
+ 
+ > Supabase PostgreSQL · RLS per org/role · **7 schemas · ~232 tables** (verified 2026-04-18)
+-> RLS rules and access patterns: see `../PATTERNS/database-rls.md`.
++> RLS rules ∧ access patterns → `../PATTERNS/database-rls.md`.
+ 
+ ## Schema Architecture
+ 
+@@ -15,13 +15,13 @@
+ | `mailing` | 14 | Mailing | `org_id` |
+ | `seed` | 4 | Seed | `org_id` |
+ 
+-Each backend uses `ClientOptions(schema="<schema>")`. Auth hook functions stay in `public` (triggered by `auth.users`).
++Each backend uses `ClientOptions(schema="<schema>")`. Auth hook fns stay in `public` (triggered by `auth.users`).
+ 
+ ## Core Tables (`public` — ~23)
+ 
+ Key tables: `noctus_users` (extends auth.users, has `org_id`, `org_role`), `organizations` (tenant defs, onboarding state), `products` (catalog), `licenses` (org→product access), `plans`, `subscriptions`, `api_keys` (SHA256 hashed), `roles` (system + custom), `invitations`, `notifications`, `audit_logs`, `webhook_endpoints`, `webhook_deliveries`, `platform_settings`, `org_settings`.
+ 
+-Onboarding is stored as fields on `organizations` (`onboarding_completed`, `onboarding_steps`), not a separate table.
++Onboarding stored as fields on `organizations` (`onboarding_completed`, `onboarding_steps`), ¬separate table.
+ 
+ ## ERP Tables (`erp` — 105)
+ 
+-- 
+2.51.2
+

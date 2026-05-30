@@ -1,0 +1,995 @@
+From a16ddd829be6aacc61447e9c04d8f3da5e717280 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:30 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a79a18cd650947536?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../noctusai_lib/domain/ai/__init__.py        |  11 +
+ .../noctusai_lib/domain/ai/audit_hook.py      | 369 ++++++++++++
+ .../tests/domain/ai/test_audit_hook.py        | 564 ++++++++++++++++++
+ 3 files changed, 944 insertions(+)
+ create mode 100644 seed/lib/backend/noctusai_lib/domain/ai/audit_hook.py
+ create mode 100644 seed/lib/backend/tests/domain/ai/test_audit_hook.py
+
+diff --git a/seed/lib/backend/noctusai_lib/domain/ai/__init__.py b/seed/lib/backend/noctusai_lib/domain/ai/__init__.py
+index f93b3383..d0ab3542 100644
+--- a/seed/lib/backend/noctusai_lib/domain/ai/__init__.py
++++ b/seed/lib/backend/noctusai_lib/domain/ai/__init__.py
+@@ -62,6 +62,12 @@ from .tool_audit import (
+     make_audit_writer,
+     now_utc,
+ )
++from .audit_hook import (
++    OnMissingRedactor,
++    audit_chat_dispatch,
++    build_audit_record_for_feature,
++    make_get_audit_writer_for_product,
++)
+ 
+ __all__ = [
+     # P1 indicator pattern (Phase 3)
+@@ -98,4 +104,9 @@ __all__ = [
+     "apply_feature_redaction",
+     "make_audit_writer",
+     "now_utc",
++    # Per-product audit_hook lift (AUDIT-LIFT, 2026-05-12)
++    "OnMissingRedactor",
++    "audit_chat_dispatch",
++    "build_audit_record_for_feature",
++    "make_get_audit_writer_for_product",
+ ]
+diff --git a/seed/lib/backend/noctusai_lib/domain/ai/audit_hook.py b/seed/lib/backend/noctusai_lib/domain/ai/audit_hook.py
+new file mode 100644
+index 00000000..49e000ca
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/domain/ai/audit_hook.py
+@@ -0,0 +1,369 @@
++"""Per-product `audit_hook` factory — lifts the N=6+ duplicated lazy
++SQLAlchemy + session-factory + noop-writer shape into the seed.
++
++Before this module landed, every product (core / mailing / daily-life /
++personal-finance / therapy-platform / erp-imobiliario) shipped a
++near-byte-identical `app/services/audit_hook.py` with:
++
++    - module-level `_engine` + `_session_factory` singletons
++    - `_get_engine_and_factory()` lazily constructing them off `settings.postgres_url`
++    - a `_noop_writer` returned when `postgres_url` is empty
++    - a `get_audit_writer()` that wraps the seed `make_audit_writer`
++      with a per-call short-lived session
++
++The body is ~70 LoC; only the product's `settings` import + `ToolCallAudit`
++class differ. The factory below closes over those two seams and returns
++the matching `get_audit_writer` callable plus a `reset_for_test()` hook
++(equivalent to the per-product `_engine = None; _session_factory = None`
++monkeypatch dance the tests do).
++
++**Optional `build_audit_record_for_feature`** — three products
++(personal-finance, daily-life, therapy-platform) also ship a helper that
++applies feature-catalog redaction (`get_feature(feature_key).redact_*`)
++BEFORE constructing the `AuditRecord`. Two semantics exist:
++
++    - `on_missing_redactor="over_redact"` (PF default) — drop the field
++      to None when no redactor registered. Safe for finance-LGPD.
++    - `on_missing_redactor="passthrough"` (daily-life default) — log
++      debug + fall back to raw arguments/result.
++
++The therapy-platform per-feature redactor lambdas are domain-specific
++(Art. 11 clinical scrubbing) and stay product-side; therapy's
++`audit_dispatch` wrapper composes those with the seed `get_writer` + the
++seed-side record construction.
++
++**`audit_chat_dispatch` async helper** — generalizes ERP's `_dispatch_chat`
++shape (monotonic-ns timing, success/failure audit row, exception re-raise
++with audit row landed first). Single-adopter today (ERP); ships at the
++seed so subsequent adopters consume rather than duplicate.
++
++Best-effort everywhere: audit-side failures NEVER raise to the caller.
++The seed `make_audit_writer` swallows DB errors; this module also catches
++exceptions in the redactor + record-construction path so audit gaps stay
++observable but never abort dispatch.
++"""
++
++from __future__ import annotations
++
++import logging
++import time
++from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
++
++from .tool_audit import (
++    AuditRecord,
++    AuditWriter,
++    make_audit_writer,
++    now_utc,
++)
++
++if TYPE_CHECKING:
++    from sqlalchemy.engine import Engine
++    from sqlalchemy.orm import sessionmaker as SessionmakerType
++
++logger = logging.getLogger(__name__)
++
++
++OnMissingRedactor = Literal["over_redact", "passthrough"]
++
++
++def make_get_audit_writer_for_product(
++    *,
++    settings: Any,
++    table_class: type,
++    postgres_url_attr: str = "postgres_url",
++    pool_size: int = 2,
++    max_overflow: int = 2,
++    logger_name: Optional[str] = None,
++) -> tuple[Callable[[], AuditWriter], Callable[[], None]]:
++    """Build a product's `get_audit_writer()` + `reset_for_test()` pair.
++
++    Closes over the product's `settings` object and `ToolCallAudit` ORM
++    class. Returns:
++
++        get_audit_writer: () -> AuditWriter
++            Lazy-constructs the SQLAlchemy engine + sessionmaker on first
++            call. When `settings.<postgres_url_attr>` is empty, returns a
++            noop writer that debug-logs each call (audit-trail gap stays
++            observable). On engine-construction failure, also returns the
++            noop writer (logged at exception level).
++        reset_for_test: () -> None
++            Clears the cached engine + sessionmaker. Lets tests flip
++            `settings.postgres_url` between cases without surviving state.
++
++    Args:
++        settings: Product settings object (Pydantic model or namespace).
++            Read via `getattr(settings, postgres_url_attr, "")`.
++        table_class: The product's concrete `ToolCallAudit` ORM class
++            (subclass of the product's `Base`). Passed verbatim to the
++            seed `make_audit_writer(session, table_class)`.
++        postgres_url_attr: Settings attribute carrying the connection
++            string. Default `"postgres_url"` matches every adopter.
++        pool_size / max_overflow: Forwarded to `create_engine`. Defaults
++            match the byte-identical per-product shape.
++        logger_name: Logger used for noop / engine-failure messages.
++            Defaults to `__name__` (this module). Override when a product
++            wants log lines attributed to its own namespace.
++    """
++    log = logging.getLogger(logger_name) if logger_name else logger
++
++    # Module-state-equivalent closure cells. The closure replaces the
++    # per-product `_engine` + `_session_factory` module globals.
++    state: dict[str, Any] = {"engine": None, "session_factory": None}
++
++    def _get_engine_and_factory() -> tuple[Any, Any]:
++        """Lazy engine + sessionmaker. Returns (None, None) on missing URL
++        or engine construction failure."""
++        if state["engine"] is not None and state["session_factory"] is not None:
++            return state["engine"], state["session_factory"]
++        postgres_url = getattr(settings, postgres_url_attr, "") or ""
++        if not postgres_url:
++            return None, None
++        try:
++            from sqlalchemy import create_engine
++            from sqlalchemy.orm import sessionmaker
++
++            engine = create_engine(
++                postgres_url,
++                pool_pre_ping=True,
++                pool_size=pool_size,
++                max_overflow=max_overflow,
++            )
++            session_factory = sessionmaker(bind=engine, expire_on_commit=False)
++            state["engine"] = engine
++            state["session_factory"] = session_factory
++            return engine, session_factory
++        except Exception:
++            log.exception(
++                "audit_hook: failed to construct SQLAlchemy engine; "
++                "tool-call audit will skip writes"
++            )
++            return None, None
++
++    def _noop_writer(record: AuditRecord) -> None:
++        """Used when no Postgres connection is configured. Best-effort means
++        audit gaps are visible — log at debug so dev runs don't spam."""
++        log.debug(
++            "audit_hook: %s unset; skipping tool_call_audit write for tool=%s",
++            postgres_url_attr,
++            record.tool_name,
++        )
++
++    def get_audit_writer() -> AuditWriter:
++        """Return an `AuditWriter` bound to a fresh SQLAlchemy session per call.
++
++        Wraps `make_audit_writer(db, table_class)`. Each call opens a short-lived
++        session, writes the row, commits, and closes. When `postgres_url` is
++        unset, returns the noop writer.
++        """
++        _engine, session_factory = _get_engine_and_factory()
++        if session_factory is None:
++            return _noop_writer
++
++        def write(record: AuditRecord) -> None:
++            session = session_factory()
++            try:
++                inner = make_audit_writer(session, table_class)
++                inner(record)
++            finally:
++                session.close()
++
++        return write
++
++    def reset_for_test() -> None:
++        """Clear the lazy engine + sessionmaker cache. Tests should call
++        this after flipping `settings.postgres_url` between cases."""
++        state["engine"] = None
++        state["session_factory"] = None
++
++    return get_audit_writer, reset_for_test
++
++
++def build_audit_record_for_feature(
++    *,
++    feature_key: str,
++    tool_name: str,
++    status: str,
++    duration_ms: int,
++    get_feature: Callable[[str], Any],
++    arguments: Optional[dict[str, Any]] = None,
++    result: Any = None,
++    error: Optional[str] = None,
++    user_id: Optional[int] = None,
++    correlation_id: Optional[str] = None,
++    conversation_id: Optional[str] = None,
++    on_missing_redactor: OnMissingRedactor = "over_redact",
++) -> AuditRecord:
++    """Construct an `AuditRecord` after applying the feature's registered
++    redaction lambdas. Defaults to `"over_redact"` (drop on missing) —
++    LGPD-safe for sensitive products.
++
++    Args:
++        feature_key: Catalog key passed to `get_feature(feature_key)`.
++        get_feature: Catalog lookup callable. Typically
++            `noctusai_lib.domain.ai.get_feature` — passed by reference so
++            this helper doesn't take a hard dependency on consent-module
++            initialization order.
++        on_missing_redactor:
++            - `"over_redact"` (PF default) — when no redactor exists,
++              drop the field to `None`. Audit row keeps structural shape
++              but no free text. Safe for LGPD-sensitive products.
++            - `"passthrough"` — log debug + keep raw values. Used by
++              daily-life where audit content drives downstream analytics
++              and the consent surface gates the dispatch upstream.
++
++    A redactor raising is ALWAYS caught: logged at WARNING and the field
++    falls back to `None` (over-redact, never leak). The audit row still
++    lands so the failure is observable.
++    """
++    feature = None
++    try:
++        feature = get_feature(feature_key)
++    except Exception:
++        logger.warning(
++            "audit_hook: get_feature(%r) raised; treating as missing feature",
++            feature_key,
++        )
++
++    def _apply(redactor: Optional[Callable[[Any], Any]], value: Any, kind: str) -> Any:
++        if value is None:
++            return None
++        if redactor is None:
++            if on_missing_redactor == "over_redact":
++                logger.debug(
++                    "audit_hook: no %s redactor for feature=%s; dropping field",
++                    kind,
++                    feature_key,
++                )
++                return None
++            # passthrough
++            return value
++        try:
++            return redactor(value)
++        except Exception:
++            logger.warning(
++                "audit_hook: %s redactor raised for feature=%s; dropping field",
++                kind,
++                feature_key,
++            )
++            return None
++
++    redact_arguments = getattr(feature, "redact_arguments", None) if feature else None
++    redact_result = getattr(feature, "redact_result", None) if feature else None
++
++    if feature is None and on_missing_redactor == "passthrough":
++        logger.debug(
++            "audit_hook: feature_key=%s not in catalog — audit row uses raw "
++            "arguments/result",
++            feature_key,
++        )
++
++    safe_arguments = _apply(redact_arguments, arguments, "arguments")
++    safe_result = _apply(redact_result, result, "result")
++
++    # PF historically coerced non-dict redacted args into `{"_value": ...}`;
++    # preserve that behavior so audit row shape stays compatible with
++    # downstream consumers expecting a JSONB dict.
++    if safe_arguments is not None and not isinstance(safe_arguments, dict):
++        safe_arguments = {"_value": safe_arguments}
++
++    return AuditRecord(
++        tool_name=tool_name,
++        status=status,  # type: ignore[arg-type]
++        duration_ms=duration_ms,
++        started_at=now_utc(),
++        arguments=safe_arguments,
++        result=safe_result,
++        error=error,
++        user_id=user_id,
++        correlation_id=correlation_id,
++        conversation_id=conversation_id,
++    )
++
++
++async def audit_chat_dispatch(
++    *,
++    tool_name: str,
++    chat_call: Callable[..., Any],
++    get_writer: Callable[[], AuditWriter],
++    messages: list[dict[str, Any]],
++    arguments: Optional[dict[str, Any]] = None,
++    user_id: Optional[int] = None,
++    org_id: Optional[str] = None,
++    **chat_kwargs: Any,
++) -> Any:
++    """Wrap a chat-completion call with audit-row write on success + failure.
++
++    Generalizes the ERP `_dispatch_chat(...)` pattern. The audit writer is
++    obtained per call (so it picks up `reset_for_test` and lazy-init).
++
++    Best-effort guarantee: a failure in audit-write path NEVER masks the
++    original chat exception (or success result). If `chat_call` raises,
++    we attempt to write a `status="failure"` row, log any audit-side
++    exception, and re-raise the original.
++
++    Args:
++        tool_name: Audit row's `tool_name`.
++        chat_call: The chat-completion callable (`noctusai_lib.integrations.llm.chat_completion`
++            or a wrapped variant). Called as
++            `await chat_call(messages=messages, org_id=org_id, **chat_kwargs)`.
++        get_writer: Callable that returns the current `AuditWriter`.
++            Typically the product's `get_audit_writer` from
++            `make_get_audit_writer_for_product`.
++        messages / org_id / chat_kwargs: Forwarded to `chat_call`.
++        arguments: Logged as the audit row's `arguments`.
++        user_id: Stored on the audit row.
++    """
++    started_at = now_utc()
++    started_ns = time.monotonic_ns()
++    audit_writer = get_writer()
++
++    try:
++        result = await chat_call(messages=messages, org_id=org_id, **chat_kwargs)
++    except Exception as exc:
++        duration_ms = max(0, (time.monotonic_ns() - started_ns) // 1_000_000)
++        try:
++            audit_writer(
++                AuditRecord(
++                    tool_name=tool_name,
++                    status="failure",
++                    duration_ms=duration_ms,
++                    started_at=started_at,
++                    arguments=arguments,
++                    result=None,
++                    error=str(exc),
++                    user_id=user_id,
++                )
++            )
++        except Exception:
++            logger.exception(
++                "audit_chat_dispatch: audit-writer failed for tool=%s", tool_name
++            )
++        raise
++
++    duration_ms = max(0, (time.monotonic_ns() - started_ns) // 1_000_000)
++    try:
++        audit_writer(
++            AuditRecord(
++                tool_name=tool_name,
++                status="success",
++                duration_ms=duration_ms,
++                started_at=started_at,
++                arguments=arguments,
++                result={"content": result} if isinstance(result, str) else result,
++                user_id=user_id,
++            )
++        )
++    except Exception:
++        logger.exception(
++            "audit_chat_dispatch: audit-writer failed for tool=%s", tool_name
++        )
++
++    return result
++
++
++__all__ = [
++    "audit_chat_dispatch",
++    "build_audit_record_for_feature",
++    "make_get_audit_writer_for_product",
++    "OnMissingRedactor",
++]
+diff --git a/seed/lib/backend/tests/domain/ai/test_audit_hook.py b/seed/lib/backend/tests/domain/ai/test_audit_hook.py
+new file mode 100644
+index 00000000..42c7166e
+--- /dev/null
++++ b/seed/lib/backend/tests/domain/ai/test_audit_hook.py
+@@ -0,0 +1,564 @@
++"""Tests for `noctusai_lib.domain.ai.audit_hook` — the per-product
++factory that lifts the duplicated lazy-engine + session-factory +
++noop-writer shape.
++
++Covers:
++  - `make_get_audit_writer_for_product` returns noop when settings has
++    no `postgres_url`.
++  - The returned writer caches engine state until `reset_for_test`.
++  - Engine construction failure surfaces as noop (not raise).
++  - `build_audit_record_for_feature` `"over_redact"` semantics —
++    missing redactor drops field.
++  - `build_audit_record_for_feature` `"passthrough"` semantics —
++    missing redactor keeps raw value.
++  - Redactor exception → field dropped + WARNING logged (never raise).
++  - Non-dict redacted args coerced to `{"_value": ...}` (PF
++    compatibility).
++  - `audit_chat_dispatch` success path writes one row with status="success"
++    + monotonic duration.
++  - `audit_chat_dispatch` failure path writes row with status="failure"
++    + re-raises original.
++  - `audit_chat_dispatch` audit-side failure NEVER masks chat exception.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from types import SimpleNamespace
++from typing import Any, Optional
++
++import pytest
++
++from noctusai_lib.domain.ai.audit_hook import (
++    audit_chat_dispatch,
++    build_audit_record_for_feature,
++    make_get_audit_writer_for_product,
++)
++from noctusai_lib.domain.ai.tool_audit import AuditRecord, now_utc
++
++
++# ---------------------------------------------------------------------------
++# Fakes — minimal session stand-ins. The factory is product-agnostic;
++# tests don't need a real engine for the noop-branch coverage.
++# ---------------------------------------------------------------------------
++
++
++class _FakeTableClass:
++    """Stand-in ORM class — accepts the kwargs `AuditRecord.to_row_kwargs`
++    emits. Per the seed contract, the only requirement is `TableClass(**kwargs)`
++    succeeds."""
++
++    def __init__(self, **kwargs: Any) -> None:
++        self.kwargs = kwargs
++
++
++# ---------------------------------------------------------------------------
++# Noop branch — the most common path in dev / test contexts without a
++# Postgres URL.
++# ---------------------------------------------------------------------------
++
++
++def test_make_get_audit_writer_noop_when_postgres_url_unset(caplog) -> None:
++    """No `postgres_url` in settings ⇒ noop writer returned. Debug log fires
++    so audit-trail gaps stay observable."""
++    settings = SimpleNamespace(postgres_url="")
++    get_writer, _reset = make_get_audit_writer_for_product(
++        settings=settings, table_class=_FakeTableClass
++    )
++
++    writer = get_writer()
++    with caplog.at_level(logging.DEBUG, logger="noctusai_lib.domain.ai.audit_hook"):
++        writer(
++            AuditRecord(
++                tool_name="seed.factory_test",
++                status="success",
++                duration_ms=0,
++                started_at=now_utc(),
++            )
++        )
++
++    assert any("postgres_url unset" in r.getMessage() for r in caplog.records)
++
++
++def test_make_get_audit_writer_noop_when_postgres_url_missing_attr(caplog) -> None:
++    """Settings without the attribute at all ⇒ noop (treated as empty)."""
++    settings = SimpleNamespace()  # no postgres_url attribute
++    get_writer, _reset = make_get_audit_writer_for_product(
++        settings=settings, table_class=_FakeTableClass
++    )
++
++    writer = get_writer()
++    with caplog.at_level(logging.DEBUG, logger="noctusai_lib.domain.ai.audit_hook"):
++        writer(
++            AuditRecord(
++                tool_name="x",
++                status="success",
++                duration_ms=1,
++                started_at=now_utc(),
++            )
++        )
++
++    assert any("postgres_url unset" in r.getMessage() for r in caplog.records)
++
++
++def test_make_get_audit_writer_custom_attr_name(caplog) -> None:
++    """`postgres_url_attr=` lets products with a different settings key
++    consume the factory unchanged."""
++    settings = SimpleNamespace(audit_db_dsn="")
++    get_writer, _reset = make_get_audit_writer_for_product(
++        settings=settings,
++        table_class=_FakeTableClass,
++        postgres_url_attr="audit_db_dsn",
++    )
++
++    writer = get_writer()
++    with caplog.at_level(logging.DEBUG, logger="noctusai_lib.domain.ai.audit_hook"):
++        writer(
++            AuditRecord(
++                tool_name="x",
++                status="success",
++                duration_ms=1,
++                started_at=now_utc(),
++            )
++        )
++
++    assert any("audit_db_dsn unset" in r.getMessage() for r in caplog.records)
++
++
++def test_reset_for_test_clears_engine_cache() -> None:
++    """After `reset_for_test`, flipping `postgres_url` to "" yields the
++    noop writer on the next `get_audit_writer()` call (no stale engine)."""
++    settings = SimpleNamespace(postgres_url="")
++    get_writer, reset = make_get_audit_writer_for_product(
++        settings=settings, table_class=_FakeTableClass
++    )
++
++    writer_a = get_writer()
++    # Both empty → noop. After reset, still empty → noop. (We can't easily
++    # exercise the real-engine path without sqlalchemy + a real DSN, so
++    # noop-after-reset is the empirical surface.)
++    reset()
++    writer_b = get_writer()
++
++    # Both are noop writers — confirmable because calling them does NOT raise
++    # (a real session_factory() in the cold path against a bogus URL would).
++    rec = AuditRecord(
++        tool_name="t", status="success", duration_ms=0, started_at=now_utc()
++    )
++    writer_a(rec)
++    writer_b(rec)  # MUST NOT raise
++
++
++def test_engine_construction_failure_falls_back_to_noop(caplog, monkeypatch) -> None:
++    """A bad `postgres_url` that raises in `create_engine` is caught + logged
++    at exception level. The returned writer is the noop, dispatch continues."""
++    settings = SimpleNamespace(postgres_url="not-a-real-dsn://bogus")
++    get_writer, _reset = make_get_audit_writer_for_product(
++        settings=settings, table_class=_FakeTableClass
++    )
++
++    # Force sqlalchemy.create_engine to raise — emulates a malformed DSN
++    # without depending on what sqlalchemy actually does with this string.
++    import sqlalchemy
++
++    def _boom(*_args: Any, **_kwargs: Any) -> Any:
++        raise RuntimeError("engine create failed")
++
++    monkeypatch.setattr(sqlalchemy, "create_engine", _boom)
++
++    with caplog.at_level(logging.ERROR, logger="noctusai_lib.domain.ai.audit_hook"):
++        writer = get_writer()
++        # The noop path doesn't raise — confirms we fell back.
++        writer(
++            AuditRecord(
++                tool_name="t",
++                status="success",
++                duration_ms=0,
++                started_at=now_utc(),
++            )
++        )
++
++    assert any(
++        "failed to construct SQLAlchemy engine" in r.getMessage()
++        for r in caplog.records
++    )
++
++
++# ---------------------------------------------------------------------------
++# build_audit_record_for_feature — redaction semantics.
++# ---------------------------------------------------------------------------
++
++
++@dataclass
++class _FakeFeature:
++    redact_arguments: Optional[Any] = None
++    redact_result: Optional[Any] = None
++
++
++def test_build_audit_record_applies_registered_redactors() -> None:
++    """Redactors registered on the feature run before the record is constructed."""
++    feature = _FakeFeature(
++        redact_arguments=lambda a: {"redacted_args": True, "len": len(a.get("text", ""))},
++        redact_result=lambda r: {"redacted_result": True},
++    )
++
++    def _get_feature(key: str) -> _FakeFeature:
++        assert key == "demo.x"
++        return feature
++
++    record = build_audit_record_for_feature(
++        feature_key="demo.x",
++        tool_name="chat_completion",
++        status="success",
++        duration_ms=10,
++        get_feature=_get_feature,
++        arguments={"text": "hello world"},
++        result={"raw": "secret response"},
++    )
++
++    assert record.arguments == {"redacted_args": True, "len": 11}
++    assert record.result == {"redacted_result": True}
++
++
++def test_build_audit_record_over_redact_when_missing_redactor() -> None:
++    """Default `"over_redact"` semantics: feature present but no redactor →
++    field dropped to None (LGPD-safe)."""
++    feature = _FakeFeature()  # both redactors None
++
++    record = build_audit_record_for_feature(
++        feature_key="demo.x",
++        tool_name="chat_completion",
++        status="success",
++        duration_ms=10,
++        get_feature=lambda _k: feature,
++        arguments={"text": "raw"},
++        result="raw-content",
++    )
++
++    assert record.arguments is None
++    assert record.result is None
++
++
++def test_build_audit_record_passthrough_keeps_raw_when_missing_redactor(caplog) -> None:
++    """`on_missing_redactor="passthrough"` (daily-life shape): no redactor →
++    raw values kept + debug log."""
++    feature = _FakeFeature()
++
++    with caplog.at_level(logging.DEBUG, logger="noctusai_lib.domain.ai.audit_hook"):
++        record = build_audit_record_for_feature(
++            feature_key="dl.x",
++            tool_name="extract_tasks",
++            status="success",
++            duration_ms=5,
++            get_feature=lambda _k: feature,
++            arguments={"note": "buy milk"},
++            result=["task1"],
++            on_missing_redactor="passthrough",
++        )
++
++    assert record.arguments == {"note": "buy milk"}
++    assert record.result == ["task1"]
++
++
++def test_build_audit_record_feature_missing_passthrough(caplog) -> None:
++    """Feature lookup returns None + passthrough semantics → raw values + log."""
++    with caplog.at_level(logging.DEBUG, logger="noctusai_lib.domain.ai.audit_hook"):
++        record = build_audit_record_for_feature(
++            feature_key="unknown.feature",
++            tool_name="t",
++            status="success",
++            duration_ms=1,
++            get_feature=lambda _k: None,
++            arguments={"raw": "value"},
++            result="raw",
++            on_missing_redactor="passthrough",
++        )
++
++    assert record.arguments == {"raw": "value"}
++    assert record.result == "raw"
++    assert any("not in catalog" in r.getMessage() for r in caplog.records)
++
++
++def test_build_audit_record_redactor_exception_drops_field(caplog) -> None:
++    """A redactor that raises is caught + WARNING logged; field falls back
++    to None (over-redact, never leak)."""
++
++    def _bad_redactor(value: Any) -> Any:
++        raise RuntimeError("redactor boom")
++
++    feature = _FakeFeature(
++        redact_arguments=_bad_redactor,
++        redact_result=_bad_redactor,
++    )
++
++    with caplog.at_level(logging.WARNING, logger="noctusai_lib.domain.ai.audit_hook"):
++        record = build_audit_record_for_feature(
++            feature_key="demo.x",
++            tool_name="t",
++            status="success",
++            duration_ms=1,
++            get_feature=lambda _k: feature,
++            arguments={"raw": "value"},
++            result="raw",
++        )
++
++    assert record.arguments is None
++    assert record.result is None
++    assert sum(
++        "redactor raised" in r.getMessage() for r in caplog.records
++    ) == 2  # both args + result
++
++
++def test_build_audit_record_get_feature_exception_treated_as_missing(caplog) -> None:
++    """`get_feature` raising is caught; behaves like feature-missing path."""
++
++    def _bad_lookup(_k: str) -> Any:
++        raise RuntimeError("catalog boom")
++
++    with caplog.at_level(logging.WARNING, logger="noctusai_lib.domain.ai.audit_hook"):
++        record = build_audit_record_for_feature(
++            feature_key="x",
++            tool_name="t",
++            status="success",
++            duration_ms=0,
++            get_feature=_bad_lookup,
++            arguments={"a": 1},
++            result="r",
++            on_missing_redactor="over_redact",
++        )
++
++    assert record.arguments is None
++    assert record.result is None
++    assert any("get_feature" in r.getMessage() for r in caplog.records)
++
++
++def test_build_audit_record_coerces_non_dict_args_to_value_wrapper() -> None:
++    """PF compat: a redactor returning a non-dict scalar is wrapped in
++    `{"_value": ...}` so the JSONB column receives a dict."""
++    feature = _FakeFeature(
++        redact_arguments=lambda _a: "redacted-string-summary",
++        redact_result=None,
++    )
++
++    record = build_audit_record_for_feature(
++        feature_key="x",
++        tool_name="t",
++        status="success",
++        duration_ms=1,
++        get_feature=lambda _k: feature,
++        arguments={"in": "raw"},
++        result=None,
++        on_missing_redactor="passthrough",
++    )
++
++    assert record.arguments == {"_value": "redacted-string-summary"}
++
++
++def test_build_audit_record_carries_metadata_fields() -> None:
++    """`user_id` / `correlation_id` / `conversation_id` / `error` flow through."""
++    record = build_audit_record_for_feature(
++        feature_key="x",
++        tool_name="t",
++        status="failure",
++        duration_ms=42,
++        get_feature=lambda _k: None,
++        arguments=None,
++        result=None,
++        error="ValueError",
++        user_id=99,
++        correlation_id="corr_abc",
++        conversation_id="conv_xyz",
++        on_missing_redactor="passthrough",
++    )
++
++    assert record.status == "failure"
++    assert record.duration_ms == 42
++    assert record.error == "ValueError"
++    assert record.user_id == 99
++    assert record.correlation_id == "corr_abc"
++    assert record.conversation_id == "conv_xyz"
++
++
++# ---------------------------------------------------------------------------
++# audit_chat_dispatch — generalized ERP `_dispatch_chat` shape.
++# ---------------------------------------------------------------------------
++
++
++class _RecordingWriter:
++    """Capture every `AuditRecord` the dispatch helper writes."""
++
++    def __init__(self) -> None:
++        self.records: list[AuditRecord] = []
++        self.fail_on_record = False
++
++    def __call__(self, record: AuditRecord) -> None:
++        if self.fail_on_record:
++            raise RuntimeError("audit-writer boom")
++        self.records.append(record)
++
++
++def _run(coro: Any) -> Any:
++    return asyncio.get_event_loop().run_until_complete(coro)
++
++
++def test_audit_chat_dispatch_success_writes_one_row() -> None:
++    """Successful chat call ⇒ one audit row with status=success + result captured."""
++    writer = _RecordingWriter()
++
++    async def _fake_chat(*, messages: list, org_id: Any = None, **_kw: Any) -> str:
++        return "hello back"
++
++    out = _run(
++        audit_chat_dispatch(
++            tool_name="demo.chat",
++            chat_call=_fake_chat,
++            get_writer=lambda: writer,
++            messages=[{"role": "user", "content": "hi"}],
++            arguments={"prompt_version": "v1"},
++            user_id=7,
++        )
++    )
++
++    assert out == "hello back"
++    assert len(writer.records) == 1
++    rec = writer.records[0]
++    assert rec.tool_name == "demo.chat"
++    assert rec.status == "success"
++    assert rec.user_id == 7
++    assert rec.arguments == {"prompt_version": "v1"}
++    assert rec.result == {"content": "hello back"}
++    assert rec.duration_ms >= 0
++
++
++def test_audit_chat_dispatch_failure_writes_failure_row_and_reraises() -> None:
++    """Chat raising ⇒ one audit row with status=failure + error=str(exc),
++    THEN the original exception is re-raised."""
++    writer = _RecordingWriter()
++
++    async def _broken_chat(*, messages: list, org_id: Any = None, **_kw: Any) -> str:
++        raise RuntimeError("llm down")
++
++    with pytest.raises(RuntimeError, match="llm down"):
++        _run(
++            audit_chat_dispatch(
++                tool_name="demo.chat",
++                chat_call=_broken_chat,
++                get_writer=lambda: writer,
++                messages=[],
++                arguments={"k": "v"},
++                user_id=1,
++            )
++        )
++
++    assert len(writer.records) == 1
++    rec = writer.records[0]
++    assert rec.status == "failure"
++    assert rec.error == "llm down"
++    assert rec.user_id == 1
++
++
++def test_audit_chat_dispatch_audit_failure_does_not_mask_chat_exception(caplog) -> None:
++    """If the audit-writer itself raises while writing the failure row, the
++    ORIGINAL chat exception MUST still propagate."""
++    writer = _RecordingWriter()
++    writer.fail_on_record = True
++
++    async def _broken_chat(*, messages: list, org_id: Any = None, **_kw: Any) -> str:
++        raise ValueError("original problem")
++
++    with caplog.at_level(logging.ERROR, logger="noctusai_lib.domain.ai.audit_hook"):
++        with pytest.raises(ValueError, match="original problem"):
++            _run(
++                audit_chat_dispatch(
++                    tool_name="demo.chat",
++                    chat_call=_broken_chat,
++                    get_writer=lambda: writer,
++                    messages=[],
++                )
++            )
++
++    assert any(
++        "audit_chat_dispatch: audit-writer failed" in r.getMessage()
++        for r in caplog.records
++    )
++
++
++def test_audit_chat_dispatch_audit_failure_does_not_mask_chat_success(caplog) -> None:
++    """Audit-writer raising during success-row write still returns the chat result."""
++    writer = _RecordingWriter()
++    writer.fail_on_record = True
++
++    async def _ok_chat(*, messages: list, org_id: Any = None, **_kw: Any) -> str:
++        return "ok"
++
++    with caplog.at_level(logging.ERROR, logger="noctusai_lib.domain.ai.audit_hook"):
++        result = _run(
++            audit_chat_dispatch(
++                tool_name="demo.chat",
++                chat_call=_ok_chat,
++                get_writer=lambda: writer,
++                messages=[],
++            )
++        )
++
++    assert result == "ok"
++    assert any(
++        "audit_chat_dispatch: audit-writer failed" in r.getMessage()
++        for r in caplog.records
++    )
++
++
++def test_audit_chat_dispatch_forwards_chat_kwargs() -> None:
++    """`**chat_kwargs` flow through to `chat_call` (model / temperature / etc.)."""
++    writer = _RecordingWriter()
++    captured: dict[str, Any] = {}
++
++    async def _capturing_chat(*, messages: list, org_id: Any = None, **kwargs: Any) -> str:
++        captured.update(kwargs)
++        captured["__messages"] = messages
++        captured["__org_id"] = org_id
++        return "x"
++
++    _run(
++        audit_chat_dispatch(
++            tool_name="demo.chat",
++            chat_call=_capturing_chat,
++            get_writer=lambda: writer,
++            messages=[{"role": "user", "content": "y"}],
++            org_id="org-123",
++            arguments=None,
++            model="gpt-4o-mini",
++            temperature=0.1,
++            max_tokens=100,
++        )
++    )
++
++    assert captured["model"] == "gpt-4o-mini"
++    assert captured["temperature"] == 0.1
++    assert captured["max_tokens"] == 100
++    assert captured["__org_id"] == "org-123"
++    assert captured["__messages"] == [{"role": "user", "content": "y"}]
++
++
++def test_audit_chat_dispatch_non_string_result_passes_through() -> None:
++    """If `chat_call` returns a non-string (e.g. structured JSON), it lands
++    on the audit row's `result` field unwrapped."""
++    writer = _RecordingWriter()
++
++    async def _structured_chat(*, messages: list, org_id: Any = None, **_kw: Any) -> dict:
++        return {"json": True, "value": 42}
++
++    out = _run(
++        audit_chat_dispatch(
++            tool_name="demo.chat",
++            chat_call=_structured_chat,
++            get_writer=lambda: writer,
++            messages=[],
++        )
++    )
++
++    assert out == {"json": True, "value": 42}
++    assert writer.records[0].result == {"json": True, "value": 42}
+-- 
+2.51.2
+

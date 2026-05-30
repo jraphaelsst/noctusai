@@ -1,0 +1,153 @@
+From cd534131e64055863d0c065adb87c5a3d13dc7f0 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 20 May 2026 07:17:24 -0300
+Subject: [PATCH] =?UTF-8?q?wip(sweep-2026-05-20):=20orphan-agent=20snapsho?=
+ =?UTF-8?q?t=20=E2=80=94=20agent-a3491a864fb0afb45?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per explicit user authorization. Agent windows lost; preserving uncommitted state as a recovery snapshot on this branch. Not authored by current session; preserved verbatim.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ mcp/google/schemas.py | 118 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 117 insertions(+), 1 deletion(-)
+
+diff --git a/mcp/google/schemas.py b/mcp/google/schemas.py
+index c3fd1793..e6bd57bb 100644
+--- a/mcp/google/schemas.py
++++ b/mcp/google/schemas.py
+@@ -363,6 +363,122 @@ class ReadFileOutput(BaseModel):
+         ),
+     )
+     adapter: str = Field(description="'fake' (no creds) or 'real'.")
++class GmailMessageModel(BaseModel):
++    id: str
++    thread_id: str
++    from_: str = Field(description="The raw From: header value.")
++    to: str = Field(description="The raw To: header value (may be comma-separated).")
++    subject: str
++    snippet: str = Field(description="Gmail's own short preview string.")
++    body_text: str = Field(description="Decoded text/plain part ('' if absent).")
++    body_html: str = Field(description="Decoded text/html part ('' if absent).")
++    received_at: str = Field(description="ISO-8601 datetime parsed from internalDate.")
++    label_ids: list[str] = Field(
++        default_factory=list,
++        description="Gmail label ids on the message (e.g. ['INBOX','UNREAD']).",
++    )
++
++
++class ListMessagesInput(BaseModel):
++    query: Optional[str] = Field(
++        default=None,
++        description=(
++            "Gmail search syntax (e.g. 'is:unread from:foo@x') or null for "
++            "no filter."
++        ),
++    )
++    label: Optional[str] = Field(
++        default=None,
++        description="Restrict to a single label id (e.g. 'INBOX', 'SENT'). Null = all mail.",
++    )
++    page_token: Optional[str] = Field(
++        default=None,
++        description="Opaque nextPageToken from a prior call; null for the first page.",
++    )
++
++
++class ListMessagesOutput(BaseModel):
++    messages: list[GmailMessageModel] = Field(default_factory=list)
++    next_page_token: Optional[str] = None
++    result_size_estimate: int = Field(
++        default=0, description="Gmail's approximate total (resultSizeEstimate)."
++    )
++    adapter: str = Field(
++        description="'fake' (no OAuth creds) or 'real' (OAuth-configured)."
++    )
++
++
++class GetMessageInput(BaseModel):
++    message_id: str = Field(description="Gmail message id (from list_messages).")
++
++
++class GetMessageOutput(BaseModel):
++    message: Optional[GmailMessageModel] = Field(
++        default=None,
++        description="None when the message doesn't exist or was deleted.",
++    )
++    adapter: str = Field(
++        description="'fake' (no OAuth creds) or 'real' (OAuth-configured)."
++    )
++
++
++class SendMessageInput(BaseModel):
++    to: str = Field(
++        description="To: header. One or more comma-separated addresses."
++    )
++    subject: str = Field(
++        description=(
++            "Subject: header. Truncated to 998 chars by the adapter (RFC 5322 "
++            "rejects longer single header lines)."
++        )
++    )
++    body_text: str = Field(
++        description="text/plain body. Always sent (safe baseline for every client)."
++    )
++    body_html: Optional[str] = Field(
++        default=None,
++        description=(
++            "Optional text/html body. When supplied the message is "
++            "multipart/alternative (plain + html); null = plain-only."
++        ),
++    )
++    cc: Optional[str] = Field(
++        default=None, description="Optional Cc: header (comma-separated). Null = no Cc."
++    )
++    bcc: Optional[str] = Field(
++        default=None,
++        description=(
++            "Optional Bcc: header (comma-separated). Null = no Bcc. Bcc "
++            "recipients are NOT written into the visible headers."
++        ),
++    )
++    confirm: bool = Field(
++        default=False,
++        description=(
++            "WRITE GATE — must be explicitly true to send the email. False "
++            "(default) returns a typed error without sending anything. "
++            "QUOTA: 100 units (users.messages.send)."
++        ),
++    )
++
++
++class SentMessageModel(BaseModel):
++    message_id: str
++    thread_id: str
++
++
++class SendMessageOutput(BaseModel):
++    sent: bool = Field(
++        description="True only when the send completed against the Real adapter."
++    )
++    result: Optional[SentMessageModel] = None
++    adapter: str = Field(
++        description=(
++            "'unconfirmed' (no confirm) or 'real' (OAuth send attempt). "
++            "Gmail is OAuth-only — there is no 'fake' adapter on a "
++            "confirmed send path (a faked send would be a silent lie)."
++        )
++    )
+ 
+ 
+ __all__ = [
+@@ -398,5 +514,5 @@ __all__ = [
+     "DriveSearchOutput",
+     "ReadFileInput",
+     "DriveFileContentModel",
+-    "ReadFileOutput",
++    "ReadFileOutput","GmailMessageModel","ListMessagesInput","ListMessagesOutput","GetMessageInput","GetMessageOutput","SendMessageInput","SentMessageModel","SendMessageOutput",
+ ]
+-- 
+2.51.2
+

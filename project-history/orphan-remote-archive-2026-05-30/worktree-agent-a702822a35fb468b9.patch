@@ -1,0 +1,530 @@
+From 4a443e856db8f9d422b57a5319736c38a673f09c Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Mon, 11 May 2026 17:39:42 -0300
+Subject: [PATCH] fix(seed/testing): MockSupabaseClient cross-schema
+ propagation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`MockSupabaseClient.schema(name)` previously created a scoped instance
+with a fresh `_tables` dict — writes via `parent.set_table_data` were
+invisible through `parent.schema("X").table("Y")` chains. Blocks Pin 5
+invalid-sig tests for any webhook whose secret resolver hits a foreign
+schema (ERP `_resolve_assinatura_secret` reads
+`db.schema("core").table("org_settings")`).
+
+Fix (Option B + shared backing dict):
+
+- `_qualify(name)` normalizes bare table names to `<schema>.<table>`;
+  names already containing `.` pass through.
+- `_tables` is keyed by schema-qualified names.
+- `table(name)` qualifies the lookup via bound schema.
+- `set_table_data(name, data)` qualifies the storage key — accepts
+  both bare names and `"<schema>.<table>"`.
+- `schema(name)` returns a scoped view that SHARES `_tables`, `_rpcs`,
+  `auth`, and `storage` with the parent — `set_table_data` on either
+  side is mutually visible.
+
+Backward-compat preserved: bare-name set + bare-name read on any bound
+schema continues to round-trip through the same qualified key. All 78
+pre-existing mock tests pass under the new model; 10 new tests cover
+the cross-schema seams (parent ↔ scoped symmetry, schema isolation,
+the exact two-step ERP webhook resolver shape, public-qualifier
+equivalence, repeated scoping round-trip).
+
+ERP Pin 5 invalid-sig tests for `assinaturas/webhook` +
+`meta_api/webhook` (filed by Engineer SSS during the webhook-compliance
+audit) are now unblocked at the seed-lib level; product-side test
+additions deferred to a focused follow-up because this worktree's venv
+can't load the ERP app (missing `xhtml2pdf` dep; pip install denied
+out-of-scope by auto-mode).
+
+Project: projects/mock-supabase-cross-schema-fix/PROJECT.md
+Seed-lib regression: 1159 passed (88 mock-related: 78 pre-existing + 10 new).
+AST-driven via libcst.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../mock-supabase-cross-schema-fix/PROJECT.md | 156 ++++++++++++
+ .../lib/backend/noctusai_lib/testing/mocks.py |  52 +++-
+ seed/lib/backend/tests/testing/test_mocks.py  | 223 ++++++++++++++++++
+ 3 files changed, 420 insertions(+), 11 deletions(-)
+ create mode 100644 projects/mock-supabase-cross-schema-fix/PROJECT.md
+ create mode 100644 seed/lib/backend/tests/testing/test_mocks.py
+
+diff --git a/projects/mock-supabase-cross-schema-fix/PROJECT.md b/projects/mock-supabase-cross-schema-fix/PROJECT.md
+new file mode 100644
+index 00000000..cf26a758
+--- /dev/null
++++ b/projects/mock-supabase-cross-schema-fix/PROJECT.md
+@@ -0,0 +1,156 @@
++# mock-supabase-cross-schema-fix — Project Document
++
++- **Created:** 2026-05-11
++- **Last updated:** 2026-05-11
++- **Status:** Phases 0-2 shipped → Phase 3 deferred (env blocker)
++- **Owner / stakeholders:** USER · Engineer MOCK-SCHEMA (executor) · Engineer SSS (filer)
++- **Related docs:** `archive/projects/2026-05-11/21-webhook-compliance-audit-2026-05-11/PROJECT.md` (filing source); `seed/lib/backend/noctusai_lib/testing/mocks.py`
++- **Project slug:** `mock-supabase-cross-schema-fix` (cross-product / seed-lib scope — `projects/<slug>/`)
++
++---
++
++## 1. Context & Purpose
++
++Engineer SSS surfaced a mock-side gap during the webhook-compliance audit
++(`archive/projects/2026-05-11/21-webhook-compliance-audit-2026-05-11`):
++`MockSupabaseClient.schema(name)` previously created a scoped instance
++with a **fresh** `_tables` dict, so data seeded on the parent via
++`set_table_data` was invisible through `parent.schema("X").table("Y")`
++chains. ERP's `_resolve_assinatura_secret` resolver runs exactly that
++shape (`db.schema("core").table("org_settings")`), and the audit's
++attempt to add Pin 5 invalid-sig tests for `assinaturas/webhook` had
++to be reverted as a result. The gap also blocks any future webhook
++receiver whose secret lives in a non-bound schema.
++
++**Win:** seed-lib mock now models PostgREST's cross-schema reach
++correctly. ERP's deferred Pin 5 tests can land (Phase 3 carrier);
++no product-side workaround needed.
++
++---
++
++## 2. Confirmed constraints
++
++Lifted from the engineer brief (no live user interrogation — this was
++filed by a parallel engineer with full context):
++
++- **Design choice:** Option B (schema-qualified storage keys) was the
++  default recommendation, with a refinement we adopted — **B + shared
++  `_tables` backing dict via `schema()`**. Reason: B alone leaves
++  `parent.set_table_data("core.foo", ...)` and
++  `scoped.set_table_data("foo", ...)` reachable through different
++  qualification paths; the shared dict makes the symmetry total.
++- **Verification scope:** seed-lib pytest must stay green; ERP webhook
++  router tests can't be exercised in this worktree's venv (missing
++  product dep `xhtml2pdf`).
++- **Constraints inherited:** AST-first (libcst), no monkey-patching of
++  our code, no `--no-verify`, branch-only push, stage explicit paths.
++
++---
++
++## 3. Goal & non-goals
++
++**Goal:** restore mock fidelity for cross-schema lookups while
++preserving every existing call shape.
++
++**Non-goals:** changing the production Supabase client; adding new
++storage primitives unrelated to schema scoping; refactoring the
++72-test legacy mock surface.
++
++---
++
++## 3a. Seed-first analysis
++
++This IS the seed-first fix. The recurrence pattern (`.schema("X").table("Y")`)
++appears in ERP `_resolve_assinatura_secret`, `core/billing` (per the
++audit catalog), and any future webhook resolver that needs a cross-
++schema secret store. Fixing the mock at the seed eliminates **all**
++per-product workarounds (the alternative being product-side `monkey
++patch.setattr` or `set_table_data("org_settings", ...)` on a separately-
++constructed mock — both anti-pattern shape). Per-product code count for
++the fix: **zero**.
++
++---
++
++## 4. Approach (Phase plan)
++
++- **Phase 0 — Read.** `seed/lib/backend/noctusai_lib/testing/mocks.py`
++  lines 972-1061; trace `_builder_for` / `table` / `schema` /
++  `set_table_data` / `set_sequential_responses`.
++- **Phase 1 — Fix.** AST-driven (`libcst`) patch:
++  - Inject `_qualify(name)` helper.
++  - Rewrite `table` to qualify keys.
++  - Rewrite `schema` to share `_tables` + `_rpcs` + `auth` + `storage`.
++  - Rewrite `set_table_data` to qualify the storage key.
++- **Phase 2 — Tests.** New file
++  `seed/lib/backend/tests/testing/test_mocks.py`; 10 tests covering
++  backward-compat (bare-name round-trip on default + bound schemas),
++  cross-schema set/lookup, parent ↔ scoped symmetry, isolation across
++  schemas, and the exact two-step ERP webhook resolver shape.
++- **Phase 3 — Unblock ERP webhook tests** — **deferred** (env gap;
++  see §11 + §7).
++
++---
++
++## 5. Touch surfaces
++
++- **Edited:** `seed/lib/backend/noctusai_lib/testing/mocks.py`
++  (4 methods rewritten + 1 added; libcst-driven).
++- **Created:** `seed/lib/backend/tests/testing/test_mocks.py` (10 tests).
++- **Created:** `projects/mock-supabase-cross-schema-fix/PROJECT.md`,
++  `findings.md`.
++
++---
++
++## 6. Verification
++
++```
++cd seed/lib/backend
++PYTHONPATH=<this-worktree>/seed/lib/backend \
++  <mcp-venv>/bin/python -m pytest tests/ -q
++# → 1159 passed
++```
++
++- `tests/testing/test_mocks.py` — 10 new, all green.
++- `tests/test_mock_*.py` — 78 pre-existing, all green (no regression).
++- Full seed-lib suite — 1159 green.
++
++ERP webhook test re-run **deferred** (Phase 3 blocker — env-side
++`xhtml2pdf` missing; `pip install` denied by auto-mode classifier as
++out-of-scope).
++
++---
++
++## 7. Open questions
++
++- **Q1 — Should we lift Phase 3 (ERP invalid-sig tests) into a follow-up
++  project?** **Recommendation: yes** — the seed-side unblock is the
++  binary deliverable Engineer SSS filed for; Phase 3 should live in a
++  scoped product-side follow-up where the runner can install
++  `xhtml2pdf` (or run inside a dedicated ERP test container). Naming
++  candidate: `erp-webhook-pin5-completion`.
++
++---
++
++## 8. Risks
++
++- **Existing tests using bare keys against a default-schema client:**
++  storage path changes from `"foo"` to `"public.foo"`. All 78 existing
++  mock tests pass under the qualified scheme, confirming the
++  equivalence. *Mitigated.*
++- **Tests that read `_tables` directly:** would break if they assumed
++  bare keys. None found via grep. *Mitigated.*
++- **`schema()` no longer calls `__init__`:** uses `__new__` + manual
++  attribute assignment to share storage by reference. Future
++  constructor additions need either an `_init_shared` helper or a
++  re-pass here. *Logged as a maintenance note in `findings.md`.*
++
++---
++
++## 11. Change log
++
++- **2026-05-11** — Phase 0 read (mocks.py 972-1061). Phase 1 libcst
++  transformer applied. Phase 2 wrote 10 tests under
++  `tests/testing/test_mocks.py`. Phase 3 deferred — ERP tests cannot
++  run in this worktree's venv (xhtml2pdf missing; pip install denied
++  out-of-scope by auto-mode classifier). Full seed-lib regression
++  green (1159/1159).
+diff --git a/seed/lib/backend/noctusai_lib/testing/mocks.py b/seed/lib/backend/noctusai_lib/testing/mocks.py
+index 290f0675..eeb36f60 100644
+--- a/seed/lib/backend/noctusai_lib/testing/mocks.py
++++ b/seed/lib/backend/noctusai_lib/testing/mocks.py
+@@ -1015,26 +1015,48 @@ class MockSupabaseClient:
+             strict_unknown_tables=self._strict_unknown_tables,
+         )
+ 
++    def _qualify(self, name: str) -> str:
++        """Normalize bare table names to `<schema>.<table>` keys.
++
++        Names containing a `.` are treated as already-qualified
++        and returned as-is — that's the seam tests use to seed
++        foreign-schema tables (`"core.org_settings"`) while a
++        bound-schema lookup (`db.table("foo")` under
++        `MockSupabaseClient(schema="erp")`) resolves to `"erp.foo"`.
++        """
++        if name and "." in name:
++            return name
++        return f"{self._schema or 'public'}.{name}"
++
+     def table(self, name):
+-        if name not in self._tables:
+-            self._tables[name] = self._builder_for(name)
+-        return self._tables[name]
++        key = self._qualify(name)
++        if key not in self._tables:
++            self._tables[key] = self._builder_for(key)
++        return self._tables[key]
+ 
+     def from_(self, name):
+         """Supabase .from_(name) alias for .table(name)."""
+         return self.table(name)
+ 
+     def schema(self, name: str) -> "MockSupabaseClient":
+-        """Return a client bound to a different schema."""
+-        scoped = MockSupabaseClient(
+-            self._data,
+-            validate_schema=self._validate_schema,
+-            schema=name,
+-            strict_unknown_tables=self._strict_unknown_tables,
+-        )
++        """Return a client bound to a different schema.
++
++        The scoped instance SHARES `_tables`, `_rpcs`, `auth`, and
++        `storage` with the parent — `set_table_data` calls on either
++        side are mutually visible. Storage is keyed by
++        `<schema>.<table>`, so `parent.set_table_data("core.org_settings", ...)`
++        is reachable via `parent.schema("core").table("org_settings")`
++        and vice-versa.
++        """
++        scoped = MockSupabaseClient.__new__(MockSupabaseClient)
++        scoped._data = self._data
+         scoped.auth = self.auth
+         scoped.storage = self.storage
++        scoped._tables = self._tables
+         scoped._rpcs = self._rpcs
++        scoped._validate_schema = self._validate_schema
++        scoped._schema = name
++        scoped._strict_unknown_tables = self._strict_unknown_tables
+         return scoped
+ 
+     def set_table_data(self, name, data):
+@@ -1043,8 +1065,16 @@ class MockSupabaseClient:
+         Insert/update/upsert/delete responses are NOT influenced by this.
+         Use `set_sequential_responses(name, [MockSupabaseResponse(...)])` to
+         control execute() output for write operations or to simulate failures.
++
++        The `name` arg accepts both bare table names (qualified with the
++        bound schema — `public` by default, or whatever `MockSupabaseClient`
++        was constructed with) and `"<schema>.<table>"` keys (stored as-is).
++        This is the seam that lets webhook tests seed `"core.org_settings"`
++        while the production code reaches it via
++        `db.schema("core").table("org_settings")`.
+         """
+-        self._tables[name] = self._builder_for(name, data=data)
++        key = self._qualify(name)
++        self._tables[key] = self._builder_for(key, data=data)
+ 
+     def set_sequential_responses(self, table_name, responses):
+         """Configure a table to return sequential responses on each execute()."""
+diff --git a/seed/lib/backend/tests/testing/test_mocks.py b/seed/lib/backend/tests/testing/test_mocks.py
+new file mode 100644
+index 00000000..9962c11a
+--- /dev/null
++++ b/seed/lib/backend/tests/testing/test_mocks.py
+@@ -0,0 +1,223 @@
++"""Tests for MockSupabaseClient cross-schema table seeding.
++
++Closes the gap filed by Engineer SSS (2026-05-11) during the webhook-
++compliance audit: ERP's assinaturas webhook resolves its secret via
++`db.schema("core").table("org_settings")`, but `MockSupabaseClient.schema(name)`
++previously created a scoped instance with a fresh `_tables` dict — so
++`parent.set_table_data("core.org_settings", [...])` was invisible
++to the scoped lookup.
++
++Design (Option B + shared `_tables` for symmetry, see PROJECT.md §3a):
++  - `_tables` is keyed by schema-qualified `<schema>.<table>` names.
++  - `_qualify(name)` normalizes bare names with the bound schema.
++  - `schema(name)` returns a scoped view that SHARES `_tables` + `_rpcs`
++    with the parent — `set_table_data` on either side is mutually visible.
++  - Backward-compat: a default-schema (`public`) client storing
++    `"foo"` and reading `db.table("foo")` continue to round-trip through
++    the same qualified key `"public.foo"`.
++"""
++from __future__ import annotations
++
++import pytest
++
++from noctusai_lib.testing import MockSupabaseClient
++
++
++# ---------------------------------------------------------------------------
++# Backward-compat — bare-name set + bare-name lookup (the existing pattern)
++# ---------------------------------------------------------------------------
++
++
++def test_bare_name_round_trip_default_schema():
++    """`set_table_data("foo", [...])` on a default-schema client is
++    readable via `client.table("foo")`. Closes the round-trip the
++    78-test legacy suite already exercises — re-stated here as a
++    regression anchor for the qualified-key refactor."""
++    db = MockSupabaseClient(validate_schema=False)
++    db.set_table_data("foo", [{"id": "x1"}])
++    res = db.table("foo").select("*").execute()
++    assert res.data == [{"id": "x1"}]
++
++
++def test_bare_name_round_trip_bound_schema():
++    """`set_table_data("foo", ...)` on a `schema="erp"` client (the ERP
++    test-fixture shape) stores under `"erp.foo"` and is readable via
++    `client.table("foo")` — same equivalence the bare-key model
++    produced, but now expressed through the bound schema."""
++    db = MockSupabaseClient(validate_schema=False, schema="erp")
++    db.set_table_data("assinaturas", [{"id": "a1", "documento_nome": "C"}])
++    res = db.table("assinaturas").select("*").execute()
++    assert len(res.data) == 1
++    assert res.data[0]["id"] == "a1"
++
++
++# ---------------------------------------------------------------------------
++# Cross-schema — the new capability
++# ---------------------------------------------------------------------------
++
++
++def test_qualified_set_visible_via_scoped_schema_chain():
++    """The headline fix. `set_table_data("core.org_settings", [...])` on
++    the parent is readable via `parent.schema("core").table("org_settings")`.
++    Mirrors ERP `_resolve_assinatura_secret`'s real lookup shape."""
++    db = MockSupabaseClient(validate_schema=False, schema="erp")
++    db.set_table_data(
++        "core.org_settings",
++        [
++            {
++                "org_id": "org-1",
++                "key": "assinatura_webhook_secret",
++                "value": "shh-secret",
++            }
++        ],
++    )
++    res = (
++        db.schema("core")
++        .table("org_settings")
++        .select("value")
++        .eq("org_id", "org-1")
++        .eq("key", "assinatura_webhook_secret")
++        .execute()
++    )
++    assert len(res.data) == 1
++    assert res.data[0]["value"] == "shh-secret"
++
++
++def test_scoped_set_visible_from_parent():
++    """Symmetric direction. Setting via the scoped client is also
++    visible via parent's qualified-key seeding view."""
++    db = MockSupabaseClient(validate_schema=False, schema="erp")
++    db.schema("core").set_table_data(
++        "org_settings",
++        [{"org_id": "org-1", "key": "k", "value": "v"}],
++    )
++    # And reachable from parent's parent-side scoped chain.
++    res = (
++        db.schema("core")
++        .table("org_settings")
++        .select("*")
++        .execute()
++    )
++    assert len(res.data) == 1
++    assert res.data[0]["value"] == "v"
++
++
++def test_different_schemas_isolated():
++    """`erp.foo` and `core.foo` are independent storage slots — seeding
++    one must not bleed into the other."""
++    db = MockSupabaseClient(validate_schema=False, schema="erp")
++    db.set_table_data("foo", [{"id": "erp-1"}])
++    db.set_table_data("core.foo", [{"id": "core-1"}])
++
++    erp_rows = db.table("foo").select("*").execute().data
++    core_rows = db.schema("core").table("foo").select("*").execute().data
++
++    assert erp_rows == [{"id": "erp-1"}]
++    assert core_rows == [{"id": "core-1"}]
++
++
++def test_explicit_public_qualifier_equals_default_schema():
++    """`set_table_data("public.foo", ...)` and `set_table_data("foo", ...)`
++    on a default-schema client target the same slot."""
++    db = MockSupabaseClient(validate_schema=False)
++    db.set_table_data("public.foo", [{"id": "v1"}])
++    # Lookup via bare name (qualifies to public.foo) hits the same slot.
++    res = db.table("foo").select("*").execute()
++    assert res.data == [{"id": "v1"}]
++
++
++def test_qualified_lookup_via_dot_in_table_name():
++    """`db.table("core.org_settings")` is itself a legitimate access
++    path (the pre-existing `_builder_for` split handled this on the
++    builder side). Confirm it now routes through the qualified storage
++    key without re-creating a fresh slot."""
++    db = MockSupabaseClient(validate_schema=False)
++    db.set_table_data("core.org_settings", [{"org_id": "org-1", "value": "v"}])
++    res = db.table("core.org_settings").select("*").execute()
++    assert res.data == [{"org_id": "org-1", "value": "v"}]
++
++
++# ---------------------------------------------------------------------------
++# Pin 5 invalid-sig integration shape — exercise the exact ERP webhook flow
++# at the seed-lib level so we don't need product-side fixtures to prove the
++# unblock. This is the "Pin 5 invalid-sig" mock contract.
++# ---------------------------------------------------------------------------
++
++
++def test_webhook_secret_resolver_pattern():
++    """Models the exact two-step lookup ERP's `_resolve_assinatura_secret`
++    runs against the admin client: bound-schema row fetch followed by a
++    `schema("core")` chain. Before the fix the second step always saw
++    an empty `_tables` dict and the resolver returned `None`, blocking
++    Pin 5 invalid-sig tests."""
++    db = MockSupabaseClient(validate_schema=False, schema="erp")
++
++    # Step 1 — assinatura row (lives in erp.assinaturas via bound schema).
++    db.set_table_data(
++        "assinaturas",
++        [{"id": "a-1", "org_id": "org-1", "provedor": "clicksign"}],
++    )
++
++    # Step 2 — core.org_settings (cross-schema secret store).
++    db.set_table_data(
++        "core.org_settings",
++        [
++            {
++                "org_id": "org-1",
++                "key": "assinatura_webhook_secret",
++                "value": "the-real-secret",
++            }
++        ],
++    )
++
++    # Replay the resolver shape.
++    row = (
++        db.table("assinaturas")
++        .select("org_id, provedor")
++        .eq("id", "a-1")
++        .execute()
++    )
++    assert row.data[0]["org_id"] == "org-1"
++
++    secret_res = (
++        db.schema("core")
++        .table("org_settings")
++        .select("value")
++        .eq("org_id", "org-1")
++        .eq("key", "assinatura_webhook_secret")
++        .execute()
++    )
++    assert secret_res.data[0]["value"] == "the-real-secret"
++
++
++# ---------------------------------------------------------------------------
++# Scoped-client carries over auth/storage/rpcs by reference
++# ---------------------------------------------------------------------------
++
++
++def test_schema_scoped_shares_auth_and_rpcs():
++    """The scoped instance must NOT re-instantiate `auth` / `storage`
++    or strand RPC seed data — the pre-existing `schema()` impl already
++    forwarded these; the refactor preserves it."""
++    db = MockSupabaseClient(validate_schema=False)
++    db.set_rpc_data("get_data_sp", ["2026-05-11"])
++    scoped = db.schema("core")
++    # auth + storage are mock objects that must be the same instances.
++    assert scoped.auth is db.auth
++    assert scoped.storage is db.storage
++    # RPC seed data flows through.
++    assert scoped.rpc("get_data_sp").execute().data == ["2026-05-11"]
++
++
++def test_schema_repeated_scoping_round_trip():
++    """`db.schema("core").schema("erp")` returns an erp-bound view; the
++    storage backing remains shared so `set_table_data` from any hop
++    is visible from the others."""
++    db = MockSupabaseClient(validate_schema=False, schema="public")
++    db.schema("core").set_table_data(
++        "org_settings", [{"key": "k", "value": "v"}]
++    )
++    via_double_hop = (
++        db.schema("public").schema("core").table("org_settings").select("*").execute()
++    )
++    assert via_double_hop.data == [{"key": "k", "value": "v"}]
+-- 
+2.51.2
+
