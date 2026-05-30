@@ -28,11 +28,14 @@ KB § PATTERNS/common/memory-embeddings.md / corpus-embeddings.md.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import math
+import os
 import sqlite3
 import struct
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -66,16 +69,87 @@ def sha_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
 
 
+# ── Async-from-sync bridge ─────────────────────────────────────────────────
+def run_coro_blocking(coro):
+    """Run an awaitable to completion from sync code, regardless of whether
+    the caller is itself inside a running event loop.
+
+    🔴 `asyncio.run()` RAISES `RuntimeError: asyncio.run() cannot be called
+    from a running event loop` when a loop already exists — which is exactly
+    the MCP-server case (FastMCP drives every tool inside its own loop). The
+    CLI path has no loop, so the bare `asyncio.run()` only ever worked there;
+    every embedding-refresh MCP tool silently errored on the real embed path.
+    Use a fresh loop in a worker thread when a loop is already running, and
+    `asyncio.run` directly otherwise (CLI / direct-import case).
+
+    Mirrors `scaffold._run_coro_blocking` — the single canonical bridge for
+    "sync MCP tool needs to await a seed coroutine".
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+# ── Proactive rate-limit throttle ──────────────────────────────────────────
+# OpenAI's own guidance for avoiding 429s is to pace PROACTIVELY rather than
+# only reacting with backoff: "calculate your rate limit and add a delay equal
+# to its reciprocal" (https://platform.openai.com/docs/guides/rate-limits ·
+# cookbook How_to_handle_rate_limits). The refresh loops call embed_sync() per
+# chunk with no spacing, so a full-corpus refresh fires hundreds of requests
+# back-to-back and trips the limit (the 0.4s retry-storm seen 2026-05-30).
+#
+# `embed_sync` is the SINGLE funnel for every embed (kb/code/corpus/memory
+# refresh loops + query paths), so one min-interval gate here paces them all.
+# Default = reciprocal-of-target + margin, per the user's example (a 500ms-cap
+# rate becomes 550ms). Tune with NOCTUS_EMBED_MIN_INTERVAL_MS=0 to disable
+# (e.g. a high-tier key that won't 429), or raise it on a tighter quota.
+_DEFAULT_EMBED_MIN_INTERVAL_MS = 550
+_last_embed_monotonic = 0.0
+
+
+def _embed_min_interval_s() -> float:
+    raw = os.environ.get("NOCTUS_EMBED_MIN_INTERVAL_MS")
+    try:
+        ms = float(raw) if raw is not None else _DEFAULT_EMBED_MIN_INTERVAL_MS
+    except ValueError:
+        ms = _DEFAULT_EMBED_MIN_INTERVAL_MS
+    return max(0.0, ms / 1000.0)
+
+
+def _throttle_embed() -> None:
+    """Block until at least `_embed_min_interval_s()` has elapsed since the
+    previous embed call. No-op when the interval is 0. Process-local (one
+    refresh runs in one process); not a distributed limiter."""
+    global _last_embed_monotonic
+    interval = _embed_min_interval_s()
+    if interval <= 0:
+        return
+    now = time.monotonic()
+    wait = interval - (now - _last_embed_monotonic)
+    if wait > 0:
+        time.sleep(wait)
+    _last_embed_monotonic = time.monotonic()
+
+
 # ── Embedding (sync wrap) ──────────────────────────────────────────────────
 def embed_sync(text: str) -> list[float]:
     """Sync-wrap the async `noctusai_lib.integrations.llm.generate_embedding`.
 
-    Run in a fresh event loop so we don't fight any caller-owned loop.
-    Caller MUST ensure `configure_llm()` was called (the noctusai CLI's
-    `_ensure_llm_configured` helper does this for refresh/search paths).
+    Loop-safe (see `run_coro_blocking`): works both under the MCP server's
+    running loop and from the loop-free CLI. Caller MUST ensure
+    `configure_llm()` was called (the noctusai CLI's `_ensure_llm_configured`
+    helper does this for refresh/search paths).
+
+    Proactively rate-limited (see `_throttle_embed`): consecutive embeds are
+    spaced ≥ NOCTUS_EMBED_MIN_INTERVAL_MS apart so a full-corpus refresh paces
+    itself under the OpenAI limit instead of relying on 429 backoff.
     """
     from noctusai_lib.integrations.llm import generate_embedding
-    return asyncio.run(generate_embedding(text))
+    _throttle_embed()
+    return run_coro_blocking(generate_embedding(text))
 
 
 # ── Real-usage capture ─────────────────────────────────────────────────────

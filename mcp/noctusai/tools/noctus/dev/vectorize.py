@@ -26,7 +26,6 @@ KB § PATTERNS/common/kb-vector-search.md § Vector platform primitives.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 
@@ -75,7 +74,9 @@ def embed_text(text: str, namespace: str | None = None) -> dict:
         from . import _embedding_corpus as _ec
         # Capture the REAL provider token usage (ground truth for the ledger).
         with _ec.capture_embedding_usage() as _usage:
-            vec = asyncio.run(generate_embedding(text))
+            # Loop-safe bridge — bare asyncio.run() raises under the MCP
+            # server's running loop. KB § PATTERNS/common/vectorize-embed-cache-framework.md.
+            vec = _ec.run_coro_blocking(generate_embedding(text))
         cfg = get_llm_config()
         result = {
             "ok": True,
