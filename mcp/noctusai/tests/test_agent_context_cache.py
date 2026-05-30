@@ -129,10 +129,10 @@ class TestRefreshAndLookup:
 
 class TestCheckAgentContextCacheFreshness:
     def test_cache_missing_flagged(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(acc, "CACHE_DIR", tmp_path / ".claude" / "cache")
-        monkeypatch.setattr(acc, "CACHE_PATH", tmp_path / ".claude" / "cache" / "agent-context.sqlite")
-        monkeypatch.setattr(acc, "AGENTS_DIR", tmp_path / ".claude" / "agents")
-        monkeypatch.setattr(acc, "KB_DIR", tmp_path / "KNOWLEDGE-BASE")
+        # The keeper resolves agents at <root>/.claude/agents and the cache via
+        # the Tier-1 resolver (now honoring repo_root). Disable Tier-2 auto-pull
+        # so the genuinely-missing cache stays missing instead of being pulled.
+        monkeypatch.setenv("NOCTUS_DISABLE_AUTO_CACHE_PULL", "1")
         (tmp_path / ".claude" / "agents").mkdir(parents=True)
         (tmp_path / "KNOWLEDGE-BASE").mkdir(parents=True)
         issues = check_agent_context_cache_freshness(repo_root=tmp_path)

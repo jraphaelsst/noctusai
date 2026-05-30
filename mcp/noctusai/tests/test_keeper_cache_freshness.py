@@ -35,7 +35,10 @@ class TestKeeperCacheFreshness:
         # Non-noc tree → silent skip (no errors).
         assert check_keeper_cache_freshness(repo_root=tmp_path) == []
 
-    def test_missing_cache_flagged_high(self, tmp_path):
+    def test_missing_cache_flagged_high(self, tmp_path, monkeypatch):
+        # Disable Tier-2 auto-pull so a genuinely-missing cache stays missing
+        # (else cache_path would pull it from the prod mirror and create it).
+        monkeypatch.setenv("NOCTUS_DISABLE_AUTO_CACHE_PULL", "1")
         _write_compliance(tmp_path, "# compliance v1\n")
         issues = check_keeper_cache_freshness(repo_root=tmp_path)
         assert any("cache missing" in i["issue"] for i in issues)

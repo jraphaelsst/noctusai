@@ -16,7 +16,7 @@ from tools.noctus.dev import cache_backend as cb
 
 
 class TestCatalog:
-    def test_known_caches_returns_5_names(self):
+    def test_known_caches_returns_registered_set(self):
         names = cb.known_caches()
         assert set(names) == {
             "keeper-patterns",
@@ -24,6 +24,9 @@ class TestCatalog:
             "auto-improvement",
             "kb-embeddings",
             "code-embeddings",
+            "memory-embeddings",
+            "corpus-embeddings",
+            "noc-graph",
         }
 
     def test_known_caches_stable_order(self):
@@ -32,9 +35,15 @@ class TestCatalog:
 
 
 class TestCachePath:
-    def test_resolves_under_dot_claude_cache(self, tmp_path):
+    def test_resolves_under_git_common_dir_cache(self, tmp_path):
+        # Tier-1 layout: <git-common-dir>/noctusai/cache/<name>.sqlite — shared
+        # by all worktrees (KB § PATTERNS/common/cache-portable-architecture.md).
+        # Asserted via cache_dir + layout (robust to the git-common-dir fallback)
+        # rather than the retired <repo>/.claude/cache path.
         p = cb.cache_path("keeper-patterns", repo_root=tmp_path)
-        assert p == tmp_path / ".claude" / "cache" / "keeper-patterns.sqlite"
+        assert p == cb.cache_dir(tmp_path) / "keeper-patterns.sqlite"
+        assert p.name == "keeper-patterns.sqlite"
+        assert p.parent.name == "cache" and p.parent.parent.name == "noctusai"
 
     def test_unknown_cache_raises_KeyError(self, tmp_path):
         with pytest.raises(KeyError, match="Unknown cache name"):
@@ -44,7 +53,7 @@ class TestCachePath:
         # No explicit repo_root → falls back to settings.REPO_ROOT.
         p = cb.cache_path("kb-embeddings")
         assert p.name == "kb-embeddings.sqlite"
-        assert ".claude/cache" in str(p)
+        assert "noctusai/cache" in str(p)
 
 
 class TestSqliteBackend:
@@ -55,14 +64,14 @@ class TestSqliteBackend:
     def test_location_returns_file_path(self, tmp_path):
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
         loc = be.location("agent-context")
-        assert loc.endswith(".claude/cache/agent-context.sqlite")
+        assert loc.endswith("noctusai/cache/agent-context.sqlite")
 
     def test_connect_creates_parent_dir(self, tmp_path):
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
         with be.connect("keeper-patterns") as conn:
             assert isinstance(conn, sqlite3.Connection)
-        # File created on connect, parent dir auto-mkdir'd.
-        assert (tmp_path / ".claude" / "cache").exists()
+        # File created on connect, parent dir auto-mkdir'd (Tier-1 location).
+        assert cb.cache_dir(tmp_path).exists()
 
     def test_connect_applies_wal_mode(self, tmp_path):
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
@@ -176,3 +185,63 @@ class TestLockingPragmas:
             assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == cb.CACHE_BUSY_TIMEOUT_MS
         finally:
             conn.close()
+
+
+class TestCacheUsesLockingHelper:
+    """Regression-test-the-detector for check_cache_uses_locking_helper — the
+    s4 keeper that blocks a new cache from inlining raw `PRAGMA journal_mode=WAL`
+    instead of calling apply_locking_pragmas (the 2026-05-30 busy_timeout gap)."""
+
+    def _tools_file(self, root, rel, body):
+        p = root / "mcp" / "noctusai" / "tools" / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_silent_skip_non_noc_tree(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        assert check_cache_uses_locking_helper(repo_root=tmp_path) == []
+
+    def test_raw_wal_flagged_high(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            'import sqlite3\n'
+            'def _connect(p):\n'
+            '    conn = sqlite3.connect(str(p))\n'
+            '    conn.execute("PRAGMA journal_mode=WAL")\n'
+            '    return conn\n')
+        issues = check_cache_uses_locking_helper(repo_root=tmp_path)
+        hits = [i for i in issues if i["symbol"] == "cache-raw-wal-without-helper"]
+        assert hits and all(i["severity"] == "high" for i in hits)
+        assert hits[0]["file"].endswith("newcache.py")
+
+    def test_helper_usage_not_flagged(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            'from .cache_backend import apply_locking_pragmas\n'
+            'import sqlite3\n'
+            'def _connect(p):\n'
+            '    conn = sqlite3.connect(str(p))\n'
+            '    apply_locking_pragmas(conn)\n'
+            '    return conn\n')
+        assert check_cache_uses_locking_helper(repo_root=tmp_path) == []
+
+    def test_comment_reference_not_flagged(self, tmp_path):
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/newcache.py",
+            '# legacy: we used to inline PRAGMA journal_mode=WAL here\n'
+            'x = 1\n')
+        assert check_cache_uses_locking_helper(repo_root=tmp_path) == []
+
+    def test_helper_home_exempt(self, tmp_path):
+        # cache_backend.py defines the helper — it legitimately holds the literal.
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        self._tools_file(tmp_path, "noctus/dev/cache_backend.py",
+            'conn.execute("PRAGMA journal_mode=WAL")\n')
+        assert check_cache_uses_locking_helper(repo_root=tmp_path) == []
+
+    def test_real_repo_has_no_violations(self):
+        # Proves the 2026-05-30 centralization is complete across the live tree
+        # AND fails loudly if anyone re-introduces a raw WAL cache connection.
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        assert check_cache_uses_locking_helper() == []

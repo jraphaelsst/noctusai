@@ -239,6 +239,7 @@ def main():
     parser.add_argument("--refresh-noc-graph", action="store_true", help="Rebuild the noc-graph cache (.claude/cache/noc-graph.sqlite) — the 8th keeper-mirror cache. Aggregates code (AST) + KB + harness (.claude/agents+skills+commands) + landscape (CLAUDE.md+CLAUDE/+CONTEXTUALIZE.md) + memory + cli flags + auto-improvement events into a structured graph. Per-aggregate-source-sha skip when in-sync. Also re-derives .noc-graph/{graph.json,graph.html,REPORT.md}. KB § PATTERNS/architect/noc-graph.md.")
     parser.add_argument("--check-noc-graph-cache-freshness", action="store_true", help="Keeper: noc-graph cache aggregate_source_sha matches the live aggregate over (code corpus + KB + harness + landscape + memory + cli + history). KB § PATTERNS/architect/noc-graph.md.")
     parser.add_argument("--check-graph-extractor-corpus-sanity", action="store_true", help="Keeper (warning severity): light corpus floor-checks on the noc-graph cache content — node/edge kind floors that catch a buggy extractor producing a fresh-but-wrong cache. Paired with test_graph_extractor_correctness.py (full regression). KB § PATTERNS/common/extractor-correctness-vs-mirror.md.")
+    parser.add_argument("--check-cache-uses-locking-helper", action="store_true", help="Keeper (high severity): every SQLite cache connection must route through cache_backend.apply_locking_pragmas (WAL + busy_timeout), not a raw inline `PRAGMA journal_mode=WAL`. Guards the writer-contention regression fixed 2026-05-30. KB § PATTERNS/common/cache-locking-discipline.md.")
     parser.add_argument("--code-search", metavar="QUERY", help="Semantic search over the code corpus — embeds the query, returns top-K matching code symbols by cosine similarity. Use for fuzzy-intent queries ('find helpers that extract a phone number') where exact identifiers are unknown.")
     parser.add_argument("--check-code-embeddings-cache-freshness", action="store_true", help="Keeper: code embeddings cache should mirror each source file's sha256. Severity WARNING (advisory layer). Auto-refresh in pre-commit on staged .py/.ts/.tsx change.")
     parser.add_argument("--kb-ratify", metavar="REASON", help="Snapshot the current kb_validate_owns_kb findings as approved-canonical baseline. REQUIRED reason explains why (future-us reads it). Persists durably to project-history/kb-baselines/. KB § CONTEXT/PATTERNS/common/vector-baseline.md.")
@@ -1032,6 +1033,16 @@ def main():
         for i in issues:
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(0)
+    elif args.check_cache_uses_locking_helper:
+        from tools.noctus.dev.compliance import check_cache_uses_locking_helper
+        issues = check_cache_uses_locking_helper()
+        if not issues:
+            print(f"  {GREEN}✓ every cache connection uses apply_locking_pragmas (no raw WAL).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} raw-WAL cache connection(s) — use cache_backend.apply_locking_pragmas:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line','?')} — {i['issue']}")
+        sys.exit(1)
     elif args.kb_ratify:
         from tools.noctus.dev import kb_baseline as kbb
         result = kbb.ratify(args.kb_ratify)

@@ -125,7 +125,10 @@ class TestFreshnessKeeper:
         issues = check_auto_improvement_cache_freshness(repo_root=tmp_repo)
         assert issues == []
 
-    def test_cache_missing_when_ndjson_exists_flagged(self, tmp_repo):
+    def test_cache_missing_when_ndjson_exists_flagged(self, tmp_repo, monkeypatch):
+        # Disable Tier-2 auto-pull so the missing cache stays missing (else the
+        # Tier-1 resolver would pull it from the prod mirror and create it).
+        monkeypatch.setenv("NOCTUS_DISABLE_AUTO_CACHE_PULL", "1")
         # Write the ndjson directly (without the helper, so the cache isn't built).
         ai.LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
         ai.LEDGER_PATH.write_text(

@@ -8032,6 +8032,12 @@ def check_all_products() -> tuple[int, list]:
     # full rebuild. Severity warning (advisory: orientation map degrades, not
     # blocks). KB § PATTERNS/architect/noc-graph.md.
     all_issues.extend(check_noc_graph_cache_freshness())
+    # 2026-05-30 (cache-locking discipline) — every cache connection must route
+    # through cache_backend.apply_locking_pragmas (WAL + busy_timeout); a raw
+    # inline `PRAGMA journal_mode=WAL` re-opens the writer-contention gap fixed
+    # this session. Severity high (zero violations post-centralization).
+    # KB § PATTERNS/common/cache-locking-discipline.md.
+    all_issues.extend(check_cache_uses_locking_helper())
     # 2026-05-28 (extractor-correctness-vs-mirror) — light corpus floor-checks
     # on the noc-graph cache content (not just freshness). Catches the case where
     # an extractor stops emitting a node/edge kind, producing a fresh-but-wrong
@@ -8897,7 +8903,7 @@ def _resolve_cache_path(name: str, root: Path) -> Path:
     """
     try:
         from .cache_backend import cache_path as _cache_path
-        return _cache_path(name)
+        return _cache_path(name, repo_root=root)
     except Exception:  # noqa: BLE001 — defensive fallback
         return root / ".claude" / "cache" / f"{name}.sqlite"
 
@@ -9823,6 +9829,70 @@ def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
         ("corpus-embeddings", lambda: check_corpus_embeddings_cache_freshness(repo_root)),
         ("memory-embeddings", lambda: check_memory_embeddings_cache_freshness(repo_root)),
     ])
+
+
+# ── Cache-locking discipline gate (the helper, not raw WAL) ──────────────────
+# Files exempt from the raw-WAL scan: the helper's home (defines + documents
+# the pragma) and this detector's home (the needle + remediation message
+# legitimately contain the literal). Neither opens a real cache connection
+# that should route through the helper.
+_LOCKING_PRAGMA_EXEMPT = (
+    ("noctus", "dev", "cache_backend.py"),  # apply_locking_pragmas lives here
+    ("noctus", "dev", "compliance.py"),     # this keeper's own source
+)
+
+
+def check_cache_uses_locking_helper(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-30): every SQLite cache connection MUST apply the
+    locking discipline via ``cache_backend.apply_locking_pragmas`` (WAL +
+    busy_timeout), NOT a raw inline ``PRAGMA journal_mode=WAL``.
+
+    A raw WAL pragma without the busy_timeout sibling is the writer-contention
+    regression fixed 2026-05-30: WAL removes reader↔writer contention but does
+    NOT serialize writer-vs-writer, so a contending writer raises
+    ``database is locked``. The single helper pairs both pragmas; inlining WAL
+    alone silently re-opens the gap (this is what guards the next new cache).
+
+    Predicate: no ``journal_mode=WAL`` literal appears in
+    ``mcp/noctusai/tools/**/*.py`` outside the exempt files (the helper home +
+    this detector). Severity ``high`` — zero violations exist after the
+    2026-05-30 centralization, so any hit is a genuine regression.
+
+    Remediation: ``from .cache_backend import apply_locking_pragmas`` then
+    ``apply_locking_pragmas(conn)`` right after ``sqlite3.connect(...)``.
+
+    Silent skip on a non-noc tree. KB § PATTERNS/common/cache-locking-discipline.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    tools_dir = root / "mcp" / "noctusai" / "tools"
+    if not tools_dir.is_dir():
+        return issues
+    exempt = {tools_dir.joinpath(*parts).resolve() for parts in _LOCKING_PRAGMA_EXEMPT}
+    needle = "journal_mode=WAL"
+    for py in sorted(tools_dir.rglob("*.py")):
+        if py.resolve() in exempt:
+            continue
+        try:
+            lines = py.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, line in enumerate(lines, 1):
+            if needle not in line or line.lstrip().startswith("#"):
+                continue
+            issues.append({
+                "file": str(py.relative_to(root)),
+                "line": lineno,
+                "issue": (
+                    f"raw `PRAGMA {needle}` at line {lineno} — call "
+                    "`cache_backend.apply_locking_pragmas(conn)` instead so the "
+                    "busy_timeout sibling is applied (WAL alone does not serialize "
+                    "writer-vs-writer). KB § PATTERNS/common/cache-locking-discipline.md"
+                ),
+                "severity": "high",
+                "symbol": "cache-raw-wal-without-helper",
+            })
+    return issues
 
 
 def check_kb_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
