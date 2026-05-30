@@ -23,16 +23,16 @@ Two compounding methodology holes, both about **work that's done but never *fini
 
 Remote heads: **330 → 3** (`dev`/`main`/`prod`). Nothing lost — every deletion has a durable, re-appliable salvage net.
 
-## Phase 3 — the PREVENTION subsystem (the durable fix; NOT YET BUILT)
+## Phase 3 — the PREVENTION subsystem (SHIPPED 2026-05-30)
 
 Four legs. Build order = top-down by leverage.
 
 | # | Leg | Shape | Status |
 |---|---|---|---|
-| P3.1 | **Learn-before-archive gate** (the conceptual core) | A mandatory pre-delete salvage step for ANY artifact (branch / worktree / file / project / temp). Before delete: (a) is content already on dev / in KB / in memory? if not → extract it (patch for code, KB/memory entry for lessons, recovery pointer for refs); (b) no dangling pointers left behind; (c) record a salvage-log entry. Generalizes `persistent-files-absorption` + `salvage-before-delete` into ONE enforced gate. Codify: CLAUDE.md §1 rule + KB doc + (eventually) a keeper that flags deletes lacking a salvage-log entry. | **pending** |
-| P3.2 | **Dangling-remote keeper** | `check_dangling_remote_branches` — flag `origin/*` unmerged > N days (warning); surfaced in review + session-end so nothing hides for weeks. Squash-aware (subject-on-dev + git-cherry + merge-tree-vs-base, not raw rev-list). | **pending** |
+| P3.1 | **Learn-before-archive gate** (the conceptual core) | A mandatory pre-delete salvage step for ANY artifact (branch / worktree / file / project / temp). Before delete: (a) is content already on dev / in KB / in memory? if not → extract it (patch for code, KB/memory entry for lessons, recovery pointer for refs); (b) no dangling pointers left behind; (c) record a salvage-log entry. Generalizes `persistent-files-absorption` + `salvage-before-delete` into ONE enforced gate. Codify: CLAUDE.md §1 rule + KB doc + (eventually) a keeper that flags deletes lacking a salvage-log entry. | **shipped** (`learn-before-archive.md` + `salvage_before_delete` tool, dry-run-default; strict keeper deferred) |
+| P3.2 | **Dangling-remote keeper** | `check_dangling_remote_branches` — flag `origin/*` unmerged > N days (warning); surfaced in review + session-end so nothing hides for weeks. Squash-aware (subject-on-dev + git-cherry). | **shipped** (`check_dangling_remote_branches`, warning; wired into review + `check_all_products`) |
 | P3.3 | **Auto-delete engineer remote post-integration** | Capability SHIPPED as the guarded tool `noctus.dev.delete_integrated_remote` (`dry_run=True` default · guards: integrated-by-classifier ∧ not-protected ∧ salvage-logged-first). **MANUAL-ONLY for now** — invoked explicitly by tech-lead/agents during integration; **NOT auto-wired** into the merge flow. Auto-wiring (fire automatically in `task_branch action=cleanup`) is **DEFERRED until the mechanism is proven** — see decision + proof-criteria below. | **shipped (manual); auto DEFERRED** |
-| P3.4 | **Remote-aware session-end sweep** | Extend `session_end_sweep` (+ `orphan_branch_sweep`) to classify `origin/*` branches (integrated / unique-archive-candidate / protected) and actually RUN — not a tool nobody invokes. Wire as an MCP tool + the session-close ritual. | **pending** |
+| P3.4 | **Remote-aware session-end sweep** | Extend `session_end_sweep` (+ `orphan_branch_sweep`) to classify `origin/*` branches (integrated / unique-archive-candidate / protected) and actually RUN — not a tool nobody invokes. Wire as an MCP tool + the session-close ritual. | **shipped** (`session_end_sweep` remote section + `classify_remote_branches`) |
 
 ### Learn-before-archive — design detail (P3.1, the user's explicit ask)
 
@@ -47,8 +47,8 @@ Enforcement ladder: (1) **principle** (CLAUDE.md §1 + KB doc) — ship first; (
 
 ## Trigger / cadence
 
-- P3.1 (learn-before-archive principle) — ship NEXT (cheap, highest leverage, the user explicitly asked).
-- P3.2/P3.3/P3.4 — build as a focused effort (ideally fresh context for quality; each is tools+keeper+wiring+tests+8-way-sync).
+- P3.1–P3.4 — **all SHIPPED 2026-05-30** (engineer `feat/branch-hygiene-prevention` `e1edb98c`/`e70d7283` → merge; disciplines `8f7ba71f`). Behavioral pair codified separately (see below).
+- Behavioral layer SHIPPED: `methodology-execution-discipline.md` + `product-dev-learning-ground.md` (the complementary process∧craft pair) + `.gitattributes merge=union` for ledgers.
 - Re-run the remote-classifier monthly OR when `git ls-remote --heads origin | wc -l` > ~10.
 
 ## Decision log
@@ -63,6 +63,10 @@ Enforcement ladder: (1) **principle** (CLAUDE.md §1 + KB doc) — ship first; (
 - _(resolved 2026-05-30 — see decision log: P3.3 manual-until-proven, then automate.)_
 - Does the learn-before-archive keeper (P3.1 stage-3) risk false-positives on routine temp-file deletes? Likely scope it to: branches, worktrees, files under `projects/`, and `KNOWLEDGE-BASE/` deletions — not arbitrary `/tmp`.
 
-## Retrospective (fill on close)
+## Retrospective (closed 2026-05-30)
+
+- Whole subsystem (machinery + behavioral disciplines) shipped in-session; remote heads 330→3, slowness root-fixed, nothing lost. Lessons absorbed to memory: `feedback_methodology_execution_discipline` + `feedback_product_dev_learning_ground` + `feedback_bg_agent_stall_heuristic_false_takeover`.
+- Only P3.3 auto-wiring remains deferred by design (manual-until-proven, criteria in decision log).
+- Dogfood proof: the agent-kb-alignment + ledger-merge gates fired during the codify commit and were fixed-at-root, not bypassed — the discipline working on itself.
 
 _TBD — absorb lessons to KB/memory when P3 ships._
