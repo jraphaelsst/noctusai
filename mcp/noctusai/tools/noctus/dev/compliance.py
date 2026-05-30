@@ -8096,6 +8096,12 @@ def check_all_products() -> tuple[int, list]:
     # KB § PATTERNS/architect/products-consume-canonical-organs.md.
     all_issues.extend(check_canonical_organ_consumption())
     all_issues.extend(check_detector_has_regression_test())
+    # auth-boundary-false-green (2026-05-29, canonical-test-runner) — static
+    # AST scan for `status_code in (401, 404)` disjunctions in product test
+    # files. The 404 branch is a false-green escape hatch (route absent ⇒ 404
+    # ⇒ test passes, auth never exercised). Only static analysis catches this.
+    # KB § PATTERNS/compliance/auth-boundary-false-green.md.
+    all_issues.extend(check_auth_boundary_false_green())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
@@ -8378,6 +8384,11 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
     "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
     "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
+    # auth-boundary-false-green (2026-05-29) — compliance keeper knowledge;
+    # owned by compliance-reviewer but added here as commons pending agent file
+    # update (agent file edit blocked by auto-mode classifier; NOC-REMEDIATE
+    # [agent-kb-auth-boundary]: tech-lead to add to compliance-reviewer owns_kb).
+    "CONTEXT/PATTERNS/compliance/auth-boundary-false-green.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
@@ -11172,6 +11183,198 @@ def check_files_outlined(
                 "issue": f"not AST-outline-able: {pe}",
                 "severity": "high",
             })
+    return issues
+
+
+# ── auth-boundary-false-green (2026-05-29, canonical-test-runner) ──────────────
+#
+# Worked example that motivated this keeper:
+#
+#   `products/dev-team` omitted `"team"` from `standard_routers=[...]`, so the
+#   seed Team-Management organ (`/api/team`) was never mounted. Four tests in
+#   `TestDevTeamAPISurfaceAuthBoundary` asserted:
+#
+#       assert resp.status_code in (401, 404)
+#
+#   against paths the product never served. They PASSED via the 404 branch —
+#   never exercising auth. The fix (commit 9d6bf79c) changed the assertions to
+#   strict `== 401` against paths the product actually serves (e.g. `/api/run`).
+#
+# Why static analysis only:
+#   A test-executing runner can NEVER catch this class of bug — the test is green
+#   by construction. Only AST-based assertion-shape analysis can detect the
+#   false-green escape hatch (the `in (401, 404)` disjunction).
+#
+# Predicate (tight — avoid false positives):
+#   Flag ONLY tuples/sets/lists containing BOTH 401 AND 404. Disjunctions that
+#   contain 401 with other codes (e.g. `in (401, 403)`) are legitimate auth
+#   checks (both codes mean "unauthorized/forbidden"); `in (404, 500)` is a
+#   legit resource-not-found check. The 401+404 combo is the ONLY shape that
+#   confuses "auth works" with "route missing".
+#
+# Never silent: SyntaxError in a test file ⇒ warning finding (manual review
+# needed) instead of silently ignoring the file.
+#
+# Self-verification: scan `products/dev-team/` on current fleet; expects 0
+# findings because the fix (9d6bf79c) already tightened those assertions.
+
+
+# Codes that, when disjoined with 401 in an auth-boundary assertion, form a
+# false-green escape hatch — each can fire on an UNauthenticated request
+# without the auth dependency running, so the test passes even if auth was
+# removed:
+#   404 — route absent (e.g. standard_routers omitted the router)
+#   422 — request-body validation fires before/independent of the auth dep
+# 403 is deliberately EXCLUDED: it is a second legitimate auth outcome
+# (authenticated-but-forbidden), not a wiring/validation mask.
+_AUTH_FALSE_GREEN_MASKABLE = frozenset({404, 422})
+
+
+def _is_false_green_compare(node: "ast.Compare") -> int | None:  # type: ignore[name-defined]
+    """Return the offending maskable code if `node` is a `<expr> in <collection>`
+    disjunction that pairs 401 with a false-green mask (404 or 422); else None.
+
+    The returned code lets the caller name the specific escape hatch in the
+    finding message instead of hard-coding '404'.
+    """
+    import ast as _ast
+    if len(node.ops) != 1 or not isinstance(node.ops[0], _ast.In):
+        return None
+    comparator = node.comparators[0]
+    # Accepted collection forms: Tuple, Set, List of constants.
+    if not isinstance(comparator, (_ast.Tuple, _ast.Set, _ast.List)):
+        return None
+    constants = set()
+    for elt in comparator.elts:
+        if isinstance(elt, _ast.Constant) and isinstance(elt.value, int):
+            constants.add(elt.value)
+    if 401 not in constants:
+        return None
+    masks = constants & _AUTH_FALSE_GREEN_MASKABLE
+    # Prefer 404 in the message when both appear (clearest exemplar).
+    if 404 in masks:
+        return 404
+    if 422 in masks:
+        return 422
+    return None
+
+
+def check_auth_boundary_false_green(
+    product_path: Path | None = None,
+    products_dir: Path | None = None,
+) -> list[dict]:
+    """Keeper: auth-boundary tests must NOT pair 401 with a maskable code.
+
+    `status_code in (401, <mask>)` is a **false-green escape hatch** — the test
+    passes via the `<mask>` branch even when auth never fired, so it cannot
+    detect an auth regression. Two maskable codes (see `_AUTH_FALSE_GREEN_MASKABLE`):
+      - `404` — route absent (e.g. `standard_routers=[...]` omitted the router),
+      - `422` — request-body validation fires before/independent of the auth dep.
+
+    The fix in both cases is a strict `== 401`: for 404, hit a path the product
+    actually serves; for 422, send a VALID body so validation passes and the
+    auth dependency is what fires (worked example: `POST /api/run` with a valid
+    `{"task": ...}` → strict 401, dev-team `test_e2e_flows.py`).
+
+    `403` is deliberately NOT flagged (a second legitimate auth outcome —
+    authenticated-but-forbidden), nor is a 404+500 resource-error range.
+
+    **Scope:** `products/*/backend/tests/**/*.py`.
+
+    **Never silent:** if a test file cannot be AST-parsed (SyntaxError or OS
+    error), emits a `warning` finding requesting manual review rather than
+    silently skipping the file.
+
+    **Severity warning / advisory-only** — surfaces debt, never blocks a commit.
+    Current fleet state: `dev-team` is clean (fixed in 9d6bf79c — replaced
+    `in (401, 404)` with strict `== 401`); `personal-finance` carries a known
+    backlog of `in (401, 422)` assertions surfaced here as warnings, tracked for
+    remediation (the keeper exists precisely to make that backlog visible).
+
+    Returns: list of `{"product": str, "file": str, "issue": str,
+    "severity": "warning"}` dicts.
+    """
+    import ast as _ast
+
+    base = products_dir if products_dir is not None else PRODUCTS_DIR
+    issues: list[dict] = []
+
+    def _scan_product(ppath: Path) -> None:
+        name = ppath.name
+        tests_root = ppath / "backend" / "tests"
+        if not tests_root.exists():
+            return
+        for test_file in sorted(tests_root.rglob("*.py")):
+            try:
+                source = test_file.read_text(encoding="utf-8")
+            except OSError as e:
+                issues.append({
+                    "product": name,
+                    "file": str(test_file.relative_to(base)),
+                    "issue": (
+                        f"Cannot read test file ({e}); "
+                        "manual review needed for auth-boundary false-green check."
+                    ),
+                    "severity": "warning",
+                })
+                continue
+            try:
+                tree = _ast.parse(source, filename=str(test_file))
+            except SyntaxError as e:
+                issues.append({
+                    "product": name,
+                    "file": str(test_file.relative_to(base)),
+                    "issue": (
+                        f"SyntaxError while parsing ({e}); "
+                        "manual review needed for auth-boundary false-green check."
+                    ),
+                    "severity": "warning",
+                })
+                continue
+            for node in _ast.walk(tree):
+                if not isinstance(node, _ast.Compare):
+                    continue
+                mask = _is_false_green_compare(node)
+                if mask is None:
+                    continue
+                # Build a compact snippet for the finding message.
+                try:
+                    snippet = _ast.unparse(node)
+                except Exception:  # noqa: BLE001 — unparse is best-effort
+                    snippet = f"<line {node.lineno}>"
+                why = {
+                    404: ("the `404` alternative lets the test pass when the "
+                          "route is absent (route not wired ⇒ 404 ⇒ test green, "
+                          "but auth was never exercised)"),
+                    422: ("the `422` alternative lets the test pass when body "
+                          "validation fires before the auth dependency (invalid "
+                          "body ⇒ 422 ⇒ test green even if auth was removed)"),
+                }[mask]
+                fix = (
+                    "Fix: assert strict `== 401`"
+                    + (" against a path the product actually serves"
+                       if mask == 404
+                       else " after sending a VALID request body so validation "
+                            "passes and the auth dependency is what fires")
+                    + f", or remove the `{mask}` branch."
+                )
+                issues.append({
+                    "product": name,
+                    "file": str(test_file.relative_to(base)),
+                    "issue": (
+                        f"Auth-boundary false-green at line {node.lineno}: "
+                        f"`{snippet}` — {why}. {fix}"
+                    ),
+                    "severity": "warning",
+                })
+
+    if product_path is not None:
+        _scan_product(product_path)
+    else:
+        for d in sorted(base.iterdir()):
+            if d.is_dir() and not d.name.startswith("."):
+                _scan_product(d)
+
     return issues
 
 

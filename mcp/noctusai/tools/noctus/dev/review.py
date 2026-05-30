@@ -94,6 +94,7 @@ def _detect(
         check_auth_session_mutation_on_shared_client,  # registration-drift fix 2026-05-25
         check_slowapi_with_pep563,
         check_canonical_organ_consumption,             # products-consume-canonical-organs 2026-05-29
+        check_auth_boundary_false_green,               # auth-boundary-false-green 2026-05-29
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -124,6 +125,7 @@ def _detect(
         issues.extend(check_admin_endpoint_service_role_bypass(product_path))
         issues.extend(check_auth_session_mutation_on_shared_client(product_path))  # registration-drift fix 2026-05-25
         issues.extend(check_slowapi_with_pep563(product_path))
+        issues.extend(check_auth_boundary_false_green(product_path=product_path, products_dir=base))  # auth-boundary-false-green 2026-05-29
     # Global repo-root sweep — only when not scoped to a single product.
     if product_slug is None:
         issues.extend(check_out_of_contract_trees())

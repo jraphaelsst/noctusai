@@ -6,7 +6,7 @@
 ## Tools
 
 <!-- kb-counts:start:mcp_tools -->
-**211 tools total** (auto-counted from `mcp/noctusai/tools/`).
+**212 tools total** (auto-counted from `mcp/noctusai/tools/`).
 <!-- kb-counts:end:mcp_tools -->
 
 ### Context
