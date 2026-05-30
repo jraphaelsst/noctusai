@@ -40,10 +40,12 @@ The `YYYY-MM` suffix disambiguates if the same topic gets revisited later (e.g.,
 What success looks like. Concrete + measurable.
 
 ## Slices
-| # | Title | Files-to-modify | Agent | Status | Wave | SHA |
-|---|---|---|---|---|---|---|
+| # | Title | Files-to-modify | Agent | Status | Wave | Verify recipe | SHA |
+|---|---|---|---|---|---|---|---|
 
 Status ∈ {pending, in-flight, blocked, shipped, abandoned}. Update as slices land.
+
+**Every slice carries a verify-recipe, not only a test-recipe.** Tests-green ≠ verified-in-production — the unit surface stops at module boundaries; the *verify-recipe* is the explicit live-state proof (provider reachable, ndjson written, MCP round-trip, page shows real data). An empty cell is a positive *"no live check needed"* claim, not a skip. Born 2026-05-26 (automation-orchestration roadmap close: 7 slices shipped tests-green but un-exercised against live caches/MCP). Mirrors the `noc-roadmap` skill Required-sections row + `templates/roadmap.md` column.
 
 ## Decision log
 | Date | Decision | Why |

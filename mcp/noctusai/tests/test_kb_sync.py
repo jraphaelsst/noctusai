@@ -127,6 +127,56 @@ def test_verify_layout_tree_drift_exit_2(tmp_path, monkeypatch):
     assert "NOT IN LAYOUT TREE" in r["stderr"]
 
 
+def test_verify_wrong_parent_path_blocks_exit_1(tmp_path, monkeypatch):
+    # Regression for feedback_kb_sync_fuzzy_path_match: a doc whose LEAF
+    # appears in INDEX.md (so the coarse "mentioned?" gate passes) but
+    # which landed at the WRONG parent path must now BLOCK (error, exit
+    # 1) rather than silently pass. Models the 2026-05-26
+    # ssh-deploy-key-restrictions.md wrong-path landing: INDEX cites
+    # CONTEXT/PATTERNS/devops/<leaf> but the file is on disk one segment
+    # shallow at CONTEXT/PATTERNS/<leaf>.
+    leaf = "ssh-deploy-key-restrictions.md"
+    cited = f"CONTEXT/PATTERNS/devops/{leaf}"
+    on_disk = f"CONTEXT/PATTERNS/{leaf}"  # wrong parent: missing devops/
+    _mk_tree(
+        tmp_path,
+        claude_md="See `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md`.\n",
+        index_md="# Index\n\n- 01-PHILOSOPHY.md\n\n"
+        + _LAYOUT.format(tree=f"CONTEXT/01-PHILOSOPHY.md\n{cited}"),
+        kb_docs={
+            "CONTEXT/01-PHILOSOPHY.md": "# Philosophy\n",
+            on_disk: "# SSH deploy key restrictions (landed at wrong path)\n",
+        },
+    )
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    r = kb_sync.verify_kb_sync()
+    assert r["exit_code"] == 1
+    assert r["ok"] is False
+    assert "WRONG INDEX PATH" in r["stderr"]
+    assert on_disk in r["stderr"]
+
+
+def test_verify_correct_nested_path_passes_exit_0(tmp_path, monkeypatch):
+    # Companion guard: a doc cited by full nested path AND living there
+    # must stay green — proves the wrong-path check is zero-false-positive
+    # for correctly-placed nested docs.
+    cited = "CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md"
+    _mk_tree(
+        tmp_path,
+        claude_md="See `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md`.\n",
+        index_md="# Index\n\n- 01-PHILOSOPHY.md\n\n"
+        + _LAYOUT.format(tree=f"CONTEXT/01-PHILOSOPHY.md\n{cited}"),
+        kb_docs={
+            "CONTEXT/01-PHILOSOPHY.md": "# Philosophy\n",
+            cited: "# SSH deploy key restrictions (correct path)\n",
+        },
+    )
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    r = kb_sync.verify_kb_sync()
+    assert r["exit_code"] == 0
+    assert r["ok"] is True
+
+
 def test_verify_collective_subtree_exempt(tmp_path, monkeypatch):
     # SKILLS/ docs are indexed collectively — neither index nor layout
     # membership required → still exit 0.

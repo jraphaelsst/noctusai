@@ -56,6 +56,11 @@ _POINTER_RE = re.compile(r"`(KNOWLEDGE-BASE/[^`]+\.md)`")
 # INDEX.md Layout-tree token scan: `grep -oE '[A-Za-z0-9_-]+\.md'`
 _MD_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+\.md")
 
+# INDEX.md full-path citation scan (maximal-munch so a path like
+# `CONTEXT/PATTERNS/devops/x.md` is captured as ONE token, not as the
+# tail `PATTERNS/devops/x.md`). Used by the wrong-parent-path guard.
+_PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./-]+\.md")
+
 
 class KBSyncResult(TypedDict):
     ok: bool
@@ -105,6 +110,26 @@ def _extract_layout_md_tokens(index_text: str) -> set[str]:
         if line == "---":
             break
     return tokens
+
+
+def _cited_paths_by_leaf(index_text: str) -> dict[str, set[str]]:
+    """Map each leaf filename → the set of KB-relative *full paths*
+    INDEX.md cites it at (slash-containing tokens only, e.g.
+    ``CONTEXT/PATTERNS/devops/x.md``).
+
+    Powers the wrong-PARENT-path guard in section 2. The coarse
+    "is the leaf mentioned anywhere?" gate accepts a doc that landed at
+    the wrong parent path as long as its bare leaf appears somewhere in
+    INDEX.md — the fuzzy-match hole that silently relocated
+    ``ssh-deploy-key-restrictions.md`` on 2026-05-26
+    (``feedback_kb_sync_fuzzy_path_match``). When INDEX cites a full
+    path for a leaf, the on-disk doc MUST live at one of those paths.
+    """
+    out: dict[str, set[str]] = {}
+    for tok in _PATH_TOKEN_RE.findall(index_text):
+        if "/" in tok:
+            out.setdefault(tok.rsplit("/", 1)[1], set()).add(tok)
+    return out
 
 
 def roster_tree_parity_gaps(root: Path) -> list[str]:
@@ -199,6 +224,7 @@ def verify_kb_sync() -> KBSyncResult:
         if index_path.is_file()
         else ""
     )
+    cited_by_leaf = _cited_paths_by_leaf(index_text)
     for doc in kb_docs:
         rel = doc.relative_to(root).as_posix()
         if rel == KB_INDEX:
@@ -211,6 +237,22 @@ def verify_kb_sync() -> KBSyncResult:
         if base not in index_text:
             err.write(f"  ⚠ NOT INDEXED: {rel}\n")
             warnings += 1
+            continue
+        # Wrong-PARENT-path guard (closes the fuzzy leaf-match hole,
+        # feedback_kb_sync_fuzzy_path_match): the leaf IS mentioned, but
+        # if INDEX.md cites a full path for this leaf, the on-disk doc
+        # MUST live at one of those paths. A doc that landed at e.g.
+        # KNOWLEDGE-BASE/PATTERNS/x.md while INDEX cites
+        # CONTEXT/PATTERNS/x.md used to pass silently — now it blocks.
+        rel_from_kb = doc.relative_to(root / KB_DIR).as_posix()
+        cited = cited_by_leaf.get(base)
+        if cited and rel_from_kb not in cited:
+            err.write(
+                f"  ✗ WRONG INDEX PATH: {rel} lives at {rel_from_kb} but "
+                f"INDEX.md cites {base} only at {', '.join(sorted(cited))} "
+                f"— move the file to the cited path or fix the INDEX ref.\n"
+            )
+            errors += 1
 
     # ─── 3. INDEX.md Layout tree reflects the filesystem ─────────────
     out.write(f"Checking {KB_INDEX} Layout tree reflects KB filesystem...\n")
