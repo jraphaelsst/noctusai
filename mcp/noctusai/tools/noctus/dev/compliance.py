@@ -8384,11 +8384,6 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
     "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
     "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
-    # auth-boundary-false-green (2026-05-29) — compliance keeper knowledge;
-    # owned by compliance-reviewer but added here as commons pending agent file
-    # update (agent file edit blocked by auto-mode classifier; NOC-REMEDIATE
-    # [agent-kb-auth-boundary]: tech-lead to add to compliance-reviewer owns_kb).
-    "CONTEXT/PATTERNS/compliance/auth-boundary-false-green.md",
 })
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
