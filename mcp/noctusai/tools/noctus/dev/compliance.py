@@ -7510,6 +7510,8 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     # extractor-correctness keeper: full regression in test_graph_extractor_correctness.py;
     # the keeper itself is a light floor-check subset of that suite.
     "check_graph_extractor_corpus_sanity": "tests/test_graph_extractor_correctness.py::TestEdgeFloors",
+    # dangling-remote-branches (2026-05-30, branch-hygiene-prevention).
+    "check_dangling_remote_branches": "tests/test_dangling_remote_branches.py",
 }
 
 
@@ -8102,6 +8104,11 @@ def check_all_products() -> tuple[int, list]:
     # ⇒ test passes, auth never exercised). Only static analysis catches this.
     # KB § PATTERNS/compliance/auth-boundary-false-green.md.
     all_issues.extend(check_auth_boundary_false_green())
+    # dangling-remote-branches (2026-05-30, branch-hygiene-prevention) — advisory
+    # keeper; flags origin/* branches with unique content older than threshold_days.
+    # Squash-aware (subject-on-dev + git-cherry); never a commit-blocker.
+    # KB § CONTEXT/PATTERNS/common/learn-before-archive.md.
+    all_issues.extend(check_dangling_remote_branches())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
@@ -8382,6 +8389,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/auto-author-scaffolds.md",
     "CONTEXT/PATTERNS/common/cache-auto-freshness.md",
     "CONTEXT/PATTERNS/common/kb-recurrence-radar.md",
+    "CONTEXT/PATTERNS/common/learn-before-archive.md",  # universal commons — pre-delete salvage gate applies to every lens that deletes any artifact (branch/worktree/file/project); no single-agent ownership
     "CONTEXT/PATTERNS/architect/seed-organ-canonical-set.md",  # universal commons — organ catalog is consumed by all agents as a reuse surface; no single-agent ownership
     "CONTEXT/PATTERNS/architect/products-consume-canonical-organs.md",  # universal commons — canonical organ consumption rule applies to every agent that builds FE components
 })
@@ -11367,6 +11375,74 @@ def check_auth_boundary_false_green(
         for d in sorted(base.iterdir()):
             if d.is_dir() and not d.name.startswith("."):
                 _scan_product(d)
+
+    return issues
+
+
+# ── dangling-remote-branches (branch-hygiene-prevention, P3.2, 2026-05-30) ──
+# Advisory keeper: flag origin/* branches with unique content older than N days.
+# Squash-aware via remote_branch_hygiene.classify_remote_branches (git-cherry +
+# subject-on-dev). Never a commit-blocker (severity=warning). Surfaced in review
+# + session-end so nothing hides for weeks.
+# KB § CONTEXT/PATTERNS/common/learn-before-archive.md.
+
+def check_dangling_remote_branches(
+    threshold_days: float = 7.0,
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Keeper: flag origin/* branches with unique content older than threshold_days.
+
+    Consumes `remote_branch_hygiene.classify_remote_branches()`. Every `unique`
+    remote branch whose `age_days > threshold_days` is surfaced as a warning finding
+    with branch name, age, subject, and unique-commit count.
+
+    NOT a commit-blocker — advisory, surfaced in review + session-end sweep.
+    Never silent on git errors: if classification fails, emits a warning finding.
+
+    Severity: warning for every qualifying unique-old branch.
+
+    Returns: list of {product, file, issue, severity} dicts (keeper shape).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    try:
+        from tools.noctus.dev.remote_branch_hygiene import classify_remote_branches
+        branches = classify_remote_branches(repo_root=root)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("check_dangling_remote_branches: classification failed: %s", exc)
+        issues.append({
+            "product": "<remotes>",
+            "file": "origin/*",
+            "issue": (
+                f"remote branch classification failed ({exc!s:.200}). "
+                "Run `noctus.dev.classify_remote_branches` manually to investigate."
+            ),
+            "severity": "warning",
+        })
+        return issues
+
+    for entry in branches:
+        if entry["verdict"] != "unique":
+            continue
+        age = entry.get("age_days")
+        if age is None or age <= threshold_days:
+            continue
+        subject = entry.get("subject") or "<no subject>"
+        unique_commits = entry.get("unique_commits")
+        issues.append({
+            "product": "<remotes>",
+            "file": f"origin/{entry['branch']}",
+            "issue": (
+                f"Remote branch 'origin/{entry['branch']}' has unique content "
+                f"({unique_commits} commit(s)) not on dev, aged {age:.0f} days "
+                f"(subject: '{subject[:80]}'). "
+                "Run `noctus.dev.salvage_before_delete` then "
+                "`noctus.dev.delete_integrated_remote` after integration, "
+                "OR integrate + delete. "
+                "KB § CONTEXT/PATTERNS/common/learn-before-archive.md."
+            ),
+            "severity": "warning",
+        })
 
     return issues
 
