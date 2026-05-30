@@ -11225,23 +11225,22 @@ def check_files_outlined(
 _AUTH_FALSE_GREEN_MASKABLE = frozenset({404, 422})
 
 
-def _is_false_green_compare(node: "ast.Compare") -> int | None:  # type: ignore[name-defined]
+def _is_false_green_compare(node: ast.Compare) -> int | None:
     """Return the offending maskable code if `node` is a `<expr> in <collection>`
     disjunction that pairs 401 with a false-green mask (404 or 422); else None.
 
     The returned code lets the caller name the specific escape hatch in the
     finding message instead of hard-coding '404'.
     """
-    import ast as _ast
-    if len(node.ops) != 1 or not isinstance(node.ops[0], _ast.In):
+    if len(node.ops) != 1 or not isinstance(node.ops[0], ast.In):
         return None
     comparator = node.comparators[0]
     # Accepted collection forms: Tuple, Set, List of constants.
-    if not isinstance(comparator, (_ast.Tuple, _ast.Set, _ast.List)):
+    if not isinstance(comparator, (ast.Tuple, ast.Set, ast.List)):
         return None
     constants = set()
     for elt in comparator.elts:
-        if isinstance(elt, _ast.Constant) and isinstance(elt.value, int):
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, int):
             constants.add(elt.value)
     if 401 not in constants:
         return None
@@ -11289,7 +11288,6 @@ def check_auth_boundary_false_green(
     Returns: list of `{"product": str, "file": str, "issue": str,
     "severity": "warning"}` dicts.
     """
-    import ast as _ast
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
     issues: list[dict] = []
@@ -11314,7 +11312,7 @@ def check_auth_boundary_false_green(
                 })
                 continue
             try:
-                tree = _ast.parse(source, filename=str(test_file))
+                tree = ast.parse(source, filename=str(test_file))
             except SyntaxError as e:
                 issues.append({
                     "product": name,
@@ -11326,15 +11324,15 @@ def check_auth_boundary_false_green(
                     "severity": "warning",
                 })
                 continue
-            for node in _ast.walk(tree):
-                if not isinstance(node, _ast.Compare):
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Compare):
                     continue
                 mask = _is_false_green_compare(node)
                 if mask is None:
                     continue
                 # Build a compact snippet for the finding message.
                 try:
-                    snippet = _ast.unparse(node)
+                    snippet = ast.unparse(node)
                 except Exception:  # noqa: BLE001 — unparse is best-effort
                     snippet = f"<line {node.lineno}>"
                 why = {
