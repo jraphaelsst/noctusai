@@ -1,0 +1,8 @@
+# Append-only event ledgers (NDJSON) — every branch appends distinct lines, so a
+# default merge treats them as conflicting edits to the same region. `merge=union`
+# keeps BOTH sides' lines (no conflict markers) — correct for append-only logs.
+# Codified 2026-05-30 after a lingering vector-costs.ndjson merge conflict blocked
+# the Phase 3 integration (learn-from-gating: a recurring gate is a fix, not a chore).
+project-history/vector-costs.ndjson      merge=union
+project-history/auto-improvement.ndjson  merge=union
+project-history/*.ndjson                 merge=union
