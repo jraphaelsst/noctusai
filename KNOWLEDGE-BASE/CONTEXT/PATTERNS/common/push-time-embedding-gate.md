@@ -1,9 +1,23 @@
-# Cache-refresh universality — every boundary refreshes every cache
+# Cache-refresh universality — every boundary refreshes every cache whose source changed
 
-> **v4.0 final rule (2026-05-27 afternoon — REVERSED earlier same-day):**
-> every cache (vector + row) refreshes on every cache-freshness boundary
-> (pre-commit / post-merge / post-checkout / pre-push). Belt-and-suspenders.
-> Stale caches are forbidden at every gate.
+> **v4.1 rule (2026-05-30 — refines v4.0):** every cache-freshness boundary
+> (pre-commit / post-merge / post-checkout / pre-push) refreshes every cache
+> **whose source files actually changed in that boundary's scope**. Coverage is
+> universal (no boundary is skipped); *work* is gated by relevance. A delete-only
+> or no-source push refreshes nothing. Correctness is backstopped by
+> `check_all_cache_freshness` (8-way-sync, pre-commit) — any residual staleness
+> surfaces on the next commit, so "no stale cache at any moment" still holds.
+>
+> **Why v4.1 (cost ≠ time):** v4.0 made pre-push refresh ALL caches
+> *unconditionally* — the lone outlier (pre-commit / post-merge / post-checkout
+> already gated on changed sources). v4.0's defence was "cost is near-zero
+> because `source_sha` skips unchanged chunks" — TRUE for OpenAI **$**, but the
+> refresh still **enumerated + hashed every source file and rebuilt noc-graph
+> (~5s) on every push**, so a delete-only or hook-only push paid a 30-60s
+> WALL-CLOCK tax for zero content change. v4.1 closes that by gating pre-push on
+> the pushed range's changed files — same shape as the other three boundaries.
+> A cache only skips when ITS sources didn't change, so it can't go stale from
+> that push; the keeper catches anything missed.
 
 This file's old title was "Push-time embedding-freshness gate." It documented
 a mid-day decision to move kb/code embedding refresh from per-commit to
@@ -40,17 +54,21 @@ Every boundary refreshes every cache:
 | **pre-commit** | All 4 vector caches IF their source surface was staged + memory-embeddings always-attempt (out-of-repo) + 3 row caches IF their source was staged |
 | **post-merge** | All 4 vector caches IF a source file changed in the merge + memory-embeddings always-attempt + 3 row caches IF their source changed |
 | **post-checkout** | Same as post-merge (branch switch is structurally similar) |
-| **pre-push** | ALL 7 caches unconditionally (the final guarantee before publishing) |
+| **pre-push** | Each cache IF its source changed in the pushed range (`remote_oid..local_oid` across all non-delete refs): kb/corpus ← `*.md`, code ← `*.py`, keeper ← `compliance.py`, agent-context ← `.claude/agents/`, auto-improvement ← `auto-improvement.ndjson`, noc-graph ← code/KB/`.claude`. **Delete-only / no-source push → skip all.** memory (out-of-repo) only under `NOCTUS_FORCE_EMBED_REFRESH=1` (it anchors on post-merge/post-checkout). |
 
-Per-file `source_sha` skip in each refresh keeps the cost bounded — unchanged
-files don't re-embed.
+Per-file `source_sha` skip bounds the **cost** (unchanged files don't re-embed);
+the v4.1 changed-files gate bounds the **time** (a push that touches none of a
+cache's sources doesn't even enumerate/hash them or rebuild noc-graph).
 
-## Bypass
+## Bypass / override
 
-`NOCTUS_SKIP_EMBED_REFRESH=1 git push` still skips the pre-push vector
-refresh (rare — CI smoke or `.env`-less env). The pre-commit / post-merge /
-post-checkout refreshes always fire when their source signal triggers (no
-env bypass — those are mechanical and fast).
+- `NOCTUS_SKIP_EMBED_REFRESH=1 git push` — skip the pre-push refresh entirely
+  (CI smoke / `.env`-less env).
+- `NOCTUS_FORCE_EMBED_REFRESH=1 git push` — force the full v4.0
+  belt-and-suspenders pass (refresh all 8 regardless of changed files) — the
+  escape hatch if you ever suspect a missed source signal.
+- The pre-commit / post-merge / post-checkout refreshes fire on their source
+  signal as before (mechanical + fast; no env bypass).
 
 ## Properties
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-# pre-push — client-side branch protection.
+# pre-push — client-side branch protection + CHANGE-GATED cache refresh.
 #
 # `main` is PRODUCTION (what the VPS deploys). `dev` is the everyday
 # integration branch — all routine work + pushes go there. This hook is
@@ -8,22 +8,13 @@
 # branch model, KB § PATTERNS/branching-and-merging.md § 0):
 #
 #   1. ANY push to a protected branch (main, prod) is REFUSED unless the
-#      sanctioned-deploy override `NOCTUS_ALLOW_MAIN_PUSH=1` is set. Routine
-#      work lands on `dev`; reaching `main` is the explicit dev→main deploy
-#      (§0.2) and must be a deliberate, consented act.
-#   2. DELETION of a protected branch is ALWAYS refused (even under the
-#      override) — production history is preserved by design.
-#   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused
-#      (even under the override) — a deploy is FF-only; never rewind prod.
-#
-# GitHub server-side branch protection / rulesets need Pro on a PRIVATE
-# repo (free-private = 403); this hook is the free, local equivalent.
+#      sanctioned-deploy override `NOCTUS_ALLOW_MAIN_PUSH=1` is set.
+#   2. DELETION of a protected branch is ALWAYS refused.
+#   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused.
 #
 # Sanctioned deploy:  NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main
-# Hard bypass (rare): git push --no-verify   (skips ALL hooks — last resort)
+# Hard bypass (rare): git push --no-verify
 # Carve-out: [carve:hook] — git-hook entry; logic is git-native + thin.
-# Provenance: extended 2026-05-23 from force/delete-only → full main-push
-#   gate, when `dev` became the integration branch and `main` deploy-only.
 # See KB § PATTERNS/branching-and-merging.md § 0.2 and § PATTERNS/branching-dispatch.md.
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -33,35 +24,87 @@ ZERO_RE='^0+$'   # all-zero OID = a delete (SHA-1 or SHA-256)
 ALLOW="${NOCTUS_ALLOW_MAIN_PUSH:-}"
 blocked=0
 
-# ─── Embedding-freshness gate (v4.0 2026-05-27) ─────────────────
-# Pre-commit no longer refreshes kb/code embeddings (wasteful: many commits
-# re-embed unchanged chunks). The push boundary is the right batching unit
-# — accumulate work, embed once. This block refreshes BOTH caches before
-# the push proceeds. If OPENAI_API_KEY is missing OR the provider is
-# unreachable, this is advisory (the refresh skips with a warning; the
-# push still proceeds since vector search is enrichment, not load-bearing).
-# Set NOCTUS_SKIP_EMBED_REFRESH=1 to bypass entirely (e.g. CI smoke pushes).
+# stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref).
+# Capture upfront — the refresh-gate needs the pushed range; the protection
+# loop reuses the captured lines (git provides stdin exactly once).
+PUSH_LINES="$(cat)"
+
+# ─── Change-GATED cache refresh (v4.1 2026-05-30) ───────────────────────
+# Pre-commit no longer refreshes kb/code embeddings; the push boundary is the
+# batching unit. v4.0 refreshed ALL 8 caches on EVERY push ("belt-and-suspenders")
+# — paying a 30-60s OpenAI-round-trip + noc-graph-rebuild tax even on delete-only
+# or no-source pushes. v4.1 GATES each refresh on whether the pushed range actually
+# changed that cache's source files:
+#   • delete-only / no-content push  → skip everything (instant)
+#   • kb-embeddings / corpus          → only if *.md changed
+#   • code-embeddings                 → only if *.py changed
+#   • keeper / agent-context / auto-improvement / noc-graph → only if their input changed
+# Under-refresh is self-healing: the source_sha invariant makes every refresh
+# idempotent, and check_all_cache_freshness (8-way-sync, pre-commit) surfaces any
+# residual staleness on the next commit. Correctness preserved; the waste is cut.
+# Overrides: NOCTUS_SKIP_EMBED_REFRESH=1 (skip entirely — CI smoke pushes) ·
+#            NOCTUS_FORCE_EMBED_REFRESH=1 (force the full v4.0 belt-and-suspenders pass).
 # KB § PATTERNS/common/push-time-embedding-gate.md.
 REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
 CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
 if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
-    echo "[pre-push] Refreshing ALL 8 caches before push (belt-and-suspenders)..."
-    # 4 vector caches (OpenAI embedding calls — slower).
-    "$PY_PP" "$CLI_PP" --refresh-kb-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] kb-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-code-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] code-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] corpus-embed: /' || true
-    # 3 row caches (millisecond-fast local ops, no API).
-    "$PY_PP" "$CLI_PP" --refresh-keeper-cache 2>&1 | tail -1 | sed 's/^/[pre-push] keeper-patterns: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-agent-context-cache 2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /' || true
-    "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true
-    # 8th — noc-graph (structured graph mirror; local-only, fast).
-    "$PY_PP" "$CLI_PP" --refresh-noc-graph 2>&1 | tail -1 | sed 's/^/[pre-push] noc-graph: /' || true
+    # Collect changed files across every NON-delete ref in this push.
+    changed=""
+    any_content=0
+    while read -r l_ref l_oid r_ref r_oid; do
+        [[ -z "${l_ref:-}" ]] && continue
+        [[ "$l_oid" =~ $ZERO_RE ]] && continue   # delete — no content
+        any_content=1
+        if [[ "$r_oid" =~ $ZERO_RE ]]; then
+            # new branch on remote — diff vs origin/dev when we have a base,
+            # else fall back to the files in the new commits themselves.
+            base="$(git merge-base "$l_oid" origin/dev 2>/dev/null || true)"
+            if [[ -n "$base" ]]; then
+                changed+=$'\n'"$(git diff --name-only "$base" "$l_oid" 2>/dev/null || true)"
+            else
+                changed+=$'\n'"$(git show --name-only --format= "$l_oid" 2>/dev/null || true)"
+            fi
+        else
+            changed+=$'\n'"$(git diff --name-only "$r_oid" "$l_oid" 2>/dev/null || true)"
+        fi
+    done <<< "$PUSH_LINES"
+
+    force="${NOCTUS_FORCE_EMBED_REFRESH:-}"
+    if [[ "$any_content" -eq 0 && -z "$force" ]]; then
+        echo "[pre-push] delete-only / no-content push — skipping all cache refresh."
+    else
+        # set -e safe flag tests (grep -q exits 1 on no-match).
+        kb=0; code=0; md=0; comp=0; agents=0; ndjson=0; graph=0
+        if [[ -n "$force" ]]; then kb=1; code=1; md=1; comp=1; agents=1; ndjson=1; graph=1; fi
+        if grep -qE '^KNOWLEDGE-BASE/.*\.md$'   <<<"$changed"; then kb=1;     fi
+        if grep -qE '\.py$'                      <<<"$changed"; then code=1;   fi
+        if grep -qE '\.md$'                      <<<"$changed"; then md=1;     fi
+        if grep -qE 'compliance\.py$'            <<<"$changed"; then comp=1;   fi
+        if grep -qE '^\.claude/agents/'          <<<"$changed"; then agents=1; fi
+        if grep -qE 'auto-improvement\.ndjson$'  <<<"$changed"; then ndjson=1; fi
+        # graph inputs: code, KB, harness surfaces (agents/skills/commands).
+        if grep -qE '\.(py|md)$|^\.claude/'      <<<"$changed"; then graph=1;  fi
+
+        ran=0
+        if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   "$PY_PP" "$CLI_PP" --refresh-kb-embeddings     2>&1 | tail -1 | sed 's/^/[pre-push] kb-embed: /'   || true; ran=1; fi
+        if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          "$PY_PP" "$CLI_PP" --refresh-code-embeddings   2>&1 | tail -1 | sed 's/^/[pre-push] code-embed: /' || true; ran=1; fi
+        if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] corpus-embed: /' || true; ran=1; fi
+        if [[ $comp   -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-keeper-cache           2>&1 | tail -1 | sed 's/^/[pre-push] keeper: /'           || true; ran=1; fi
+        if [[ $agents -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-agent-context-cache    2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /'    || true; ran=1; fi
+        if [[ $ndjson -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true; ran=1; fi
+        if [[ $graph  -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-noc-graph              2>&1 | tail -1 | sed 's/^/[pre-push] noc-graph: /'        || true; ran=1; fi
+        # memory-embeddings is OUT-OF-REPO (the ~/.claude memory dir) so it can't be
+        # git-gated; it has its own post-merge/post-checkout triggers + the freshness
+        # keeper. Refreshed here only under explicit force.
+        if [[ -n "$force" ]]; then "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true; fi
+        [[ $ran -eq 0 ]] && echo "[pre-push] no embeddable/graph sources changed in this push — skipped all refreshes."
+    fi
 fi
 
-# stdin: <local_ref> <local_oid> <remote_ref> <remote_oid>  (one line per ref)
+# ─── branch protection (reads the captured push lines) ──────────────────
 while read -r local_ref local_oid remote_ref remote_oid; do
+    [[ -z "${remote_ref:-}" ]] && continue
     [[ "$remote_ref" =~ $PROTECTED_RE ]] || continue
     branch="${remote_ref#refs/heads/}"
 
@@ -74,7 +117,6 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
 
     # 2) force-push — remote tip exists but is NOT an ancestor of the new tip.
-    #    Always refused, even under NOCTUS_ALLOW_MAIN_PUSH (a deploy is FF-only).
     if [[ ! "$remote_oid" =~ $ZERO_RE ]]; then
         if ! git merge-base --is-ancestor "$remote_oid" "$local_oid" 2>/dev/null; then
             echo "🔴 pre-push: refusing NON-FAST-FORWARD (force) push to '$branch'." >&2
@@ -85,8 +127,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         fi
     fi
 
-    # 3) ordinary (fast-forward / create) push to a protected branch.
-    #    Gated: routine work goes to dev. main is deploy-only (§0.2).
+    # 3) ordinary push to a protected branch — gated (main is deploy-only, §0.2).
     if [[ "$ALLOW" != "1" ]]; then
         echo "🔒 pre-push: BLOCKED — '$branch' is production; pushes are gated." >&2
         echo "   Land everyday work on 'dev' (the integration branch)." >&2
@@ -96,7 +137,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
 
     echo "✅ pre-push: NOCTUS_ALLOW_MAIN_PUSH=1 — allowing fast-forward deploy push to '$branch'." >&2
-done
+done <<< "$PUSH_LINES"
 
 if [[ "$blocked" -ne 0 ]]; then
     echo "" >&2
