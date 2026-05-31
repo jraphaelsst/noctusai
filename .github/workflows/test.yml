@@ -520,6 +520,16 @@ jobs:
     # 45/45 keyless), so this stays fast + green on fork PRs (no secrets needed).
     name: MCP Toolkit Tests
     runs-on: ubuntu-latest
+    # JOB-level hermetic env so EVERY step (incl. the cache-priming step) inherits
+    # it — not just the pytest step. NOCTUS_DISABLE_AUTO_CACHE_PULL is the load-
+    # bearing one: without it the structural-cache refreshes try to auto-pull from
+    # the prod pgvector mirror (localhost:5432, unreachable here), which left a
+    # stale-schema sqlite file → `no such column: keeper_name` in _init_schema →
+    # the prime step died before pytest even ran. Disabled, each cache builds clean
+    # from source.
+    env:
+      NOCTUS_EMBED_MIN_INTERVAL_MS: "0"
+      NOCTUS_DISABLE_AUTO_CACHE_PULL: "1"
     steps:
       - uses: actions/checkout@v4
 
