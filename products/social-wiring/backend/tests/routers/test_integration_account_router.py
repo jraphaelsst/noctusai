@@ -8,9 +8,11 @@ Coverage:
   - CRUD round-trips (list / get / create / update / set-default / delete)
   - ENCRYPTION_KEY missing → 503 via DI seam
   - Provider registry endpoint
-  - YouTube OAuth start: mock the GoogleProvider dependency, verify response
-  - YouTube OAuth callback: mock provider.exchange_code + channels.list,
-    verify integration_account row is created with correct metadata
+  - YouTube OAuth start: inject the seed FakeOAuthProvider via the
+    get_yt_oauth_provider DI seam, verify the consent-URL response
+  - YouTube OAuth callback: inject FakeOAuthProvider + FakeYoutubeClient via
+    the DI seams, verify the integration_account row is created with correct
+    metadata (exercises the REAL async exchange_code→TokenSet contract)
   - RLS: org A cannot see org B's accounts (DI seam verifies service-level)
 """
 from __future__ import annotations
@@ -274,10 +276,19 @@ class TestEncryptionKeyMissing:
 # ─── YouTube OAuth: start ─────────────────────────────────────────────────────
 class TestYouTubeOAuthStart:
     def test_start_returns_auth_url_and_state(self, client):
-        """Mock GoogleProvider to avoid real OAuth network calls."""
+        """Inject the seed FakeOAuthProvider via the get_yt_oauth_provider DI
+        seam — NO monkeypatch (KB § PATTERNS/compliance/testing.md). This
+        exercises the REAL async ``authorization_url`` contract, so an interface
+        drift (e.g. the historical get_auth_url→authorization_url break) fails
+        loudly instead of being masked by a MagicMock."""
         from app.dependencies import get_settings
         from app.config import settings as _settings
         from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
 
         fake_cfg = _settings.model_copy(
             update={
@@ -285,34 +296,23 @@ class TestYouTubeOAuthStart:
                 "youtube_client_secret": "fake-client-secret",
             }
         )
-        prev = app.dependency_overrides.get(get_settings)
-        app.dependency_overrides[get_settings] = lambda: fake_cfg
-
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=True),
+            get_yt_pkce_redis: lambda: None,
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
         try:
-            # Patch GoogleProvider at the import location used by the router.
-            with (
-                patch(
-                    "app.routers.integration_accounts_router.GoogleProvider",
-                ) as MockProvider,
-                patch(
-                    "app.routers.integration_accounts_router._yt_pkce_redis_client",
-                    return_value=None,
-                ),
-            ):
-                instance = MagicMock()
-                instance.get_auth_url = MagicMock(
-                    return_value=("https://accounts.google.com/o/oauth2?...", "verifier-xyz")
-                )
-                MockProvider.return_value = instance
-
-                resp = client.post(
-                    "/api/integrations/accounts/youtube/oauth/start",
-                    headers=_auth_header(),
-                )
+            resp = client.post(
+                "/api/integrations/accounts/youtube/oauth/start",
+                headers=_auth_header(),
+            )
         finally:
-            app.dependency_overrides.pop(get_settings, None)
-            if prev is not None:
-                app.dependency_overrides[get_settings] = prev
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
 
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -346,10 +346,21 @@ class TestYouTubeOAuthStart:
 # ─── YouTube OAuth: callback ──────────────────────────────────────────────────
 class TestYouTubeOAuthCallback:
     def test_callback_creates_account(self, client, ia_service):
-        """Mock provider.exchange_code + channels.list; verify account row."""
+        """Inject the seed FakeOAuthProvider + FakeYoutubeClient via the DI
+        seams (no monkeypatch). Exercises the REAL async exchange_code→TokenSet
+        and get_channel_info_mine contracts end-to-end — a mismatch (like the
+        historical sync-exchange_code→dict break) fails loudly here."""
         from app.dependencies import get_settings
         from app.config import settings as _settings
         from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+            get_yt_client_factory,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+        from noctusai_lib.integrations.youtube import ChannelInfo
+        from noctusai_lib.integrations.youtube.fake import FakeYoutubeClient
 
         fake_cfg = _settings.model_copy(
             update={
@@ -358,53 +369,37 @@ class TestYouTubeOAuthCallback:
                 "frontend_base_url": "",
             }
         )
-        prev = app.dependency_overrides.get(get_settings)
-        app.dependency_overrides[get_settings] = lambda: fake_cfg
-
-        fake_bundle = {
-            "access_token": "at-123",
-            "refresh_token": "rt-456",
-            "scopes": ["https://www.googleapis.com/auth/youtube.upload"],
+        owned = ChannelInfo(
+            channel_id="UC999",
+            title="Test Channel",
+            subscriber_count=0,
+            video_count=0,
+            view_count=0,
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            # use_pkce=False ⇒ exchange_code needs no PKCE verifier (the redis
+            # seam returns None below); the Fake returns a default TokenSet.
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_yt_pkce_redis: lambda: None,
+            get_yt_client_factory: lambda: (
+                lambda **kw: FakeYoutubeClient(owned_channel_info=owned)
+            ),
         }
-
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
         try:
-            with (
-                patch(
-                    "app.routers.integration_accounts_router.GoogleProvider",
-                ) as MockProvider,
-                patch(
-                    "app.routers.integration_accounts_router._yt_pkce_redis_client",
-                    return_value=None,
-                ),
-                patch(
-                    "app.routers.integration_accounts_router.make_youtube_client",
-                ) as mock_yt_client,
-            ):
-                provider_instance = MagicMock()
-                provider_instance.exchange_code = MagicMock(return_value=fake_bundle)
-                MockProvider.return_value = provider_instance
-
-                yt_instance = MagicMock()
-                fake_channel = MagicMock()
-                fake_channel.channel_id = "UC999"
-                fake_channel.title = "Test Channel"
-
-                async def _fake_channel_info():
-                    return fake_channel
-
-                yt_instance.get_channel_info_mine = _fake_channel_info
-                mock_yt_client.return_value = yt_instance
-
-                state = f"{_ORG_A}:nonce123"
-                resp = client.get(
-                    "/api/integrations/accounts/youtube/oauth/callback"
-                    f"?code=auth-code&state={state}",
-                    follow_redirects=False,
-                )
+            state = f"{_ORG_A}:nonce123"
+            resp = client.get(
+                "/api/integrations/accounts/youtube/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
         finally:
-            app.dependency_overrides.pop(get_settings, None)
-            if prev is not None:
-                app.dependency_overrides[get_settings] = prev
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
 
         # Should redirect to /integrations?account_created=<id>
         assert resp.status_code in (302, 303), resp.text

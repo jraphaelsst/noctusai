@@ -315,6 +315,43 @@ def _yt_pkce_redis_client():
         return None
 
 
+# ─── DI seams ─────────────────────────────────────────────────────────────────
+# Mirror whatsapp_connections_router's get_connection_store /
+# get_waha_client_factory: injectable seams so tests supply the seed Fakes via
+# app.dependency_overrides instead of monkeypatching our own symbols
+# (KB § PATTERNS/compliance/testing.md — "no monkey-patching, incl. tests";
+# a MagicMock'd provider hid that this flow called a non-existent provider API).
+def get_yt_oauth_provider(
+    cfg: SocialWiringSettings = Depends(get_settings),
+):
+    """The YouTube OAuth provider for the multi-account flow.
+
+    Returns ``None`` when YT OAuth isn't configured — the endpoints raise 503
+    AFTER their own request validations, so error ordering is preserved. Tests
+    override this with the seed ``FakeOAuthProvider`` so the flow exercises the
+    REAL async ``OAuthProvider`` contract (``authorization_url`` /
+    ``exchange_code`` → ``TokenSet``) rather than a MagicMock that masks drift.
+    """
+    if not cfg.youtube_client_id or not cfg.youtube_client_secret:
+        return None
+    return GoogleProvider(
+        client_id=cfg.youtube_client_id,
+        client_secret=cfg.youtube_client_secret,
+        use_pkce=True,
+    )
+
+
+def get_yt_pkce_redis():
+    """DI seam: the PKCE-verifier Redis client (``None`` when unavailable)."""
+    return _yt_pkce_redis_client()
+
+
+def get_yt_client_factory():
+    """DI seam: the YouTube client factory. Tests override to return a
+    ``make_youtube_client(use_fake=True, ...)`` flavour."""
+    return make_youtube_client
+
+
 @router.post(
     "/accounts/youtube/oauth/start",
     response_model=YouTubeOAuthStartOut,
@@ -322,6 +359,8 @@ def _yt_pkce_redis_client():
 def youtube_oauth_start(
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
+    provider=Depends(get_yt_oauth_provider),
+    redis_client=Depends(get_yt_pkce_redis),
 ) -> YouTubeOAuthStartOut:
     """Build a YouTube OAuth consent URL for the multi-account flow.
 
@@ -329,7 +368,9 @@ def youtube_oauth_start(
     callback uses to resolve the tenant without trusting the redirect URI
     alone. PKCE verifier persisted in Redis (10-min TTL, single-use).
     """
-    if not cfg.youtube_client_id or not cfg.youtube_client_secret:
+    import asyncio
+
+    if provider is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
@@ -341,35 +382,34 @@ def youtube_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    # Derive the multi-account OAuth callback redirect URI.
-    # Use a separate path from the existing /api/youtube/oauth/callback so
-    # both flows can coexist independently.
+    # Derive the multi-account OAuth callback redirect URI (separate path from
+    # /api/youtube/oauth/callback so both flows coexist).
     redirect_uri = _build_ia_youtube_redirect_uri(cfg)
 
     from app.modules.youtube.services.youtube import YOUTUBE_SCOPES
 
-    provider = GoogleProvider(
-        client_id=cfg.youtube_client_id,
-        client_secret=cfg.youtube_client_secret,
-        redirect_uri=redirect_uri,
-        scopes=YOUTUBE_SCOPES,
-        use_pkce=True,
-    )
     state = f"{org_id}:{secrets.token_urlsafe(16)}"
-    auth_url, code_verifier = provider.get_auth_url(state=state)
+    # Seed OAuthProvider methods are async; this endpoint is sync (AnyIO worker
+    # thread), so bridge via asyncio.run — the same pattern the callback uses
+    # for the YouTube client. `provider` (real GoogleProvider or an injected
+    # Fake) comes from the get_yt_oauth_provider DI seam.
+    auth_result = asyncio.run(
+        provider.authorization_url(
+            state=state, scopes=YOUTUBE_SCOPES, redirect_uri=redirect_uri
+        )
+    )
 
-    redis_client = _yt_pkce_redis_client()
-    if redis_client is not None and code_verifier:
+    if redis_client is not None and auth_result.code_verifier:
         try:
             redis_client.set(
                 f"{_YT_PKCE_KEY_PREFIX}{state}",
-                code_verifier,
+                auth_result.code_verifier,
                 ex=_YT_PKCE_TTL_SECONDS,
             )
         except Exception as exc:
             logger.warning("integration_accounts: failed to persist PKCE verifier: %s", exc)
 
-    return YouTubeOAuthStartOut(auth_url=auth_url, state=state)
+    return YouTubeOAuthStartOut(auth_url=auth_result.url, state=state)
 
 
 @router.get("/accounts/youtube/oauth/callback")
@@ -379,6 +419,9 @@ def youtube_oauth_callback(
     error: Optional[str] = Query(default=None),
     cfg: SocialWiringSettings = Depends(get_settings),
     svc: IntegrationAccountService = Depends(get_account_service),
+    provider=Depends(get_yt_oauth_provider),
+    redis_client=Depends(get_yt_pkce_redis),
+    yt_client_factory=Depends(get_yt_client_factory),
 ):
     """Google redirect target for the multi-account YouTube OAuth flow.
 
@@ -414,26 +457,19 @@ def youtube_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    if not cfg.youtube_client_id or not cfg.youtube_client_secret:
+    if provider is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET not configured.",
         )
 
+    import asyncio
+
     redirect_uri = _build_ia_youtube_redirect_uri(cfg)
 
     from app.modules.youtube.services.youtube import YOUTUBE_SCOPES
 
-    provider = GoogleProvider(
-        client_id=cfg.youtube_client_id,
-        client_secret=cfg.youtube_client_secret,
-        redirect_uri=redirect_uri,
-        scopes=YOUTUBE_SCOPES,
-        use_pkce=True,
-    )
-
     code_verifier: Optional[str] = None
-    redis_client = _yt_pkce_redis_client()
     if redis_client is not None:
         try:
             key = f"{_YT_PKCE_KEY_PREFIX}{state}"
@@ -446,7 +482,17 @@ def youtube_oauth_callback(
             )
 
     try:
-        bundle = provider.exchange_code(code=code, code_verifier=code_verifier)
+        # Seed OAuthProvider.exchange_code is async → canonical TokenSet;
+        # bridge via asyncio.run (sync endpoint). `provider` is the
+        # get_yt_oauth_provider seam (real GoogleProvider or injected Fake).
+        tokens = asyncio.run(
+            provider.exchange_code(
+                code=code,
+                state=state,
+                redirect_uri=redirect_uri,
+                code_verifier=code_verifier,
+            )
+        )
     except Exception as exc:
         logger.exception("integration_accounts: YouTube OAuth exchange failed")
         raise HTTPException(
@@ -454,15 +500,24 @@ def youtube_oauth_callback(
             detail=f"OAuth code exchange failed: {exc}",
         ) from exc
 
-    # Fetch channel info to populate account_label + metadata.
-    # Build a transient Credentials object from the fresh bundle and call
-    # the seed YoutubeClient directly — no CredentialStore write here.
+    # Canonical TokenSet → the credential bundle persisted on the account row
+    # (the downstream metadata/creds code consumes a dict). `raw` carries any
+    # provider-specific extras (e.g. an `email` claim) when present.
+    bundle = {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "scopes": tokens.scope or YOUTUBE_SCOPES,
+        "expires_at": tokens.expires_at.isoformat() if tokens.expires_at else None,
+        **(tokens.raw or {}),
+    }
+
+    # Fetch channel info to populate account_label + metadata. Build a transient
+    # Credentials object from the fresh bundle and call the seed YoutubeClient
+    # (via the get_yt_client_factory seam) — no CredentialStore write here.
     channel_id: Optional[str] = None
     channel_title: Optional[str] = None
     try:
-        import asyncio
         from google.oauth2.credentials import Credentials as GCredentials
-        from app.modules.youtube.services.youtube import YOUTUBE_SCOPES
 
         creds = GCredentials(
             token=bundle.get("access_token"),
@@ -472,10 +527,8 @@ def youtube_oauth_callback(
             client_secret=cfg.youtube_client_secret,
             scopes=bundle.get("scopes", YOUTUBE_SCOPES),
         )
-        yt_client = make_youtube_client(oauth_credentials=creds)
-        # The callback is a sync endpoint running in an AnyIO worker thread.
-        # Create a fresh event loop (asyncio.run) rather than using the
-        # thread-local loop so this works in both test and production contexts.
+        yt_client = yt_client_factory(oauth_credentials=creds)
+        # asyncio.run gives a fresh loop so this works in both test + prod.
         info = asyncio.run(yt_client.get_channel_info_mine())
         channel_id = info.channel_id
         channel_title = info.title
