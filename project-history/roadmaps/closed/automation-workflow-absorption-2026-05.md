@@ -78,8 +78,12 @@ Resolved without absorbing anything. Findings at close:
   uncaptured piece was the rules-based command layer — and its code is off-disk/unreadable, while noc is
   deliberately LLM-first (a rules engine would need to clear the deterministic/offline/cost-reducing gate
   to not be a regression). No code to judge → no absorption.
-- **The prod `automation_workflow` schema (12 tables, 0 rows) was DROPPED** 2026-05-31 (`DROP SCHEMA
-  automation_workflow CASCADE` — empty, superseded by daily-life, no product owner).
+- **The prod `automation_workflow` schema** — `DROP SCHEMA … CASCADE` was run, but the schema was in
+  **PostgREST's exposed-schemas list**, so the drop broke the REST schema cache (`PGRST002`, fleet-wide
+  503 for ~30 min during the deploy). Recovered by **recreating the empty schema** + `NOTIFY pgrst,
+  'reload schema'`. So the schema now EXISTS again as an inert empty namespace; a clean drop is
+  **deferred pending unexpose-first** (dashboard → API → Exposed schemas). See
+  `feedback_postgrest_exposed_schema_drop`.
 - **The `automations/` folder was salvaged-then-deleted** — its unique provenance (AUDIT.md + PROJECT.md)
   preserved at `project-history/provenance/methodology-origin-2026-04/`; the superseded scaffold removed.
 
