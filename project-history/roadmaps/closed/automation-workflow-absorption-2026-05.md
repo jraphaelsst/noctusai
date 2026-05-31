@@ -78,12 +78,13 @@ Resolved without absorbing anything. Findings at close:
   uncaptured piece was the rules-based command layer — and its code is off-disk/unreadable, while noc is
   deliberately LLM-first (a rules engine would need to clear the deterministic/offline/cost-reducing gate
   to not be a regression). No code to judge → no absorption.
-- **The prod `automation_workflow` schema** — `DROP SCHEMA … CASCADE` was run, but the schema was in
-  **PostgREST's exposed-schemas list**, so the drop broke the REST schema cache (`PGRST002`, fleet-wide
-  503 for ~30 min during the deploy). Recovered by **recreating the empty schema** + `NOTIFY pgrst,
-  'reload schema'`. So the schema now EXISTS again as an inert empty namespace; a clean drop is
-  **deferred pending unexpose-first** (dashboard → API → Exposed schemas). See
-  `feedback_postgrest_exposed_schema_drop`.
+- **The prod `automation_workflow` schema — DROPPED CLEANLY (final).** A first `DROP SCHEMA … CASCADE`
+  was run while the schema was still in **PostgREST's exposed-schemas list**, which broke the REST
+  schema cache (`PGRST002`, fleet-wide 503 for ~30 min during the deploy) → recovered by recreating the
+  empty schema. It was **then dropped properly in the correct order**: `ALTER ROLE authenticator SET
+  pgrst.db_schemas='…(minus automation_workflow)'` → `NOTIFY pgrst,'reload config'` → verify REST 200 +
+  schema 406 (unexposed) → `DROP SCHEMA … CASCADE` → `NOTIFY pgrst,'reload schema'` → REST stayed 200.
+  **Gone, no outage.** Full lesson: `feedback_postgrest_exposed_schema_drop` + `KB § GUIDES/production-deploy.md §6`.
 - **The `automations/` folder was salvaged-then-deleted** — its unique provenance (AUDIT.md + PROJECT.md)
   preserved at `project-history/provenance/methodology-origin-2026-04/`; the superseded scaffold removed.
 
