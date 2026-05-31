@@ -9,6 +9,18 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Cost trim (2026-05-31): cancel a superseded in-flight run when a newer commit
+# lands on the same branch / PR. Without this, a rapid push sequence (e.g. a
+# chore-commit train — a single session pushed ~12 times) ran the FULL ~21-job
+# suite to completion every time, burning compute on commits the very next push
+# already obsoleted. Only the newest commit's green status matters. No coverage
+# loss (every job still runs on the latest commit); this is strictly waste removal.
+# `build-and-push.yml` + `embedding-cache-gate.yml` already carry this; `test.yml`
+# (the heaviest, every-push workflow) was the one missing it.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write

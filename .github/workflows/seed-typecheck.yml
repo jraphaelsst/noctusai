@@ -25,6 +25,13 @@ on:
       - "seed/framework/frontend/**"
       - ".github/workflows/seed-typecheck.yml"
 
+# Cancel a superseded run on rapid pushes to the same branch/PR (cost trim
+# 2026-05-31 — the last workflow that lacked it; path-gated so it fires rarely,
+# but free to make consistent with the other workflows). No coverage loss.
+concurrency:
+  group: seed-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
