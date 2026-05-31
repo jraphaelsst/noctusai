@@ -71,10 +71,17 @@ CREATE INDEX IF NOT EXISTS ix_tool_call_audits_conversation
 
 
 -- RLS -------------------------------------------------------------------------
--- Products that scope by user_id should enable RLS + add a policy. Default
--- shape (uncomment + tune to the product's auth model):
---
--- ALTER TABLE {{SCHEMA_NAME}}.tool_call_audits ENABLE ROW LEVEL SECURITY;
+-- CANONICAL DEFAULT: RLS ON. This is an audit trail written by `service_role`
+-- (which BYPASSES RLS — backend writes are unaffected). With RLS enabled and no
+-- read policy, anon/authenticated are denied — the correct, safe default for a
+-- table in an API-exposed schema. RLS-OFF here is an `rls_disabled_in_public`
+-- advisor flag (the predeploy supabase_advisors gate catches it), so the enable
+-- is NOT opt-in — it ships ON by default.
+ALTER TABLE {{SCHEMA_NAME}}.tool_call_audits ENABLE ROW LEVEL SECURITY;
+
+-- The POLICY is the genuine per-product opt-in. Default shape ships nothing
+-- (service_role-only). Add a user-scoped SELECT policy ONLY if the product
+-- exposes audit reads to end users (uncomment + tune to the auth model):
 --
 -- CREATE POLICY tool_call_audits_owner_select
 --     ON {{SCHEMA_NAME}}.tool_call_audits

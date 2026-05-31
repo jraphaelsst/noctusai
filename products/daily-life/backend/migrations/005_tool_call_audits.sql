@@ -69,10 +69,13 @@ CREATE INDEX IF NOT EXISTS ix_tool_call_audits_conversation
 
 -- RLS -------------------------------------------------------------------------
 -- Daily-life's audit table is service-role-only in v1 (writes happen via the
--- audit_hook factory with the admin client). Add a user-facing SELECT policy
--- when the BI / "your AI activity" surface ships. Reference shape (commented):
---
--- ALTER TABLE daily_life.tool_call_audits ENABLE ROW LEVEL SECURITY;
+-- audit_hook factory with the admin client). Per the seed canonical default
+-- (tool_call_audits.sql.template), RLS ships ON (service_role bypasses → the
+-- writer is unaffected; anon/auth denied) — no read policy = service_role-only.
+ALTER TABLE daily_life.tool_call_audits ENABLE ROW LEVEL SECURITY;
+
+-- Add a user-facing SELECT policy when the BI / "your AI activity" surface
+-- ships. Reference shape (commented):
 --
 -- CREATE POLICY tool_call_audits_owner_select
 --     ON daily_life.tool_call_audits

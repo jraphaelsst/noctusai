@@ -71,9 +71,12 @@ CREATE INDEX IF NOT EXISTS ix_tool_call_audits_conversation
 
 -- Service-role bypass --------------------------------------------------------
 -- The audit writer runs under the product's admin/service connection (the
--- SQLAlchemy engine in `app.services.audit_hook`). No RLS in v1 — PF's
--- user-facing routes never read this table; BI surfaces will land in a
--- separate project per PROJECT.md §4 out-of-scope.
+-- SQLAlchemy engine in `app.services.audit_hook`). PF's user-facing routes
+-- never read this table; BI surfaces will land in a separate project per
+-- PROJECT.md §4 out-of-scope. Per the seed canonical default
+-- (tool_call_audits.sql.template), RLS ships ON (service_role bypasses → the
+-- writer is unaffected; anon/auth denied) — no read policy = service_role-only.
+ALTER TABLE "personal-finance".tool_call_audits ENABLE ROW LEVEL SECURITY;
 
 GRANT INSERT, SELECT ON "personal-finance".tool_call_audits TO service_role;
 GRANT USAGE, SELECT ON SEQUENCE "personal-finance".tool_call_audits_id_seq TO service_role;

@@ -57,4 +57,7 @@ CREATE INDEX IF NOT EXISTS ix_tool_call_audits_conversation
 -- RLS — admin-only read surface. Core's only dispatch site is the weekly
 -- audit digest, run by an admin cron (no per-user surface today). When a
 -- router exposes this table, add a policy keyed on `noctus_users.role='admin'`.
--- For now, no explicit policy is required (service_role + admin-only callers).
+-- Per the seed canonical default (tool_call_audits.sql.template), RLS ships ON
+-- (service_role bypasses → the digest cron is unaffected; anon/auth denied). No
+-- read policy = service_role-only, which is exactly the admin-only surface here.
+ALTER TABLE public.tool_call_audits ENABLE ROW LEVEL SECURITY;

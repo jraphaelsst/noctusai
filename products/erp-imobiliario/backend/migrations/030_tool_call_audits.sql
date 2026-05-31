@@ -72,6 +72,9 @@ CREATE INDEX IF NOT EXISTS ix_tool_call_audits_conversation
 -- ERP uses service_role_bypass per `KB § PATTERNS/database-rls.md`. The audit
 -- table is written exclusively by the backend (via SQLAlchemy bound to
 -- `postgres_url`) and read only via service-role admin queries / BI tooling.
--- No user-facing SELECT path lands in the API surface, so we keep RLS
--- disabled here. If a user-facing audit-history endpoint is added later,
--- enable RLS + scope by `user_id` joined to `erp.profiles.user_id`.
+-- No user-facing SELECT path lands in the API surface. Per the seed canonical
+-- default (tool_call_audits.sql.template), RLS ships ON (service_role bypasses →
+-- the backend writer is unaffected; anon/auth denied) — no read policy =
+-- service_role-only. If a user-facing audit-history endpoint is added later,
+-- add a SELECT policy scoped by `user_id` joined to `erp.profiles.user_id`.
+ALTER TABLE erp.tool_call_audits ENABLE ROW LEVEL SECURITY;
