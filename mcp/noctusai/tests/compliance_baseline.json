@@ -25,7 +25,7 @@
     "or a NEW pre-existing class is triaged-and-accepted (never to silence a regression).",
     "A refresh that GROWS the baseline must cite the triage decision in the commit msg."
   ],
-  "generated": "2026-05-25",
+  "generated": "2026-05-31",
   "generator": "mcp/noctusai/tests/refresh_compliance_baseline.py (calls the real check_all_products())",
   "fingerprints": [
     "adconnect|products/adconnect/frontend/src/hooks/useCart.ts|high|line #: FE calls `api.delete('/api/cart/items/${id}')` but no backend route mat",
@@ -48,6 +48,8 @@
     "adconnect|products/adconnect/frontend/src/hooks/useSellout.ts|high|line #: FE calls `api.post('/api/sellout/submit')` but no backend route matches",
     "adconnect|products/adconnect/frontend/src/hooks/useSellout.ts|high|line #: FE calls `api.post('/api/sellout/upload-attachment')` but no backend ro",
     "adconnect|products/adconnect/frontend/src/hooks/useSellout.ts|high|line #: FE calls `api.post('/api/sellout/upload-nfe')` but no backend route mat",
+    "core|products/core/frontend/src/components/NotificationBell.tsx|high|line #: local declaration of canonical organ `NotificationBell` — import from `",
+    "erp-imobiliario|products/erp-imobiliario/frontend/src/components/NotificationBell.tsx|high|line #: local declaration of canonical organ `NotificationBell` — import from `@",
     "erp-imobiliario|products/erp-imobiliario/frontend/src/hooks/useEquipe.ts|high|line #: FE calls `api.delete('/api/team/members/${id}')` but no backend route m",
     "erp-imobiliario|products/erp-imobiliario/frontend/src/hooks/useNotificacoes.ts|high|line #: FE calls `api.get('/api/notificacoes/preferencias')` but no backend rou",
     "erp-imobiliario|products/erp-imobiliario/frontend/src/hooks/useNotificacoes.ts|high|line #: FE calls `api.patch('/api/notificacoes/preferencias')` but no backend r",

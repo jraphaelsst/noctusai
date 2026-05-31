@@ -456,3 +456,43 @@ jobs:
           # Honour the repo-root `.gitleaks.toml` allowlist for
           # known-safe public values (Supabase demo JWT, etc.).
           config-path: .gitleaks.toml
+
+  mcp-toolkit-tests:
+    # The dev toolkit's OWN suite (mcp/noctusai/tests/, ~2.6k tests): the MCP
+    # tools, compliance keepers, cache infra, the embed funnel. Born 2026-05-31
+    # — this suite had NO CI job, so it silently rotted to 12 red tests + 15
+    # compliance regressions that only a human hand-running pytest could ever
+    # catch (and none did). An unenforced quality gate is silent debt; "is it
+    # green?" must be answered by CI, not a person. Memory:
+    # feedback_unenforced_gate_is_silent_debt.
+    # HERMETIC: no live OpenAI key — keyless, the embed tests mock/skip (verified
+    # 45/45 keyless), so this stays fast + green on fork PRs (no secrets needed).
+    name: MCP Toolkit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system build deps (libpq for psycopg; ffi for cffi)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libffi-dev libpq-dev pkg-config
+
+      - name: Install toolkit deps (incl. -e seed/lib/backend → noctusai_lib)
+        run: pip install -r mcp/noctusai/requirements.txt
+
+      - name: Run MCP toolkit suite (hermetic — no live OpenAI key)
+        env:
+          NOCTUS_EMBED_MIN_INTERVAL_MS: "0"
+          NOCTUS_DISABLE_AUTO_CACHE_PULL: "1"
+        # Full suite, no exclusions. (The 2026-05-31 quarantine of the two
+        # platform-health gate tests was lifted the same day: the social-wiring
+        # YT-OAuth production bug was fixed — 8c800c37 — and the 2 organ-shim
+        # NotificationBell findings were accepted into the refreshed compliance
+        # baseline with rationale.)
+        run: pytest mcp/noctusai/tests/ -q -p no:cacheprovider
