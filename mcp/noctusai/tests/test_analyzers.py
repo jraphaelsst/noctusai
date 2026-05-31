@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.analyzers import (
     find_duplicated_functions, find_inline_hooks,
     audit_python_deps, analyze_test_coverage, get_code_metrics,
-    run_all_analyzers,
+    run_all_analyzers, _parse_requirements,
 )
 
 
@@ -30,6 +30,22 @@ class TestDependencyAudit:
     def test_no_python_mismatches(self):
         mismatches = audit_python_deps()
         assert len(mismatches) == 0, f"Dep mismatches: {mismatches}"
+
+    def test_parse_requirements_strips_inline_comments(self):
+        """A `pkg>=1.0  # why` line must parse to the clean version, not swallow
+        the comment (regression 2026-05-31: inline comments in the root superset
+        false-mismatched the same clean version in a product requirements file)."""
+        parsed = _parse_requirements(
+            "anthropic>=0.40.0                # therapy-platform (LLM)\n"
+            "python-docx>=1.1.0   # ke docx_export\n"
+            "# a pure comment line is skipped\n"
+            "requests\n"
+        )
+        assert parsed == {
+            "anthropic": ">=0.40.0",
+            "python-docx": ">=1.1.0",
+            "requests": "any",
+        }, parsed
 
 
 class TestTestCoverage:

@@ -129,6 +129,13 @@ def _parse_requirements(content):
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-e"):
             continue
+        # Strip an INLINE comment (`pkg>=1.0  # why`) before parsing — pip does
+        # the same. Without this the trailing comment was swallowed into the
+        # version spec, so `anthropic>=0.40.0  # therapy` "mismatched" the clean
+        # `anthropic>=0.40.0` in a product file (false dep-audit failure, 2026-05-31).
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
         match = re.match(r'^([a-zA-Z0-9_-]+(?:\[[a-zA-Z0-9_,-]+\])?)\s*([>=<!=~]+.+)?$', line)
         if match:
             pkgs[match.group(1).split("[")[0].lower()] = match.group(2) or "any"
