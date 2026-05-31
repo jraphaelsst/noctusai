@@ -18,6 +18,13 @@ PyJWT==2.12.0
 python-multipart>=0.0.9
 slowapi>=0.1.9
 
+# LLM tool-call audit writer — `app/services/audit_hook.py` +
+# `app/models/tool_call_audit.py` use SQLAlchemy's typed-table-class shape (the
+# seed audit writer's secondary surface; psycopg2-binary is opt-in via
+# postgres_url). Imported at startup via the routers, so it MUST be declared
+# here. See `KB § PATTERNS/llm-tool-audit.md`.
+sqlalchemy>=2.0.0
+
 # Video calls (LiveKit)
 livekit-api>=0.6.0
 

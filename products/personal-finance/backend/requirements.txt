@@ -12,6 +12,11 @@ slowapi>=0.1.9
 APScheduler>=3.10.0
 yfinance>=0.2.36
 
+# LLM tool-call audit writer — `app/services/audit_hook.py` +
+# `app/models/tool_call_audit.py` use SQLAlchemy's typed-table-class shape
+# (imported → MUST be declared, even if latent at boot). KB § PATTERNS/llm-tool-audit.md.
+sqlalchemy>=2.0.0
+
 # Observability (optional)
 sentry-sdk[fastapi]==1.45.1
 

@@ -11,6 +11,12 @@ httpx>=0.27.0
 PyJWT==2.12.0
 python-multipart>=0.0.9
 slowapi>=0.1.9
+
+# LLM tool-call audit writer — `app/services/audit_hook.py` +
+# `app/models/tool_call_audit.py` use SQLAlchemy's typed-table-class shape
+# (imported at startup → MUST be declared). KB § PATTERNS/llm-tool-audit.md.
+sqlalchemy>=2.0.0
+
 reportlab>=4.0.0
 xhtml2pdf>=0.2.0
 PyMuPDF>=1.24.0
