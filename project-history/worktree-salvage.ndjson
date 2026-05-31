@@ -89,3 +89,4 @@
 {"ts": "2026-05-30", "event": "worktree-sweep", "path": ".claude/worktrees/task-branch-settle-noc-graph-cache", "branch": "feat/task-branch-settle-noc-graph-cache", "sha": "af00deafc4f68d1e65c68ff8b39521e1a1538a12", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-05-30T23:36:33.107327+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 0, "remote_unique_aged_count": 0}
 {"ts": "2026-05-31T08:01:00.891853+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 0, "remote_unique_aged_count": 0}
+{"ts": "2026-05-31", "event": "worktree-sweep", "path": ".claude/worktrees/social-wiring-rls-tca", "branch": "feat/social-wiring-rls-tca", "sha": "aeb68f79302dbd91aa754f11ce245abde5964041", "reason": "task_branch cleanup (learn-before-delete)"}
