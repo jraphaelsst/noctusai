@@ -9,10 +9,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ─── Stub @noctusai/seed/infra ─────────────────────────────────────────
-const mockGet = vi.fn();
-const mockPost = vi.fn();
-const mockPatch = vi.fn();
-const mockDelete = vi.fn();
+// vi.hoisted: the static `import ... from "./useIntegrationAccounts"` below is
+// hoisted above these declarations, and loading that module triggers the
+// @noctusai/seed/infra mock factory — so the mocks must exist BEFORE then.
+const { mockGet, mockPost, mockPatch, mockDelete, invalidateQueriesMock } =
+  vi.hoisted(() => ({
+    mockGet: vi.fn(),
+    mockPost: vi.fn(),
+    mockPatch: vi.fn(),
+    mockDelete: vi.fn(),
+    invalidateQueriesMock: vi.fn(),
+  }));
 vi.mock("@noctusai/seed/infra", () => ({
   api: {
     get: mockGet,
@@ -23,7 +30,6 @@ vi.mock("@noctusai/seed/infra", () => ({
 }));
 
 // ─── Stub @tanstack/react-query (minimal) ─────────────────────────────
-const invalidateQueriesMock = vi.fn();
 vi.mock("@tanstack/react-query", () => {
   const useQuery = vi.fn(({ queryFn }: { queryFn: () => unknown }) => ({
     data: undefined,
@@ -32,8 +38,14 @@ vi.mock("@tanstack/react-query", () => {
     _queryFn: queryFn,
   }));
   const useMutation = vi.fn(
-    ({ mutationFn }: { mutationFn: (v: unknown) => unknown }) => ({
-      mutateAsync: mutationFn,
+    ({ mutationFn, onSuccess }: { mutationFn: (v: unknown) => unknown; onSuccess?: (r: unknown, v: unknown) => void }) => ({
+      // Simulate react-query's flow: run mutationFn, THEN onSuccess (where the
+      // hooks invalidate query keys) — so onSuccess side effects are testable.
+      mutateAsync: async (vars: unknown) => {
+        const result = await mutationFn(vars);
+        onSuccess?.(result, vars);
+        return result;
+      },
       isPending: false,
       _mutationFn: mutationFn,
     })

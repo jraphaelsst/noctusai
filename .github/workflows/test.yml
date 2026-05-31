@@ -163,6 +163,38 @@ jobs:
         working-directory: products/core/frontend
         run: npm run build
 
+  social-wiring-frontend-tests:
+    # The product FE vitest suite (Integrations page + integration-account hooks).
+    # Born 2026-05-31 to close the FE-test CI gap: the render harness was
+    # unrunnable (missing test deps) AND no product ran FE vitest in CI — the
+    # same unenforced-gate silent-debt class as the toolkit suite (the suite had
+    # rotted to 8 stale-mock failures, fixed this session). Verified green: 19/19.
+    name: Social-Wiring Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: products/social-wiring/frontend/package-lock.json
+
+      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
+      - name: Install dependencies
+        working-directory: products/social-wiring/frontend
+        run: npm ci
+
+      - name: Run FE tests (vitest)
+        working-directory: products/social-wiring/frontend
+        run: npm test
+
   pf-frontend-build:
     name: PF Frontend Build
     runs-on: ubuntu-latest
