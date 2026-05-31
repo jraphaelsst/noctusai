@@ -1,8 +1,0 @@
-noctusai-lib
-fastapi>=0.115.0
-pydantic>=2.9.0
-pydantic-settings>=2.5.2
-supabase>=2.9.1
-PyJWT>=2.9.0
-httpx>=0.27.0
-slowapi>=0.1.9

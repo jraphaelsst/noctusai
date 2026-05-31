@@ -8,6 +8,11 @@
 # ModuleNotFoundError until seed/framework/backend was added here (2026-05-31).
 -e seed/lib/backend
 -e seed/framework/backend
+# dev-team product consumes the `dev_team` engine (repo-root package, installed in
+# its image via `pip install -e /opt/dev_team`). Its own requirements.txt only
+# DOCUMENTS this in a comment, so the CI backend matrix + predeploy (which install
+# THIS root file) hit ModuleNotFoundError: dev_team. Install it here too (2026-05-31).
+-e dev_team/
 
 # Core dependencies (shared by all backends)
 fastapi==0.115.5

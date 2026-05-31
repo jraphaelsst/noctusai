@@ -192,7 +192,9 @@ class TestAttachmentLimits:
         db = MockSupabaseClient()
         with pytest.raises(HTTPException) as exc_info:
             import asyncio
-            asyncio.get_event_loop().run_until_complete(
+            # new_event_loop() not get_event_loop(): py3.10+ raises "no current
+            # event loop" in a thread without a running loop (CI MainThread).
+            asyncio.new_event_loop().run_until_complete(
                 upload_attachment(
                     file_bytes=b"MZ\x90\x00",  # exe magic bytes
                     filename="malware.exe",
@@ -215,7 +217,9 @@ class TestAttachmentLimits:
         big_data = b"x" * (50 * 1024 * 1024 + 1)
         with pytest.raises(HTTPException) as exc_info:
             import asyncio
-            asyncio.get_event_loop().run_until_complete(
+            # new_event_loop() not get_event_loop(): py3.10+ raises "no current
+            # event loop" in a thread without a running loop (CI MainThread).
+            asyncio.new_event_loop().run_until_complete(
                 upload_attachment(
                     file_bytes=big_data,
                     filename="huge.jpg",
