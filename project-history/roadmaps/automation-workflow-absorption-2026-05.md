@@ -1,51 +1,70 @@
-# automation-workflow-absorption-2026-05 — absorb the productivity-assistant repo into noc
+# automation-workflow-absorption-2026-05 — absorb the external productivity-CLI's command layer
 
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
-> NOT to be confused with `automation-orchestration-followup-2026-06.md` (that one is
-> methodology-automation tooling — linters, query tools). THIS is the absorption of an
-> EXTERNAL repo the user built: a command-driven personal-productivity assistant.
+> NOT to be confused with `automation-orchestration-followup-2026-06.md` (methodology-automation tooling).
+>
+> ⚠️ **DISAMBIGUATION (verified 2026-05-31 by a 4-agent eval — read before acting):**
+> The source of this schema is **NOT** the on-disk sibling folder `repository/NoctusAI/automations/`.
+> That folder is the superseded **`noctus-starter`** methodology scaffold (markdown spec only — an
+> early Agno dev-team blueprint that current noc already SHIPPED + surpassed; zero productivity
+> tables; zero matches for `intent_patterns`/`sessoes_foco`/`learned_promotions`). The
+> `automation_workflow` schema comes from a **separate standalone command-driven productivity CLI
+> that exists in NONE of the 11 sibling repos on disk** (exact-table-name greps = zero across all).
+> They merely share the word "automation." Two unrelated artifacts.
 
 ## Goal
 
-`automation_workflow` is a **separate repo the user created to develop automations** — not a
-noctus product itself, but it holds features/tools worth **propagating into real noc products**
-(seed/lib for the generic parts; daily-life for the productivity-domain parts). It surfaced
-on 2026-05-31 as a 12-table schema in the noctusai prod DB that **no product code references**
-(`grep -rl automation_workflow products/ seed/ mcp/` = empty). Treatment = **feature/tool
-absorption**, not migrate-or-drop. RLS was hand-applied to all 12 tables as defense-in-depth
-while the data sits (see `feedback_rls_sweep_and_orphan_schema`).
+Decide whether the external productivity-CLI behind the prod `automation_workflow` schema holds any
+**dispatch/NLU/learning logic** worth absorbing into noc — given that noc's chatbot stack is already
+mature and deliberately **LLM-first**.
 
-## Feature surface (inferred from the prod schema — the LOGIC lives in the external repo, not yet read)
+## Current state (what's already captured vs the real gap)
 
-| Cluster | `automation_workflow` tables | Likely absorption target | Seed-first note |
-|---|---|---|---|
-| Command dispatch + NLU | `commands`, `command_history`, `intent_patterns`, `context_rules` | **seed/lib** (`noctusai_lib.domain.chatbot` / a new `commands` domain) | Generic command router + intent matcher = reusable by every product's chat/command layer. Check overlap with existing `noctusai_lib.domain.chatbot.delivery`. |
-| Adaptive learning | `learned_promotions` | **seed/lib** | A learn-from-usage promotion mechanism — generalize cautiously; may overlap the methodology codification pipeline. |
-| Productivity domain | `tarefas`, `metas`, `notas`, `eventos`, `sessoes_foco`, `metricas_produtividade`, `checkins` | **daily-life** product | Heavy overlap with daily-life's existing domain — absorb as features into daily-life's schema, don't fork a new product. |
+- **The 12 prod `automation_workflow` tables are EMPTY (0 rows, 2026-05-31)** → drop candidate, **no data migration needed**. RLS hand-applied to all 12 as defense-in-depth while they sit (see `feedback_rls_sweep_and_orphan_schema`).
+- **The data model is ALREADY mirrored in the `daily-life` product** (schema `daily_life` == the same 12 tables). daily-life ported the **domain-CRUD half** — `tarefas`/`metas`/`notas`/`eventos`/`sessoes_foco`/`metricas_produtividade`/`checkins` (services + brief). So the productivity-domain absorption is **largely already done**.
+- **The UN-captured half = the 5 command-knowledge tables**, left UNWIRED in daily-life: `commands`, `command_history`, `intent_patterns`, `context_rules`, `learned_promotions`. THIS is the only potential prize.
+
+## The one potential prize (conditional on getting the external repo)
+
+A **rules-based command layer**: 3-tier dispatch cascade (direct → pattern → LLM, tier recorded per
+call); regex/keyword/fuzzy **intent recognition** with confidence thresholds; per-user `context_rules`
+parameter resolution; and an adaptive **`learned_promotions`** loop that auto-promotes repeated LLM
+resolutions to cheap deterministic patterns after ≥3 hits (with token/latency telemetry) — structurally
+analogous to noc's own s1→s3 codification pipeline.
+
+**⚠️ LLM-first tension (decision gate before any absorption):** noc's command dispatch is deliberately
+**LLM function-calling** (`LLMDispatcher` / `OpenAIToolOrchestrator`, Fake+Real+factory), NOT a
+rules/intent engine. A rules router **earns its place ONLY** if it covers deterministic / offline /
+cost-reducing command routing the LLM path genuinely doesn't (cheap fast offline commands + a
+learn-to-promote ladder that lowers LLM spend over time). Otherwise absorbing it is a **regression** —
+reject it and close this roadmap.
 
 ## Slices (provisional — firm up after the repo is inventoried)
 
 | # | Title | Depends on | Tier | Status |
 |---|---|---|---|---|
-| A0 | **Locate + inventory the external repo** — clone/read; map each table to its service/router/logic; confirm the cluster split above | repo access | BLOCKER | **blocked — need repo location** |
-| A1 | Absorb command-dispatch + NLU → seed/lib (Protocol+Fake+Real+factory; consume in ≥1 pilot) | A0 | HIGH | pending |
-| A2 | Absorb adaptive-learning primitive → seed/lib (or fold into codification pipeline if duplicative) | A0, A1 | MED | pending |
-| A3 | Absorb productivity-domain features → daily-life (schema + services + FE surfaces) | A0 | MED | pending |
-| A4 | Decide the fate of the prod `automation_workflow` schema + data (migrate rows into the absorbing schemas, then drop the orphan schema) | A1-A3 | LOW | pending |
+| A0 | **Locate + read the external productivity-CLI repo** — the DATA shapes are already known; only the LOGIC (dispatch/intent/learning) is missing | repo access | BLOCKER | **blocked — repo not on disk, location unknown** |
+| A1 | Judge the rules-layer against the LLM-first tension gate — does it cover deterministic/offline/cost-reducing routing the LLM path lacks? If NO → reject, close roadmap | A0 | HIGH | pending |
+| A2 | If YES: absorb dispatch + NLU + learned-promotions → seed/lib, **extending `noctusai_lib.domain.chatbot`** (absorption-search first: `noctus.seed.scan_fusions`) | A0, A1 | MED | pending |
+| A3 | Wire the 5 command-knowledge tables into daily-life (the CRUD half is already there) | A2 | LOW-MED | pending |
+| A4 | Drop the empty prod `automation_workflow` schema (0 rows; reconcile shape against `daily_life`, then drop) | A1–A3 decided | LOW | ready (no data to migrate) |
 
 ## Open questions / blockers
 
-1. **Where is the `automation_workflow` repo?** (URL / local path / access). The prod tables show the
-   data shape but not the dispatch/intent/learning LOGIC — A0 can't start without it.
-2. Is there **live data** in the 12 prod tables to preserve (real usage), or is it dev/seed scaffolding?
-   (`SELECT count(*)` per table will tell — informs whether A4 needs a data migration or just a drop.)
-3. Does the command-dispatch layer overlap enough with `noctusai_lib.domain.chatbot` to **extend** rather
-   than add a sibling? (absorption-search duty — run `noctus.seed.scan_fusions` against the imported code.)
+1. **Where is the external productivity-CLI repo?** (URL / path / access). NOT on disk in any sibling — the prod tables reveal data shape only, never the dispatch/intent/learning LOGIC. A0 can't start without it.
+2. ~~Live data to preserve?~~ **RESOLVED 2026-05-31: all 12 prod tables EMPTY (0 rows)** → no migration; A4 is a clean drop once A1 decides.
+3. Does the rules-layer clear the LLM-first tension gate (deterministic/offline/cost-reducing), or is it a regression against noc's intentional LLM-function-calling dispatch?
 
 ## Decision log
 
-- 2026-05-31 — Reframed from "orphan schema, migrate-or-drop?" to "absorption source." RLS hand-applied
-  to all 12 tables (defense-in-depth) so the holding state is safe. Roadmap opened; A0 is the gate.
+- 2026-05-31 — Opened as "orphan schema, migrate-or-drop?"; user reframed as "absorption source."
+- 2026-05-31 — 4-agent eval **corrected a name-collision conflation**: the schema's source is the
+  external CLI, **NOT** the on-disk `automations/` folder (that's superseded `noctus-starter`). Verified
+  by exact-table-name greps across all 11 siblings = zero matches.
+- 2026-05-31 — Found the data model is **already mirrored in daily-life** (CRUD half done); only the
+  5 command-knowledge tables are uncaptured. Prod tables EMPTY → drop, not migrate.
+- 2026-05-31 — Recorded the **LLM-first tension**: a rules/intent engine must justify itself vs noc's
+  intentional LLM-function-calling dispatch, or it's a regression.
 
 ## Retrospective
 
