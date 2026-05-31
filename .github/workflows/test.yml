@@ -543,6 +543,25 @@ jobs:
         working-directory: mcp/noctusai
         run: pip install -r requirements.txt
 
+      - name: Prime hermetic state (version stamp + structural caches; zero OpenAI)
+        # The suite has tests that assert the STRUCTURAL keeper-mirror caches
+        # (keeper-patterns / agent-context / auto-improvement / noc-graph) exist
+        # AND are populated, and that the seed version stamp matches HEAD. Those
+        # are gitignored / generated, so a fresh CI checkout lacks them → cache-
+        # missing compliance findings + empty-graph edge-floor failures. All four
+        # caches are ZERO-OpenAI, so build them here (mirrors a real environment).
+        # noc-graph is built LAST so it reads the freshly-built keeper cache
+        # (→ KEEPER_RULE nodes + GUARDED_BY edges). The embedding-backed
+        # semantic_neighbor edges still can't exist hermetically (no OpenAI key) —
+        # that one floor test skips itself when the embedding cache is absent.
+        working-directory: mcp/noctusai
+        run: |
+          python cli.py --stamp-seed-version
+          python cli.py --refresh-keeper-cache
+          python cli.py --refresh-agent-context-cache
+          python cli.py --refresh-auto-improvement-cache
+          python cli.py --refresh-noc-graph
+
       - name: Run MCP toolkit suite (hermetic — no live OpenAI key)
         env:
           NOCTUS_EMBED_MIN_INTERVAL_MS: "0"

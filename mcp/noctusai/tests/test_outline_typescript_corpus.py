@@ -64,6 +64,14 @@ def _walk_corpus() -> list[Path]:
             rel = str(p.relative_to(base))
             if "/frontend/src/" not in str(p) + "/":
                 continue
+            # Co-located UNIT tests (`*.test.ts(x)` / `*.spec.ts(x)`) are not
+            # production code: their top-level body is mostly `describe`/`it`
+            # callbacks + `vi.fn()` mocks, so the outliner legitimately finds
+            # near-zero declarations — that trips `test_nontrivial_files_have_
+            # symbols` and pollutes the baseline. The corpus measures PRODUCT
+            # symbol coverage; exclude tests (same rationale as the e2e exclusion).
+            if p.name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")):
+                continue
             files.append(p)
     return sorted(files)
 

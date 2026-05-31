@@ -696,6 +696,21 @@ class TestEdgeFloors:
                 f"noc-graph cache absent at {cache_p} — "
                 "run `python mcp/noctusai/cli.py --refresh-noc-graph` first."
             )
+        # `semantic_neighbor` edges are derived from the OpenAI EMBEDDING cache
+        # (cosine similarity over code/kb vectors). A hermetic env (CI, no OpenAI
+        # key) legitimately has no embedding cache → the noc-graph build injects
+        # zero such edges, so asserting a floor there is a false red. Skip when the
+        # embedding cache is absent; the local dev run (where it exists) still
+        # enforces the floor. `guarded_by` needs only the keeper cache (zero-OpenAI,
+        # built in CI), so it keeps asserting.
+        if edge_kind == "semantic_neighbor":
+            from tools.noctus.dev.cache_backend import cache_path as _emb_cache_path
+
+            if not _emb_cache_path("code-embeddings", _REPO_ROOT).exists():
+                pytest.skip(
+                    "embedding cache absent (hermetic env / no OpenAI key) — "
+                    "semantic_neighbor edges require embeddings."
+                )
         conn = sqlite3.connect(str(cache_p))
         try:
             row = conn.execute(
