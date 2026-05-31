@@ -12,6 +12,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/dev-prod-parity.md
   - CONTEXT/PATTERNS/devops/ci-security-gates.md
   - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
+  - CONTEXT/PATTERNS/devops/dev-main-ci-gates.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
   - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/PATTERNS/devops/prod-cache-container.md
@@ -51,6 +52,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/containerization-operations.md`
 - **Operate the live VPS via `noctus.vps.*`.** Read-free: `ps` / `health` / `logs` / `inspect` / `images` / `disk` / `stats`. Confirm-gated: `restart` / `recreate` / `prune`. → `KB § 05-INFRASTRUCTURE.md`
 - **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
+- **dev→main process — consistent, CI-enforced gates.** The consolidated map: which CI workflows gate `dev`/`main`, the green requirement, the bless→promote flow; every suite + baseline is CI-gated (an unenforced gate is silent debt). → `KB § PATTERNS/devops/dev-main-ci-gates.md`
 - **CI embedding-cache gate.** GitHub Actions workflow (`embedding-cache-gate.yml`) connecting CI to the shared prod pgvector cache; secrets `NOCTUS_VPS_DEPLOY_KEY` + `NOCTUS_VPS_HOST` + `NOCTUS_CACHE_POSTGRES_DSN`; conditional gating via `CACHE_TUNNEL_UP` env flag (hard-fail when tunnel up, soft-fail on fork PRs). → `KB § PATTERNS/devops/ci-embedding-cache-gate.md`
 - **SSH deploy-key restrictions.** `restrict` overrides `permitopen` on Ubuntu OpenSSH_9.6p1 — canonical pattern uses explicit `command="/bin/false",no-pty,no-X11-forwarding,no-agent-forwarding,permitopen=...`; verified during 2026-05-26 CI tunnel wiring for prod `noctus-cache-pg`. → `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md`
 - **Push-time embedding-freshness gate.** Embed at the push boundary, not on every commit (v4.0 2026-05-27). pre-commit no longer refreshes kb/code embeddings; pre-push runs the refresh + soft-fails on missing key/provider. `NOCTUS_SKIP_EMBED_REFRESH=1` bypass for CI smoke pushes. → `KB § PATTERNS/common/push-time-embedding-gate.md`
