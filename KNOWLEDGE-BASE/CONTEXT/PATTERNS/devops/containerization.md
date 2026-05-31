@@ -596,6 +596,12 @@ cheap builds at once *still* oversubscribe; the wave cap alone leaves each
 build thrashing on the resolver. Together: each build is cheap **and** only a
 wave's worth run at once → load stays ≈ cores, never the 8×+ that crashes.
 
+### 6a.C · Memory-leg contention — the wave is also capped by RAM (2026-05-31)
+
+The two stagger batches above (`cores/2` boot, `cores/4` build) are **CPU-tuned** — correct on a roomy machine, but on a **small Docker VM the wall is RAM, not CPU**. Each concurrent `vite build` (at image-build *or* cold-boot) needs ~1.5 GB; on the 3.8 GB dev VM, `cores/2 = 4` simultaneous boots OOM-killed a product's FE build (**exit 137 — a memory kill, not CPU**), while idle cores sat unused. CPU staggering can't see that wall.
+
+The fix: a third ceiling, `_mem_batch_cap()` in `start.sh`, applied to **both** legs — the effective wave is `min(cpu_batch, floor(vm_mem_mb / NOCTUS_PER_BUILD_MEM_MB))` (default `NOCTUS_PER_BUILD_MEM_MB=1536`; VM RAM read from `docker info --format '{{.MemTotal}}'`). On the 3.8 GB VM the mem cap is **2**, so boots/builds go 2-at-a-time and can't OOM; on a 16 GB+ VM the mem cap exceeds the CPU cap so it has **no effect** (CPU governs). No manual `NOCTUS_*_BATCH` tuning needed — the stagger is now self-tuning to the VM. Composes with the seed `reportCompressedSize:false` vite fix (which removed the gzip-report OOM spike). This is the structural answer to "bump the Docker VM RAM" on a memory-constrained host: make the fleet *fit* the VM instead of needing a bigger one.
+
 ## 7 · Adding a new product
 
 `noctus.dev.scaffold_product` does it end-to-end:

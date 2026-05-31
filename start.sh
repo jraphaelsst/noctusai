@@ -193,15 +193,35 @@ else
   # fully sequential, the safest/slowest option). Build flags (e.g.
   # --no-cache --pull) arrive via $BUILD_FLAGS.
   # KB § PATTERNS/devops/containerization.md § 6a.
+  # Memory-aware concurrency ceiling — the missing leg of the CPU-tuned staggers.
+  # cores/N is the right cap on a roomy machine, but on a SMALL Docker VM the wall
+  # is RAM, not CPU: each concurrent vite build (at image-build OR cold-boot) needs
+  # ~1.5 GB, and the OOM-killer (exit 137) fires on memory no matter how many cores
+  # sit idle (observed: erp FE build OOM'd on the 3.8 GB VM). So also cap the wave
+  # by the DOCKER VM's RAM: floor(vm_mem_mb / NOCTUS_PER_BUILD_MEM_MB), min 1. On a
+  # big VM this exceeds the CPU cap (no effect); on a small VM it shrinks the wave
+  # so N builds can't OOM at once — no manual NOCTUS_*_BATCH tuning needed. Echoes
+  # 9999 (no cap) when VM RAM can't be read. KB § PATTERNS/devops/containerization.md § 6a.
+  _mem_batch_cap() {
+    local vm_mb per cap
+    per="${NOCTUS_PER_BUILD_MEM_MB:-1536}"
+    vm_mb="$(docker info --format '{{.MemTotal}}' 2>/dev/null | awk '{printf "%d", $1/1048576}')"
+    { [[ -z "$vm_mb" || "$vm_mb" -le 0 ]]; } && { echo 9999; return; }
+    cap=$(( vm_mb / per )); [[ $cap -lt 1 ]] && cap=1
+    echo "$cap"
+  }
+
   staggered_build() {
-    local svcs=("$@") cores batch i wave
+    local svcs=("$@") cores batch i wave cpu_batch mem_cap
     cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-    batch="${NOCTUS_BUILD_BATCH:-$(( cores / 4 > 1 ? cores / 4 : 1 ))}"
+    cpu_batch=$(( cores / 4 > 1 ? cores / 4 : 1 ))
+    mem_cap="$(_mem_batch_cap)"
+    batch="${NOCTUS_BUILD_BATCH:-$(( cpu_batch < mem_cap ? cpu_batch : mem_cap ))}"
     if [[ ${#svcs[@]} -le $batch ]]; then
       docker "${PRODUCTS_COMPOSE[@]}" build ${BUILD_FLAGS:-} "${svcs[@]}"
       return $?
     fi
-    echo "[docker] build stagger: ${#svcs[@]} imagens em ondas de $batch (cores=$cores; override: NOCTUS_BUILD_BATCH)"
+    echo "[docker] build stagger: ${#svcs[@]} imagens em ondas de $batch (cores=$cores, mem-cap=$mem_cap; override: NOCTUS_BUILD_BATCH / NOCTUS_PER_BUILD_MEM_MB)"
     i=0
     while [[ $i -lt ${#svcs[@]} ]]; do
       wave=("${svcs[@]:i:batch}")
@@ -238,7 +258,7 @@ else
   # gate ceiling, seconds; on timeout it proceeds — slow ≠ failed).
   # KB § PATTERNS/containerization.md § 6a.
   staggered_up() {
-    local svcs=("$@") cores batch i wave deadline ready s st
+    local svcs=("$@") cores batch i wave deadline ready s st cpu_batch mem_cap
     # ----- self-heal stale containers BEFORE up -d -----
     # A targeted product whose container exists but is `unhealthy` or
     # `restarting` is STALE: Docker auto-resurrected it after a host sleep
@@ -266,12 +286,14 @@ else
     fi
     # ----- end self-heal -----
     cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-    batch="${NOCTUS_BOOT_BATCH:-$(( cores / 2 > 1 ? cores / 2 : 2 ))}"
+    cpu_batch=$(( cores / 2 > 1 ? cores / 2 : 2 ))
+    mem_cap="$(_mem_batch_cap)"
+    batch="${NOCTUS_BOOT_BATCH:-$(( cpu_batch < mem_cap ? cpu_batch : mem_cap ))}"
     if [[ ${#svcs[@]} -le $batch ]]; then
       docker "${PRODUCT_ARGS[@]}" up -d "${svcs[@]}"
       return 0
     fi
-    echo "[docker] cold-boot stagger: ${#svcs[@]} produtos em ondas de $batch (cores=$cores; override: NOCTUS_BOOT_BATCH)"
+    echo "[docker] cold-boot stagger: ${#svcs[@]} produtos em ondas de $batch (cores=$cores, mem-cap=$mem_cap; override: NOCTUS_BOOT_BATCH / NOCTUS_PER_BUILD_MEM_MB)"
     i=0
     while [[ $i -lt ${#svcs[@]} ]]; do
       wave=("${svcs[@]:i:batch}")

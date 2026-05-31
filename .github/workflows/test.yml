@@ -170,10 +170,12 @@ jobs:
     # as the toolkit suite. Generalized 2026-05-31 to a matrix over EVERY product
     # with a real FE suite (DRY — the recurrence rule, N=5 ⇒ formalize), each
     # verified green at the time of gating (social-wiring 19, pf 30, erp 16,
-    # therapy 9, daily-life 5). Products with 0 test files (core / adconnect /
-    # dev-team / knowledge-extractor) are intentionally OMITTED — `vitest run`
-    # fails on "no test files found"; they join the matrix when they grow a suite.
-    # `fail-fast: false` so one product's red doesn't mask the others.
+    # therapy 9, daily-life 5). 2026-05-31: core / adconnect / dev-team had FE test
+    # infra but ZERO test files; each got a minimal `__harness_smoke__.test.tsx`
+    # (proves vitest+jsdom+testing-library run) so they join the gate too. Only
+    # knowledge-extractor (no vitest at all) remains out. `vitest run` fails on
+    # "no test files found", so a product joins the matrix the same commit it gets
+    # its first test. `fail-fast: false` so one product's red doesn't mask others.
     name: Product Frontend Tests (vitest)
     runs-on: ubuntu-latest
     strategy:
@@ -185,6 +187,9 @@ jobs:
           - erp-imobiliario
           - therapy-platform
           - daily-life
+          - core
+          - adconnect
+          - dev-team
 
     steps:
       - uses: actions/checkout@v4
