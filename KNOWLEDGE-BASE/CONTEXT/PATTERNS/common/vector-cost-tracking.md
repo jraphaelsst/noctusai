@@ -204,6 +204,45 @@ result = embed_text(description, namespace="codification_radar")
   high-volume callers, prefer a batch refresh pattern with one summary row.
 - **Failure-tolerant**: logging errors never propagate to the embed result.
 
+## Auto-commit by construction — the ledger never lingers dirty (2026-05-31)
+
+The ledger is **committed, not gitignored** (see Constraints). But it is also
+written as a *side-effect* of routine work — every embed (tool call) and every
+`refresh()` appends a row — so without a discipline it sits **dirty in the
+working tree** and gets re-surfaced as "drift" at the next `/contextualize`.
+This recurred **5 times**, and ~**7 of every 30 commits** were manual
+`chore(cost-log)` cleanups — pure toil. The root has two timings:
+
+| Timing | Who appends | Why it lingered |
+|---|---|---|
+| **Mid-work** | MCP embed tools / cache `refresh()` during a session | dirty until the next commit happened to include it |
+| **Push-time** | the pre-push embedding-cache refreshes (kb/code/corpus/**memory**) | appended **after** the last commit, so it can't be folded into *this* push (refs already negotiated) → orphaned at session end |
+
+The fix is **not** a human remembering to commit it — it is *by construction*,
+two symmetric git-hook legs (both best-effort, never blocking):
+
+1. **pre-commit auto-stage** (`scripts/hooks/pre-commit`, leg 10c): if the
+   ledger is dirty, `git add` it into **whatever** is being committed. It rides
+   along with every real commit. Safe — and this is the key insight — because
+   the ledger is **append-only + machine-generated + ownership-free**: the
+   concurrent-writer guard that protects CLAUDE.md/KB (pre-commit leg 2, "never
+   sweep another agent's uncommitted edits") does **NOT** apply, since folding a
+   sibling worktree's appended cost row into this commit is harmless and desired.
+2. **pre-push sweep** (`scripts/hooks/pre-push`): after the refreshes append the
+   push-time churn, commit it as a path-limited `chore(cost-log): … [auto]`
+   commit on the current branch. The tree stays **clean** by construction; at
+   worst the branch is "ahead by 1" (a normal local commit) and the next push
+   carries it. Guards: skip on protected-branch deploys (main/prod), detached
+   HEAD, or mid-merge/rebase; escape hatch `NOCTUS_SKIP_COSTLOG_COMMIT=1`.
+
+**General rule** (sibling of [[funnel-self-satisfies-preconditions]]): a
+git-tracked file that is **machine-appended as a side-effect of routine work**
+must be swept into commits *by the tooling*, never left for a human to notice —
+an append-only ownership-free ledger is auto-staged on commit and auto-committed
+on push, so "dirty working tree" is structurally impossible. Auto-staging is
+**only** safe for this file class (append-only, machine-generated, no line
+ownership); never auto-sweep hand-authored content.
+
 ## Universality
 
 This is a `common/` pattern — owned by no single agent; every agent inherits

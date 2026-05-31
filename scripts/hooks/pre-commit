@@ -296,6 +296,23 @@ if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
     fi
 fi
 
+# ─── 10c. Vector-costs ledger AUTO-STAGE (2026-05-31) ───────────
+# `project-history/vector-costs.ndjson` is an APPEND-ONLY machine-generated
+# telemetry ledger — embed/cost-log tools append to it; it is NEVER hand-
+# authored. Left dirty it lingers across sessions and gets re-surfaced as
+# "drift" at every /contextualize (observed 5×). UNLIKE CLAUDE.md/KB docs,
+# the concurrent-writer guard of leg 2 does NOT apply: appended cost lines
+# are independent + ownership-free, so folding another worktree's appended
+# line into THIS commit is harmless and exactly what we want. So if the
+# ledger is dirty (staged or unstaged), auto-stage it — it rides along with
+# whatever is being committed, BY CONSTRUCTION, and never lingers. (The
+# pre-push sibling leg sweeps the push-time refresh churn that lands AFTER
+# the last commit.) KB § PATTERNS/common/vector-cost-tracking.md § Auto-commit.
+if have_py && git status --porcelain -- project-history/vector-costs.ndjson 2>/dev/null | grep -q .; then
+    git add -- project-history/vector-costs.ndjson \
+      && echo "[pre-commit] auto-staged vector-costs.ndjson (append-only ledger — rides along by construction)"
+fi
+
 # ─── 11. Vector-costs ledger sanity (2026-05-26, post-verify-pass) ──
 # The vector-costs.ndjson append-only ledger MUST stay parseable. If a
 # concurrent writer races and produces a malformed line, downstream
