@@ -53,6 +53,24 @@ Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-i
 
 **Tooling — `noctus.dev.release` codifies both gates.** `stage='status'` shows the `feat→dev→main→prod` chain read-only; `stage='bless'` FFs `main → dev` tip; `stage='promote'` snapshots the current prod onto `prod-backup` then FFs `prod →` a blessed `main` sha. DRY-RUN by default → `confirm=True` to push. It is the **only sanctioned setter of `NOCTUS_ALLOW_MAIN_PUSH`** (and only for its own FF push), so you never hand-manage that env var — the pre-push hook keeps blocking every other path. FF-only by construction (a colocated test asserts no force/reset/checkout token ever). After a promote, `noctus.dev.deploy_pull` pulls `origin/prod` onto the VPS.
 
+### 0.2a What "CI green" means — the enumerated gate set (the consistent dev→main gate)
+
+"CI green" is **not a vibe** — it is the named, exhaustive set of jobs below, all green on the `dev` tip you are about to bless. This enumeration IS the gate: it exists so a quality surface can never silently fall out of coverage (the **unenforced-gate-is-silent-debt** lesson — a gate not run by automation catches nothing until a human happens to run it; born 2026-05-30 when the MCP toolkit suite, with **no CI job**, rotted to 12 reds unnoticed). Every workflow runs on **every push to `dev`** ∧ PRs targeting `dev`/`main`, so the bless evidence is satisfied as work lands.
+
+| Workflow | Jobs | Covers |
+|---|---|---|
+| `test.yml` | `erp/core/pf-backend-tests` | product FastAPI suites (pytest) |
+| | `erp/core/pf-frontend-build` | product Vite builds compile |
+| | **`product-frontend-tests`** (matrix: social-wiring · personal-finance · erp-imobiliario · therapy-platform · daily-life) | **product FE vitest suites** — the FE-test gate, matrixed 2026-05-31 |
+| | `core/erp-e2e-tests` | Playwright e2e |
+| | `mcp-toolkit-tests` | the 2630-test dev-toolkit + keeper + cache suite (added 2026-05-31) |
+| | `docker-compose-validate` · `trivy-fs-scan` · `bandit-scan` · `gitleaks-scan` | container config + CVE + SAST + secret scan |
+| `seed-typecheck.yml` | seed typecheck | the shared seed lib/framework type-checks |
+| `embedding-cache-gate.yml` | embedding-cache parity | conditional (gated on validation-surface reachability) |
+| `build-and-push.yml` | GHCR artifacts | **`main`-only** by design — ships deploy images, not an integration gate |
+
+**The rule that keeps this honest: a new test surface ships with its CI job IN THE SAME COMMIT.** Adding a test suite (a new product FE suite → a matrix entry; a new keeper → it's already under `mcp-toolkit-tests`; a new product backend → a `*-backend-tests` job) WITHOUT wiring it into the matrix above is a silent unenforced gate — forbidden. When a product grows its first FE test file, add it to the `product-frontend-tests` matrix the same commit (products with **zero** test files are omitted on purpose — `vitest run` fails on "no test files found"). The bless presents this table's state (latest `dev` run + `noctus.dev.release stage='status'`); a single red anywhere = no bless.
+
 ### 0.3 Always return to `dev`
 `dev` is the **default resting state** of the primary checkout. Whenever you `git switch`/`checkout`/inspect a worker branch, **switch back to `dev`** when done — never leave the primary checkout parked on a worker branch or on `main`. Prefer inspecting worker branches **without switching** (`git diff dev feat/<slice>`, `git show <branch>:<path>`); concurrent *active* work uses isolated worktrees, never a shared switch (§9a — concurrent agents never share one checkout).
 

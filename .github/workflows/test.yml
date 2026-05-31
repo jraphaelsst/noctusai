@@ -163,14 +163,28 @@ jobs:
         working-directory: products/core/frontend
         run: npm run build
 
-  social-wiring-frontend-tests:
-    # The product FE vitest suite (Integrations page + integration-account hooks).
-    # Born 2026-05-31 to close the FE-test CI gap: the render harness was
-    # unrunnable (missing test deps) AND no product ran FE vitest in CI — the
-    # same unenforced-gate silent-debt class as the toolkit suite (the suite had
-    # rotted to 8 stale-mock failures, fixed this session). Verified green: 19/19.
-    name: Social-Wiring Frontend Tests
+  product-frontend-tests:
+    # Per-product FE vitest suites — the consistent unenforced-gate closure.
+    # Born 2026-05-31 (social-wiring, standalone) to close the FE-test CI gap:
+    # no product ran FE vitest in CI — the same unenforced-gate silent-debt class
+    # as the toolkit suite. Generalized 2026-05-31 to a matrix over EVERY product
+    # with a real FE suite (DRY — the recurrence rule, N=5 ⇒ formalize), each
+    # verified green at the time of gating (social-wiring 19, pf 30, erp 16,
+    # therapy 9, daily-life 5). Products with 0 test files (core / adconnect /
+    # dev-team / knowledge-extractor) are intentionally OMITTED — `vitest run`
+    # fails on "no test files found"; they join the matrix when they grow a suite.
+    # `fail-fast: false` so one product's red doesn't mask the others.
+    name: Product Frontend Tests (vitest)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - social-wiring
+          - personal-finance
+          - erp-imobiliario
+          - therapy-platform
+          - daily-life
 
     steps:
       - uses: actions/checkout@v4
@@ -180,7 +194,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: products/social-wiring/frontend/package-lock.json
+          cache-dependency-path: products/${{ matrix.product }}/frontend/package-lock.json
 
       - name: Install seed frontend deps (file:-linked; product npm ci skips them)
         run: |
@@ -188,11 +202,11 @@ jobs:
           (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
 
       - name: Install dependencies
-        working-directory: products/social-wiring/frontend
+        working-directory: products/${{ matrix.product }}/frontend
         run: npm ci
 
       - name: Run FE tests (vitest)
-        working-directory: products/social-wiring/frontend
+        working-directory: products/${{ matrix.product }}/frontend
         run: npm test
 
   pf-frontend-build:
