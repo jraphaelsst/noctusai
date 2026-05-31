@@ -535,7 +535,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends libffi-dev libpq-dev pkg-config
 
       - name: Install toolkit deps (incl. -e seed/lib/backend → noctusai_lib)
-        run: pip install -r mcp/noctusai/requirements.txt
+        # MUST run from mcp/noctusai/: requirements.txt has `-e ../../seed/lib/backend`,
+        # and pip resolves a requirements-file relative path against the CWD (not the
+        # file's dir). From repo-root the `../../` escapes the repo → "not a valid
+        # editable requirement". This was invisible until CI actually ran (the job was
+        # billing-gated since it was added) — the unenforced-gate lesson, one layer down.
+        working-directory: mcp/noctusai
+        run: pip install -r requirements.txt
 
       - name: Run MCP toolkit suite (hermetic — no live OpenAI key)
         env:
