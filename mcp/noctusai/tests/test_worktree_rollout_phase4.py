@@ -442,7 +442,7 @@ class TestUpdateProposalStatusWorktreePath:
             product="demo",
             worktree_path=wt,
         )
-        assert result == {"updated": True, "status": "accepted"}, result
+        assert result == {"updated": True, "status": "accepted", "path": str(proposal)}, result
         # Status flipped in the worktree's copy.
         content = proposal.read_text()
         assert "**Status:** accepted" in content
@@ -462,7 +462,7 @@ class TestUpdateProposalStatusWorktreePath:
             reason="not aligned",
             worktree_path=wt,
         )
-        assert result == {"updated": True, "status": "rejected"}, result
+        assert result == {"updated": True, "status": "rejected", "path": str(proposal_b)}, result
         content = proposal_b.read_text()
         assert "**Status:** rejected" in content
         assert "not aligned" in content
@@ -480,7 +480,7 @@ class TestUpdateProposalStatusWorktreePath:
             products_dir=sink_products,
             worktree_path=wt,
         )
-        assert result == {"updated": True, "status": "accepted"}, result
+        assert result == {"updated": True, "status": "accepted", "path": str(proposal)}, result
         content = proposal.read_text()
         assert "**Status:** accepted" in content
 

@@ -511,7 +511,10 @@ class TestCheckDocToolReferenceDrift:
         self, tmp_path: Path, *, doc_body: str, scripts: dict[str, str],
     ) -> Path:
         # Build the doc surface in scope: methodology-codification-pipeline.md.
-        doc_dir = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS"
+        # Path MUST match _DOC_TOOL_REF_SCOPE exactly — the doc lives under
+        # common/; an earlier fixture wrote to PATTERNS/ (no common/), so the
+        # detector never saw it and the flag-tests silently passed on [].
+        doc_dir = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "PATTERNS" / "common"
         doc_dir.mkdir(parents=True)
         (doc_dir / "methodology-codification-pipeline.md").write_text(doc_body)
         scripts_dir = tmp_path / "scripts"

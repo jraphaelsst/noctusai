@@ -41,7 +41,7 @@ CORPUS_GLOB_BASES = [
 ]
 TS_EXTENSIONS = {".ts", ".tsx"}
 SKIP_DIRS = {"node_modules", ".venv", "dist", "build", "playwright-report",
-             "test-results", "__pycache__", "coverage", "e2e"}
+             "test-results", "__pycache__", "coverage", "e2e", ".backup"}
 BASELINE_FILE = Path(__file__).resolve().parent / "fixtures" / "outline_corpus_baseline.json"
 TOLERANCE = 0.05  # ±5% per file
 

@@ -7512,6 +7512,22 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_graph_extractor_corpus_sanity": "tests/test_graph_extractor_correctness.py::TestEdgeFloors",
     # dangling-remote-branches (2026-05-30, branch-hygiene-prevention).
     "check_dangling_remote_branches": "tests/test_dangling_remote_branches.py",
+    # 2026-05-31 — detectors genuinely tested under non-matching class names
+    # (the Test<CamelDetector> heuristic misses them); verified each mapped
+    # test CALLS the detector (call-counts in parens). Surfaced by the toolkit
+    # suite's first CI-gate pass after years with no automated gate.
+    "check_canonical_organ_consumption": "tests/test_check_canonical_organ_consumption.py",          # class TestCanonicalConsumerPasses, 7 calls
+    "check_code_recurrence_drift": "tests/test_code_baseline.py",                                     # 4 calls
+    "check_kb_semantic_drift": "tests/test_kb_baseline.py",                                           # 4 calls
+    "check_codification_pipeline_health": "tests/test_check_codification_pipeline_health.py",         # class TestPipelineHealth, 9 calls
+    "check_cache_backend_env_matches_environment": "tests/test_prod_deploy_safety_gates.py",          # 4 calls
+    "check_auth_boundary_false_green": "tests/test_auth_boundary_false_green.py",                     # 16 calls (TestAuthBoundaryFalseGreenPositive — Positive suffix breaks \b)
+    # cache-freshness trio: composed into check_all_cache_freshness, exercised
+    # by TestAllCacheFreshness::test_composes_eight_legs (lists them explicitly)
+    # — same pattern as the kb/corpus/memory siblings already mapped above.
+    "check_auto_improvement_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_code_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_noc_graph_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
 }
 
 
