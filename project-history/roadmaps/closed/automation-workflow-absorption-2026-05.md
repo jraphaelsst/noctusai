@@ -66,6 +66,27 @@ reject it and close this roadmap.
 - 2026-05-31 — Recorded the **LLM-first tension**: a rules/intent engine must justify itself vs noc's
   intentional LLM-function-calling dispatch, or it's a regression.
 
+## CLOSED — 2026-05-31 (no prize on disk)
+
+Resolved without absorbing anything. Findings at close:
+
+- **The schema's source CLI is not on this machine** — the user pointed at the sibling `automations/`
+  folder, but that folder is the **methodology/dev-team design workspace** (its own AUDIT.md/PROJECT.md
+  prove it, with user quotes), NOT the productivity CLI. Zero productivity code in it. The two "automation"
+  things are unrelated; the name collision misled both user and assistant.
+- **The productivity domain is already captured** in the daily-life product (`daily_life` schema). The only
+  uncaptured piece was the rules-based command layer — and its code is off-disk/unreadable, while noc is
+  deliberately LLM-first (a rules engine would need to clear the deterministic/offline/cost-reducing gate
+  to not be a regression). No code to judge → no absorption.
+- **The prod `automation_workflow` schema (12 tables, 0 rows) was DROPPED** 2026-05-31 (`DROP SCHEMA
+  automation_workflow CASCADE` — empty, superseded by daily-life, no product owner).
+- **The `automations/` folder was salvaged-then-deleted** — its unique provenance (AUDIT.md + PROJECT.md)
+  preserved at `project-history/provenance/methodology-origin-2026-04/`; the superseded scaffold removed.
+
 ## Retrospective
 
-_(on close — absorb lessons → KB/memory.)_
+**Lesson (→ memory `feedback_rls_sweep_and_orphan_schema`):** a shared word in two names ("automation") is
+enough to silently fuse two unrelated artifacts across BOTH a human's memory and an assistant's inference.
+The fix that caught it: **verify by unique identifier, not by name** — exact-table-name greps (`sessoes_foco`,
+`learned_promotions`) across all siblings = zero, which is stronger evidence than any folder name. When an
+investigation hinges on "is X the same as Y?", anchor on a content fingerprint, never the label.
