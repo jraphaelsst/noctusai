@@ -196,10 +196,19 @@ def get_workspace_context(start: Path | None = None) -> WorkspaceContext:
     kind = fields.get("workspace_kind", "primary")
     name = fields.get("workspace_name", marker_dir.name)
     home_str = fields.get("noctusai_home")
-    if home_str:
-        noctusai_home = Path(home_str).expanduser().resolve()
-    elif kind == "primary":
+    if kind == "primary":
+        # The PRIMARY marker lives AT the noc repo root, so its OWN directory
+        # is the authoritative home — NEVER the committed `noctusai_home=` line.
+        # That line is the author's absolute machine path (`/Users/<name>/…`);
+        # trusting it makes REPO_ROOT resolve to the author's laptop on every
+        # other checkout (CI, a fresh clone, a teammate) → cache/path errors.
+        # Invisible until CI actually ran (the toolkit job was billing-gated).
+        # 2026-05-31 portability fix. KB § PATTERNS/architect/seed-workspace.md.
         noctusai_home = marker_dir
+    elif home_str:
+        # NON-primary (seed/sibling) workspace: the marker legitimately points
+        # `noctusai_home` BACK to a separate noc checkout — honor it.
+        noctusai_home = Path(home_str).expanduser().resolve()
     else:
         # Template marker without explicit home — defensive fallback.
         noctusai_home = _fallback_noc_root()

@@ -31,6 +31,8 @@ dependencies = [
     # warning and falls back to text-encoded vector(N) on insert.
     "psycopg2-binary>=2.9.0",
     "pgvector>=0.2.5",
+    # organ_knowledge.py + find_reusable_component.py parse sidecar YAML.
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

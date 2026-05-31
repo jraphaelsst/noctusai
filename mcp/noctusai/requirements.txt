@@ -8,6 +8,7 @@ fakeredis>=2.35.0  # tests/test_llm_cache_redis.py — in-memory Redis stand-in
 tiktoken>=0.7.0  # cost_evaluation precise tokenizer; chars/4 fallback if absent
 psycopg2-binary>=2.9.0  # postgres cache backend (cache_backend_postgres.py) + cache_deploy_mirror
 pgvector>=0.2.5  # register_vector() for psycopg2 — silences "pgvector not installed" warning during mirror
+PyYAML>=6.0  # organ_knowledge.py + find_reusable_component.py parse sidecar YAML (was undeclared → CI collection error)
 # Editable install of the platform shared lib — gives MCP tools access to
 # `noctusai_lib.logging_config.auto_configure_for_cli(...)` so MCP CLI/server
 # output uses the same formatter as backend products. Path is relative to
