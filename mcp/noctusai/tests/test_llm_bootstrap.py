@@ -120,3 +120,35 @@ class TestEmbedSyncSelfConfigures:
         assert ("embed", "hello") in order
         # ensure precedes the embed (the precondition is satisfied before use)
         assert order.index("ensure") < order.index(("embed", "hello"))
+
+
+class TestEmbedTextSelfConfigures:
+    """`vectorize.embed_text` is the AD-HOC embed funnel — the path used by
+    codification_radar / kb_recurrence_radar / find_reusable_component. It must
+    self-configure the LLM too. It previously bypassed the bootstrap that
+    `embed_sync` already carried (it calls `generate_embedding` via
+    `run_coro_blocking` directly, not `embed_sync`), so it raised
+    "LLM not configured" in the live MCP server (codification_radar observed
+    failing 2026-05-31). The half-wired-funnel gap."""
+
+    def test_embed_text_calls_ensure_before_embedding(self, monkeypatch):
+        from tools.noctus.dev import vectorize as vz
+
+        class _Cfg:
+            default_embedding_model = "text-embedding-3-small"
+            default_provider = "openai"
+
+        order = []
+        monkeypatch.setattr(lb, "ensure_llm_configured", lambda: order.append("ensure") or True)
+        monkeypatch.setattr(
+            _llm_mod, "generate_embedding", lambda text: order.append(("embed", text)) or "coro"
+        )
+        monkeypatch.setattr(ec, "run_coro_blocking", lambda coro: [0.0] * ec.EMBEDDING_DIM)
+        monkeypatch.setattr(_client_mod, "get_llm_config", lambda: _Cfg())
+
+        out = vz.embed_text("hello")
+
+        assert out["ok"] is True
+        assert out["dim"] == ec.EMBEDDING_DIM
+        assert order[0] == "ensure", "embed_text must self-configure FIRST"
+        assert order.index("ensure") < order.index(("embed", "hello"))

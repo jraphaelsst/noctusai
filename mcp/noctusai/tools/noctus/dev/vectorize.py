@@ -69,6 +69,17 @@ def embed_text(text: str, namespace: str | None = None) -> dict:
     if not text or not text.strip():
         return {"ok": False, "error": "text is empty"}
     try:
+        # Funnel self-satisfies its config precondition. The live FastMCP server
+        # never calls configure_llm() at startup, so a DIRECT embed caller
+        # (codification_radar / kb_recurrence_radar / find_reusable_component)
+        # raised "LLM not configured" in-process — the half-wired-funnel gap:
+        # _embedding_corpus.refresh() already bootstrapped, but embed_text (the
+        # ad-hoc funnel) did not. Idempotent + graceful-degrade (no key / no lib
+        # → returns False, the generate_embedding call below then surfaces the
+        # real provider error rather than the missing-config one).
+        # KB § PATTERNS/common/funnel-self-satisfies-preconditions.md.
+        from ._llm_bootstrap import ensure_llm_configured
+        ensure_llm_configured()
         from noctusai_lib.integrations.llm import generate_embedding
         from noctusai_lib.integrations.llm.client import get_llm_config
         from . import _embedding_corpus as _ec
