@@ -205,6 +205,18 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
       "import.meta.env.VITE_PRODUCT_SCHEMA": JSON.stringify(resolvedSchema),
     },
 
+    build: {
+      // Disable compressed-size reporting. The post-bundle "computing gzip
+      // size" step holds every emitted chunk in memory to gzip it for the
+      // build summary — a pure dev-report with ZERO runtime impact. On the
+      // heaviest frontend (erp-imobiliario: ~3729 modules) this spike OOM-
+      // killed (exit 137) the in-container build on the small dev VM (~3.9 GB),
+      // even building solo. Vite's own docs recommend disabling it for large
+      // projects. Seed-canonical so every product's in-container build inherits
+      // the headroom. See KB § PATTERNS/devops/containerization.md.
+      reportCompressedSize: false,
+    },
+
     resolve: {
       alias: {
         "@": path.resolve(productDir, "./src"),
