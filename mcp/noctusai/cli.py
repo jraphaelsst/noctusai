@@ -171,6 +171,7 @@ def main():
     parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync (two promotions back). Will be removed once external callers migrate.")
     parser.add_argument("--check-all-cache-freshness", action="store_true", help="Keeper: composes the 8 per-cache freshness keepers (keeper-patterns / agent-context / auto-improvement / code-embeddings / noc-graph / kb-embeddings / corpus-embeddings / memory-embeddings) into one named gate — the 8th methodology surface (.claude/cache/, live agent read path). Severity per-sub-keeper. KB § PATTERNS/common/eight-way-sync.md.")
+    parser.add_argument("--settle-structural-caches", action="store_true", help="Heal-on-contact: refresh any STALE zero-OpenAI STRUCTURAL cache (keeper-patterns / agent-context / auto-improvement / noc-graph) — only-stale + source_sha-guarded (no-op when fresh). Closes the post-merge-FF / out-of-commit-append / Tier-1-cross-tree staleness gaps no event-hook can catch. Embedding caches untouched (OpenAI cost). KB § PATTERNS/common/cache-auto-freshness.md.")
     parser.add_argument("--check-skills-listed-in-router", action="store_true", help="Keeper sub-leg of check_eight_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Procedure skills' line; every skill named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--check-commands-listed-in-router", action="store_true", help="Keeper sub-leg of check_eight_way_sync: every .claude/commands/<name>.md MUST be referenced in CLAUDE.md §2 'Slash commands' line; every command named in CLAUDE.md MUST exist on disk. Severity high.")
     parser.add_argument("--refresh-kb-embeddings", action="store_true", help="Re-populate the local KB embeddings cache (.claude/cache/kb-embeddings.sqlite) from KNOWLEDGE-BASE/**/*.md. Embeds via OpenAI text-embedding-3-small through noctusai_lib.integrations.llm (no new external dep). ADDITIVE discovery layer — does not replace owns_kb / INDEX.md / grep. KB § PATTERNS/common/kb-vector-search.md.")
@@ -722,8 +723,29 @@ def main():
             sev_color = RED if i.get("severity") == "high" else YELLOW
             print(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
         sys.exit(1 if any_high else 0)
+    elif args.settle_structural_caches:
+        from tools.noctus.dev.refresh_all_caches import settle_structural_caches
+        r = settle_structural_caches()
+        if r.get("healed"):
+            print(f"  {GREEN}✓ healed-on-contact (structural, zero-OpenAI): {', '.join(r['healed'])}.{RESET}")
+        else:
+            print(f"  {GREEN}✓ structural caches already coherent — nothing to heal.{RESET}")
+        if r.get("stale_embedding"):
+            print(f"  {YELLOW}⚠ embedding cache(s) stale (OpenAI cost — refresh at push/--refresh-*): {', '.join(r['stale_embedding'])}.{RESET}")
+        sys.exit(0 if r.get("ok", True) else 1)
     elif args.check_all_cache_freshness:
         from tools.noctus.dev.compliance import check_all_cache_freshness
+        # Heal-on-contact: the zero-OpenAI STRUCTURAL caches self-heal whenever
+        # freshness is observed (this is the universal contact point that closes
+        # the post-merge-FF / out-of-commit-append / Tier-1-cross-tree gaps no
+        # event-hook can catch). Embedding caches are left for the keeper to
+        # warn about (OpenAI cost stays human-in-the-loop).
+        # KB § PATTERNS/common/cache-auto-freshness.md § Heal-on-contact.
+        from tools.noctus.dev.refresh_all_caches import settle_structural_caches
+        _settled = settle_structural_caches()
+        if _settled.get("healed"):
+            print(f"  {GREEN}✓ healed-on-contact (structural, zero-OpenAI): "
+                  f"{', '.join(_settled['healed'])}.{RESET}")
         issues = check_all_cache_freshness()
         if not issues:
             print(f"  {GREEN}✓ all 8 keeper-mirror caches fresh (keeper-patterns / agent-context / auto-improvement / code-embeddings / noc-graph / kb-embeddings / corpus-embeddings / memory-embeddings).{RESET}")

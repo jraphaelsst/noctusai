@@ -280,6 +280,47 @@ def refresh_all(
     }
 
 
+# Structural caches = the ZERO-OpenAI keeper-mirror caches. Unlike the embedding
+# caches (kb/code/corpus/memory — OpenAI round-trips, kept warn-only so the human
+# stays in the spend loop), these are FREE to rebuild, so they can be HEALED ON
+# CONTACT rather than merely warned about.
+_STRUCTURAL_CACHES = ("keeper-patterns", "agent-context", "auto-improvement", "noc-graph")
+
+
+def settle_structural_caches(repo_root: Path | None = None) -> dict[str, Any]:
+    """Heal-on-contact for the zero-OpenAI STRUCTURAL caches.
+
+    WHY (the durable guarantee): the eager refresh hooks have gaps no
+    event-catching fix can close — git SKIPS the post-merge hook on a
+    fast-forward merge (and the whole dev workflow is FF-based: task_branch
+    integrate FF-pushes, agents FF their primary to origin/dev), out-of-commit
+    appends to `auto-improvement.ndjson` never fire pre-commit, and the Tier-1
+    SHARED cache briefly reflects cross-tree integrate transients. So instead of
+    chasing every mutating event, heal at OBSERVATION time: whenever freshness is
+    checked, refresh any STALE structural cache (only-stale + source_sha-guarded
+    ⇒ a no-op when coherent). Safe because these caches cost no OpenAI to rebuild.
+    Embedding caches are deliberately NOT touched here (OpenAI cost → they stay
+    warn-only so the human stays in the spend loop).
+
+    Best-effort: a refresh failure is reported, never raised. Returns
+    ``{ok, healed:[names], stale_embedding:[names], detail}``.
+    KB § PATTERNS/common/cache-auto-freshness.md § Heal-on-contact.
+    """
+    stale_all = detect_stale_caches(repo_root)
+    stale_structural = [c for c in stale_all if c in _STRUCTURAL_CACHES]
+    stale_embedding = [c for c in stale_all if c not in _STRUCTURAL_CACHES]
+    if not stale_structural:
+        return {"ok": True, "healed": [], "stale_embedding": stale_embedding, "detail": None}
+    result = refresh_all(only=stale_structural)
+    failures = result.get("failures", [])
+    return {
+        "ok": result.get("ok", False),
+        "healed": [c for c in stale_structural if c not in failures],
+        "stale_embedding": stale_embedding,
+        "detail": result,
+    }
+
+
 # ── MCP registration ─────────────────────────────────────────────────────────
 def register(server) -> None:
     @server.tool(
@@ -318,5 +359,22 @@ def register(server) -> None:
     def _detect() -> list[str]:
         return detect_stale_caches()
 
+    @server.tool(
+        name="noctus.dev.settle_structural_caches",
+        description=(
+            "Heal-on-contact for the zero-OpenAI STRUCTURAL caches "
+            "(keeper-patterns / agent-context / auto-improvement / noc-graph): "
+            "refresh any that are STALE (only-stale, source_sha-guarded ⇒ a no-op "
+            "when fresh). Closes the staleness gaps that event-hooks structurally "
+            "cannot — git skips post-merge on fast-forward merges, out-of-commit "
+            "ndjson appends never fire pre-commit, and the Tier-1 shared cache sees "
+            "cross-tree integrate transients. Embedding caches are NOT touched "
+            "(OpenAI cost → they stay warn-only). Returns {ok, healed, "
+            "stale_embedding}. KB § PATTERNS/common/cache-auto-freshness.md."
+        ),
+    )
+    def _settle(repo_root: str | None = None) -> dict:
+        return settle_structural_caches(Path(repo_root) if repo_root else None)
 
-__all__ = ["refresh_all", "detect_stale_caches", "register"]
+
+__all__ = ["refresh_all", "detect_stale_caches", "settle_structural_caches", "register"]

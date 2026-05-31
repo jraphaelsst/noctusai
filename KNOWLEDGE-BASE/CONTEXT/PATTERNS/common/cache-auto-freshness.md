@@ -98,6 +98,22 @@ The structural caches (noc-graph + auto-improvement) are **Tier-1 shared** acros
 
 `task_branch` closes this with `_settle_structural_caches()` at each success return: an **only-stale** (`force=False`, source-sha-guarded ⇒ no-op when coherent) + **best-effort** (a refresh failure NEVER fails the integrate/cleanup) in-process refresh of noc-graph + auto-improvement, surfaced as `cache_settle` in the result. The freshness keeper stays the net — this just settles the predictable cross-tree transient before control returns. NOT a leg-ordering bug (the pre-commit `auto_improvement.refresh()` only READS the ndjson; reordering legs is a no-op) and NOT a source-sha defect (`compute_source_sha` is deterministic). Symptom-targeted, not speculative.
 
+## Heal-on-contact — structural caches self-heal at observation (2026-05-31)
+
+The integrate/cleanup settle above is one patch on one leak. The **general** problem: the eager refresh hooks have gaps that *no event-catching fix can close*, because the mutating event isn't always catchable —
+
+- **git SKIPS `post-merge` on a fast-forward merge.** The entire dev workflow is FF-based (`task_branch` integrate FF-pushes; an agent FFs its primary tree to `origin/dev` to materialize an integrated change). So a FF that carries KB/code/harness changes moves the live `aggregate_source_sha` but **never fires the cache-refresh hook** → noc-graph stale until the next graph *query* (lazy `_ensure_fresh_on_read`) or graph-input commit.
+- **Out-of-commit appends** to `project-history/auto-improvement.ndjson` (surface logging mid-session) change a graph-source file with no commit → pre-commit never fires.
+- **Tier-1 cross-tree transients** (the settle section above).
+
+The durable fix can't depend on catching the event — it heals at **observation time**. The freshness *check* is the universal contact point, and the **structural** caches (`keeper-patterns` / `agent-context` / `auto-improvement` / `noc-graph`) cost **zero OpenAI** to rebuild, so they are **healed on contact** rather than merely warned about:
+
+- `refresh_all_caches.settle_structural_caches()` — `detect_stale_caches()` ∩ the structural set → `refresh_all(only=…)` (only-stale + source-sha-guarded ⇒ no-op when coherent; best-effort, never raises). **Embedding caches are deliberately NOT touched** (OpenAI cost → they stay warn-only so the human stays in the spend loop).
+- Wired into the freshness-check entry points: CLI `--check-all-cache-freshness` (heals structural, then runs the pure keeper) + standalone `--settle-structural-caches` + MCP `noctus.dev.settle_structural_caches`. The pure keeper `check_noc_graph_cache_freshness` is **unchanged** (still a side-effect-free detector — pre-commit/CI block decisions + the test suite rely on that), so the ~rebuild cost is never paid at commit time; it's paid only when staleness is genuinely *observed*.
+- `task_branch._settle_structural_caches()` remains the integrate/cleanup-specific observability leg (its `cache_settle` report shape is consumed by callers); it and `settle_structural_caches()` are the two instantiations of the same heal-on-contact idea (N=2 — accept-with-rationale: distinct return-shape contracts).
+
+Net: **the structural-cache staleness warning never reaches the user** — it self-resolves the instant freshness is checked. Embedding staleness still surfaces (cost is a human decision).
+
 ## Deferred follow-ups (next session candidates)
 
 1. **Embedding-model version stamp**: cache rows don't currently record the model name. If the seed lib upgrades `text-embedding-3-small` → `4-small`, dim mismatch errors only surface at retrieve time. A `model:` column per row + a startup check would auto-trigger force-refresh on model change.
@@ -118,3 +134,4 @@ The structural caches (noc-graph + auto-improvement) are **Tier-1 shared** acros
 - v4.0-beta (2026-05-26 morning): pre-commit hook leg 9b/9c/10 + per-cache freshness keepers were in place; assumed commit boundary covers freshness.
 - v4.0-beta (2026-05-26 evening): user observation surfaced the gap — `git pull` + branch switch don't fire pre-commit, leaving caches stale. This pattern + the hooks codify the closure.
 - 2026-05-30: user observation ("noc-graph shouldn't be stale — isn't it in the 8-way sync?") surfaced the cross-tree shared-cache transient at `task_branch` integrate/cleanup. Diagnosed (a leg-ordering hypothesis was disproven; source-sha is deterministic) → closed with the only-stale + best-effort `_settle_structural_caches()` settle leg above.
+- 2026-05-31: user ("noc-graph staleness happens a lot, solve once and for all") forced the GENERALIZATION. Root: git skips `post-merge` on fast-forward merges (the dev workflow is FF-based) + out-of-commit `auto-improvement.ndjson` appends → the eager hooks can't catch the mutating event. Closed with `settle_structural_caches()` **heal-on-contact** at the freshness-check entry points (see § Heal-on-contact) — structural caches self-heal when freshness is observed; embedding caches stay warn-only.
