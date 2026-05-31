@@ -58,6 +58,25 @@ sqlalchemy>=2.0.0
 # sqlalchemy above (CI backend jobs install the root superset).
 defusedxml>=0.7.1
 
+# Product-specific runtime deps absorbed into the superset (2026-05-31) — same
+# completeness reason as sqlalchemy/defusedxml above: this root requirements.txt
+# IS what the CI backend-test jobs + `noctus.dev.predeploy_check` install, so any
+# product runtime dep a test imports at collection MUST be here or that product's
+# tests fail in CI/predeploy. Each product's OWN image installs its own
+# requirements.txt, so PROD was always fine — this is test-env superset parity.
+# Surfaced by the fleet-wide predeploy before a deploy (KE test_docx_export.py →
+# ModuleNotFoundError: docx); the drift silently spanned 4 products.
+anthropic>=0.40.0                # therapy-platform (LLM)
+cryptography>=42.0.0             # social-wiring (token encryption)
+gdown>=5.2.0                     # knowledge-extractor + social-wiring (drive pull)
+google-auth>=2.30.0             # knowledge-extractor (drive oauth)
+google-auth-httplib2>=0.2.0     # knowledge-extractor + social-wiring
+google-generativeai>=0.8.0      # therapy-platform (LLM)
+pdfminer.six>=20231228          # social-wiring (pdf extract)
+psycopg2-binary>=2.9.0          # daily-life
+python-docx>=1.1.0              # knowledge-extractor (docx_export service)
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.21.0
+pytest-timeout>=2.3.0           # social-wiring test suite
