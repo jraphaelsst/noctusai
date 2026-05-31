@@ -20,6 +20,7 @@ from tools.noctus.dev.compliance import (
     check_seed_canonical_default,
     check_query_fn_returns_undefined,
     check_derives_from_dev_only_artifact,
+    check_root_requirements_superset,
     check_limiter_conftest_import,
     check_playwright_supabase_env,
     check_rls_policy_self_reference,
@@ -2216,6 +2217,57 @@ class TestCheckPlaywrightSupabaseEnv:
     def test_no_webserver_is_out_of_scope(self):
         cfg = "export default defineConfig({ testDir: './e2e' });\n"
         assert check_playwright_supabase_env(self._mk("nows", cfg)) == []
+
+
+class TestCheckRootRequirementsSuperset:
+    """root requirements.txt must be a superset of every product backend's deps
+    (CI + predeploy install the root file). Regression for the 2026-05-31
+    python-docx deploy blocker."""
+
+    def _mk(self, root_reqs: str, product_reqs: dict[str, str]) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="req_superset_test_"))
+        (tmp / "requirements.txt").write_text(root_reqs)
+        for slug, reqs in product_reqs.items():
+            be = tmp / "products" / slug / "backend"
+            be.mkdir(parents=True, exist_ok=True)
+            (be / "requirements.txt").write_text(reqs)
+        return tmp
+
+    def test_complete_superset_passes(self):
+        repo = self._mk(
+            "fastapi>=0.1\npython-docx>=1.1.0\nanthropic>=0.40.0\n",
+            {"ke": "fastapi>=0.1\npython-docx>=1.1.0  # docx_export\n",
+             "therapy": "anthropic>=0.40.0\n"},
+        )
+        assert check_root_requirements_superset(repo) == []
+
+    def test_missing_product_dep_flags_high(self):
+        repo = self._mk(
+            "fastapi>=0.1\n",  # missing python-docx
+            {"ke": "fastapi>=0.1\npython-docx>=1.1.0\n"},
+        )
+        issues = check_root_requirements_superset(repo)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "high"
+        assert issues[0]["product"] == "ke"
+        assert "python-docx" in issues[0]["issue"]
+        assert issues[0]["symbol"] == "root-requirements-superset-incomplete"
+
+    def test_editable_and_comment_lines_ignored(self):
+        repo = self._mk(
+            "fastapi>=0.1\n",
+            {"p": "-e ../../seed/lib/backend\n# a comment\nfastapi>=0.1\n"},
+        )
+        assert check_root_requirements_superset(repo) == []
+
+    def test_name_normalization_underscore_dash(self):
+        # product uses `python_docx`, root uses `python-docx` — pip-equivalent.
+        repo = self._mk("python-docx>=1.1.0\n", {"p": "python_docx>=1.1.0\n"})
+        assert check_root_requirements_superset(repo) == []
+
+    def test_real_repo_superset_is_complete(self):
+        # The live repo must satisfy the invariant (guards against re-drift).
+        assert check_root_requirements_superset() == []
 
 
 class TestCheckRlsPolicySelfReference:

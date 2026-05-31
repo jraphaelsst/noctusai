@@ -7942,6 +7942,10 @@ def check_all_products() -> tuple[int, list]:
     # Global (non-per-product) checks.
     all_issues.extend(check_out_of_contract_trees())
     all_issues.extend(check_seed_version_propagation())
+    # root requirements.txt is the superset CI + predeploy install — every
+    # product-backend dep must be in it or that product's tests fail against an
+    # incomplete root venv (the python-docx deploy blocker, 2026-05-31).
+    all_issues.extend(check_root_requirements_superset())
     all_issues.extend(check_phase_state_consistency())
     # dispatch-with-PROJECT-and-notes (2026-05-26) — every PROJECT.md with §6
     # phases carries §4a Dispatch routing (slice→lens · codification s1-s4 ·
@@ -11035,6 +11039,67 @@ def check_pre_deploy_gate(repo_root: Path | None = None) -> list[dict]:
     issues.extend(check_cache_backend_env_matches_environment(repo_root))
     issues.extend(check_drift_shield(repo_root))
     issues.extend(check_slip_shield(repo_root))
+    return issues
+
+
+def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict]:
+    """The root `requirements.txt` is the "unified superset" that the CI
+    backend-test jobs (`pip install -r requirements.txt` from repo-root) AND
+    `noctus.dev.predeploy_check` (pytest in the root venv) install — so EVERY
+    product-backend dependency MUST be present in it. When it drifts (a product
+    adds a dep but it isn't added to root), that product's tests fail against an
+    incomplete root venv even though prod is fine (each image installs its OWN
+    requirements.txt). Surfaced 2026-05-31 as the python-docx deploy blocker — 4
+    products had silently drifted. This keeper makes the superset invariant
+    ENFORCED instead of hope-based (the file already carries hand-maintained
+    `sqlalchemy`/`defusedxml` absorptions; this is their guardrail).
+
+    Predicate: `union(every products/*/backend/requirements.txt package) ⊆ root`.
+    Editable installs (`-e`) and comments are ignored (via the shared
+    `_parse_requirements`, which strips inline comments); names normalised
+    lower + `_`→`-` (pip-equivalent) to avoid false hits.
+
+    Severity HIGH — an incomplete superset breaks the backend CI/predeploy gate.
+    Silent skip when root requirements.txt or products/ are absent (non-noc tree).
+    KB § PATTERNS/devops/dev-prod-parity.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    root_req = root / "requirements.txt"
+    products_dir = root / "products"
+    if not root_req.exists() or not products_dir.is_dir():
+        return issues
+    try:
+        from .analyzers import _parse_requirements
+    except Exception:  # noqa: BLE001 — defensive
+        return issues
+
+    def _norm(s: str) -> str:
+        return s.lower().replace("_", "-")
+
+    root_pkgs = {_norm(p) for p in _parse_requirements(root_req.read_text()).keys()}
+    for prod_req in sorted(products_dir.glob("*/backend/requirements.txt")):
+        product = prod_req.parts[-3]
+        if product == "seed":
+            continue
+        try:
+            prod_pkgs = {_norm(p) for p in _parse_requirements(prod_req.read_text()).keys()}
+        except Exception:  # noqa: BLE001 — a malformed product file is its own concern
+            continue
+        for pkg in sorted(prod_pkgs - root_pkgs):
+            issues.append({
+                "product": product,
+                "file": "requirements.txt",
+                "issue": (
+                    f"'{product}' backend requires '{pkg}' but it is MISSING from the "
+                    f"root requirements.txt superset — the CI backend-test jobs + "
+                    f"predeploy_check install the ROOT file, so '{product}'s tests fail "
+                    f"against an incomplete root venv (prod is fine; its image installs "
+                    f"its own requirements). Add '{pkg}' to the root requirements.txt."
+                ),
+                "severity": "high",
+                "symbol": "root-requirements-superset-incomplete",
+            })
     return issues
 
 

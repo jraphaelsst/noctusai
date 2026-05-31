@@ -59,7 +59,7 @@ Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-i
 
 | Workflow | Jobs | Covers |
 |---|---|---|
-| `test.yml` | `erp/core/pf-backend-tests` | product FastAPI suites (pytest) |
+| `test.yml` | **`product-backend-tests`** (matrix: core · erp-imobiliario · personal-finance · social-wiring · therapy-platform · knowledge-extractor · adconnect · daily-life · dev-team) | product FastAPI suites (pytest) — matrixed over all 9 backends 2026-05-31 (was 3; the 6 ungated ones hid KE's missing dep until deploy pre-flight) |
 | | `erp/core/pf-frontend-build` | product Vite builds compile |
 | | **`product-frontend-tests`** (matrix: social-wiring · personal-finance · erp-imobiliario · therapy-platform · daily-life) | **product FE vitest suites** — the FE-test gate, matrixed 2026-05-31 |
 | | `core/erp-e2e-tests` | Playwright e2e |
@@ -69,7 +69,7 @@ Composes with [[phased-push-policy]] (R4 — phased increments, 100%-sure, per-i
 | `embedding-cache-gate.yml` | embedding-cache parity | conditional (gated on validation-surface reachability) |
 | `build-and-push.yml` | GHCR artifacts | **`main`-only** by design — ships deploy images, not an integration gate |
 
-**The rule that keeps this honest: a new test surface ships with its CI job IN THE SAME COMMIT.** Adding a test suite (a new product FE suite → a matrix entry; a new keeper → it's already under `mcp-toolkit-tests`; a new product backend → a `*-backend-tests` job) WITHOUT wiring it into the matrix above is a silent unenforced gate — forbidden. When a product grows its first FE test file, add it to the `product-frontend-tests` matrix the same commit (products with **zero** test files are omitted on purpose — `vitest run` fails on "no test files found"). The bless presents this table's state (latest `dev` run + `noctus.dev.release stage='status'`); a single red anywhere = no bless.
+**The rule that keeps this honest: a new test surface ships with its CI job IN THE SAME COMMIT.** Adding a test suite (a new product FE suite → a `product-frontend-tests` matrix entry; a new product backend → a `product-backend-tests` matrix entry; a new keeper → it's already under `mcp-toolkit-tests`) WITHOUT wiring it into the matrix above is a silent unenforced gate — forbidden. Both matrices install the root `requirements.txt` superset, kept complete by the `check_root_requirements_superset` keeper (a product dep missing from root breaks its backend job — the python-docx deploy blocker that prompted both this matrix and the keeper). When a product grows its first FE test file, add it to the `product-frontend-tests` matrix the same commit (products with **zero** test files are omitted on purpose — `vitest run` fails on "no test files found"). The bless presents this table's state (latest `dev` run + `noctus.dev.release stage='status'`); a single red anywhere = no bless.
 
 ### 0.3 Always return to `dev`
 `dev` is the **default resting state** of the primary checkout. Whenever you `git switch`/`checkout`/inspect a worker branch, **switch back to `dev`** when done — never leave the primary checkout parked on a worker branch or on `main`. Prefer inspecting worker branches **without switching** (`git diff dev feat/<slice>`, `git show <branch>:<path>`); concurrent *active* work uses isolated worktrees, never a shared switch (§9a — concurrent agents never share one checkout).

@@ -27,9 +27,31 @@ permissions:
   security-events: write
 
 jobs:
-  erp-backend-tests:
-    name: ERP Backend Tests
+  product-backend-tests:
+    # Per-product backend pytest. WAS 3 hand-maintained jobs (erp/core/pf) — the
+    # OTHER 6 product backends had NO CI job, so KE's missing dep (python-docx,
+    # absent from the root superset) only surfaced at deploy pre-flight, never in
+    # CI (the unenforced-gate class — same as the FE-test matrix this session).
+    # Matrixed over ALL 9 products with a backend suite (2026-05-31; predeploy
+    # proved each passes). Each installs the ROOT requirements.txt (the unified
+    # superset — check_root_requirements_superset keeps it complete) + pytest, then
+    # runs that product's suite. fail-fast:false. (Per-product-install for full
+    # dev↔prod parity is a tracked follow-up; the keeper makes root-install safe.)
+    name: Product Backend Tests (pytest)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product:
+          - core
+          - erp-imobiliario
+          - personal-finance
+          - social-wiring
+          - therapy-platform
+          - knowledge-extractor
+          - adconnect
+          - daily-life
+          - dev-team
 
     steps:
       - uses: actions/checkout@v4
@@ -40,82 +62,25 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
+      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
-      - name: Install dependencies
+      - name: Install dependencies (root superset)
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
 
       - name: Run tests
-        working-directory: products/erp-imobiliario/backend
+        working-directory: products/${{ matrix.product }}/backend
         run: pytest --tb=short -q
 
-  core-backend-tests:
-    name: Core Backend Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
-
-      - name: Run tests
-        working-directory: products/core/backend
-        run: pytest --tb=short -q
-
-      - name: FRAMEWORK_DEPS parity (moved from compose-validate; needs noctusai_lib from requirements)
+      - name: FRAMEWORK_DEPS parity (core — needs noctusai_lib from requirements)
+        if: ${{ matrix.product == 'core' }}
         run: python mcp/noctusai/cli.py --check-framework-deps
-
-  pf-backend-tests:
-    name: PF Backend Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
-
-      - name: Run tests
-        working-directory: products/personal-finance/backend
-        run: pytest --tb=short -q
 
   erp-frontend-build:
     name: ERP Frontend Build
