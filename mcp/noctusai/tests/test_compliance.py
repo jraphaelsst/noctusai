@@ -2253,12 +2253,27 @@ class TestCheckRootRequirementsSuperset:
         assert "python-docx" in issues[0]["issue"]
         assert issues[0]["symbol"] == "root-requirements-superset-incomplete"
 
-    def test_editable_and_comment_lines_ignored(self):
+    def test_comment_lines_ignored_editables_matched(self):
+        # comments ignored; an editable in the product that IS in root (modulo the
+        # `../../` prefix) does not flag.
         repo = self._mk(
-            "fastapi>=0.1\n",
+            "-e seed/lib/backend\nfastapi>=0.1\n",
             {"p": "-e ../../seed/lib/backend\n# a comment\nfastapi>=0.1\n"},
         )
         assert check_root_requirements_superset(repo) == []
+
+    def test_missing_editable_flags_high(self):
+        # product editable-installs the seed FRAMEWORK but root only has the lib —
+        # the noctusai_seed gap (2026-05-31).
+        repo = self._mk(
+            "-e seed/lib/backend\nfastapi>=0.1\n",  # missing -e seed/framework/backend
+            {"p": "-e ../../seed/lib/backend\n-e ../../seed/framework/backend\nfastapi>=0.1\n"},
+        )
+        issues = check_root_requirements_superset(repo)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "high"
+        assert issues[0]["symbol"] == "root-requirements-superset-incomplete-editable"
+        assert "seed/framework/backend" in issues[0]["issue"]
 
     def test_name_normalization_underscore_dash(self):
         # product uses `python_docx`, root uses `python-docx` — pip-equivalent.

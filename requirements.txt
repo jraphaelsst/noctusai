@@ -1,8 +1,13 @@
 # Root requirements — unified superset for all backends
 # Per-backend requirements.txt files are kept for independent Docker deploys.
 
-# Shared package (editable install)
+# Shared packages (editable installs) — BOTH seed packages, so the CI backend
+# matrix + predeploy (which install this root file) can import them. Root had only
+# noctusai_lib; products that import `noctusai_seed` (the create_product_app
+# framework) at test collection — KE / therapy / dev-team — failed in CI with
+# ModuleNotFoundError until seed/framework/backend was added here (2026-05-31).
 -e seed/lib/backend
+-e seed/framework/backend
 
 # Core dependencies (shared by all backends)
 fastapi==0.115.5

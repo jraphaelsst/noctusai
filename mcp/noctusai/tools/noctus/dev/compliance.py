@@ -11077,13 +11077,40 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
     def _norm(s: str) -> str:
         return s.lower().replace("_", "-")
 
-    root_pkgs = {_norm(p) for p in _parse_requirements(root_req.read_text()).keys()}
+    def _editables(content: str) -> set[str]:
+        """`-e <path>` lines → in-repo target, canonicalised by DROPPING leading
+        `./` and `../` components so the same seed package compares equal whether
+        written `seed/lib/backend` (from root) or `../../seed/lib/backend` (from a
+        product, two dirs deeper). The noctusai_seed gap (2026-05-31) was an
+        editable install present in products but not root — invisible to a
+        package-name-only check, hence this leg. URL editables (`git+…`) are kept
+        verbatim (they compare equal across files anyway)."""
+        out: set[str] = set()
+        for line in content.splitlines():
+            line = line.strip()
+            if not line.startswith("-e "):
+                continue
+            target = line[3:].split("#", 1)[0].strip()
+            if not target:
+                continue
+            if "://" in target:
+                out.add(target)
+                continue
+            parts = [p for p in target.replace("\\", "/").split("/") if p not in ("", ".", "..")]
+            out.add("/".join(parts))
+        return out
+
+    root_text = root_req.read_text()
+    root_pkgs = {_norm(p) for p in _parse_requirements(root_text).keys()}
+    root_edit = _editables(root_text)
     for prod_req in sorted(products_dir.glob("*/backend/requirements.txt")):
         product = prod_req.parts[-3]
         if product == "seed":
             continue
         try:
-            prod_pkgs = {_norm(p) for p in _parse_requirements(prod_req.read_text()).keys()}
+            prod_text = prod_req.read_text()
+            prod_pkgs = {_norm(p) for p in _parse_requirements(prod_text).keys()}
+            prod_edit = _editables(prod_text)
         except Exception:  # noqa: BLE001 — a malformed product file is its own concern
             continue
         for pkg in sorted(prod_pkgs - root_pkgs):
@@ -11099,6 +11126,19 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
                 ),
                 "severity": "high",
                 "symbol": "root-requirements-superset-incomplete",
+            })
+        for tgt in sorted(prod_edit - root_edit):
+            issues.append({
+                "product": product,
+                "file": "requirements.txt",
+                "issue": (
+                    f"'{product}' backend editable-installs '-e {tgt}' but the root "
+                    f"requirements.txt superset does NOT — CI backend jobs + predeploy "
+                    f"install the ROOT file, so '{product}' fails with ModuleNotFoundError "
+                    f"for that package (the noctusai_seed gap). Add '-e {tgt}' to root."
+                ),
+                "severity": "high",
+                "symbol": "root-requirements-superset-incomplete-editable",
             })
     return issues
 
