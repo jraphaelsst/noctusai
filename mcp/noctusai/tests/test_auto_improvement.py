@@ -179,6 +179,19 @@ class TestLogResolveFields:
         assert r["ok"] is False
         assert "resolve_to must be one of" in r["error"]
 
+    def test_log_entry_eager_refreshes_mirror(self, tmp_repo):
+        # 3-leg keeper-mirror contract: log_entry must leave the mirror cache
+        # FRESH at the mutation point (not stale awaiting lazy/heal-on-contact
+        # rebuild). Proof: a refresh() immediately after reports 'in-sync'
+        # (no rebuild needed). If log_entry only appended (the old lazy path),
+        # the cache would be stale → this refresh would report 'rebuilt'.
+        ai.log_entry(scope="broad", kind="improvement", target="x", description="first")
+        r = ai.refresh()
+        assert r["status"] == "in-sync", f"expected eager-refreshed mirror, got {r}"
+        # A second append also stays compliant immediately.
+        ai.log_entry(scope="broad", kind="drift", target="y", description="second")
+        assert ai.refresh()["status"] == "in-sync"
+
 
 class TestReconcile:
     def _seed_compliance(self, root: Path, *keeper_names: str) -> None:

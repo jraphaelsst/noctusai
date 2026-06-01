@@ -184,7 +184,24 @@ def log_entry(
     LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    # Lazy: next query() call will detect source_sha mismatch and rebuild.
+    # 3-leg keeper-mirror contract: EAGER-refresh the mirror cache at the
+    # mutation point (zero-OpenAI, source_sha-guarded) so the cache stays
+    # COMPLIANT by construction — the freshness check is then a true no-op,
+    # instead of the cache sitting stale until a query()/8-way-check heals it
+    # on contact (the 2026-06-01 trap: a codify_log append left the
+    # auto-improvement cache stale → blocked an UNRELATED commit [high]). This
+    # is the proactive mechanism the other mirrors already use (refresh-on-source-
+    # mutate); heal-on-contact (settle_structural_caches) stays ONLY as the
+    # FF-merge / cross-tree fallback. Best-effort: a refresh failure is LOGGED,
+    # the lazy rebuild + heal-on-contact still cover it (no silent error).
+    try:
+        refresh()
+    except Exception as exc:  # noqa: BLE001 — eager refresh is best-effort
+        logging.getLogger(__name__).warning(
+            "auto_improvement.log_entry: eager mirror refresh skipped (%s); "
+            "lazy rebuild + heal-on-contact remain the fallback",
+            exc,
+        )
     # `relative_to` may fail when tests monkeypatch LEDGER_PATH out of REPO_ROOT;
     # fall back to the absolute path so the return shape stays stable.
     try:
