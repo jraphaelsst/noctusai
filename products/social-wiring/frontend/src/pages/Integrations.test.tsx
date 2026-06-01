@@ -1,5 +1,5 @@
 /**
- * Tests for the Integrations page and AddAccountModal.
+ * Tests for Integrations page, AddAccountModal, and the unified Conexoes page.
  *
  * Strategy: ONE consolidated mock of @/hooks/useIntegrationAccounts (vi.mock is
  * file-scoped + hoisted — multiple mocks of the same module collide and the last
@@ -8,6 +8,9 @@
  * automatic react/jsx-runtime → a single React instance; `require("react")`
  * pulled a 2nd CJS instance → dual-React). Queries come from the render return
  * (bound to the actual container) rather than the global `screen`.
+ *
+ * Shape note: providers use `id` (not `name`), manual fields use `name` (not `key`).
+ * API returns bare arrays/objects — no envelope wrappers.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -25,9 +28,10 @@ const mockSetDefault = vi.fn();
 const mockDelete = vi.fn();
 const mockCreate = vi.fn();
 const mockOAuth = vi.fn();
+const mockAdoptLegacy = vi.fn();
 
 // No importOriginal — the real module imports the Supabase client (needs
-// build-time VITE_* env). The components only import these 6 hooks (+ erased
+// build-time VITE_* env). The components only import these hooks (+ erased
 // types) from this module, so providing them directly is complete.
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationProviders: mockProviders,
@@ -36,6 +40,29 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useDeleteAccount: mockDelete,
   useCreateAccount: mockCreate,
   useStartYouTubeOAuth: mockOAuth,
+  useAdoptLegacy: mockAdoptLegacy,
+}));
+
+// WhatsApp connections hooks (needed by Conexoes which embeds WhatsAppConnections)
+vi.mock("@/hooks/useWhatsAppConnections", () => ({
+  useWhatsAppConnections: vi.fn(() => ({ data: [], isLoading: false })),
+  useWhatsAppConnectionMutations: vi.fn(() => ({
+    create: { mutate: vi.fn(), isPending: false },
+    remove: { mutate: vi.fn(), isPending: false },
+  })),
+  useWhatsAppConnectionStatus: vi.fn(() => ({ data: null })),
+  useWhatsAppConnectionQr: vi.fn(() => ({ data: null })),
+  useWhatsAppConnectionActions: vi.fn(() => ({
+    start: { mutate: vi.fn(), isPending: false },
+    restart: { mutate: vi.fn(), isPending: false },
+    logout: { mutate: vi.fn(), isPending: false },
+    configureWebhook: { mutate: vi.fn(), isPending: false },
+  })),
+}));
+
+// react-router-dom (needed by Conexoes for useSearchParams)
+vi.mock("react-router-dom", () => ({
+  useSearchParams: vi.fn(() => [new URLSearchParams(), vi.fn()]),
 }));
 
 // ─── UI-primitive mocks (JSX — single React instance) ──────────────────────
@@ -82,7 +109,7 @@ vi.mock("@/components/AddAccountModal", () => ({
     <div data-testid="add-account-modal"><button onClick={onClose}>Close</button></div>
   ),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // Sensible defaults each test can override.
 beforeEach(() => {
@@ -91,7 +118,8 @@ beforeEach(() => {
   mockSetDefault.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockDelete.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockCreate.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  mockOAuth.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockOAuth.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+  mockAdoptLegacy.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
 });
 
 async function renderPage() {
@@ -101,7 +129,14 @@ async function renderPage() {
   return { ...rtl.render(React.createElement(Integrations)), fireEvent: rtl.fireEvent };
 }
 
-// ─── Page states ───────────────────────────────────────────────────────────
+async function renderConexoes() {
+  const { default: Conexoes } = await import("./Conexoes");
+  const React = (await import("react")).default;
+  const rtl = await import("@testing-library/react");
+  return { ...rtl.render(React.createElement(Conexoes)), fireEvent: rtl.fireEvent };
+}
+
+// ─── Integrations page states ─────────────────────────────────────────────
 describe("Integrations page — loading state", () => {
   it("renders loading spinner when providers loading", async () => {
     mockProviders.mockReturnValue({ data: [], isLoading: true, isError: false });
@@ -119,13 +154,15 @@ describe("Integrations page — empty providers", () => {
 });
 
 describe("Integrations page — with providers", () => {
+  // Provider now uses `id` (not `name`)
   const mockProvider = {
-    name: "youtube", display_name: "YouTube", oauth_supported: true,
-    manual_key_fields: [], tutorial_url: null, scopes: [],
+    id: "youtube", display_name: "YouTube", oauth_supported: true,
+    manual_entry: false, manual_key_fields: [], tutorial_url: null,
+    scopes: [], icon: null,
   };
   const mockAccount = {
     id: "acc-1", provider: "youtube", account_label: "Canal Principal",
-    metadata: { channel: "main" }, is_default: true,
+    org_id: "org-1", metadata: { channel: "main" }, is_default: true,
     created_at: "2026-01-01", updated_at: "2026-01-01",
   };
 
@@ -155,20 +192,24 @@ describe("Integrations page — with providers", () => {
 
 // ─── AddAccountModal (the real component; UI primitives mocked) ─────────────
 describe("AddAccountModal", () => {
+  // Provider now uses `id`; manual_key_fields use `name` (not `key`)
   const oauthProvider = {
-    name: "youtube", display_name: "YouTube", oauth_supported: true,
+    id: "youtube", display_name: "YouTube", oauth_supported: true,
+    manual_entry: true,
     manual_key_fields: [
-      { key: "api_key", label: "API Key", placeholder: "AIza...", type: "password" as const },
+      { name: "api_key", label: "API Key", placeholder: "AIza...", type: "password" as const },
     ],
-    tutorial_url: "https://developers.google.com/youtube/v3/getting-started", scopes: [],
+    tutorial_url: "https://developers.google.com/youtube/v3/getting-started",
+    scopes: [], icon: null,
   };
   const manualProvider = {
-    name: "n8n", display_name: "n8n", oauth_supported: false,
+    id: "n8n", display_name: "n8n", oauth_supported: false,
+    manual_entry: true,
     manual_key_fields: [
-      { key: "api_url", label: "API URL", placeholder: "https://n8n.example.com", type: "url" as const },
-      { key: "api_key", label: "API Key", placeholder: "n8n_...", type: "password" as const },
+      { name: "api_url", label: "API URL", placeholder: "https://n8n.example.com", type: "url" as const },
+      { name: "api_key", label: "API Key", placeholder: "n8n_...", type: "password" as const },
     ],
-    tutorial_url: null, scopes: [],
+    tutorial_url: null, scopes: [], icon: null,
   };
 
   async function renderModal(provider: string, providerConfig: any, onClose = vi.fn()) {
@@ -188,7 +229,7 @@ describe("AddAccountModal", () => {
     expect(getByText(/Conectar via OAuth/i)).toBeTruthy();
   });
 
-  it("renders manual form fields for n8n provider", async () => {
+  it("renders manual form fields for n8n provider (field.name-keyed)", async () => {
     // "API URL" / "API Key" appear in BOTH the field label and the help text,
     // so assert presence (≥1) rather than a single match.
     const { getAllByText } = await renderModal("n8n", manualProvider);
@@ -200,6 +241,43 @@ describe("AddAccountModal", () => {
     const { getByText, fireEvent, onClose } = await renderModal("n8n", manualProvider);
     fireEvent.click(getByText(/Cancelar/i));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// ─── Conexoes (unified page) ────────────────────────────────────────────────
+describe("Conexoes page", () => {
+  const youtubeProvider = {
+    id: "youtube", display_name: "YouTube", oauth_supported: true,
+    manual_entry: false, manual_key_fields: [], tutorial_url: null,
+    scopes: [], icon: null,
+  };
+
+  it("renders the Conexoes header", async () => {
+    const { getAllByText } = await renderConexoes();
+    expect(getAllByText(/Conexoes/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders WhatsApp section heading", async () => {
+    const { getByText } = await renderConexoes();
+    expect(getByText("WhatsApp")).toBeTruthy();
+  });
+
+  it("calls adopt-legacy on mount for youtube", async () => {
+    const adoptMutate = vi.fn();
+    mockAdoptLegacy.mockReturnValue({ mutate: adoptMutate, mutateAsync: vi.fn(), isPending: false });
+    mockProviders.mockReturnValue({ data: [youtubeProvider], isLoading: false, isError: false });
+    mockAccounts.mockReturnValue({ data: [], isLoading: false });
+
+    await renderConexoes();
+    // adopt.mutate() is called once on mount inside YouTubeSection
+    expect(adoptMutate).toHaveBeenCalled();
+  });
+
+  it("renders YouTube connect button", async () => {
+    mockProviders.mockReturnValue({ data: [youtubeProvider], isLoading: false, isError: false });
+    mockAccounts.mockReturnValue({ data: [], isLoading: false });
+    const { getByText } = await renderConexoes();
+    expect(getByText(/Conectar canal do YouTube/i)).toBeTruthy();
   });
 });
 

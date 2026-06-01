@@ -7,12 +7,14 @@
  *
  * Nav:
  *   Principal     · Dashboard / Criação de mídia / Email Marketing / YouTube
- *   WhatsApp      · Conexão / Monitor
- *   Configuração  · Configurações / Equipe / Integrações
+ *   Conexões      · Conexões (unified: WhatsApp + YouTube + providers) / Monitor
+ *   Configuração  · Configurações / Equipe
  *
- * The former "Agente" / "Vídeos" / "Upload" entries are consolidated under
- * ONE "YouTube" page (Vídeos + Upload tabs; Agente is now Upload→Chat). The
- * `/chat` route stays public for direct access. pt-BR copy preserved.
+ * The former "Integrações" nav item is folded into "Conexões" — both the
+ * /conexoes and /integrations routes point to the same Conexoes page.
+ * The former separate "Conexão" (WhatsApp-only) is now embedded inside Conexoes.
+ * The standalone /conexao route is kept for back-compat (direct WAHA management).
+ * pt-BR copy preserved.
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
@@ -24,7 +26,7 @@ import {
   Users,
   Home,
   Mail,
-  Plug,
+  Link2,
   Settings as SettingsIcon,
   Settings2,
   Smartphone,
@@ -45,11 +47,11 @@ const Equipe = lazy(() => import("@/pages/Equipe"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const YouTube = lazy(() => import("@/pages/YouTube"));
 const Conexao = lazy(() => import("@/pages/Conexao"));
+const Conexoes = lazy(() => import("@/pages/Conexoes"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
 const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
 const EmailMarketing = lazy(() => import("@/pages/EmailMarketing"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-const Integrations = lazy(() => import("@/pages/Integrations"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -66,12 +68,12 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     ],
   },
   {
-    key: "whatsapp",
-    label: "WhatsApp",
+    key: "conexoes",
+    label: "Conexões",
     icon: Smartphone,
     defaultOpen: true,
     items: [
-      { name: "Conexão", href: "/conexao", icon: Smartphone, route: "conexao" },
+      { name: "Conexões", href: "/conexoes", icon: Link2, route: "conexao" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
     ],
   },
@@ -83,7 +85,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
-      { name: "Integrações", href: "/integrations", icon: Plug, route: "integrations" },
     ],
   },
 ];
@@ -102,12 +103,12 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
-    key: "whatsapp",
-    label: "WhatsApp",
+    key: "conexoes",
+    label: "Conexões",
     icon: Smartphone,
     defaultOpen: true,
     items: [
-      { name: "Conexão", href: "/conexao", icon: Smartphone },
+      { name: "Conexões", href: "/conexoes", icon: Link2 },
       { name: "Monitor", href: "/monitor", icon: Activity },
     ],
   },
@@ -119,7 +120,6 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Equipe", href: "/equipe", icon: Users },
-      { name: "Integrações", href: "/integrations", icon: Plug },
     ],
   },
 ];
@@ -139,11 +139,15 @@ export default createProductApp({
     { path: "/media-creation", component: MediaCreation },
     { path: "/email-marketing", component: EmailMarketing },
     { path: "/youtube", component: YouTube },
+    // Unified connections page (new canonical route)
+    { path: "/conexoes", component: Conexoes },
+    // Back-compat: /integrations → Conexoes (OAuth callback redirect target)
+    { path: "/integrations", component: Conexoes },
+    // Back-compat: /conexao → standalone WAHA-only page
     { path: "/conexao", component: Conexao },
     { path: "/monitor", component: Monitor },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
-    { path: "/integrations", component: Integrations },
   ],
   // /chat is public — the backend chat router is unauthenticated by
   // current product direction, so the frontend route matches that

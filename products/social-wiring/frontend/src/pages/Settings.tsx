@@ -1,21 +1,20 @@
 /**
- * Settings page — three-tab configuration cockpit.
+ * Settings page — two-tab configuration cockpit.
  *
- *   YouTube tab          OAuth status + connect/disconnect
  *   Notifications tab    SMTP + WAHA status (read-only) + recipient CRUD
  *   API Keys tab         Read-only health badges from /api/settings/keys/status
+ *
+ * NOTE: The YouTube connection tab was removed — YouTube accounts are now
+ * managed in the unified Conexoes page (/conexoes).
  */
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
   CircleAlert,
   Loader2,
   Plus,
-  Power,
   Trash2,
-  Youtube,
   Mail,
   MessageCircle,
   KeyRound,
@@ -31,7 +30,6 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
 import {
-  useYouTubeStatus,
   useRecipients,
   useKeysStatus,
   type KeyStatusEntry,
@@ -50,105 +48,6 @@ function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
       {ok ? <CheckCircle2 className="h-3 w-3" /> : <CircleAlert className="h-3 w-3" />}
       {ok ? "configurado" : "ausente"}
     </Badge>
-  );
-}
-
-// ─── YouTube tab ────────────────────────────────────────────────────────
-function YouTubeTab() {
-  const { data, loading, connect, disconnect } = useYouTubeStatus();
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  // The OAuth callback redirects with ?youtube=connected; surface a
-  // toast once and clear the param so a refresh doesn't repeat it.
-  useEffect(() => {
-    if (searchParams.get("youtube") === "connected") {
-      toast.success("Canal conectado com sucesso");
-      const next = new URLSearchParams(searchParams);
-      next.delete("youtube");
-      setSearchParams(next, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Youtube className="h-6 w-6 text-red-600" />
-            <div>
-              <CardTitle>YouTube</CardTitle>
-              <CardDescription>
-                Conexao OAuth com o canal que sera gerenciado.
-              </CardDescription>
-            </div>
-          </div>
-          <Badge variant={data?.connected ? "default" : "secondary"}>
-            {data?.connected ? "Conectado" : "Nao conectado"}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {data?.connected ? (
-          <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Canal</p>
-                <p className="font-medium">{data.channel_title ?? "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">ID do canal</p>
-                <p className="font-mono text-sm">{data.channel_id ?? "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Conectado em</p>
-                <p className="text-sm">
-                  {data.connected_at
-                    ? new Date(data.connected_at).toLocaleString("pt-BR")
-                    : "—"}
-                </p>
-              </div>
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Permissoes concedidas</p>
-                <p className="text-xs text-muted-foreground font-mono">
-                  {data.scopes.join("\n") || "—"}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={disconnect}
-                className="gap-2"
-              >
-                <Power className="h-4 w-4" />
-                Desconectar
-              </Button>
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center gap-4 py-8 text-center">
-            <p className="max-w-md text-sm text-muted-foreground">
-              Conecte um canal do YouTube para habilitar uploads, listagem
-              de videos e analytics. A autorizacao usa OAuth 2.0 com escopo
-              completo (upload + leitura).
-            </p>
-            <Button onClick={connect} size="lg" className="gap-2">
-              <Youtube className="h-4 w-4" />
-              Conectar canal do YouTube
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -322,9 +221,9 @@ function RecipientRow({
       <div className="flex flex-1 flex-col">
         <p className="font-medium">{recipient.name}</p>
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          {recipient.email && <span>📧 {recipient.email}</span>}
+          {recipient.email && <span>email: {recipient.email}</span>}
           {recipient.whatsapp_number && (
-            <span>💬 {recipient.whatsapp_number}</span>
+            <span>whatsapp: {recipient.whatsapp_number}</span>
           )}
         </div>
       </div>
@@ -415,21 +314,16 @@ export default function Settings() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">Configuracoes</h1>
         <p className="text-sm text-muted-foreground">
-          Gerencie a conexao com o YouTube, destinatarios de notificacao e
-          status das chaves de integracao.
+          Gerencie destinatarios de notificacao e status das chaves de integracao.
         </p>
       </header>
 
-      <Tabs defaultValue="youtube" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 sm:max-w-md">
-          <TabsTrigger value="youtube">YouTube</TabsTrigger>
+      <Tabs defaultValue="notifications" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 sm:max-w-xs">
           <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="youtube" className="mt-6">
-          <YouTubeTab />
-        </TabsContent>
         <TabsContent value="notifications" className="mt-6">
           <NotificationsTab />
         </TabsContent>

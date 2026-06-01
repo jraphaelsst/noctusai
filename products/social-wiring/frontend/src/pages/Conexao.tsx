@@ -451,8 +451,13 @@ function ConnectionRow({
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
-export default function ConexaoPage() {
+// ─── WhatsApp connections — exported so Conexoes.tsx can embed it ────────────
+/**
+ * WhatsAppConnections renders the full WAHA session management UI without the
+ * outer page container. Import this into Conexoes.tsx to embed under a section
+ * heading.
+ */
+export function WhatsAppConnections() {
   const { data: lines, isLoading } = useWhatsAppConnections();
   const { create, remove } = useWhatsAppConnectionMutations();
   const [creating, setCreating] = useState(false);
@@ -487,15 +492,12 @@ export default function ConexaoPage() {
   };
 
   return (
-    <div className="container max-w-3xl space-y-6 py-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Conexões WhatsApp</h1>
-          <p className="text-sm text-muted-foreground">
-            Clique numa sessão para ver, editar e gerenciar — API key e QR code,
-            sem abrir o painel do WAHA.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Clique numa sessão para ver, editar e gerenciar — API key e QR code,
+          sem abrir o painel do WAHA.
+        </p>
         <Button onClick={() => setCreating(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nova conexão
@@ -559,6 +561,18 @@ export default function ConexaoPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+// ─── Standalone page wrapper (for /conexao direct route) ──────────────────────
+export default function ConexaoPage() {
+  return (
+    <div className="container max-w-3xl space-y-6 py-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Conexões WhatsApp</h1>
+      </div>
+      <WhatsAppConnections />
     </div>
   );
 }

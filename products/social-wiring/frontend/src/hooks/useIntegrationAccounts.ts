@@ -7,6 +7,8 @@
  *
  * Providers: YouTube, Meta, n8n, Google Drive, Gmail (WAHA excluded — handled
  * by Conexao page / useWhatsAppConnections).
+ *
+ * API contract: all endpoints return bare arrays/objects (NO envelope).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
@@ -14,23 +16,28 @@ import { api } from "@noctusai/seed/infra";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface ManualKeyField {
-  key: string;
+  /** BE uses `name` (not `key`) */
+  name: string;
   label: string;
   placeholder: string;
   type: "text" | "password" | "url";
 }
 
 export interface IntegrationProvider {
-  name: string;
+  /** BE uses `id` (not `name`) */
+  id: string;
   display_name: string;
+  icon: string | null;
   oauth_supported: boolean;
+  manual_entry: boolean;
   manual_key_fields: ManualKeyField[];
-  tutorial_url: string | null;
   scopes: string[];
+  tutorial_url: string | null;
 }
 
 export interface IntegrationAccount {
   id: string;
+  org_id: string;
   provider: string;
   account_label: string;
   metadata: Record<string, unknown>;
@@ -49,12 +56,13 @@ export interface CreateAccountInput {
 
 export interface UpdateAccountInput {
   account_label?: string;
-  credential?: Record<string, string>;
   metadata?: Record<string, unknown>;
+  is_default?: boolean;
 }
 
 export interface OAuthStartResponse {
   auth_url: string;
+  state: string;
 }
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -72,10 +80,8 @@ export function useIntegrationProviders() {
   return useQuery({
     queryKey: PROVIDERS_KEY,
     queryFn: async () => {
-      const res = await api.get<{ providers: IntegrationProvider[] }>(
-        "/api/integrations/providers"
-      );
-      return res.providers ?? [];
+      const res = await api.get<IntegrationProvider[]>("/api/integrations/providers");
+      return res ?? [];
     },
     staleTime: 5 * 60 * 1000, // provider list changes rarely
   });
@@ -90,8 +96,8 @@ export function useIntegrationAccounts(provider?: string) {
       const url = provider
         ? `/api/integrations/accounts?provider=${encodeURIComponent(provider)}`
         : "/api/integrations/accounts";
-      const res = await api.get<{ data: IntegrationAccount[] }>(url);
-      return res.data ?? [];
+      const res = await api.get<IntegrationAccount[]>(url);
+      return res ?? [];
     },
   });
 }
@@ -102,10 +108,8 @@ export function useIntegrationAccount(id: string) {
   return useQuery({
     queryKey: ACCOUNT_KEY(id),
     queryFn: async () => {
-      const res = await api.get<{ data: IntegrationAccount }>(
-        `/api/integrations/accounts/${id}`
-      );
-      return res.data;
+      const res = await api.get<IntegrationAccount>(`/api/integrations/accounts/${id}`);
+      return res;
     },
     enabled: !!id,
   });
@@ -117,10 +121,12 @@ export function useCreateAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateAccountInput) =>
-      api.post<{ data: IntegrationAccount }>("/api/integrations/accounts", payload),
-    onSuccess: (_, variables) => {
+      api.post<IntegrationAccount>("/api/integrations/accounts", payload),
+    onSuccess: (res, variables) => {
+      // res is a bare account; fall back to variables.provider
+      const provider = (res as any)?.provider ?? variables.provider;
       qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
-      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(variables.provider) });
+      if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
     },
   });
 }
@@ -129,9 +135,9 @@ export function useUpdateAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...payload }: UpdateAccountInput & { id: string }) =>
-      api.patch<{ data: IntegrationAccount }>(`/api/integrations/accounts/${id}`, payload),
+      api.patch<IntegrationAccount>(`/api/integrations/accounts/${id}`, payload),
     onSuccess: (res) => {
-      const provider = (res as any)?.data?.provider;
+      const provider = (res as any)?.provider;
       qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
       if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
     },
@@ -142,12 +148,9 @@ export function useSetDefaultAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api.patch<{ data: IntegrationAccount }>(
-        `/api/integrations/accounts/${id}/set-default`,
-        {}
-      ),
+      api.patch<IntegrationAccount>(`/api/integrations/accounts/${id}/set-default`, {}),
     onSuccess: (res) => {
-      const provider = (res as any)?.data?.provider;
+      const provider = (res as any)?.provider;
       qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
       if (provider) qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
     },
@@ -160,6 +163,28 @@ export function useDeleteAccount() {
     mutationFn: (id: string) => api.delete(`/api/integrations/accounts/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
+    },
+  });
+}
+
+// ─── Legacy adoption ─────────────────────────────────────────────────────────
+
+/**
+ * useAdoptLegacy — promotes a pre-existing single-account connection into a
+ * first-class default integration account. Idempotent; returns null when
+ * there's nothing to adopt.
+ */
+export function useAdoptLegacy(provider: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<IntegrationAccount | null>(
+        `/api/integrations/accounts/${provider}/adopt-legacy`,
+        {}
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY(provider) });
     },
   });
 }

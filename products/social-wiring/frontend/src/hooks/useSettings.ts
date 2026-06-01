@@ -1,29 +1,16 @@
 /**
  * Settings hooks — thin TanStack-Query wrappers over the /api/settings/*
  * endpoints. Splits each tab into its own hook so a slow API key check
- * doesn't block the YouTube tab from rendering.
+ * doesn't block a tab from rendering.
+ *
+ * NOTE: useYouTubeStatus was removed — YouTube connections are now managed
+ * in the unified Conexoes page via useIntegrationAccounts.
  */
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
 // ─── Types (mirror backend schemas) ─────────────────────────────────────
-export interface YouTubeStatus {
-  connected: boolean;
-  channel_id?: string | null;
-  channel_title?: string | null;
-  subscriber_count?: number | null;
-  video_count?: number | null;
-  view_count?: number | null;
-  scopes: string[];
-  connected_at?: string | null;
-}
-
-export interface YouTubeAuthURL {
-  auth_url: string;
-  state: string;
-}
-
 export interface Recipient {
   id: string;
   name: string;
@@ -71,53 +58,6 @@ export interface KeysStatus {
   database_backend: KeyStatusEntry;
   supabase_url: KeyStatusEntry;
   supabase_service_role_key: KeyStatusEntry;
-}
-
-// ─── YouTube tab ────────────────────────────────────────────────────────
-export function useYouTubeStatus() {
-  const [data, setData] = useState<YouTubeStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const status = await api.get<YouTubeStatus>("/api/settings/youtube/status");
-      setData(status);
-    } catch (err) {
-      // Backend returns 503 when ENCRYPTION_KEY is missing — surface to
-      // the user once, then let the tab show the "not connected" state
-      // so the UI stays interactive.
-      console.error("youtube status load failed", err);
-      setData({ connected: false, scopes: [] });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const connect = useCallback(async () => {
-    try {
-      const { auth_url } = await api.get<YouTubeAuthURL>("/api/settings/youtube/auth-url");
-      window.location.assign(auth_url);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao iniciar conexao com o YouTube");
-    }
-  }, []);
-
-  const disconnect = useCallback(async () => {
-    try {
-      await api.delete("/api/settings/youtube/disconnect");
-      toast.success("Canal desconectado");
-      await refresh();
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao desconectar");
-    }
-  }, [refresh]);
-
-  return { data, loading, connect, disconnect, refresh };
 }
 
 // ─── Recipients tab ─────────────────────────────────────────────────────

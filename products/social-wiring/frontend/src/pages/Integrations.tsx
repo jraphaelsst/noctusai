@@ -8,6 +8,8 @@
  *   · Empty state per provider
  *
  * WAHA is explicitly excluded — use the Conexao page for WhatsApp connections.
+ *
+ * NOTE: `ProviderSection` is exported so Conexoes.tsx can re-use it.
  */
 import { useState } from "react";
 import { Loader2, Plus, Star, StarOff, Trash2, Plug } from "lucide-react";
@@ -105,8 +107,9 @@ function AccountRow({
 
 // ─── Provider section ─────────────────────────────────────────────────────────
 
-function ProviderSection({ providerConfig }: { providerConfig: IntegrationProvider }) {
-  const { data: accounts = [], isLoading } = useIntegrationAccounts(providerConfig.name);
+export function ProviderSection({ providerConfig }: { providerConfig: IntegrationProvider }) {
+  // providerConfig.id is the canonical identifier (not .name)
+  const { data: accounts = [], isLoading } = useIntegrationAccounts(providerConfig.id);
   const setDefault = useSetDefaultAccount();
   const deleteMutation = useDeleteAccount();
 
@@ -178,10 +181,10 @@ function ProviderSection({ providerConfig }: { providerConfig: IntegrationProvid
         )}
       </CardContent>
 
-      {/* Add modal */}
+      {/* Add modal — passes providerConfig.id as the provider identifier */}
       {addOpen && (
         <AddAccountModal
-          provider={providerConfig.name}
+          provider={providerConfig.id}
           providerConfig={providerConfig}
           onClose={() => setAddOpen(false)}
         />
@@ -259,7 +262,7 @@ export default function Integrations() {
       ) : (
         <div className="space-y-4">
           {providers.map((p) => (
-            <ProviderSection key={p.name} providerConfig={p} />
+            <ProviderSection key={p.id} providerConfig={p} />
           ))}
         </div>
       )}

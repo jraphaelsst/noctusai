@@ -64,7 +64,7 @@ export default function AddAccountModal({
   const [showManual, setShowManual] = useState(!providerConfig.oauth_supported);
   const [label, setLabel] = useState("");
   const [fields, setFields] = useState<Record<string, string>>(() =>
-    Object.fromEntries(providerConfig.manual_key_fields.map((f) => [f.key, ""]))
+    Object.fromEntries(providerConfig.manual_key_fields.map((f) => [f.name, ""]))
   );
 
   // Only YouTube has a real OAuth flow in v1; other oauth_supported providers
@@ -73,8 +73,8 @@ export default function AddAccountModal({
   const oauthReady = providerConfig.oauth_supported && isYouTube;
   const oauthComingSoon = providerConfig.oauth_supported && !isYouTube;
 
-  function setField(key: string, value: string) {
-    setFields((prev) => ({ ...prev, [key]: value }));
+  function setField(fieldName: string, value: string) {
+    setFields((prev) => ({ ...prev, [fieldName]: value }));
   }
 
   async function handleOAuth() {
@@ -97,7 +97,7 @@ export default function AddAccountModal({
       return;
     }
     const missing = providerConfig.manual_key_fields.filter(
-      (f) => !fields[f.key]?.trim()
+      (f) => !fields[f.name]?.trim()
     );
     if (missing.length > 0) {
       toast.error(`Preencha: ${missing.map((f) => f.label).join(", ")}`);
@@ -186,13 +186,13 @@ export default function AddAccountModal({
                 />
               </div>
               {providerConfig.manual_key_fields.map((field) => (
-                <div key={field.key} className="grid gap-1.5">
-                  <Label htmlFor={`acc-${field.key}`}>{field.label} *</Label>
+                <div key={field.name} className="grid gap-1.5">
+                  <Label htmlFor={`acc-${field.name}`}>{field.label} *</Label>
                   <Input
-                    id={`acc-${field.key}`}
+                    id={`acc-${field.name}`}
                     type={field.type}
-                    value={fields[field.key] ?? ""}
-                    onChange={(e) => setField(field.key, e.target.value)}
+                    value={fields[field.name] ?? ""}
+                    onChange={(e) => setField(field.name, e.target.value)}
                     placeholder={field.placeholder}
                     disabled={saving}
                     autoComplete={field.type === "password" ? "off" : undefined}

@@ -2,9 +2,10 @@
  * Tests for useIntegrationAccounts hooks.
  *
  * Verifies:
- *   · queries return data from the API
+ *   · queries return data from the API (bare arrays/objects — no envelope)
  *   · mutations call the right endpoints and invalidate query keys
  *   · useStartYouTubeOAuth assigns window.location on success
+ *   · useAdoptLegacy calls adopt-legacy endpoint and invalidates accounts
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -62,41 +63,64 @@ import {
   useUpdateAccount,
   useSetDefaultAccount,
   useDeleteAccount,
+  useAdoptLegacy,
   useStartYouTubeOAuth,
 } from "./useIntegrationAccounts";
 
+// Reset mocks between tests to avoid cross-test pollution
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
 describe("useIntegrationProviders", () => {
-  it("calls GET /api/integrations/providers", async () => {
-    mockGet.mockResolvedValue({ providers: [{ name: "youtube", display_name: "YouTube" }] });
+  it("calls GET /api/integrations/providers and returns bare array", async () => {
+    // API now returns a BARE array (not {providers: [...]})
+    mockGet.mockResolvedValue([{ id: "youtube", display_name: "YouTube" }]);
     const hook = useIntegrationProviders() as any;
     const data = await hook._queryFn();
     expect(mockGet).toHaveBeenCalledWith("/api/integrations/providers");
     expect(data).toHaveLength(1);
-    expect(data[0].name).toBe("youtube");
+    // provider uses `id` (not `name`)
+    expect(data[0].id).toBe("youtube");
+  });
+
+  it("returns empty array when API returns null/undefined", async () => {
+    mockGet.mockResolvedValue(null);
+    const hook = useIntegrationProviders() as any;
+    const data = await hook._queryFn();
+    expect(data).toEqual([]);
   });
 });
 
 describe("useIntegrationAccounts", () => {
-  it("calls GET /api/integrations/accounts without filter", async () => {
-    mockGet.mockResolvedValue({ data: [] });
+  it("calls GET /api/integrations/accounts without filter and returns bare array", async () => {
+    mockGet.mockResolvedValue([]);
     const hook = useIntegrationAccounts() as any;
     await hook._queryFn();
     expect(mockGet).toHaveBeenCalledWith("/api/integrations/accounts");
   });
 
   it("calls GET /api/integrations/accounts?provider=youtube with filter", async () => {
-    mockGet.mockResolvedValue({ data: [] });
+    mockGet.mockResolvedValue([]);
     const hook = useIntegrationAccounts("youtube") as any;
     await hook._queryFn();
     expect(mockGet).toHaveBeenCalledWith(
       "/api/integrations/accounts?provider=youtube"
     );
   });
+
+  it("returns empty array when API returns null/undefined", async () => {
+    mockGet.mockResolvedValue(null);
+    const hook = useIntegrationAccounts() as any;
+    const data = await hook._queryFn();
+    expect(data).toEqual([]);
+  });
 });
 
 describe("useIntegrationAccount", () => {
-  it("calls GET /api/integrations/accounts/:id", async () => {
-    mockGet.mockResolvedValue({ data: { id: "abc", provider: "youtube" } });
+  it("calls GET /api/integrations/accounts/:id and returns bare object", async () => {
+    // API returns bare account (not {data: {...}})
+    mockGet.mockResolvedValue({ id: "abc", provider: "youtube" });
     const hook = useIntegrationAccount("abc") as any;
     const data = await hook._queryFn();
     expect(mockGet).toHaveBeenCalledWith("/api/integrations/accounts/abc");
@@ -106,7 +130,8 @@ describe("useIntegrationAccount", () => {
 
 describe("useCreateAccount", () => {
   it("calls POST and invalidates accounts keys", async () => {
-    mockPost.mockResolvedValue({ data: { id: "1", provider: "youtube" } });
+    // API returns bare account
+    mockPost.mockResolvedValue({ id: "1", provider: "youtube" });
     const hook = useCreateAccount() as any;
     await hook.mutateAsync({ provider: "youtube", account_label: "Main", credential: {} });
     expect(mockPost).toHaveBeenCalledWith(
@@ -118,20 +143,23 @@ describe("useCreateAccount", () => {
 });
 
 describe("useUpdateAccount", () => {
-  it("calls PATCH /api/integrations/accounts/:id", async () => {
-    mockPatch.mockResolvedValue({ data: { id: "1", provider: "youtube" } });
+  it("calls PATCH /api/integrations/accounts/:id with bare response", async () => {
+    // API returns bare account (not {data: {...}})
+    mockPatch.mockResolvedValue({ id: "1", provider: "youtube" });
     const hook = useUpdateAccount() as any;
     await hook.mutateAsync({ id: "1", account_label: "Updated" });
     expect(mockPatch).toHaveBeenCalledWith(
       "/api/integrations/accounts/1",
       expect.objectContaining({ account_label: "Updated" })
     );
+    expect(invalidateQueriesMock).toHaveBeenCalled();
   });
 });
 
 describe("useSetDefaultAccount", () => {
-  it("calls PATCH /api/integrations/accounts/:id/set-default", async () => {
-    mockPatch.mockResolvedValue({ data: { id: "1", provider: "youtube" } });
+  it("calls PATCH /api/integrations/accounts/:id/set-default with bare response", async () => {
+    // API returns bare account (not {data: {...}})
+    mockPatch.mockResolvedValue({ id: "1", provider: "youtube" });
     const hook = useSetDefaultAccount() as any;
     await hook.mutateAsync("1");
     expect(mockPatch).toHaveBeenCalledWith(
@@ -152,6 +180,27 @@ describe("useDeleteAccount", () => {
   });
 });
 
+describe("useAdoptLegacy", () => {
+  it("calls POST /api/integrations/accounts/:provider/adopt-legacy and invalidates", async () => {
+    mockPost.mockResolvedValue({ id: "acc-1", provider: "youtube" });
+    const hook = useAdoptLegacy("youtube") as any;
+    await hook.mutateAsync();
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/integrations/accounts/youtube/adopt-legacy",
+      {}
+    );
+    expect(invalidateQueriesMock).toHaveBeenCalled();
+  });
+
+  it("handles null response (nothing to adopt)", async () => {
+    mockPost.mockResolvedValue(null);
+    const hook = useAdoptLegacy("youtube") as any;
+    // Should not throw
+    const result = await hook.mutateAsync();
+    expect(result).toBeNull();
+  });
+});
+
 describe("useStartYouTubeOAuth", () => {
   it("calls POST /api/integrations/accounts/youtube/oauth/start", async () => {
     const assignSpy = vi.fn();
@@ -159,12 +208,13 @@ describe("useStartYouTubeOAuth", () => {
       value: { assign: assignSpy },
       writable: true,
     });
-    mockPost.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?foo=1" });
+    mockPost.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?foo=1", state: "abc" });
     const hook = useStartYouTubeOAuth() as any;
     await hook.mutateAsync();
     expect(mockPost).toHaveBeenCalledWith(
       "/api/integrations/accounts/youtube/oauth/start",
       {}
     );
+    expect(assignSpy).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/auth?foo=1");
   });
 });
