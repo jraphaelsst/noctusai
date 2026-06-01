@@ -9,6 +9,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
+import { useActiveAccountStore } from "@/state/useActiveAccount";
+
 // ─── Types (mirror backend schemas) ────────────────────────────────────
 export type PrivacyStatus = "public" | "unlisted" | "private";
 
@@ -102,10 +104,14 @@ export function isShort(video: Pick<Video, "duration">): boolean {
 interface UseVideosOptions {
   pageSize?: number;
   uploadedViaApp?: boolean;
+  /** When provided, fetches videos for a specific YouTube integration account. */
+  accountId?: string | null;
 }
 
 export function useVideos(options: UseVideosOptions = {}) {
-  const { pageSize = 50, uploadedViaApp } = options;
+  const { pageSize = 50, uploadedViaApp, accountId } = options;
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const effectiveAccountId = accountId ?? storeAccountId;
   const [items, setItems] = useState<Video[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [totalKnown, setTotalKnown] = useState(0);
@@ -121,9 +127,10 @@ export function useVideos(options: UseVideosOptions = {}) {
       if (uploadedViaApp !== undefined) {
         params.set("uploaded_via_app", String(uploadedViaApp));
       }
+      if (effectiveAccountId) params.set("account_id", effectiveAccountId);
       return `/api/videos?${params.toString()}`;
     },
-    [pageSize, uploadedViaApp],
+    [pageSize, uploadedViaApp, effectiveAccountId],
   );
 
   const refresh = useCallback(async () => {

@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { ConnectedAccountSwitcher } from "@/components/ConnectedAccountSwitcher";
 import { MetricCard } from "@/components/MetricCard";
 import { VideoCard } from "@/components/VideoCard";
 import { ViewsChart } from "@/components/ViewsChart";
@@ -268,6 +269,11 @@ export default function Dashboard() {
           Atualizar
         </Button>
       </div>
+
+      {/* Live account/client switcher — re-points the KPI/top-videos/recent
+          hooks via the shared useActiveAccountStore (same store as the YouTube
+          page), so the user can view a different account's data in-place. */}
+      <ConnectedAccountSwitcher />
 
       {error && (
         <Card>

@@ -98,3 +98,25 @@ export type {
 // renders the standard shape (title + prose + feedback buttons).
 export { DigestCard, splitProseIntoParagraphs } from "./ai";
 export type { DigestCardProps } from "./ai";
+
+// Integration card organ — config-driven card for provider integration accounts.
+// Driven by PROVIDER_CARD_CONFIG (youtube + whatsapp shipped); extend the registry
+// to add more providers — the card component needs no changes.
+export {
+  IntegrationCard,
+  IntegrationCardModal,
+  resolveStatusBadge,
+  PROVIDER_CARD_CONFIG,
+  getProviderConfig,
+} from "./integrations";
+export type {
+  IntegrationCardProps,
+  IntegrationCardModalProps,
+  IntegrationAccount,
+  IntegrationAccountPatch,
+  IntegrationStatus,
+  SecondaryField,
+  ModalSection,
+  ProviderCardConfig,
+  EditableField,
+} from "./integrations";

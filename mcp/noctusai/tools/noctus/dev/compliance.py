@@ -7528,6 +7528,10 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_auto_improvement_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_code_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_noc_graph_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    # consent-routes-mandate (2026-06-01) — seed-first LGPD/OAuth verification
+    # routes must never regress; no product may shadow them with a local copy.
+    # KB § PATTERNS/frontend/consent-routes-mandate.md.
+    "check_consent_routes_mounted": "tests/test_consent_routes_mandate.py",
 }
 
 
@@ -7903,6 +7907,224 @@ def check_canonical_organ_consumption(
     return issues
 
 
+# ── consent-routes-mandate (2026-06-01) ─────────────────────────────────────
+# Consent routes (/consent, /consent/privacy-policy, /consent/terms-of-use)
+# are mounted by the SEED in `createProductApp`'s AppRoutes. They are the
+# canonical URLs for Google OAuth verification + Meta App Review (LGPD/ABNT).
+# Three invariants:
+#   1. seed/framework/frontend/src/app.tsx mounts all 3 routes + imports the
+#      3 page components (ConsentHubPage, PrivacyPolicyPage, TermsOfUsePage).
+#   2. seed/framework/frontend/src/index.ts re-exports the 3 page components +
+#      the consent content module (so products/tests can consume them).
+#   3. No products/<slug>/frontend/ re-declares a `/consent*` route or defines
+#      a local ConsentHubPage/PrivacyPolicyPage/TermsOfUsePage component — a
+#      product inherits these via the seed; a local re-implementation is drift.
+# KB § PATTERNS/frontend/consent-routes-mandate.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CONSENT_ROUTE_PATHS = (
+    'path="/consent"',
+    'path="/consent/privacy-policy"',
+    'path="/consent/terms-of-use"',
+)
+_CONSENT_PAGE_IMPORTS = (
+    "ConsentHubPage",
+    "PrivacyPolicyPage",
+    "TermsOfUsePage",
+)
+_CONSENT_INDEX_EXPORTS = (
+    "ConsentHubPage",
+    "PrivacyPolicyPage",
+    "TermsOfUsePage",
+    # The content module is re-exported from './content/consent' — we check for
+    # the path, not a bare name.  Any export from that module path satisfies the
+    # invariant (the exact names change as the content evolves).
+    "content/consent",
+)
+# Component names that, if DEFINED (not just imported) in a product, constitute
+# a shadowing violation.  A bare import is fine (consuming the seed export is
+# the correct pattern).
+_CONSENT_SHADOW_NAMES = (
+    "ConsentHubPage",
+    "PrivacyPolicyPage",
+    "TermsOfUsePage",
+)
+
+
+def check_consent_routes_mounted(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Seed consent routes must never regress; no product may shadow them.
+
+    Asserts three invariants:
+      1. seed/framework/frontend/src/app.tsx mounts all 3 /consent* routes
+         AND imports the 3 ConsentHub/PrivacyPolicy/TermsOfUse page components.
+      2. seed/framework/frontend/src/index.ts exports the 3 page components
+         + the consent content module (products consume them from there).
+      3. No products/<slug>/frontend/ file DEFINES (function/const/class
+         declaration of) ConsentHubPage, PrivacyPolicyPage, or TermsOfUsePage
+         — a product re-implementing rather than consuming is drift.
+
+    Products may freely IMPORT these from @noctusai/lib (the seed re-export);
+    only a local DECLARATION is a violation.
+
+    Severity: `high` — a regressed seed mount removes Google OAuth verification
+    + Meta App Review canonical URLs from every product simultaneously.
+
+    Stage-4 codification: consent-routes-mandate (2026-06-01).
+    KB § PATTERNS/frontend/consent-routes-mandate.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+
+    # ── 1. seed/framework/frontend/src/app.tsx ──────────────────────────────
+    app_tsx = root / "seed" / "framework" / "frontend" / "src" / "app.tsx"
+    if not app_tsx.exists():
+        issues.append({
+            "product": "<seed>",
+            "file": "seed/framework/frontend/src/app.tsx",
+            "issue": (
+                "seed app.tsx not found — cannot verify consent route mounts. "
+                "KB § PATTERNS/frontend/consent-routes-mandate.md"
+            ),
+            "severity": "high",
+        })
+    else:
+        try:
+            app_text = app_tsx.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", app_tsx, exc)
+            app_text = ""
+
+        for route_path in _CONSENT_ROUTE_PATHS:
+            if route_path not in app_text:
+                issues.append({
+                    "product": "<seed>",
+                    "file": "seed/framework/frontend/src/app.tsx",
+                    "issue": (
+                        f"Missing consent route mount: `{route_path}` not found. "
+                        "The seed must mount all 3 /consent* routes in AppRoutes "
+                        "so every product exposes them (Google OAuth + Meta App "
+                        "Review canonical URLs). "
+                        "KB § PATTERNS/frontend/consent-routes-mandate.md"
+                    ),
+                    "severity": "high",
+                })
+
+        for page_name in _CONSENT_PAGE_IMPORTS:
+            # Must appear on an import line (not just as a JSX usage).
+            # We look for "import" and the page_name on the same line.
+            import_line_present = any(
+                "import" in line and page_name in line
+                for line in app_text.splitlines()
+            )
+            if not import_line_present:
+                issues.append({
+                    "product": "<seed>",
+                    "file": "seed/framework/frontend/src/app.tsx",
+                    "issue": (
+                        f"Consent page component `{page_name}` is not imported in "
+                        "seed app.tsx — the route mount and the import must both be "
+                        "present. "
+                        "KB § PATTERNS/frontend/consent-routes-mandate.md"
+                    ),
+                    "severity": "high",
+                })
+
+    # ── 2. seed/framework/frontend/src/index.ts ─────────────────────────────
+    index_ts = root / "seed" / "framework" / "frontend" / "src" / "index.ts"
+    if not index_ts.exists():
+        issues.append({
+            "product": "<seed>",
+            "file": "seed/framework/frontend/src/index.ts",
+            "issue": (
+                "seed index.ts not found — cannot verify consent page exports. "
+                "KB § PATTERNS/frontend/consent-routes-mandate.md"
+            ),
+            "severity": "high",
+        })
+    else:
+        try:
+            index_text = index_ts.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", index_ts, exc)
+            index_text = ""
+
+        for export_name in _CONSENT_INDEX_EXPORTS:
+            if export_name not in index_text:
+                issues.append({
+                    "product": "<seed>",
+                    "file": "seed/framework/frontend/src/index.ts",
+                    "issue": (
+                        f"Consent export `{export_name}` missing from seed index.ts — "
+                        "products must be able to consume consent pages + content "
+                        "from @noctusai/lib re-exports. "
+                        "KB § PATTERNS/frontend/consent-routes-mandate.md"
+                    ),
+                    "severity": "high",
+                })
+
+    # ── 3. No product shadows the consent page components ───────────────────
+    products_dir = root / "products"
+    if products_dir.exists():
+        # Regex: a function/const/class DECLARATION of the exact name
+        shadow_pattern = re.compile(
+            r"(?:export\s+)?(?:function|const|class)\s+"
+            r"(?:" + "|".join(re.escape(n) for n in _CONSENT_SHADOW_NAMES) + r")"
+            r"\s*[=(:{<]"
+        )
+        for product_path in sorted(products_dir.iterdir()):
+            if not product_path.is_dir() or product_path.name.startswith("."):
+                continue
+            fe_src = product_path / "frontend" / "src"
+            if not fe_src.exists():
+                continue
+            slug = product_path.name
+            for ext in ("*.tsx", "*.ts"):
+                for src_file in fe_src.rglob(ext):
+                    try:
+                        content = src_file.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError) as exc:
+                        logger.debug(
+                            "compliance: cannot read %s (%s)", src_file, exc
+                        )
+                        continue
+                    match = shadow_pattern.search(content)
+                    if not match:
+                        continue
+                    # Identify which name was matched
+                    matched_name = next(
+                        n for n in _CONSENT_SHADOW_NAMES
+                        if re.search(
+                            r"(?:export\s+)?(?:function|const|class)\s+"
+                            + re.escape(n)
+                            + r"\s*[=(:{<]",
+                            content,
+                        )
+                    )
+                    try:
+                        rel = str(src_file.relative_to(root))
+                    except ValueError:
+                        rel = str(src_file)
+                    line_no = content[: match.start()].count("\n") + 1
+                    issues.append({
+                        "product": slug,
+                        "file": rel,
+                        "issue": (
+                            f"line {line_no}: product-local declaration of consent "
+                            f"page `{matched_name}` — products inherit consent pages "
+                            "via the seed's createProductApp; a local re-declaration "
+                            "shadows the canonical seed mount and breaks the "
+                            "Google OAuth + Meta App Review URLs. Remove the local "
+                            "definition and import from @noctusai/lib instead. "
+                            "KB § PATTERNS/frontend/consent-routes-mandate.md"
+                        ),
+                        "severity": "high",
+                    })
+
+    return issues
+
+
 def check_all_products() -> tuple[int, list]:
     """Run all compliance checks on all products. Returns (score, issues)."""
     all_issues = []
@@ -8134,6 +8356,12 @@ def check_all_products() -> tuple[int, list]:
     # implement locally. Named-seam extensions allowed when declared.
     # KB § PATTERNS/architect/products-consume-canonical-organs.md.
     all_issues.extend(check_canonical_organ_consumption())
+    # consent-routes-mandate (2026-06-01) — seed-first LGPD/OAuth-verification
+    # routes (/consent, /consent/privacy-policy, /consent/terms-of-use) must
+    # stay mounted in the seed + exported from index.ts; no product may shadow
+    # them with a local re-implementation.
+    # KB § PATTERNS/frontend/consent-routes-mandate.md.
+    all_issues.extend(check_consent_routes_mounted())
     all_issues.extend(check_detector_has_regression_test())
     # auth-boundary-false-green (2026-05-29, canonical-test-runner) — static
     # AST scan for `status_code in (401, 404)` disjunctions in product test

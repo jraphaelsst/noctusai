@@ -31,7 +31,8 @@ from app.sqlite_client import SQLiteClient
 _ORG_A = UUID("00000000-0000-4000-8000-000000000001")
 _ORG_B = UUID("00000000-0000-4000-8000-000000000002")
 
-# SQLite schema mirrors the Supabase DDL (without BYTEA — SQLite uses TEXT/BLOB).
+# SQLite schema mirrors the Supabase DDL (migration 008 extended columns
+# — without BYTEA; SQLite uses TEXT/BLOB).
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS integration_accounts (
     id                  TEXT PRIMARY KEY,
@@ -43,6 +44,10 @@ CREATE TABLE IF NOT EXISTS integration_accounts (
     is_default          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    client_id           TEXT,
+    status              TEXT NOT NULL DEFAULT 'validated',
+    channel_info        TEXT NOT NULL DEFAULT '{}',
+    last_synced_at      TEXT,
     UNIQUE (org_id, provider, account_label)
 );
 """

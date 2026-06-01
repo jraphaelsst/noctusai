@@ -40,16 +40,16 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 10 | 19 | 19 | 11 | 52 | 550 |
+| Social Wiring | 11 | 20 | 20 | 13 | 56 | 613 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| **Total** | **175** | **184** | **263** | **145** | **430** | **5,126** |
+| **Total** | **176** | **185** | **264** | **147** | **434** | **5,189** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (10):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 310** distributed across the schemas.
+- **Tables: 311** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.

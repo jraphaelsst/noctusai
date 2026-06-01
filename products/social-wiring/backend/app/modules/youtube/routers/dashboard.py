@@ -15,7 +15,7 @@ Auth pattern: ``Depends(get_current_user_org)`` per
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -44,9 +44,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def _build_dashboard_service(token: str, cfg: SocialWiringSettings) -> DashboardService:
+def _build_dashboard_service(
+    token: str,
+    cfg: SocialWiringSettings,
+    account_id: Optional[UUID] = None,
+) -> DashboardService:
     """503-on-config-gap shape — same convention as upload + videos
     routers. Operator-actionable error rather than a 500 trace.
+
+    ``account_id`` pins the credential store to a specific YouTube account
+    (channel-switching seam). ``None`` resolves the org's default account.
 
     Config arrives via ``cfg`` (``Depends(get_settings)`` DI seam) — see
     ``KB § PATTERNS/di-test-seam.md``."""
@@ -71,27 +78,40 @@ def _build_dashboard_service(token: str, cfg: SocialWiringSettings) -> Dashboard
 
 
 @router.get("/stats", response_model=KpiStats)
-def get_stats(auth: tuple = Depends(get_current_user_org), cfg: SocialWiringSettings = Depends(get_settings)) -> KpiStats:
+def get_stats(
+    account_id: Optional[UUID] = Query(default=None),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> KpiStats:
     """Top-row KPI tiles. Single RLS-bounded SUM aggregate plus the
-    connected-channel metadata."""
+    connected-channel metadata.
+
+    ``account_id`` (optional) scopes data to a specific YouTube account.
+    Omit to use the org's default account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token, cfg)
+    service = _build_dashboard_service(token, cfg, account_id=account_id)
     return KpiStats(**service.kpi_stats(org_id=org_id))
 
 
 @router.get("/top-videos", response_model=list[TopVideoItem])
 def get_top_videos(
     limit: int = Query(default=5, ge=1, le=50),
+    account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
-cfg: SocialWiringSettings = Depends(get_settings)) -> list[TopVideoItem]:
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> list[TopVideoItem]:
     """Top videos ordered by view count, descending. Default 5
     matches the dashboard panel's row count; cap raised to 50 so the
     cumulative-views chart (Dashboard.tsx "Visualizacoes acumuladas
-    — top 50 do cache") can fetch its full window in one call."""
+    — top 50 do cache") can fetch its full window in one call.
+
+    ``account_id`` (optional) scopes to a specific YouTube account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token, cfg)
+    service = _build_dashboard_service(token, cfg, account_id=account_id)
     rows = service.top_videos(org_id=org_id, limit=limit)
     return [TopVideoItem(**_coerce_row(row)) for row in rows]
 
@@ -99,12 +119,17 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> list[TopVideoItem]:
 @router.get("/recent-uploads", response_model=list[RecentUploadItem])
 def get_recent_uploads(
     limit: int = Query(default=10, ge=1, le=50),
+    account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
-cfg: SocialWiringSettings = Depends(get_settings)) -> list[RecentUploadItem]:
-    """Last N upload jobs + per-job notification dispatch summary."""
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> list[RecentUploadItem]:
+    """Last N upload jobs + per-job notification dispatch summary.
+
+    ``account_id`` (optional) scopes to a specific YouTube account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_dashboard_service(token, cfg)
+    service = _build_dashboard_service(token, cfg, account_id=account_id)
     rows = service.recent_uploads(org_id=org_id, limit=limit)
     return [RecentUploadItem(**row) for row in rows]
 

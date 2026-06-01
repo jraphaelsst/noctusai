@@ -46,7 +46,9 @@ __all__ = [
     "build_service_for_org",
     "build_youtube_service_for_org",
     "resolve_default_account",
+    "resolve_account_by_id",
     "register_service_factory",
+    "sync_channel_info",
 ]
 
 
@@ -74,6 +76,34 @@ def resolve_default_account(
     return next((a for a in accounts if a.is_default), accounts[0])
 
 
+def resolve_account_by_id(
+    svc: IntegrationAccountService,
+    org_id: UUID,
+    provider: str,
+    account_id: UUID,
+) -> Optional[IntegrationAccount]:
+    """Resolve a specific account by id + assert it belongs to ``provider``.
+
+    Returns ``None`` if the account doesn't exist, isn't owned by ``org_id``,
+    or belongs to a different provider (not a silent fallback — callers
+    treat None as 404 / not-connected).
+    """
+    account = svc.get_account(account_id, org_id)
+    if account is None:
+        return None
+    if account.provider != provider:
+        logger.warning(
+            "resolve_account_by_id: account %s provider=%r does not match "
+            "requested provider=%r for org %s",
+            account_id,
+            account.provider,
+            provider,
+            org_id,
+        )
+        return None
+    return account
+
+
 class MultiAccountCredentialStore:
     """A :class:`CredentialStore`-shaped view bound to ONE ``provider`` that
     routes ``(org, provider)`` to that org's DEFAULT ``integration_accounts``
@@ -85,11 +115,21 @@ class MultiAccountCredentialStore:
     provider, so this matches by construction.
     """
 
-    def __init__(self, svc: IntegrationAccountService, provider: str):
+    def __init__(
+        self,
+        svc: IntegrationAccountService,
+        provider: str,
+        account_id: Optional[UUID] = None,
+    ):
         self._svc = svc
         self._provider = provider
+        self._account_id = account_id
 
     def _resolve(self, org_id: str) -> Optional[IntegrationAccount]:
+        if self._account_id is not None:
+            return resolve_account_by_id(
+                self._svc, _coerce_org(org_id), self._provider, self._account_id
+            )
         return resolve_default_account(self._svc, _coerce_org(org_id), self._provider)
 
     # ─── CredentialStore Protocol ──────────────────────────────────────
@@ -160,8 +200,13 @@ def build_credential_store(
     admin_client: Any,
     cfg: Any,
     provider: str,
+    account_id: Optional[UUID] = None,
 ) -> CredentialStore:
     """Build the multi-account credential store for ``provider`` (GENERIC).
+
+    ``account_id`` pins the store to a specific account row instead of
+    resolving the org's default. Passing ``None`` (default) preserves
+    existing behaviour (resolve default account).
 
     Validates the Fernet key loudly (via ``build_integration_account_service``
     → ``require_fernet``) so a missing ``ENCRYPTION_KEY`` raises
@@ -170,7 +215,7 @@ def build_credential_store(
     svc = build_integration_account_service(
         admin_client, encryption_key=cfg.encryption_key
     )
-    return MultiAccountCredentialStore(svc, provider)
+    return MultiAccountCredentialStore(svc, provider, account_id=account_id)
 
 
 # ─── Per-provider SERVICE factory registry ─────────────────────────────────
@@ -209,11 +254,22 @@ def register_service_factory(
     _SERVICE_FACTORIES[provider] = factory
 
 
-def build_service_for_org(admin_client: Any, cfg: Any, provider: str) -> Any:
-    """Build the multi-account-aware service for ``provider``, wired to that
-    org's default account. Raises ``ProviderNotWired`` for providers without a
-    registered service factory yet (the credential store still builds via
-    ``build_credential_store`` — only the service wrapper is pending)."""
+def build_service_for_org(
+    admin_client: Any,
+    cfg: Any,
+    provider: str,
+    account_id: Optional[UUID] = None,
+) -> Any:
+    """Build the multi-account-aware service for ``provider``.
+
+    ``account_id`` pins the credential store to a specific account row (the
+    channel-switching seam). ``None`` (default) resolves the org's default
+    account — preserves existing behaviour.
+
+    Raises ``ProviderNotWired`` for providers without a registered service
+    factory yet (the credential store still builds via ``build_credential_store``
+    — only the service wrapper is pending).
+    """
     factory = _SERVICE_FACTORIES.get(provider)
     if factory is None:
         raise ProviderNotWired(
@@ -221,15 +277,98 @@ def build_service_for_org(admin_client: Any, cfg: Any, provider: str) -> Any:
             f"register one in account_credentials._SERVICE_FACTORIES "
             f"(wired: {sorted(_SERVICE_FACTORIES)})"
         )
-    store = build_credential_store(admin_client, cfg, provider)
+    store = build_credential_store(admin_client, cfg, provider, account_id=account_id)
     return factory(admin_client, cfg, store)
 
 
-def build_youtube_service_for_org(admin_client: Any, cfg: Any):
+def build_youtube_service_for_org(
+    admin_client: Any,
+    cfg: Any,
+    account_id: Optional[UUID] = None,
+):
     """Convenience wrapper — the YouTube call-sites' canonical entrypoint.
 
-    Thin alias for ``build_service_for_org(admin_client, cfg, "youtube")``;
-    keeps the YouTube routers readable while the general factory owns the
-    construction. Raises ``EncryptionNotConfigured`` / ``YouTubeServiceError``
-    exactly as the inlined form did."""
-    return build_service_for_org(admin_client, cfg, "youtube")
+    ``account_id`` pins the store to a specific YouTube account (channel-
+    switching seam). ``None`` (default) resolves the org's default account.
+
+    Thin alias for ``build_service_for_org(admin_client, cfg, "youtube",
+    account_id=account_id)``; keeps the YouTube routers readable while the
+    general factory owns the construction. Raises ``EncryptionNotConfigured``
+    / ``YouTubeServiceError`` exactly as the inlined form did.
+    """
+    return build_service_for_org(admin_client, cfg, "youtube", account_id=account_id)
+
+
+def sync_channel_info(
+    admin_client: Any,
+    cfg: Any,
+    svc: "IntegrationAccountService",
+    account: "IntegrationAccount",
+) -> "IntegrationAccount":
+    """Validate a YouTube account by fetching live channel info from the API.
+
+    Sets status='validating', calls the YouTube API bound to this account,
+    then writes:
+      - status='validated' + channel_info dict + last_synced_at on success
+      - status='error' + channel_info={'error': <msg>} + last_synced_at on
+        any exception
+
+    No silent failures — always writes a status update.
+
+    Returns the updated IntegrationAccount.
+    """
+    from datetime import timezone as _tz
+    from datetime import datetime as _dt
+
+    # Mark as in-flight.
+    try:
+        account = svc.update_channel_info(
+            account.id,
+            account.org_id,
+            channel_info=dict(account.channel_info or {}),
+            status="validating",
+            last_synced_at=_dt.now(_tz.utc),
+        )
+    except Exception as exc:
+        logger.warning(
+            "sync_channel_info: failed to set validating status for account %s: %s",
+            account.id,
+            exc,
+        )
+
+    try:
+        yt_svc = build_youtube_service_for_org(
+            admin_client, cfg, account_id=account.id
+        )
+        info = yt_svc.get_channel_info(org_id=account.org_id)
+        channel_info_dict = {
+            "channel_id": info.channel_id,
+            "title": info.title,
+            "thumbnail_url": getattr(info, "thumbnail_url", ""),
+            "subscriber_count": info.subscriber_count,
+            "video_count": info.video_count,
+            "view_count": info.view_count,
+        }
+        synced_at = _dt.now(_tz.utc)
+        return svc.update_channel_info(
+            account.id,
+            account.org_id,
+            channel_info=channel_info_dict,
+            status="validated",
+            last_synced_at=synced_at,
+        )
+    except Exception as exc:
+        logger.error(
+            "sync_channel_info: failed for account %s org %s: %s",
+            account.id,
+            account.org_id,
+            exc,
+        )
+        synced_at = _dt.now(_tz.utc)
+        return svc.update_channel_info(
+            account.id,
+            account.org_id,
+            channel_info={"error": str(exc)},
+            status="error",
+            last_synced_at=synced_at,
+        )

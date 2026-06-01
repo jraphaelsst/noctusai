@@ -70,3 +70,25 @@ export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from 
 // branch on backend-adapter mode without rendering the badge directly).
 export { useEnvMode } from './hooks/useEnvMode';
 export type { EnvMode, EnvModeResult, VendorMode } from './hooks/useEnvMode';
+
+// Integration card organ — config-driven card for provider integration accounts.
+// YouTube + WhatsApp configs shipped; extend PROVIDER_CARD_CONFIG for more.
+// Consuming product wires mutations; the organ is purely presentational.
+export {
+  IntegrationCard,
+  IntegrationCardModal,
+  resolveStatusBadge,
+  PROVIDER_CARD_CONFIG,
+  getProviderConfig,
+} from './design-system/integrations';
+export type {
+  IntegrationCardProps,
+  IntegrationCardModalProps,
+  IntegrationAccount,
+  IntegrationAccountPatch,
+  IntegrationStatus,
+  SecondaryField,
+  ModalSection,
+  ProviderCardConfig,
+  EditableField,
+} from './design-system/integrations';

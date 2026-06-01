@@ -14,6 +14,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// localStorage/sessionStorage are provisioned by the shared seed vitest setup
+// (seed/framework/frontend/vitest.setup.ts) — no per-file polyfill needed.
+
 // Unmount previous renders so render-return queries (which scan document.body)
 // don't trip "found multiple elements". Dynamic import → same @testing-library
 // instance the tests render with.
@@ -41,6 +44,17 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useCreateAccount: mockCreate,
   useStartYouTubeOAuth: mockOAuth,
   useAdoptLegacy: mockAdoptLegacy,
+  // New in P2 refactor — needed by Conexoes
+  useUpdateAccount: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useSyncAccount: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+}));
+
+// Clients hooks (needed by Conexoes which now fetches clients for grouping)
+vi.mock("@/hooks/useClients", () => ({
+  useClients: vi.fn(() => ({ data: [], isLoading: false, isError: false })),
+  useCreateClient: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateClient: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeleteClient: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
 // WhatsApp connections hooks (needed by Conexoes which embeds WhatsAppConnections)
@@ -110,6 +124,31 @@ vi.mock("@/components/AddAccountModal", () => ({
   ),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+
+// @noctusai/lib — stub IntegrationCard + IntegrationCardModal (needed by Conexoes P2)
+vi.mock("@noctusai/lib", () => ({
+  IntegrationCard: ({ account }: any) => (
+    <div data-testid="integration-card" data-account-label={account?.account_label}>
+      {account?.account_label}
+    </div>
+  ),
+  IntegrationCardModal: ({ account, onClose }: any) =>
+    account ? (
+      <div data-testid="integration-card-modal">
+        <button onClick={onClose}>Fechar modal</button>
+      </div>
+    ) : null,
+  resolveStatusBadge: (status: string) => ({ label: status, className: "badge", showSpinner: false }),
+}));
+
+// ClientManagementModal (needed by Conexoes P2)
+vi.mock("@/components/ClientManagementModal", () => ({
+  ClientManagementModal: ({ onClose }: any) => (
+    <div data-testid="client-management-modal">
+      <button onClick={onClose}>Fechar</button>
+    </div>
+  ),
+}));
 
 // Sensible defaults each test can override.
 beforeEach(() => {
@@ -254,7 +293,9 @@ describe("Conexoes page", () => {
 
   it("renders the Conexoes header", async () => {
     const { getAllByText } = await renderConexoes();
-    expect(getAllByText(/Conexoes/i).length).toBeGreaterThan(0);
+    // Page title is "Conexões" (with ões); use a regex that matches both
+    // the accented and ASCII variants in case the test file has an older expectation.
+    expect(getAllByText(/Cone.{0,5}es/i).length).toBeGreaterThan(0);
   });
 
   it("renders WhatsApp section heading", async () => {

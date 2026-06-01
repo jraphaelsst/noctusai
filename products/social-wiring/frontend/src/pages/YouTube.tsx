@@ -13,6 +13,7 @@ import { lazy, Suspense } from "react";
 import { PlaySquare, Upload as UploadIcon, Loader2 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ConnectedAccountSwitcher } from "@/components/ConnectedAccountSwitcher";
 
 const VideosPanel = lazy(() => import("@/pages/Videos"));
 const UploadPanel = lazy(() => import("@/pages/Upload"));
@@ -28,11 +29,16 @@ function PanelFallback() {
 export default function YouTubePage() {
   return (
     <div className="container max-w-7xl space-y-6 py-6">
-      <div>
-        <h1 className="text-2xl font-semibold">YouTube</h1>
-        <p className="text-sm text-muted-foreground">
-          Catálogo do canal e envios de vídeo, num só lugar.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">YouTube</h1>
+          <p className="text-sm text-muted-foreground">
+            Catálogo do canal e envios de vídeo, num só lugar.
+          </p>
+        </div>
+        {/* Live account/client switcher — re-points every YT data hook
+            (videos, dashboard) via the shared useActiveAccountStore. */}
+        <ConnectedAccountSwitcher />
       </div>
 
       <Tabs defaultValue="videos">

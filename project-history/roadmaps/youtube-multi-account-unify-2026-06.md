@@ -27,6 +27,37 @@ User clicked "Connect YouTube" on `/configuracoes` → Google `redirect_uri_mism
 - [ ] **S2 · Frontend** — unified "Conexões" page: card sections WhatsApp + YouTube + providers; connect/detach/set-active; channel labels+badges; retire single-account YouTube tab (redirect). Tests.
 - [ ] **S3 · Ops/prod** — GCC redirect URIs (user); set `OAUTH_REDIRECT_BASE_URL=https://social-wiring.noctusai.com` in prod; deploy; verify SSO + connect round-trip in prod shape.
 
+## Phase 2 — clients + channel objects + card-template organ + live switching + consent keeper (2026-06-01)
+
+**Branch:** `feat/social-multiaccount-clients` (off `origin/dev` @ ab9f8e5e). **Why:** Phase-1 connected the account but the UI doesn't reflect it (no add-account, raw creds exposed, no real channel data, no client grouping). User is an agency tracking several **downstream clients'** social medias and wants per-client grouping + few-click data switching + a mandated reusable provider-card.
+
+**User-ratified decisions (2026-06-01):**
+1. `clients` is the canonical top entity; a **brand owner IS a client**, its branding lives inside the client → fold `mc_brand_owners` → `clients` (1:1, same UUIDs; branding re-points; old table → `security_invoker` compat view).
+2. Creds grouped by **(org_id, provider, client_id)** — `integration_accounts.client_id` (nullable = org-level).
+3. Each account = a **channel object**: cached `channel_info` JSONB (title/avatar/subs/videos/views) + `status` (wiring/validating/validated/error/disconnected) + `last_synced_at`.
+4. **Build live account/client data-switching NOW** (not deferred) — re-points dashboards/videos/analytics in the same view.
+5. The provider card is a **`@noctusai/lib` organ** (`IntegrationCard`, config-driven per provider) — a MANDATE; WAHA/Meta/etc. reuse it. Click→modal; edit-icon→inline-editable.
+6. **Consent routes become keeper-enforced** (`check_consent_routes_mounted`) — every product inherits identical seed consent.
+
+### FE↔BE Contract (authored first; both sides build to it — bare arrays/objects, no envelope, matching existing convention)
+- `GET /api/clients` → `Client[]` · `POST /api/clients {slug,name,kind?,notes?}` → `Client` · `PATCH /api/clients/{id} {name?,slug?,kind?,notes?}` → `Client` · `DELETE /api/clients/{id}` → 204.
+  - `Client = {id, org_id, slug, name, kind, notes, created_at, updated_at}`.
+- `GET /api/integrations/accounts?provider=&client_id=` → `IntegrationAccount[]` (extends existing shape with `client_id, status, channel_info, last_synced_at`).
+- `IntegrationAccount = {id, org_id, provider, account_label, client_id|null, status, channel_info, metadata, is_default, last_synced_at|null, created_at, updated_at}`.
+  - `channel_info` (youtube) = `{channel_id, title, thumbnail_url, subscriber_count, video_count, view_count}`.
+  - `status ∈ {wiring, validating, validated, error, disconnected}`.
+- `POST /api/integrations/accounts {provider, account_label, credential, metadata, is_default, client_id?}` → `IntegrationAccount`.
+- `PATCH /api/integrations/accounts/{id} {account_label?, metadata?, is_default?, client_id?, status?}` → `IntegrationAccount`.
+- `POST /api/integrations/accounts/{id}/sync` → `IntegrationAccount` (live channel-info refresh → status validated/error).
+- YT data surfaces accept `?account_id=<uuid>` (omitted → org default): `GET /api/youtube/dashboard…`, `/api/videos…`. Shapes unchanged, account-scoped.
+
+### Phase-2 slices
+- [ ] **P2-BE** — migrations `007_clients.sql` + `008_integration_accounts_client_channel.sql`; `clients_service`+`clients_router`; `integration_account_service` (+client_id/status/channel_info/last_synced_at + `update_channel_info`); `account_credentials` switching seam (`account_id` → `MultiAccountCredentialStore` + `build_*_for_org`) + `sync_channel_info`; `ChannelInfo.thumbnail_url`; OAuth callback writes channel_info/status; dashboard/videos `account_id` Query. Tests.
+- [ ] **P2-FE-lib** — `IntegrationCard` + `IntegrationCardModal` + `PROVIDER_CARD_CONFIG` (YT+WAHA blocks) in `seed/lib/frontend/src/design-system/`; lib index export; config unit tests.
+- [ ] **P2-FE-app** — `Conexoes.tsx` card-listing grouped by client; Clients CRUD page; account/client switcher → `account_id` into YT hooks; `useClients.ts`; extend `useIntegrationAccounts` (client filter + sync); render-test card usage.
+- [ ] **P2-KEEPER** — `check_consent_routes_mounted` + CI + keeper-pattern cache; `KB § PATTERNS/frontend/consent-routes-mandate.md` + INDEX + CLAUDE.md §1 + memory (8-way sync).
+- [ ] **P2-DEPLOY** — integrate → FF → apply 007/008 (verify PG `security_invoker`) → dev-validation gate → bless+promote → CI → deploy social-wiring + Core.
+
 ## Decision log
 - 2026-06-01 — roadmap created; branch isolated; S0 next.
 - 2026-06-01 — S0 applied (migration 005 live). S1 shipped: consumption resolver + 4 build-sites.
