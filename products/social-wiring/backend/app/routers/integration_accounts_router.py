@@ -165,9 +165,28 @@ def list_accounts(
     provider: Optional[str] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
+    cfg: SocialWiringSettings = Depends(get_settings),
 ) -> list[IntegrationAccountOut]:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
+    # One-time, idempotent backfill: surface a pre-existing single-account
+    # YouTube connection as a (default) integration_account so it shows up
+    # as a card here without the operator having to re-authorize. Only fires
+    # when the org has ZERO youtube integration_accounts AND a legacy
+    # credentials row exists; best-effort (a failure must not break listing).
+    if provider in (None, "youtube"):
+        try:
+            from app.services.youtube_account_resolver import (
+                migrate_legacy_youtube_account,
+            )
+            migrate_legacy_youtube_account(get_admin_client(), svc, org_id, cfg)
+        except Exception as exc:  # noqa: BLE001 — non-critical backfill
+            logger.warning(
+                "integration_accounts: legacy YouTube backfill skipped for "
+                "org=%s: %s",
+                org_id,
+                exc,
+            )
     accounts = svc.list_accounts(org_id=org_id, provider=provider)
     return [_out(a) for a in accounts]
 

@@ -58,7 +58,8 @@ from app.modules.youtube.schemas.upload import (
     UploadMetadata,
 )
 from app.services.credential_vault import (
-    CredentialStore, EncryptionNotConfigured, build_credential_store)
+    CredentialStore, EncryptionNotConfigured)
+from app.services.youtube_account_resolver import build_multi_account_youtube_store
 from app.services.notification_service import NotificationService
 from app.modules.youtube.services.upload import (
     UploadService,
@@ -106,9 +107,7 @@ def _build_upload_service(token: str, cfg: SocialWiringSettings) -> UploadServic
         user_supabase = admin_supabase
 
     try:
-        store = build_credential_store(
-            admin_supabase, encryption_key=cfg.encryption_key
-        )
+        store = build_multi_account_youtube_store(admin_supabase, cfg)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

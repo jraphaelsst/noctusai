@@ -307,6 +307,55 @@ class IntegrationAccountService:
         row = self._require_row(account_id, org_id)
         return self._decrypt(row["encrypted_credential"])
 
+    def update_credential(
+        self,
+        account_id: UUID,
+        org_id: UUID,
+        credential_dict: dict,
+        metadata: Optional[dict] = None,
+    ) -> IntegrationAccount:
+        """Re-encrypt + persist a refreshed credential bundle for one account.
+
+        This is the token-refresh path (access_token rotation): a service
+        that decrypted the bundle, refreshed it against the provider, and
+        needs to persist the new bundle BACK to the same row. Distinct from
+        ``update_account`` (which deliberately refuses credential edits to
+        keep label/metadata patches safe). ``metadata`` is MERGED into the
+        existing metadata when provided (so a refresh that only carries new
+        ``expires_at`` doesn't clobber ``channel_id`` / ``channel_title``).
+
+        Raises ``IntegrationAccountNotFound`` if the account doesn't exist
+        or isn't owned by ``org_id``.
+        """
+        from datetime import timezone
+
+        row = self._require_row(account_id, org_id)
+        encrypted = self._encrypt(credential_dict)
+        encrypted_str = (
+            encrypted.decode("utf-8") if isinstance(encrypted, bytes) else encrypted
+        )
+        updates: dict = {
+            "encrypted_credential": encrypted_str,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if metadata is not None:
+            existing_meta = self._row_to_account(row).metadata
+            merged = {**existing_meta, **metadata}
+            updates["metadata"] = json.dumps(merged)
+        resp = (
+            self._table()
+            .update(updates)
+            .eq("id", str(account_id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise IntegrationAccountNotFound(
+                f"integration account {account_id} not found for org {org_id}"
+            )
+        return self._row_to_account(rows[0])
+
 
 def build_integration_account_service(
     client: Any,
