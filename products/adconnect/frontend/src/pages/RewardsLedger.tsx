@@ -34,8 +34,13 @@ const statusClass: Record<RewardStatus, string> = {
 };
 
 export default function RewardsLedger() {
-  const { data: rewards, totalAccrued, totalAvailable, isLoading, error } =
-    useRewards();
+  const { data: rewards = [], isLoading, error } = useRewards();
+  // Totals are derived client-side from the rewards list (the hook returns the
+  // raw Reward[] query, not pre-aggregated totals).
+  const totalAccrued = rewards.reduce((sum, r) => sum + r.amount, 0);
+  const totalAvailable = rewards
+    .filter((r) => r.status === "liberado")
+    .reduce((sum, r) => sum + r.amount, 0);
 
   return (
     <div className="space-y-6">

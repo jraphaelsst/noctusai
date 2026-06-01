@@ -14,6 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { useForm, useFieldArray } from "react-hook-form";
 import { FileText, Plus, Trash2, Upload } from "lucide-react";
 import { useSubmitSellout } from "@/hooks/useSellout";
+import { useAuthStore } from "@noctusai/seed/infra";
 import type { SelloutLineItem, SelloutSubmissionMode } from "@/types";
 
 const inputClass =
@@ -24,9 +25,25 @@ interface StructuredFormData {
   line_items: SelloutLineItem[];
 }
 
+/** "YYYY-MM" → first/last calendar day of that month (the backend's period range). */
+function monthToRange(periodMonth: string): { periodo_inicio: string; periodo_fim: string } {
+  const [y, m] = periodMonth.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    periodo_inicio: `${periodMonth}-01`,
+    periodo_fim: `${periodMonth}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 export default function SelloutReportSubmit() {
   const navigate = useNavigate();
-  const { submit, isPending } = useSubmitSellout();
+  const { submitEstruturado, uploadNfe, uploadAttachment } = useSubmitSellout();
+  const { user } = useAuthStore();
+  // distributor_id is optional on /submit (backend infers via RLS from the auth
+  // user) but required as a Form field on /upload-nfe + /upload-attachment.
+  // Read it from the auth user's metadata, mirroring the backend's _user_distributor.
+  const distributorId: string =
+    user?.distributor_id ?? user?.user_metadata?.distributor_id ?? "";
   const [mode, setMode] = useState<SelloutSubmissionMode>("structured");
 
   // Structured form
@@ -58,10 +75,14 @@ export default function SelloutReportSubmit() {
   const [freeformNotes, setFreeformNotes] = useState("");
 
   const onStructuredSubmit = (data: StructuredFormData) => {
-    submit({
-      submission_mode: "structured",
-      period_month: data.period_month,
-      line_items: data.line_items,
+    submitEstruturado.mutate({
+      distributor_id: distributorId,
+      valor_total: data.line_items.reduce(
+        (sum, li) => sum + li.quantity * (li.unit_price ?? 0),
+        0,
+      ),
+      quantidade_itens: data.line_items.reduce((sum, li) => sum + li.quantity, 0),
+      ...monthToRange(data.period_month),
     });
     navigate("/sellout");
   };
@@ -69,10 +90,10 @@ export default function SelloutReportSubmit() {
   const onNfeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nfeFile) return;
-    submit({
-      submission_mode: "nfe_xml",
-      period_month: nfeMonth,
-      nfe_file: nfeFile,
+    uploadNfe.mutate({
+      distributor_id: distributorId,
+      nfe_xml: nfeFile,
+      ...monthToRange(nfeMonth),
     });
     navigate("/sellout");
   };
@@ -80,11 +101,11 @@ export default function SelloutReportSubmit() {
   const onFreeformSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!freeformFile) return;
-    submit({
-      submission_mode: "freeform",
-      period_month: freeformMonth,
-      attachment_file: freeformFile,
-      notes: freeformNotes,
+    uploadAttachment.mutate({
+      distributor_id: distributorId,
+      attachment: freeformFile,
+      observacoes: freeformNotes,
+      ...monthToRange(freeformMonth),
     });
     navigate("/sellout");
   };
@@ -191,10 +212,10 @@ export default function SelloutReportSubmit() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={isPending}
+              disabled={submitEstruturado.isPending}
               className="px-6 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              {isPending ? "Enviando…" : "Enviar relatório"}
+              {submitEstruturado.isPending ? "Enviando…" : "Enviar relatório"}
             </button>
           </div>
         </form>
@@ -238,10 +259,10 @@ export default function SelloutReportSubmit() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={isPending || !nfeFile}
+              disabled={uploadNfe.isPending || !nfeFile}
               className="px-6 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              {isPending ? "Enviando…" : "Enviar NF-e"}
+              {uploadNfe.isPending ? "Enviando…" : "Enviar NF-e"}
             </button>
           </div>
         </form>
@@ -288,10 +309,10 @@ export default function SelloutReportSubmit() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={isPending || !freeformFile}
+              disabled={uploadAttachment.isPending || !freeformFile}
               className="px-6 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              {isPending ? "Enviando…" : "Enviar anexo"}
+              {uploadAttachment.isPending ? "Enviando…" : "Enviar anexo"}
             </button>
           </div>
         </form>

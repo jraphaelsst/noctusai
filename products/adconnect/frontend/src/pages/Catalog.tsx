@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Package, Search, SlidersHorizontal } from "lucide-react";
-import { useCatalog } from "@/hooks/useCatalog";
+import { useCatalog, useCategorias } from "@/hooks/useCatalog";
 import type { CatalogFilters, Product } from "@/types";
 
 const inputClass =
@@ -28,12 +28,14 @@ export default function Catalog() {
   const [sortBy, setSortBy] = useState<CatalogFilters["sort_by"]>("name");
   const [inStockOnly, setInStockOnly] = useState(false);
 
-  const { data: products, categorias, isLoading, error } = useCatalog({
+  const { data: products, isLoading, error } = useCatalog({
     search,
     category: category || undefined,
     in_stock_only: inStockOnly,
     sort_by: sortBy,
   });
+  // Categorias live in their own hook (separate query), not on useCatalog.
+  const { data: categorias = [] } = useCategorias();
 
   const filtered = useMemo<Product[]>(() => {
     let list = products;
