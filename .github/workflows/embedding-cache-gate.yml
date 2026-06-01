@@ -31,6 +31,15 @@ jobs:
     name: Embedding Cache Validate
     runs-on: ubuntu-latest
 
+    # The `secrets` context is NOT available in step `if:` conditions — using it
+    # there fails the workflow at STARTUP (0s startup_failure on every event,
+    # never reaching a job). Map the tunnel secrets to job-level env so the
+    # tunnel step can gate on their presence via `env`. GitHub docs: "to use a
+    # secret in an if conditional, set the secret as an environment variable."
+    env:
+      VPS_DEPLOY_KEY: ${{ secrets.NOCTUS_VPS_DEPLOY_KEY }}
+      VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -69,13 +78,13 @@ jobs:
         #   NOCTUS_VPS_HOST        — public hostname of noctus-vps
         # Graceful-degrade: if either secret is unset, skip the tunnel; the
         # downstream gates run continue-on-error against local-sqlite fallback.
-        if: ${{ secrets.NOCTUS_VPS_DEPLOY_KEY != '' && secrets.NOCTUS_VPS_HOST != '' }}
+        if: ${{ env.VPS_DEPLOY_KEY != '' && env.VPS_HOST != '' }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "${{ secrets.NOCTUS_VPS_DEPLOY_KEY }}" > ~/.ssh/cache-deploy-key
+          printf '%s\n' "$VPS_DEPLOY_KEY" > ~/.ssh/cache-deploy-key
           chmod 600 ~/.ssh/cache-deploy-key
-          ssh-keyscan -H "${{ secrets.NOCTUS_VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           # Open background tunnel; -fN = forward only, no remote command;
           # ExitOnForwardFailure=yes ensures we fail fast if permitopen rejects.
           ssh -i ~/.ssh/cache-deploy-key \
@@ -83,7 +92,7 @@ jobs:
               -o ExitOnForwardFailure=yes \
               -o ServerAliveInterval=30 \
               -o StrictHostKeyChecking=yes \
-              root@"${{ secrets.NOCTUS_VPS_HOST }}"
+              root@"$VPS_HOST"
           # Verify the tunnel is alive before downstream steps consume it.
           (timeout 5 bash -c 'until nc -z 127.0.0.1 5432; do sleep 0.3; done') \
             || (echo "::warning::cache-pg tunnel failed to come up; downstream gates will use sqlite fallback" && exit 0)
