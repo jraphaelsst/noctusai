@@ -272,7 +272,9 @@ function ConnectionDetailDialog({
 
   const paired = !!status?.paired;
 
-  const run = (mut: ReturnType<typeof start>, ok: string) =>
+  // `start` (and its siblings) are mutation OBJECTS (UseMutationResult), not
+  // functions — the param is the mutation's own type, not its ReturnType.
+  const run = (mut: typeof start, ok: string) =>
     mut.mutate(line.id, {
       onSuccess: () => toast.success(ok),
       onError: (e: any) => toast.error(e?.message ?? "Falha"),
