@@ -59,7 +59,7 @@ from app.modules.youtube.schemas.upload import (
 )
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured)
-from app.services.youtube_account_resolver import build_multi_account_youtube_store
+from app.services.youtube_account_resolver import build_youtube_service_for_org
 from app.services.notification_service import NotificationService
 from app.modules.youtube.services.upload import (
     UploadService,
@@ -67,7 +67,7 @@ from app.modules.youtube.services.upload import (
     rename_for_job,
     stage_browser_upload,
 )
-from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
+from app.modules.youtube.services.youtube import YouTubeServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -107,21 +107,8 @@ def _build_upload_service(token: str, cfg: SocialWiringSettings) -> UploadServic
         user_supabase = admin_supabase
 
     try:
-        store = build_multi_account_youtube_store(admin_supabase, cfg)
-    except EncryptionNotConfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
-    try:
-        youtube = YouTubeService(
-            client_id=cfg.youtube_client_id,
-            client_secret=cfg.youtube_client_secret,
-            redirect_uri=cfg.youtube_redirect_uri,
-            credential_store=store,
-        )
-    except YouTubeServiceError as exc:
+        youtube = build_youtube_service_for_org(admin_supabase, cfg)
+    except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),

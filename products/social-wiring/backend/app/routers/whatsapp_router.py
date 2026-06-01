@@ -33,7 +33,7 @@ from app.dependencies import get_admin_client
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
-from app.services.youtube_account_resolver import build_multi_account_youtube_store
+from app.services.youtube_account_resolver import build_youtube_service_for_org
 from noctusai_lib.integrations.vista import (
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
@@ -80,13 +80,7 @@ def _build_intake_service() -> WhatsAppIntakeService | None:
     # online so the assistant can tell the user what is missing.
     youtube: YouTubeService | None = None
     try:
-        store = build_multi_account_youtube_store(admin_supabase, settings)
-        youtube = YouTubeService(
-            client_id=settings.youtube_client_id,
-            client_secret=settings.youtube_client_secret,
-            redirect_uri=settings.youtube_redirect_uri,
-            credential_store=store,
-        )
+        youtube = build_youtube_service_for_org(admin_supabase, settings)
     except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         logger.warning("YouTube service unavailable for WhatsApp upload confirmation: %s", exc)
 

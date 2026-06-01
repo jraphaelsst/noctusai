@@ -33,11 +33,10 @@ from app.dependencies import (
 from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured)
-from app.services.youtube_account_resolver import build_multi_account_youtube_store
+from app.services.youtube_account_resolver import build_youtube_service_for_org
 from app.modules.youtube.services.video_cache import VideoCacheError, VideoCacheService
 from app.modules.youtube.services.youtube import (
     YouTubeNotConnected,
-    YouTubeService,
     YouTubeServiceError,
 )
 
@@ -65,21 +64,8 @@ def _build_video_cache_service(token: str, cfg: SocialWiringSettings) -> VideoCa
     admin_supabase = get_admin_client()
 
     try:
-        store = build_multi_account_youtube_store(admin_supabase, cfg)
-    except EncryptionNotConfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
-    try:
-        youtube = YouTubeService(
-            client_id=cfg.youtube_client_id,
-            client_secret=cfg.youtube_client_secret,
-            redirect_uri=cfg.youtube_redirect_uri,
-            credential_store=store,
-        )
-    except YouTubeServiceError as exc:
+        youtube = build_youtube_service_for_org(admin_supabase, cfg)
+    except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),

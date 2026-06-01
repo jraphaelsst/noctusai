@@ -51,6 +51,7 @@ from app.services.integration_account_service import (
     build_integration_account_service,
 )
 from app.services.integration_providers import PROVIDERS
+from app.services.legacy_adoption import adopt_legacy_account
 
 logger = logging.getLogger(__name__)
 
@@ -165,30 +166,43 @@ def list_accounts(
     provider: Optional[str] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
-    cfg: SocialWiringSettings = Depends(get_settings),
 ) -> list[IntegrationAccountOut]:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    # One-time, idempotent backfill: surface a pre-existing single-account
-    # YouTube connection as a (default) integration_account so it shows up
-    # as a card here without the operator having to re-authorize. Only fires
-    # when the org has ZERO youtube integration_accounts AND a legacy
-    # credentials row exists; best-effort (a failure must not break listing).
-    if provider in (None, "youtube"):
-        try:
-            from app.services.youtube_account_resolver import (
-                migrate_legacy_youtube_account,
-            )
-            migrate_legacy_youtube_account(get_admin_client(), svc, org_id, cfg)
-        except Exception as exc:  # noqa: BLE001 — non-critical backfill
-            logger.warning(
-                "integration_accounts: legacy YouTube backfill skipped for "
-                "org=%s: %s",
-                org_id,
-                exc,
-            )
     accounts = svc.list_accounts(org_id=org_id, provider=provider)
     return [_out(a) for a in accounts]
+
+
+@router.post(
+    "/accounts/{provider}/adopt-legacy",
+    response_model=Optional[IntegrationAccountOut],
+)
+def adopt_legacy(
+    provider: str,
+    auth: tuple = Depends(get_current_user_org),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> Optional[IntegrationAccountOut]:
+    """Adopt a pre-existing single-account connection for ``provider`` into
+    the multi-account model as a first-class (default) account.
+
+    The canonical "import an existing connection" path — YouTube is pilot
+    #1; the other single-account providers adopt through the SAME
+    ``legacy_adoption.adopt_legacy_account`` function. Explicit + idempotent:
+    returns the existing default if already adopted, or ``null`` if there is
+    no legacy connection to adopt. The unified Conexões page calls this on
+    load so an existing connection appears as a card (no silent GET-side
+    backfill — adoption is a deliberate, observable step)."""
+    from app.services.integration_providers import SUPPORTED_PROVIDER_IDS
+    if provider not in SUPPORTED_PROVIDER_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unsupported provider '{provider}'",
+        )
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    account = adopt_legacy_account(get_admin_client(), svc, org_id, provider, cfg)
+    return _out(account) if account is not None else None
 
 
 @router.get("/accounts/{account_id}", response_model=IntegrationAccountOut)

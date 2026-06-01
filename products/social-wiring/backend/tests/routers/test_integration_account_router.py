@@ -434,3 +434,22 @@ class TestYouTubeOAuthCallback:
             follow_redirects=False,
         )
         assert resp.status_code == 400
+
+
+# ─── Legacy adoption endpoint ───────────────────────────────────────────────
+class TestAdoptLegacy:
+    def test_unsupported_provider_422(self, client):
+        resp = client.post(
+            "/api/integrations/accounts/notaprovider/adopt-legacy",
+            headers=_auth_header(),
+        )
+        assert resp.status_code == 422
+
+    def test_no_legacy_connection_returns_null(self, client):
+        # Mock substrate has no legacy `credentials` row → nothing to adopt.
+        resp = client.post(
+            "/api/integrations/accounts/youtube/adopt-legacy",
+            headers=_auth_header(),
+        )
+        assert resp.status_code == 200
+        assert resp.json() is None

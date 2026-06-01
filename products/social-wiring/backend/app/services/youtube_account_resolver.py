@@ -25,12 +25,12 @@ is NOT a fork of the Protocol (it implements it) and NOT a fork of the
 crypto (encryption stays in ``IntegrationAccountService`` →
 ``credential_vault.require_fernet`` → seed Fernet).
 
-Auto-migration: the first time an org with a legacy single-account
-YouTube credential is resolved (and it has no ``integration_accounts``
-YouTube row yet), the legacy bundle is copied into an
-``integration_accounts`` row (``is_default=True``) so existing
-connections keep working AND show up as a card in the unified UI. The
-legacy row is left in place as a transition-safety fallback.
+Onboarding an EXISTING single-account connection is a separate, explicit
+step — see ``app.services.legacy_adoption.adopt_legacy_account`` (the
+canonical "adopt existing connection" path, YouTube as pilot #1). This
+consume path NEVER adopts implicitly: if the org has no
+``integration_accounts`` YouTube row, ``get`` returns ``None`` (honest
+"not connected") and the operator adopts/connects via the UI.
 """
 from __future__ import annotations
 
@@ -38,23 +38,20 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from app.services.credential_vault import (
-    CredentialStore,
-    StoredCredential,
-    build_credential_store,
-)
+from app.services.credential_vault import CredentialStore, StoredCredential
 from app.services.integration_account_service import (
     IntegrationAccount,
     IntegrationAccountService,
     build_integration_account_service,
 )
+from app.modules.youtube.services.youtube import YouTubeService
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "MultiAccountYouTubeStore",
     "build_multi_account_youtube_store",
-    "migrate_legacy_youtube_account",
+    "build_youtube_service_for_org",
     "resolve_default_youtube_account",
 ]
 
@@ -67,107 +64,15 @@ def _coerce_org(org_id: Any) -> UUID:
     return UUID(str(org_id))
 
 
-def migrate_legacy_youtube_account(
-    admin_client: Any,
-    svc: IntegrationAccountService,
-    org_id: UUID,
-    cfg: Any,
-    *,
-    legacy_store: Optional[CredentialStore] = None,
-) -> Optional[IntegrationAccount]:
-    """Idempotently copy a legacy single-account YouTube credential into
-    ``integration_accounts`` (``is_default=True``).
-
-    Returns the new (or pre-existing) default account, or ``None`` when
-    there is nothing to migrate. Safe to call repeatedly: it only acts
-    when the org has ZERO ``integration_accounts`` YouTube rows AND a
-    legacy ``credentials`` row exists.
-
-    ``legacy_store`` is a DI seam (KB § PATTERNS/di-test-seam.md): tests
-    inject the seed ``FakeCredentialStore``; production builds the real
-    ``credentials``-backed store from ``admin_client``.
-    """
-    existing = svc.list_accounts(org_id, provider=_PROVIDER)
-    if existing:
-        # Already multi-account — nothing to migrate. Hand back the default.
-        return next((a for a in existing if a.is_default), existing[0])
-
-    if legacy_store is None:
-        try:
-            legacy_store = build_credential_store(
-                admin_client, encryption_key=cfg.encryption_key
-            )
-        except Exception as exc:  # EncryptionNotConfigured et al.
-            logger.warning(
-                "youtube_account_resolver: cannot read legacy creds for migration "
-                "(org=%s): %s",
-                org_id,
-                exc,
-            )
-            return None
-
-    record = legacy_store.get(str(org_id), _PROVIDER)
-    if record is None:
-        return None
-
-    label = (
-        record.metadata.get("channel_title")
-        or f"YouTube ({org_id})"
-    )
-    metadata = {
-        k: record.metadata.get(k)
-        for k in ("channel_id", "channel_title", "scopes")
-        if record.metadata.get(k)
-    }
-    try:
-        account = svc.create_account(
-            org_id=org_id,
-            provider=_PROVIDER,
-            account_label=label,
-            credential_dict=record.tokens,
-            metadata=metadata,
-            is_default=True,
-        )
-        logger.info(
-            "youtube_account_resolver: migrated legacy single-account YouTube "
-            "credential into integration_accounts for org=%s (account=%s, label=%r)",
-            org_id,
-            account.id,
-            label,
-        )
-        return account
-    except Exception as exc:  # unique-violation race / concurrent migration
-        logger.warning(
-            "youtube_account_resolver: legacy migration insert failed for org=%s "
-            "(%s) — re-reading accounts in case of a concurrent migration",
-            org_id,
-            exc,
-        )
-        again = svc.list_accounts(org_id, provider=_PROVIDER)
-        if again:
-            return next((a for a in again if a.is_default), again[0])
-        return None
-
-
 def resolve_default_youtube_account(
-    admin_client: Any,
     svc: IntegrationAccountService,
     org_id: UUID,
-    cfg: Any,
-    *,
-    auto_migrate: bool = True,
-    legacy_store: Optional[CredentialStore] = None,
 ) -> Optional[IntegrationAccount]:
     """Resolve the org's active YouTube account: its default row, else the
-    sole row, else (after optional legacy auto-migration) ``None``.
+    sole row, else ``None``. Reads ``integration_accounts`` only — adoption
+    of a legacy connection is an explicit step (see ``legacy_adoption``).
     """
     accounts = svc.list_accounts(org_id, provider=_PROVIDER)
-    if not accounts and auto_migrate:
-        migrated = migrate_legacy_youtube_account(
-            admin_client, svc, org_id, cfg, legacy_store=legacy_store
-        )
-        if migrated is not None:
-            accounts = [migrated]
     if not accounts:
         return None
     return next((a for a in accounts if a.is_default), accounts[0])
@@ -183,31 +88,11 @@ class MultiAccountYouTubeStore:
     for ``youtube``.
     """
 
-    def __init__(
-        self,
-        svc: IntegrationAccountService,
-        admin_client: Any,
-        cfg: Any,
-        *,
-        auto_migrate: bool = True,
-        legacy_store: Optional[CredentialStore] = None,
-    ):
+    def __init__(self, svc: IntegrationAccountService):
         self._svc = svc
-        self._admin = admin_client
-        self._cfg = cfg
-        self._auto_migrate = auto_migrate
-        self._legacy_store = legacy_store
 
     def _resolve(self, org_id: str) -> Optional[IntegrationAccount]:
-        org = _coerce_org(org_id)
-        return resolve_default_youtube_account(
-            self._admin,
-            self._svc,
-            org,
-            self._cfg,
-            auto_migrate=self._auto_migrate,
-            legacy_store=self._legacy_store,
-        )
+        return resolve_default_youtube_account(self._svc, _coerce_org(org_id))
 
     # ─── CredentialStore Protocol ──────────────────────────────────────
     def get(self, org_id: str, provider: str) -> Optional[StoredCredential]:
@@ -274,17 +159,13 @@ class MultiAccountYouTubeStore:
         return self._svc.delete_account(account.id, account.org_id)
 
     def list_providers(self, org_id: str) -> list[str]:
-        org = _coerce_org(org_id)
-        accounts = self._svc.list_accounts(org, provider=_PROVIDER)
+        accounts = self._svc.list_accounts(_coerce_org(org_id), provider=_PROVIDER)
         return [_PROVIDER] if accounts else []
 
 
 def build_multi_account_youtube_store(
     admin_client: Any,
     cfg: Any,
-    *,
-    auto_migrate: bool = True,
-    legacy_store: Optional[CredentialStore] = None,
 ) -> CredentialStore:
     """Build the multi-account YouTube credential store.
 
@@ -297,6 +178,23 @@ def build_multi_account_youtube_store(
     svc = build_integration_account_service(
         admin_client, encryption_key=cfg.encryption_key
     )
-    return MultiAccountYouTubeStore(
-        svc, admin_client, cfg, auto_migrate=auto_migrate, legacy_store=legacy_store
+    return MultiAccountYouTubeStore(svc)
+
+
+def build_youtube_service_for_org(admin_client: Any, cfg: Any) -> YouTubeService:
+    """Canonical ``YouTubeService`` factory wired to the multi-account store.
+
+    Absorbs the N=4 ``build_…store(...)`` + ``YouTubeService(...)`` recurrence
+    that every YouTube call-site (upload / videos / chat / whatsapp) carried.
+    Raises the same exceptions the inlined form did
+    (``EncryptionNotConfigured`` from the store build, ``YouTubeServiceError``
+    from the service ctor), so each call-site keeps its own error policy
+    (503 vs. degrade-to-optional) unchanged.
+    """
+    store = build_multi_account_youtube_store(admin_client, cfg)
+    return YouTubeService(
+        client_id=cfg.youtube_client_id,
+        client_secret=cfg.youtube_client_secret,
+        redirect_uri=cfg.youtube_redirect_uri,
+        credential_store=store,
     )

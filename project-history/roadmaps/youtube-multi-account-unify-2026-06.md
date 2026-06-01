@@ -29,6 +29,8 @@ User clicked "Connect YouTube" on `/configuracoes` → Google `redirect_uri_mism
 
 ## Decision log
 - 2026-06-01 — roadmap created; branch isolated; S0 next.
+- 2026-06-01 — S0 applied (migration 005 live). S1 shipped: consumption resolver + 4 build-sites.
+- 2026-06-01 (user directives) — (a) **Absorb** the N=4 `build_store + YouTubeService` recurrence → one canonical `build_youtube_service_for_org()`. (b) **No legacy backfill** — replace the silent GET-side backfill + resolver lazy-migrate with an EXPLICIT, provider-general `legacy_adoption.adopt_legacy_account()` (YouTube = pilot #1; calendar/gmail/meta inherit the SAME path) + `POST /accounts/{provider}/adopt-legacy`; the unified page triggers it on load. Legacy = canonical first account / reference for the seed of the multi-account framework. Both shipped + green (189 backend tests).
 
 ## Open questions
 - Per-upload account picker vs. always-default? (Default-account v1; per-upload picker = follow-up unless user asks.)
