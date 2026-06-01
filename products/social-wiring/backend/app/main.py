@@ -92,6 +92,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.integration_accounts_router import (
         router as integration_accounts_router,
     )
+    from app.routers.clients_router import (
+        router as clients_router,
+    )
 
     return ModuleRegistration(
         routers=[
@@ -106,6 +109,7 @@ def _register_media_wiring() -> ModuleRegistration:
             google_router,
             meta_router,
             integration_accounts_router,
+            clients_router,
         ],
         standard_routers=("health", "notificacoes", "team"),
     )

@@ -17,7 +17,7 @@ Auth pattern: ``Depends(get_current_user_org)`` per
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -50,8 +50,15 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 # trigger — see its docstring there.)
 
 
-def _build_video_cache_service(token: str, cfg: SocialWiringSettings) -> VideoCacheService:
+def _build_video_cache_service(
+    token: str,
+    cfg: SocialWiringSettings,
+    account_id: Optional[UUID] = None,
+) -> VideoCacheService:
     """Wire the read+write split for the cache service.
+
+    ``account_id`` pins the YouTube service to a specific account (the
+    channel-switching seam). ``None`` (default) resolves the org's default.
 
     503 on encryption-key / youtube-credentials gaps — same shape as
     settings_router / upload_router. Operator-actionable error rather
@@ -64,7 +71,9 @@ def _build_video_cache_service(token: str, cfg: SocialWiringSettings) -> VideoCa
     admin_supabase = get_admin_client()
 
     try:
-        youtube = build_youtube_service_for_org(admin_supabase, cfg)
+        youtube = build_youtube_service_for_org(
+            admin_supabase, cfg, account_id=account_id
+        )
     except (EncryptionNotConfigured, YouTubeServiceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -108,13 +117,18 @@ def list_videos(
     cursor: str | None = Query(default=None, description="Opaque pagination cursor."),
     limit: int = Query(default=50, ge=1, le=100),
     uploaded_via_app: bool | None = Query(default=None, alias="uploaded_via_app"),
-cfg: SocialWiringSettings = Depends(get_settings)) -> VideoListResponse:
+    account_id: Optional[UUID] = Query(default=None),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> VideoListResponse:
     """Paginated list of cached videos. Cursor-based — the next_cursor
     in the response is opaque; pass it back as `?cursor=...` to fetch
-    the next page."""
+    the next page.
+
+    ``account_id`` (optional) scopes to a specific YouTube account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token, cfg)
+    service = _build_video_cache_service(token, cfg, account_id=account_id)
 
     rows, next_cursor, total_known = service.list(
         org_id=org_id,
@@ -133,13 +147,18 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> VideoListResponse:
 @router.get("/{youtube_video_id}", response_model=VideoOut)
 def get_video(
     youtube_video_id: str,
+    account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
-cfg: SocialWiringSettings = Depends(get_settings)) -> VideoOut:
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> VideoOut:
     """Single video by YouTube ID. Returns 404 if not in the cache —
-    callers can trigger a sync to populate."""
+    callers can trigger a sync to populate.
+
+    ``account_id`` (optional) scopes to a specific YouTube account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token, cfg)
+    service = _build_video_cache_service(token, cfg, account_id=account_id)
 
     row = service.get(org_id=org_id, youtube_video_id=youtube_video_id)
     if row is None:
@@ -156,14 +175,19 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> VideoOut:
 # ─── POST /api/videos/sync — refresh from YouTube ──────────────────────
 @router.post("/sync", response_model=VideoSyncResult)
 def sync_videos(
+    account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
-cfg: SocialWiringSettings = Depends(get_settings)) -> VideoSyncResult:
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> VideoSyncResult:
     """Walk the channel's full video list (multi-page) + upsert into the
     local cache. Synchronous — the response includes the count summary
-    so the UI doesn't need a separate status round-trip."""
+    so the UI doesn't need a separate status round-trip.
+
+    ``account_id`` (optional) scopes to a specific YouTube account.
+    """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    service = _build_video_cache_service(token, cfg)
+    service = _build_video_cache_service(token, cfg, account_id=account_id)
 
     try:
         outcome = service.sync(org_id=org_id)

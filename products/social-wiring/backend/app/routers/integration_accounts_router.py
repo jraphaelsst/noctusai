@@ -38,6 +38,7 @@ from app.dependencies import (
     get_admin_client,
     get_current_user_org,
     get_settings,
+    get_user_client,
 )
 from app.config import SocialWiringSettings
 from app.services.credential_vault import (
@@ -70,6 +71,11 @@ class IntegrationAccountOut(BaseModel):
     is_default: bool
     created_at: Any = None
     updated_at: Any = None
+    # Channel-object fields (migration 008)
+    client_id: Optional[UUID] = None
+    status: str = "validated"
+    channel_info: dict = Field(default_factory=dict)
+    last_synced_at: Any = None
 
     class Config:
         from_attributes = True
@@ -83,6 +89,7 @@ class IntegrationAccountCreate(BaseModel):
     credential: dict  # provider-specific key/value bag — Fernet-encrypted at rest
     metadata: dict = Field(default_factory=dict)
     is_default: bool = False
+    client_id: Optional[UUID] = None
 
     class Config:
         extra = "forbid"
@@ -94,6 +101,8 @@ class IntegrationAccountUpdate(BaseModel):
     account_label: Optional[str] = None
     metadata: Optional[dict] = None
     is_default: Optional[bool] = None
+    client_id: Optional[UUID] = None
+    status: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -133,6 +142,10 @@ def _out(account: IntegrationAccount) -> IntegrationAccountOut:
         is_default=account.is_default,
         created_at=account.created_at,
         updated_at=account.updated_at,
+        client_id=account.client_id,
+        status=account.status,
+        channel_info=account.channel_info or {},
+        last_synced_at=account.last_synced_at,
     )
 
 
@@ -164,12 +177,13 @@ def list_providers() -> list[dict]:
 @router.get("/accounts", response_model=list[IntegrationAccountOut])
 def list_accounts(
     provider: Optional[str] = Query(default=None),
+    client_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
 ) -> list[IntegrationAccountOut]:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    accounts = svc.list_accounts(org_id=org_id, provider=provider)
+    accounts = svc.list_accounts(org_id=org_id, provider=provider, client_id=client_id)
     return [_out(a) for a in accounts]
 
 
@@ -246,6 +260,7 @@ def create_account(
             credential_dict=body.credential,
             metadata=body.metadata,
             is_default=body.is_default,
+            client_id=body.client_id,
         )
     except CredentialStoreError as exc:
         raise HTTPException(
@@ -261,10 +276,24 @@ def update_account(
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
 ) -> IntegrationAccountOut:
+    from app.services.integration_account_service import _UNSET
+
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     # Confirm ownership first.
     _require_account(svc, account_id, org_id)
+    # client_id uses a sentinel: if the field was not supplied in the request
+    # body Pydantic leaves it as None (the default); we still need to
+    # distinguish "explicitly set to null" from "not provided". Because
+    # IntegrationAccountUpdate.client_id defaults to None, we can't tell the
+    # difference from the model alone. The conservative choice: treat None as
+    # "not provided" (no change) since clearing the FK via PATCH is an
+    # explicit opt-in the FE signals via `client_id: null` in the body. Pydantic
+    # always includes the field; check if it was actually in the raw body via
+    # model_fields_set.
+    client_id_arg = _UNSET
+    if "client_id" in body.model_fields_set:
+        client_id_arg = body.client_id
     try:
         account = svc.update_account(
             account_id=account_id,
@@ -272,6 +301,8 @@ def update_account(
             account_label=body.account_label,
             metadata=body.metadata,
             is_default=body.is_default,
+            client_id=client_id_arg,
+            status=body.status,
         )
     except IntegrationAccountNotFound:
         raise HTTPException(
@@ -321,6 +352,37 @@ def delete_account(
             detail="integration account not found",
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Channel sync ─────────────────────────────────────────────────────────────
+
+@router.post("/accounts/{account_id}/sync", response_model=IntegrationAccountOut)
+def sync_account(
+    account_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> IntegrationAccountOut:
+    """Validate a YouTube account by fetching live channel info from the API.
+
+    Sets status='validating', calls channels.list bound to this account,
+    then writes channel_info + status='validated' + last_synced_at on success,
+    or status='error' + channel_info={'error': ...} on failure.
+    """
+    from app.services.account_credentials import sync_channel_info
+
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    account = _require_account(svc, account_id, org_id)
+    try:
+        updated = sync_channel_info(get_admin_client(), cfg, svc, account)
+    except Exception as exc:
+        logger.exception("sync_account: unexpected error for account %s", account_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"channel sync failed: {exc}",
+        ) from exc
+    return _out(updated)
 
 
 # ─── YouTube OAuth ────────────────────────────────────────────────────────────
@@ -584,6 +646,17 @@ def youtube_oauth_callback(
     # Strip None values so the metadata column is clean.
     metadata = {k: v for k, v in metadata.items() if v is not None}
 
+    # Channel object: persist what we fetched (thumbnail not available from
+    # OAuth channel info; sync endpoint provides the full projection).
+    from datetime import datetime as _dt, timezone as _tz
+    _now_iso = _dt.now(_tz.utc).isoformat()
+    _channel_info: dict = {}
+    if channel_id:
+        _channel_info = {
+            "channel_id": channel_id,
+            "title": channel_title or "",
+        }
+
     # Idempotent on channel_id. Re-connecting a channel that's already an
     # account for this org RE-AUTHENTICATES it (persists the fresh token bundle)
     # instead of inserting a duplicate row — this is what makes the legacy
@@ -607,6 +680,14 @@ def youtube_oauth_callback(
             credential_dict=bundle,
             metadata=metadata,
         )
+        # Also refresh channel_info + status on re-auth.
+        account = svc.update_channel_info(
+            account_id=existing.id,
+            org_id=org_id,
+            channel_info=_channel_info,
+            status="validated",
+            last_synced_at=_dt.now(_tz.utc),
+        )
     else:
         # Disambiguate only if a DIFFERENT channel already holds this label
         # (two channels can share a title) — keeps the UNIQUE constraint happy
@@ -622,7 +703,17 @@ def youtube_oauth_callback(
             credential_dict=bundle,
             metadata=metadata,
             is_default=not youtube_accounts,  # first-ever account becomes default
+            status="validated",
         )
+        # Write channel_info for the new account too (same as re-auth path).
+        if _channel_info:
+            account = svc.update_channel_info(
+                account_id=account.id,
+                org_id=org_id,
+                channel_info=_channel_info,
+                status="validated",
+                last_synced_at=_dt.now(_tz.utc),
+            )
 
     redirect_url = f"/integrations?account_created={account.id}"
     if cfg.frontend_base_url:

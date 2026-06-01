@@ -188,13 +188,22 @@ def _retry_with_backoff(call, *, label: str):
 
 @dataclass
 class ChannelInfo:
-    """Subset of channels.list response that the UI cares about."""
+    """Subset of channels.list response that the UI cares about.
+
+    ``thumbnail_url`` is populated when the seed YoutubeClient exposes it.
+    The seed ``ChannelInfo`` type (noctusai_lib.integrations.youtube.types)
+    does NOT include a thumbnail field as of this writing — the field is left
+    empty string here to keep the product shape forward-compatible. When the
+    seed lifts ``thumbnail_url`` into ``ChannelInfo``, the mapping in
+    ``get_channel_info`` below auto-picks it up via ``getattr(..., '')``.
+    """
 
     channel_id: str
     title: str
     subscriber_count: int
     video_count: int
     view_count: int
+    thumbnail_url: str = ""
 
 
 @dataclass
@@ -380,6 +389,10 @@ class YouTubeService:
             subscriber_count=info.subscriber_count,
             video_count=info.video_count,
             view_count=info.view_count,
+            # seed ChannelInfo does not expose thumbnail_url yet; default to
+            # empty string. When the seed adds it, getattr picks it up
+            # automatically without a product-side change.
+            thumbnail_url=getattr(info, "thumbnail_url", ""),
         )
 
     def list_all_videos(

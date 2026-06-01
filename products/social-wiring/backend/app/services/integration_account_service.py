@@ -36,6 +36,7 @@ __all__ = [
     "IntegrationAccountService",
     "IntegrationAccountNotFound",
     "build_integration_account_service",
+    "_UNSET",
 ]
 
 _SCHEMA = "social_wiring"
@@ -58,10 +59,20 @@ class IntegrationAccount:
     is_default: bool
     created_at: Any
     updated_at: Any
+    # Channel-object columns (migration 008)
+    client_id: Optional[UUID]
+    status: str
+    channel_info: dict[str, Any]
+    last_synced_at: Any
 
 
 class IntegrationAccountNotFound(Exception):
     """Raised when an account row doesn't exist or isn't owned by the org."""
+
+
+# Sentinel for update_account: distinguishes "caller passed None (clear the
+# FK)" from "caller did not pass client_id at all (leave unchanged)".
+_UNSET = object()
 
 
 class IntegrationAccountService:
@@ -109,6 +120,14 @@ class IntegrationAccountService:
                 raw_meta = json.loads(raw_meta)
             except Exception:
                 raw_meta = {}
+        raw_channel_info = row.get("channel_info") or {}
+        if isinstance(raw_channel_info, str):
+            try:
+                raw_channel_info = json.loads(raw_channel_info)
+            except Exception:
+                raw_channel_info = {}
+        raw_client_id = row.get("client_id")
+        client_id = UUID(str(raw_client_id)) if raw_client_id else None
         return IntegrationAccount(
             id=UUID(str(row["id"])),
             org_id=UUID(str(row["org_id"])),
@@ -118,6 +137,10 @@ class IntegrationAccountService:
             is_default=bool(row.get("is_default", False)),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
+            client_id=client_id,
+            status=row.get("status") or "validated",
+            channel_info=raw_channel_info,
+            last_synced_at=row.get("last_synced_at"),
         )
 
     def _require_row(self, account_id: UUID, org_id: UUID) -> dict:
@@ -142,11 +165,15 @@ class IntegrationAccountService:
         self,
         org_id: UUID,
         provider: Optional[str] = None,
+        client_id: Optional[UUID] = None,
     ) -> list[IntegrationAccount]:
-        """List integration accounts for an org, optionally filtered by provider."""
+        """List integration accounts for an org, optionally filtered by
+        provider and/or client_id."""
         q = self._table().select("*").eq("org_id", str(org_id))
         if provider:
             q = q.eq("provider", provider)
+        if client_id is not None:
+            q = q.eq("client_id", str(client_id))
         resp = q.execute()
         return [self._row_to_account(r) for r in (resp.data or [])]
 
@@ -170,6 +197,8 @@ class IntegrationAccountService:
         credential_dict: dict,
         metadata: Optional[dict] = None,
         is_default: bool = False,
+        client_id: Optional[UUID] = None,
+        status: str = "validated",
     ) -> IntegrationAccount:
         """Create a new integration account row.
 
@@ -190,7 +219,10 @@ class IntegrationAccountService:
             "encrypted_credential": encrypted_str,
             "metadata": json.dumps(metadata or {}),
             "is_default": is_default,
+            "status": status,
         }
+        if client_id is not None:
+            data["client_id"] = str(client_id)
         if is_default:
             # Clear existing defaults for this provider before inserting.
             self._clear_defaults(org_id=org_id, provider=provider)
@@ -207,9 +239,16 @@ class IntegrationAccountService:
         account_label: Optional[str] = None,
         metadata: Optional[dict] = None,
         is_default: Optional[bool] = None,
+        client_id: Any = _UNSET,
+        status: Optional[str] = None,
     ) -> IntegrationAccount:
-        """Update label / metadata / is_default. credential cannot be
-        patched via this method — re-create the account to rotate keys."""
+        """Update label / metadata / is_default / client_id / status.
+
+        ``client_id`` uses the ``_UNSET`` sentinel so passing ``None``
+        explicitly clears the FK, while omitting the arg leaves it unchanged.
+        credential cannot be patched via this method — re-create the account
+        to rotate keys.
+        """
         # Confirm the row exists and belongs to this org.
         self._require_row(account_id, org_id)
 
@@ -228,6 +267,11 @@ class IntegrationAccountService:
                     provider=row["provider"],
                     exclude_id=account_id,
                 )
+        if client_id is not _UNSET:
+            # Explicit None clears the FK; a UUID sets it.
+            updates["client_id"] = str(client_id) if client_id is not None else None
+        if status is not None:
+            updates["status"] = status
 
         if not updates:
             # Nothing to do — return current state.
@@ -342,6 +386,44 @@ class IntegrationAccountService:
             existing_meta = self._row_to_account(row).metadata
             merged = {**existing_meta, **metadata}
             updates["metadata"] = json.dumps(merged)
+        resp = (
+            self._table()
+            .update(updates)
+            .eq("id", str(account_id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise IntegrationAccountNotFound(
+                f"integration account {account_id} not found for org {org_id}"
+            )
+        return self._row_to_account(rows[0])
+
+
+    def update_channel_info(
+        self,
+        account_id: UUID,
+        org_id: UUID,
+        *,
+        channel_info: dict,
+        status: str,
+        last_synced_at: Any,
+    ) -> IntegrationAccount:
+        """Persist channel_info / status / last_synced_at for one account.
+
+        Owner-scoped (org_id filter). Raises ``IntegrationAccountNotFound``
+        if the account doesn't exist or isn't owned by ``org_id``.
+        """
+        from datetime import timezone
+
+        self._require_row(account_id, org_id)
+        updates: dict = {
+            "channel_info": json.dumps(channel_info),
+            "status": status,
+            "last_synced_at": last_synced_at.isoformat() if hasattr(last_synced_at, "isoformat") else last_synced_at,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
         resp = (
             self._table()
             .update(updates)
