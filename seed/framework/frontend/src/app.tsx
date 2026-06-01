@@ -17,7 +17,15 @@ import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
 import { PrivacyPolicyPage } from "./pages/consent/PrivacyPolicyPage";
 import { TermsOfUsePage } from "./pages/consent/TermsOfUsePage";
-import type { SupabaseClient } from "@supabase/supabase-js";
+
+// The seed lib types every supabase seam STRUCTURALLY (duck-typed) so the public
+// contract never couples to a specific @supabase/supabase-js COPY. Two installed
+// versions of the package expose `supabaseUrl` as a `protected` member, which
+// makes their SupabaseClient class identities non-assignable to each other even
+// at <any, …> ("not a class derived from"). The framework follows that same
+// pattern instead of importing the real SupabaseClient class — here only the
+// `.auth` surface is used (createAuthProvider + SSOCallback).
+type AnySupabaseClient = { auth: any };
 
 export interface ProductRoute {
   path: string;
@@ -62,7 +70,7 @@ export interface ProductAppConfig {
   /** Layout for flat routing */
   Layout?: React.ComponentType<{ children: React.ReactNode }>;
   /** Supabase client (required unless `authProvider` is provided) */
-  supabase?: SupabaseClient<any, any, any>;
+  supabase?: AnySupabaseClient;
   /** Full auth store hook (required unless `authProvider` is provided) */
   useAuthStore?: () => any;
   /**
