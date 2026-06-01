@@ -243,3 +243,34 @@ class TestAllCacheFreshness:
         assert len(noc_errs) == 1
         assert noc_errs[0]["severity"] == "warning"
         assert "synthetic" in noc_errs[0]["issue"]
+
+    def test_heals_structural_caches_on_contact(self, tmp_path, monkeypatch):
+        # The check MUST settle the zero-OpenAI structural caches first, so a
+        # structural cache left stale by an out-of-commit auto-improvement.ndjson
+        # append (or an FF-merge that skips post-merge) SELF-HEALS instead of
+        # blocking [high] an unrelated commit. (2026-06-01 regression.)
+        from tools.noctus.dev import refresh_all_caches as _r
+
+        called = {"n": 0}
+
+        def _spy(repo_root=None):
+            called["n"] += 1
+            return {"ok": True, "healed": [], "stale_embedding": [], "detail": None}
+
+        monkeypatch.setattr(_r, "settle_structural_caches", _spy)
+        check_all_cache_freshness(tmp_path)
+        assert called["n"] == 1, \
+            "check_all_cache_freshness must settle structural caches (heal-on-contact)"
+
+    def test_heal_failure_is_logged_not_raised(self, tmp_path, monkeypatch):
+        # Heal is BEST-EFFORT: if settle raises, the check still runs the
+        # sub-keepers (no crash, no silent swallow — residual staleness still
+        # surfaces through the composed sub-keepers).
+        from tools.noctus.dev import refresh_all_caches as _r
+
+        def _boom(repo_root=None):
+            raise RuntimeError("synthetic settle failure")
+
+        monkeypatch.setattr(_r, "settle_structural_caches", _boom)
+        result = check_all_cache_freshness(tmp_path)  # must NOT raise
+        assert isinstance(result, list)

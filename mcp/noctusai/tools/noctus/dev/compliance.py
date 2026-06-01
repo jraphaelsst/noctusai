@@ -9854,7 +9854,32 @@ def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     (see KB § PATTERNS/common/extractor-correctness-vs-mirror.md).
 
     KB § PATTERNS/common/eight-way-sync.md.
+
+    Heal-on-contact: the zero-OpenAI STRUCTURAL caches are SETTLED first via
+    ``settle_structural_caches`` BEFORE evaluating freshness — so a structural
+    cache left stale by an out-of-commit ``auto-improvement.ndjson`` append or
+    an FF-merge that skips the post-merge hook SELF-HEALS at the check instead
+    of blocking [high] an unrelated commit (2026-06-01: a stale auto-improvement
+    cache blocked a hook-fix commit + required a manual refresh). only-stale +
+    source_sha-guarded ⇒ a no-op when coherent; embedding caches are NOT settled
+    (OpenAI cost → they stay warn-only so the human stays in the spend loop).
+    Best-effort: a heal failure is LOGGED, never raised — the sub-keepers below
+    still surface any residual staleness (no silent error).
+    KB § PATTERNS/common/cache-auto-freshness.md § Heal-on-contact.
     """
+    # Heal-on-contact for the structural (zero-OpenAI) caches — the documented
+    # "self-heal whenever freshness is checked" leg, wired into the check that
+    # is supposed to do it (was previously only fired by the pre-commit when the
+    # cache's source was STAGED, leaving out-of-commit/FF-merge drift to block).
+    try:
+        from tools.noctus.dev.refresh_all_caches import settle_structural_caches
+        settle_structural_caches(repo_root)
+    except Exception as exc:  # best-effort; residual staleness still flagged below
+        logger.warning(
+            "check_all_cache_freshness: structural heal-on-contact skipped (%s); "
+            "sub-keepers will still report any residual staleness",
+            exc,
+        )
     return _run_composed_keeper("all-cache-freshness", [
         ("keeper-patterns", lambda: check_keeper_cache_freshness(repo_root)),
         ("agent-context", lambda: check_agent_context_cache_freshness(repo_root)),
