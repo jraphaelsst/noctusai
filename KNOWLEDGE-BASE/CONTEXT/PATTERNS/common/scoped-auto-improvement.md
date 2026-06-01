@@ -34,12 +34,34 @@ The **ndjson lives under `project-history/`** alongside `worktree-salvage.ndjson
   "target":      ".claude/agents/<x>.md",  // the doc/agent/file the surface is ABOUT (path or '*' for cross-cutting)
   "description": "verbatim surface text",
   "status":      "s1-emergent",            // 's1-emergent' | 's2-memory' | 's3-kb' | 's4-keeper' | 'closed'
-  "source_ref":  "commit:abc123 | session:..." // optional provenance
+  "source_ref":  "commit:abc123 | session:...", // optional provenance
+  "resolve_when": "keeper:check_x",         // OPTIONAL resolution handle (predicate, or list AND-combined)
+  "resolve_to":   "closed"                  // OPTIONAL target status when resolve_when passes (default 'closed')
 }
 ```
 
 **Status flow** maps directly to the codification pipeline (`KB § PATTERNS/common/methodology-codification-pipeline.md`):
 `s1-emergent` (just surfaced) → `s2-memory` (lands in MEMORY) → `s3-kb` (lands in a KB doc) → `s4-keeper` (gets a detector) → `closed` (resolved, no further work).
+
+## Reconcile — landed drift self-closes (heal-on-contact)
+
+**The bug this kills.** The ledger is append-only and the hot-drift surface (the `/contextualize` protocol) shows every OPEN `s1`/`s2-memory` entry. The recurring failure: a drift's fix LANDS, but the resolving session APPENDS a fresh `closed`/`s4-keeper` row (a new `ts`+`target`+`description`) instead of promoting the ORIGINAL — so the original `s2-memory` row never dies and re-surfaces as "hot drift" every session, until someone re-investigates and discovers it was already done. Observed 2026-06-01: 4 entries resolved at 00:39 via appended rows, still surfaced by the 00:53 cache rebuild. `auto_improvement_promote` keys on the exact `(ts,target,description)` triple the resolver rarely has handy.
+
+**The fix.** Each entry carries an optional `resolve_when` — a declarative predicate describing the real-world condition that means *resolved*. `noctus.dev.auto_improvement_reconcile` evaluates it against the live tree and auto-advances the ORIGINAL row's `status` to `resolve_to` (default `closed`), stamping `resolved_ts` + `resolved_by` for audit. A landed fix stops re-surfacing WITHOUT anyone flipping status by hand.
+
+**Predicate grammar** (`auto_improvement._eval_predicate`; a list is AND-combined; unknown grammar ⇒ unmet, never silently resolved):
+
+| Predicate | Satisfied when |
+|---|---|
+| `keeper:<name>` | `def <name>(` exists in `compliance.py` |
+| `path_exists:<relpath>` | file/dir exists under repo root |
+| `grep_present:<term>@<path>` | ≥1 file under `<path>` contains `<term>` |
+| `grep_max:<n>:<term>@<path>` | ≤ `n` files under `<path>` contain `<term>` |
+| `superseded_by:<target_substr>` | a LATER entry at a terminal status (`s4-keeper`/`closed`) has `target` ⊇ substr |
+
+**Heal-on-contact.** Run `auto_improvement_reconcile dry_run=True` at every hot-drift surface; entries it would reconcile are DONE — exclude them from "hot drift." Apply with `dry_run=False` (atomic ndjson rewrite + cache refresh) and commit the ledger. Reconcile NEVER runs silently inside a read-side freshness check — the ndjson is a committed source-of-truth, so mutation is always an explicit, committed action. Idempotent (terminal rows are never re-touched).
+
+**Discipline (gated).** Keeper `check_s2_drift_has_resolution_handle` (severity `medium`) flags any `s2-memory` entry lacking a `resolve_when` — it cannot self-close and would rot. `s1-emergent` is exempt (too freshly-surfaced); `s3`/`s4`/`closed` are past the hot-drift surface. So: log an `s2-memory` entry WITH its resolution handle, and reconcile retires it for you when the work lands.
 
 ## sqlite schema
 

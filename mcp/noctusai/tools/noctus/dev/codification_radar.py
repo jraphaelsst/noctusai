@@ -196,45 +196,29 @@ def promote(matches: list[dict], target_status: str) -> dict:
         return {"ok": False, "error": f"ledger not found: {ledger}"}
 
     # Build a match-set keyed by (ts, target, description) for O(1) lookup.
-    match_keys: set[tuple[str, str, str]] = set()
-    for m in matches:
-        key = (m.get("ts", ""), m.get("target", ""), m.get("description", ""))
-        match_keys.add(key)
+    match_keys: set[tuple[str, str, str]] = {ai._entry_key(m) for m in matches}
 
-    new_lines: list[str] = []
-    updated = 0
-    no_match = 0
-    for raw_line in ledger.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            new_lines.append(raw_line)
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            # Preserve malformed lines verbatim — don't lose data.
-            new_lines.append(raw_line)
-            continue
-        key = (entry.get("ts", ""), entry.get("target", ""), entry.get("description", ""))
-        if key in match_keys:
+    # Route through the shared atomic-rewrite helper (one source of truth for
+    # the tmp+rename + malformed-line-preservation invariants; reconcile uses
+    # the same). Counters are tracked in the mutate closure so the
+    # updated/no_match return shape is preserved exactly.
+    counters = {"updated": 0, "no_match": 0}
+
+    def _mutate(entry: dict) -> dict:
+        if ai._entry_key(entry) in match_keys:
             if entry.get("status") == target_status:
-                no_match += 1
+                counters["no_match"] += 1
             else:
                 entry["status"] = target_status
-                updated += 1
-            new_lines.append(json.dumps(entry, ensure_ascii=False))
-        else:
-            new_lines.append(raw_line)
+                counters["updated"] += 1
+        return entry
 
-    # Atomic rewrite: write to temp + rename.
-    tmp = ledger.with_suffix(".ndjson.tmp")
-    tmp.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
-    tmp.replace(ledger)
+    ai._rewrite_ledger(_mutate)
 
     return {
         "ok": True,
-        "updated": updated,
-        "no_match": no_match,
+        "updated": counters["updated"],
+        "no_match": counters["no_match"],
         "target_status": target_status,
     }
 

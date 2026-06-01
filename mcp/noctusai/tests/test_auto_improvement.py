@@ -12,7 +12,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev import auto_improvement as ai  # noqa: E402
-from tools.noctus.dev.compliance import check_auto_improvement_cache_freshness  # noqa: E402
+from tools.noctus.dev import codification_radar as cr  # noqa: E402
+from tools.noctus.dev.compliance import (  # noqa: E402
+    check_auto_improvement_cache_freshness,
+    check_s2_drift_has_resolution_handle,
+)
 
 
 @pytest.fixture
@@ -146,3 +150,172 @@ class TestFreshnessKeeper:
         ai.refresh(force=True)
         issues = check_auto_improvement_cache_freshness(repo_root=tmp_repo)
         assert issues == []
+
+
+class TestLogResolveFields:
+    def test_resolve_when_and_to_persisted(self, tmp_repo):
+        r = ai.log_entry(
+            scope="broad", kind="drift", target="t", description="d", agent="tl",
+            status="s2-memory", resolve_when="keeper:check_x", resolve_to="s4-keeper",
+        )
+        assert r["ok"] is True
+        e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
+        assert e["resolve_when"] == "keeper:check_x"
+        assert e["resolve_to"] == "s4-keeper"
+
+    def test_omitted_resolve_fields_absent(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d", agent="tl")
+        e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
+        assert "resolve_when" not in e and "resolve_to" not in e
+
+    def test_invalid_resolve_to_rejected(self, tmp_repo):
+        r = ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+                         resolve_to="bogus")
+        assert r["ok"] is False
+        assert "resolve_to must be one of" in r["error"]
+
+
+class TestReconcile:
+    def _seed_compliance(self, root: Path, *keeper_names: str) -> None:
+        comp = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+        comp.parent.mkdir(parents=True, exist_ok=True)
+        comp.write_text("".join(f"def {n}(x):\n    return []\n" for n in keeper_names), encoding="utf-8")
+
+    def test_keeper_predicate_closes_and_is_idempotent(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_embed_funnel_self_configures")
+        ai.log_entry(scope="broad", kind="improvement", target="embed-funnel", description="d",
+                     status="s2-memory", resolve_when="keeper:check_embed_funnel_self_configures",
+                     resolve_to="s4-keeper")
+        r1 = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r1["counts"]["reconciled"] == 1
+        assert r1["reconciled"][0]["to"] == "s4-keeper"
+        e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
+        assert e["status"] == "s4-keeper"
+        assert e["resolved_ts"] and e["resolved_by"] == ["keeper:check_embed_funnel_self_configures"]
+        # Idempotent: terminal entry never re-touched.
+        r2 = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r2["counts"]["reconciled"] == 0
+
+    def test_dry_run_does_not_mutate(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_k")
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+                     status="s2-memory", resolve_when="keeper:check_k")
+        before = ai.LEDGER_PATH.read_text(encoding="utf-8")
+        r = ai.reconcile(dry_run=True, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 1
+        assert ai.LEDGER_PATH.read_text(encoding="utf-8") == before  # untouched
+
+    def test_unmet_keeper_stays_open(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_present")
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+                     status="s2-memory", resolve_when="keeper:check_absent")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 0
+        assert r["counts"]["still_open"] == 1
+
+    def test_all_predicates_must_pass(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_k")
+        (tmp_repo / "exists.txt").write_text("x", encoding="utf-8")
+        # one met (keeper), one unmet (missing path) → AND fails → still open
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d", status="s2-memory",
+                     resolve_when=["keeper:check_k", "path_exists:missing.txt"])
+        assert ai.reconcile(dry_run=False, repo_root=tmp_repo)["counts"]["reconciled"] == 0
+        # now both met
+        ai.log_entry(scope="broad", kind="drift", target="t2", description="d2", status="s2-memory",
+                     resolve_when=["keeper:check_k", "path_exists:exists.txt"])
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 1
+
+    def test_grep_max_and_present(self, tmp_repo):
+        kb = tmp_repo / "KB"
+        kb.mkdir()
+        (kb / "a.md").write_text("legacy term here", encoding="utf-8")
+        # grep_max:0 fails (1 file has it); grep_max:1 passes
+        ai.log_entry(scope="broad", kind="drift", target="g0", description="d", status="s2-memory",
+                     resolve_when="grep_max:0:legacy term@KB")
+        ai.log_entry(scope="broad", kind="drift", target="g1", description="d", status="s2-memory",
+                     resolve_when="grep_max:1:legacy term@KB")
+        ai.log_entry(scope="broad", kind="drift", target="gp", description="d", status="s2-memory",
+                     resolve_when="grep_present:legacy term@KB")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        closed = {x["target"] for x in r["reconciled"]}
+        assert closed == {"g1", "gp"}  # g0 stays open (count 1 > 0)
+
+    def test_superseded_by(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="old-drift", description="orig",
+                     status="s2-memory", resolve_when="superseded_by:embed-keeper")
+        # a LATER terminal entry whose target carries the substring
+        ai.log_entry(scope="broad", kind="improvement", target="embed-keeper landed",
+                     description="done", status="s4-keeper")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert any(x["target"] == "old-drift" for x in r["reconciled"])
+
+    def test_entry_without_handle_is_unhandled_not_touched(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="no-handle", description="d",
+                     status="s2-memory")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 0
+        assert any(u["target"] == "no-handle" for u in r["unhandled"])
+        e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
+        assert e["status"] == "s2-memory"  # untouched
+
+    def test_unknown_predicate_never_silently_closes(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+                     status="s2-memory", resolve_when="bogus_grammar:x")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 0  # unknown ⇒ unmet, loud not silent
+
+    def test_malformed_line_preserved_through_reconcile(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_k")
+        ai.log_entry(scope="broad", kind="drift", target="t", description="d",
+                     status="s2-memory", resolve_when="keeper:check_k")
+        with ai.LEDGER_PATH.open("a", encoding="utf-8") as f:
+            f.write("not json\n")
+        ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert "not json" in ai.LEDGER_PATH.read_text(encoding="utf-8")
+
+
+class TestPromoteSharesRewriter:
+    """codification_radar.promote now routes through ai._rewrite_ledger."""
+
+    def test_promote_updates_and_counts(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="t1", description="x",
+                     status="s1-emergent")
+        ai.refresh(force=True)
+        rows = ai.query()
+        r = cr.promote(rows, "s2-memory")
+        assert r["ok"] and r["updated"] == 1 and r["no_match"] == 0
+        # second promote = idempotent no-op
+        rows2 = ai.query()
+        r2 = cr.promote(rows2, "s2-memory")
+        assert r2["updated"] == 0 and r2["no_match"] == 1
+
+    def test_promote_preserves_malformed(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="t1", description="x")
+        with ai.LEDGER_PATH.open("a", encoding="utf-8") as f:
+            f.write("garbage line\n")
+        ai.refresh(force=True)
+        cr.promote(ai.query(), "closed")
+        assert "garbage line" in ai.LEDGER_PATH.read_text(encoding="utf-8")
+
+
+class TestResolutionHandleKeeper:
+    def test_s2_without_handle_flagged(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="lingering", description="d",
+                     status="s2-memory")
+        issues = check_s2_drift_has_resolution_handle(repo_root=tmp_repo)
+        assert any(i["symbol"] == "s2-drift-no-resolution-handle" for i in issues)
+
+    def test_s2_with_handle_clean(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="ok", description="d",
+                     status="s2-memory", resolve_when="keeper:check_k")
+        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []
+
+    def test_s1_without_handle_not_flagged(self, tmp_repo):
+        # s1-emergent is too freshly-surfaced to demand a handle.
+        ai.log_entry(scope="broad", kind="drift", target="fresh", description="d",
+                     status="s1-emergent")
+        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []
+
+    def test_no_ledger_silent_pass(self, tmp_repo):
+        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []

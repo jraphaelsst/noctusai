@@ -8020,6 +8020,9 @@ def check_all_products() -> tuple[int, list]:
     # mirrors project-history/auto-improvement.ndjson. Consult-before-editing
     # discipline. KB § PATTERNS/common/scoped-auto-improvement.md.
     all_issues.extend(check_auto_improvement_cache_freshness())
+    # 2026-06-01 — every s2-memory drift must carry a `resolve_when` so
+    # `auto_improvement_reconcile` can self-close it; else it rots as hot drift.
+    all_issues.extend(check_s2_drift_has_resolution_handle())
     # 2026-05-26 (Phase B) — CONTEXTUALIZE.md = fresh-agent read map; sibling
     # of check_claude_md_router (same pointer-only discipline, applied to the
     # onboarding ramp). KB § PATTERNS/common/claude-md-router-discipline.md.
@@ -10617,6 +10620,68 @@ def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> lis
             "severity": "high",
             "symbol": "auto-improvement-cache-stale",
         })
+    return issues
+
+
+def check_s2_drift_has_resolution_handle(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-06-01): every `s2-memory` auto-improvement entry MUST
+    carry a `resolve_when` resolution handle so it can SELF-CLOSE.
+
+    The drift this locks. The ledger is append-only and the hot-drift surface
+    (the /contextualize protocol) surfaces every OPEN `s1`/`s2-memory` entry. The
+    recurring failure: a drift's fix LANDS, the resolving session appends a fresh
+    `closed`/`s4-keeper` row (a new ts+target+description) instead of promoting the
+    ORIGINAL — so the original `s2-memory` row never dies and re-surfaces as "hot
+    drift" every session (observed 2026-06-01: 4 entries resolved at 00:39 via
+    appended rows, still surfaced by the 00:53 cache rebuild). The structural fix
+    is `auto_improvement_reconcile`, which auto-advances any entry whose
+    `resolve_when` predicate is satisfied — but only if the entry HAS one. This
+    keeper is that guarantee: a lingering `s2-memory` entry without a `resolve_when`
+    is invisible to reconcile and will rot.
+
+    Predicate: no ndjson entry at status ``s2-memory`` lacks a non-empty
+    ``resolve_when``. Severity ``medium`` (a rotting surface, not a broken build).
+    Only ``s2-memory`` is gated — ``s1-emergent`` is too freshly-surfaced to
+    demand a handle, and ``s3``/``s4``/``closed`` are past the hot-drift surface.
+
+    Remediation: add a `resolve_when` predicate to the entry (e.g.
+    `keeper:<name>`, `grep_max:0:<term>@<path>`, `path_exists:<p>`) via
+    `auto_improvement_log` on a superseding entry, or close it manually — then
+    run `noctus.dev.auto_improvement_reconcile dry_run=False`.
+
+    Silent skip when the ndjson is absent. KB § PATTERNS/common/scoped-auto-improvement.md.
+    """
+    import json as _json
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "auto-improvement.ndjson"
+    if not ledger.exists():
+        return issues
+    rel = "project-history/auto-improvement.ndjson"
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue  # malformed-line health is a separate keeper's concern
+        if entry.get("status") != "s2-memory":
+            continue
+        rw = entry.get("resolve_when")
+        if not rw:
+            issues.append({
+                "file": rel,
+                "issue": (
+                    f"s2-memory drift `{entry.get('target', '?')[:70]}` has no "
+                    "`resolve_when` resolution handle — it cannot self-close and "
+                    "will re-surface as hot drift every session. Add a predicate "
+                    "(keeper:/grep_max:/path_exists:/superseded_by:) or close it; "
+                    "then run `auto_improvement_reconcile dry_run=False`"
+                ),
+                "severity": "medium",
+                "symbol": "s2-drift-no-resolution-handle",
+            })
     return issues
 
 
