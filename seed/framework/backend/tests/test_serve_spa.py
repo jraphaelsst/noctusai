@@ -152,6 +152,27 @@ def test_unknown_ops_path_is_real_404_not_index(settings, spa_dir):
     assert "SPA-ROOT" not in r.text
 
 
+def test_spa_shell_is_no_cache_but_assets_stay_cacheable(settings, spa_dir):
+    """The index.html SHELL must be served ``Cache-Control: no-cache`` — it
+    references content-hashed asset filenames, so a browser-cached shell loads
+    a STALE bundle after a deploy (the new route silently misses → the auth
+    gate redirects to /landing; observed on noctusai.com after a deploy). The
+    hashed assets are immutable (new build ⇒ new filename) and must NOT be
+    no-cached, or every visit re-downloads the whole bundle."""
+    client = TestClient(_app(settings, serve_spa=str(spa_dir)))
+
+    root = client.get("/")
+    assert "no-cache" in root.headers.get("cache-control", "").lower()
+
+    # SPA client-route fallback also serves the shell → no-cache.
+    fallback = client.get("/dashboard/clients")
+    assert "no-cache" in fallback.headers.get("cache-control", "").lower()
+
+    # Content-hashed asset → NOT no-cache (stays cacheable).
+    asset = client.get("/assets/app-abc123.js")
+    assert "no-cache" not in asset.headers.get("cache-control", "").lower()
+
+
 def test_api_route_wins_over_spa_mount(settings, spa_dir):
     """`/_health` is registered before the `/` mount → API still answers."""
     client = TestClient(_app(settings, serve_spa=str(spa_dir)))

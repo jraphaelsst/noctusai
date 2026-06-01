@@ -395,10 +395,27 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
     from starlette.responses import FileResponse, PlainTextResponse
     from starlette.staticfiles import StaticFiles
 
+    def _no_cache(response):
+        # The SPA shell (index.html) must NEVER be browser-cached: it references
+        # content-hashed asset filenames, so a stale shell points at an OLD
+        # bundle → after a deploy a returning visitor's cached shell loads the
+        # pre-deploy JS, the new route silently misses, and the auth gate
+        # redirects to /landing ("noctusai.com serves a stale page after deploy"
+        # — observed on the apex). The hashed assets under /assets/ are immutable
+        # (new build ⇒ new filename), so they keep StaticFiles' default caching;
+        # only the shell is no-cache.
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     class _SPAStaticFiles(StaticFiles):
         async def get_response(self, path: str, scope):
             try:
-                return await super().get_response(path, scope)
+                response = await super().get_response(path, scope)
+                # html=True serves index.html for "/" (path == "") and for a
+                # direct /index.html — that's the shell; never cache it.
+                if path in ("", ".", "index.html") or path.endswith("/index.html"):
+                    return _no_cache(response)
+                return response
             except StarletteHTTPException as exc:
                 # Compose both protections:
                 # - api/ and _ops paths NEVER get HTML-rescued (prevents
@@ -410,7 +427,8 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
                 is_api_or_ops = path.startswith("api/") or path.startswith("_")
                 if exc.status_code == 404 and not PurePosixPath(path).suffix and not is_api_or_ops:
                     if index_file.is_file():
-                        return FileResponse(index_file)
+                        # SPA fallback always serves the shell → no-cache too.
+                        return _no_cache(FileResponse(index_file))
                     return PlainTextResponse(
                         "SPA bundle not yet built (vite build in progress).",
                         status_code=503,
