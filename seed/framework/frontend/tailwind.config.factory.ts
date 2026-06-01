@@ -44,6 +44,11 @@ const DEFAULT_CONTENT: string[] = [
   "./src/**/*.{ts,tsx}",
   "./index.html",
   "../../../seed/lib/frontend/src/**/*.{ts,tsx}",
+  // The framework ships seed-mounted pages (e.g. ConsentSettingsPage, the
+  // public /consent legal pages) whose utility classes must be generated into
+  // every product's CSS — scan the framework src too, or those pages render
+  // unstyled (esp. arbitrary values like text-[0.95rem] / scroll-mt-20).
+  "../../../seed/framework/frontend/src/**/*.{ts,tsx}",
 ];
 
 export function createTailwindConfig(

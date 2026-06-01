@@ -14,6 +14,9 @@ import { ErrorBoundary, createAuthProvider, SSOCallback, env } from "@noctusai/l
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
+import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
+import { PrivacyPolicyPage } from "./pages/consent/PrivacyPolicyPage";
+import { TermsOfUsePage } from "./pages/consent/TermsOfUsePage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ProductRoute {
@@ -274,6 +277,12 @@ export function createProductApp(config: ProductAppConfig) {
           {publicRoutes.map(({ path, component: Component }) => (
             <Route key={path} path={path} element={<Component />} />
           ))}
+          {/* Seed-mounted PUBLIC legal pages — auto-injected for every product,
+              no auth, no Layout (Google/Meta verification crawlers must reach
+              them). Platform-wide consent docs; see content/consent.ts. */}
+          <Route path="/consent" element={<ConsentHubPage />} />
+          <Route path="/consent/privacy-policy" element={<PrivacyPolicyPage />} />
+          <Route path="/consent/terms-of-use" element={<TermsOfUsePage />} />
           <Route path="/*" element={<AppContent />} />
         </Routes>
       </Suspense>
