@@ -1,7 +1,7 @@
 ---
 name: noc-ship
 description: Use for the in-repo release/deploy gates — triggers "ship to main", "bless this", "merge to main", "promote to prod", "release", "deploy these changes", "deploy the latest", "redeploy", "pull the code to the VPS". `main` is production; everyday work lands on `dev`.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # noc-ship — release · bless · promote · deploy
@@ -10,6 +10,7 @@ version: 1.0.0
 
 ## Workflow
 
+0. **🔴 Dev-validate FIRST (the gate — prod-deploy is a PROMOTION of a dev-validated build, never first-contact).** Before any bless: (a) the change must be RUNNING on the dev fleet — `./start.sh <slug>` (add `build` only when deps/Dockerfile changed; else a `docker restart dev-noctus-<slug>` lets its bind-mounted `vite --watch` + `uvicorn --reload` pick up the synced source); (b) **functional smoke** — `noctus.dev.smoke_fleet` + hit the actually-changed route/endpoint on `localhost:<port>`; (c) keepers green — `noctus.dev.predeploy_check <slug>`. Only a GREEN dev fleet (functional ∧ keepers) earns the bless. We work mainly on `dev`; deploying to `dev` ≠ deploying to prod, but deploying to prod REQUIRES a validated dev first. **Hygiene:** after worktree integrates, FF the PRIMARY checkout to `origin/dev` (`git merge --ff-only origin/dev`) so its bind-mount + active hooks reflect dev — else the dev fleet serves STALE code (the 2026-06-01 trap: deployed straight to prod off a dev fleet running old source). → `KB § GUIDES/production-deploy.md § 0.1`.
 1. **Status first** — `noctus.dev.release stage=status` (read-only chain view: dev → main → prod).
 2. **Bless** — `noctus.dev.release stage=bless` FFs `main` → `dev` tip. DRY-RUN by default; `confirm=true` to push. FF-only by construction; it is the ONLY sanctioned setter of `NOCTUS_ALLOW_MAIN_PUSH`.
 3. **Promote** — `noctus.dev.release stage=promote` snapshots `prod` → `prod-backup` (rollback pointer) then FFs `prod` → a blessed `main` sha. `confirm=true` to push.

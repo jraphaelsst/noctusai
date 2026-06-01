@@ -25,6 +25,17 @@ your registrar (NS → Cloudflare)             │      docker, external `noctus
 
 ---
 
+## 0.1 · Dev-first validation gate — prod-deploy is a PROMOTION, never first-contact 🔴
+
+**The rule (2026-06-01, born from a real drift):** code reaches prod ONLY as a *promotion of a build already validated on the running dev fleet*. We work mainly on `dev`; deploying to `dev` ≠ deploying to prod, but a prod deploy REQUIRES a green dev first. The drift this closes: a session blessed→promoted→deployed straight to prod while the local **dev fleet was still serving STALE source** (the primary checkout hadn't been FF'd to `origin/dev`) — so prod got code that had never actually run anywhere. `predeploy_check` (§P5) is *static* (vite build + pytest + config-parity); it is necessary but NOT sufficient — it never *runs* the change against a live fleet.
+
+**The dev-deploy step (the missing leg — uses existing tooling, no new tool):**
+1. **Sync the primary** — after worktree integrates, `git merge --ff-only origin/dev` in the primary checkout so its bind-mount (`./backend`, `./frontend` → the dev container's `vite --watch` + `uvicorn --reload`) AND the active git hooks reflect current `dev`. A stale primary = a dev fleet running old code = a false "it works." (Cross-checkout note: real work flows to `origin/dev` via `task_branch` integrates from worktrees, so the primary's local `dev` does NOT auto-advance — FF it explicitly. Ledger churn that stranded the primary's `dev`: see `[[feedback_auto_ledger_appends_strand_on_primary]]`.)
+2. **Deploy to the dev fleet** — `./start.sh <slug>` (whole fleet: bare `./start.sh`); add `build` (`./start.sh <slug> build`) ONLY when deps/Dockerfile changed — otherwise a `docker restart dev-noctus-<slug>` is enough (bind-mount + watchers pick up the synced source). The dev fleet is bind-mount+watch (`runtime-watch` target), so code changes need no image rebuild — but they DO need the container to actually be running the synced source.
+3. **Validate** — `noctus.dev.smoke_fleet` (fleet health) + hit the actually-changed route/endpoint on `localhost:<port>` (functional) + `noctus.dev.predeploy_check <slug>` (keepers/static). GREEN on all three = the build has earned a bless.
+
+Only THEN: bless (§0.2/§2b) → promote (§2b) → `deploy_pull` → `deploy_image` (§2a). The dev fleet is the **validation environment**; prod is the promotion target. (`skill noc-ship` step 0 enforces this.)
+
 ## 1 · Code delivery = git (never rsync)
 
 The VPS gets code by **cloning from GitHub via a read-only deploy key** — not file-copy. Redeploy = `git pull` + rebuild.
