@@ -29,8 +29,11 @@ import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
 import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { SupabaseClient } from "@supabase/supabase-js";
-type AnySupabaseClient = SupabaseClient<any, any, any>;
+// Structural (duck-typed) supabase shape — see the note in app.tsx. The layout
+// only touches `.auth` (refresh/signOut/updateUser) and `.from` (usePageStatus),
+// so it never needs the real SupabaseClient class identity (non-assignable across
+// two installed @supabase/supabase-js copies due to its `protected supabaseUrl`).
+type AnySupabaseClient = { auth: any; from: any };
 
 /**
  * Enrichment data returned by the optional useLayoutEnrichment hook.

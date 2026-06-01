@@ -20,5 +20,20 @@ export type { ProductLayoutConfig, LayoutEnrichment } from './layout';
 // with their own wrapper.
 export { ConsentSettingsPage } from './pages/ConsentSettingsPage';
 
+// Public (unauthenticated) legal pages — auto-routed by createProductApp at
+// /consent, /consent/privacy-policy, /consent/terms-of-use for every product.
+// Platform-wide consent docs (LGPD); also the canonical URLs for Google OAuth
+// verification + Meta App Review. Content lives in ./content/consent.
+export { ConsentHubPage } from './pages/consent/ConsentHubPage';
+export { PrivacyPolicyPage } from './pages/consent/PrivacyPolicyPage';
+export { TermsOfUsePage } from './pages/consent/TermsOfUsePage';
+export {
+  CONSENT_META,
+  CONSENT_DOCS,
+  PRIVACY_POLICY,
+  TERMS_OF_USE,
+} from './content/consent';
+export type { ConsentDoc, DocSection, DocBlock } from './content/consent';
+
 // createViteConfig lives at seed/framework/frontend/vite.config.factory.ts
 // Config-time code, imported by path: import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
