@@ -584,14 +584,45 @@ def youtube_oauth_callback(
     # Strip None values so the metadata column is clean.
     metadata = {k: v for k, v in metadata.items() if v is not None}
 
-    account = svc.create_account(
-        org_id=org_id,
-        provider="youtube",
-        account_label=account_label,
-        credential_dict=bundle,
-        metadata=metadata,
-        is_default=False,
+    # Idempotent on channel_id. Re-connecting a channel that's already an
+    # account for this org RE-AUTHENTICATES it (persists the fresh token bundle)
+    # instead of inserting a duplicate row — this is what makes the legacy
+    # auto-adopted "Padrão" account fully UI-manageable (the connect button
+    # doubles as re-auth) and eliminates the UNIQUE(org, provider,
+    # account_label) CONFLICT the channel-title collision was raising. A
+    # genuinely NEW channel creates a new account → true multi-account.
+    youtube_accounts = svc.list_accounts(org_id, provider="youtube")
+    existing = (
+        next(
+            (a for a in youtube_accounts if (a.metadata or {}).get("channel_id") == channel_id),
+            None,
+        )
+        if channel_id
+        else None
     )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+    else:
+        # Disambiguate only if a DIFFERENT channel already holds this label
+        # (two channels can share a title) — keeps the UNIQUE constraint happy
+        # without masking a real re-connect (handled by the channel_id branch).
+        existing_labels = {a.account_label for a in youtube_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels and channel_id:
+            unique_label = f"{account_label} · {channel_id[-6:]}"
+        account = svc.create_account(
+            org_id=org_id,
+            provider="youtube",
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not youtube_accounts,  # first-ever account becomes default
+        )
 
     redirect_url = f"/integrations?account_created={account.id}"
     if cfg.frontend_base_url:

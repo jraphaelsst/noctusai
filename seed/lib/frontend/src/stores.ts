@@ -12,16 +12,31 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { User } from '@supabase/supabase-js';
 
 // ---------------------------------------------------------------------------
 // Auth store
 // ---------------------------------------------------------------------------
 
+/**
+ * The authenticated user held by the store. The platform has TWO auth models —
+ * Supabase (a `@supabase/supabase-js` `User`) and the seed's session auth (a
+ * `SessionUser` = `{ id, email }`). Rather than binding the shared store to the
+ * Supabase `User` class (which a session-auth product like social-wiring can't
+ * satisfy), we type it as the minimal common account shape with a passthrough
+ * index signature — both models fit, and provider-specific fields
+ * (`user_metadata`, `roles`, …) still resolve. Same structural-seam principle
+ * as the framework's supabase config typing.
+ */
+export interface AuthUser {
+  id: string;
+  email?: string | null;
+  [key: string]: any;
+}
+
 export interface AuthState {
-  user: User | null;
+  user: AuthUser | null;
   isInitialized: boolean;
-  setUser: (user: User | null) => void;
+  setUser: (user: AuthUser | null) => void;
   setInitialized: () => void;
 }
 

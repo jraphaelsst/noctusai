@@ -9,5 +9,4 @@ class NoopResizeObserver {
   unobserve() {}
   disconnect() {}
 }
-// @ts-expect-error — patch jsdom global
 globalThis.ResizeObserver = globalThis.ResizeObserver || NoopResizeObserver;

@@ -414,6 +414,68 @@ class TestYouTubeOAuthCallback:
         assert acct.metadata.get("channel_id") == "UC999"
         assert acct.account_label == "Test Channel"
 
+    def test_callback_reconnect_same_channel_is_idempotent(self, client, ia_service):
+        """Re-connecting the SAME channel RE-AUTHENTICATES the existing account
+        instead of inserting a duplicate (which hit UNIQUE(org, provider,
+        account_label) → CONFLICT "Registro duplicado"). Two callbacks for the
+        same channel_id ⇒ exactly ONE account. This is the de-hardcode fix that
+        makes the legacy auto-adopted account fully UI-manageable."""
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+            get_yt_client_factory,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+        from noctusai_lib.integrations.youtube import ChannelInfo
+        from noctusai_lib.integrations.youtube.fake import FakeYoutubeClient
+
+        fake_cfg = _settings.model_copy(
+            update={
+                "youtube_client_id": "fake-cid",
+                "youtube_client_secret": "fake-cs",
+                "frontend_base_url": "",
+            }
+        )
+        owned = ChannelInfo(
+            channel_id="UC_SAME",
+            title="Same Channel",
+            subscriber_count=0,
+            video_count=0,
+            view_count=0,
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_yt_pkce_redis: lambda: None,
+            get_yt_client_factory: lambda: (
+                lambda **kw: FakeYoutubeClient(owned_channel_info=owned)
+            ),
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-reconnect"
+            for _ in range(2):  # connect the SAME channel twice
+                resp = client.get(
+                    "/api/integrations/accounts/youtube/oauth/callback"
+                    f"?code=auth-code&state={state}",
+                    follow_redirects=False,
+                )
+                assert resp.status_code in (302, 303), resp.text
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        # Idempotent: exactly one account for the channel, no CONFLICT.
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
+        same = [a for a in accounts if a.metadata.get("channel_id") == "UC_SAME"]
+        assert len(same) == 1, f"expected 1 account for UC_SAME, got {len(same)}"
+
     def test_callback_missing_code_400(self, client):
         resp = client.get(
             "/api/integrations/accounts/youtube/oauth/callback?state=x",

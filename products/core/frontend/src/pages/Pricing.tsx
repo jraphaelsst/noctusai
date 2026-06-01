@@ -35,7 +35,7 @@ export function Pricing() {
     async function fetchPlans() {
       try {
         const res = await api.get('/api/plans');
-        const activePlans = (res.data || []).filter((p: Plan) => p.is_active && !p.is_custom);
+        const activePlans = (res.data || []).filter((p: Plan) => p.ativo && !p.is_custom);
         setPlans(activePlans);
       } catch (err) {
         console.error('Erro ao carregar planos:', err);

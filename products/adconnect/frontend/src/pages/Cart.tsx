@@ -83,7 +83,7 @@ export default function Cart() {
                         min={1}
                         value={item.quantity}
                         onChange={(e) =>
-                          updateItem(item.id, Number(e.target.value))
+                          updateItem.mutate({ id: item.id, quantidade: Number(e.target.value) })
                         }
                         className="w-20 px-2 py-1 rounded-md border border-border bg-background text-center text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
@@ -94,7 +94,7 @@ export default function Cart() {
                     <td className="px-4 py-3 text-center">
                       <button
                         type="button"
-                        onClick={() => removeItem(item.id)}
+                        onClick={() => removeItem.mutate(item.id)}
                         className="p-1 rounded hover:bg-destructive/10 text-destructive"
                         title="Remover"
                       >

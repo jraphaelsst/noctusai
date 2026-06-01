@@ -7,8 +7,7 @@
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { CreditCard, FileCheck } from "lucide-react";
-import { useCart } from "@/hooks/useCart";
-import { usePlaceOrder } from "@/hooks/useOrders";
+import { useCart, useCartMutations } from "@/hooks/useCart";
 
 interface CheckoutFormData {
   delivery_address: string;
@@ -32,7 +31,9 @@ function formatBRL(value: number): string {
 export default function Checkout() {
   const navigate = useNavigate();
   const { data: cart } = useCart();
-  const { placeOrder, isPending } = usePlaceOrder();
+  // Checkout finalizes the server-side cart (the `checkout` mutation takes only
+  // { observacoes }); usePlaceOrder is the lower-level items-array path.
+  const { checkout } = useCartMutations();
 
   const {
     register,
@@ -46,7 +47,7 @@ export default function Checkout() {
 
   const onSubmit = (data: CheckoutFormData) => {
     if (!cart) return;
-    placeOrder({ cart_id: cart.id, notes: data.notes });
+    checkout.mutate({ observacoes: data.notes });
     // TODO(adconnect-phase-7): on success, navigate to /orders/{newOrderId}
     // and clear the cart cache.
     navigate("/orders");
@@ -160,10 +161,10 @@ export default function Checkout() {
             </button>
             <button
               type="submit"
-              disabled={isPending}
+              disabled={checkout.isPending}
               className="px-6 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              {isPending ? "Enviando…" : "Confirmar pedido"}
+              {checkout.isPending ? "Enviando…" : "Confirmar pedido"}
             </button>
           </div>
         </div>
