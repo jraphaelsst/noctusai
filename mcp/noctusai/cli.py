@@ -190,6 +190,7 @@ def main():
     parser.add_argument("--check-noc-graph-cache-freshness", action="store_true", help="Keeper: noc-graph cache aggregate_source_sha matches the live aggregate over (code corpus + KB + harness + landscape + memory + cli + history). KB § PATTERNS/architect/noc-graph.md.")
     parser.add_argument("--check-graph-extractor-corpus-sanity", action="store_true", help="Keeper (warning severity): light corpus floor-checks on the noc-graph cache content — node/edge kind floors that catch a buggy extractor producing a fresh-but-wrong cache. Paired with test_graph_extractor_correctness.py (full regression). KB § PATTERNS/common/extractor-correctness-vs-mirror.md.")
     parser.add_argument("--check-cache-uses-locking-helper", action="store_true", help="Keeper (high severity): every SQLite cache connection must route through cache_backend.apply_locking_pragmas (WAL + busy_timeout), not a raw inline `PRAGMA journal_mode=WAL`. Guards the writer-contention regression fixed 2026-05-30. KB § PATTERNS/common/cache-locking-discipline.md.")
+    parser.add_argument("--check-embed-funnel-self-configures", action="store_true", help="Keeper (high severity): every direct generate_embedding() call in tools/ must self-configure the LLM (ensure_llm_configured) in the same funnel — the live MCP server never calls configure_llm() at startup. Guards the recurring 'LLM not configured' embed-funnel drift (patched reactively for embed_sync 2026-05-30 + embed_text 2026-05-31). KB § PATTERNS/common/funnel-self-satisfies-preconditions.md.")
     parser.add_argument("--code-search", metavar="QUERY", help="Semantic search over the code corpus — embeds the query, returns top-K matching code symbols by cosine similarity. Use for fuzzy-intent queries ('find helpers that extract a phone number') where exact identifiers are unknown.")
     parser.add_argument("--check-code-embeddings-cache-freshness", action="store_true", help="Keeper: code embeddings cache should mirror each source file's sha256. Severity WARNING (advisory layer). Auto-refresh in pre-commit on staged .py/.ts/.tsx change.")
     parser.add_argument("--kb-ratify", metavar="REASON", help="Snapshot the current kb_validate_owns_kb findings as approved-canonical baseline. REQUIRED reason explains why (future-us reads it). Persists durably to project-history/kb-baselines/. KB § CONTEXT/PATTERNS/common/vector-baseline.md.")
@@ -1011,6 +1012,16 @@ def main():
             print(f"  {GREEN}✓ every cache connection uses apply_locking_pragmas (no raw WAL).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} raw-WAL cache connection(s) — use cache_backend.apply_locking_pragmas:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line','?')} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_embed_funnel_self_configures:
+        from tools.noctus.dev.compliance import check_embed_funnel_self_configures
+        issues = check_embed_funnel_self_configures()
+        if not issues:
+            print(f"  {GREEN}✓ every direct generate_embedding() call self-configures the LLM (ensure_llm_configured).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} embed call(s) without ensure_llm_configured() — the MCP-server path will raise 'LLM not configured':{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line','?')} — {i['issue']}")
         sys.exit(1)

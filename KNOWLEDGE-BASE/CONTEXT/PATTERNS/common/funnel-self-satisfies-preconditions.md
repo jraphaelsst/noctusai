@@ -72,13 +72,38 @@ and tests all behave identically.
   failing caller (no pre-config, no `.env` in env) — see the regression test
   `test_llm_bootstrap.py::TestEmbedSyncSelfConfigures`.
 
+## Structural guard — the keeper (2026-05-31)
+
+The prose above is discipline; the keeper is the structural guarantee. After the
+SECOND funnel (`vectorize.embed_text`) needed the bootstrap added by hand
+(2026-05-31, sibling of the `embed_sync` patch the day before), the recurrence
+was ratified and locked:
+
+**`check_embed_funnel_self_configures`** (severity `high`) — AST-walks every
+`.py` under `mcp/noctusai/tools/`; any function that makes a DIRECT
+`generate_embedding(...)` call MUST also call `ensure_llm_configured(...)` in the
+same body. Both live funnels (`embed_sync` + `embed_text`) pass; everything else
+routes through them and holds no direct embed call, so it is correctly ignored.
+Zero violations exist today, so any hit is a genuine regression — a new direct
+embedder that forgot the bootstrap, before it fails at runtime on the MCP-server
+path. Exempt: `_llm_bootstrap.py` (defines the bootstrap) + `compliance.py` (the
+keeper's own source). CLI: `--check-embed-funnel-self-configures`. Test:
+`test_embed_funnel_self_configures.py::TestEmbedFunnelSelfConfigures`.
+
+This is the N=2 ratified-promotion variant of the keeper that was DEFERRED at the
+N=1 s3 codification ("promote at N≥2 if another funnel offloads config") — the
+second funnel arrived, so the keeper shipped.
+
 ## Provenance + surfaces
 
 - Born: session 2026-05-30 (`fix/realtime-dep-resolver-thrash` wrap-up surfaced
   it via `refresh_memory_embeddings` failing in the MCP server). Auto-improvement
-  ledger: the s1 drift + its s3 codification.
+  ledger: the s1 drift + its s3 codification; the s2→s4 keeper promotion 2026-05-31.
 - Code: `_llm_bootstrap.ensure_llm_configured` · `_embedding_corpus.embed_sync` ·
-  `cli._ensure_llm_configured` (delegates) · test `test_llm_bootstrap.py`.
+  `vectorize.embed_text` (both self-configure) · `cli._ensure_llm_configured`
+  (delegates) · tests `test_llm_bootstrap.py` + `test_embed_funnel_self_configures.py`.
+- Keeper: `compliance.check_embed_funnel_self_configures` (CLI
+  `--check-embed-funnel-self-configures`).
 - Memory: `feedback_funnel_self_satisfies_preconditions`.
 - Composes with: `KB § PATTERNS/common/vectorize-embed-cache-framework.md` (the
   embed funnel) · `KB § 01-PHILOSOPHY.md` (no silent errors · fix-at-root).

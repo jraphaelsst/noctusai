@@ -8058,6 +8058,13 @@ def check_all_products() -> tuple[int, list]:
     # this session. Severity high (zero violations post-centralization).
     # KB § PATTERNS/common/cache-locking-discipline.md.
     all_issues.extend(check_cache_uses_locking_helper())
+    # 2026-05-31 (embed-funnel bootstrap) — every direct generate_embedding()
+    # call in tools/ must self-configure the LLM (ensure_llm_configured) in the
+    # same funnel; the live MCP server never calls configure_llm() at startup, so
+    # a forgotten bootstrap silently re-opens the recurring "LLM not configured"
+    # drift. Severity high (zero violations after the 2026-05-31 fix).
+    # KB § PATTERNS/common/funnel-self-satisfies-preconditions.md.
+    all_issues.extend(check_embed_funnel_self_configures())
     # 2026-05-28 (extractor-correctness-vs-mirror) — light corpus floor-checks
     # on the noc-graph cache content (not just freshness). Catches the case where
     # an extractor stops emitting a node/edge kind, producing a fresh-but-wrong
@@ -10005,6 +10012,129 @@ def check_cache_uses_locking_helper(repo_root: Path | None = None) -> list[dict]
                 ),
                 "severity": "high",
                 "symbol": "cache-connect-without-locking-helper",
+            })
+    return issues
+
+
+_EMBED_BOOTSTRAP_EXEMPT = (
+    ("noctus", "dev", "_llm_bootstrap.py"),  # defines ensure_llm_configured; performs no embed
+    ("noctus", "dev", "compliance.py"),      # this keeper's own source (holds the literal name)
+)
+
+
+def _is_generate_embedding_call(node: ast.AST) -> bool:
+    """True for a DIRECT ``generate_embedding(...)`` call (Name or Attribute
+    form) — the seed embedder entry point that requires the LLM client to be
+    configured (``configure_llm``) first."""
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    if isinstance(f, ast.Name):
+        return f.id == "generate_embedding"
+    if isinstance(f, ast.Attribute):
+        return f.attr == "generate_embedding"
+    return False
+
+
+def _fn_calls_ensure_llm_configured(fn: ast.AST) -> bool:
+    """True iff the function body (incl. nested scopes) calls
+    ``ensure_llm_configured`` anywhere — the funnel-self-satisfies-preconditions
+    shape paired with every direct ``generate_embedding`` call."""
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Name) and f.id == "ensure_llm_configured":
+            return True
+        if isinstance(f, ast.Attribute) and f.attr == "ensure_llm_configured":
+            return True
+    return False
+
+
+def check_embed_funnel_self_configures(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-05-31): every DIRECT ``generate_embedding(...)`` call
+    under ``mcp/noctusai/tools/`` MUST sit in a function that ALSO calls
+    ``ensure_llm_configured()`` — the funnel-self-satisfies-its-preconditions
+    shape (KB § PATTERNS/common/funnel-self-satisfies-preconditions.md).
+
+    The recurring drift this locks. The seed LLM client needs
+    ``configure_llm(config)`` once before any embed; the dev toolkit is not a
+    product app, so a funnel must self-bootstrap. The single bootstrap is
+    ``_llm_bootstrap.ensure_llm_configured`` (idempotent, graceful-degrade). Both
+    embed funnels — ``_embedding_corpus.embed_sync`` and ``vectorize.embed_text``
+    — call it, so every routed caller (kb/code/corpus/memory refresh,
+    find_reusable_component, codification_radar, kb_recurrence_radar,
+    brief_similarity_radar, engineer_brief_compose) works in-process. But that
+    state was reached by TWO reactive per-caller patches (embed_sync 2026-05-30,
+    embed_text 2026-05-31) with no structural guard — so a THIRD direct
+    ``generate_embedding`` call that forgot the bootstrap would silently re-open
+    the "LLM not configured" failure in the live MCP server (which never sources
+    ``.env`` / calls ``configure_llm`` at startup). This keeper IS that guard:
+    promoted at N=2 by explicit ratification rather than waiting for the N=3
+    runtime failure.
+
+    Predicate (AST, per FunctionDef): a function containing a direct
+    ``generate_embedding(...)`` call MUST also contain an
+    ``ensure_llm_configured(...)`` call. Functions that route through the funnels
+    (``embed_sync`` / ``embed_text``) hold no direct ``generate_embedding`` call
+    and are correctly ignored. Severity ``high`` — zero violations exist after
+    the 2026-05-31 fix, so any hit is a genuine regression.
+
+    Exempt: ``_llm_bootstrap.py`` (defines the bootstrap; performs no embed) and
+    this keeper's own source (``compliance.py`` — holds the literal name in a
+    PII-helper list + remediation strings).
+
+    Remediation: call ``ensure_llm_configured()`` (import from
+    ``._llm_bootstrap``) immediately before the ``generate_embedding`` call — or,
+    preferably, route through ``_embedding_corpus.embed_sync`` /
+    ``vectorize.embed_text`` instead of embedding directly.
+
+    Silent skip on a non-noc tree. KB § PATTERNS/common/funnel-self-satisfies-preconditions.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    tools_dir = root / "mcp" / "noctusai" / "tools"
+    if not tools_dir.is_dir():
+        return issues
+    exempt = {tools_dir.joinpath(*parts).resolve() for parts in _EMBED_BOOTSTRAP_EXEMPT}
+    for py in sorted(tools_dir.rglob("*.py")):
+        if py.resolve() in exempt:
+            continue
+        try:
+            src = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "generate_embedding" not in src:  # cheap pre-filter before the AST parse
+            continue
+        try:
+            tree = ast.parse(src, filename=str(py))
+        except SyntaxError:
+            continue
+        rel = str(py.relative_to(root))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            embed_line = next(
+                (n.lineno for n in ast.walk(fn) if _is_generate_embedding_call(n)),
+                None,
+            )
+            if embed_line is None or _fn_calls_ensure_llm_configured(fn):
+                continue
+            issues.append({
+                "file": rel,
+                "line": embed_line,
+                "issue": (
+                    f"direct `generate_embedding()` at line {embed_line} in "
+                    f"`{fn.name}()` without `ensure_llm_configured()` — the live "
+                    "MCP server never calls configure_llm() at startup, so this "
+                    "path raises `LLM not configured` in-process (the recurring "
+                    "embed-funnel drift). Call `ensure_llm_configured()` first "
+                    "(from `._llm_bootstrap`) or route through "
+                    "`_embedding_corpus.embed_sync` / `vectorize.embed_text`. "
+                    "KB § PATTERNS/common/funnel-self-satisfies-preconditions.md"
+                ),
+                "severity": "high",
+                "symbol": "embed-without-llm-bootstrap",
             })
     return issues
 
