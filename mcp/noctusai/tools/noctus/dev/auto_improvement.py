@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -264,6 +265,7 @@ def query(
     status: str | None = None,
     open_only: bool = False,
     limit: int = 200,
+    skip_reconcile: bool = False,
 ) -> list[dict]:
     """Consult the cache before editing a doc/agent.
 
@@ -271,7 +273,18 @@ def query(
     `.claude/agents/backend-engineer.md` for agent-specific surfaces,
     `KB § PATTERNS/` for all KB-pattern surfaces). `open_only=True`
     excludes `status='closed'`. Lazy rebuild on source_sha mismatch.
-    """
+
+    **Auto-reconcile-filter (heal-on-contact at the READ path).** When
+    `open_only=True`, the result EXCLUDES any entry whose `resolve_when`
+    predicate already passes against the live tree — i.e. landed-but-not-yet-
+    closed drift is never surfaced as open. This is the structural guarantee
+    that a fresh environment cannot re-detect already-done work: it does not
+    depend on anyone REMEMBERING to run `reconcile` first (the ledger row may
+    still read `s2-memory` in git until an explicit `reconcile(dry_run=False)`
+    + commit, but the surface is correct on every read). Set
+    `skip_reconcile=True` to get the raw not-closed set (the ledger's literal
+    state — used by the reconcile apply path + tests). Graceful: a reconcile
+    failure logs a warning and falls back to the unfiltered set."""
     sha_now = _source_sha()
     if not CACHE_PATH.exists():
         refresh()
@@ -305,6 +318,19 @@ def query(
     cur = conn.execute(sql, params)
     out = [dict(r) for r in cur.fetchall()]
     conn.close()
+    if open_only and not skip_reconcile and out:
+        # Heal-on-contact: drop entries whose resolve_when already passes, so a
+        # landed fix is never re-surfaced as open even before the ledger row is
+        # closed. Best-effort — reconcile reads the tree only (no mutation here).
+        try:
+            rec = reconcile(dry_run=True)
+            resolved = {(r["ts"], r["target"]) for r in rec.get("reconciled", [])}
+            if resolved:
+                out = [r for r in out if (r.get("ts"), r.get("target")) not in resolved]
+        except Exception as e:  # noqa: BLE001 — never let the filter break the query
+            logging.getLogger(__name__).warning(
+                "auto_improvement.query open_only reconcile-filter skipped: %s", e
+            )
     return out
 
 
@@ -513,6 +539,11 @@ def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
         verdicts = [(p, *_eval_predicate(p, entries, e, root)) for p in preds]
         if all(v[1] for v in verdicts):
             new_status = e.get("resolve_to") or "closed"
+            # Idempotency guard: if the entry is ALREADY at its resolve_to, there
+            # is nothing to advance — skip (else a non-terminal resolve_to like
+            # `s3-codified` would re-stamp resolved_ts on every run → ndjson churn).
+            if e.get("status") == new_status:
+                continue
             satisfied = [v[0] for v in verdicts]
             resolutions[_entry_key(e)] = (new_status, satisfied)
             reconciled.append({
@@ -592,7 +623,10 @@ def register(server) -> None:
             "open_only=True (excludes 'closed'). Returns most-recent-first. "
             "The **consult-before-editing** discipline — sibling of "
             "keeper-check-before-doc'ing. Lazy-rebuilds on source_sha "
-            "mismatch (the cache self-heals on use)."
+            "mismatch (the cache self-heals on use). With open_only=True the "
+            "result AUTO-EXCLUDES entries whose `resolve_when` already passes "
+            "(heal-on-contact — landed-but-unclosed drift never surfaces); pass "
+            "skip_reconcile=True for the raw not-closed set."
         ),
     )
     def _query(
@@ -602,10 +636,11 @@ def register(server) -> None:
         status: str | None = None,
         open_only: bool = False,
         limit: int = 200,
+        skip_reconcile: bool = False,
     ) -> list[dict]:
         return query(
             target=target, agent=agent, kind=kind, status=status,
-            open_only=open_only, limit=limit,
+            open_only=open_only, limit=limit, skip_reconcile=skip_reconcile,
         )
 
     @server.tool(

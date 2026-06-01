@@ -15,6 +15,7 @@ from tools.noctus.dev import auto_improvement as ai  # noqa: E402
 from tools.noctus.dev import codification_radar as cr  # noqa: E402
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_auto_improvement_cache_freshness,
+    check_open_drift_has_resolution_handle,
     check_s2_drift_has_resolution_handle,
 )
 
@@ -303,19 +304,108 @@ class TestResolutionHandleKeeper:
     def test_s2_without_handle_flagged(self, tmp_repo):
         ai.log_entry(scope="broad", kind="drift", target="lingering", description="d",
                      status="s2-memory")
-        issues = check_s2_drift_has_resolution_handle(repo_root=tmp_repo)
-        assert any(i["symbol"] == "s2-drift-no-resolution-handle" for i in issues)
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_repo)
+        assert any(i["symbol"] == "open-drift-no-resolution-handle" for i in issues)
+
+    def test_s3_without_handle_flagged(self, tmp_repo):
+        # Residual-2: s3-kb / s3-codified are now gated too (they linger as radar
+        # promotion candidates if they can't auto-promote).
+        for st in ("s3-kb", "s3-codified"):
+            ai.log_entry(scope="broad", kind="drift", target=f"t-{st}", description="d", status=st)
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_repo)
+        flagged = {i["issue"].split("`")[1] for i in issues}
+        assert "t-s3-kb" in flagged and "t-s3-codified" in flagged
+
+    def test_s3_with_handle_clean(self, tmp_repo):
+        ai.log_entry(scope="broad", kind="drift", target="ok", description="d",
+                     status="s3-codified", resolve_when="keeper:check_k")
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_repo) == []
 
     def test_s2_with_handle_clean(self, tmp_repo):
         ai.log_entry(scope="broad", kind="drift", target="ok", description="d",
                      status="s2-memory", resolve_when="keeper:check_k")
-        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_repo) == []
 
     def test_s1_without_handle_not_flagged(self, tmp_repo):
         # s1-emergent is too freshly-surfaced to demand a handle.
         ai.log_entry(scope="broad", kind="drift", target="fresh", description="d",
                      status="s1-emergent")
-        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_repo) == []
 
     def test_no_ledger_silent_pass(self, tmp_repo):
-        assert check_s2_drift_has_resolution_handle(repo_root=tmp_repo) == []
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_repo) == []
+
+    def test_legacy_alias_resolves(self):
+        # Old s2-only name preserved (born s2-only, widened same day).
+        assert check_s2_drift_has_resolution_handle is check_open_drift_has_resolution_handle
+
+
+class TestReconcileS3AndIdempotency:
+    def _seed_compliance(self, root, *names):
+        comp = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+        comp.parent.mkdir(parents=True, exist_ok=True)
+        comp.write_text("".join(f"def {n}(x):\n    return []\n" for n in names), encoding="utf-8")
+
+    def test_s3_auto_promotes_to_s4_when_keeper_lands(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_landed")
+        ai.log_entry(scope="broad", kind="improvement", target="codified-x", description="d",
+                     status="s3-codified", resolve_when="keeper:check_landed", resolve_to="s4-keeper")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 1
+        assert r["reconciled"][0]["from"] == "s3-codified" and r["reconciled"][0]["to"] == "s4-keeper"
+
+    def test_s3_stays_when_keeper_absent(self, tmp_repo):
+        self._seed_compliance(tmp_repo, "check_other")
+        ai.log_entry(scope="broad", kind="improvement", target="codified-y", description="d",
+                     status="s3-codified", resolve_when="keeper:check_not_yet", resolve_to="s4-keeper")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 0 and r["counts"]["still_open"] == 1
+
+    def test_idempotency_guard_skips_when_already_at_resolve_to(self, tmp_repo):
+        # resolve_to == current status (non-terminal) → no re-stamp, no churn.
+        (tmp_repo / "doc.md").write_text("x", encoding="utf-8")
+        ai.log_entry(scope="broad", kind="improvement", target="already", description="d",
+                     status="s3-codified", resolve_when="path_exists:doc.md", resolve_to="s3-codified")
+        r = ai.reconcile(dry_run=False, repo_root=tmp_repo)
+        assert r["counts"]["reconciled"] == 0  # already there → skipped
+        e = json.loads(ai.LEDGER_PATH.read_text(encoding="utf-8").strip())
+        assert "resolved_ts" not in e  # never stamped
+
+
+class TestQueryAutoReconcileFilter:
+    def _seed_compliance(self, root, *names):
+        comp = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+        comp.parent.mkdir(parents=True, exist_ok=True)
+        comp.write_text("".join(f"def {n}(x):\n    return []\n" for n in names), encoding="utf-8")
+
+    def test_open_only_excludes_resolved_entry(self, tmp_repo, monkeypatch):
+        # The core fix: a landed-but-not-yet-closed entry is NOT surfaced as open,
+        # WITHOUT anyone running reconcile first. Pin reconcile's tree to tmp_repo.
+        self._seed_compliance(tmp_repo, "check_done")
+        monkeypatch.setattr(ai, "REPO_ROOT", tmp_repo)
+        ai.log_entry(scope="broad", kind="drift", target="landed", description="d",
+                     status="s2-memory", resolve_when="keeper:check_done")
+        ai.log_entry(scope="broad", kind="drift", target="still-pending", description="d",
+                     status="s2-memory", resolve_when="keeper:check_missing")
+        ai.refresh(force=True)
+        targets = {r["target"] for r in ai.query(open_only=True)}
+        assert "landed" not in targets       # resolve_when passes → auto-filtered
+        assert "still-pending" in targets    # predicate unmet → still surfaced
+
+    def test_skip_reconcile_returns_raw_open_set(self, tmp_repo, monkeypatch):
+        self._seed_compliance(tmp_repo, "check_done")
+        monkeypatch.setattr(ai, "REPO_ROOT", tmp_repo)
+        ai.log_entry(scope="broad", kind="drift", target="landed", description="d",
+                     status="s2-memory", resolve_when="keeper:check_done")
+        ai.refresh(force=True)
+        raw = {r["target"] for r in ai.query(open_only=True, skip_reconcile=True)}
+        assert "landed" in raw  # raw not-closed set — the ledger's literal state
+
+    def test_non_open_query_not_filtered(self, tmp_repo, monkeypatch):
+        # A targeted (non-open_only) consult query is never reconcile-filtered.
+        self._seed_compliance(tmp_repo, "check_done")
+        monkeypatch.setattr(ai, "REPO_ROOT", tmp_repo)
+        ai.log_entry(scope="broad", kind="drift", target="landed", description="d",
+                     status="s2-memory", resolve_when="keeper:check_done")
+        ai.refresh(force=True)
+        assert len(ai.query(target="landed")) == 1
