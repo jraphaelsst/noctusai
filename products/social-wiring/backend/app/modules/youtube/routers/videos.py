@@ -33,7 +33,7 @@ from app.dependencies import (
 from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured)
-from app.services.youtube_account_resolver import build_youtube_service_for_org
+from app.services.account_credentials import build_youtube_service_for_org
 from app.modules.youtube.services.video_cache import VideoCacheError, VideoCacheService
 from app.modules.youtube.services.youtube import (
     YouTubeNotConnected,

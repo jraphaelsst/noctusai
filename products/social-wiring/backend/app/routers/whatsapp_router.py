@@ -33,7 +33,7 @@ from app.dependencies import get_admin_client
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
-from app.services.youtube_account_resolver import build_youtube_service_for_org
+from app.services.account_credentials import build_youtube_service_for_org
 from noctusai_lib.integrations.vista import (
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
