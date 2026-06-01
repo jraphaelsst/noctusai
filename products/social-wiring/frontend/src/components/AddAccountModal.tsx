@@ -80,7 +80,7 @@ export default function AddAccountModal({
   async function handleOAuth() {
     if (!oauthReady) return;
     try {
-      await oauthMutation.mutateAsync();
+      await oauthMutation.mutateAsync(undefined);
       // window.location.assign fires in mutation onSuccess; toast for feedback
       toast.info("Redirecting to Google sign-in...");
     } catch (err: any) {

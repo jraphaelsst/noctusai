@@ -70,8 +70,16 @@ export interface QueueState {
   total: number;
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function withAccountId(base: string, accountId?: string | null): string {
+  if (!accountId) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}account_id=${encodeURIComponent(accountId)}`;
+}
+
 // ─── Hooks ─────────────────────────────────────────────────────────────
-export function useDashboardStats() {
+export function useDashboardStats(accountId?: string | null) {
   const [data, setData] = useState<KpiStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,14 +88,16 @@ export function useDashboardStats() {
     setLoading(true);
     setError(null);
     try {
-      const stats = await api.get<KpiStats>("/api/dashboard/stats");
+      const stats = await api.get<KpiStats>(
+        withAccountId("/api/dashboard/stats", accountId),
+      );
       setData(stats);
     } catch (err: any) {
       setError(err?.message ?? "Falha ao carregar dashboard");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accountId]);
 
   useEffect(() => {
     void refresh();
@@ -96,14 +106,16 @@ export function useDashboardStats() {
   return { data, loading, error, refresh };
 }
 
-export function useTopVideos(limit = 5) {
+export function useTopVideos(limit = 5, accountId?: string | null) {
   const [data, setData] = useState<TopVideo[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.get<TopVideo[]>(`/api/dashboard/top-videos?limit=${limit}`)
+    api.get<TopVideo[]>(
+      withAccountId(`/api/dashboard/top-videos?limit=${limit}`, accountId),
+    )
       .then((rows) => { if (!cancelled) setData(rows); })
       .catch((err) => {
         if (cancelled) return;
@@ -112,12 +124,12 @@ export function useTopVideos(limit = 5) {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [limit]);
+  }, [limit, accountId]);
 
   return { data, loading };
 }
 
-export function useRecentUploads(limit = 10) {
+export function useRecentUploads(limit = 10, accountId?: string | null) {
   const [data, setData] = useState<RecentUpload[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -125,7 +137,7 @@ export function useRecentUploads(limit = 10) {
     setLoading(true);
     try {
       const rows = await api.get<RecentUpload[]>(
-        `/api/dashboard/recent-uploads?limit=${limit}`,
+        withAccountId(`/api/dashboard/recent-uploads?limit=${limit}`, accountId),
       );
       setData(rows);
     } catch (err: any) {
@@ -134,7 +146,7 @@ export function useRecentUploads(limit = 10) {
     } finally {
       setLoading(false);
     }
-  }, [limit]);
+  }, [limit, accountId]);
 
   useEffect(() => {
     void refresh();
