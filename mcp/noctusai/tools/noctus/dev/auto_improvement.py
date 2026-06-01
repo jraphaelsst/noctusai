@@ -272,7 +272,9 @@ def query(
     `target` accepts an exact path OR a substring (e.g.
     `.claude/agents/backend-engineer.md` for agent-specific surfaces,
     `KB § PATTERNS/` for all KB-pattern surfaces). `open_only=True`
-    excludes `status='closed'`. Lazy rebuild on source_sha mismatch.
+    returns only entries that STILL NEED WORK — excludes the terminal
+    statuses (`closed` ∪ `s4-keeper`; a keeper-guarded drift is done).
+    Lazy rebuild on source_sha mismatch.
 
     **Auto-reconcile-filter (heal-on-contact at the READ path).** When
     `open_only=True`, the result EXCLUDES any entry whose `resolve_when`
@@ -312,7 +314,15 @@ def query(
         sql += " AND status = ?"
         params.append(status)
     if open_only:
-        sql += " AND status != 'closed'"
+        # "open" = still needs work = NOT terminal. Terminal = `closed` ∪
+        # `s4-keeper` (a keeper now permanently guards the drift — the strongest
+        # codification, no further work). Mirrors reconcile's TERMINAL_STATUSES so
+        # the read surface and the reconciler agree on what "done" means; aligns
+        # the impl with the long-documented intent (kb_recurrence_radar:
+        # "open_only: read only s1/s2/s3 entries; s4-keeper + closed excluded").
+        _terminal = sorted(TERMINAL_STATUSES)
+        sql += f" AND status NOT IN ({','.join('?' for _ in _terminal)})"
+        params.extend(_terminal)
     sql += " ORDER BY ts DESC LIMIT ?"
     params.append(limit)
     cur = conn.execute(sql, params)
@@ -620,7 +630,8 @@ def register(server) -> None:
         description=(
             "Consult the auto-improvement cache before editing a doc/agent. "
             "Filter by target (path substring), agent, kind, status, or "
-            "open_only=True (excludes 'closed'). Returns most-recent-first. "
+            "open_only=True (returns only still-needs-work entries — excludes "
+            "the terminal statuses 'closed' + 's4-keeper'). Most-recent-first. "
             "The **consult-before-editing** discipline — sibling of "
             "keeper-check-before-doc'ing. Lazy-rebuilds on source_sha "
             "mismatch (the cache self-heals on use). With open_only=True the "

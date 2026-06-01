@@ -95,14 +95,18 @@ class TestRefreshAndQuery:
         rows_kb = ai.query(target="KB §")
         assert len(rows_kb) == 1
 
-    def test_query_open_only_excludes_closed(self, tmp_repo):
+    def test_query_open_only_excludes_terminal(self, tmp_repo):
+        # "open" = still-needs-work = NOT terminal. Terminal = closed ∪ s4-keeper
+        # (a keeper now guards it). s1/s2/s3 are returned; closed + s4 are not.
         ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl", status="s1-emergent")
         ai.log_entry(scope="broad", kind="drift", target="t2", description="y", agent="tl", status="closed")
+        ai.log_entry(scope="broad", kind="drift", target="t3", description="z", agent="tl", status="s4-keeper")
+        ai.log_entry(scope="broad", kind="drift", target="t4", description="w", agent="tl", status="s3-codified")
         ai.refresh(force=True)
-        rows = ai.query(open_only=True)
-        targets = {r["target"] for r in rows}
-        assert "t1" in targets
-        assert "t2" not in targets
+        targets = {r["target"] for r in ai.query(open_only=True, skip_reconcile=True)}
+        assert targets == {"t1", "t4"}      # s1 + s3 surface
+        assert "t2" not in targets          # closed — terminal
+        assert "t3" not in targets          # s4-keeper — terminal (the fix)
 
     def test_query_filter_by_kind(self, tmp_repo):
         ai.log_entry(scope="broad", kind="drift", target="t1", description="x", agent="tl")
