@@ -23,8 +23,22 @@ FE="/app/products/${SLUG}/frontend"
 echo "[local-watch] initial SPA build (${SLUG})..."
 ( cd "$FE" && npm run build )
 
-echo "[local-watch] starting vite build --watch (background)..."
-( cd "$FE" && npm run build -- --watch ) &
+echo "[local-watch] starting supervised vite build --watch (background)..."
+# Supervised loop: if the watcher ever exits (crash / transient / killed) it is
+# restarted, so a dead watcher can NEVER leave dist/ frozen for the container's
+# whole lifetime (observed 2026-06-01: watcher died mid-rebuild → empty dist →
+# permanent "SPA bundle not yet built" 503). Paired with emptyOutDir:false in the
+# watch build (vite.config.factory) so a rebuild OVERWRITES dist in place and
+# never empties it — the last good bundle stays served across a watcher restart.
+(
+  cd "$FE"
+  while :; do
+    npm run build -- --watch || true
+    rc=$?
+    echo "[local-watch] ⚠ vite --watch exited (rc=${rc}) — restarting in 2s" >&2
+    sleep 2
+  done
+) &
 
 # Enforce the contract above (not just attempt it). The background
 # `--watch` does its own initial pass that briefly empties dist/ (vite

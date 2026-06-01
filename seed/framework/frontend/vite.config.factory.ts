@@ -157,6 +157,15 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   const productDir = process.cwd();
   const { repoRoot, seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
 
+  // Watch mode (the dev `runtime-watch` container runs `vite build --watch`).
+  // In watch mode we must NOT empty dist/ before each rebuild: emptying creates
+  // a window where dist/index.html is absent, and if the watcher dies mid-pass
+  // (crash/transient) it leaves dist EMPTY for the container's lifetime →
+  // permanent "SPA bundle not yet built" 503. With emptyOutDir:false the rebuild
+  // overwrites files in place, so the last good bundle is always served. One-shot
+  // + prod builds keep emptyOutDir:true (clean build). See seed/docker/local-watch.sh.
+  const isWatch = process.argv.includes("--watch");
+
   // Schema injection: explicit factory option → `"public"` (Postgres'
   // architectural canonical default; products with a non-public schema
   // pass it explicitly). NOT keyed by port — port→schema coupling was
@@ -215,6 +224,10 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
       // projects. Seed-canonical so every product's in-container build inherits
       // the headroom. See KB § PATTERNS/devops/containerization.md.
       reportCompressedSize: false,
+      // Never empty dist on a --watch rebuild (see isWatch note above) — a dead
+      // watcher must not be able to leave the SPA bundle absent. One-shot/prod
+      // builds still get a clean dist.
+      emptyOutDir: !isWatch,
     },
 
     resolve: {
