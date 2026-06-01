@@ -10,6 +10,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
+import { useActiveAccountStore } from "@/state/useActiveAccount";
+
 // ─── Types (mirror backend schemas) ────────────────────────────────────
 export interface KpiStats {
   total_videos: number;
@@ -83,13 +85,15 @@ export function useDashboardStats(accountId?: string | null) {
   const [data, setData] = useState<KpiStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const effectiveAccountId = accountId ?? storeAccountId;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const stats = await api.get<KpiStats>(
-        withAccountId("/api/dashboard/stats", accountId),
+        withAccountId("/api/dashboard/stats", effectiveAccountId),
       );
       setData(stats);
     } catch (err: any) {
@@ -97,7 +101,7 @@ export function useDashboardStats(accountId?: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [accountId]);
+  }, [effectiveAccountId]);
 
   useEffect(() => {
     void refresh();
@@ -109,12 +113,14 @@ export function useDashboardStats(accountId?: string | null) {
 export function useTopVideos(limit = 5, accountId?: string | null) {
   const [data, setData] = useState<TopVideo[]>([]);
   const [loading, setLoading] = useState(true);
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const effectiveAccountId = accountId ?? storeAccountId;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     api.get<TopVideo[]>(
-      withAccountId(`/api/dashboard/top-videos?limit=${limit}`, accountId),
+      withAccountId(`/api/dashboard/top-videos?limit=${limit}`, effectiveAccountId),
     )
       .then((rows) => { if (!cancelled) setData(rows); })
       .catch((err) => {
@@ -124,7 +130,7 @@ export function useTopVideos(limit = 5, accountId?: string | null) {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [limit, accountId]);
+  }, [limit, effectiveAccountId]);
 
   return { data, loading };
 }
@@ -132,12 +138,14 @@ export function useTopVideos(limit = 5, accountId?: string | null) {
 export function useRecentUploads(limit = 10, accountId?: string | null) {
   const [data, setData] = useState<RecentUpload[]>([]);
   const [loading, setLoading] = useState(true);
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const effectiveAccountId = accountId ?? storeAccountId;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await api.get<RecentUpload[]>(
-        withAccountId(`/api/dashboard/recent-uploads?limit=${limit}`, accountId),
+        withAccountId(`/api/dashboard/recent-uploads?limit=${limit}`, effectiveAccountId),
       );
       setData(rows);
     } catch (err: any) {
@@ -146,7 +154,7 @@ export function useRecentUploads(limit = 10, accountId?: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [limit, accountId]);
+  }, [limit, effectiveAccountId]);
 
   useEffect(() => {
     void refresh();

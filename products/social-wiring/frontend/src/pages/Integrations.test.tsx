@@ -14,19 +14,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// ─── localStorage polyfill (zustand persist in AccountSwitcher / Conexoes) ───
-const _localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: (k: string) => store[k] ?? null,
-    setItem: (k: string, v: string) => { store[k] = v; },
-    removeItem: (k: string) => { delete store[k]; },
-    clear: () => { store = {}; },
-    get length() { return Object.keys(store).length; },
-    key: (i: number) => Object.keys(store)[i] ?? null,
-  };
-})();
-Object.defineProperty(globalThis, "localStorage", { value: _localStorageMock, writable: true });
+// localStorage/sessionStorage are provisioned by the shared seed vitest setup
+// (seed/framework/frontend/vitest.setup.ts) — no per-file polyfill needed.
 
 // Unmount previous renders so render-return queries (which scan document.body)
 // don't trip "found multiple elements". Dynamic import → same @testing-library

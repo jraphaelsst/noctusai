@@ -16,29 +16,10 @@
  *   · @noctusai/lib's IntegrationCard and IntegrationCardModal are mocked
  *     as lightweight rendering stubs so the test does not need the full
  *     lib render pipeline (avoids dual-React null-useState gap).
- *   · localStorage is polyfilled for jsdom so zustand persist doesn't fail.
+ *   · localStorage/sessionStorage are provisioned by the shared seed vitest
+ *     setup (seed/framework/frontend/vitest.setup.ts) — no per-file polyfill.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// ─── localStorage polyfill for jsdom (zustand persist calls setItem) ─────────
-// jsdom's localStorage mock errors with "--localstorage-file" not set.
-// Replace with a simple in-memory store for test isolation.
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: (k: string) => store[k] ?? null,
-    setItem: (k: string, v: string) => { store[k] = v; },
-    removeItem: (k: string) => { delete store[k]; },
-    clear: () => { store = {}; },
-    get length() { return Object.keys(store).length; },
-    key: (i: number) => Object.keys(store)[i] ?? null,
-  };
-})();
-
-Object.defineProperty(globalThis, "localStorage", {
-  value: localStorageMock,
-  writable: true,
-});
 
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
