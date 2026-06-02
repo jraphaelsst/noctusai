@@ -8,7 +8,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -91,7 +91,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -118,7 +118,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -412,7 +412,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -439,7 +439,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -680,7 +680,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -707,7 +707,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -923,7 +923,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1078,7 +1078,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1105,7 +1105,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1317,7 +1317,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1344,7 +1344,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1560,7 +1560,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1686,7 +1686,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -1713,7 +1713,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -2148,7 +2148,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -2175,7 +2175,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -2390,7 +2390,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "=tipo",
@@ -2435,7 +2435,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj_raiz' }}",
@@ -2464,7 +2464,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -2655,7 +2655,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -2682,7 +2682,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -2898,7 +2898,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -3077,7 +3077,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -3138,7 +3138,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -3167,7 +3167,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -3196,7 +3196,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",
@@ -3225,7 +3225,7 @@
                     "parameters": [
                         {
                             "name": "token",
-                            "value": "64rYU57TNV8v5uxZMAvmCqslwz_7rX8QfFmUA-Zz"
+                            "value": "={{ $env.INFOSIMPLES_API_TOKEN }}"
                         },
                         {
                             "name": "={{ $('Preparar Variáveis').item.json.tipoDocumento === '1' ? 'cpf': 'cnpj' }}",

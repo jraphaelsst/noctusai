@@ -289,7 +289,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },
@@ -330,7 +330,7 @@
                     "parameters": [
                         {
                             "name": "x-api-key",
-                            "value": "joaoraphaelsst@gmail.com_7ctLESWX5h2ko54GIZk5Ak5UUH9Q0bRTZ91dE2z1rKFV4zBe6bAMBeYRf7Hw2fv2"
+                            "value": "={{ $env.PDF_CO_API_KEY }}"
                         }
                     ]
                 },

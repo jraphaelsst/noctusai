@@ -85,6 +85,9 @@ services:
       GENERIC_TIMEZONE: America/Sao_Paulo
       N8N_LOG_LEVEL: info
       N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+      # Workflow template credentials — referenced via {{ $env.* }} expressions.
+      PDF_CO_API_KEY: ${PDF_CO_API_KEY:?set PDF_CO_API_KEY in .env.services}
+      INFOSIMPLES_API_TOKEN: ${INFOSIMPLES_API_TOKEN:?set INFOSIMPLES_API_TOKEN in .env.services}
       # NOTE: this n8n stores its DB as SQLite inside n8n-data (no DB_POSTGRESDB_* in the
       # Coolify config). The postgres service above is preserved but n8n does NOT use it —
       # verify what (if anything) uses postgres before final Coolify teardown.
