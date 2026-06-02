@@ -183,6 +183,142 @@ def compute_source_sha(repo_root: Optional[Path] = None) -> str:
     return h.hexdigest()[:12]
 
 
+# ── Per-bucket sub-sha (for incremental rebuilds) ──────────────────────────
+#
+# The graph derives from 7 disjoint input buckets, each fed by a distinct set
+# of extractors. The ONLY expensive bucket is ``code`` (the AST walk over the
+# whole seed / mcp / products tree — the 1-2 min cost). The other six are
+# bounded markdown / ndjson walks measured in single-digit seconds.
+#
+# Incremental rebuild therefore caches the ``code`` bucket: when its sub-sha is
+# unchanged, the persisted ``code:*`` nodes/edges are reused as-is and the AST
+# walk is skipped, while the cheap knowledge tier + the global finalization
+# (history decoration, R3 mined edges, dedup, Louvain cluster, meta) ALWAYS
+# re-run. Reuse-of-code ≡ recompute-of-code by construction (the code bucket is
+# independent of every other bucket), so full and incremental produce the same
+# final graph for the same tree — proven by the parity test.
+#
+# Sub-shas for ALL seven buckets are still computed + persisted so the decision
+# logic is per-bucket explicit and ``noc_graph_status`` can report which bucket
+# busted the cache.
+
+# Bucket names in canonical order.
+_BUCKETS: tuple[str, ...] = (
+    "code", "kb", "harness", "landscape", "memory", "cli", "history",
+)
+
+
+def _bucket_of_path(rel: str) -> str | None:
+    """Classify a repo-relative source path into its extractor bucket.
+
+    Mirrors which extractor consumes the file in ``build_graph`` — NOT the
+    coarse ``_source_files`` grouping (e.g. PROJECT-HISTORY.md + CHANGELOG.md
+    + VERSION are consumed by ``walk_landscape``, so they land in
+    ``landscape``; only auto-improvement.ndjson is the ``history`` bucket).
+    Returns ``None`` for a path no bucket consumes.
+    """
+    # cli — the single cli.py flag-surface file.
+    if rel == "mcp/noctusai/cli.py":
+        return "cli"
+    # code — .py/.pyi/.ts/.tsx under the walked code roots.
+    if rel.split("/", 1)[0] in ("seed", "mcp", "products") and rel.rsplit(".", 1)[-1] in (
+        "py", "pyi", "ts", "tsx"
+    ):
+        return "code"
+    # kb — every markdown chapter / pattern under KNOWLEDGE-BASE.
+    if rel.startswith("KNOWLEDGE-BASE/"):
+        return "kb"
+    # harness — the methodology fabric.
+    if rel.startswith((".claude/agents/", ".claude/skills/", ".claude/commands/")):
+        return "harness"
+    # history — the auto-improvement event ndjson.
+    if rel == "project-history/auto-improvement.ndjson":
+        return "history"
+    # memory — resolved at compute time (lives outside the repo tree); handled
+    # separately in compute_bucket_shas (the MEMORY.md root is not a repo file).
+    # landscape — CLAUDE.md + CLAUDE/*.md + CONTEXTUALIZE.md + CHANGELOG.md +
+    # VERSION + PROJECT-HISTORY.md + projects/*/PROJECT.md.
+    if rel in ("CLAUDE.md", "CONTEXTUALIZE.md", "CHANGELOG.md", "VERSION"):
+        return "landscape"
+    if rel.startswith("CLAUDE/") and rel.endswith(".md"):
+        return "landscape"
+    if rel == "project-history/PROJECT-HISTORY.md":
+        return "landscape"
+    if rel.startswith("projects/") and rel.endswith("/PROJECT.md"):
+        return "landscape"
+    return None
+
+
+def _memory_files(repo_root: Path) -> list[Path]:
+    """The memory bucket's source files (MEMORY.md + topic .md), if discoverable."""
+    try:
+        from noctusai_lib.graph.build import _discover_memory_root
+    except ImportError:
+        return []
+    mem_root = _discover_memory_root(repo_root)
+    if mem_root is None:
+        return []
+    return sorted(p for p in mem_root.rglob("*.md") if p.is_file())
+
+
+def compute_bucket_shas(repo_root: Optional[Path] = None) -> dict[str, str]:
+    """Per-bucket sha256 over (repo-relative-path, content), one digest per bucket.
+
+    The union of bucket inputs equals ``_source_files`` (plus the out-of-tree
+    memory files), so a change to ANY graph input bumps exactly one bucket's
+    sub-sha — the lever the incremental rebuild pulls.
+    """
+    root = repo_root or REPO_ROOT
+    buckets: dict[str, hashlib._Hash] = {b: hashlib.sha256() for b in _BUCKETS}
+
+    # In-tree files.
+    for p in sorted(_source_files(root), key=lambda p: p.as_posix()):
+        try:
+            rel = p.relative_to(root).as_posix()
+        except ValueError:
+            rel = p.as_posix()
+        bucket = _bucket_of_path(rel)
+        if bucket is None:
+            continue
+        h = buckets[bucket]
+        h.update(rel.encode("utf-8"))
+        h.update(b"\0")
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            h.update(b"<unreadable>")
+
+    # Out-of-tree memory files (MEMORY.md lives under ~/.claude/...).
+    mh = buckets["memory"]
+    for p in _memory_files(root):
+        mh.update(p.as_posix().encode("utf-8"))
+        mh.update(b"\0")
+        try:
+            mh.update(p.read_bytes())
+        except OSError:
+            mh.update(b"<unreadable>")
+
+    return {b: buckets[b].hexdigest()[:12] for b in _BUCKETS}
+
+
+def get_cached_bucket_shas(repo_root: Optional[Path] = None) -> dict[str, str]:
+    """Read the per-bucket sub-shas stamped by the last rebuild (empty if none)."""
+    cache_p = cache_path(repo_root)
+    if not cache_p.exists():
+        return {}
+    try:
+        conn = _connect(cache_p)
+    except sqlite3.OperationalError:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM cache_meta WHERE key LIKE 'bucket_sha:%'"
+        ).fetchall()
+        return {r["key"].split(":", 1)[1]: r["value"] for r in rows}
+    finally:
+        conn.close()
+
+
 def get_cached_source_sha(repo_root: Optional[Path] = None) -> str | None:
     cache_p = cache_path(repo_root)
     if not cache_p.exists():
@@ -203,21 +339,38 @@ def get_cached_source_sha(repo_root: Optional[Path] = None) -> str | None:
 # ── Mirror — build graph + persist to SQLite ───────────────────────────────
 
 
+# ``ai_*`` node-meta keys are written EXCLUSIVELY by the history extractor
+# (extract_history decorates existing nodes). Reused code nodes must drop them
+# so the always-re-run history pass re-derives them from scratch — otherwise a
+# target that dropped out of the ndjson would keep a stale decoration. This is
+# what makes "reuse cached code" byte-equivalent to "re-walk code".
+_HISTORY_DECORATION_KEYS = ("ai_events", "ai_last_stage", "ai_last_ts", "ai_stages_seen")
+
+
 def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, Any]:
     """Rebuild the graph + mirror it into the SQLite cache.
 
-    Per-source-file sha guards the FULL rebuild: when the aggregate sha
-    matches the cached value AND `force=False`, the rebuild is skipped.
+    Three paths:
+
+    - **in-sync** — the aggregate source sha matches the cached value and
+      ``force`` is False: no-op (the cheapest case).
+    - **incremental** — the ``code`` bucket sub-sha is unchanged and a cache
+      with code nodes exists: the persisted ``code:*`` nodes/edges are reused
+      and the (expensive) AST walk is SKIPPED; the cheap knowledge tier
+      (kb / harness / landscape / memory / cli) + the global finalization
+      (history decoration, R3 mined edges, dedup, Louvain cluster) re-run.
+    - **full** — ``force=True``, no usable cache, or the ``code`` bucket
+      changed: re-run every extractor (the fallback / canonical path).
 
     Returns ``{ok, status, nodes, edges, rows_written, scope, build_seconds,
-    source_sha}``.
+    source_sha}`` (status ∈ ``in-sync`` | ``refreshed`` | ``incremental``).
     """
     from noctusai_lib.graph import build_graph
-    from noctusai_lib.graph.serialize import write_graph_html, write_graph_json, write_graph_report
 
     root = repo_root or REPO_ROOT
     cache_p = cache_path(root)
     live_sha = compute_source_sha(root)
+    live_bucket_shas = compute_bucket_shas(root)
 
     if not force:
         cached_sha = get_cached_source_sha(root)
@@ -230,18 +383,216 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
                 "scope": "repo",
             }
 
-    # Rebuild — full repo scope is the canonical cache.
-    graph = build_graph(root, scope="repo")
+    # Decide full vs incremental. Incremental is viable iff the EXPENSIVE
+    # ``code`` bucket is unchanged AND a cache with code nodes already exists.
+    cached_bucket_shas = {} if force else get_cached_bucket_shas(root)
+    code_unchanged = (
+        not force
+        and cached_bucket_shas
+        and cached_bucket_shas.get("code") == live_bucket_shas.get("code")
+    )
 
-    # R3 slice 1: SEMANTIC_NEIGHBOR edges (embedding-cosine, threshold=0.85).
-    # R3 slice 2: GUARDED_BY edges (keeper-patterns → keeper_rule nodes).
-    # Both are purely additive — a failure logs a warning and continues.
-    #
-    # Preferred path: delegate to the seed-side ingestors (canonical location).
-    # Fallback: use the MCP-local bridge which calls the same logic.
-    # This two-path approach handles the worktree-editable-install gap: the
-    # seed functions may not yet be visible (editable install points at primary
-    # checkout) but the MCP-side computation still works.
+    graph = None
+    status = "refreshed"
+    if code_unchanged:
+        graph = _assemble_incremental(root)
+        if graph is not None:
+            status = "incremental"
+    if graph is None:
+        # Full rebuild — canonical repo scope is the cache.
+        graph = build_graph(root, scope="repo")
+        status = "refreshed"
+
+    _inject_r3_edges(graph, root)
+    _persist_graph(cache_p, root, graph, live_sha, live_bucket_shas)
+
+    # Re-derive the portable artifacts (graph.json / graph.html / REPORT.md).
+    from noctusai_lib.graph.serialize import (
+        write_graph_html,
+        write_graph_json,
+        write_graph_report,
+    )
+    out_dir = root / ".noc-graph"
+    write_graph_json(graph, out_dir)
+    write_graph_html(graph, out_dir)
+    write_graph_report(graph, out_dir)
+
+    return {
+        "ok": True,
+        "status": status,
+        "source_sha": live_sha,
+        "rows_written": len(graph.nodes) + len(graph.edges),
+        "scope": graph.meta.get("scope", "repo"),
+        "nodes": len(graph.nodes),
+        "edges": len(graph.edges),
+        "build_seconds": graph.meta.get("build_seconds"),
+    }
+
+
+def _load_cached_code_subgraph(repo_root: Path):
+    """Load the persisted ``code`` bucket (nodes + their edges) from the cache.
+
+    Returns ``(nodes, edges)`` of schema dataclasses with the history
+    decoration (``ai_*`` meta) stripped from nodes, or ``None`` if the cache
+    has no code nodes.
+
+    The reused edges are exactly the set the code extractor emits:
+
+      - every edge whose SOURCE is a ``code:`` node (IMPORTS / CALLS /
+        INHERITS / consumes_component / EXPORTS / …), AND
+      - the anchor→module ``CONTAINS`` edges (``product:<slug>`` /
+        ``seed:noctusai_lib`` → ``code:…``) — these have a non-``code`` source
+        but are emitted ONLY by the code walk, so they must travel with the
+        reused code bucket or they orphan the modules under their anchor.
+
+    Cross-bucket edges that merely TARGET code (kb DOCUMENTS source=``kb:``,
+    history REFERENCED_BY_EVENT source=``ai:``) are owned by their source
+    bucket and are re-emitted by the always-re-run knowledge / history passes —
+    so they are NOT reused here (reusing them would risk a stale orphan when
+    the owning doc stops referencing the code path).
+    """
+    from noctusai_lib.graph.schema import Edge, Node
+
+    cache_p = cache_path(repo_root)
+    if not cache_p.exists():
+        return None
+    conn = _connect(cache_p)
+    try:
+        node_rows = conn.execute(
+            "SELECT id, label, kind, path, line, end_line, product, cluster, "
+            "confidence, meta_json FROM noc_graph_nodes WHERE id LIKE 'code:%'"
+        ).fetchall()
+        if not node_rows:
+            return None
+        edge_rows = conn.execute(
+            "SELECT source, target, kind, confidence, weight, meta_json "
+            "FROM noc_graph_edges "
+            "WHERE source LIKE 'code:%' "
+            "   OR (kind = 'contains' AND target LIKE 'code:%' "
+            "       AND (source LIKE 'product:%' OR source = 'seed:noctusai_lib'))"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    nodes: list = []
+    for r in node_rows:
+        meta = json.loads(r["meta_json"]) if r["meta_json"] else {}
+        for k in _HISTORY_DECORATION_KEYS:
+            meta.pop(k, None)
+        nodes.append(Node.from_dict({
+            "id": r["id"], "label": r["label"], "kind": r["kind"],
+            "path": r["path"], "line": r["line"], "end_line": r["end_line"],
+            "product": r["product"],
+            # cluster is recomputed in finalization — drop the stale value.
+            "confidence": r["confidence"], "meta": meta,
+        }))
+
+    edges: list = []
+    for r in edge_rows:
+        meta = json.loads(r["meta_json"]) if r["meta_json"] else {}
+        edges.append(Edge.from_dict({
+            "source": r["source"], "target": r["target"], "kind": r["kind"],
+            "confidence": r["confidence"], "weight": r["weight"], "meta": meta,
+        }))
+    return nodes, edges
+
+
+def _assemble_incremental(repo_root: Path):
+    """Assemble the graph reusing cached code nodes + re-running everything else.
+
+    Mirrors the canonical ``build_graph(scope="repo")`` extractor ORDER, but
+    seeds the code layer (L1) from the cache instead of walking the AST tree.
+    The knowledge tier (L2) + finalization run identically to the full path, so
+    the result is identical to a full rebuild for the same tree (proven by the
+    parity test). Returns ``None`` (caller falls back to full) if the cached
+    code subgraph is unavailable or the seed extractors can't be imported.
+    """
+    import time
+
+    cached = _load_cached_code_subgraph(repo_root)
+    if cached is None:
+        return None
+    code_nodes, code_edges = cached
+
+    try:
+        from noctusai_lib.graph.build import _cluster, _dedup, _discover_memory_root
+        from noctusai_lib.graph.extract_cli import walk_cli
+        from noctusai_lib.graph.extract_docs import walk_findings, walk_kb, walk_projects
+        from noctusai_lib.graph.extract_harness import walk_harness
+        from noctusai_lib.graph.extract_history import walk_auto_improvement
+        from noctusai_lib.graph.extract_landscape import walk_kb_chapters, walk_landscape
+        from noctusai_lib.graph.extract_memory import walk_memory
+        from noctusai_lib.graph.extract_products import walk_products
+        from noctusai_lib.graph.schema import Graph
+    except ImportError as exc:
+        logger.warning(
+            "noc_graph_cache: incremental extractors unavailable (%s) — full rebuild",
+            exc,
+        )
+        return None
+
+    start = time.monotonic()
+    graph = Graph(meta={"scope": "repo", "repo_root": str(repo_root)})
+
+    # L0 anchors — products + seed (same as build_graph).
+    landscape_candidates = [
+        repo_root / "KNOWLEDGE-BASE" / "02-LANDSCAPE.md",
+        repo_root / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md",
+    ]
+    landscape = next((p for p in landscape_candidates if p.exists()), landscape_candidates[0])
+    walk_products(graph, landscape)
+
+    # L1 — code, reused from cache (THE skipped AST walk).
+    for n in code_nodes:
+        graph.add_node(n)
+    for e in code_edges:
+        graph.add_edge(e)
+
+    # L2 — knowledge layers, re-run fresh against the reused code nodes (so the
+    # presence-gated kb DOCUMENTS edges resolve against the identical node set).
+    kb_root = repo_root / "KNOWLEDGE-BASE"
+    walk_kb(graph, kb_root, repo_root=repo_root)
+    walk_kb_chapters(graph, kb_root, repo_root=repo_root)
+    walk_projects(graph, repo_root / "projects", repo_root=repo_root)
+    for products_projects in (repo_root / "products").glob("*/projects"):
+        walk_projects(graph, products_projects, repo_root=repo_root)
+    walk_findings(graph, repo_root)
+    memory_root = _discover_memory_root(repo_root)
+    if memory_root is not None:
+        walk_memory(graph, memory_root, repo_root=repo_root)
+    walk_harness(graph, repo_root / ".claude", repo_root=repo_root)
+    walk_landscape(graph, repo_root)
+    cli_path = repo_root / "mcp" / "noctusai" / "cli.py"
+    if cli_path.exists():
+        walk_cli(graph, cli_path, repo_root=repo_root)
+    ai_ndjson = repo_root / "project-history" / "auto-improvement.ndjson"
+    if ai_ndjson.exists():
+        walk_auto_improvement(graph, ai_ndjson)
+
+    # Finalization — identical to build_graph's tail.
+    _dedup(graph)
+    _cluster(graph)
+    graph.meta.update({
+        "node_count": len(graph.nodes),
+        "edge_count": len(graph.edges),
+        "build_seconds": round(time.monotonic() - start, 3),
+        "rebuild": "incremental",
+    })
+    logger.info(
+        "noc_graph_cache: incremental rebuild — %d nodes, %d edges in %.2fs "
+        "(code AST walk skipped)",
+        len(graph.nodes), len(graph.edges), time.monotonic() - start,
+    )
+    return graph
+
+
+def _inject_r3_edges(graph, root: Path) -> None:
+    """Inject the additive R3 edges (SEMANTIC_NEIGHBOR + GUARDED_BY).
+
+    Identical for the full and incremental paths — a failure logs a warning
+    and continues (purely additive). See the original inline note re: the
+    seed-side-ingestor preferred path + the worktree-editable-install fallback.
+    """
     try:
         from tools.noctus.graph.build import (
             _compute_guarded_by_edges,
@@ -262,10 +613,8 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
                 ingest_guarded_by_edges(graph, gb_bindings)
         except ImportError:
             # Seed functions not yet visible (worktree isolation or pre-merge).
-            # Inline the same edge-injection logic directly.
             from noctusai_lib.graph.schema import Edge, EdgeKind
             node_ids = {n.id for n in graph.nodes}
-            # SEMANTIC_NEIGHBOR — canonical ordering: lower-string-id first.
             sem_seen: set[tuple[str, str]] = set()
             for id_a, id_b, score in sem_pairs:
                 if id_a > id_b:
@@ -283,7 +632,6 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
                             weight=score,
                             meta=(("cosine", round(score, 4)),),
                         ))
-            # GUARDED_BY
             for guarded_id, keeper_id in gb_bindings:
                 if guarded_id in node_ids and keeper_id in node_ids:
                     graph.add_edge(Edge(
@@ -303,7 +651,16 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
             "noc_graph_cache.refresh: R3 edge injection failed — %s", _r3_exc
         )
 
-    # Persist to SQLite (atomic replace).
+
+def _persist_graph(cache_p: Path, root: Path, graph, live_sha: str,
+                   bucket_shas: dict[str, str]) -> None:
+    """Mirror the assembled graph into SQLite (atomic full replace).
+
+    Shared by the full + incremental paths — both write the SAME final graph,
+    so persistence is a clean overwrite (no per-bucket DELETE/INSERT surgery in
+    the table; the bucket-level skip happens upstream in assembly). This keeps
+    the source-sha invariant + the 3-leg mirror contract intact.
+    """
     conn = _connect(cache_p)
     try:
         conn.execute("DELETE FROM noc_graph_nodes")
@@ -325,7 +682,7 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
             edge_rows,
         )
 
-        # Per-file source_sha for incremental rebuilds.
+        # Per-file source_sha (legacy column; kept for portability).
         by_path: dict[str, list[str]] = {}
         for n in graph.nodes:
             if n.path:
@@ -346,7 +703,7 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
                 file_rows,
             )
 
-        # Stamp meta.
+        # Stamp meta — aggregate + per-bucket sub-shas (the incremental levers).
         meta_kv = {
             "aggregate_source_sha": live_sha,
             "last_refresh": ts,
@@ -355,7 +712,10 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
             "scope": graph.meta.get("scope", "repo"),
             "build_seconds": str(graph.meta.get("build_seconds", "")),
             "clustering": str(graph.meta.get("clustering", "")),
+            "rebuild": str(graph.meta.get("rebuild", "full")),
         }
+        for bucket, sha in bucket_shas.items():
+            meta_kv[f"bucket_sha:{bucket}"] = sha
         conn.executemany(
             "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
             meta_kv.items(),
@@ -363,23 +723,6 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
         conn.commit()
     finally:
         conn.close()
-
-    # Re-derive the portable artifacts (graph.json / graph.html / REPORT.md).
-    out_dir = root / ".noc-graph"
-    write_graph_json(graph, out_dir)
-    write_graph_html(graph, out_dir)
-    write_graph_report(graph, out_dir)
-
-    return {
-        "ok": True,
-        "status": "refreshed",
-        "source_sha": live_sha,
-        "rows_written": len(graph.nodes) + len(graph.edges),
-        "scope": graph.meta.get("scope", "repo"),
-        "nodes": len(graph.nodes),
-        "edges": len(graph.edges),
-        "build_seconds": graph.meta.get("build_seconds"),
-    }
 
 
 def _node_row(n) -> tuple:
@@ -502,7 +845,9 @@ def register(server) -> None:
 __all__ = [
     "cache_path",
     "compute_source_sha",
+    "compute_bucket_shas",
     "get_cached_source_sha",
+    "get_cached_bucket_shas",
     "refresh",
     "load_summary",
     "register",
