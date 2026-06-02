@@ -28,9 +28,11 @@ from noctusai_lib.integrations.youtube import (
     Playlist,
     ProcessingStatus,
     RealYoutubeClient,
+    ShortClassification,
     Video,
     VideoFull,
     YoutubeClient,
+    classify_short,
     make_youtube_client,
 )
 from noctusai_lib.integrations.youtube.real import (
@@ -1827,3 +1829,248 @@ def test_is_transient_http_error_classifications() -> None:
     assert _is_transient_http_error(_make_non_transient_http_error(404)) is False
     assert _is_transient_http_error(_make_non_transient_http_error(401)) is False
     assert _is_transient_http_error(_make_non_transient_http_error(403)) is False
+
+
+# ============================================================================
+# list_owned_videos_via_uploads — Fake (cheap uploads-playlist path)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_via_uploads_single_page() -> None:
+    """Returns owned videos (incl private) at the cheap ~3-unit cost."""
+    fake = FakeYoutubeClient(
+        owned_channel_info=_channel_info(),
+        owned_videos=[_video_full("vid1"), _video_full("vid2", privacy_status="private")],
+    )
+    result = await fake.list_owned_videos_via_uploads(page_size=5)
+    assert [v.id for v in result.items] == ["vid1", "vid2"]
+    assert result.next_page_token is None
+    # 1 (channels.list) + 1 (playlistItems.list) + 1 (videos.list) = 3.
+    assert result.quota_units_consumed == 3
+    assert fake.quota_units_consumed == 3
+    # Private video is present — the whole point of the uploads-playlist path.
+    assert any(v.privacy_status == "private" for v in result.items)
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_via_uploads_pages_correctly() -> None:
+    fake = FakeYoutubeClient(
+        owned_channel_info=_channel_info(),
+        owned_videos=[_video_full(f"vid{i}") for i in range(5)],
+    )
+    seen: list[str] = []
+    token: str | None = None
+    pages = 0
+    while True:
+        result = await fake.list_owned_videos_via_uploads(page_token=token, page_size=2)
+        seen.extend(v.id for v in result.items)
+        pages += 1
+        if result.next_page_token is None:
+            break
+        token = result.next_page_token
+    assert pages == 3  # ceil(5/2)
+    assert seen == [f"vid{i}" for i in range(5)]
+    assert fake.quota_units_consumed == 9  # 3 pages × 3 units
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_via_uploads_empty_skips_videos_list() -> None:
+    """Empty page → videos.list skipped → 2 units (mirrors Real)."""
+    fake = FakeYoutubeClient(owned_channel_info=_channel_info(), owned_videos=[])
+    result = await fake.list_owned_videos_via_uploads()
+    assert result.items == []
+    assert result.quota_units_consumed == 2
+    assert fake.quota_units_consumed == 2
+
+
+@pytest.mark.asyncio
+async def test_fake_list_owned_via_uploads_raises_when_no_channel() -> None:
+    """No seeded owned_channel_info → ValueError (mirrors Real's
+    channels.list?mine returned no items)."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("vid1")])
+    with pytest.raises(ValueError, match="no items"):
+        await fake.list_owned_videos_via_uploads()
+    assert fake.quota_units_consumed == 1  # channels.list charged before raise
+
+
+# ============================================================================
+# list_owned_videos_via_uploads — Real (mocked transport)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_via_uploads_requires_oauth() -> None:
+    client = RealYoutubeClient(api_key="key-only")
+    with pytest.raises(ValueError, match="requires oauth_credentials"):
+        await client.list_owned_videos_via_uploads()
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_via_uploads_walks_uploads_not_search() -> None:
+    """Resolves uploads playlist via channels.list?mine, walks
+    playlistItems.list, hydrates with videos.list — and NEVER calls
+    search.list. Returns private/unlisted items."""
+    service = _mock_service_with_responses(
+        channels_response={
+            "items": [
+                {
+                    "id": "UC-owner",
+                    "contentDetails": {"relatedPlaylists": {"uploads": "UU-owner"}},
+                }
+            ]
+        },
+        playlist_items_response={
+            "items": [
+                {"contentDetails": {"videoId": "vid1"}},
+                {"contentDetails": {"videoId": "vid2"}},
+            ],
+            "nextPageToken": "next-tok",
+        },
+        videos_response={
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "First",
+                        "channelId": "UC-owner",
+                        "publishedAt": "2026-05-04T12:00:00Z",
+                    },
+                    "contentDetails": {"duration": "PT5M30S"},
+                    "statistics": {"viewCount": "1000"},
+                    "status": {"privacyStatus": "unlisted"},
+                },
+                {
+                    "id": "vid2",
+                    "snippet": {
+                        "title": "Second",
+                        "channelId": "UC-owner",
+                        "publishedAt": "2026-05-03T12:00:00Z",
+                    },
+                    "contentDetails": {"duration": "PT3M"},
+                    "statistics": {"viewCount": "500"},
+                    "status": {"privacyStatus": "private"},
+                },
+            ]
+        },
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        result = await client.list_owned_videos_via_uploads(page_size=25)
+
+    # channels.list called with mine=True + contentDetails (to get uploads id).
+    ch_kwargs = service.channels.return_value.list.call_args.kwargs
+    assert ch_kwargs["mine"] is True
+    assert "contentDetails" in ch_kwargs["part"]
+    # playlistItems.list walked the uploads playlist (NOT search.list).
+    pli_kwargs = service.playlistItems.return_value.list.call_args.kwargs
+    assert pli_kwargs["playlistId"] == "UU-owner"
+    assert pli_kwargs["maxResults"] == 25
+    service.search.assert_not_called()
+    # videos.list hydrated the batch with the rich projection.
+    v_kwargs = service.videos.return_value.list.call_args.kwargs
+    assert v_kwargs["id"] == "vid1,vid2"
+    for piece in ("snippet", "statistics", "status", "contentDetails"):
+        assert piece in v_kwargs["part"]
+    # Private + unlisted both returned.
+    assert {v.privacy_status for v in result.items} == {"unlisted", "private"}
+    assert result.next_page_token == "next-tok"
+    assert result.quota_units_consumed == 3
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_via_uploads_empty_playlist_skips_videos_list() -> None:
+    service = _mock_service_with_responses(
+        channels_response={
+            "items": [
+                {"id": "UC-owner",
+                 "contentDetails": {"relatedPlaylists": {"uploads": "UU-owner"}}}
+            ]
+        },
+        playlist_items_response={"items": []},
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        result = await client.list_owned_videos_via_uploads()
+    assert result.items == []
+    assert result.quota_units_consumed == 2
+    service.videos.return_value.list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_real_list_owned_via_uploads_forwards_page_token() -> None:
+    service = _mock_service_with_responses(
+        channels_response={
+            "items": [
+                {"id": "UC-owner",
+                 "contentDetails": {"relatedPlaylists": {"uploads": "UU-owner"}}}
+            ]
+        },
+        playlist_items_response={"items": []},
+    )
+    with patch(
+        "noctusai_lib.integrations.youtube.real.build", return_value=service
+    ):
+        client = RealYoutubeClient(oauth_credentials=MagicMock())
+        await client.list_owned_videos_via_uploads(page_token="page-2")
+    pli_kwargs = service.playlistItems.return_value.list.call_args.kwargs
+    assert pli_kwargs["pageToken"] == "page-2"
+
+
+# ============================================================================
+# classify_short — pure three-tier shorts classifier
+# ============================================================================
+
+
+def test_classify_short_hashtag_in_description_high() -> None:
+    v = _video_full("v", description="Cool clip #Shorts", duration_seconds=300)
+    c = classify_short(v)
+    assert c == ShortClassification(
+        is_short=True, detected_via="hashtag", confidence="high", needs_probe=False
+    )
+
+
+def test_classify_short_hashtag_in_tags_high() -> None:
+    v = _video_full("v", tags=("vlog", "Shorts"), duration_seconds=300)
+    c = classify_short(v)
+    assert c.is_short is True
+    assert c.detected_via == "hashtag"
+    assert c.needs_probe is False
+
+
+def test_classify_short_duration_under_60_high() -> None:
+    v = _video_full("v", title="clip", description="d", tags=(), duration_seconds=45)
+    c = classify_short(v)
+    assert c == ShortClassification(
+        is_short=True, detected_via="duration", confidence="high", needs_probe=False
+    )
+
+
+def test_classify_short_ambiguous_band_defaults_not_short_needs_probe() -> None:
+    """61-180s with no hashtag: medium confidence, default not-short, probe."""
+    v = _video_full("v", title="t", description="d", tags=(), duration_seconds=106)
+    c = classify_short(v)
+    assert c.is_short is False
+    assert c.detected_via == "duration"
+    assert c.confidence == "medium"
+    assert c.needs_probe is True
+
+
+def test_classify_short_over_180_not_short_high() -> None:
+    v = _video_full("v", title="t", description="d", tags=(), duration_seconds=196)
+    c = classify_short(v)
+    assert c == ShortClassification(
+        is_short=False, detected_via="duration", confidence="high", needs_probe=False
+    )
+
+
+def test_classify_short_unknown_duration_low_needs_probe() -> None:
+    v = _video_full("v", title="t", description="d", tags=(), duration_seconds=0)
+    c = classify_short(v)
+    assert c.is_short is False
+    assert c.confidence == "low"
+    assert c.needs_probe is True

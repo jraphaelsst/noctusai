@@ -32,12 +32,19 @@ docstrings document this; consumers reading the surface pick the
 cheap path by default.
 """
 
+from noctusai_lib.integrations.youtube.classification import (
+    Confidence,
+    DetectedVia,
+    ShortClassification,
+    classify_short,
+)
 from noctusai_lib.integrations.youtube.factory import make_youtube_client
 from noctusai_lib.integrations.youtube.fake import FakeYoutubeClient
 from noctusai_lib.integrations.youtube.protocol import YoutubeClient
 from noctusai_lib.integrations.youtube.real import RealYoutubeClient
 from noctusai_lib.integrations.youtube.types import (
     DESCRIPTION_MAX_LEN,
+    SHORTS_MAX_DURATION_SECONDS,
     TITLE_MAX_LEN,
     UPLOAD_QUOTA_UNITS,
     Channel,
@@ -55,10 +62,13 @@ from noctusai_lib.integrations.youtube.types import (
 
 __all__ = [
     "DESCRIPTION_MAX_LEN",
+    "SHORTS_MAX_DURATION_SECONDS",
     "TITLE_MAX_LEN",
     "UPLOAD_QUOTA_UNITS",
     "Channel",
     "ChannelInfo",
+    "Confidence",
+    "DetectedVia",
     "FakeYoutubeClient",
     "ListResult",
     "Playlist",
@@ -66,10 +76,12 @@ __all__ = [
     "ProcStatus",
     "ProcessingStatus",
     "RealYoutubeClient",
+    "ShortClassification",
     "UploadStatus",
     "Video",
     "VideoFull",
     "VideoUpload",
     "YoutubeClient",
+    "classify_short",
     "make_youtube_client",
 ]

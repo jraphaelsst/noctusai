@@ -73,6 +73,14 @@ quota — by far the most expensive call in the API (≈6 uploads exhaust
 a fresh daily quota). Documented here so consumers budget correctly;
 the often-quoted "100" figure is the *listing* search cost, not insert."""
 
+SHORTS_MAX_DURATION_SECONDS = 180
+"""Upper duration bound for a YouTube Short. YouTube raised the ceiling
+from 60s to **180s (3 min)** in October 2024. The Data API exposes NO
+`is_short` field — Shorts are ordinary `Video` resources — so duration
+is one inference signal (see :func:`classify_short`). A video longer
+than this is never a Short; `≤ 60s` is a high-confidence Short; the
+`61–180s` band is genuinely ambiguous (duration alone can't decide)."""
+
 
 @dataclass(frozen=True)
 class Channel:
@@ -254,6 +262,7 @@ class ListResult(Generic[T]):
 
 __all__ = [
     "DESCRIPTION_MAX_LEN",
+    "SHORTS_MAX_DURATION_SECONDS",
     "TITLE_MAX_LEN",
     "UPLOAD_QUOTA_UNITS",
     "Channel",

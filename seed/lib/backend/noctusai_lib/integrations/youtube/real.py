@@ -599,6 +599,118 @@ class RealYoutubeClient:
             quota_units_consumed=101,
         )
 
+    async def list_owned_videos_via_uploads(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """~2-3 quota units / page — the cheap, reliable "all my uploads
+        (incl. private + unlisted)" path. See the Protocol docstring for
+        the corrected uploads-playlist-returns-private contract.
+
+        1. `channels.list?mine=True&part=contentDetails` → uploads
+           playlist id (1 unit).
+        2. `playlistItems.list?playlistId=<uploads>` → up to `page_size`
+           video ids for the page (1 unit).
+        3. `videos.list?part=snippet,statistics,status,contentDetails`
+           → VideoFull batch (1 unit; skipped when the page is empty)."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.list_owned_videos_via_uploads requires "
+                "oauth_credentials (channels.list?mine=True needs an "
+                "authenticated context — an API key cannot resolve "
+                "'the current user')"
+            )
+
+        # Step 1: resolve the uploads playlist id from the owner's channel.
+        try:
+            channel_response = (
+                self._service()
+                .channels()
+                .list(part="contentDetails", mine=True)
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_via_uploads_channel_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        channel_items = channel_response.get("items") or []
+        if not channel_items:
+            raise ValueError(
+                "channels.list?mine=True returned no items — the OAuth "
+                "account has no associated YouTube channel."
+            )
+        uploads_playlist_id = _channel_from_api(channel_items[0]).uploads_playlist_id
+        if not uploads_playlist_id:
+            # Channel exists but exposes no uploads playlist — only the
+            # 1-unit channels.list was spent.
+            return ListResult(items=[], next_page_token=None, quota_units_consumed=1)
+
+        # Step 2: page the uploads playlist for video ids (1 unit).
+        try:
+            playlist_response = (
+                self._service()
+                .playlistItems()
+                .list(
+                    part="contentDetails",
+                    playlistId=uploads_playlist_id,
+                    maxResults=page_size,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_via_uploads_playlist_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        playlist_items = playlist_response.get("items", [])
+        next_page_token = playlist_response.get("nextPageToken")
+        video_ids = [
+            item["contentDetails"]["videoId"]
+            for item in playlist_items
+            if item.get("contentDetails", {}).get("videoId")
+        ]
+        if not video_ids:
+            # 1 (channels.list) + 1 (playlistItems.list); videos.list skipped.
+            return ListResult(
+                items=[], next_page_token=next_page_token, quota_units_consumed=2
+            )
+
+        # Step 3: hydrate the batch to the full projection (1 unit).
+        try:
+            videos_response = (
+                self._service()
+                .videos()
+                .list(
+                    part="snippet,statistics,status,contentDetails",
+                    id=",".join(video_ids),
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            logger.warning(
+                "youtube.list_owned_videos_via_uploads_videos_http_error status=%s",
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        videos = [
+            _video_full_from_api(item) for item in videos_response.get("items", [])
+        ]
+        return ListResult(
+            items=videos,
+            next_page_token=next_page_token,
+            # 1 (channels.list) + 1 (playlistItems.list) + 1 (videos.list) = 3.
+            quota_units_consumed=3,
+        )
+
     async def upload_video(
         self,
         *,

@@ -155,22 +155,20 @@ class YoutubeClient(Protocol):
         page_token: str | None = None,
         page_size: int = 50,
     ) -> ListResult[VideoFull]:
-        """List the OAuth-authenticated channel's videos (including
-        private + unlisted) with the full projection.
+        """List the OAuth-authenticated channel's videos with the full
+        projection via the **expensive `search.list?forMine=True`** path.
+
+        ⚠️ **PREFER :meth:`list_owned_videos_via_uploads`.** This method
+        is retained for back-compat, but `search.list?forMine=True` is
+        both **50× more expensive** (101 units/page vs ~2-3) AND
+        **unreliable for private/unlisted uploads** — `search.list` is
+        index-backed and lags / omits non-public videos, so a channel
+        whose uploads are all private can return ZERO results here even
+        though the videos exist (observed in production, 2026-06).
 
         **Quota cost: 101 units / page** — `search.list?forMine=True`
-        (100 units) followed by `videos.list?part=snippet,statistics,
-        status,contentDetails&id=...` (1 unit) for the page batch.
-
-        Distinct from :meth:`list_channel_videos` because that method
-        walks `playlistItems.list` on the channel's auto-`uploads`
-        playlist which exposes ONLY public videos (the cheap path costs
-        ~2 units / 50 videos but private + unlisted uploads are
-        invisible there). For the operator surface that owns the
-        channel + needs to see every upload, the expensive
-        `search.list?forMine=True` is the canonical YT API path —
-        documented here so consumers reading the surface understand
-        the per-call cost trade-off.
+        (100 units) + `videos.list?part=snippet,statistics,status,
+        contentDetails&id=...` (1 unit) for the page batch.
 
         Args:
             page_token: opaque YT pagination token; `None` for the
@@ -179,11 +177,53 @@ class YoutubeClient(Protocol):
                 forwards the value verbatim.
 
         Returns:
-            `ListResult[VideoFull]` — `next_page_token` is `None` when
-            the underlying API stops returning `nextPageToken`.
-            `quota_units_consumed` reflects the per-call cost (101 for
-            the standard 2-API-call path; 100 when the search page
-            returns no ids and `videos.list` is skipped)."""
+            `ListResult[VideoFull]` — `quota_units_consumed` is 101 for
+            the standard 2-call path; 100 when the search page returns
+            no ids and `videos.list` is skipped."""
+        ...
+
+    async def list_owned_videos_via_uploads(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """List EVERY upload of the OAuth-authenticated channel —
+        **including private + unlisted** — via the cheap, reliable
+        uploads-playlist path. This is the canonical "see all my videos"
+        method; prefer it over :meth:`list_owned_videos`.
+
+        **Quota cost: ~3 units / page of 50** (1 `channels.list?mine=
+        True&part=contentDetails` to resolve the uploads playlist + 1
+        `playlistItems.list` for the page of ids + 1 `videos.list` for
+        the batch hydration). Drops to 2 when the page has no ids
+        (`videos.list` skipped).
+
+        **Why this returns private/unlisted (the corrected contract):**
+        a channel's auto-managed `uploads` playlist (`relatedPlaylists.
+        uploads`, id `UU…`) contains **all** of the owner's uploads in
+        reverse-chronological order. When `playlistItems.list` is called
+        with the **owner's OAuth credentials**, it returns the owner's
+        private + unlisted items too — the "uploads playlist is
+        public-only" belief is true only for an API-key / third-party
+        context, NOT for the authenticated owner. The expensive
+        `search.list?forMine=True` path was historically used under that
+        mistaken belief; this method is the cheap, complete replacement.
+
+        OAuth-only: `channels.list?mine=True` needs an authenticated
+        context. The Real adapter raises `ValueError` when no OAuth
+        credentials were supplied (fail loud, per no-silent-errors).
+
+        Args:
+            page_token: opaque YT pagination token (the
+                `playlistItems.list` token); `None` for the first page.
+            page_size: `maxResults` (1-50). YT caps at 50.
+
+        Returns:
+            `ListResult[VideoFull]` — `next_page_token` is `None` on the
+            last page. `quota_units_consumed` reflects the ~2-3 unit
+            per-call cost. To classify each item as a Short, pass it to
+            `noctusai_lib.integrations.youtube.classify_short`."""
         ...
 
     async def upload_video(

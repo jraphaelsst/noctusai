@@ -240,6 +240,43 @@ class FakeYoutubeClient:
             quota_units_consumed=cost,
         )
 
+    async def list_owned_videos_via_uploads(
+        self,
+        *,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> ListResult[VideoFull]:
+        """~2-3 quota units / page (the cheap uploads-playlist path):
+        1 `channels.list?mine` + 1 `playlistItems.list` + 1 `videos.list`
+        when the page has ids; 2 when the page is empty (`videos.list`
+        skipped). Mirrors :meth:`list_owned_videos` paging over
+        :attr:`owned_videos` (which, unlike the real `search.list` path,
+        faithfully includes private + unlisted entries).
+
+        Raises :class:`ValueError` when no :attr:`owned_channel_info`
+        was seeded — mirrors the Real adapter's
+        `channels.list?mine=True returned no items` branch."""
+        if self.owned_channel_info is None:
+            self._charge(1)
+            raise ValueError(
+                "channels.list?mine=True returned no items — the OAuth "
+                "account has no associated YouTube channel."
+            )
+        page_items, next_token = self._page(
+            self.owned_videos, page_token, page_size=page_size
+        )
+        if not page_items:
+            cost = self._charge(2)
+            return ListResult(
+                items=[], next_page_token=next_token, quota_units_consumed=cost
+            )
+        cost = self._charge(3)
+        return ListResult(
+            items=list(page_items),
+            next_page_token=next_token,
+            quota_units_consumed=cost,
+        )
+
     async def upload_video(
         self,
         *,
