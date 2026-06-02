@@ -497,10 +497,16 @@ CREATE OR REPLACE FUNCTION public.current_user_id()
   SET search_path = public
 AS $$ SELECT (SELECT auth.uid()); $$;
 
+-- current_org_id() — SECURITY DEFINER org resolver.
+-- Reads from the trusted noctus_users table (NOT from the JWT claim, which is
+-- user_metadata-nested and thus: (a) always NULL at the top level, and
+-- (b) user-editable — a privilege-escalation hole if used for RLS).
+-- Root-fixed 2026-06-02 (feat/rls-migration-parity): original used
+-- auth.jwt() ->> 'org_id' which is always NULL in Supabase.
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
   SET search_path = public
-AS $$ SELECT (SELECT (auth.jwt() ->> 'org_id'))::uuid; $$;
+AS $$ SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid()); $$;
 
 CREATE OR REPLACE FUNCTION public.is_platform_admin()
   RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER

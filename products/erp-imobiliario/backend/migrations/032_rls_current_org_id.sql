@@ -637,6 +637,8 @@ CREATE POLICY "movimentacoes_bancarias_update_policy" ON erp.movimentacoes_banca
   USING ((org_id = current_org_id()));
 
 -- ----- erp.notificacao_preferencias -----
+-- Also drop the legacy "org_isolation" policy created by 001_erp_imobiliario.sql.
+DROP POLICY IF EXISTS "org_isolation" ON erp.notificacao_preferencias;
 DROP POLICY IF EXISTS "notificacao_preferencias_delete_policy" ON erp.notificacao_preferencias;
 CREATE POLICY "notificacao_preferencias_delete_policy" ON erp.notificacao_preferencias
   FOR DELETE TO authenticated
@@ -658,6 +660,8 @@ CREATE POLICY "notificacao_preferencias_update_policy" ON erp.notificacao_prefer
   USING ((org_id = current_org_id()));
 
 -- ----- erp.notificacoes -----
+-- Also drop the legacy "org_isolation" policy created by 001_erp_imobiliario.sql.
+DROP POLICY IF EXISTS "org_isolation" ON erp.notificacoes;
 DROP POLICY IF EXISTS "notificacoes_delete_policy" ON erp.notificacoes;
 CREATE POLICY "notificacoes_delete_policy" ON erp.notificacoes
   FOR DELETE TO authenticated
