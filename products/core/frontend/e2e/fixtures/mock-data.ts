@@ -74,6 +74,10 @@ export const mockTrialSubscription = {
 // and mockProducts). The pre-refactor mock used `name` / `description`, which
 // the pages never read → cards rendered with undefined names. Match the real
 // contract here.
+// NOTE: the backend / Plan interface uses `ativo` (Portuguese), NOT `is_active`.
+// Pricing.tsx filters with `p.ativo && !p.is_custom` — using `is_active` here
+// means `p.ativo` resolves to `undefined` (falsy) → all plans filtered out →
+// pricing page shows "Nenhum plano disponível" instead of plan cards.
 export const mockPlans = [
   {
     id: 'plan-001',
@@ -86,7 +90,7 @@ export const mockPlans = [
     max_products: 1,
     features: { suporte_email: true },
     is_custom: false,
-    is_active: true,
+    ativo: true,
   },
   {
     id: 'plan-002',
@@ -99,7 +103,7 @@ export const mockPlans = [
     max_products: 5,
     features: { suporte_email: true, suporte_prioritario: true, api_access: true },
     is_custom: false,
-    is_active: true,
+    ativo: true,
   },
 ];
 

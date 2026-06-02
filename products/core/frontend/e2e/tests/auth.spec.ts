@@ -64,10 +64,13 @@ test.describe('Authentication', () => {
     );
     await page.goto('/');
 
-    // No token → the seed createProductApp guard redirects unauthenticated
-    // users to `unauthRedirect`, which core sets to '/landing' (apex landing
-    // page added in df821179). The login form lives at /login.
-    await expect(page).toHaveURL(/\/landing/);
+    // No token → the seed createProductApp unauth branch (68970efc): when
+    // Landing is provided, it renders Landing at "/" via an inner <Routes> and
+    // redirects any other unauth path to "/". The URL stays at "/" — the
+    // /landing path itself now has a back-compat <Navigate to="/" replace/>.
+    // Assert the URL and the Landing page's visible hero content.
+    await expect(page).toHaveURL('/');
+    await expect(page.getByRole('heading', { name: /portfólio de produtos/i })).toBeVisible();
   });
 
   test('successful login redirects to dashboard', async ({ page }) => {
