@@ -8,18 +8,21 @@ version = "0.1.0"
 description = "Backend code library for all NoctusAI products"
 requires-python = ">=3.9"
 dependencies = [
-    "fastapi>=0.115.0",
-    # fastapi 0.115.5 requires starlette>=0.40.0,<0.42.0. Keep an EXPLICIT bound
+    "fastapi>=0.121.0",
+    # fastapi 0.121.0 requires starlette>=0.40.0,<0.50.0. Keep an EXPLICIT bound
     # (not floor-only) because floor-only once let the env pull starlette 1.0.0,
     # which removed the Router on_startup/on_shutdown kwargs fastapi still passes
     # → 14 router tests failed with `Router.__init__() got an unexpected keyword
-    # argument 'on_startup'` (WA-FIX 2026-05-18). The <0.42 cap stays well below
-    # 1.0.0; the >=0.40 floor matches fastapi 0.115.5. Bump in lock-step with any
-    # future fastapi bump.
+    # argument 'on_startup'` (WA-FIX 2026-05-18). The <0.50 cap stays well below
+    # 1.0.0; the >=0.49.1 floor is the CVE-patched minimum. Bump in lock-step with
+    # any future fastapi bump.
     # 2026-05-22: floor was <0.39.0 — INCOMPATIBLE with fastapi==0.115.5's
     # starlette>=0.40 in the root requirements aggregate (CI ResolutionImpossible
     # → all backend-test jobs red). Raised to >=0.40.0 to match the shipped combo.
-    "starlette>=0.40.0,<0.42.0",
+    # 2026-06-02: bumped fastapi 0.115.5→0.121.0 + starlette floor 0.40→0.49.1 to
+    # clear Dependabot high-severity starlette CVE (vuln range >=0.39.0,<=0.49.0;
+    # first_patched=0.49.1). fastapi 0.121.0 accepts starlette <0.50.0 ✓.
+    "starlette>=0.49.1,<0.50.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
     "supabase>=2.9.1,<2.10",  # 2.10+ dropped ClientOptions.storage; matches product exact-pin to ==2.9.1

@@ -12,7 +12,7 @@
 
 # Shared app/server stack — pinned to the seed canonical (uvicorn is the server
 # the base does NOT provide; the container CMD needs it on PATH).
-fastapi==0.115.5
+fastapi==0.121.0
 uvicorn[standard]==0.30.6
 supabase==2.9.1
 pydantic==2.13.4
