@@ -161,10 +161,11 @@ def _source_files(repo_root: Path) -> list[Path]:
     ph = repo_root / "project-history" / "PROJECT-HISTORY.md"
     if ph.exists():
         paths.append(ph)
-    # branch-tree.ndjson is EXCLUDED: it is tracking METADATA (not graph-input
-    # content) and a pointer push MUST NOT trigger noc-graph rebuild.
-    # Contract: KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3
-    # "Cache-sync discipline".  Exclusion lives HERE (config, not a keeper bypass).
+    # branch-tree.ndjson AND its mirror (branch-tree.mirror.ndjson) are EXCLUDED:
+    # both are tracking METADATA (not graph-input content) and a pointer push MUST
+    # NOT trigger a noc-graph rebuild. Excluded by construction (never appended to
+    # the source list above). Contract: KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md
+    # §3 "Cache-sync discipline".  Exclusion lives HERE (config, not a keeper bypass).
     return paths
 
 

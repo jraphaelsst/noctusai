@@ -12241,6 +12241,28 @@ def check_branch_tree_mirror(
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
     ledger = root / "project-history" / "branch-tree.ndjson"
+    mirror = root / "project-history" / "branch-tree.mirror.ndjson"
+
+    # ── Mirror parity (global invariant) ─────────────────────────────────────
+    # The ledger + its repo-tracked human-accessible mirror MUST be byte-identical.
+    # branch_pointer writes BOTH by construction; this gate catches an out-of-band
+    # hand-edit of one alone (the "agents forget" case). KB § branch-tree-tracking §2.
+    if ledger.exists() or mirror.exists():
+        _led = ledger.read_text(encoding="utf-8") if ledger.exists() else None
+        _mir = mirror.read_text(encoding="utf-8") if mirror.exists() else None
+        if _led != _mir:
+            issues.append({
+                "product": "<platform>",
+                "file": "project-history/branch-tree.mirror.ndjson",
+                "issue": (
+                    "branch-tree ledger and its mirror have DRIFTED — they MUST be "
+                    "byte-identical. Always write via `noctus.dev.branch_pointer` (it "
+                    "populates both); never hand-edit one alone. Repair: copy "
+                    "project-history/branch-tree.ndjson → branch-tree.mirror.ndjson. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2 (the mirror)."
+                ),
+                "severity": "high",
+            })
 
     if not ledger.exists():
         # No ledger yet — only flag if a specific branch was requested.

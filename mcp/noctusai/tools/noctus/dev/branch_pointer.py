@@ -47,10 +47,40 @@ logger = logging.getLogger(__name__)
 # ── Paths ─────────────────────────────────────────────────────────────────────
 LEDGER_REL = "project-history/branch-tree.ndjson"
 LEDGER_PATH: Path = REPO_ROOT / LEDGER_REL
+# Repo-tracked, human-accessible MIRROR — kept byte-identical to the canonical
+# ledger BY CONSTRUCTION (every write goes to both; the check_branch_tree_mirror
+# keeper hard-blocks any drift). Both are project-history/*.ndjson ⇒ merge=union +
+# cache-exempt. KB § PATTERNS/architect/branch-tree-tracking.md (§2 the mirror).
+MIRROR_NAME = "branch-tree.mirror.ndjson"
+MIRROR_REL = "project-history/" + MIRROR_NAME
+MIRROR_PATH: Path = REPO_ROOT / MIRROR_REL
 
 # ── Cache-exemption sentinel ──────────────────────────────────────────────────
-# ONLY this path is exempt — any other staged file re-enables cache refresh.
-_CACHE_EXEMPT_PATHS: frozenset[str] = frozenset({LEDGER_REL})
+# ONLY these paths (the ledger + its mirror) are exempt — any other staged file
+# re-enables cache refresh.
+_CACHE_EXEMPT_PATHS: frozenset[str] = frozenset({LEDGER_REL, MIRROR_REL})
+
+
+def _ledger_targets() -> tuple[Path, ...]:
+    """Canonical ledger + its mirror, derived from the CURRENT module-level
+    LEDGER_PATH so monkeypatching LEDGER_PATH (tests) relocates both."""
+    return (LEDGER_PATH, LEDGER_PATH.with_name(MIRROR_NAME))
+
+
+def _ledger_rels() -> tuple[str, ...]:
+    """Repo-relative paths to stage — derived from the CURRENT LEDGER_REL."""
+    from pathlib import PurePosixPath
+    return (LEDGER_REL, str(PurePosixPath(LEDGER_REL).with_name(MIRROR_NAME)))
+
+
+def _write_row(row: dict[str, Any]) -> None:
+    """Append one row to BOTH the canonical ledger AND its mirror — drift-free by
+    construction. Agents never populate one without the other; the
+    check_branch_tree_mirror keeper enforces parity for any out-of-band edit."""
+    for _p in _ledger_targets():
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        with _p.open("a", encoding="utf-8") as _f:
+            _f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def is_cache_exempt_path(rel_path: str) -> bool:
@@ -161,19 +191,20 @@ def _push_ledger_to_dev(
     # Fetch to ensure we can do a FF push
     run(["git", "fetch", remote])
 
-    # Check if the file is dirty
-    rc_s, out_s, _ = run(["git", "status", "--porcelain", "--", LEDGER_REL])
+    rels = list(_ledger_rels())
+    # Check if either the ledger OR its mirror is dirty
+    rc_s, out_s, _ = run(["git", "status", "--porcelain", "--", *rels])
     if rc_s != 0 or not (out_s or "").strip():
         return {"ok": True, "status": "already_clean", "pushed": False}
 
-    # Stage ONLY the ledger file
-    rc_a, _, err_a = run(["git", "add", "--", LEDGER_REL])
+    # Stage ONLY the ledger + mirror (both cache-exempt, merge=union)
+    rc_a, _, err_a = run(["git", "add", "--", *rels])
     if rc_a != 0:
         logger.warning("branch_pointer: git add failed (%s)", err_a.strip())
         return {"ok": False, "error": f"git add failed: {err_a.strip()}"}
 
     # Commit
-    rc_c, _, err_c = run(["git", "commit", "-m", commit_msg, "--", LEDGER_REL])
+    rc_c, _, err_c = run(["git", "commit", "-m", commit_msg, "--", *rels])
     if rc_c != 0:
         logger.warning("branch_pointer: git commit failed (%s)", err_c.strip())
         return {"ok": False, "error": f"git commit failed: {err_c.strip()}"}
@@ -245,9 +276,7 @@ def append(
         "notes": notes,
     }
 
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    _write_row(row)  # writes BOTH the canonical ledger and its mirror
 
     result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": LEDGER_REL}
 
@@ -324,9 +353,7 @@ def update(
         "notes": notes if notes is not None else prev.get("notes", ""),
     }
 
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    _write_row(row)  # writes BOTH the canonical ledger and its mirror
 
     result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": LEDGER_REL}
 

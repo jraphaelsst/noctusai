@@ -80,7 +80,10 @@ def _add_commit(root: Path, *, message: str = "extra commit") -> str:
 def _write_ledger(root: Path, rows: list[dict]) -> Path:
     ledger = root / "project-history" / "branch-tree.ndjson"
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    body = "\n".join(json.dumps(r) for r in rows) + "\n"
+    ledger.write_text(body)
+    # The mirror MUST stay byte-identical (check_branch_tree_mirror parity invariant).
+    (root / "project-history" / "branch-tree.mirror.ndjson").write_text(body)
     return ledger
 
 
@@ -106,6 +109,34 @@ def _base_row(branch: str, commit: str, **overrides) -> dict:
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+
+
+class TestBranchTreeMirrorParity:
+    """The canonical ledger and its repo-tracked mirror MUST be byte-identical."""
+
+    def test_mirror_drift_is_hard_blocked(self, tmp_path):
+        root, sha = _init_repo(tmp_path)
+        _write_ledger(root, [_base_row("feat/x", sha)])  # writes both identically
+        # Drift the mirror out-of-band (the "agent hand-edited one alone" case).
+        (root / "project-history" / "branch-tree.mirror.ndjson").write_text("drifted\n")
+        issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
+        assert any("DRIFTED" in i["issue"] and i["severity"] == "high" for i in issues), \
+            f"mirror drift must hard-block; got: {issues}"
+
+    def test_missing_mirror_is_flagged(self, tmp_path):
+        root, sha = _init_repo(tmp_path)
+        _write_ledger(root, [_base_row("feat/x", sha)])
+        (root / "project-history" / "branch-tree.mirror.ndjson").unlink()
+        issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
+        assert any("DRIFTED" in i["issue"] for i in issues), \
+            f"missing mirror must be flagged; got: {issues}"
+
+    def test_in_sync_mirror_passes_parity(self, tmp_path):
+        root, sha = _init_repo(tmp_path)
+        _write_ledger(root, [_base_row("feat/x", sha)])  # both identical
+        issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
+        assert not any("DRIFTED" in i["issue"] for i in issues), \
+            f"in-sync mirror must NOT flag parity; got: {issues}"
 
 
 class TestBranchTreeMirrorPass:

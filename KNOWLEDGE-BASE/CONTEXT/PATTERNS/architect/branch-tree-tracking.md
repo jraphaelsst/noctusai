@@ -16,6 +16,9 @@ Append-only ndjson, **tracked and pushed to dev** (sibling of `auto-improvement.
 
 Append-only ⇒ a status update is a NEW row for the same `branch`; **latest-by-`ts` wins** per branch (the query tool resolves this). No in-place edits ⇒ no merge conflicts.
 
+### The mirror — `project-history/branch-tree.mirror.ndjson` (repo-tracked, always two)
+A second **repo-tracked** ndjson kept **byte-identical** to the canonical ledger, so the branch-tree map is robustly persisted + reliably accessible. **Drift-prevention by construction:** `branch_pointer` writes BOTH files on every `append`/`update` (an agent populating one always populates the other — it's automatic, not a discipline they can forget). The cache-exemption + noc-graph exclusion cover both (`branch-tree.mirror.ndjson` is also metadata, never graph-input). **The gate for when something edits one out-of-band:** `check_branch_tree_mirror` carries a global PARITY invariant — if the two files ever differ (or the mirror is missing), it HARD-BLOCKS with a repair hint (`cp branch-tree.ndjson → branch-tree.mirror.ndjson`). Methodology rule: never hand-edit one alone; always write via the tool. (General principle the user affirmed 2026-06-01: ndjson ledgers are repo-tracked, never gitignored.)
+
 ### Schema (one JSON object per line)
 
 ```jsonc
