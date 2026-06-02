@@ -69,7 +69,8 @@ _ALL_CACHES = (
     # 6th + 7th (memory-embeddings, corpus-embeddings) being landed by a
     # parallel session — when that branch integrates first, they slot in
     # before noc-graph here.
-    "noc-graph",  # 8th — structured graph mirror (KB § PATTERNS/architect/noc-graph.md)
+    "noc-graph",    # 8th — structured graph mirror (KB § PATTERNS/architect/noc-graph.md)
+    "absorptions",  # 9th — absorption tracking mirror
 )
 
 
@@ -96,6 +97,7 @@ def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
         "kb-embeddings":      "check_kb_vector_canonical",
         "code-embeddings":    "check_code_embeddings_cache_freshness",
         "noc-graph":          "check_noc_graph_cache_freshness",
+        "absorptions":        "check_absorptions_cache_freshness",
     }
     try:
         from . import compliance as _c
@@ -268,6 +270,22 @@ def refresh_all(
             failures.append("noc-graph")
             warnings.append(f"noc-graph import: {str(e)[:120]}")
 
+    # 9. absorptions cache (absorption tracking mirror)
+    if "absorptions" in active:
+        try:
+            from . import absorption_tracking as ab
+            result, err = _refresh_one("absorptions",
+                                       lambda: ab.refresh(force=force))
+            refreshed["absorptions"] = result
+            if err:
+                failures.append("absorptions")
+                warnings.append(err)
+            else:
+                total_rows += result.get("rows_written", 0)
+        except Exception as e:  # noqa: BLE001
+            failures.append("absorptions")
+            warnings.append(f"absorptions import: {str(e)[:120]}")
+
     return {
         "ok": not failures,
         "ts": _now_iso(),
@@ -315,7 +333,7 @@ def should_skip_cache_refresh(changed_paths: list[str]) -> bool:
 # caches (kb/code/corpus/memory — OpenAI round-trips, kept warn-only so the human
 # stays in the spend loop), these are FREE to rebuild, so they can be HEALED ON
 # CONTACT rather than merely warned about.
-_STRUCTURAL_CACHES = ("keeper-patterns", "agent-context", "auto-improvement", "noc-graph")
+_STRUCTURAL_CACHES = ("keeper-patterns", "agent-context", "auto-improvement", "noc-graph", "absorptions")
 
 
 def settle_structural_caches(repo_root: Path | None = None) -> dict[str, Any]:

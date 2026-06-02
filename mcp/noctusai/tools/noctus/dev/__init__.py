@@ -12,6 +12,7 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every dev-umbrella tool on the given FastMCP server."""
+    from . import absorption_tracking
     from . import agent_context
     from . import ai_brain
     from . import branch_pointer
@@ -120,6 +121,7 @@ def register_all(server) -> None:
     from . import vps
     from . import vps_exec_sql
 
+    absorption_tracking.register(server)
     agent_context.register(server)
     ai_brain.register(server)
     analyzers.register(server)

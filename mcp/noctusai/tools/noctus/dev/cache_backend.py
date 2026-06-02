@@ -103,6 +103,7 @@ _CACHE_FILES: dict[str, str] = {
     "memory-embeddings": "memory-embeddings.sqlite",
     "corpus-embeddings": "corpus-embeddings.sqlite",
     "noc-graph":        "noc-graph.sqlite",  # 8th — structured graph mirror
+    "absorptions":      "absorptions.sqlite",  # 9th — absorption tracking mirror
 }
 
 # ── Tier-1 path resolution (worktree-shared persistent cache) ────────────────

@@ -7528,6 +7528,7 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_auto_improvement_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_code_embeddings_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
     "check_noc_graph_cache_freshness": "tests/test_eight_way_sync.py::TestAllCacheFreshness",
+    "check_absorptions_cache_freshness": "tests/test_absorption_tracking.py::TestAbsorptionsFreshness",
     # consent-routes-mandate (2026-06-01) — seed-first LGPD/OAuth verification
     # routes must never regress; no product may shadow them with a local copy.
     # KB § PATTERNS/frontend/consent-routes-mandate.md.
@@ -8278,6 +8279,10 @@ def check_all_products() -> tuple[int, list]:
     # full rebuild. Severity warning (advisory: orientation map degrades, not
     # blocks). KB § PATTERNS/architect/noc-graph.md.
     all_issues.extend(check_noc_graph_cache_freshness())
+    # 2026-06-02 (absorption-tracking 9th keeper-mirror) — absorptions cache
+    # mirrors project-history/absorptions.ndjson. Advisory (warning severity);
+    # heal-on-contact via settle_structural_caches.
+    all_issues.extend(check_absorptions_cache_freshness())
     # 2026-05-30 (cache-locking discipline) — every cache connection must route
     # through cache_backend.apply_locking_pragmas (WAL + busy_timeout); a raw
     # inline `PRAGMA journal_mode=WAL` re-opens the writer-contention gap fixed
@@ -9641,6 +9646,71 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     return issues
 
 
+def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-06-02): the absorptions cache MUST mirror
+    `project-history/absorptions.ndjson`. 9th member of the keeper-mirror
+    family — sibling of `check_auto_improvement_cache_freshness`, applied to
+    the absorption-tracking ledger.  Same 3-leg contract: pre-commit eager
+    refresh + lazy query-time rebuild + this freshness gate.
+
+    Predicate: ``cache exists ∧ meta.source_sha ≡ sha256(ndjson)``.
+    Severity ``warning`` (advisory — same tier as noc-graph; heal-on-contact
+    via ``settle_structural_caches``). Silent skip when the ndjson is absent
+    (no absorptions logged yet — fresh repo or pre-absorption tree).
+
+    Remediation: ``python mcp/noctusai/cli.py --refresh-absorptions-cache``.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "absorptions.ndjson"
+    if not ledger.exists():
+        return issues  # nothing to mirror yet; fresh tree
+    cache = _resolve_cache_path("absorptions", root)
+    cache_file_label = _cache_label(cache, root)
+    if not cache.exists():
+        issues.append({
+            "product": "<harness>", "file": cache_file_label,
+            "issue": (
+                "absorptions cache missing — run "
+                "`python mcp/noctusai/cli.py --refresh-absorptions-cache` "
+                "(absorption-tracking keeper-mirror #9)"
+            ),
+            "severity": "warning",
+            "symbol": "absorptions-cache-missing",
+        })
+        return issues
+    src_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
+    try:
+        conn = sqlite3.connect(str(cache))
+        _apply_cache_lock(conn)
+        cur = conn.execute("SELECT value FROM meta WHERE key='source_sha'")
+        row = cur.fetchone()
+        conn.close()
+    except sqlite3.Error as e:
+        issues.append({
+            "product": "<harness>", "file": cache_file_label,
+            "issue": (
+                f"absorptions cache unreadable ({e}) — re-create via "
+                "`--refresh-absorptions-cache`"
+            ),
+            "severity": "warning",
+            "symbol": "absorptions-cache-unreadable",
+        })
+        return issues
+    if not row or row[0] != src_sha:
+        cached = row[0] if row else "(none)"
+        issues.append({
+            "product": "<harness>", "file": cache_file_label,
+            "issue": (
+                f"absorptions cache STALE — cache.source_sha={cached[:12]} "
+                f"≠ ndjson sha={src_sha[:12]}; run `--refresh-absorptions-cache`"
+            ),
+            "severity": "warning",
+            "symbol": "absorptions-cache-stale",
+        })
+    return issues
+
+
 def check_graph_extractor_corpus_sanity(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-28): light floor-checks on the noc-graph corpus
     to surface a buggy extractor that produces a fresh-but-wrong cache.
@@ -10118,6 +10188,7 @@ def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
         ("kb-embeddings", lambda: check_kb_embeddings_cache_freshness(repo_root)),
         ("corpus-embeddings", lambda: check_corpus_embeddings_cache_freshness(repo_root)),
         ("memory-embeddings", lambda: check_memory_embeddings_cache_freshness(repo_root)),
+        ("absorptions", lambda: check_absorptions_cache_freshness(repo_root)),
     ])
 
 

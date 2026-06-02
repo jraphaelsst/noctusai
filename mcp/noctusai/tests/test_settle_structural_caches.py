@@ -19,7 +19,7 @@ class TestSettleStructuralCaches:
         for embedding in ("kb-embeddings", "code-embeddings", "corpus-embeddings", "memory-embeddings"):
             assert embedding not in rac._STRUCTURAL_CACHES
         assert set(rac._STRUCTURAL_CACHES) == {
-            "keeper-patterns", "agent-context", "auto-improvement", "noc-graph"
+            "keeper-patterns", "agent-context", "auto-improvement", "noc-graph", "absorptions"
         }
 
     def test_noop_when_nothing_stale(self, monkeypatch):
