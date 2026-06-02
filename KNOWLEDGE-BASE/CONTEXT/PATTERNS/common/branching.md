@@ -87,6 +87,20 @@ Pick the row; route to its depth. Axis order: **write-vs-read first** (isolation
 
 ---
 
+## 4.5. Branch-tree tracking — the global live map (collisions seen BEFORE they happen)
+
+> **What it adds.** The §0–§4 primitive isolates writes + designs out collisions **at dispatch from local diffs**. This layer makes the whole branch tree (git-tree × claude-tree) a **real-time, globally-readable map** so collisions are seen *before* they happen — **even against unshipped, un-integrated work** — and no leftover/undone work goes silent. It is additive to and the enforcement layer for §0–§4; nothing above is weakened, only made globally observable + code-enforced. **Depth + schema + tool API + keeper: [[branch-tree-tracking]].**
+
+- **The global live map — `project-history/branch-tree.ndjson`.** Append-only, **tracked + pushed to dev** (sibling of `auto-improvement.ndjson` / `vector-costs.ndjson`; `*.ndjson merge=union` ⇒ concurrent appends never conflict). One row carries BOTH coordinates: git-tree (`branch`/`base`/`commit`/`worktree`) ∧ claude-tree (`role`/`agent`/`parent`/`session`) joined 1:1 by `branch`, plus the `paths` collision zone + `status` + `brief` + `notes`. Latest-by-`ts` wins per branch. Read via `noctus.dev.branch_pointer list|query` (default `from_dev=True` — the cross-branch truth lives on dev, not your branch's copy).
+- **Status-first pre-dispatch read (the planner).** BEFORE decomposing a dispatch, read **dev's** map and scan **pointer statuses first**: `on_going` rows = live work → their `paths` are live collision zones (classify C1/C2/C3 against the GLOBAL map, not just local diffs — overlap ⇒ re-scope to a sibling file ∨ sequence); `blocked`/`stale`/`deferred`/`shipped`-but-undelivered rows = **leftover ground**. This is the §1/§4 collision-class decision, now sighted against unshipped work too.
+- **Leftover-claim protocol — whoever spots it, owns it.** When ANY agent spots a leftover, that agent absorbs + delivers it AND must **immediately flip the pointer to `on_going` with itself as `agent`/owner (+ a `notes` line explaining the claim) and push** — so a second spotter never double-claims. Other running agents catch the new collision-zone on their next status read; the integration owner takes extra merge care + signals the affected team via `notes`.
+- **`notes` is the inter-agent comms channel.** `brief` = the one-liner that contextualizes a commit/branch instantly (then the `branch`+`commit` pointer goes in-depth on demand); `notes` = the durable value extracted (lessons / procedures / findings / watch-points) mirroring the commit message. **`notes` (+ the commit message) is HOW AGENTS TALK** — a running agent signals a collision zone, an orchestrator records a merge/claim rationale, a spotter explains what it absorbed; the orchestrator reads the `notes` trail to reconstruct the *why* of every commit at merge time (the merge-decision audit log).
+- **Cache-sync discipline — pointer pushes are lag-free.** A pointer push happens **constantly** (before self-branch, every commit, mid-flight) so it MUST NOT trigger the heavy cache-refresh hooks. `project-history/branch-tree.ndjson` is **EXCLUDED from the cache-refresh hook triggers** (post-commit / post-merge / pre-push cache-settle) and from the noc-graph `history` aggregate — it is tracking METADATA, not graph-input content; a commit/push touching ONLY it does **no** cache refresh. Cache sync fires only on a worktree's final real push (the code/doc work). This is a hook-config exclusion, **not** a keeper bypass — the mirror keeper (`check_branch_tree_mirror`, pre-push HARD-BLOCK) still enforces the map.
+
+**The lifecycle (agents MUST NOT skip a step) — see [[branch-tree-tracking]] §3:** (1) orchestrator reads STATUS FIRST before dispatch; (2) engineer creates+pushes its pointer (`on_going` + `paths` + `brief`) right BEFORE self-branching — publishing the claim before touching a file; (3) engineer updates+pushes on EVERY commit (refresh `commit`/`status`, append to `notes`) + mid-flight; (4) orchestrator flips merged slices to `shipped` (∨ `canceled` w/ reason) on merge; (5) terminal rows let the sweep + wrap surveys catch leftovers. The no-skip + push-on-every-commit rules are what design misinformation out.
+
+---
+
 ## 5. Known errors — the bump catalog (avoid these)
 
 > Open / self-extending (§6): a NEW bump ⇒ ADD a row, never force-fit ∨ ignore. Each row: symptom ⇒ root ⇒ avoid.
@@ -131,6 +145,7 @@ The loop (s1 → s4):
 
 ## 7. References / composition / codification
 - Depth modes: [[branching-and-merging]] (the §0–§21 reference) · [[self-branching-mode]] (solo) · [[branching-dispatch]] (parallel) · [[master-tree-parallel-batches]] (multi-product) · [[two-session-architect-operator]] · [[autonomous-operator-via-subagent]].
+- Tracking layer (§4.5): [[branch-tree-tracking]] — the global live map (git-tree × claude-tree), the branch-pointer lifecycle, `noctus.dev.branch_pointer`, the `check_branch_tree_mirror` keeper.
 - Adjacent: [[harness-overlay-worktree-divergence]] · [[verify-seed-on-fork-base]] · [[phased-push-policy]] · [[compliance-regression-baseline]] (a §2-sensitive gate) · [[dev-prod-parity]] · [[dev-toolkit-scaffolders]] (`dispatch_preflight` / `salvage_worktree` / `findings`) · [[storage-hygiene]] (worktree sweep).
 - Tools: `noctus.dev.task_branch` (self-mode lifecycle) · `noctus.dev.dispatch_preflight` (parallel pre-flight) · `noctus.dev.release` (the sacred-line gates none of the above ever touch).
 - Codification: s3 = this doc (the unified spine) + the CLAUDE.md §1 pointer + MEMORY entries; s4 = the `task_branch` tool (self-mode) + a deferred worktree-sensitivity guard (tracked below as a `[codify]` marker, not buried prose).

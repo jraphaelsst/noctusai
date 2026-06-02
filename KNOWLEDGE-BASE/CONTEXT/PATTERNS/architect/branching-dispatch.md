@@ -1,6 +1,6 @@
 # Branching-dispatch — the parallel-agent runbook
 
-> **Front-door.** The *parallel* mode of the unified [[branching]] methodology (the §0 primitive at scale = N engineers). Read [[branching]] first for the decision spine, the worktree-sensitivity map, and the known-errors bump catalog; this doc is the parallel-mode runbook.
+> **Front-door.** The *parallel* mode of the unified [[branching]] methodology (the §0 primitive at scale = N engineers). Read [[branching]] first for the decision spine, the worktree-sensitivity map, the known-errors bump catalog, and the §4.5 **branch-tree tracking layer** ([[branch-tree-tracking]] — read the global live map STATUS-FIRST + claim leftovers BEFORE you decompose a dispatch); this doc is the parallel-mode runbook.
 
 > **One-liner.** Decompose a task into **file-disjoint** subtasks, run one engineer agent per subtask **in parallel, each in its own worktree/branch forked from `dev`**, then the architect collects the signals, detects + resolves collisions (incl. semantic duplicates git can't see), lands the reconciled result on **`dev`** (the persistent integration branch) — **never on `main`** (production; reached only by the explicit, consent-gated `dev → main` deploy, [[branching-and-merging]] §0.2).
 

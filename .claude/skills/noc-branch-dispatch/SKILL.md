@@ -11,7 +11,8 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 ## Workflow (10-step runbook)
 
 1. `noctus.dev.dispatch_preflight project_slug=<slug>` — fork-base + collision + env-pin + project-doc-phantom checks.
-2. **Decompose into file-disjoint slices** — classify collision-class per slice vs the parallel-active file set (`git diff --name-only`): C1 disjoint → parallel-clean · C2 same-file-additive → brief additive-only · C3 substantive-overlap → re-scope to a sibling file OR sequence.
+1b. **Read the global live map STATUS-FIRST, BEFORE you decompose** — `noctus.dev.branch_pointer action=list` (default `from_dev=True`). Scan **pointer statuses first**: `on_going` rows = live work → their `paths` are LIVE collision zones to plan around (even unshipped/un-integrated work); `blocked`/`stale`/`deferred`/`shipped`-but-undelivered rows = **leftover ground**. Use `branch_pointer action=query paths_overlap=[…]` to test a candidate slice against the whole tree. **Leftover-claim (whoever spots it, owns it):** to absorb a leftover, IMMEDIATELY flip its pointer to `on_going` with the new owner (+ a `notes` claim line) and push — so no second agent double-claims. Depth: `KB § PATTERNS/architect/branch-tree-tracking.md`.
+2. **Decompose into file-disjoint slices** — classify collision-class per slice vs the GLOBAL map (not just local `git diff --name-only`): C1 disjoint → parallel-clean · C2 same-file-additive → brief additive-only · C3 substantive-overlap → re-scope to a sibling file OR sequence. Each engineer publishes its own pointer right before self-branching (`engineer-seed` §1d); you flip merged slices to `shipped` at integration.
 3. One isolated worktree per engineer off `origin/dev` (`task_branch start` per slice).
 4. **Dispatch in ONE message** (multiple `Agent` calls) so they run concurrently. Each brief ≤~15 lines, references `engineer-seed`. Sonnet default; `model: opus` only for judgment-heavy slices.
 5. Collect each engineer's short-form return + a `/tmp` patch overlay-safety copy.
@@ -27,4 +28,4 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 - Engineers commit ONLY their own branch; tech-lead owns all merging/pushing/blessing.
 
 ## Depth
-`KB § PATTERNS/architect/branching-dispatch.md` (the runbook) · `KB § PATTERNS/architect/branching-and-merging.md` §18/§21 (collision-class) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` (fast/cheap engineers).
+`KB § PATTERNS/architect/branching-dispatch.md` (the runbook) · `KB § PATTERNS/architect/branching-and-merging.md` §18/§21 (collision-class) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` (fast/cheap engineers) · `KB § PATTERNS/architect/branch-tree-tracking.md` (the global live map + status-first read + leftover-claim) · front-door `KB § PATTERNS/common/branching.md` §4.5.

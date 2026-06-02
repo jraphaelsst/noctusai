@@ -12,9 +12,10 @@ version: 1.0.0
 
 0. **Residue sweep (drift-fix-on-contact §0).** BEFORE `task_branch action=start`, scan for the recurring git-leftovers drift class (untracked at repo root, worktree-uncommitted state on peer trees). One call: `git status --porcelain` at the primary + glance at `git worktree list --porcelain`. Drift found ⇒ apply the on-contact drill (PAUSE → resolve → surface-if-blocked → update docs → continue) BEFORE forking the new worktree. The clean tree is the precondition for clean parallel work — leftovers absorbed into your fresh worktree become your problem. → `KB § PATTERNS/common/drift-fix-on-contact.md`
 1. **Start** — `noctus.dev.task_branch action=start slug=<kebab-task>` (dry-run → `confirm=true`). Forks `.claude/worktrees/<slug>` on `feat/<slug>` off `origin/dev`. Add `wire_env=true` if the slice needs a FE build / vitest in the worktree.
-2. **Work + commit IN the worktree** — every Edit/Write/commit happens under `.claude/worktrees/<slug>/`. Confirm `pwd` is the worktree path, never the primary checkout.
+1b. **Publish your branch-pointer right AFTER start, BEFORE the first edit** — `noctus.dev.branch_pointer action=append branch=feat/<slug> base=origin/dev commit=<HEAD> role=engineer agent=<slug> parent=<self|tech-lead> paths=[…] status=on_going brief="…" push_dev=True`. This publishes your collision zone to the global live map before you touch a file (depth: `KB § PATTERNS/architect/branch-tree-tracking.md`). NEVER skip — a missing pointer mis-routes a peer's collision decision.
+2. **Work + commit IN the worktree** — every Edit/Write/commit happens under `.claude/worktrees/<slug>/`. Confirm `pwd` is the worktree path, never the primary checkout. **On EVERY commit (+ mid-flight when it fits)** → `noctus.dev.branch_pointer action=update branch=feat/<slug> commit=<new-HEAD> notes="<commit msg>"` (push_dev defaults True). Pointer pushes are lag-free (the ndjson is excluded from the cache-refresh hooks).
 3. **Integrate (worktree-explicit — NOT the MCP wrapper when a peer is live):** `git -C <wt> fetch origin && git -C <wt> rebase origin/dev && git -C <wt> push origin HEAD:dev`. Retry on non-FF race; NEVER `--force`. Conflict → abort + surface.
-4. **Cleanup** — `noctus.dev.task_branch action=cleanup slug=<slug> confirm=true` (salvages recovery pointer, then removes). Return the primary to `dev` idle.
+4. **Cleanup** — flip your pointer to `status=shipped` (`branch_pointer action=update branch=feat/<slug> status=shipped`), then `noctus.dev.task_branch action=cleanup slug=<slug> confirm=true` (salvages recovery pointer, then removes). Return the primary to `dev` idle.
 
 ## Guardrails
 
@@ -25,4 +26,4 @@ version: 1.0.0
 - A worktree is **invisible to the running env** — unit-green there ≠ live works. Integrate + live-probe before calling a UI feature done.
 
 ## Depth
-`KB § PATTERNS/common/self-branching-mode.md` (§0 absolute rule, §5a wire_env, §5b cross-tree hazard) · front-door `KB § PATTERNS/common/branching.md`.
+`KB § PATTERNS/common/self-branching-mode.md` (§0 absolute rule, §5a wire_env, §5b cross-tree hazard) · front-door `KB § PATTERNS/common/branching.md` (§4.5 tracking layer) · `KB § PATTERNS/architect/branch-tree-tracking.md` (branch-pointer lifecycle + `noctus.dev.branch_pointer`).

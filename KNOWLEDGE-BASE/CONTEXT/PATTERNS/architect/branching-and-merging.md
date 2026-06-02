@@ -9,7 +9,7 @@
 >
 > **What this replaces.** Ad-hoc decisions like "should I just `git push --force` to bypass the parallel-agent commits?", "how do I rescue this bad merge?", "which branch goes first?" — all of which are destructive or unanswered without the methodology. Branching + merging together = a complete answer to the multi-agent git-workflow question.
 >
-> **Cross-references.** `KB § PATTERNS/architect/project-execution.md § 2.10 Commit + push authorship discipline` (the rule branching solves), `KB § 01-PHILOSOPHY.md § Safety nets capture failures` (foundational principle that anchors §10 Merging), `feedback_commit_only_own_work.md`, `feedback_branching_methodology.md`, `feedback_merging_methodology.md`, `KB § PATTERNS/architect/master-tree-parallel-batches.md` (parallel-agent collision context), `feedback_parallel_agent_collision_protocol.md`.
+> **Cross-references.** `KB § PATTERNS/architect/project-execution.md § 2.10 Commit + push authorship discipline` (the rule branching solves), `KB § 01-PHILOSOPHY.md § Safety nets capture failures` (foundational principle that anchors §10 Merging), `feedback_commit_only_own_work.md`, `feedback_branching_methodology.md`, `feedback_merging_methodology.md`, `KB § PATTERNS/architect/master-tree-parallel-batches.md` (parallel-agent collision context), `feedback_parallel_agent_collision_protocol.md`, `KB § PATTERNS/architect/branch-tree-tracking.md` (the global live-map tracking layer — wave/collision-class decisions in §18/§21 read the cross-branch map status-first, not just local diffs).
 
 ---
 

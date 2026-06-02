@@ -1,6 +1,6 @@
 # Self-branching mode — per-task worktree isolation for peer terminal-agents
 
-> **Front-door.** The *solo* mode of the unified [[branching]] methodology (the §0 primitive at scale = 1). Read [[branching]] first for the decision spine, the worktree-sensitivity map, and the known-errors bump catalog; this doc is the solo-mode depth.
+> **Front-door.** The *solo* mode of the unified [[branching]] methodology (the §0 primitive at scale = 1). Read [[branching]] first for the decision spine, the worktree-sensitivity map, the known-errors bump catalog, and the §4.5 **branch-tree tracking layer** ([[branch-tree-tracking]] — create+push your branch-pointer right BEFORE you self-branch, then update+push it on every commit; never skip); this doc is the solo-mode depth.
 
 > **One-liner.** When a terminal-agent is assigned a **writing** task, it **self-isolates** by default: do the work in a per-task `git worktree` forked from `origin/dev`, integrate straight to `origin/dev`, tear the worktree down, return to idle — **without ever switching the shared primary checkout's branch out from under a sibling**. Automatic (no "branch this" keyword), one `noctus.dev.task_branch` lifecycle call per stage.
 >

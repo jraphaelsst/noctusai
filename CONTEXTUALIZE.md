@@ -47,7 +47,7 @@
 - **Security / LGPD / webhook signatures** → `KB § PATTERNS/security/webhook-signatures.md` · `lgpd.md` · `llm-bot-security.md`. Specialist agent: `security` (advisor).
 - **Compliance / testing / regression baseline** → `KB § PATTERNS/compliance/compliance-regression-baseline.md` · `testing.md`. Specialist agent: `compliance-reviewer` (advisor).
 - **Integrations** (Google / Meta / WhatsApp / OAuth / image-gen) → `KB § INTEGRATIONS/*.md`.
-- **Branching / dispatch / parallel waves** → `KB § PATTERNS/common/branching.md` · `branching-and-merging.md` (§18/§21 collision-class) · `branching-dispatch.md` · `dispatch-engineer-tuning.md` · `parallelization-first-orchestration.md`. Specialist agent: `architect`.
+- **Branching / dispatch / parallel waves** → `KB § PATTERNS/common/branching.md` (§4.5 = read dev's live branch-tree map STATUS-FIRST before any write) · `branch-tree-tracking.md` (the global map + branch-pointer lifecycle) · `branching-and-merging.md` (§18/§21 collision-class) · `branching-dispatch.md` · `dispatch-engineer-tuning.md` · `parallelization-first-orchestration.md`. Specialist agent: `architect`.
 
 ## 4 · Specialist agents + procedure skills
 

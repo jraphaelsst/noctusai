@@ -95,6 +95,19 @@ If during execution you see a better route than the dispatched one (different ar
 
 The block-on-surface rule mirrors `§7 drift-found:` rationale — your worktree doesn't see the broad picture; the tech-lead routes cross-slice decisions.
 
+## 1d. Branch-pointer lifecycle — publish your claim to the global live map (MUST NOT skip)
+
+The platform keeps a **global live map** of the whole branch tree (git-tree × claude-tree) at `project-history/branch-tree.ndjson`, read/written via `noctus.dev.branch_pointer` (depth: `KB § PATTERNS/architect/branch-tree-tracking.md`). Your pointer publishes your collision zone (your `paths`) to every peer **before you touch a file** — so collisions are seen before they happen, even against unshipped work. The lifecycle is part of the standing protocol, NOT optional:
+
+1. **Right BEFORE self-branching** (the §1 first action) — append your pointer with `status=on_going`, your `paths` (the brief's `Files-to-modify:`), and a one-line `brief`, then push ONLY the ndjson to dev: `noctus.dev.branch_pointer action=append branch=feat/<slug> base=<orchestrator-branch> commit=<HEAD> role=engineer agent=<slug> parent=<orchestrator> paths=[…] status=on_going brief="…" push_dev=True`. This publishes the claim before the first edit.
+2. **On EVERY commit to your worker branch** — `branch_pointer action=update branch=feat/<slug> commit=<new-HEAD> status=on_going notes="<mirror the commit message>"` (push_dev defaults True). Plus **mid-flight** whenever it fits: entering `blocked`, widening `paths`, recording a finding worth a peer's attention.
+3. **NEVER skip a step.** The no-skip + push-on-every-commit rules are what design misinformation out of the map — a stale pointer mis-routes a peer's collision-class decision. Skipping is a silent-error shape.
+4. **`notes` is how you talk to the tech-lead + peers** — mirror your commit message into `notes`; signal a collision zone you just entered; record a finding. The orchestrator reads the `notes` trail to reconstruct the *why* of every commit at merge time.
+5. **Cache-sync is automatic + lag-free** — a pointer push touches ONLY `branch-tree.ndjson` (excluded from the cache-refresh hooks), so it never triggers the multi-minute noc-graph/embedding refresh. Do NOT batch or defer pointer updates "to avoid the cache tax" — there is none.
+6. **Leftover-claim (whoever spots it, owns it).** If you spot a leftover (a `blocked`/`stale`/`deferred`/`shipped`-but-undelivered row, or untracked/uncommitted peer residue) that falls in your slice's path, surface it per §7 `drift-found:` — do NOT silently claim+expand scope. Claiming (flip-to-`on_going`-with-yourself-as-owner) is the orchestrator's call unless the brief authorizes it.
+
+The pointer is metadata, never a substitute for the §2 stage-only / §3 return contract — it runs alongside them.
+
 ## 2. Stage-only contract (CRITICAL)
 
 - `git add` with **explicit paths only** — never `git add .` or `-A`
