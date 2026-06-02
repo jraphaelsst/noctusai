@@ -107,9 +107,10 @@ export interface ProductAppConfig {
    */
   defaultRedirect?: string;
   /**
-   * Path to redirect to when an unauthenticated user hits a protected route.
-   * Defaults to "/landing". Products without a Landing page (e.g. core) can
-   * set this to "/login" directly.
+   * Path to redirect unauthenticated users who hit a non-root protected route.
+   * Defaults to "/" which renders the Landing page at root (if provided).
+   * Products without a Landing page MUST set this to "/login" to avoid a
+   * redirect loop (no Landing → root falls through to this redirect → loop).
    */
   unauthRedirect?: string;
   /**
@@ -135,7 +136,7 @@ export function createProductApp(config: ProductAppConfig) {
     roleRoutes,
     resolveRole,
     defaultRedirect,
-    unauthRedirect = "/landing",
+    unauthRedirect = "/",
     unwrappedRoutes = [],
   } = config;
 
@@ -215,6 +216,22 @@ export function createProductApp(config: ProductAppConfig) {
     }
 
     if (!user) {
+      // When a Landing page is provided, serve it at "/" for unauthenticated
+      // users and redirect any other protected path to "/" so the visitor
+      // always lands on the public marketing page.
+      // When no Landing is configured (e.g. products whose entry point is a
+      // direct login), redirect to `unauthRedirect` (must be "/login" for
+      // landing-less products to avoid a loop).
+      if (Landing) {
+        return (
+          <Routes>
+            <Route path="/" element={
+              <Suspense fallback={<PageSkeleton />}><Landing /></Suspense>
+            } />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        );
+      }
       return <Navigate to={unauthRedirect} replace />;
     }
 
@@ -259,7 +276,9 @@ export function createProductApp(config: ProductAppConfig) {
     return (
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
-          {Landing && <Route path="/landing" element={<Landing />} />}
+          {/* Back-compat: bookmarks / old SPA-shell redirects pointing to
+              /landing are silently upgraded to "/" (the new canonical root). */}
+          <Route path="/landing" element={<Navigate to="/" replace />} />
           {Login && <Route path="/login" element={<Login />} />}
           {supabase && (
             <Route

@@ -49,7 +49,7 @@ const App = createProductApp({
   Layout: CoreLayout,
   Login,
   Landing,
-  unauthRedirect: '/landing',
+  unauthRedirect: '/',
   publicRoutes: [
     { path: '/invite/:token', component: AcceptInvite },
   ],

@@ -3,17 +3,19 @@
  * based on config presence:
  *   - `/sso` is only mounted when `supabase` is provided (custom-auth
  *     products don't use Supabase SSO callback).
- *   - `unauthRedirect` defaults to `/landing` but can be overridden
- *     (core overrides to `/login` because it has no Landing page).
+ *   - `unauthRedirect` defaults to `/` (the Landing page root). Products
+ *     without a Landing page set this to "/login" to avoid a redirect loop.
+ *   - Unauthenticated users hitting "/" see the Landing component (when
+ *     provided); authenticated users hitting "/" see the app home.
+ *   - `/landing` (old canonical) permanently redirects to "/".
  *
  * These tests render the App and peek at what's in the DOM for the
  * documented-public paths. We don't assert full route coverage — that's
  * React Router's responsibility, not createProductApp's.
  */
-import React from "react";
-import { describe, it, expect } from "vitest";
+import React, { lazy } from "react";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
 import { createProductApp } from "../src/app";
 import { mockSupabaseAuth, mockAuthProvider } from "./fixtures";
 
@@ -48,15 +50,89 @@ describe("createProductApp — route topology", () => {
   });
 
   it("accepts a custom unauthRedirect value", () => {
-    // If the framework did not respect the override, unauth'd users would
-    // get redirected to `/landing` (default). Verify the factory constructs
-    // an App without error when the override is passed — the routing
-    // behavior itself is React Router's concern and covered by integration.
+    // Verify the factory constructs an App without error when the
+    // override is passed — routing behavior is covered by integration.
     const auth = mockAuthProvider({ user: null, isInitialized: true });
     const App = createProductApp({
       authProvider: auth,
       unauthRedirect: "/login",
     });
     expect(typeof App).toBe("function");
+  });
+});
+
+// ── Landing-at-root routing contract ─────────────────────────────────────────
+// These tests assert the routing contract introduced when Landing moved from
+// "/landing" to "/": unauth "/" → Landing; auth "/" → app; "/landing" → "/".
+
+const FakeLanding = lazy(() =>
+  Promise.resolve({
+    default: () => <div data-testid="landing-page">landing</div>,
+  })
+);
+
+const FakeLayout: React.ComponentType<{ children: React.ReactNode }> = ({
+  children,
+}) => <div data-testid="app-layout">{children}</div>;
+
+const AnyPage = lazy(() =>
+  Promise.resolve({
+    default: () => <div data-testid="any-page">app-home</div>,
+  })
+);
+
+describe("createProductApp — Landing at / routing contract", () => {
+  beforeEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("unauth user at '/' sees Landing when Landing is provided", async () => {
+    const auth = mockAuthProvider({ user: null, isInitialized: true });
+    const App = createProductApp({
+      authProvider: auth,
+      Landing: FakeLanding,
+      Login: AnyPage,
+      Layout: FakeLayout,
+      routes: [{ path: "/", component: AnyPage }],
+      unauthRedirect: "/",
+    });
+
+    render(<App />);
+    expect(await screen.findByTestId("landing-page")).toBeTruthy();
+  });
+
+  it("auth user at '/' sees the app (not Landing)", async () => {
+    const auth = mockAuthProvider({
+      user: { id: "u1" },
+      isInitialized: true,
+    });
+    const App = createProductApp({
+      authProvider: auth,
+      Landing: FakeLanding,
+      Layout: FakeLayout,
+      routes: [{ path: "/", component: AnyPage }],
+      unauthRedirect: "/",
+    });
+
+    render(<App />);
+    expect(await screen.findByTestId("any-page")).toBeTruthy();
+    expect(screen.queryByTestId("landing-page")).toBeNull();
+  });
+
+  it("/landing redirects to / for unauth user (back-compat)", async () => {
+    window.history.pushState({}, "", "/landing");
+    const auth = mockAuthProvider({ user: null, isInitialized: true });
+    const App = createProductApp({
+      authProvider: auth,
+      Landing: FakeLanding,
+      Login: AnyPage,
+      Layout: FakeLayout,
+      routes: [{ path: "/", component: AnyPage }],
+      unauthRedirect: "/",
+    });
+
+    render(<App />);
+    // After the /landing → / redirect, unauth user sees Landing at /.
+    expect(await screen.findByTestId("landing-page")).toBeTruthy();
   });
 });
