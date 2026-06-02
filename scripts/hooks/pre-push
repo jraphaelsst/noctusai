@@ -92,6 +92,17 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # graph inputs: code, KB, harness surfaces (agents/skills/commands).
         if grep -qE '\.(py|md)$|^\.claude/'      <<<"$changed"; then graph=1;  fi
 
+        # Branch-tree pointer pushes are cache-EXEMPT (tracking metadata, not
+        # graph-input) — KB § branch-tree-tracking §3 "Cache-sync discipline".
+        # If the push touches ONLY cache-exempt paths, force every flag off so a
+        # constant pointer update never pays the noc-graph/embedding refresh tax.
+        # (Defensive belt: ndjson already matches no pattern above; this makes
+        # the exemption explicit + robust against future pattern drift.)
+        if [[ -z "$force" ]] && "$PY_PP" "$CLI_PP" --branch-pointer-cache-exempt --bp-paths "$changed" >/dev/null 2>&1; then
+            echo "[pre-push] metadata-only branch-tree pointer push — cache refresh exempt."
+            kb=0; code=0; md=0; comp=0; agents=0; ndjson=0; graph=0
+        fi
+
         ran=0
         if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   "$PY_PP" "$CLI_PP" --refresh-kb-embeddings     2>&1 | tail -1 | sed 's/^/[pre-push] kb-embed: /'   || true; ran=1; fi
         if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          "$PY_PP" "$CLI_PP" --refresh-code-embeddings   2>&1 | tail -1 | sed 's/^/[pre-push] code-embed: /' || true; ran=1; fi

@@ -78,6 +78,16 @@ A pointer push happens **constantly** (before self-branch, every commit, mid-fli
 - Cache sync fires **only on a worktree's final, real push to dev** (the actual code/doc work) — not on pointer updates.
 - This is a hook-config exclusion, **not** a keeper bypass: the mirror keeper (§5) still hard-blocks at pre-push; only the *cache-refresh convenience hooks* skip the metadata-only ledger.
 
+**General cache-refresh-timing rule (the root cure — NEXT SLICE to implement).** The branch-tree exemption is the special case of a broader principle: **graph/cache refresh should fire ONLY at the final delivery-push to dev** (when the orchestrator delivers validated branches), **never on intermediate worktree commits/merges**, and when it does fire it must be **incremental on the modified files only** (the surface-2 per-bucket incremental rebuild is the mechanism). Each tree keeps its own local sqlite cache. Today the pre-commit / post-merge / post-checkout / pre-push hooks refresh on *every* commit — the multi-minute lag this batch hit repeatedly. Target: intermediate operations do zero refresh; the single delivery-push to dev does one incremental refresh of exactly what changed. (Status: incremental rebuild = built [hot-drift surface 2]; the hook-timing relocation = the next slice.)
+
+### Conflict-zone merge ownership — LAST-FINISHER-MERGES (not the orchestrator)
+When your `paths` overlap a peer's (you share a collision zone), the merge of those two branches is owned by **whoever finishes LAST** — conflict zones must arrive at the orchestrator already reconciled. On finishing your work, before delivering:
+1. Read the peer's pointer **status** from dev's map (`branch_pointer query branch=<peer>`).
+2. **Peer is done** (`shipped`/terminal) → **YOU resolve the merge**: merge the peer's branch into yours (least-conflict-first), reconcile, and deliver the combined result. Record the merge rationale in your `notes` (the orchestrator reads it at integration).
+3. **Peer is still `on_going`** → you cannot merge a moving target. Instead **write a merge-conflict signal note into the PEER's pointer** and push: `branch_pointer update branch=<peer> notes="MERGE-CONFLICT: merge feat/<you>@<sha> into your work before delivering — zone: <overlapping paths>"`. When the peer finishes, it catches that note on its own pointer (it MUST read its own latest pointer before delivering), resolves the leftover merge (your branch into theirs), then delivers the now-merged work to the orchestrator.
+
+So the merge-resolution work flows to the later finisher; the orchestrator integrates pre-reconciled branches with the rationale already in `notes`. Sibling of the leftover-claim protocol (§3 step 1): both are "whoever spots/finishes-last owns it," signalled through pointer `notes` across context windows.
+
 ## 4 · MCP tool API — `noctus.dev.branch_pointer`
 
 Mirror the existing ledger tools (`auto_improvement`, `_worktree_salvage`, `brief_ledger`) for file IO; mirror the salvage-ledger / `task_branch` **FF-push-to-dev** mechanism (fetch dev → stage ONLY `project-history/branch-tree.ndjson` → commit → push to dev FF-only, retry-on-race; union-merge handles concurrent appends).
