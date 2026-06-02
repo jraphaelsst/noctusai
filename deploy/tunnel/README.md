@@ -106,7 +106,23 @@ registry — keep it in sync with `ingress.yml`.
 ### 4. Create the stable DNS CNAMEs (one per hostname in `ingress.yml`)
 
 `cloudflared tunnel route dns` creates a proxied CNAME
-`<hostname> → <TUNNEL_ID>.cfargotunnel.com`:
+`<hostname> → <TUNNEL_ID>.cfargotunnel.com`.
+
+**Preferred — drive it from `ingress.yml` (no hand-typed list to drift):**
+
+```bash
+deploy/tunnel/route-dns.sh <TUNNEL_NAME>            # route every ingress.yml host (idempotent)
+deploy/tunnel/route-dns.sh <TUNNEL_NAME> --dry-run  # preview, no DNS calls
+```
+
+> **Why the script.** The hand-typed list below silently drifted once: on
+> 2026-06-02 only `core` / `erp` / `seed` / `social` (+ apex) resolved, while
+> `personal-finance`, `therapy-platform`, `daily-life`, `adconnect` and
+> `dev-team` were deployed + healthy but had **no DNS record** (edge NXDOMAIN).
+> `route-dns.sh` reads hostnames straight from `ingress.yml`, so it always
+> routes the full set — re-run it after any `ingress.yml` edit.
+
+**Manual fallback** (same effect, one hostname at a time):
 
 ```bash
 cloudflared tunnel route dns <TUNNEL_NAME> noctusai.com
