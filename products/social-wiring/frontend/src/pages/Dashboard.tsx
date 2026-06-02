@@ -1,30 +1,20 @@
 /**
- * Dashboard — analytics + activity overview for the connected channel.
+ * Dashboard — activity overview for the connected channel.
  *
  * Layout (top-to-bottom):
- *   1. KPI cards row (Total Videos / Views / Likes / Comments)
- *   2. Cumulative views chart (recharts; uses top-50 cached videos)
- *   3. Top 5 videos panel (compact card grid)
- *   4. Recent uploads + delivery status panel
- *   5. Connected channel card (right column when wide)
+ *   1. VisaoGeralPanel: KPI cards + channel trend chart + top-5 videos
+ *   2. Upload queue (live)
+ *   3. Recent uploads + delivery status
  *
- * All read-only; data sourced from `/api/dashboard/*` endpoints which
- * read from `video_cache` + `upload_jobs` + `notification_log`. Zero
- * YouTube API calls — sync is explicit (Videos page → Sync button).
+ * KPI / trend / top-5 are delegated to VisaoGeralPanel so the same component
+ * powers both the Dashboard page and the YouTube "Visão geral" tab.
  */
 import { useEffect, useState } from "react";
 import {
-  Activity,
-  CheckCircle2,
-  CircleAlert,
-  Eye,
   ExternalLink,
-  Heart,
-  MessageCircle,
   PlaySquare,
   RefreshCw,
   RotateCw,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,16 +24,12 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import { ConnectedAccountSwitcher } from "@/components/ConnectedAccountSwitcher";
-import { MetricCard } from "@/components/MetricCard";
-import { VideoCard } from "@/components/VideoCard";
-import { ViewsChart } from "@/components/ViewsChart";
+import { VisaoGeralPanel } from "@/components/VisaoGeralPanel";
 import {
-  formatNumber,
   retryUpload,
   useDashboardStats,
   useQueueState,
   useRecentUploads,
-  useTopVideos,
   type NotificationDeliveryStatus,
   type QueueEntry,
   type RecentUpload,
@@ -58,57 +44,6 @@ const DELIVERY_BADGE: Record<
   partial: { label: "Parcial", variant: "secondary" },
   all_failed: { label: "Falha de envio", variant: "destructive" },
 };
-
-function ChannelCard({
-  channelTitle,
-  channelId,
-  totalVideos,
-  lastSyncedAt,
-}: {
-  channelTitle: string | null;
-  channelId: string | null;
-  totalVideos: number;
-  lastSyncedAt: string | null;
-}) {
-  const connected = !!channelId;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {connected ? (
-            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          ) : (
-            <CircleAlert className="h-5 w-5 text-amber-600" />
-          )}
-          Canal conectado
-        </CardTitle>
-        <CardDescription>
-          {connected
-            ? "OAuth ativo. Sincronize a pagina de Videos para atualizar o cache."
-            : "Nenhum canal conectado. Va em Configuracoes → YouTube."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Canal</span>
-          <span className="font-medium">{channelTitle ?? "—"}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Videos no cache</span>
-          <span className="font-medium tabular-nums">{totalVideos}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Ultima sincronizacao</span>
-          <span className="font-medium">
-            {lastSyncedAt
-              ? new Date(lastSyncedAt).toLocaleString("pt-BR")
-              : "—"}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function RecentUploadsRow({
   upload,
@@ -237,10 +172,9 @@ function QueueRow({ entry, max }: { entry: QueueEntry; max: number }) {
 }
 
 export default function Dashboard() {
-  const { data: stats, loading: statsLoading, error, refresh } = useDashboardStats();
-  const { data: topVideos, loading: topLoading } = useTopVideos(5);
-  // Wider window for the chart so the cumulative view-count line has body.
-  const { data: chartVideos } = useTopVideos(50);
+  // error + refresh used for the header error card and "Atualizar" button.
+  // KPI / trend / top-5 are delegated to VisaoGeralPanel which has its own fetches.
+  const { error, refresh } = useDashboardStats();
   const { data: recent, loading: recentLoading, refresh: refreshRecent } = useRecentUploads(10);
   const { data: queueState } = useQueueState(5000);
 
@@ -281,105 +215,10 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* KPI row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          icon={PlaySquare}
-          label="Total Videos"
-          value={statsLoading ? "—" : formatNumber(stats?.total_videos ?? 0)}
-          loading={statsLoading}
-        />
-        <MetricCard
-          icon={Eye}
-          label="Visualizacoes"
-          value={statsLoading ? "—" : formatNumber(stats?.total_views ?? 0)}
-          loading={statsLoading}
-        />
-        <MetricCard
-          icon={Heart}
-          label="Likes"
-          value={statsLoading ? "—" : formatNumber(stats?.total_likes ?? 0)}
-          loading={statsLoading}
-        />
-        <MetricCard
-          icon={MessageCircle}
-          label="Comentarios"
-          value={statsLoading ? "—" : formatNumber(stats?.total_comments ?? 0)}
-          loading={statsLoading}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Visualizacoes acumuladas
-            </CardTitle>
-            <CardDescription>
-              Soma cumulativa por data de publicacao (top 50 do cache).
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ViewsChart videos={chartVideos} />
-          </CardContent>
-        </Card>
-
-        <ChannelCard
-          channelTitle={stats?.channel_title ?? null}
-          channelId={stats?.channel_id ?? null}
-          totalVideos={stats?.total_videos ?? 0}
-          lastSyncedAt={stats?.last_synced_at ?? null}
-        />
-      </div>
-
-      {/* Top videos */}
-      <div>
-        <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-          <Sparkles className="h-5 w-5" />
-          Top 5 videos
-        </h2>
-        {topLoading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-44 rounded-md" />
-            ))}
-          </div>
-        ) : topVideos.length === 0 ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-muted-foreground">
-              Nenhum video no cache. Sincronize na pagina de Videos.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            {topVideos.map((v) => (
-              <VideoCard
-                key={v.youtube_video_id}
-                variant="compact"
-                video={{
-                  id: v.youtube_video_id,        // VideoCard treats this opaquely
-                  youtube_video_id: v.youtube_video_id,
-                  title: v.title,
-                  description: null,
-                  thumbnail_url: v.thumbnail_url,
-                  published_at: v.published_at,
-                  duration: v.duration,
-                  privacy_status: null,
-                  view_count: v.view_count,
-                  like_count: v.like_count,
-                  comment_count: v.comment_count,
-                  favorite_count: 0,
-                  tags: [],
-                  category_id: null,
-                  uploaded_via_app: v.uploaded_via_app,
-                  synced_at: new Date().toISOString(),
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Channel overview: KPI cards + trend chart + top-5 videos.
+          VisaoGeralPanel reads from useDashboardStats, useTopVideos, useChannelTrend
+          all defaulting to the active account from useActiveAccountStore. */}
+      <VisaoGeralPanel />
 
       {/* Upload queue — live "what's in the pipeline" panel */}
       {queueState && queueState.total > 0 && (

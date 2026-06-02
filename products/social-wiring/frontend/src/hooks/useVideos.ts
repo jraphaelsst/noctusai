@@ -106,10 +106,16 @@ interface UseVideosOptions {
   uploadedViaApp?: boolean;
   /** When provided, fetches videos for a specific YouTube integration account. */
   accountId?: string | null;
+  /**
+   * Filter by video kind as stored on the BE.
+   * "video" = long-form, "short" = YouTube Shorts.
+   * When omitted the backend returns all kinds.
+   */
+  kind?: "video" | "short";
 }
 
 export function useVideos(options: UseVideosOptions = {}) {
-  const { pageSize = 50, uploadedViaApp, accountId } = options;
+  const { pageSize = 50, uploadedViaApp, accountId, kind } = options;
   const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
   const effectiveAccountId = accountId ?? storeAccountId;
   const [items, setItems] = useState<Video[]>([]);
@@ -128,9 +134,10 @@ export function useVideos(options: UseVideosOptions = {}) {
         params.set("uploaded_via_app", String(uploadedViaApp));
       }
       if (effectiveAccountId) params.set("account_id", effectiveAccountId);
+      if (kind) params.set("kind", kind);
       return `/api/videos?${params.toString()}`;
     },
-    [pageSize, uploadedViaApp, effectiveAccountId],
+    [pageSize, uploadedViaApp, effectiveAccountId, kind],
   );
 
   const refresh = useCallback(async () => {
@@ -183,11 +190,15 @@ export function useVideos(options: UseVideosOptions = {}) {
 export function useVideoSync(onComplete?: () => void) {
   const [pending, setPending] = useState(false);
   const [lastResult, setLastResult] = useState<VideoSyncResult | null>(null);
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
 
   const sync = useCallback(async () => {
     setPending(true);
     try {
-      const result = await api.post<VideoSyncResult>("/api/videos/sync");
+      const path = storeAccountId
+        ? `/api/videos/sync?account_id=${encodeURIComponent(storeAccountId)}`
+        : "/api/videos/sync";
+      const result = await api.post<VideoSyncResult>(path);
       setLastResult(result);
       const total = result.inserted + result.updated;
       toast.success(

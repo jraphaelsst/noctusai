@@ -1,183 +1,101 @@
 /**
- * Vídeos panel — browse the connected channel's catalog, discriminated into
- * **Vídeos** (YouTube long-form) and **Shorts** sub-tabs.
+ * Vídeos panel — YouTube Studio "Conteúdo do canal" table layout.
  *
- * `video_cache` carries no explicit Shorts flag, so the split uses a duration
- * heuristic (`isShort` ≤ 60s — see useVideos). Default view: card grid; toggle
- * to a compact table. "Sincronizar" hits POST /api/videos/sync.
+ * Two kind-scoped sub-tabs: Vídeos (long-form) and Shorts, each backed
+ * by a separate useVideos({ kind }) call so BE returns pre-filtered data.
+ * Row click opens VideoDetailModal with per-video trend chart.
  *
- * Container-free panel rendered inside the YouTube page (architected so
- * Upload + Vídeos fuse cleanly later).
+ * Container-free panel rendered inside the YouTube page.
  */
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  ExternalLink,
-  Eye,
-  Grid,
-  Heart,
   Loader2,
-  MessageCircle,
   PlaySquare,
   RefreshCw,
-  Search,
   Smartphone,
-  Sparkles,
-  Table as TableIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import { VideoCard } from "@/components/VideoCard";
+import { ChannelContentTable } from "@/components/ChannelContentTable";
+import { VideoDetailModal } from "@/components/VideoDetailModal";
 import {
-  formatCount,
-  formatDuration,
-  isShort,
   useVideos,
   useVideoSync,
-  youtubeUrl,
   type Video,
 } from "@/hooks/useVideos";
 
-type ViewMode = "grid" | "table";
 type FormatTab = "videos" | "shorts";
 
-function VideoTableRow({ video }: { video: Video }) {
+// ─── Sub-panel: one kind (video | short) ────────────────────────────────────
+
+function KindPanel({ kind }: { kind: "video" | "short" }) {
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+
+  const {
+    items,
+    totalKnown,
+    loading,
+    loadingMore,
+    hasMore,
+    loadMore,
+    error,
+  } = useVideos({ kind });
+
+  const emptyMsg =
+    totalKnown === 0
+      ? "Nenhum vídeo no cache. Clique em Sincronizar."
+      : kind === "video"
+      ? "Nenhum vídeo longo encontrado."
+      : "Nenhum Short encontrado.";
+
   return (
-    <div className="flex items-center gap-3 border-b py-2 last:border-0 hover:bg-muted/30">
-      <div className="relative h-12 w-20 shrink-0 overflow-hidden rounded bg-muted">
-        {video.thumbnail_url && (
-          <img
-            src={video.thumbnail_url}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover"
-          />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium">
-            {video.title || video.youtube_video_id}
-          </span>
-          {video.uploaded_via_app && (
-            <Badge variant="default" className="shrink-0 gap-1 text-[10px]">
-              <Sparkles className="h-3 w-3" />
-              App
-            </Badge>
-          )}
-        </div>
-        <div className="text-xs text-muted-foreground">
-          {video.published_at
-            ? new Date(video.published_at).toLocaleDateString("pt-BR")
-            : "—"}
-          {video.duration && <> · {formatDuration(video.duration)}</>}
-        </div>
-      </div>
-      <div className="hidden items-center gap-4 text-xs text-muted-foreground sm:flex">
-        <span className="inline-flex items-center gap-1">
-          <Eye className="h-3 w-3" />
-          {formatCount(video.view_count)}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Heart className="h-3 w-3" />
-          {formatCount(video.like_count)}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <MessageCircle className="h-3 w-3" />
-          {formatCount(video.comment_count)}
-        </span>
-      </div>
-      <Button asChild variant="ghost" size="icon" className="shrink-0">
-        <a
-          href={youtubeUrl(video.youtube_video_id)}
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Abrir no YouTube"
-        >
-          <ExternalLink className="h-4 w-4" />
-        </a>
-      </Button>
-    </div>
+    <>
+      {error ? (
+        <Card>
+          <CardContent className="p-6 text-sm text-destructive">{error}</CardContent>
+        </Card>
+      ) : (
+        <ChannelContentTable
+          items={items}
+          loading={loading}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onRowClick={setSelectedVideo}
+          emptyMessage={emptyMsg}
+        />
+      )}
+
+      <VideoDetailModal
+        video={selectedVideo}
+        onClose={() => setSelectedVideo(null)}
+      />
+    </>
   );
 }
 
-function VideoGridOrTable({
-  items,
-  viewMode,
-  empty,
-}: {
-  items: Video[];
-  viewMode: ViewMode;
-  empty: string;
-}) {
-  if (items.length === 0) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-2 p-12 text-center text-sm text-muted-foreground">
-          <Sparkles className="h-8 w-8" />
-          {empty}
-        </CardContent>
-      </Card>
-    );
-  }
-  if (viewMode === "grid") {
-    return (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {items.map((v) => (
-          <VideoCard key={v.id} video={v} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <Card>
-      <CardContent className="p-2">
-        {items.map((v) => (
-          <VideoTableRow key={v.id} video={v} />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
+// ─── Panel ───────────────────────────────────────────────────────────────────
 
 export default function VideosPanel() {
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [search, setSearch] = useState("");
-  const [appOnly, setAppOnly] = useState(false);
   const [tab, setTab] = useState<FormatTab>("videos");
 
-  const { items, totalKnown, loading, loadingMore, hasMore, refresh, loadMore, error } =
-    useVideos({ uploadedViaApp: appOnly || undefined });
-
-  const { sync, pending: syncing } = useVideoSync(refresh);
-
-  // Search-filtered, then split into long-form (Vídeos) vs Shorts.
-  const searched = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((v) => (v.title ?? "").toLowerCase().includes(q));
-  }, [items, search]);
-
-  const shorts = useMemo(() => searched.filter((v) => isShort(v)), [searched]);
-  const longform = useMemo(() => searched.filter((v) => !isShort(v)), [searched]);
+  // Sync uses the active account from the store (wired in useVideoSync).
+  const { sync, pending: syncing } = useVideoSync();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Header: title + sync button */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">Vídeos do canal</h2>
+          <h2 className="text-lg font-semibold">Conteúdo do canal</h2>
           <p className="text-sm text-muted-foreground">
-            {totalKnown} vídeos no cache.{" "}
-            <span className="text-xs">Use Sincronizar para atualizar com o YouTube.</span>
+            Clique em uma linha para ver detalhes e histórico do vídeo.
           </p>
         </div>
-        <Button onClick={() => sync()} disabled={syncing}>
+        <Button onClick={() => void sync()} disabled={syncing}>
           {syncing ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
@@ -187,99 +105,26 @@ export default function VideosPanel() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-4 p-4">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-10"
-              placeholder="Buscar por titulo..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch id="app-only" checked={appOnly} onCheckedChange={setAppOnly} />
-            <Label htmlFor="app-only" className="cursor-pointer">
-              Apenas enviados pelo app
-            </Label>
-          </div>
-          <div className="ml-auto flex rounded-md border">
-            <Button
-              variant={viewMode === "grid" ? "default" : "ghost"}
-              size="sm"
-              className="rounded-r-none"
-              onClick={() => setViewMode("grid")}
-              aria-label="Visualizacao em grade"
-            >
-              <Grid className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={viewMode === "table" ? "default" : "ghost"}
-              size="sm"
-              className="rounded-l-none border-l"
-              onClick={() => setViewMode("table")}
-              aria-label="Visualizacao em tabela"
-            >
-              <TableIcon className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as FormatTab)}>
+        <TabsList>
+          <TabsTrigger value="videos">
+            <PlaySquare className="mr-2 h-4 w-4" />
+            Vídeos
+          </TabsTrigger>
+          <TabsTrigger value="shorts">
+            <Smartphone className="mr-2 h-4 w-4" />
+            Shorts
+          </TabsTrigger>
+        </TabsList>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : error ? (
-        <Card>
-          <CardContent className="p-6 text-sm text-destructive">{error}</CardContent>
-        </Card>
-      ) : (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as FormatTab)}>
-          <TabsList>
-            <TabsTrigger value="videos">
-              <PlaySquare className="mr-2 h-4 w-4" />
-              Vídeos ({longform.length})
-            </TabsTrigger>
-            <TabsTrigger value="shorts">
-              <Smartphone className="mr-2 h-4 w-4" />
-              Shorts ({shorts.length})
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="videos" className="mt-4">
-            <VideoGridOrTable
-              items={longform}
-              viewMode={viewMode}
-              empty={
-                items.length === 0
-                  ? "Nenhum vídeo no cache. Clique em Sincronizar para buscar do YouTube."
-                  : "Nenhum vídeo longo bate com os filtros atuais."
-              }
-            />
-          </TabsContent>
-          <TabsContent value="shorts" className="mt-4">
-            <VideoGridOrTable
-              items={shorts}
-              viewMode={viewMode}
-              empty={
-                items.length === 0
-                  ? "Nenhum vídeo no cache. Clique em Sincronizar para buscar do YouTube."
-                  : "Nenhum Short (≤ 60s) bate com os filtros atuais."
-              }
-            />
-          </TabsContent>
-        </Tabs>
-      )}
+        <TabsContent value="videos" className="mt-2">
+          <KindPanel kind="video" />
+        </TabsContent>
 
-      {hasMore && !search && (
-        <div className="flex justify-center">
-          <Button variant="outline" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Carregar mais
-          </Button>
-        </div>
-      )}
+        <TabsContent value="shorts" className="mt-2">
+          <KindPanel kind="short" />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
