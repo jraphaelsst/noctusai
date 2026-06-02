@@ -1,0 +1,50 @@
+-- ============================================================================
+-- Migration 036 — Drop the DEPRECATED media_scheduling schema (post-merge husk)
+--
+-- ⚠️  DESTRUCTIVE — DROP SCHEMA. Apply DELIBERATELY (not part of any auto-run).
+--     erp-imobiliario migrations are applied by hand / by an explicit deploy
+--     step (no startup auto-runner), so this file sits inert until applied.
+--
+-- WHY THIS EXISTS
+-- ---------------
+-- media_scheduling was the original "media-scheduling" product schema. It was
+-- CONSOLIDATED INTO imobi_scheduling on 2026-05-11 in commit:
+--
+--     b91043fc  feat(ms-merge): consolidate media-scheduling into imobi-scheduling
+--
+-- After that merge, imobi_scheduling became the live scheduling schema for
+-- erp-imobiliario (17 tables, RLS-secured by migration 033). media_scheduling
+-- has been a dead husk ever since:
+--   • ZERO references in any product Python/TS code (grep, 2026-06-02).
+--   • NOT in PostgREST's exposed-schemas list (authenticator.pgrst.db_schemas =
+--     public, graphql_public, erp, personal-finance, therapy, seed, daily_life,
+--     mailing, social_wiring). => dropping it CANNOT trigger the PGRST002
+--     schema-cache outage (the automation_workflow incident, 2026-05-31), which
+--     only occurs when an EXPOSED schema is dropped. No unexpose/reload needed.
+--   • Its only live equivalent (imobi_scheduling.services / .condominiums) is
+--     the merge target and is itself empty (0 rows, 2026-06-02).
+--
+-- WHAT IT HELD (full salvage — recoverable; 10 rows, all non-production):
+--   media_scheduling.condominiums (4) — SMOKE-TEST fixtures:
+--     1 Reserva One               | Estrada do Capuava, Cotia/SP        | -23.6037,-46.8805
+--     2 The Square Residences     | The Square Open Mall, Cotia/SP      | -23.5897,-46.8337
+--     3 Vintage Granja            | Av. São Camilo, Granja Viana/Cotia  | -23.5909,-46.8421
+--     4 Condomínio Sem Coordenadas| Endereço pendente, Cotia/SP         | NULL,NULL (missing-coord validation fixture)
+--   media_scheduling.service_types (4) — seed catalog:
+--     1 photos | Fotografia imobiliária.
+--     2 videos | Vídeo imobiliário.
+--     3 reels  | Reels para redes sociais.
+--     4 virtual_tour | Tour virtual do imóvel.
+--   media_scheduling.status_pagina (2) — nav config: dashboard=producao, equipe=producao
+--   (all 12 other tables: 0 rows — see migration 034 / git history for their DDL/RLS)
+--
+-- IDEMPOTENT: DROP SCHEMA IF EXISTS ... CASCADE. Re-running is a no-op.
+--
+-- PRE-APPLY CONFIRMATION (the one thing grep cannot see): confirm no n8n
+-- workflow / external webhook reads media_scheduling.* directly via service_role
+-- before applying. The 17 product files grepped cover the app code, not n8n.
+--
+-- SOURCE OF TRUTH: Supabase project nyplttplcoyiiqjrvtiw, queried 2026-06-02.
+-- ============================================================================
+
+DROP SCHEMA IF EXISTS media_scheduling CASCADE;
