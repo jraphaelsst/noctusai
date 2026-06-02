@@ -141,6 +141,53 @@ vi.mock("@noctusai/lib", () => ({
   resolveStatusBadge: (status: string) => ({ label: status, className: "badge", showSpinner: false }),
 }));
 
+// @noctusai/lib/design-system — stub the seed organ barrel which transitively
+// imports `useAIOutputFor` → `createProductInfra` → `createProductSupabase`
+// (throws at module-load time when VITE_SUPABASE_URL is absent in the test env).
+// The Integrations page imports `ClientCredentialPanel` and `IntegrationCardModal`
+// from this path. The mock renders meaningful UI so the Integrations page tests
+// can assert loading / empty / success / modal-open behavior against the NEW
+// component structure.
+vi.mock("@noctusai/lib/design-system", () => ({
+  // ClientCredentialPanel stub: mirrors the real panel's key affordances —
+  //   - loading skeleton when isLoading=true (aria-busy present)
+  //   - "Nenhuma conta ainda" empty state when accounts=[]
+  //   - account labels rendered when accounts are non-empty
+  //   - "Adicionar conta" button that fires onAdd(null)
+  ClientCredentialPanel: ({ accounts, isLoading, onAdd }: any) => {
+    if (isLoading) {
+      return (
+        <div aria-busy="true" aria-label="Carregando credenciais">
+          <div className="animate-pulse" />
+        </div>
+      );
+    }
+    return (
+      <div>
+        {accounts && accounts.length > 0 ? (
+          accounts.map((acc: any) => (
+            <div key={acc.id} data-testid="credential-panel-account">
+              {acc.account_label}
+            </div>
+          ))
+        ) : (
+          <div>Nenhuma conta ainda. Clique em Adicionar conta para comecar.</div>
+        )}
+        {onAdd && (
+          <button onClick={() => onAdd(null)}>Adicionar conta</button>
+        )}
+      </div>
+    );
+  },
+  // IntegrationCardModal stub (the CredentialModal used by ProviderSection)
+  IntegrationCardModal: ({ account, onClose }: any) =>
+    account ? (
+      <div data-testid="credential-modal">
+        <button onClick={onClose}>Fechar modal</button>
+      </div>
+    ) : null,
+}));
+
 // ClientManagementModal (needed by Conexoes P2)
 vi.mock("@/components/ClientManagementModal", () => ({
   ClientManagementModal: ({ onClose }: any) => (
@@ -223,8 +270,10 @@ describe("Integrations page — with providers", () => {
   it("opens AddAccountModal when Add button clicked", async () => {
     mockProviders.mockReturnValue({ data: [mockProvider], isLoading: false, isError: false });
     mockAccounts.mockReturnValue({ data: [], isLoading: false });
-    const { getByText, getByTestId, fireEvent } = await renderPage();
-    fireEvent.click(getByText(/Adicionar conta/i));
+    const { getByRole, getByTestId, fireEvent } = await renderPage();
+    // Use getByRole("button") to target specifically the "Adicionar conta" button,
+    // not the empty-state text which also contains "Adicionar conta".
+    fireEvent.click(getByRole("button", { name: /Adicionar conta/i }));
     expect(getByTestId("add-account-modal")).toBeTruthy();
   });
 });
