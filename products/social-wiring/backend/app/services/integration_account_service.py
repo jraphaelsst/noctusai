@@ -105,7 +105,20 @@ class IntegrationAccountService:
             if isinstance(raw, memoryview):
                 raw = bytes(raw)
             if isinstance(raw, str):
-                raw = raw.encode("utf-8")
+                # PostgREST returns a `bytea` column as a hex-encoded string
+                # prefixed with "\x" (e.g. "\x6741414141..."). Encoding that
+                # literal string as UTF-8 yields the hex TEXT, not the Fernet
+                # token bytes — Fernet then raises InvalidToken, which *looks*
+                # like a key mismatch but is really a read-format bug. So
+                # hex-decode the bytea repr back to the original token bytes.
+                # A non-prefixed str is an ascii-safe Fernet token stored in a
+                # TEXT column → encode it directly. (The SQLite test Fake
+                # returns bytes, so only the real-PG parity test exercises the
+                # "\x" branch — see test_jsonb_payload_shape / cred round-trip.)
+                if raw.startswith("\\x"):
+                    raw = bytes.fromhex(raw[2:])
+                else:
+                    raw = raw.encode("utf-8")
             plaintext = self._fernet.decrypt(raw)
             return json.loads(plaintext.decode("utf-8"))
         except (InvalidToken, Exception) as exc:

@@ -290,3 +290,48 @@ class TestBuildService:
         key = Fernet.generate_key().decode("ascii")
         svc = build_integration_account_service(sqlite_db, encryption_key=key)
         assert isinstance(svc, IntegrationAccountService)
+
+
+class TestDecryptByteaHexParity:
+    """Real-Postgres parity: PostgREST returns a ``bytea`` column as a
+    hex-encoded string prefixed with ``\\x`` (e.g. ``\\x6741414141...``).
+
+    The SQLite test client stores ``encrypted_credential`` as TEXT/BLOB and
+    returns the Fernet token verbatim, so the round-trip tests above NEVER
+    exercise the ``\\x``-hex shape. On real Postgres the prod migration
+    (005) types the column ``BYTEA`` → every read came back as ``\\x``-hex →
+    ``_decrypt`` did ``str.encode('utf-8')`` on the hex TEXT → Fernet raised
+    InvalidToken, surfacing as a misleading "key mismatch". This was the
+    root blocker for YouTube sync in prod (channel showed zero data).
+
+    These tests reproduce the exact prod read shape and assert the fix
+    (hex-decode the ``\\x`` prefix) round-trips. They FAIL against the
+    pre-fix ``_decrypt`` and PASS after.
+    """
+
+    def _service(self):
+        key = Fernet.generate_key()
+        return IntegrationAccountService(None, fernet=Fernet(key)), key
+
+    def test_decrypt_handles_postgrest_bytea_hex_string(self):
+        svc, key = self._service()
+        token = Fernet(key).encrypt(json.dumps({"refresh_token": "r", "token": "t"}).encode("utf-8"))
+        # Simulate exactly what PostgREST returns for a BYTEA column:
+        pg_bytea_read = "\\x" + token.hex()
+        assert pg_bytea_read.startswith("\\x67")  # 0x67='g' → Fernet 'gAAAA...'
+        out = svc._decrypt(pg_bytea_read)
+        assert out == {"refresh_token": "r", "token": "t"}
+
+    def test_decrypt_still_handles_plain_text_token(self):
+        # TEXT-column path (seed store / SQLite Fake): ascii-safe token string.
+        svc, key = self._service()
+        token = Fernet(key).encrypt(json.dumps({"k": "v"}).encode("utf-8"))
+        out = svc._decrypt(token.decode("ascii"))
+        assert out == {"k": "v"}
+
+    def test_decrypt_still_handles_raw_bytes(self):
+        # bytes / memoryview path (driver returns the token directly).
+        svc, key = self._service()
+        token = Fernet(key).encrypt(json.dumps({"k": "v"}).encode("utf-8"))
+        assert svc._decrypt(token) == {"k": "v"}
+        assert svc._decrypt(memoryview(token)) == {"k": "v"}
