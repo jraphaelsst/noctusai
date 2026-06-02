@@ -280,6 +280,36 @@ def refresh_all(
     }
 
 
+# ── Cache-exemption (branch-tree.ndjson pointer pushes) ──────────────────────
+# A commit/push touching ONLY project-history/branch-tree.ndjson must NOT
+# trigger any cache refresh (structural or embedding).  The pointer pushes
+# happen constantly (before self-branch, every commit, mid-flight); triggering
+# noc-graph / embeddings on each would be the multi-minute lag the platform
+# already hit on every commit — defeating the real-time collision-map guarantee.
+# Contract: KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3
+# "Cache-sync discipline".  This is a config exclusion, NOT a keeper bypass.
+_CACHE_EXEMPT_PATHS: frozenset[str] = frozenset({
+    "project-history/branch-tree.ndjson",
+})
+
+
+def should_skip_cache_refresh(changed_paths: list[str]) -> bool:
+    """Return True iff ALL changed paths are cache-exempt metadata paths.
+
+    The pre-push hook calls this (via the CLI --branch-pointer-cache-exempt
+    flag) to decide whether to skip ALL cache refresh when a push touches
+    ONLY the branch-tree ledger.  A push that also changes ANY non-exempt
+    file always triggers the normal refresh logic.
+
+    `changed_paths` should be repo-relative paths (as `git diff --name-only`
+    prints them).  An empty list returns False (conservative: refresh when
+    unknown).
+    """
+    if not changed_paths:
+        return False
+    return all(p in _CACHE_EXEMPT_PATHS for p in changed_paths)
+
+
 # Structural caches = the ZERO-OpenAI keeper-mirror caches. Unlike the embedding
 # caches (kb/code/corpus/memory — OpenAI round-trips, kept warn-only so the human
 # stays in the spend loop), these are FREE to rebuild, so they can be HEALED ON
@@ -377,4 +407,7 @@ def register(server) -> None:
         return settle_structural_caches(Path(repo_root) if repo_root else None)
 
 
-__all__ = ["refresh_all", "detect_stale_caches", "settle_structural_caches", "register"]
+__all__ = [
+    "refresh_all", "detect_stale_caches", "settle_structural_caches",
+    "should_skip_cache_refresh", "register",
+]

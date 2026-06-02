@@ -14,6 +14,7 @@ def register_all(server) -> None:
     """Register every dev-umbrella tool on the given FastMCP server."""
     from . import agent_context
     from . import ai_brain
+    from . import branch_pointer
     from . import auto_author_scaffolds
     from . import auto_improvement
     from . import analyzers
@@ -122,6 +123,7 @@ def register_all(server) -> None:
     agent_context.register(server)
     ai_brain.register(server)
     analyzers.register(server)
+    branch_pointer.register(server)
     archive.register(server)
     audit_product.register(server)
     auto_author_scaffolds.register(server)

@@ -324,6 +324,27 @@ def main():
     parser.add_argument("--namespace", metavar="NS", help="With --vector-costs-report / --vector-costs-total: filter to one namespace (e.g. 'kb-embeddings').")
     parser.add_argument("--since", metavar="DATE", help="With --vector-costs-report / --vector-costs-total: only rows with ts >= DATE (ISO YYYY-MM-DD).")
     parser.add_argument("--group-by", metavar="GRANULARITY", default="day", choices=["day", "week", "month"], help="With --vector-costs-report: aggregation granularity (default: day).")
+    # ── branch_pointer flags ─────────────────────────────────────────────────
+    parser.add_argument("--branch-pointer-append", action="store_true", dest="branch_pointer_append", help="Append a new pointer row for a branch (pre-self-branch claim). Requires --bp-branch, --bp-base, --bp-commit, --bp-role, --bp-agent, --bp-parent, --bp-paths, --bp-status, --bp-brief. Optional: --bp-notes, --bp-worktree, --bp-session, --bp-no-push. MCP: noctus.dev.branch_pointer action=append. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md.")
+    parser.add_argument("--branch-pointer-update", action="store_true", dest="branch_pointer_update", help="Append a delta row for an existing branch (latest-by-ts wins). Requires --bp-branch. Optional: --bp-status, --bp-commit, --bp-paths, --bp-brief, --bp-notes, --bp-no-push, --bp-local. MCP: noctus.dev.branch_pointer action=update.")
+    parser.add_argument("--branch-pointer-query", action="store_true", dest="branch_pointer_query", help="Resolve latest-per-branch from dev's copy. Optional: --bp-status, --bp-branch, --bp-agent, --bp-paths (collision-zone filter). MCP: noctus.dev.branch_pointer action=query.")
+    parser.add_argument("--branch-pointer-list", action="store_true", dest="branch_pointer_list", help="Live map of all non-terminal pointers (pass --bp-terminal to include shipped/canceled/stale). MCP: noctus.dev.branch_pointer action=list.")
+    parser.add_argument("--branch-pointer-cache-exempt", action="store_true", dest="branch_pointer_cache_exempt", help="Exit 0 if ALL paths in --bp-paths are cache-exempt (only branch-tree.ndjson changed → skip cache refresh). Exit 1 otherwise. Used by the pre-push hook. MCP: noctus.dev.should_skip_cache_refresh.")
+    parser.add_argument("--bp-branch", metavar="BRANCH", dest="bp_branch", help="With --branch-pointer-*: branch name (JOIN KEY).")
+    parser.add_argument("--bp-base", metavar="BASE", dest="bp_base", help="With --branch-pointer-append: fork-base branch.")
+    parser.add_argument("--bp-commit", metavar="SHA", dest="bp_commit", help="With --branch-pointer-append/update: current tip commit.")
+    parser.add_argument("--bp-role", metavar="ROLE", choices=["orchestrator", "engineer"], dest="bp_role", help="With --branch-pointer-append: orchestrator | engineer.")
+    parser.add_argument("--bp-agent", metavar="AGENT", dest="bp_agent", help="With --branch-pointer-append/query: claude-tree node label.")
+    parser.add_argument("--bp-parent", metavar="PARENT", dest="bp_parent", help="With --branch-pointer-append: who dispatched this (claude parent edge).")
+    parser.add_argument("--bp-paths", metavar="PATH", nargs="+", dest="bp_paths", help="With --branch-pointer-append/update/query: collision-zone paths (or changed-file list for --branch-pointer-cache-exempt).")
+    parser.add_argument("--bp-status", metavar="STATUS", dest="bp_status", help="With --branch-pointer-append/update/query: on_going|shipped|blocked|canceled|stale|deferred.")
+    parser.add_argument("--bp-brief", metavar="TEXT", dest="bp_brief", help="With --branch-pointer-append/update: one-liner commit/branch description.")
+    parser.add_argument("--bp-notes", metavar="TEXT", dest="bp_notes", help="With --branch-pointer-append/update: durable annotations / inter-agent comms.")
+    parser.add_argument("--bp-worktree", metavar="PATH", dest="bp_worktree", help="With --branch-pointer-append: worktree path (or null).")
+    parser.add_argument("--bp-session", metavar="SESSION", dest="bp_session", help="With --branch-pointer-append: owning session label.")
+    parser.add_argument("--bp-no-push", action="store_true", dest="bp_no_push", help="With --branch-pointer-append/update: skip the FF-push to dev (local-only write).")
+    parser.add_argument("--bp-local", action="store_true", dest="bp_local", help="With --branch-pointer-update/query/list: read from local file, not dev's copy.")
+    parser.add_argument("--bp-terminal", action="store_true", dest="bp_terminal", help="With --branch-pointer-list: include terminal statuses (shipped/canceled/stale).")
     args = parser.parse_args()
 
     # If the caller passed an explicit worktree path, override the module-level
@@ -2181,6 +2202,102 @@ def main():
             print(f"  {RED}Error:{RESET} {result.get('error')}")
             sys.exit(1)
         sys.exit(0)
+
+    elif getattr(args, "branch_pointer_append", False):
+        from tools.noctus.dev.branch_pointer import append as _bp_append
+        missing = [f for f, v in [
+            ("--bp-branch", getattr(args, "bp_branch", None)),
+            ("--bp-base", getattr(args, "bp_base", None)),
+            ("--bp-commit", getattr(args, "bp_commit", None)),
+            ("--bp-role", getattr(args, "bp_role", None)),
+            ("--bp-agent", getattr(args, "bp_agent", None)),
+            ("--bp-parent", getattr(args, "bp_parent", None)),
+            ("--bp-paths", getattr(args, "bp_paths", None)),
+            ("--bp-status", getattr(args, "bp_status", None)),
+            ("--bp-brief", getattr(args, "bp_brief", None)),
+        ] if v is None]
+        if missing:
+            print(f"  {RED}Error:{RESET} --branch-pointer-append requires: {', '.join(missing)}")
+            sys.exit(2)
+        result = _bp_append(
+            branch=args.bp_branch, base=args.bp_base, commit=args.bp_commit,
+            role=args.bp_role, agent=args.bp_agent, parent=args.bp_parent,
+            paths=args.bp_paths, status=args.bp_status, brief=args.bp_brief,
+            notes=getattr(args, "bp_notes", None) or "",
+            worktree=getattr(args, "bp_worktree", None),
+            session=getattr(args, "bp_session", None),
+            push_dev=not getattr(args, "bp_no_push", False),
+        )
+        if result.get("ok"):
+            print(f"  {GREEN}✓ branch-pointer appended:{RESET} {args.bp_branch}")
+            print(json.dumps(result["row"], indent=2, default=str))
+        else:
+            print(f"  {RED}✗ Failed: {result.get('error')}{RESET}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif getattr(args, "branch_pointer_update", False):
+        from tools.noctus.dev.branch_pointer import update as _bp_update
+        if not getattr(args, "bp_branch", None):
+            print(f"  {RED}Error:{RESET} --branch-pointer-update requires --bp-branch")
+            sys.exit(2)
+        result = _bp_update(
+            branch=args.bp_branch,
+            status=getattr(args, "bp_status", None),
+            commit=getattr(args, "bp_commit", None),
+            paths=getattr(args, "bp_paths", None),
+            brief=getattr(args, "bp_brief", None),
+            notes=getattr(args, "bp_notes", None),
+            push_dev=not getattr(args, "bp_no_push", False),
+            from_dev=not getattr(args, "bp_local", False),
+        )
+        if result.get("ok"):
+            print(f"  {GREEN}✓ branch-pointer updated:{RESET} {args.bp_branch}")
+            print(json.dumps(result["row"], indent=2, default=str))
+        else:
+            print(f"  {RED}✗ Failed: {result.get('error')}{RESET}")
+            sys.exit(1)
+        sys.exit(0)
+
+    elif getattr(args, "branch_pointer_query", False):
+        from tools.noctus.dev.branch_pointer import query as _bp_query
+        rows = _bp_query(
+            from_dev=not getattr(args, "bp_local", False),
+            status=getattr(args, "bp_status", None),
+            branch=getattr(args, "bp_branch", None),
+            agent=getattr(args, "bp_agent", None),
+            paths_overlap=getattr(args, "bp_paths", None),
+        )
+        if not rows:
+            print(f"  {YELLOW}(no pointers match the given filters){RESET}")
+        else:
+            print(f"  {GREEN}✓ {len(rows)} branch pointer(s):{RESET}")
+            print(json.dumps(rows, indent=2, default=str))
+        sys.exit(0)
+
+    elif getattr(args, "branch_pointer_list", False):
+        from tools.noctus.dev.branch_pointer import list_pointers as _bp_list
+        rows = _bp_list(
+            from_dev=not getattr(args, "bp_local", False),
+            include_terminal=getattr(args, "bp_terminal", False),
+        )
+        if not rows:
+            print(f"  {YELLOW}(no active pointers in branch-tree.ndjson){RESET}")
+        else:
+            print(f"  {GREEN}✓ Live branch map ({len(rows)} pointer(s)):{RESET}")
+            print(json.dumps(rows, indent=2, default=str))
+        sys.exit(0)
+
+    elif getattr(args, "branch_pointer_cache_exempt", False):
+        from tools.noctus.dev.refresh_all_caches import should_skip_cache_refresh as _bpce
+        paths = getattr(args, "bp_paths", None) or []
+        exempt = _bpce(paths)
+        if exempt:
+            print("[branch-pointer] all changed paths are cache-exempt — skip cache refresh")
+            sys.exit(0)
+        else:
+            print("[branch-pointer] non-exempt paths present — cache refresh applies")
+            sys.exit(1)
 
     else:
         # Default: validate + analyze
