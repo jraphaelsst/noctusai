@@ -20,9 +20,13 @@ lifecycle so it is one call, not a hand-typed ritual:
                 pre-commit hook writes as side-effects: KNOWLEDGE-BASE/
                 AGENT-CONTEXT.md, KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md,
                 project-history/vector-costs.ndjson, project-history/
-                auto-improvement.ndjson, .claude/cache/*) are auto-stashed
-                before the rebase and restored after, so a clean FF rebase is
-                never blocked by them. Only real conflicts surface.
+                auto-improvement.ndjson, project-history/worktree-salvage.ndjson,
+                .claude/cache/*) are auto-stashed before the rebase and restored
+                after, so a clean FF rebase is never blocked by them. Only real
+                conflicts surface. A rebase REFUSED before starting (hook chatter
+                re-dirties after stash) is surfaced as status=dirty_blocked
+                (not status=conflict) so the caller sees dirty files, not phantom
+                merge-conflict markers.
   • cleanup   : SALVAGE-before-delete (KB § PATTERNS/storage-hygiene.md § 2.3 —
                 the worktree analogue of archive's learn-before-archive) THEN
                 `git worktree remove <wt>` (refuses if dirty — no --force) →
@@ -89,11 +93,18 @@ _BANNED_TOKENS = (
 # rebase would be a clean FF. The integrate precheck auto-stashes these before
 # the rebase and pops the stash after. Patterns are fnmatch-style relative paths
 # (as printed by `git status --porcelain`, XY-code stripped).
+#
+# All three project-history/*.ndjson ledger files are gitattributes merge=union
+# append-only logs churned by post-checkout/post-merge cache-settle hooks
+# (noc-graph/auto-improvement/worktree-salvage). They are reconstructable and
+# never contain task work — so they are benign for the purpose of the rebase
+# pre-check and should be auto-stashed rather than blocking integrate.
 _BENIGN_REFRESH_PATTERNS = (
     "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
     "KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md",
     "project-history/vector-costs.ndjson",
     "project-history/auto-improvement.ndjson",
+    "project-history/worktree-salvage.ndjson",
     ".claude/cache/*",
 )
 
@@ -237,6 +248,36 @@ def _classify_dirty_files(
         matched = any(fnmatch.fnmatch(path, pat) for pat in _BENIGN_REFRESH_PATTERNS)
         (benign if matched else real).append(path)
     return benign, real
+
+
+def _rebase_in_progress(runner, wt_path: str) -> bool:
+    """True iff a rebase is currently in-progress in the worktree.
+
+    git creates ``rebase-merge/`` (interactive/merge rebase) or ``rebase-apply/``
+    (apply-based rebase) inside the worktree's git directory as soon as the
+    rebase begins applying patches. If NEITHER exists after a ``git rebase``
+    rc≠0, the rebase was REFUSED before it started (e.g. "error: cannot rebase:
+    You have unstaged changes") — hook chatter re-dirtied the worktree after our
+    auto-stash. Distinguishing "refused" from "conflicted" is Bug B's fix: a
+    refused rebase must NOT produce ``status=conflict`` with empty
+    ``conflicted_files`` (the phantom conflict).
+
+    Uses ``git rev-parse --git-dir`` (allowlisted) to resolve the git dir path,
+    then checks the filesystem. Falls back to True (conservative — treat as
+    in-progress) if rev-parse fails.
+    """
+    rc, out, _e = runner(["git", "rev-parse", "--git-dir"], cwd=wt_path)
+    if rc != 0:
+        # Cannot determine git dir — be conservative (caller will abort + surface).
+        return True
+    git_dir = out.strip()
+    # git-dir may be relative to wt_path
+    if not os.path.isabs(git_dir):
+        git_dir = os.path.join(wt_path, git_dir)
+    return (
+        os.path.isdir(os.path.join(git_dir, "rebase-merge"))
+        or os.path.isdir(os.path.join(git_dir, "rebase-apply"))
+    )
 
 
 def _stash_benign_artifacts(
@@ -622,19 +663,50 @@ def task_branch(
             git("fetch", remote, "--quiet")
             rc, out, err = git("rebase", f"{remote}/{dev_branch}", cwd=wt_path)
             if rc != 0:
-                # Rebase failed — find actually-conflicted files via diff --diff-filter=U.
-                # If that list is EMPTY + we have benign_files that weren't stashed
-                # successfully, that is the known false-positive pattern. Surface with
-                # enough detail to diagnose.
+                # Rebase failed — distinguish "refused" (worktree still dirty after
+                # stash, rebase never started) from "conflicted" (rebase started and
+                # hit content conflicts). The discriminator is the presence of the
+                # `.git/rebase-merge` (or `.git/rebase-apply`) directory: git creates
+                # this directory as soon as the rebase begins applying patches; if it
+                # is ABSENT after a rc≠0, the rebase was REFUSED before it started
+                # (e.g. "error: cannot rebase: You have unstaged changes") — likely
+                # hook chatter re-dirtying the worktree after our stash. A "refused"
+                # rebase has no `--abort` state and `diff --diff-filter=U` returns
+                # nothing, producing the phantom status=conflict with empty
+                # conflicted_files. In that case surface as dirty-block, not conflict.
+                rebase_in_progress = _rebase_in_progress(runner, wt_path)
                 _rc2, cout, _ce = git("diff", "--name-only", "--diff-filter=U", cwd=wt_path)
                 conflicted = [ln.strip() for ln in cout.splitlines() if ln.strip()]
-                git("rebase", "--abort", cwd=wt_path)
+                if rebase_in_progress:
+                    git("rebase", "--abort", cwd=wt_path)
                 # Restore the stash even on failure so the worktree is clean.
                 if benign_stashed:
                     _pop_stash(runner, wt_path, verbose)
                     benign_stashed = False
-                # Re-classify after the abort to give accurate diagnostics.
+                # Re-classify after the abort (or refused) to give accurate diagnostics.
                 _, real_after = _classify_dirty_files(runner, wt_path)
+                if not rebase_in_progress and not conflicted:
+                    # Rebase was REFUSED (never started) — hook chatter re-dirtied the
+                    # worktree after we stashed. Surface as a dirty-block, not a conflict,
+                    # so the caller knows to inspect the worktree's dirty files rather
+                    # than looking for merge conflicts. This is Bug B's phantom conflict.
+                    refused_msg = (err or out or "").strip()
+                    if verbose:
+                        logger.debug(
+                            "task_branch.integrate: rebase was REFUSED (no rebase-merge dir), "
+                            "not conflicted. stderr: %s", refused_msg)
+                    return {**plan, "status": "dirty_blocked", "exit_code": 1,
+                            "conflicted_files": [],
+                            "blocked_by_dirty": real_after,
+                            "rebase_refused": True,
+                            "message": (
+                                f"rebase of {branch} onto {remote}/{dev_branch} was REFUSED "
+                                f"(the worktree is dirty after auto-stash — likely post-checkout "
+                                f"hook chatter re-dirtied files). No conflict markers present. "
+                                f"Dirty files: {real_after}. "
+                                f"git output: {refused_msg or '(none)'}. "
+                                f"Run `git status` in the worktree, resolve the dirty files "
+                                f"(commit or stash), then re-run integrate.").strip()}
                 detail = (f"Dirty files present before rebase: benign={benign_files} "
                           f"real={real_files}; conflicted after rebase: {conflicted}. "
                           f"If conflicted_files is empty, check for uncommitted "
@@ -894,6 +966,6 @@ def register(server) -> None:
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",
            "_assert_push_targets_dev", "_parse_worktrees", "_branch_for_path",
            "_is_dirty_excluding_gitignored", "_classify_dirty_files",
-           "_stash_benign_artifacts", "_pop_stash",
+           "_rebase_in_progress", "_stash_benign_artifacts", "_pop_stash",
            "_plan_env_wiring", "_apply_env_wiring",
            "FsOps", "register"]

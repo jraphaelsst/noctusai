@@ -1084,3 +1084,215 @@ def test_settle_helper_swallows_refresh_failure(monkeypatch):
     rep = T._settle_structural_caches()  # must not raise
     assert rep["noc_graph"]["ok"] is False and "cache locked" in rep["noc_graph"]["error"]
     assert rep["auto_improvement"]["ok"] is True
+
+
+# ── Bug A fix: worktree-salvage.ndjson is benign (list-driven extensibility) ──
+
+def test_classify_dirty_files_worktree_salvage_ndjson_is_benign():
+    """Bug A fix: project-history/worktree-salvage.ndjson is a gitattributes
+    merge=union append-only ledger churned by the post-checkout/post-merge
+    cache-settle hooks — it must be in the benign set so integrate is not
+    blocked when the tool's own hooks dirty it."""
+    status_out = " M project-history/worktree-salvage.ndjson\n"
+    runner = lambda cmd, cwd=None: (0, status_out, "")
+    benign, real = T._classify_dirty_files(runner, "/wt")
+    assert "project-history/worktree-salvage.ndjson" in benign
+    assert real == []
+
+
+def test_integrate_with_only_worktree_salvage_dirty_succeeds():
+    """Bug A integration: a worktree dirty ONLY with worktree-salvage.ndjson
+    (churned by the tool's own post-checkout hooks) must NOT be blocked —
+    the ledger is auto-stashed and integrate returns status=integrated."""
+    stash_pushed = []
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "stash":
+                if "pop" in cmd:
+                    return (0, "", "")
+                stash_pushed.append(True)
+                return (0, "", "")
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        # The only dirty file is the salvage ledger — must be treated as benign.
+        status_output=" M project-history/worktree-salvage.ndjson\n",
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "integrated", (
+        f"expected integrated, got {res!r} — worktree-salvage.ndjson should be benign")
+    assert res["exit_code"] == 0
+    assert stash_pushed, "stash push must be called for the salvage ledger benign artifact"
+
+
+def test_benign_patterns_contains_worktree_salvage():
+    """Structural: the pattern constant itself includes worktree-salvage.ndjson
+    so it is extensible by adding to the list, not buried in ad-hoc logic."""
+    assert any(
+        "worktree-salvage.ndjson" in p for p in T._BENIGN_REFRESH_PATTERNS
+    ), f"worktree-salvage.ndjson missing from _BENIGN_REFRESH_PATTERNS: {T._BENIGN_REFRESH_PATTERNS}"
+
+
+# ── Bug B fix: phantom conflict → dirty_blocked when rebase was refused ──
+
+def _make_refused_rebase_runner(fake, *, git_dir_path="/wt/.git"):
+    """Build a runner that simulates a rebase REFUSED before starting:
+    - `git rev-parse --git-dir` returns the git dir path
+    - `git rebase ...` returns rc=1 with "cannot rebase: unstaged changes" stderr
+    - No rebase-merge / rebase-apply directory exists at git_dir_path
+    (the caller is responsible for NOT creating those dirs in tmp_path)
+    """
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "rev-parse" and "--git-dir" in cmd:
+            return (0, git_dir_path + "\n", "")
+        if sub == "rebase" and "--abort" not in cmd:
+            # Simulate refused: rc=1, no rebase-merge dir created
+            return (1, "", "error: cannot rebase: You have unstaged changes")
+        return fake(cmd, cwd)
+    return runner
+
+
+def test_rebase_refused_by_dirty_worktree_surfaces_dirty_blocked_not_conflict(tmp_path):
+    """Bug B fix: when git rebase returns rc≠0 but the rebase was REFUSED
+    (no rebase-merge directory, hook chatter re-dirtied files after stash),
+    the tool must return status=dirty_blocked — NOT status=conflict — and
+    conflicted_files must be empty. A status=conflict MUST imply real conflicts."""
+    # Create a fake .git dir WITHOUT rebase-merge (simulates "refused" rebase).
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    # No rebase-merge subdir → rebase was refused, never started.
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": "e1 z"},
+        head_sha="b0",
+        # Some dirty file re-appeared after stash (hook chatter)
+        status_output=" M project-history/auto-improvement.ndjson\n",
+    )
+    runner = _make_refused_rebase_runner(fake, git_dir_path=str(fake_git))
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner,
+                        verbose=True)
+    # Must be dirty_blocked, NOT conflict.
+    assert res["status"] == "dirty_blocked", (
+        f"expected dirty_blocked (rebase refused, no rebase-merge dir), got {res!r}")
+    assert res["exit_code"] == 1
+    assert res["conflicted_files"] == [], (
+        "conflicted_files must be empty when rebase was refused (not conflicted)")
+    assert res.get("rebase_refused") is True
+    # The message must mention dirty / refused (not merge conflicts).
+    assert "REFUSED" in res["message"] or "dirty" in res["message"].lower()
+
+
+def test_rebase_genuine_conflict_still_surfaces_conflict_status(tmp_path):
+    """Bug B inverse: a genuine rebase conflict (rebase-merge dir exists,
+    conflicted files present) must still produce status=conflict. The fix
+    must not suppress real conflicts."""
+    # Create a fake .git dir WITH rebase-merge → rebase is in-progress.
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    (fake_git / "rebase-merge").mkdir()  # present → rebase in-progress
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": "e1 z"},
+        head_sha="b0",
+        rebase_rcs=[1],
+        conflicts=["seed/lib/backend/x.py"],
+        status_output="",  # clean before rebase
+    )
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "rev-parse" and "--git-dir" in cmd:
+            return (0, str(fake_git) + "\n", "")
+        return fake(cmd, cwd)
+
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "conflict", (
+        f"expected conflict (rebase-merge dir present), got {res!r}")
+    assert res["conflicted_files"] == ["seed/lib/backend/x.py"]
+
+
+def test_rebase_in_progress_returns_false_when_no_rebase_dir(tmp_path):
+    """Unit: _rebase_in_progress returns False when neither rebase-merge nor
+    rebase-apply exists under the git dir."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    runner = lambda cmd, cwd=None: (0, str(fake_git) + "\n", "")
+    assert T._rebase_in_progress(runner, str(tmp_path)) is False
+
+
+def test_rebase_in_progress_returns_true_when_rebase_merge_exists(tmp_path):
+    """Unit: _rebase_in_progress returns True when rebase-merge dir exists."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    (fake_git / "rebase-merge").mkdir()
+    runner = lambda cmd, cwd=None: (0, str(fake_git) + "\n", "")
+    assert T._rebase_in_progress(runner, str(tmp_path)) is True
+
+
+def test_rebase_in_progress_returns_true_when_rebase_apply_exists(tmp_path):
+    """Unit: _rebase_in_progress returns True when rebase-apply dir exists."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    (fake_git / "rebase-apply").mkdir()
+    runner = lambda cmd, cwd=None: (0, str(fake_git) + "\n", "")
+    assert T._rebase_in_progress(runner, str(tmp_path)) is True
+
+
+def test_rebase_in_progress_conservative_on_rev_parse_failure(tmp_path):
+    """Unit: _rebase_in_progress is conservative (True) when git rev-parse fails."""
+    runner = lambda cmd, cwd=None: (128, "", "not a git repo")
+    assert T._rebase_in_progress(runner, str(tmp_path)) is True
+
+
+def test_hook_chatter_on_stdout_does_not_yield_conflict_when_rebase_refused(tmp_path):
+    """Bug B: hook chatter on stdout/stderr (noc-graph/embedding output) must NOT
+    produce status=conflict. When git rebase rc≠0 but no rebase-merge dir exists,
+    the result is dirty_blocked — the hook chatter is correctly interpreted as a
+    dirty-worktree refusal, not a merge conflict."""
+    fake_git = tmp_path / ".git"
+    fake_git.mkdir()
+    # No rebase-merge → refused, not conflicted.
+
+    # Chatter-heavy stdout that could be misread as conflict output
+    chatter = (
+        "Refreshing noc-graph cache...\n"
+        "Embedding 42 KB chunks...\n"
+        "auto-improvement: 3 new entries\n"
+    )
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": "e1 z"},
+        head_sha="b0",
+        status_output="",
+    )
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "rev-parse" and "--git-dir" in cmd:
+            return (0, str(fake_git) + "\n", "")
+        if sub == "rebase" and "--abort" not in cmd:
+            # Hook chatter on stdout; rc=1 due to pre-rebase dirty check
+            return (1, chatter, "error: cannot rebase: You have unstaged changes")
+        return fake(cmd, cwd)
+
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    # Hook chatter must NOT be misread as conflict markers.
+    assert res["status"] != "conflict", (
+        "hook chatter on stdout/stderr must not produce status=conflict")
+    assert res["conflicted_files"] == []
+    # Must be dirty_blocked (the rebase was refused, not conflicted).
+    assert res["status"] == "dirty_blocked"
