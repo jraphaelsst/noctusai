@@ -12,6 +12,7 @@ L3 enhancement slices (R3):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -177,6 +178,42 @@ def _compute_semantic_neighbors(
         len(result), _COSINE_THRESHOLD,
     )
     return result
+
+
+def semantic_neighbor_fingerprint(graph, repo_root: Path) -> str:
+    """Deterministic fingerprint of every SEMANTIC_NEIGHBOR input.
+
+    The pairs ``_compute_semantic_neighbors`` returns are a PURE FUNCTION of
+    exactly two things:
+
+      1. the embedding vectors (``cache_name``, ``path``, vector) loaded from
+         the 4 embedding caches, and
+      2. the graph's resolvable node-id set (the ``node_index`` filter — a pair
+         survives only when BOTH endpoints resolve to a live node).
+
+    Both are captured here, so an unchanged fingerprint ⇒ an IDENTICAL pair set
+    by construction. This is the cross-bucket-edge reuse gate: the (expensive,
+    O(N²) cosine) recompute is skipped iff this fingerprint is unchanged.
+
+    Cheap to compute (~1s on the live tree, dominated by the embeddings read
+    that the recompute would pay anyway) vs. the ~60s O(N²) cosine it guards.
+    """
+    h = hashlib.sha256()
+    # (1) embeddings — content-sensitive + machine-stable (vector floats, not
+    # mtime). Sorted for order-independence.
+    for cache_name, path, vec in sorted(_load_all_embeddings(repo_root), key=lambda r: (r[0], r[1])):
+        h.update(cache_name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(path.encode("utf-8"))
+        h.update(b"\0")
+        h.update(",".join(format(x, ".6g") for x in vec).encode("utf-8"))
+        h.update(b"\x1e")
+    h.update(b"||nodes||")
+    # (2) the resolvable node-id set (the filter that decides which pairs land).
+    for nid in sorted(n.id for n in graph.nodes):
+        h.update(nid.encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 
 
 # ── Slice 2: GUARDED_BY ───────────────────────────────────────────────────────

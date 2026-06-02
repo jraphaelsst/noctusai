@@ -110,7 +110,13 @@ def tmp_cache(tmp_path, monkeypatch):
     # embeddings + keeper-pattern caches — slow + non-hermetic. It is purely
     # additive and IDENTICAL across the full + incremental paths, so stub it to
     # a no-op: these tests isolate the EXTRACTOR-parity guarantee, not R3.
-    monkeypatch.setattr(ngc, "_inject_r3_edges", lambda graph, root: None)
+    # (Accepts the ``reuse_semantic`` kwarg the real signature now carries.)
+    monkeypatch.setattr(
+        ngc, "_inject_r3_edges", lambda graph, root, reuse_semantic=None: None
+    )
+    # The semantic-reuse gate also reads the live embeddings caches — stub it to
+    # "no fingerprint, no reuse" so the EXTRACTOR-parity tests stay hermetic.
+    monkeypatch.setattr(ngc, "_maybe_reuse_semantic", lambda graph, root, force: (None, None))
     return cache_file
 
 
@@ -320,3 +326,165 @@ class TestBucketShaPlumbing:
         cached = ngc.get_cached_bucket_shas(repo)
         assert set(cached) == set(ngc._BUCKETS)
         assert cached == ngc.compute_bucket_shas(repo)
+
+
+# ── SEMANTIC_NEIGHBOR cross-bucket-edge reuse gate (the dominant-cost win) ────
+#
+# SEMANTIC_NEIGHBOR is the ~60s O(N²) cosine — the practical 1-2 min cost. The
+# pairs are a PURE FUNCTION of (embeddings, node-id-set), captured by
+# ``semantic_neighbor_fingerprint``. These tests lock the reuse equivalence
+# invariant: when the fingerprint is unchanged the persisted semantic edges are
+# reused VERBATIM and the cosine is skipped, producing a graph IDENTICAL to a
+# from-scratch recompute. When any input changes, the fingerprint busts and the
+# cosine recomputes (correctness over speed).
+#
+# These run WITHOUT the tmp_cache fixture's R3 stub so the REAL
+# ``_inject_r3_edges`` + ``_maybe_reuse_semantic`` execute — but the cosine +
+# embeddings + keeper reads are stubbed deterministically here (hermetic, fast).
+
+
+@pytest.fixture()
+def tmp_cache_real_r3(tmp_path, monkeypatch):
+    """Like ``tmp_cache`` but leaves the REAL R3 + reuse-gate code in place.
+
+    The expensive / non-hermetic leaves (cosine, embeddings load, keeper read)
+    are stubbed deterministically so the reuse LOGIC runs end-to-end fast.
+    """
+    cache_file = tmp_path / "cache" / "noc-graph.sqlite"
+    monkeypatch.setattr(ngc, "cache_path", lambda repo_root=None: cache_file)
+    monkeypatch.setattr(
+        "noctusai_lib.graph.build._discover_memory_root", lambda repo_root: None
+    )
+    return cache_file
+
+
+def _stub_semantic(monkeypatch, *, fingerprint, pairs, recompute_counter):
+    """Stub the seed-side R3 leaves used by the real ``_inject_r3_edges``.
+
+    ``fingerprint`` — value returned by ``semantic_neighbor_fingerprint``.
+    ``pairs``       — (id_a, id_b, score) tuples the cosine "computes".
+    ``recompute_counter`` — a list; appended to each time the cosine runs (so a
+                            test can assert it was SKIPPED on the reuse path).
+    """
+    import tools.noctus.graph.build as B
+
+    def _fake_cosine(graph, root):
+        recompute_counter.append(1)
+        node_ids = {n.id for n in graph.nodes}
+        return [(a, b, s) for (a, b, s) in pairs if a in node_ids and b in node_ids]
+
+    monkeypatch.setattr(B, "_compute_semantic_neighbors", _fake_cosine)
+    monkeypatch.setattr(B, "_compute_guarded_by_edges", lambda graph, root: [])
+    monkeypatch.setattr(
+        B, "semantic_neighbor_fingerprint", lambda graph, root: fingerprint
+    )
+
+
+def _semantic_edges(cache_file: Path) -> set:
+    snap = _snapshot(cache_file)
+    return {e for e in snap["edges"] if e[2] == "semantic_neighbor"}
+
+
+class TestSemanticReuseEquivalence:
+    def test_unchanged_fingerprint_reuses_and_skips_cosine(self, repo, tmp_cache_real_r3, monkeypatch):
+        counter: list = []
+        # A pair between two real code nodes the fixture produces.
+        pairs = [(
+            "code:seed/lib/backend/noctusai_lib/alpha.py",
+            "code:seed/lib/backend/noctusai_lib/beta.py",
+            0.93,
+        )]
+        _stub_semantic(monkeypatch, fingerprint="fp-stable", pairs=pairs, recompute_counter=counter)
+
+        # First (forced) build → cosine runs once, edges persisted.
+        ngc.refresh(force=True, repo_root=repo)
+        assert len(counter) == 1, "first build must run the cosine"
+        full_sem = _semantic_edges(tmp_cache_real_r3)
+        assert full_sem, "fixture must yield at least one semantic edge"
+
+        # Edit ONLY a kb file → aggregate sha differs (rebuild triggers), code
+        # bucket unchanged (incremental assembly), fingerprint UNCHANGED → reuse.
+        _write(
+            repo / "KNOWLEDGE-BASE" / "PATTERNS" / "backend" / "alpha-pattern.md",
+            "# Alpha Pattern edited\n\nDocuments `seed/lib/backend/noctusai_lib/alpha.py`.\n",
+        )
+        res = ngc.refresh(force=False, repo_root=repo)
+        assert res["status"] == "incremental"
+        # Cosine must NOT have re-run.
+        assert len(counter) == 1, "cosine re-ran despite unchanged fingerprint"
+        # Semantic edges identical (reused verbatim).
+        assert _semantic_edges(tmp_cache_real_r3) == full_sem
+
+    def test_changed_fingerprint_recomputes(self, repo, tmp_cache_real_r3, monkeypatch):
+        counter: list = []
+        pairs = [(
+            "code:seed/lib/backend/noctusai_lib/alpha.py",
+            "code:seed/lib/backend/noctusai_lib/beta.py",
+            0.91,
+        )]
+        # First build with one fingerprint.
+        _stub_semantic(monkeypatch, fingerprint="fp-v1", pairs=pairs, recompute_counter=counter)
+        ngc.refresh(force=True, repo_root=repo)
+        assert len(counter) == 1
+
+        # Bump the fingerprint (simulating an embeddings-cache change) → recompute.
+        _stub_semantic(monkeypatch, fingerprint="fp-v2", pairs=pairs, recompute_counter=counter)
+        _write(
+            repo / "KNOWLEDGE-BASE" / "PATTERNS" / "backend" / "alpha-pattern.md",
+            "# Alpha Pattern v3\n",
+        )
+        res = ngc.refresh(force=False, repo_root=repo)
+        assert res["status"] == "incremental"
+        assert len(counter) == 2, "cosine must re-run when the fingerprint busts"
+
+    def test_reuse_path_equals_full_recompute(self, repo, tmp_cache_real_r3, tmp_path, monkeypatch):
+        """The equivalence ORACLE: reuse-path graph == a from-scratch full build.
+
+        Builds once (recompute), mutates a non-semantic bucket (kb), rebuilds
+        incrementally with the SAME fingerprint (reuse). Then full-rebuilds the
+        mutated tree from a clean cache. The two semantic-edge sets MUST match.
+        """
+        counter: list = []
+        pairs = [(
+            "code:seed/lib/backend/noctusai_lib/alpha.py",
+            "code:seed/lib/backend/noctusai_lib/beta.py",
+            0.88,
+        )]
+        _stub_semantic(monkeypatch, fingerprint="fp-eq", pairs=pairs, recompute_counter=counter)
+
+        ngc.refresh(force=True, repo_root=repo)
+        _write(
+            repo / "KNOWLEDGE-BASE" / "PATTERNS" / "backend" / "alpha-pattern.md",
+            "# Alpha Pattern eq\n\nDocuments `seed/lib/backend/noctusai_lib/alpha.py`.\n",
+        )
+        res = ngc.refresh(force=False, repo_root=repo)
+        assert res["status"] == "incremental"
+        reuse_snapshot = _snapshot(tmp_cache_real_r3)
+
+        # From-scratch full rebuild of the mutated tree into a clean cache.
+        ref_cache = tmp_path / "ref-cache" / "noc-graph.sqlite"
+        with patch.object(ngc, "cache_path", lambda repo_root=None: ref_cache):
+            ngc.refresh(force=True, repo_root=repo)
+            full_snapshot = _snapshot(ref_cache)
+
+        # FULL equivalence — node set AND edge set (incl. semantic) must match.
+        assert reuse_snapshot["nodes"] == full_snapshot["nodes"]
+        assert reuse_snapshot["edges"] == full_snapshot["edges"]
+
+
+class TestSemanticFingerprintDeterminism:
+    """The fingerprint itself — stable for equal inputs, sensitive to changes."""
+
+    def test_fingerprint_stable_and_node_sensitive(self, repo, tmp_cache_real_r3):
+        from noctusai_lib.graph import build_graph
+        from tools.noctus.graph.build import semantic_neighbor_fingerprint
+
+        g1 = build_graph(repo, scope="repo")
+        fp1 = semantic_neighbor_fingerprint(g1, repo)
+        fp1_again = semantic_neighbor_fingerprint(g1, repo)
+        assert fp1 == fp1_again, "fingerprint must be deterministic for equal inputs"
+        assert isinstance(fp1, str) and fp1
+
+        # Drop a node → fingerprint must change (node-id-set is an input).
+        g1.nodes = g1.nodes[:-1]
+        assert semantic_neighbor_fingerprint(g1, repo) != fp1

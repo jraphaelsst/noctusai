@@ -324,6 +324,64 @@ def get_cached_bucket_shas(repo_root: Optional[Path] = None) -> dict[str, str]:
         conn.close()
 
 
+def get_cached_semantic_fingerprint(repo_root: Optional[Path] = None) -> str | None:
+    """Read the SEMANTIC_NEIGHBOR input fingerprint stamped by the last rebuild.
+
+    Pairs with ``noctus.graph.build.semantic_neighbor_fingerprint``: an
+    unchanged fingerprint means the (embeddings, node-id-set) inputs to the
+    O(N²) cosine are identical, so the persisted SEMANTIC_NEIGHBOR edges can be
+    reused verbatim instead of recomputed. Returns ``None`` if absent.
+    """
+    cache_p = cache_path(repo_root)
+    if not cache_p.exists():
+        return None
+    try:
+        conn = _connect(cache_p)
+    except sqlite3.OperationalError:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT value FROM cache_meta WHERE key = 'semantic_fingerprint'"
+        ).fetchone()
+        return row["value"] if row else None
+    finally:
+        conn.close()
+
+
+def load_cached_semantic_edges(repo_root: Optional[Path] = None) -> list | None:
+    """Load the persisted SEMANTIC_NEIGHBOR edges as schema ``Edge`` objects.
+
+    Returns ``None`` if the cache is absent / unreadable, an empty list if the
+    cache simply holds no semantic edges (a legitimate reuse target — e.g. a
+    tree below the 2-vector threshold). The reused edges are re-added verbatim
+    by ``_inject_r3_edges`` when the fingerprint is unchanged.
+    """
+    from noctusai_lib.graph.schema import Edge
+
+    cache_p = cache_path(repo_root)
+    if not cache_p.exists():
+        return None
+    try:
+        conn = _connect(cache_p)
+    except sqlite3.OperationalError:
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT source, target, kind, confidence, weight, meta_json "
+            "FROM noc_graph_edges WHERE kind = 'semantic_neighbor'"
+        ).fetchall()
+    finally:
+        conn.close()
+    edges: list = []
+    for r in rows:
+        meta = json.loads(r["meta_json"]) if r["meta_json"] else {}
+        edges.append(Edge.from_dict({
+            "source": r["source"], "target": r["target"], "kind": r["kind"],
+            "confidence": r["confidence"], "weight": r["weight"], "meta": meta,
+        }))
+    return edges
+
+
 def get_cached_source_sha(repo_root: Optional[Path] = None) -> str | None:
     cache_p = cache_path(repo_root)
     if not cache_p.exists():
@@ -408,8 +466,16 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
         graph = build_graph(root, scope="repo")
         status = "refreshed"
 
-    _inject_r3_edges(graph, root)
-    _persist_graph(cache_p, root, graph, live_sha, live_bucket_shas)
+    # Cross-bucket SEMANTIC_NEIGHBOR reuse gate. The pair set is a pure
+    # function of (embeddings, node-id-set); if that fingerprint is unchanged
+    # from the persisted build we reuse the persisted semantic edges verbatim
+    # and skip the ~60s O(N²) cosine. Computed AFTER assembly (the node-id set
+    # is final; R3 adds edges only, never nodes) and BEFORE R3 injection.
+    # ``force`` always recomputes (the canonical oracle path).
+    sem_fp, reuse_semantic = _maybe_reuse_semantic(graph, root, force=force)
+    _inject_r3_edges(graph, root, reuse_semantic=reuse_semantic)
+    _persist_graph(cache_p, root, graph, live_sha, live_bucket_shas,
+                   semantic_fingerprint=sem_fp)
 
     # Re-derive the portable artifacts (graph.json / graph.html / REPORT.md).
     from noctusai_lib.graph.serialize import (
@@ -455,6 +521,16 @@ def _load_cached_code_subgraph(repo_root: Path):
     bucket and are re-emitted by the always-re-run knowledge / history passes —
     so they are NOT reused here (reusing them would risk a stale orphan when
     the owning doc stops referencing the code path).
+
+    **R3-derived rows are NEVER reused.** ``_compute_guarded_by_edges``
+    SYNTHESIZES ``code:…compliance.py::<keeper>`` KEEPER_RULE nodes (and their
+    GUARDED_BY edges) into the graph; these get persisted with ``code:`` ids but
+    are NOT code-bucket content — they are owned by the always-re-run R3 pass.
+    Reloading them as "code" would (a) make the incremental node-set diverge
+    from a full build pre-R3 (busting the semantic fingerprint) and (b) leak a
+    stale keeper node if a keeper is later removed. So we exclude
+    ``kind='keeper_rule'`` nodes and ``kind IN ('guarded_by','semantic_neighbor')``
+    edges from the reused subgraph — R3 re-adds the live ones every rebuild.
     """
     from noctusai_lib.graph.schema import Edge, Node
 
@@ -465,16 +541,18 @@ def _load_cached_code_subgraph(repo_root: Path):
     try:
         node_rows = conn.execute(
             "SELECT id, label, kind, path, line, end_line, product, cluster, "
-            "confidence, meta_json FROM noc_graph_nodes WHERE id LIKE 'code:%'"
+            "confidence, meta_json FROM noc_graph_nodes "
+            "WHERE id LIKE 'code:%' AND kind != 'keeper_rule'"
         ).fetchall()
         if not node_rows:
             return None
         edge_rows = conn.execute(
             "SELECT source, target, kind, confidence, weight, meta_json "
             "FROM noc_graph_edges "
-            "WHERE source LIKE 'code:%' "
-            "   OR (kind = 'contains' AND target LIKE 'code:%' "
-            "       AND (source LIKE 'product:%' OR source = 'seed:noctusai_lib'))"
+            "WHERE kind NOT IN ('guarded_by', 'semantic_neighbor') "
+            "  AND (source LIKE 'code:%' "
+            "       OR (kind = 'contains' AND target LIKE 'code:%' "
+            "           AND (source LIKE 'product:%' OR source = 'seed:noctusai_lib')))"
         ).fetchall()
     finally:
         conn.close()
@@ -591,19 +669,86 @@ def _assemble_incremental(repo_root: Path):
     return graph
 
 
-def _inject_r3_edges(graph, root: Path) -> None:
+def _maybe_reuse_semantic(graph, root: Path, force: bool) -> tuple[str | None, list | None]:
+    """Decide whether the persisted SEMANTIC_NEIGHBOR edges can be reused.
+
+    Returns ``(live_fingerprint, reuse_edges)``:
+
+      - ``live_fingerprint`` — the freshly-computed fingerprint to stamp into
+        meta on persist (``None`` if the fingerprint helper is unavailable, in
+        which case we never reuse on the NEXT build either — safe).
+      - ``reuse_edges`` — the persisted semantic ``Edge`` list to reuse, or
+        ``None`` to force a full recompute.
+
+    Reuse iff: not ``force`` AND the helper is importable AND the persisted
+    fingerprint equals the live one AND persisted semantic edges are loadable.
+    Any uncertainty falls back to recompute (correctness over speed).
+    """
+    if force:
+        # Still compute the live fingerprint so the fresh recompute stamps it.
+        try:
+            from tools.noctus.graph.build import semantic_neighbor_fingerprint
+            return semantic_neighbor_fingerprint(graph, root), None
+        except Exception as exc:  # pragma: no cover - import/IO guard
+            logger.debug("noc_graph_cache: semantic fingerprint unavailable (%s)", exc)
+            return None, None
+    try:
+        from tools.noctus.graph.build import semantic_neighbor_fingerprint
+        live_fp = semantic_neighbor_fingerprint(graph, root)
+    except Exception as exc:  # pragma: no cover - import/IO guard
+        logger.debug("noc_graph_cache: semantic fingerprint unavailable (%s)", exc)
+        return None, None
+    cached_fp = get_cached_semantic_fingerprint(root)
+    if cached_fp is None or cached_fp != live_fp:
+        return live_fp, None  # inputs changed → recompute.
+    reuse = load_cached_semantic_edges(root)
+    if reuse is None:
+        return live_fp, None  # cache unreadable → recompute (safe).
+    return live_fp, reuse
+
+
+def _inject_r3_edges(graph, root: Path, reuse_semantic: list | None = None) -> None:
     """Inject the additive R3 edges (SEMANTIC_NEIGHBOR + GUARDED_BY).
 
     Identical for the full and incremental paths — a failure logs a warning
     and continues (purely additive). See the original inline note re: the
     seed-side-ingestor preferred path + the worktree-editable-install fallback.
+
+    **Cross-bucket-edge reuse gate (the correctness-sensitive part).**
+    SEMANTIC_NEIGHBOR pairs are a pure function of (embeddings, node-id-set) —
+    see ``semantic_neighbor_fingerprint``. When ``reuse_semantic`` is provided
+    (the caller verified the fingerprint is unchanged), the persisted semantic
+    edges are re-added verbatim and the ~60s O(N²) cosine is SKIPPED. The pairs
+    are identical by construction (same deterministic function, same inputs),
+    so this satisfies the full-vs-incremental equivalence invariant. GUARDED_BY
+    (sub-second) ALWAYS recomputes — never reused — because it resolves against
+    the freshly-assembled keeper/graph state.
+
+    ``reuse_semantic is None`` ⇒ recompute both (the canonical / safe fallback).
     """
     try:
         from tools.noctus.graph.build import (
             _compute_guarded_by_edges,
             _compute_semantic_neighbors,
         )
-        sem_pairs = _compute_semantic_neighbors(graph, root)
+        if reuse_semantic is not None:
+            # Fingerprint unchanged → reuse persisted semantic edges verbatim
+            # (the O(N²) cosine is skipped). Filter to surviving node ids so a
+            # reused edge can never dangle (defence-in-depth; the fingerprint
+            # already pins the node-id set).
+            node_ids = {n.id for n in graph.nodes}
+            reused = 0
+            for e in reuse_semantic:
+                if e.source in node_ids and e.target in node_ids:
+                    graph.add_edge(e)
+                    reused += 1
+            sem_pairs = []
+            logger.info(
+                "noc_graph_cache.refresh: SEMANTIC_NEIGHBOR reused %d cached edges "
+                "(fingerprint unchanged — cosine skipped)", reused,
+            )
+        else:
+            sem_pairs = _compute_semantic_neighbors(graph, root)
         gb_bindings = _compute_guarded_by_edges(graph, root)
 
         # Try seed-side ingestors first; fall back to inline edge injection.
@@ -658,13 +803,17 @@ def _inject_r3_edges(graph, root: Path) -> None:
 
 
 def _persist_graph(cache_p: Path, root: Path, graph, live_sha: str,
-                   bucket_shas: dict[str, str]) -> None:
+                   bucket_shas: dict[str, str],
+                   semantic_fingerprint: str | None = None) -> None:
     """Mirror the assembled graph into SQLite (atomic full replace).
 
     Shared by the full + incremental paths — both write the SAME final graph,
     so persistence is a clean overwrite (no per-bucket DELETE/INSERT surgery in
     the table; the bucket-level skip happens upstream in assembly). This keeps
     the source-sha invariant + the 3-leg mirror contract intact.
+
+    ``semantic_fingerprint`` is stamped into meta so the NEXT rebuild can decide
+    whether the persisted SEMANTIC_NEIGHBOR edges are reusable (cosine skip).
     """
     conn = _connect(cache_p)
     try:
@@ -721,6 +870,8 @@ def _persist_graph(cache_p: Path, root: Path, graph, live_sha: str,
         }
         for bucket, sha in bucket_shas.items():
             meta_kv[f"bucket_sha:{bucket}"] = sha
+        if semantic_fingerprint is not None:
+            meta_kv["semantic_fingerprint"] = semantic_fingerprint
         conn.executemany(
             "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
             meta_kv.items(),
@@ -853,6 +1004,8 @@ __all__ = [
     "compute_bucket_shas",
     "get_cached_source_sha",
     "get_cached_bucket_shas",
+    "get_cached_semantic_fingerprint",
+    "load_cached_semantic_edges",
     "refresh",
     "load_summary",
     "register",

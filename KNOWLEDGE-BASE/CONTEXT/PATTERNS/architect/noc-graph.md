@@ -98,7 +98,7 @@ For ~24k nodes (full repo) physics stabilization takes ~3-5s; filter aggressivel
 ## The 3-leg keeper-mirror contract (sibling of 7 other caches)
 
 1. **Eager** — pre-commit + `post-merge` + `post-checkout` + `pre-push` hooks invoke `python mcp/noctusai/cli.py --refresh-noc-graph` whenever a graph-input file changes (code corpus / KB / `.claude/agents+skills+commands/` / `CLAUDE.md` / `CONTEXTUALIZE.md` / `CHANGELOG.md` / `project-history/*` / `mcp/noctusai/cli.py`).
-2. **Lazy** — `noctus.dev.noc_graph_cache.refresh()` compares the cached `aggregate_source_sha` (sha256 over every source file's content) against the live aggregate; in-sync ⇒ no-op (~50 ms); drift ⇒ full rebuild (~13 s).
+2. **Lazy** — `noctus.dev.noc_graph_cache.refresh()` compares the cached `aggregate_source_sha` (sha256 over every source file's content) against the live aggregate; in-sync ⇒ no-op (~50 ms); drift ⇒ **incremental** rebuild when only cheap buckets changed (~5 s — both the AST walk and the O(N²) semantic cosine are skipped via per-bucket reuse; see *Incremental rebuild*), else a full rebuild.
 3. **Loud** — `check_noc_graph_cache_freshness` keeper surfaces stale cache as a warning (advisory tier: orientation degrades, never blocks correctness). Wired into the master `check_compliance` aggregator.
 
 ## Pairings with other mechanisms
@@ -120,9 +120,26 @@ For ~24k nodes (full repo) physics stabilization takes ~3-5s; filter aggressivel
 
 ## Incremental rebuild
 
-`build_graph(repo_root, paths=[...rel...])` walks ONLY the listed files for L1 extraction. L2 (KB, harness, landscape, memory) is always re-extracted (cheap, bounded). Use case: pre-commit performance tuning when only a handful of code files change — the cache module can compute the affected files from git diff + pass them as `paths`.
+The graph derives from **7 disjoint input buckets** — `code · kb · harness · landscape · memory · cli · history` — each with its own sub-sha persisted in `cache_meta` as `bucket_sha:<name>`. `refresh()` has three paths:
 
-(Not yet wired into the pre-commit eager leg by default; the full-repo build is fast enough at current scale.)
+1. **in-sync** — aggregate `source_sha` unchanged ⇒ no-op (~50 ms).
+2. **incremental** — the EXPENSIVE `code` bucket sub-sha is unchanged ⇒ reuse the persisted `code:*` nodes/edges and SKIP the AST walk; re-run the cheap knowledge tier (kb/harness/landscape/memory/cli/history) + finalization (`_assemble_incremental`).
+3. **full** — `force=True`, no usable cache, or the `code` bucket changed.
+
+**The two dominant costs, both skipped on a doc-only commit:**
+
+- **The AST walk** (~60 s) — skipped by the `code`-bucket reuse above.
+- **The O(N²) `SEMANTIC_NEIGHBOR` cosine** (~60 s) — skipped by the *semantic-reuse gate*: `semantic_neighbor_fingerprint(graph, root)` (in `tools/noctus/graph/build.py`) is a sha over `(every embedding vector loaded from the 4 caches, the resolvable node-id set)` — the **complete + only** inputs to the pair computation. When the live fingerprint equals the persisted `semantic_fingerprint`, the persisted `SEMANTIC_NEIGHBOR` edges are reused VERBATIM. `GUARDED_BY` (sub-second) always recomputes.
+
+Measured on the live tree: a doc-only commit goes **67 s → 5.4 s (92% saved)**.
+
+### Equivalence invariant (the correctness gate)
+
+> A full rebuild and an incremental rebuild from the same tree state MUST produce equivalent graphs — identical node id-set AND edge id-set.
+
+Proven by `test_noc_graph_incremental.py::TestFullVsIncrementalParity` (extractor parity) + `TestSemanticReuseEquivalence::test_reuse_path_equals_full_recompute` (semantic-edge parity), and re-verified end-to-end on the live tree.
+
+**Cross-bucket-edge invariant chosen:** R3-derived rows are **owned by the always-re-run R3 pass, never by the reused `code` bucket.** `_compute_guarded_by_edges` *synthesizes* `code:…compliance.py::<keeper>` `keeper_rule` nodes (+ `GUARDED_BY` edges) which persist with a `code:` id; `_load_cached_code_subgraph` therefore EXCLUDES `kind='keeper_rule'` nodes and `kind IN ('guarded_by','semantic_neighbor')` edges from reuse. Without this exclusion the incremental node-set diverges from a full build pre-R3 (busting the fingerprint) and a removed keeper would leak a stale node. The `keeper_rule` nodes are re-emitted every rebuild by the always-re-run harness walk + R3, so excluding them from reuse loses nothing.
 
 ## Re-export resolution (`consumes_component` edge)
 
