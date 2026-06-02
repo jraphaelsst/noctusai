@@ -14,6 +14,7 @@ import {
   Zap, Building2, Wallet, HeartPulse, Share2, CalendarCheck,
   ShieldCheck, Brain, ArrowRight,
 } from "lucide-react";
+import { LandingFooter } from "../components/LandingFooter";
 
 const PRODUCTS = [
   {
@@ -71,9 +72,12 @@ export default function Landing() {
             <Zap className="h-6 w-6 text-primary" />
             <span className="font-semibold text-lg">NoctusAI</span>
           </div>
-          <Button asChild size="sm">
-            <Link to="/login">Entrar</Link>
-          </Button>
+          <Link
+            to="/login"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm transition-colors px-1"
+          >
+            Entrar
+          </Link>
         </div>
       </nav>
 
@@ -143,11 +147,7 @@ export default function Landing() {
         </Button>
       </section>
 
-      <footer className="border-t">
-        <div className="max-w-6xl mx-auto px-4 py-6 text-center text-sm text-muted-foreground">
-          © {new Date().getFullYear()} NoctusAI · Plataforma de Produtos Digitais AI-First
-        </div>
-      </footer>
+      <LandingFooter />
     </div>
   );
 }
