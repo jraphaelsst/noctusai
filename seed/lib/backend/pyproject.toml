@@ -33,7 +33,7 @@ dependencies = [
     # even if it only uses one. Simpler ops; slightly bigger image.
     "openai>=1.50.0",
     "anthropic>=0.40.0",
-    "google-genai>=1.0.0,<1.3.0",  # 1.3.0+ widened transitive constraints; pip backtracks through 50+ versions during Docker builds (T1/T6-A/core-backend hit this 2026-05-10). Bump intentionally when re-tested.
+    "google-genai>=1.0.0,<1.48.0",  # 1.3.0+ widened transitive constraints; pip backtracks through 50+ versions during Docker builds (T1/T6-A/core-backend hit this 2026-05-10). Bump intentionally when re-tested.
     # Cache backend — optional at runtime (only used when REDIS_URL is set),
     # but installed monolithically so every product can opt in without
     # touching requirements.txt.
