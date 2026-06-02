@@ -131,6 +131,18 @@ def get_account_service(
         ) from exc
 
 
+def get_sync_yt_service_builder():
+    """DI seam for the YouTube service builder used by the sync endpoint.
+
+    Returns the real ``build_youtube_service_for_org`` by default. Tests
+    override via ``app.dependency_overrides[get_sync_yt_service_builder]``
+    to inject a fake without patching our own module symbols.
+    Per KB § PATTERNS/backend/di-test-seam.md (Class-B, service DI).
+    """
+    from app.services.account_credentials import build_youtube_service_for_org
+    return build_youtube_service_for_org
+
+
 # ─── helpers ──────────────────────────────────────────────────────────────────
 def _out(account: IntegrationAccount) -> IntegrationAccountOut:
     return IntegrationAccountOut(
@@ -362,6 +374,7 @@ def sync_account(
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
     cfg: SocialWiringSettings = Depends(get_settings),
+    yt_builder=Depends(get_sync_yt_service_builder),
 ) -> IntegrationAccountOut:
     """Validate a YouTube account by fetching live channel info from the API.
 
@@ -375,7 +388,10 @@ def sync_account(
     org_id = coerce_org_uuid(raw_org)
     account = _require_account(svc, account_id, org_id)
     try:
-        updated = sync_channel_info(get_admin_client(), cfg, svc, account)
+        updated = sync_channel_info(
+            get_admin_client(), cfg, svc, account,
+            yt_service_builder=yt_builder,
+        )
     except Exception as exc:
         logger.exception("sync_account: unexpected error for account %s", account_id)
         raise HTTPException(

@@ -304,6 +304,8 @@ def sync_channel_info(
     cfg: Any,
     svc: "IntegrationAccountService",
     account: "IntegrationAccount",
+    *,
+    yt_service_builder: Any = None,
 ) -> "IntegrationAccount":
     """Validate a YouTube account by fetching live channel info from the API.
 
@@ -315,10 +317,16 @@ def sync_channel_info(
 
     No silent failures — always writes a status update.
 
+    DI seam: ``yt_service_builder`` defaults to the real
+    ``build_youtube_service_for_org`` when ``None``. Tests inject a fake
+    without patching our own symbols (KB § PATTERNS/backend/di-test-seam.md).
+
     Returns the updated IntegrationAccount.
     """
     from datetime import timezone as _tz
     from datetime import datetime as _dt
+
+    _build_yt = yt_service_builder or build_youtube_service_for_org
 
     # Mark as in-flight.
     try:
@@ -337,7 +345,7 @@ def sync_channel_info(
         )
 
     try:
-        yt_svc = build_youtube_service_for_org(
+        yt_svc = _build_yt(
             admin_client, cfg, account_id=account.id
         )
         info = yt_svc.get_channel_info(org_id=account.org_id)

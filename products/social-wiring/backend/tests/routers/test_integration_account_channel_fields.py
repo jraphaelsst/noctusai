@@ -169,8 +169,15 @@ class TestPatchChannelFields:
 
 class TestSyncEndpoint:
     def test_sync_happy_path(self, client, ia_service):
-        """POST /sync calls sync_channel_info and returns updated account."""
+        """POST /sync calls sync_channel_info and returns updated account.
+
+        Uses app.dependency_overrides[get_sync_yt_service_builder] so no
+        patching of our own module symbols is needed.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         from app.modules.youtube.services.youtube import ChannelInfo
+        from app.main import app
+        from app.routers.integration_accounts_router import get_sync_yt_service_builder
 
         data = _make_account(client)
         account_id = data["id"]
@@ -187,14 +194,16 @@ class TestSyncEndpoint:
         mock_yt_svc = MagicMock()
         mock_yt_svc.get_channel_info.return_value = fake_channel
 
-        with patch(
-            "app.services.account_credentials.build_youtube_service_for_org",
-            return_value=mock_yt_svc,
-        ):
+        app.dependency_overrides[get_sync_yt_service_builder] = (
+            lambda: (lambda *a, **kw: mock_yt_svc)
+        )
+        try:
             resp = client.post(
                 f"/api/integrations/accounts/{account_id}/sync",
                 headers=_auth(),
             )
+        finally:
+            app.dependency_overrides.pop(get_sync_yt_service_builder, None)
 
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -203,21 +212,31 @@ class TestSyncEndpoint:
         assert body["last_synced_at"] is not None
 
     def test_sync_error_path_returns_error_status(self, client, ia_service):
-        """If the YT service fails, the account is set to status=error."""
+        """If the YT service fails, the account is set to status=error.
+
+        Uses app.dependency_overrides[get_sync_yt_service_builder] so no
+        patching of our own module symbols is needed.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
+        from app.main import app
+        from app.routers.integration_accounts_router import get_sync_yt_service_builder
+
         data = _make_account(client)
         account_id = data["id"]
 
         mock_yt_svc = MagicMock()
         mock_yt_svc.get_channel_info.side_effect = RuntimeError("quota exceeded")
 
-        with patch(
-            "app.services.account_credentials.build_youtube_service_for_org",
-            return_value=mock_yt_svc,
-        ):
+        app.dependency_overrides[get_sync_yt_service_builder] = (
+            lambda: (lambda *a, **kw: mock_yt_svc)
+        )
+        try:
             resp = client.post(
                 f"/api/integrations/accounts/{account_id}/sync",
                 headers=_auth(),
             )
+        finally:
+            app.dependency_overrides.pop(get_sync_yt_service_builder, None)
 
         assert resp.status_code == 200, resp.text
         body = resp.json()

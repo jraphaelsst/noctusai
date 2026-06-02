@@ -104,7 +104,7 @@ class _CapturingContext:
             self.payloads.append(payload)
             return original(query_self, payload, **kwargs)
 
-        self._patcher = patch.object(SQLiteQuery, self._method, _spy)
+        self._patcher = patch.object(SQLiteQuery, self._method, _spy)  # self-patch-ok: SQLiteQuery is the DB-driver boundary; spy intercepts wire payloads to assert dict vs string — not neutering business logic
         self._patcher.start()
         return self
 

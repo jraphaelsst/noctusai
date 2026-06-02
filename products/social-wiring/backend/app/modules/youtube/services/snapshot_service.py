@@ -64,11 +64,26 @@ class SnapshotService:
     """Per-call snapshot worker. Admin client used for ALL writes (service role).
 
     Construction: SnapshotService(admin_supabase=..., cfg=...)
+
+    DI seam: ``yt_service_builder`` and ``ia_service_builder`` are optional
+    callables injected at construction time. Production code leaves them ``None``
+    (the real builders are used); tests pass in fakes without patching our symbols.
+    Per KB § PATTERNS/backend/di-test-seam.md (Class-B, service DI).
     """
 
-    def __init__(self, *, admin_supabase: Any, cfg: Any) -> None:
+    def __init__(
+        self,
+        *,
+        admin_supabase: Any,
+        cfg: Any,
+        yt_service_builder: Any = None,
+        ia_service_builder: Any = None,
+    ) -> None:
         self._admin = admin_supabase
         self._cfg = cfg
+        # Optional DI seam — defaults to the real module-level builders.
+        self._yt_service_builder = yt_service_builder or build_youtube_service_for_org
+        self._ia_service_builder = ia_service_builder or build_integration_account_service
 
     # ─── Public API ─────────────────────────────────────────────────────
 
@@ -170,8 +185,8 @@ class SnapshotService:
         snapshot_date: date,
         outcome: SnapshotOutcome,
     ) -> None:
-        # Build YouTube service pinned to this account.
-        yt_svc: YouTubeService = build_youtube_service_for_org(
+        # Build YouTube service pinned to this account (via DI seam or real builder).
+        yt_svc: YouTubeService = self._yt_service_builder(
             self._admin, self._cfg, account_id=account_id
         )
 
@@ -179,7 +194,7 @@ class SnapshotService:
         info = yt_svc.get_channel_info(org_id=org_id)
 
         # ── Step 3: update integration_accounts ──────────────────────
-        ia_svc = build_integration_account_service(
+        ia_svc = self._ia_service_builder(
             self._admin, encryption_key=self._cfg.encryption_key
         )
         channel_info_dict = {

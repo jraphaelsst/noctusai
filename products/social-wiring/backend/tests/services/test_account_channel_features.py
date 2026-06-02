@@ -208,13 +208,16 @@ class TestUpdateChannelInfo:
 
 class TestSyncChannelInfo:
     def test_happy_path_sets_validated(self, svc, fernet_key):
-        """sync_channel_info fetches channel info → status=validated."""
+        """sync_channel_info fetches channel info → status=validated.
+
+        Uses yt_service_builder DI seam so no patching of our own symbols
+        is needed. Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         from app.services.account_credentials import sync_channel_info
         from app.modules.youtube.services.youtube import ChannelInfo
 
         acct = _make(svc)
 
-        # Build mock objects (external service — ok to mock)
         mock_cfg = MagicMock()
         mock_cfg.encryption_key = fernet_key
         mock_cfg.youtube_client_id = "cid"
@@ -230,17 +233,13 @@ class TestSyncChannelInfo:
             thumbnail_url="",
         )
 
-        # We patch build_youtube_service_for_org (external YT service boundary)
-        from unittest.mock import patch
-
         mock_yt_svc = MagicMock()
         mock_yt_svc.get_channel_info.return_value = fake_channel_info
 
-        with patch(
-            "app.services.account_credentials.build_youtube_service_for_org",
-            return_value=mock_yt_svc,
-        ):
-            updated = sync_channel_info(None, mock_cfg, svc, acct)
+        updated = sync_channel_info(
+            None, mock_cfg, svc, acct,
+            yt_service_builder=lambda *a, **kw: mock_yt_svc,
+        )
 
         assert updated.status == "validated"
         assert updated.channel_info["channel_id"] == "UC_SYNCED"
@@ -249,9 +248,12 @@ class TestSyncChannelInfo:
         assert updated.last_synced_at is not None
 
     def test_error_path_sets_error_status(self, svc, fernet_key):
-        """sync_channel_info API failure → status=error, no exception raised."""
+        """sync_channel_info API failure → status=error, no exception raised.
+
+        Uses yt_service_builder DI seam so no patching of our own symbols
+        is needed. Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         from app.services.account_credentials import sync_channel_info
-        from unittest.mock import patch
 
         acct = _make(svc)
 
@@ -261,11 +263,10 @@ class TestSyncChannelInfo:
         mock_yt_svc = MagicMock()
         mock_yt_svc.get_channel_info.side_effect = RuntimeError("API down")
 
-        with patch(
-            "app.services.account_credentials.build_youtube_service_for_org",
-            return_value=mock_yt_svc,
-        ):
-            updated = sync_channel_info(None, mock_cfg, svc, acct)
+        updated = sync_channel_info(
+            None, mock_cfg, svc, acct,
+            yt_service_builder=lambda *a, **kw: mock_yt_svc,
+        )
 
         assert updated.status == "error"
         assert "API down" in updated.channel_info.get("error", "")

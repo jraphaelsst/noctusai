@@ -8,13 +8,17 @@ Coverage:
   - video snapshot upsert
   - backfill_from_video_cache seeds catalog when empty
   - error path: status='error' set, exception re-raised
+
+DI pattern: SnapshotService accepts optional ``yt_service_builder`` and
+``ia_service_builder`` constructor params (KB § PATTERNS/backend/di-test-seam.md
+Class-B). Tests inject fakes directly without patching our own symbols.
 """
 from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timezone
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -146,12 +150,15 @@ class TestClaimRowGuard:
         assert outcome.shorts_upserted == 0
 
     def test_force_overrides_done_row(self):
-        """force=True runs even when a done row exists (writes snapshot_runs again)."""
+        """force=True runs even when a done row exists (writes snapshot_runs again).
+
+        Uses DI seam: yt_service_builder / ia_service_builder injected at
+        construction so no patching of our own module symbols is needed.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         admin = _StubSupabase()
         # Claim check: 'done' row
         admin.set_select(data=[{"status": "done"}])
-
-        svc = SnapshotService(admin_supabase=admin, cfg=_stub_cfg())
 
         channel_info = ChannelInfo(
             channel_id="UC1",
@@ -162,37 +169,34 @@ class TestClaimRowGuard:
         )
         vf_regular = _make_video_full("vid1")
 
-        with (
-            patch(
-                "app.modules.youtube.services.snapshot_service.build_youtube_service_for_org"
-            ) as mock_build,
-            patch(
-                "app.modules.youtube.services.snapshot_service.build_integration_account_service"
-            ) as mock_ia,
-        ):
-            mock_yt = MagicMock()
-            mock_yt.get_channel_info.return_value = channel_info
-            mock_yt.list_all_videos_full.return_value = ([vf_regular], None)
-            mock_build.return_value = mock_yt
+        mock_yt = MagicMock()
+        mock_yt.get_channel_info.return_value = channel_info
+        mock_yt.list_all_videos_full.return_value = ([vf_regular], None)
 
-            mock_ia_svc = MagicMock()
-            mock_ia.return_value = mock_ia_svc
-            mock_ia_svc.update_channel_info.return_value = MagicMock()
+        mock_ia_svc = MagicMock()
+        mock_ia_svc.update_channel_info.return_value = MagicMock()
 
-            # Catalog is empty (no existing rows)
-            admin.set_select(data=[])   # catalog_is_empty youtube_videos
-            admin.set_select(data=[])   # catalog_is_empty youtube_shorts
-            # backfill: video_cache is empty
-            admin.set_select(data=[])
-            # app_uploaded_ids
-            admin.set_select(data=[])
+        svc = SnapshotService(
+            admin_supabase=admin,
+            cfg=_stub_cfg(),
+            yt_service_builder=lambda *a, **kw: mock_yt,
+            ia_service_builder=lambda *a, **kw: mock_ia_svc,
+        )
 
-            outcome = svc.run_for_account(
-                org_id=uuid4(),
-                account_id=uuid4(),
-                snapshot_date=date(2026, 6, 1),
-                force=True,
-            )
+        # Catalog is empty (no existing rows)
+        admin.set_select(data=[])   # catalog_is_empty youtube_videos
+        admin.set_select(data=[])   # catalog_is_empty youtube_shorts
+        # backfill: video_cache is empty
+        admin.set_select(data=[])
+        # app_uploaded_ids
+        admin.set_select(data=[])
+
+        outcome = svc.run_for_account(
+            org_id=uuid4(),
+            account_id=uuid4(),
+            snapshot_date=date(2026, 6, 1),
+            force=True,
+        )
 
         assert outcome.skipped is False
         assert outcome.videos_upserted == 1
@@ -202,6 +206,12 @@ class TestClaimRowGuard:
 
 class TestClassifyRouting:
     def _run_with_videos(self, videos: list[VideoFull]) -> tuple[_StubSupabase, SnapshotOutcome]:
+        """Run SnapshotService with a pre-seeded video list.
+
+        Uses DI seam: yt_service_builder / ia_service_builder injected so no
+        patching of our own module symbols is needed.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         admin = _StubSupabase()
         # Claim check: no existing row → proceed
         admin.set_select(data=[])
@@ -213,41 +223,35 @@ class TestClassifyRouting:
         # app_uploaded_ids
         admin.set_select(data=[])
 
-        svc = SnapshotService(admin_supabase=admin, cfg=_stub_cfg())
-
         channel_info = ChannelInfo(
             channel_id="UC1", title="T", subscriber_count=0, video_count=0, view_count=0
         )
         org_id = uuid4()
         account_id = uuid4()
 
-        with (
-            patch(
-                "app.modules.youtube.services.snapshot_service.build_youtube_service_for_org"
-            ) as mock_build,
-            patch(
-                "app.modules.youtube.services.snapshot_service.build_integration_account_service"
-            ) as mock_ia,
-        ):
-            mock_yt = MagicMock()
-            mock_yt.get_channel_info.return_value = channel_info
+        mock_yt = MagicMock()
+        mock_yt.get_channel_info.return_value = channel_info
+        # Simulate pagination: single page returning 'videos', then done
+        pages = iter([(videos, None)])
+        def _list_full(**_kwargs):
+            return next(pages)
+        mock_yt.list_all_videos_full.side_effect = _list_full
 
-            # Simulate pagination: single page returning 'videos', then done
-            pages = iter([(videos, None)])
-            def _list_full(**_kwargs):
-                return next(pages)
-            mock_yt.list_all_videos_full.side_effect = _list_full
-            mock_build.return_value = mock_yt
+        mock_ia_svc = MagicMock()
+        mock_ia_svc.update_channel_info.return_value = MagicMock()
 
-            mock_ia_svc = MagicMock()
-            mock_ia.return_value = mock_ia_svc
-            mock_ia_svc.update_channel_info.return_value = MagicMock()
+        svc = SnapshotService(
+            admin_supabase=admin,
+            cfg=_stub_cfg(),
+            yt_service_builder=lambda *a, **kw: mock_yt,
+            ia_service_builder=lambda *a, **kw: mock_ia_svc,
+        )
 
-            outcome = svc.run_for_account(
-                org_id=org_id,
-                account_id=account_id,
-                snapshot_date=date(2026, 6, 1),
-            )
+        outcome = svc.run_for_account(
+            org_id=org_id,
+            account_id=account_id,
+            snapshot_date=date(2026, 6, 1),
+        )
 
         return admin, outcome
 
@@ -306,25 +310,29 @@ class TestClassifyRouting:
 
 class TestErrorPath:
     def test_marks_error_and_reraises(self):
-        """When the YouTube call fails, snapshot_runs is marked 'error' + exception re-raised."""
+        """When the YouTube call fails, snapshot_runs is marked 'error' + exception re-raised.
+
+        Uses DI seam: yt_service_builder injected so no patching of our own
+        module symbols is needed. Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         admin = _StubSupabase()
         admin.set_select(data=[])  # claim: no existing row
 
-        svc = SnapshotService(admin_supabase=admin, cfg=_stub_cfg())
+        mock_yt = MagicMock()
+        mock_yt.get_channel_info.side_effect = Exception("YouTube boom")
 
-        with patch(
-            "app.modules.youtube.services.snapshot_service.build_youtube_service_for_org"
-        ) as mock_build:
-            mock_yt = MagicMock()
-            mock_yt.get_channel_info.side_effect = Exception("YouTube boom")
-            mock_build.return_value = mock_yt
+        svc = SnapshotService(
+            admin_supabase=admin,
+            cfg=_stub_cfg(),
+            yt_service_builder=lambda *a, **kw: mock_yt,
+        )
 
-            with pytest.raises(SnapshotServiceError):
-                svc.run_for_account(
-                    org_id=uuid4(),
-                    account_id=uuid4(),
-                    snapshot_date=date(2026, 6, 1),
-                )
+        with pytest.raises(SnapshotServiceError):
+            svc.run_for_account(
+                org_id=uuid4(),
+                account_id=uuid4(),
+                snapshot_date=date(2026, 6, 1),
+            )
 
         # snapshot_runs should have a status='error' update
         error_updates = [

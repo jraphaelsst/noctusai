@@ -9,6 +9,10 @@ Phase 7 additions (feat/yt-card-crud):
     auth boundary.
   - TestDeleteVideo: DELETE /api/videos/{id} — 204 catalog-only removal, 404
     not-in-catalog, auth boundary.
+
+DI pattern: tests that need to control the YouTube service use
+``app.dependency_overrides[get_yt_service_builder]`` instead of patching
+our own module symbols (KB § PATTERNS/backend/di-test-seam.md Class-B).
 """
 from __future__ import annotations
 
@@ -174,15 +178,17 @@ class TestPatchVideoWriteThrough:
         """PATCH /api/videos/{id} with a mocked YouTubeService.update_video_metadata
         should write-through and return the updated VideoOut.
 
-        Strategy: patch `build_youtube_service_for_org` to return a stub service
-        whose `update_video_metadata` is a no-op, AND seed the Supabase mock to
-        return a catalog row. Assert 200 + returned VideoOut reflects the input.
+        Uses app.dependency_overrides[get_yt_service_builder] to inject the stub
+        service without patching our own module symbols.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
         """
         override_settings(**_YT_COMPLETE)
 
         from noctusai_lib.testing import MockSupabaseResponse
         from noctusai_lib.integrations.youtube.types import VideoFull
         from datetime import datetime, timezone
+        from app.main import app
+        from app.modules.youtube.routers.videos import get_yt_service_builder
 
         _vf = VideoFull(
             id="test-vid-wt",
@@ -247,18 +253,20 @@ class TestPatchVideoWriteThrough:
         stub_svc = MagicMock()
         stub_svc.update_video_metadata = MagicMock(return_value=_vf)
 
-        with (
-            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-            patch(
-                "app.modules.youtube.routers.videos.build_youtube_service_for_org",
-                return_value=stub_svc,
-            ),
-        ):
-            resp = client.patch(
-                "/api/videos/test-vid-wt",
-                json={"title": "Updated Title", "privacy_status": "unlisted"},
-            )
+        app.dependency_overrides[get_yt_service_builder] = lambda: (
+            lambda *a, **kw: stub_svc
+        )
+        try:
+            with (
+                patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+                patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            ):
+                resp = client.patch(
+                    "/api/videos/test-vid-wt",
+                    json={"title": "Updated Title", "privacy_status": "unlisted"},
+                )
+        finally:
+            app.dependency_overrides.pop(get_yt_service_builder, None)
 
         assert resp.status_code == 200, resp.text
         data = resp.json()
@@ -330,10 +338,17 @@ class TestDeleteVideoSuccess:
         mock_table.delete.assert_called()
 
     def test_delete_does_not_call_youtube_api(self, client, override_settings):
-        """DELETE must not call the YouTube Data API (irreversibility guard)."""
+        """DELETE must not call the YouTube Data API (irreversibility guard).
+
+        Uses app.dependency_overrides[get_yt_service_builder] to assert the
+        builder is NOT called without patching our own module symbols.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         override_settings(**_YT_COMPLETE)
 
         from noctusai_lib.testing import MockSupabaseResponse
+        from app.main import app
+        from app.modules.youtube.routers.videos import get_yt_service_builder
 
         _row_id = {"id": "00000000-0000-0000-0000-000000000004"}
 
@@ -353,19 +368,26 @@ class TestDeleteVideoSuccess:
         mock_schema_obj.table = MagicMock(return_value=mock_chain)
         mock_sb.schema = MagicMock(return_value=mock_schema_obj)
 
-        # build_youtube_service_for_org must NOT be called for DELETE.
-        with (
-            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-            patch(
-                "app.modules.youtube.routers.videos.build_youtube_service_for_org"
-            ) as mock_build_svc,
-        ):
-            resp = client.delete("/api/videos/test-vid-del2")
+        # Track whether the builder is invoked via the DI seam.
+        builder_call_count = [0]
+
+        def _tracking_builder(*a, **kw):
+            builder_call_count[0] += 1
+            return MagicMock()
+
+        app.dependency_overrides[get_yt_service_builder] = lambda: _tracking_builder
+        try:
+            with (
+                patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+                patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            ):
+                resp = client.delete("/api/videos/test-vid-del2")
+        finally:
+            app.dependency_overrides.pop(get_yt_service_builder, None)
 
         # 204 expected; more importantly, the YouTube service must not be built.
         assert resp.status_code == 204, resp.text
-        mock_build_svc.assert_not_called()
+        assert builder_call_count[0] == 0, "build_youtube_service_for_org must NOT be called for catalog-only DELETE"
 
 
 # ─── Phase 8: DELETE /api/videos/{id}?purge_remote=true ────────────────────
@@ -391,10 +413,17 @@ class TestPurgeRemoteSuccess:
     def test_purge_remote_calls_delete_youtube_video_then_removes_catalog(
         self, client, override_settings
     ):
-        """DELETE ?purge_remote=true should call delete_youtube_video THEN remove catalog row."""
+        """DELETE ?purge_remote=true should call delete_youtube_video THEN remove catalog row.
+
+        Uses app.dependency_overrides[get_yt_service_builder] to inject stub
+        without patching our own module symbols.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         override_settings(**_YT_COMPLETE)
 
         from noctusai_lib.testing import MockSupabaseResponse
+        from app.main import app
+        from app.modules.youtube.routers.videos import get_yt_service_builder
 
         _row_id = {"id": "00000000-0000-0000-0000-000000000010"}
 
@@ -424,15 +453,17 @@ class TestPurgeRemoteSuccess:
         stub_svc = MagicMock()
         stub_svc.delete_youtube_video = MagicMock(return_value=None)
 
-        with (
-            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-            patch(
-                "app.modules.youtube.routers.videos.build_youtube_service_for_org",
-                return_value=stub_svc,
-            ),
-        ):
-            resp = client.delete("/api/videos/test-purge-vid?purge_remote=true")
+        app.dependency_overrides[get_yt_service_builder] = lambda: (
+            lambda *a, **kw: stub_svc
+        )
+        try:
+            with (
+                patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+                patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            ):
+                resp = client.delete("/api/videos/test-purge-vid?purge_remote=true")
+        finally:
+            app.dependency_overrides.pop(get_yt_service_builder, None)
 
         assert resp.status_code == 204, resp.text
         stub_svc.delete_youtube_video.assert_called_once()
@@ -444,11 +475,18 @@ class TestPurgeRemoteApiFailurePreservesCatalog:
         self, client, override_settings
     ):
         """When delete_youtube_video raises YouTubeServiceError the catalog row
-        must NOT be removed and the endpoint must return 502."""
+        must NOT be removed and the endpoint must return 502.
+
+        Uses app.dependency_overrides[get_yt_service_builder] to inject stub
+        without patching our own module symbols.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         override_settings(**_YT_COMPLETE)
 
         from noctusai_lib.testing import MockSupabaseResponse
         from app.modules.youtube.services.youtube import YouTubeServiceError
+        from app.main import app
+        from app.modules.youtube.routers.videos import get_yt_service_builder
 
         _row_id = {"id": "00000000-0000-0000-0000-000000000011"}
 
@@ -475,15 +513,17 @@ class TestPurgeRemoteApiFailurePreservesCatalog:
             side_effect=YouTubeServiceError("YouTube API failed")
         )
 
-        with (
-            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-            patch(
-                "app.modules.youtube.routers.videos.build_youtube_service_for_org",
-                return_value=stub_svc,
-            ),
-        ):
-            resp = client.delete("/api/videos/test-purge-fail?purge_remote=true")
+        app.dependency_overrides[get_yt_service_builder] = lambda: (
+            lambda *a, **kw: stub_svc
+        )
+        try:
+            with (
+                patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+                patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            ):
+                resp = client.delete("/api/videos/test-purge-fail?purge_remote=true")
+        finally:
+            app.dependency_overrides.pop(get_yt_service_builder, None)
 
         assert resp.status_code == 502, resp.text
         # Catalog row must NOT have been deleted.
@@ -495,10 +535,17 @@ class TestDefaultDeleteStillCatalogOnly:
         self, client, override_settings
     ):
         """DELETE without purge_remote (default=false) must NOT call delete_youtube_video.
-        Regression guard: the new param must not change existing catalog-only behavior."""
+        Regression guard: the new param must not change existing catalog-only behavior.
+
+        Uses app.dependency_overrides[get_yt_service_builder] to track builder
+        calls without patching our own module symbols.
+        Per KB § PATTERNS/backend/di-test-seam.md (Class-B).
+        """
         override_settings(**_YT_COMPLETE)
 
         from noctusai_lib.testing import MockSupabaseResponse
+        from app.main import app
+        from app.modules.youtube.routers.videos import get_yt_service_builder
 
         _row_id = {"id": "00000000-0000-0000-0000-000000000012"}
 
@@ -518,15 +565,23 @@ class TestDefaultDeleteStillCatalogOnly:
         mock_schema_obj.table = MagicMock(return_value=mock_chain)
         mock_sb.schema = MagicMock(return_value=mock_schema_obj)
 
-        with (
-            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-            patch(
-                "app.modules.youtube.routers.videos.build_youtube_service_for_org"
-            ) as mock_build,
-        ):
-            resp = client.delete("/api/videos/test-default-del")
+        # Track builder calls via the DI seam.
+        builder_call_count = [0]
+
+        def _tracking_builder(*a, **kw):
+            builder_call_count[0] += 1
+            return MagicMock()
+
+        app.dependency_overrides[get_yt_service_builder] = lambda: _tracking_builder
+        try:
+            with (
+                patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+                patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            ):
+                resp = client.delete("/api/videos/test-default-del")
+        finally:
+            app.dependency_overrides.pop(get_yt_service_builder, None)
 
         assert resp.status_code == 204, resp.text
         # build_youtube_service_for_org must NOT be called for default delete.
-        mock_build.assert_not_called()
+        assert builder_call_count[0] == 0, "YouTube service builder must NOT be called for catalog-only DELETE"

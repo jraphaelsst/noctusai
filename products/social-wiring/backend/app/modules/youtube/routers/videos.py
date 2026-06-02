@@ -48,6 +48,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
+def get_yt_service_builder():
+    """DI seam for the YouTube service builder used by PATCH + DELETE endpoints.
+
+    Returns the real ``build_youtube_service_for_org`` by default. Tests
+    override via ``app.dependency_overrides[get_yt_service_builder]`` to
+    inject a fake without patching our own module symbols.
+    Per KB § PATTERNS/backend/di-test-seam.md (Class-B, service DI).
+    """
+    return build_youtube_service_for_org
+
+
 # ─── Helpers ───────────────────────────────────────────────────────────
 # (`coerce_org_uuid` lifted to app.dependencies at the N=3 recurrence
 # trigger — see its docstring there.)
@@ -313,6 +324,7 @@ def update_video(
     account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
+    yt_builder=Depends(get_yt_service_builder),
 ) -> VideoOut:
     """Write-through metadata update to YouTube + catalog mirror.
 
@@ -387,11 +399,11 @@ def update_video(
         row = row_resp.data[0] if row_resp.data else {}
         return _row_to_out(row, kind=catalog_kind)
 
-    # 3. Write-through to YouTube via the service layer.
+    # 3. Write-through to YouTube via the service layer (via DI seam or real builder).
     from app.modules.youtube.services.youtube import YouTubeNotConnected, YouTubeServiceError
 
     try:
-        yt_svc = build_youtube_service_for_org(admin, cfg, account_id=account_id)
+        yt_svc = yt_builder(admin, cfg, account_id=account_id)
     except EncryptionNotConfigured as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -470,6 +482,7 @@ def delete_video(
     account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
+    yt_builder=Depends(get_yt_service_builder),
 ):
     """Delete a video from the catalog, with an opt-in real-YouTube purge.
 
@@ -533,7 +546,7 @@ def delete_video(
         from app.modules.youtube.services.youtube import YouTubeNotConnected, YouTubeServiceError
 
         try:
-            yt_svc = build_youtube_service_for_org(admin, cfg, account_id=account_id)
+            yt_svc = yt_builder(admin, cfg, account_id=account_id)
         except EncryptionNotConfigured as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
