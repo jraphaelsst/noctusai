@@ -192,19 +192,39 @@ class TestSqlTemplatesIntegration:
         # _scaffold_and_read_migration runs the full assertion suite for us.
         self._scaffold_and_read_migration(tmp_path)
 
-    def test_invitations_rls_policy_matches_helper(self, tmp_path):
+    def test_invitations_rls_policy_uses_current_org_id(self, tmp_path):
+        """Scaffolded invitations policy MUST call current_org_id(), NOT jwt().
+
+        The old auth.jwt() ->> 'org_id' top-level claim is always NULL in
+        Supabase (org_id is nested under user_metadata). The correct form is
+        public.current_org_id(), a SECURITY DEFINER function reading from
+        noctus_users. See memory/feedback_rls_never_key_on_user_metadata.md.
+
+        Comments in the migration may reference auth.jwt() for documentation;
+        only actual SQL (non-comment) lines are checked.
+        """
         content = self._scaffold_and_read_migration(tmp_path)
         expected_policy = rls_subquery_policy(
             self.SCAFFOLD_SCHEMA,
             "invitations",
             "invitations_select_own_org",
             "SELECT",
-            using="org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid",
+            using="org_id = current_org_id()",
         )
         assert _normalize_ws(expected_policy) in _normalize_ws(content), (
-            f"Scaffolded RLS policy doesn't match `rls_subquery_policy` output.\n"
+            f"Scaffolded RLS policy must use current_org_id(), not jwt() claim.\n"
             f"Expected (whitespace-normalized): {_normalize_ws(expected_policy)!r}\n"
             f"Migration head:\n{content[:1200]}"
+        )
+        # Assert the old broken pattern is absent from actual SQL (comments excluded)
+        sql_no_comments = "\n".join(
+            line[:line.find("--")] if "--" in line else line
+            for line in content.splitlines()
+        )
+        assert "auth.jwt()" not in sql_no_comments, (
+            "Scaffolded migration SQL (non-comment) must NOT contain auth.jwt() "
+            "— use current_org_id() instead. "
+            "See memory/feedback_rls_never_key_on_user_metadata.md"
         )
 
     def test_schema_placeholder_substitution(self, tmp_path):

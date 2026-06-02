@@ -7,6 +7,13 @@
 -- folded here: 006 (product_code) + 008 (thumbnail_url) are columns on
 -- upload_jobs; the status_pagina seed inserts are consolidated.
 --
+-- RLS policy shape (2026-06-02 update, codified in 011_rls_current_org_id.sql):
+-- All authenticated-read policies use public.current_org_id() which
+-- reads org_id from public.noctus_users via SECURITY DEFINER. The old
+-- pattern ((SELECT auth.jwt()) ->> 'org_id')::uuid was always NULL
+-- (org_id is nested under user_metadata, not at JWT top-level) and
+-- was replaced. See memory/feedback_rls_never_key_on_user_metadata.md.
+--
 -- ┌─ MODULE TABLE LAYOUT (for W2.2 / W2.3) ────────────────────────────┐
 -- │ W2.1 media_wiring  → status_pagina, invitations, credentials,      │
 -- │                       upload_jobs, video_cache,                    │
@@ -30,6 +37,28 @@ GRANT ALL ON ALL TABLES IN SCHEMA social_wiring TO anon, authenticated, service_
 GRANT ALL ON ALL SEQUENCES IN SCHEMA social_wiring TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+
+
+-- ============================================================================
+-- current_org_id() — SECURITY DEFINER org resolver (prerequisite for RLS)
+--
+-- Must be declared before any RLS policy that calls it. A SECURITY DEFINER
+-- function reading from the trusted noctus_users table is the ONLY correct
+-- approach for org-scoped RLS:
+--   - auth.jwt() ->> 'org_id' is always NULL (org_id is nested in
+--     user_metadata, not at the top-level JWT claim) → silently strips rows.
+--   - auth.jwt()->'user_metadata'->>'org_id' is user-editable → privilege
+--     escalation (Supabase advisor: rls_references_user_metadata ERROR).
+-- This function resolves the caller's org from the authoritative DB table.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.current_org_id()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
+$f$;
 
 
 -- ============================================================================
@@ -74,7 +103,7 @@ ALTER TABLE social_wiring.invitations ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "invitations_select_own_org" ON social_wiring.invitations
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE INDEX idx_social_wiring_invitations_org ON social_wiring.invitations(org_id);
 CREATE INDEX idx_social_wiring_invitations_token ON social_wiring.invitations(token);
@@ -103,7 +132,7 @@ ALTER TABLE social_wiring.credentials ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "credentials_select_own_org" ON social_wiring.credentials
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "credentials_write_service_role" ON social_wiring.credentials
     FOR ALL TO service_role
@@ -163,16 +192,16 @@ ALTER TABLE social_wiring.upload_jobs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "upload_jobs_select_own_org" ON social_wiring.upload_jobs
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "upload_jobs_insert_own_org" ON social_wiring.upload_jobs
     FOR INSERT TO authenticated
-    WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    WITH CHECK (org_id = current_org_id());
 
 CREATE POLICY "upload_jobs_update_own_org" ON social_wiring.upload_jobs
     FOR UPDATE TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid)
-    WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id())
+    WITH CHECK (org_id = current_org_id());
 
 CREATE POLICY "upload_jobs_service_role" ON social_wiring.upload_jobs
     FOR ALL TO service_role
@@ -220,14 +249,14 @@ ALTER TABLE social_wiring.api_tokens ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "api_tokens_select_own_org" ON social_wiring.api_tokens
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 -- INSERT + UPDATE limited to owner/admin org_role (matches the platform's
 -- convention for sensitive config; org_role lives in noctus_users).
 CREATE POLICY "api_tokens_insert_own_org_admin" ON social_wiring.api_tokens
     FOR INSERT TO authenticated
     WITH CHECK (
-        org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid
+        org_id = current_org_id()
         AND EXISTS (
             SELECT 1 FROM public.noctus_users nu
             WHERE nu.id = (SELECT auth.uid())
@@ -239,7 +268,7 @@ CREATE POLICY "api_tokens_insert_own_org_admin" ON social_wiring.api_tokens
 CREATE POLICY "api_tokens_update_own_org_admin" ON social_wiring.api_tokens
     FOR UPDATE TO authenticated
     USING (
-        org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid
+        org_id = current_org_id()
         AND EXISTS (
             SELECT 1 FROM public.noctus_users nu
             WHERE nu.id = (SELECT auth.uid())
@@ -286,7 +315,7 @@ ALTER TABLE social_wiring.video_cache ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "video_cache_select_own_org" ON social_wiring.video_cache
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "video_cache_service_role" ON social_wiring.video_cache
     FOR ALL TO service_role
@@ -324,13 +353,13 @@ ALTER TABLE social_wiring.notification_recipients ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "notification_recipients_select_own_org"
     ON social_wiring.notification_recipients
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "notification_recipients_write_own_org"
     ON social_wiring.notification_recipients
     FOR ALL TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid)
-    WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id())
+    WITH CHECK (org_id = current_org_id());
 
 CREATE INDEX idx_sw_notification_recipients_org
     ON social_wiring.notification_recipients(org_id);
@@ -356,7 +385,7 @@ ALTER TABLE social_wiring.notification_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "notification_log_select_own_org"
     ON social_wiring.notification_log
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "notification_log_write_service_role"
     ON social_wiring.notification_log
@@ -398,7 +427,7 @@ ALTER TABLE social_wiring.conversation_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "conversation_messages_select_own_org"
     ON social_wiring.conversation_messages
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "conversation_messages_write_service_role"
     ON social_wiring.conversation_messages
@@ -438,7 +467,7 @@ CREATE TABLE social_wiring.contacts (
 );
 ALTER TABLE social_wiring.contacts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_contacts_select_own_org" ON social_wiring.contacts
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_contacts_write_service_role" ON social_wiring.contacts
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_contacts_org_email ON social_wiring.contacts(org_id, email);
@@ -457,7 +486,7 @@ CREATE TABLE social_wiring.contact_lists (
 );
 ALTER TABLE social_wiring.contact_lists ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_lists_select_own_org" ON social_wiring.contact_lists
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_lists_write_service_role" ON social_wiring.contact_lists
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -472,7 +501,7 @@ ALTER TABLE social_wiring.contact_list_members ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_list_members_select_via_list" ON social_wiring.contact_list_members
     FOR SELECT TO authenticated USING (list_id IN (
         SELECT id FROM social_wiring.contact_lists
-        WHERE org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid));
+        WHERE org_id = current_org_id()));
 CREATE POLICY "em_list_members_write_service_role" ON social_wiring.contact_list_members
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -489,7 +518,7 @@ CREATE TABLE social_wiring.templates (
 );
 ALTER TABLE social_wiring.templates ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_templates_select_own_org" ON social_wiring.templates
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_templates_write_service_role" ON social_wiring.templates
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -509,7 +538,7 @@ CREATE TABLE social_wiring.campaigns (
 );
 ALTER TABLE social_wiring.campaigns ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_campaigns_select_own_org" ON social_wiring.campaigns
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_campaigns_write_service_role" ON social_wiring.campaigns
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -526,7 +555,7 @@ CREATE TABLE social_wiring.automations (
 );
 ALTER TABLE social_wiring.automations ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_automations_select_own_org" ON social_wiring.automations
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_automations_write_service_role" ON social_wiring.automations
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -542,7 +571,7 @@ ALTER TABLE social_wiring.automation_steps ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_steps_select_via_automation" ON social_wiring.automation_steps
     FOR SELECT TO authenticated USING (automation_id IN (
         SELECT id FROM social_wiring.automations
-        WHERE org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid));
+        WHERE org_id = current_org_id()));
 CREATE POLICY "em_steps_write_service_role" ON social_wiring.automation_steps
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -561,7 +590,7 @@ ALTER TABLE social_wiring.automation_enrollments ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_enrollments_select_via_automation" ON social_wiring.automation_enrollments
     FOR SELECT TO authenticated USING (automation_id IN (
         SELECT id FROM social_wiring.automations
-        WHERE org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid));
+        WHERE org_id = current_org_id()));
 CREATE POLICY "em_enrollments_write_service_role" ON social_wiring.automation_enrollments
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_enrollments_next ON social_wiring.automation_enrollments(next_action_at) WHERE status = 'active';
@@ -582,7 +611,7 @@ CREATE TABLE social_wiring.send_logs (
 );
 ALTER TABLE social_wiring.send_logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_send_logs_select_own_org" ON social_wiring.send_logs
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_send_logs_write_service_role" ON social_wiring.send_logs
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_send_logs_campaign ON social_wiring.send_logs(campaign_id);
@@ -600,7 +629,7 @@ ALTER TABLE social_wiring.link_clicks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_clicks_select_via_send_log" ON social_wiring.link_clicks
     FOR SELECT TO authenticated USING (send_log_id IN (
         SELECT id FROM social_wiring.send_logs
-        WHERE org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid));
+        WHERE org_id = current_org_id()));
 CREATE POLICY "em_clicks_write_service_role" ON social_wiring.link_clicks
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -615,7 +644,7 @@ CREATE TABLE social_wiring.unsubscribes (
 );
 ALTER TABLE social_wiring.unsubscribes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_unsubscribes_select_own_org" ON social_wiring.unsubscribes
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_unsubscribes_write_service_role" ON social_wiring.unsubscribes
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -630,7 +659,7 @@ CREATE TABLE social_wiring.sender_domains (
 );
 ALTER TABLE social_wiring.sender_domains ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "em_domains_select_own_org" ON social_wiring.sender_domains
-    FOR SELECT TO authenticated USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    FOR SELECT TO authenticated USING (org_id = current_org_id());
 CREATE POLICY "em_domains_write_service_role" ON social_wiring.sender_domains
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -679,7 +708,7 @@ CREATE TABLE social_wiring.sched_users (
 ALTER TABLE social_wiring.sched_users ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_users_select_own_org" ON social_wiring.sched_users
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_users_write_service_role" ON social_wiring.sched_users
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_users_org ON social_wiring.sched_users(org_id);
@@ -705,7 +734,7 @@ CREATE TABLE social_wiring.sched_condominiums (
 ALTER TABLE social_wiring.sched_condominiums ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_condominiums_select_own_org" ON social_wiring.sched_condominiums
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_condominiums_write_service_role" ON social_wiring.sched_condominiums
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_condominiums_org ON social_wiring.sched_condominiums(org_id);
@@ -728,7 +757,7 @@ CREATE TABLE social_wiring.sched_properties (
 ALTER TABLE social_wiring.sched_properties ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_properties_select_own_org" ON social_wiring.sched_properties
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_properties_write_service_role" ON social_wiring.sched_properties
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_properties_org ON social_wiring.sched_properties(org_id);
@@ -752,7 +781,7 @@ CREATE TABLE social_wiring.sched_services (
 ALTER TABLE social_wiring.sched_services ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_services_select_own_org" ON social_wiring.sched_services
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_services_write_service_role" ON social_wiring.sched_services
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_services_org ON social_wiring.sched_services(org_id);
@@ -770,7 +799,7 @@ CREATE TABLE social_wiring.sched_crew_skills (
 ALTER TABLE social_wiring.sched_crew_skills ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_crew_skills_select_own_org" ON social_wiring.sched_crew_skills
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_crew_skills_write_service_role" ON social_wiring.sched_crew_skills
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_crew_skills_user ON social_wiring.sched_crew_skills(user_id);
@@ -794,7 +823,7 @@ CREATE TABLE social_wiring.sched_appointment_requests (
 ALTER TABLE social_wiring.sched_appointment_requests ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_appt_requests_select_own_org" ON social_wiring.sched_appointment_requests
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_appt_requests_write_service_role" ON social_wiring.sched_appointment_requests
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_appt_req_org ON social_wiring.sched_appointment_requests(org_id);
@@ -814,7 +843,7 @@ CREATE TABLE social_wiring.sched_appointment_request_services (
 ALTER TABLE social_wiring.sched_appointment_request_services ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_appt_req_svc_select_own_org" ON social_wiring.sched_appointment_request_services
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_appt_req_svc_write_service_role" ON social_wiring.sched_appointment_request_services
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_appt_req_svc_req
@@ -836,7 +865,7 @@ CREATE TABLE social_wiring.sched_route_groups (
 ALTER TABLE social_wiring.sched_route_groups ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_route_groups_select_own_org" ON social_wiring.sched_route_groups
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_route_groups_write_service_role" ON social_wiring.sched_route_groups
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_route_groups_org ON social_wiring.sched_route_groups(org_id);
@@ -872,7 +901,7 @@ CREATE TABLE social_wiring.sched_appointments (
 ALTER TABLE social_wiring.sched_appointments ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_appointments_select_own_org" ON social_wiring.sched_appointments
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_appointments_write_service_role" ON social_wiring.sched_appointments
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_appointments_org ON social_wiring.sched_appointments(org_id);
@@ -900,7 +929,7 @@ CREATE TABLE social_wiring.sched_pending_chat_identities (
 ALTER TABLE social_wiring.sched_pending_chat_identities ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_pending_chat_select_own_org" ON social_wiring.sched_pending_chat_identities
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_pending_chat_write_service_role" ON social_wiring.sched_pending_chat_identities
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX idx_sw_sched_pending_chat_org ON social_wiring.sched_pending_chat_identities(org_id);
@@ -928,7 +957,7 @@ CREATE TABLE social_wiring.sched_tool_call_audits (
 ALTER TABLE social_wiring.sched_tool_call_audits ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sched_tool_call_audits_select_own_org" ON social_wiring.sched_tool_call_audits
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "sched_tool_call_audits_write_service_role" ON social_wiring.sched_tool_call_audits
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX ix_sw_sched_tca_org ON social_wiring.sched_tool_call_audits(org_id);
@@ -965,7 +994,7 @@ CREATE TABLE social_wiring.mc_brand_kits (
 ALTER TABLE social_wiring.mc_brand_kits ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "mc_brand_kits_select_own_org" ON social_wiring.mc_brand_kits
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "service_role_bypass" ON social_wiring.mc_brand_kits
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX ix_sw_mc_brand_kits_org ON social_wiring.mc_brand_kits(org_id);
@@ -989,7 +1018,7 @@ CREATE TABLE social_wiring.mc_brand_references (
 ALTER TABLE social_wiring.mc_brand_references ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "mc_brand_references_select_own_org" ON social_wiring.mc_brand_references
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "service_role_bypass" ON social_wiring.mc_brand_references
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX ix_sw_mc_brand_refs_kit ON social_wiring.mc_brand_references(brand_kit_id);
@@ -1023,7 +1052,7 @@ CREATE TABLE social_wiring.mc_posts (
 ALTER TABLE social_wiring.mc_posts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "mc_posts_select_own_org" ON social_wiring.mc_posts
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "service_role_bypass" ON social_wiring.mc_posts
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX ix_sw_mc_posts_org ON social_wiring.mc_posts(org_id);
@@ -1059,7 +1088,7 @@ CREATE TABLE social_wiring.mc_post_slides (
 ALTER TABLE social_wiring.mc_post_slides ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "mc_post_slides_select_own_org" ON social_wiring.mc_post_slides
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 CREATE POLICY "service_role_bypass" ON social_wiring.mc_post_slides
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE INDEX ix_sw_mc_post_slides_post ON social_wiring.mc_post_slides(post_id);
@@ -1123,7 +1152,7 @@ ALTER TABLE social_wiring.youtube_videos ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "youtube_videos_select_own_org" ON social_wiring.youtube_videos
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "youtube_videos_service_role" ON social_wiring.youtube_videos
     FOR ALL TO service_role
@@ -1170,7 +1199,7 @@ ALTER TABLE social_wiring.youtube_shorts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "youtube_shorts_select_own_org" ON social_wiring.youtube_shorts
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "youtube_shorts_service_role" ON social_wiring.youtube_shorts
     FOR ALL TO service_role
@@ -1199,7 +1228,7 @@ ALTER TABLE social_wiring.youtube_channel_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "youtube_channel_snapshots_select_own_org"
     ON social_wiring.youtube_channel_snapshots
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "youtube_channel_snapshots_service_role"
     ON social_wiring.youtube_channel_snapshots
@@ -1228,7 +1257,7 @@ ALTER TABLE social_wiring.youtube_video_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "youtube_video_snapshots_select_own_org"
     ON social_wiring.youtube_video_snapshots
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "youtube_video_snapshots_service_role"
     ON social_wiring.youtube_video_snapshots

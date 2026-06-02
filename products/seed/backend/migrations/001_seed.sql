@@ -21,6 +21,26 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON SEQUENCES TO anon, authenti
 
 
 -- ============================================================================
+-- current_org_id() — SECURITY DEFINER org resolver (prerequisite for RLS)
+--
+-- Must be declared before any RLS policy that calls it. Using
+-- auth.jwt() ->> 'org_id' (top-level) is always NULL in Supabase because
+-- org_id lives under user_metadata. Using user_metadata directly is a
+-- privilege-escalation hole (user-editable, Supabase advisor ERROR).
+-- This SECURITY DEFINER function reads from the trusted noctus_users table.
+-- Codified by 011_rls_current_org_id.sql on 2026-06-02.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.current_org_id()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
+$f$;
+
+
+-- ============================================================================
 -- Page status (feature flags)
 -- ============================================================================
 
@@ -59,12 +79,13 @@ CREATE TABLE seed.invitations (
 
 ALTER TABLE seed.invitations ENABLE ROW LEVEL SECURITY;
 
--- Matches `rls_subquery_policy(seed, "invitations", "invitations_select_own_org",
---   "SELECT", using="org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid")`
--- output (whitespace-normalized). The scaffold's regression test enforces this.
+-- Uses public.current_org_id() — the SECURITY DEFINER trusted-table resolver.
+-- NOTE: the scaffold regression test in test_scaffold.py was updated in the
+-- same commit (011_rls_current_org_id) to assert current_org_id() instead
+-- of the old jwt()-based form.
 CREATE POLICY "invitations_select_own_org" ON seed.invitations
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE INDEX idx_seed_invitations_org ON seed.invitations(org_id);
 CREATE INDEX idx_seed_invitations_token ON seed.invitations(token);
