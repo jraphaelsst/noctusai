@@ -25,12 +25,12 @@ def test_standard_routers_is_empty():
     assert register().standard_routers == ()
 
 
-def test_register_carries_five_routers():
-    """videos · upload · dashboard · youtube-tab-settings · oauth-callback."""
+def test_register_carries_six_routers():
+    """videos · upload · dashboard · youtube-tab-settings · oauth-callback · snapshot."""
     from app.modules.youtube import register
 
     reg = register()
-    assert len(reg.routers) == 5
+    assert len(reg.routers) == 6
 
     prefixes = sorted(getattr(r, "prefix", "") for r in reg.routers)
     assert prefixes == [
@@ -38,5 +38,6 @@ def test_register_carries_five_routers():
         "/api/settings",
         "/api/videos",
         "/api/videos/upload",
+        "/api/youtube",        # snapshot/trend router
         "/api/youtube/oauth",
     ]

@@ -399,26 +399,28 @@ class YouTubeService:
         self,
         *,
         org_id: UUID,
+        account_id: UUID | None = None,
         page_token: str | None = None,
         max_results: int = 50,
     ) -> tuple[list[VideoSummary], str | None]:
         """List videos owned by the connected channel + their stats.
 
-        Quota cost: 101 units / page (100 search.list?forMine + 1
-        videos.list). Returns (videos, next_page_token); next is None
+        Quota cost: ~3 units / page (uploads-playlist path — includes
+        private + unlisted). Returns (videos, next_page_token); next is None
         on the last page. Delegates to the seed
-        ``YoutubeClient.list_owned_videos`` (Phase 6a-youtube). The
-        seed emits ``VideoFull`` (rich projection — thumbnail_url,
-        duration_iso, privacy_status, tags, category_id,
-        like/comment_count); this wrapper translates to the product's
-        ``VideoSummary`` view-model.
+        ``YoutubeClient.list_owned_videos_via_uploads`` (Phase 3 fix — replaces
+        the old ``list_owned_videos`` / search.list?forMine path that returned
+        ZERO for private libraries).
+
+        ``account_id`` (optional) pins to a specific channel; ``None`` resolves
+        the org's default account.
         """
         creds = self._fresh_credentials(org_id)
         client = self._youtube_client(creds)
 
         try:
             result = _run_sync(
-                client.list_owned_videos(
+                client.list_owned_videos_via_uploads(
                     page_token=page_token, page_size=max_results
                 )
             )
@@ -429,6 +431,38 @@ class YouTubeService:
             [_video_full_to_summary(v) for v in result.items],
             result.next_page_token,
         )
+
+    def list_all_videos_full(
+        self,
+        *,
+        org_id: UUID,
+        account_id: UUID | None = None,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> tuple[list[VideoFull], str | None]:
+        """List ALL owned videos with the full VideoFull projection.
+
+        Quota cost: ~3 units / page (uploads-playlist path — includes
+        private + unlisted). Returns (videos, next_page_token); next is None
+        on the last page. Used by SnapshotService for shorts classification +
+        catalog upserts.
+
+        ``account_id`` (optional) pins to a specific channel; ``None`` resolves
+        the org's default account.
+        """
+        creds = self._fresh_credentials(org_id)
+        client = self._youtube_client(creds)
+
+        try:
+            result = _run_sync(
+                client.list_owned_videos_via_uploads(
+                    page_token=page_token, page_size=page_size
+                )
+            )
+        except HttpError as exc:
+            raise YouTubeServiceError(_format_http_error(exc)) from exc
+
+        return result.items, result.next_page_token
 
     def get_video_stats(
         self, *, org_id: UUID, video_ids: list[str]

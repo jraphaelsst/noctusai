@@ -19,6 +19,7 @@ class KpiStats(BaseModel):
     total_views: int = 0
     total_likes: int = 0
     total_comments: int = 0
+    subscriber_count: int = 0
     last_synced_at: datetime | None = None
     channel_id: str | None = None
     channel_title: str | None = None

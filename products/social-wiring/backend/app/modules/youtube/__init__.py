@@ -43,15 +43,22 @@ def register() -> Any:
     Imported and invoked by the ``main.py`` assembly loop. ``app.main``
     is already imported by the time the loop runs, so importing
     ``ModuleRegistration`` here is not circular.
+
+    Also calls ``youtube.scheduler.configure()`` to register the daily
+    snapshot job on the seed scheduler (same pattern as email_marketing).
     """
     from app.modules.youtube.routers import (
         dashboard,
         settings as yt_settings,
         upload,
         videos,
+        snapshot as yt_snapshot,
     )
-
+    from app.modules.youtube.scheduler import configure as _configure_scheduler
     from app.main import ModuleRegistration
+
+    # Register scheduler jobs before the lifespan starts the scheduler.
+    _configure_scheduler()
 
     return ModuleRegistration(
         routers=[
@@ -60,6 +67,7 @@ def register() -> Any:
             dashboard.router,
             yt_settings.router,
             yt_settings.oauth_router,
+            yt_snapshot.router,
         ],
         # No extra standard routers — the W2.1 base set (health /
         # notificacoes / team) covers everything the YouTube surface

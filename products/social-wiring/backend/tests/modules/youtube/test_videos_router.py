@@ -16,25 +16,30 @@ _YT_COMPLETE = dict(
 
 
 class TestListConfigGaps:
-    def test_missing_encryption_key_returns_503(self, client, override_settings):
+    def test_list_no_longer_requires_youtube_creds(self, client, override_settings):
+        """GET /api/videos now reads directly from youtube_videos (RLS-bounded Supabase);
+        it does NOT instantiate a YouTubeService — so missing encryption_key / YouTube
+        creds no longer produce 503 on the list path. The 503 now fires only on sync.
+        Regression-guard: assert 200 (empty catalog) not 503."""
         override_settings(
             encryption_key="",
             youtube_client_id="cid",
             youtube_client_secret="csecret",
         )
         resp = client.get("/api/videos")
-        assert resp.status_code == 503, resp.text
-        assert "encryption_key" in resp.text.lower()
+        # 200 with empty items (mock Supabase returns no rows)
+        assert resp.status_code == 200, resp.text
 
-    def test_missing_youtube_creds_returns_503(self, client, override_settings):
+    def test_sync_missing_encryption_key_returns_503(self, client, override_settings):
+        """POST /api/videos/sync resolves account via integration_account_service,
+        which requires an encryption_key — 503 on missing key."""
         override_settings(
-            encryption_key=_ENC_KEY,
-            youtube_client_id="",
-            youtube_client_secret="",
+            encryption_key="",
+            youtube_client_id="cid",
+            youtube_client_secret="csecret",
         )
-        resp = client.get("/api/videos")
+        resp = client.post("/api/videos/sync")
         assert resp.status_code == 503, resp.text
-        assert "youtube_client" in resp.text.lower()
 
 
 class TestListLimitValidation:

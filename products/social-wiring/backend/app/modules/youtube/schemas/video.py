@@ -9,16 +9,21 @@ data than necessary.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 PrivacyStatus = Literal["public", "unlisted", "private"]
+VideoKind = Literal["video", "short"]
 
 
 class VideoOut(BaseModel):
-    """Outbound shape for the Videos page list + detail."""
+    """Outbound shape for the Videos page list + detail.
+
+    When served from ``youtube_videos`` the ``kind`` is ``"video"`` and
+    ``is_short`` / ``detected_via`` are None. When served from
+    ``youtube_shorts`` those fields are populated."""
 
     id: UUID
     youtube_video_id: str
@@ -36,6 +41,10 @@ class VideoOut(BaseModel):
     category_id: str | None = None
     uploaded_via_app: bool = False
     synced_at: datetime
+    # Shorts-only fields (None for regular videos):
+    kind: VideoKind = "video"
+    is_short: Optional[bool] = None
+    detected_via: Optional[str] = None
 
     @property
     def youtube_url(self) -> str:

@@ -92,7 +92,7 @@ def get_stats(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     service = _build_dashboard_service(token, cfg, account_id=account_id)
-    return KpiStats(**service.kpi_stats(org_id=org_id))
+    return KpiStats(**service.kpi_stats(org_id=org_id, account_id=account_id))
 
 
 @router.get("/top-videos", response_model=list[TopVideoItem])
@@ -112,7 +112,7 @@ def get_top_videos(
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     service = _build_dashboard_service(token, cfg, account_id=account_id)
-    rows = service.top_videos(org_id=org_id, limit=limit)
+    rows = service.top_videos(org_id=org_id, limit=limit, account_id=account_id)
     return [TopVideoItem(**_coerce_row(row)) for row in rows]
 
 
