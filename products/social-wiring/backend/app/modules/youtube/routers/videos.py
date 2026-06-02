@@ -456,30 +456,44 @@ def update_video(
     return _row_to_out(updated_row, kind=catalog_kind)
 
 
-# ─── DELETE /api/videos/{youtube_video_id} — catalog-only removal ──────
+# ─── DELETE /api/videos/{youtube_video_id} ─────────────────────────────
 @router.delete("/{youtube_video_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_video(
     youtube_video_id: str,
+    purge_remote: bool = Query(default=False, description=(
+        "When False (default): catalog-only removal — the real YouTube video "
+        "is NOT affected and can be restored via POST /api/videos/sync. "
+        "When True: PERMANENTLY deletes the video from YouTube (irreversible, "
+        "cannot be undone) and then removes the catalog row. Requires the "
+        "YouTube account to be connected."
+    )),
     account_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
 ):
-    """Catalog-only delete (re-syncable). Does NOT delete the real YouTube video.
+    """Delete a video from the catalog, with an opt-in real-YouTube purge.
 
+    **Default (``purge_remote=False``) — catalog-only removal (re-syncable):**
     Removes the row from ``youtube_videos`` (kind=video) or
-    ``youtube_shorts`` (kind=short) — whichever contains the video. The
-    ``youtube_video_snapshots`` history is NOT touched so trend data is
-    preserved. The deleted row can be recovered by running
-    ``POST /api/videos/sync``.
+    ``youtube_shorts`` (kind=short). The ``youtube_video_snapshots``
+    history is NOT touched so trend data is preserved. The catalog row
+    can be recovered by running ``POST /api/videos/sync``.
 
-    **IMPORTANT:** This endpoint intentionally does NOT call the YouTube
-    Data API delete. Deleting a YouTube video is irreversible and must
-    remain a deliberate operator action via the YouTube Studio UI.
-    This is a local catalog management operation only.
+    **Opt-in (``purge_remote=True``) — PERMANENT YouTube deletion:**
+    Calls ``videos.delete`` on the YouTube Data API FIRST (permanently
+    removes the video from the channel, irreversible — no undo, no
+    recycle bin). Only if that succeeds is the catalog row removed.
+    If the YouTube API call fails the catalog row is left intact and
+    502 is returned — the video is never orphaned in a half-deleted
+    state.
+
+    Error shape for ``purge_remote=True``:
+    - 404: video not in catalog.
+    - 409: YouTube account not connected (``YouTubeNotConnected``).
+    - 502: YouTube API failure — catalog row preserved, nothing deleted.
+    - 503: encryption-key gap (``EncryptionNotConfigured``).
 
     Returns 204 No Content on success.
-    Returns 404 when the video is not found in the catalog (already
-    removed or never synced).
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -514,6 +528,36 @@ def delete_video(
             ),
         )
 
+    # purge_remote=True: call YouTube Data API FIRST; only delete catalog on success.
+    if purge_remote:
+        from app.modules.youtube.services.youtube import YouTubeNotConnected, YouTubeServiceError
+
+        try:
+            yt_svc = build_youtube_service_for_org(admin, cfg, account_id=account_id)
+        except EncryptionNotConfigured as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        try:
+            yt_svc.delete_youtube_video(
+                org_id=org_id,
+                video_id=youtube_video_id,
+            )
+        except YouTubeNotConnected as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{exc} Connect via Settings → YouTube before deleting.",
+            ) from exc
+        except YouTubeServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"YouTube API failed: {exc}. Catalog row preserved — nothing was deleted.",
+            ) from exc
+
+    # Remove the catalog row (reached only on catalog-only path, OR after
+    # successful remote delete above).
     (
         admin
         .schema(_SCHEMA)

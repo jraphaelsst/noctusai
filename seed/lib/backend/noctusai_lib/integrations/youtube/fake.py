@@ -89,6 +89,10 @@ class FakeYoutubeClient:
         "OAuth account has no associated YT channel" branch — the
         method raises :class:`ValueError` to match the Real adapter."""
         self.owned_videos: list[VideoFull] = list(owned_videos or [])
+        self.deleted_video_ids: list[str] = []
+        """Every :meth:`delete_video` call appends the video id here, in
+        call order — tests assert against it without inspecting state
+        directly."""
         """Seeded OAuth-owned video corpus for
         :meth:`list_owned_videos`. Paged in insertion order — first
         :attr:`PAGE_SIZE` items are page 1. Tests append in the order
@@ -389,6 +393,27 @@ class FakeYoutubeClient:
             f"videos.list returned no items for video_id={video_id!r} — "
             "video not found in FakeYoutubeClient.owned_videos."
         )
+
+    async def delete_video(self, video_id: str) -> None:
+        """~50 quota units (mirrors ``videos.delete``).
+
+        Removes the video from :attr:`owned_videos` (the ``VideoFull``
+        corpus) AND from :attr:`videos` (the lean ``Video`` dict) when
+        present in either. Mirrors the Real adapter's irreversible-delete
+        semantics — after this call any ``get_video`` / ``get_video_full``
+        call for the same id will return ``None``.
+
+        Does NOT raise when the video is absent (YouTube's own
+        ``videos.delete`` also silently succeeds when the video is already
+        gone — idempotent from the caller's perspective).
+
+        ``deleted_video_ids`` is a public list appended to on each call so
+        tests can assert the exact ids that were deleted without needing to
+        inspect internal state."""
+        self._charge(50)
+        self.deleted_video_ids.append(video_id)
+        self.owned_videos = [v for v in self.owned_videos if v.id != video_id]
+        self.videos = {k: v for k, v in self.videos.items() if k != video_id}
 
     async def get_processing_status(self, video_id: str) -> ProcessingStatus:
         """1 quota unit (mirrors `videos.list?part=status,processingDetails`).

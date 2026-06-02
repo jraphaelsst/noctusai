@@ -10,14 +10,17 @@
  *     (reuses local ViewsChart, adapted for snapshot points vs cumulative series)
  *   - Empty trend state: "Sem histórico ainda — sincronize para acumular snapshots."
  *   - Edit form (title / description / visibility) → PATCH /api/videos/{id}
- *   - Delete button → confirmation dialog → DELETE /api/videos/{id}
+ *   - "Remover do catálogo" → confirmation dialog → DELETE /api/videos/{id}
  *     (catalog-only removal — does NOT delete the real YouTube video)
+ *   - "Excluir permanentemente do YouTube" → two-step typed confirm (irreversible)
+ *     → DELETE /api/videos/{id}?purge_remote=true
  *
  * Opens when video row is clicked; closed via onClose().
  * Fetches trend data via useVideoTrend — data flows only when videoId is set.
  */
 import { useState } from "react";
 import {
+  AlertTriangle,
   Edit2,
   ExternalLink,
   Eye,
@@ -170,6 +173,10 @@ export function VideoDetailModal({
     video.privacy_status ?? "private",
   );
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purgeConfirmText, setPurgeConfirmText] = useState("");
+
+  const PURGE_CONFIRM_PHRASE = "EXCLUIR PERMANENTEMENTE";
 
   const { mutate: updateVideo, isPending: isUpdating } = useUpdateVideo({
     onSuccess: (updated) => {
@@ -181,6 +188,7 @@ export function VideoDetailModal({
   const { mutate: deleteVideo, isPending: isDeleting } = useDeleteVideo({
     onSuccess: () => {
       setDeleteConfirmOpen(false);
+      setPurgeConfirmOpen(false);
       onClose();
       onDeleted?.();
     },
@@ -222,6 +230,7 @@ export function VideoDetailModal({
               setEditPrivacy(video.privacy_status ?? "private");
               setEditOpen((v) => !v);
               setDeleteConfirmOpen(false);
+              setPurgeConfirmOpen(false);
             }}
             aria-label="Editar video"
             title="Editar"
@@ -235,6 +244,7 @@ export function VideoDetailModal({
             onClick={() => {
               setDeleteConfirmOpen((v) => !v);
               setEditOpen(false);
+              setPurgeConfirmOpen(false);
             }}
             aria-label="Remover do catálogo"
             title="Remover do catálogo"
@@ -448,7 +458,7 @@ export function VideoDetailModal({
             </Card>
           )}
 
-          {/* Delete confirmation panel */}
+          {/* Delete confirmation panel — catalog-only */}
           {deleteConfirmOpen && (
             <Card
               className="border-destructive/40 bg-destructive/5"
@@ -465,7 +475,9 @@ export function VideoDetailModal({
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => deleteVideo(video.youtube_video_id)}
+                    onClick={() =>
+                      deleteVideo({ youtubeVideoId: video.youtube_video_id })
+                    }
                     disabled={isDeleting}
                     aria-label="Confirmar remoção do catálogo"
                   >
@@ -482,6 +494,108 @@ export function VideoDetailModal({
                     variant="ghost"
                     size="sm"
                     onClick={() => setDeleteConfirmOpen(false)}
+                    disabled={isDeleting}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+                {/* Separator + permanent-delete escalation link */}
+                <div className="border-t border-destructive/20 pt-3">
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline underline-offset-2 hover:text-destructive transition-colors"
+                    onClick={() => {
+                      setDeleteConfirmOpen(false);
+                      setPurgeConfirmOpen(true);
+                      setPurgeConfirmText("");
+                    }}
+                    data-testid="open-purge-confirm"
+                  >
+                    Excluir permanentemente do YouTube (irreversível)
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Permanent-delete confirmation panel — two-step typed confirm */}
+          {purgeConfirmOpen && (
+            <Card
+              className="border-destructive bg-destructive/10"
+              data-testid="purge-confirm"
+            >
+              <CardContent className="space-y-3 pt-4">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-destructive">
+                      Excluir permanentemente do YouTube
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Esta ação <strong>remove o video real do seu canal no YouTube</strong>.
+                      Não existe desfazer, lixeira ou forma de recuperar o video
+                      após a exclusão. O video desaparecerá do YouTube Studio,
+                      dos analytics e de todos os embeds imediatamente.
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label
+                    className="text-xs font-medium text-muted-foreground"
+                    htmlFor="purge-confirm-input"
+                  >
+                    Para confirmar, digite{" "}
+                    <span className="font-mono font-semibold text-destructive select-all">
+                      {PURGE_CONFIRM_PHRASE}
+                    </span>{" "}
+                    abaixo:
+                  </label>
+                  <input
+                    id="purge-confirm-input"
+                    type="text"
+                    value={purgeConfirmText}
+                    onChange={(e) => setPurgeConfirmText(e.target.value)}
+                    disabled={isDeleting}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full rounded-md border border-destructive/60 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive disabled:opacity-50"
+                    placeholder={PURGE_CONFIRM_PHRASE}
+                    data-testid="purge-confirm-input"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() =>
+                      deleteVideo({
+                        youtubeVideoId: video.youtube_video_id,
+                        purgeRemote: true,
+                      })
+                    }
+                    disabled={
+                      isDeleting ||
+                      purgeConfirmText.trim() !== PURGE_CONFIRM_PHRASE
+                    }
+                    aria-label="Confirmar exclusão permanente do YouTube"
+                    data-testid="purge-confirm-submit"
+                  >
+                    {isDeleting ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Excluindo…
+                      </>
+                    ) : (
+                      "Excluir permanentemente do YouTube"
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPurgeConfirmOpen(false);
+                      setPurgeConfirmText("");
+                    }}
                     disabled={isDeleting}
                   >
                     Cancelar

@@ -366,3 +366,167 @@ class TestDeleteVideoSuccess:
         # 204 expected; more importantly, the YouTube service must not be built.
         assert resp.status_code == 204, resp.text
         mock_build_svc.assert_not_called()
+
+
+# ─── Phase 8: DELETE /api/videos/{id}?purge_remote=true ────────────────────
+
+
+class TestPurgeRemoteAuth:
+    def test_purge_remote_requires_auth(self, client):
+        """DELETE /api/videos/{id}?purge_remote=true without a token → 401."""
+        resp = client.raw().delete("/api/videos/any-video-id?purge_remote=true")
+        assert resp.status_code == 401, resp.text
+
+
+class TestPurgeRemoteNotInCatalog:
+    def test_purge_remote_unknown_video_returns_404(self, client, override_settings):
+        """DELETE ?purge_remote=true when video is not in catalog → 404 (same as catalog-only)."""
+        override_settings(**_YT_COMPLETE)
+        resp = client.delete("/api/videos/ghost-id-purge?purge_remote=true")
+        assert resp.status_code == 404, resp.text
+        assert "sync" in resp.text.lower()
+
+
+class TestPurgeRemoteSuccess:
+    def test_purge_remote_calls_delete_youtube_video_then_removes_catalog(
+        self, client, override_settings
+    ):
+        """DELETE ?purge_remote=true should call delete_youtube_video THEN remove catalog row."""
+        override_settings(**_YT_COMPLETE)
+
+        from noctusai_lib.testing import MockSupabaseResponse
+
+        _row_id = {"id": "00000000-0000-0000-0000-000000000010"}
+
+        mock_sb = MagicMock()
+        mock_sb.auth.get_user = MagicMock(
+            return_value=MagicMock(
+                user=MagicMock(app_metadata={"org_id": "test-org-123"})
+            )
+        )
+        mock_execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
+        mock_delete_execute = MagicMock(return_value=MockSupabaseResponse(data=[]))
+        mock_chain = MagicMock()
+        mock_chain.execute = mock_execute
+        mock_chain.eq = MagicMock(return_value=mock_chain)
+        mock_chain.limit = MagicMock(return_value=mock_chain)
+        mock_chain.select = MagicMock(return_value=mock_chain)
+        mock_delete_chain = MagicMock()
+        mock_delete_chain.execute = mock_delete_execute
+        mock_delete_chain.eq = MagicMock(return_value=mock_delete_chain)
+        mock_table = MagicMock()
+        mock_table.select = MagicMock(return_value=mock_chain)
+        mock_table.delete = MagicMock(return_value=mock_delete_chain)
+        mock_schema = MagicMock()
+        mock_schema.table = MagicMock(return_value=mock_table)
+        mock_sb.schema = MagicMock(return_value=mock_schema)
+
+        stub_svc = MagicMock()
+        stub_svc.delete_youtube_video = MagicMock(return_value=None)
+
+        with (
+            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            patch(
+                "app.modules.youtube.routers.videos.build_youtube_service_for_org",
+                return_value=stub_svc,
+            ),
+        ):
+            resp = client.delete("/api/videos/test-purge-vid?purge_remote=true")
+
+        assert resp.status_code == 204, resp.text
+        stub_svc.delete_youtube_video.assert_called_once()
+        mock_table.delete.assert_called()
+
+
+class TestPurgeRemoteApiFailurePreservesCatalog:
+    def test_purge_remote_youtube_api_failure_returns_502_no_catalog_delete(
+        self, client, override_settings
+    ):
+        """When delete_youtube_video raises YouTubeServiceError the catalog row
+        must NOT be removed and the endpoint must return 502."""
+        override_settings(**_YT_COMPLETE)
+
+        from noctusai_lib.testing import MockSupabaseResponse
+        from app.modules.youtube.services.youtube import YouTubeServiceError
+
+        _row_id = {"id": "00000000-0000-0000-0000-000000000011"}
+
+        mock_sb = MagicMock()
+        mock_sb.auth.get_user = MagicMock(
+            return_value=MagicMock(
+                user=MagicMock(app_metadata={"org_id": "test-org-123"})
+            )
+        )
+        mock_execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
+        mock_chain = MagicMock()
+        mock_chain.execute = mock_execute
+        mock_chain.eq = MagicMock(return_value=mock_chain)
+        mock_chain.limit = MagicMock(return_value=mock_chain)
+        mock_chain.select = MagicMock(return_value=mock_chain)
+        mock_table = MagicMock()
+        mock_table.select = MagicMock(return_value=mock_chain)
+        mock_schema = MagicMock()
+        mock_schema.table = MagicMock(return_value=mock_table)
+        mock_sb.schema = MagicMock(return_value=mock_schema)
+
+        stub_svc = MagicMock()
+        stub_svc.delete_youtube_video = MagicMock(
+            side_effect=YouTubeServiceError("YouTube API failed")
+        )
+
+        with (
+            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            patch(
+                "app.modules.youtube.routers.videos.build_youtube_service_for_org",
+                return_value=stub_svc,
+            ),
+        ):
+            resp = client.delete("/api/videos/test-purge-fail?purge_remote=true")
+
+        assert resp.status_code == 502, resp.text
+        # Catalog row must NOT have been deleted.
+        mock_table.delete.assert_not_called()
+
+
+class TestDefaultDeleteStillCatalogOnly:
+    def test_default_delete_does_not_call_delete_youtube_video(
+        self, client, override_settings
+    ):
+        """DELETE without purge_remote (default=false) must NOT call delete_youtube_video.
+        Regression guard: the new param must not change existing catalog-only behavior."""
+        override_settings(**_YT_COMPLETE)
+
+        from noctusai_lib.testing import MockSupabaseResponse
+
+        _row_id = {"id": "00000000-0000-0000-0000-000000000012"}
+
+        mock_sb = MagicMock()
+        mock_sb.auth.get_user = MagicMock(
+            return_value=MagicMock(
+                user=MagicMock(app_metadata={"org_id": "test-org-123"})
+            )
+        )
+        mock_chain = MagicMock()
+        mock_chain.execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
+        mock_chain.eq = MagicMock(return_value=mock_chain)
+        mock_chain.limit = MagicMock(return_value=mock_chain)
+        mock_chain.select = MagicMock(return_value=mock_chain)
+        mock_chain.delete = MagicMock(return_value=mock_chain)
+        mock_schema_obj = MagicMock()
+        mock_schema_obj.table = MagicMock(return_value=mock_chain)
+        mock_sb.schema = MagicMock(return_value=mock_schema_obj)
+
+        with (
+            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+            patch(
+                "app.modules.youtube.routers.videos.build_youtube_service_for_org"
+            ) as mock_build,
+        ):
+            resp = client.delete("/api/videos/test-default-del")
+
+        assert resp.status_code == 204, resp.text
+        # build_youtube_service_for_org must NOT be called for default delete.
+        mock_build.assert_not_called()

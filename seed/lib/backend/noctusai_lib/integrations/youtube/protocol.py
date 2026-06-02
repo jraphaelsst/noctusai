@@ -374,5 +374,41 @@ class YoutubeClient(Protocol):
             HttpError: on YouTube API errors (quota, permission, etc.)."""
         ...
 
+    async def delete_video(self, video_id: str) -> None:
+        """Permanently delete a YouTube video from the channel via
+        ``videos.delete``.
+
+        **Quota cost: ~50 units** — ``videos.delete`` costs 50 units per
+        call, the same tier as ``videos.update``.
+
+        .. warning::
+            **IRREVERSIBLE.** This call PERMANENTLY removes the video from
+            the YouTube channel. There is no undo, no recycle bin, and no
+            YouTube Data API method to restore a deleted video. The video
+            is gone from YouTube Studio, analytics, and all embeds fleet-wide
+            the moment the call succeeds. Callers MUST obtain explicit
+            double-confirmation from the operator before invoking this
+            method.
+
+        **Requires OAuth** — ``videos.delete`` is a write; an API-key-only
+        client cannot delete videos. The Real adapter raises ``ValueError``
+        at call time if no OAuth credentials were supplied (fail loud, per
+        the no-silent-errors rule).
+
+        Args:
+            video_id: YouTube video id to permanently delete.
+
+        Returns:
+            ``None``; success is the absence of an exception. YouTube's
+            ``videos.delete`` returns HTTP 204 No Content on success — the
+            Real adapter surfaces this as a normal return.
+
+        Raises:
+            ValueError: when no OAuth credentials were supplied.
+            HttpError: on YouTube API errors (quota, permission, not-found
+                when the video no longer exists). Logged at WARN before
+                re-raising."""
+        ...
+
 
 __all__ = ["YoutubeClient"]

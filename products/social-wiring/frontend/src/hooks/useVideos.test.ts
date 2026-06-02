@@ -6,10 +6,12 @@
  *   · useUpdateVideo threads account_id from the store
  *   · useUpdateVideo shows a success toast on success
  *   · useUpdateVideo shows an error toast on failure
- *   · useDeleteVideo calls DELETE /api/videos/{id}
- *   · useDeleteVideo threads account_id from the store
- *   · useDeleteVideo shows a success toast on success
- *   · useDeleteVideo shows an error toast on failure
+ *   · useDeleteVideo (catalog-only) calls DELETE /api/videos/{id} — no purge_remote
+ *   · useDeleteVideo (catalog-only) threads account_id from the store
+ *   · useDeleteVideo (catalog-only) shows catalog success toast
+ *   · useDeleteVideo (catalog-only) shows an error toast on failure
+ *   · useDeleteVideo (purgeRemote=true) appends purge_remote=true to the URL
+ *   · useDeleteVideo (purgeRemote=true) shows permanent-delete success toast
  *
  * Mock strategy mirrors useIntegrationAccounts.test.ts:
  *   · @noctusai/seed/infra — mocked at the module level.
@@ -191,12 +193,12 @@ describe("useUpdateVideo", () => {
 
 // ─── useDeleteVideo ──────────────────────────────────────────────────────────
 
-describe("useDeleteVideo", () => {
-  it("calls DELETE /api/videos/{id}", async () => {
+describe("useDeleteVideo — catalog-only (default)", () => {
+  it("calls DELETE /api/videos/{id} without purge_remote when not specified", async () => {
     mockDelete.mockResolvedValue(undefined);
 
     const hook = useDeleteVideo() as any;
-    await hook.mutateAsync("abc123");
+    await hook.mutateAsync({ youtubeVideoId: "abc123" });
 
     expect(mockDelete).toHaveBeenCalledWith("/api/videos/abc123");
   });
@@ -206,7 +208,7 @@ describe("useDeleteVideo", () => {
     mockDelete.mockResolvedValue(undefined);
 
     const hook = useDeleteVideo() as any;
-    await hook.mutateAsync("vid1");
+    await hook.mutateAsync({ youtubeVideoId: "vid1" });
 
     expect(mockDelete).toHaveBeenCalledWith("/api/videos/vid1?account_id=acct-uuid-2");
   });
@@ -216,16 +218,16 @@ describe("useDeleteVideo", () => {
     mockDelete.mockResolvedValue(undefined);
 
     const hook = useDeleteVideo() as any;
-    await hook.mutateAsync("vid2");
+    await hook.mutateAsync({ youtubeVideoId: "vid2" });
 
     expect(mockDelete).toHaveBeenCalledWith("/api/videos/vid2");
   });
 
-  it("shows a success toast on success", async () => {
+  it("shows 'catálogo' success toast (catalog-only path)", async () => {
     mockDelete.mockResolvedValue(undefined);
 
     const hook = useDeleteVideo() as any;
-    await hook.mutateAsync("vid3");
+    await hook.mutateAsync({ youtubeVideoId: "vid3" });
 
     expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("catálogo"));
   });
@@ -235,7 +237,7 @@ describe("useDeleteVideo", () => {
 
     const onSuccess = vi.fn();
     const hook = useDeleteVideo({ onSuccess }) as any;
-    await hook.mutateAsync("vid4");
+    await hook.mutateAsync({ youtubeVideoId: "vid4" });
 
     expect(onSuccess).toHaveBeenCalledOnce();
   });
@@ -245,13 +247,53 @@ describe("useDeleteVideo", () => {
 
     const hook = useDeleteVideo() as any;
     try {
-      await hook.mutateAsync("vid5");
+      await hook.mutateAsync({ youtubeVideoId: "vid5" });
     } catch {
       // expected
     }
 
     expect(toastError).toHaveBeenCalledWith(
       expect.stringMatching(/Network error|remover/),
+    );
+  });
+});
+
+describe("useDeleteVideo — purgeRemote=true (permanent YouTube delete)", () => {
+  it("appends purge_remote=true to the URL", async () => {
+    mockDelete.mockResolvedValue(undefined);
+
+    const hook = useDeleteVideo() as any;
+    await hook.mutateAsync({ youtubeVideoId: "abc456", purgeRemote: true });
+
+    expect(mockDelete).toHaveBeenCalledWith("/api/videos/abc456?purge_remote=true");
+  });
+
+  it("appends both account_id and purge_remote=true when store is set", async () => {
+    mockActiveAccountId.value = "acct-uuid-3";
+    mockDelete.mockResolvedValue(undefined);
+
+    const hook = useDeleteVideo() as any;
+    await hook.mutateAsync({ youtubeVideoId: "vid-purge", purgeRemote: true });
+
+    const call = mockDelete.mock.calls[0][0] as string;
+    expect(call).toContain("purge_remote=true");
+    expect(call).toContain("account_id=acct-uuid-3");
+  });
+
+  it("shows permanent-delete success toast (NOT 'catálogo')", async () => {
+    mockDelete.mockResolvedValue(undefined);
+
+    const hook = useDeleteVideo() as any;
+    await hook.mutateAsync({ youtubeVideoId: "vid-purge2", purgeRemote: true });
+
+    // Should NOT show the catalog toast
+    const catalogCalls = toastSuccess.mock.calls.filter((c: string[]) =>
+      c[0]?.includes("catálogo")
+    );
+    expect(catalogCalls.length).toBe(0);
+    // Should show the permanent-delete toast
+    expect(toastSuccess).toHaveBeenCalledWith(
+      expect.stringMatching(/permanentemente|YouTube/),
     );
   });
 });

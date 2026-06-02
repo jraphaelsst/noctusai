@@ -2170,3 +2170,63 @@ async def test_fake_update_video_missing_id_raises_value_error() -> None:
     fake = FakeYoutubeClient()
     with pytest.raises(ValueError, match="no items"):
         await fake.update_video("ghost-id", title="X")
+
+
+# FakeYoutubeClient.delete_video — Phase 8 (feat/yt-real-delete)
+
+
+@pytest.mark.asyncio
+async def test_fake_delete_video_removes_from_owned_videos() -> None:
+    """delete_video removes the video from owned_videos."""
+    fake = FakeYoutubeClient(
+        owned_videos=[_video_full("del1"), _video_full("del2")]
+    )
+    await fake.delete_video("del1")
+    assert len(fake.owned_videos) == 1
+    assert fake.owned_videos[0].id == "del2"
+
+
+@pytest.mark.asyncio
+async def test_fake_delete_video_removes_from_lean_videos_dict() -> None:
+    """delete_video also prunes the lean videos dict."""
+    from datetime import datetime, timezone
+
+    v = Video(
+        id="lean1",
+        title="Lean",
+        description="",
+        channel_id="UC1",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        duration_seconds=60,
+        view_count=0,
+    )
+    fake = FakeYoutubeClient(videos={"lean1": v})
+    await fake.delete_video("lean1")
+    assert "lean1" not in fake.videos
+
+
+@pytest.mark.asyncio
+async def test_fake_delete_video_appends_to_deleted_ids() -> None:
+    """delete_video records the video id in deleted_video_ids for test assertions."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("track1")])
+    assert fake.deleted_video_ids == []
+    await fake.delete_video("track1")
+    assert fake.deleted_video_ids == ["track1"]
+
+
+@pytest.mark.asyncio
+async def test_fake_delete_video_charges_50_quota_units() -> None:
+    """delete_video charges exactly 50 quota units per call."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("q1")])
+    before = fake.quota_units_consumed
+    await fake.delete_video("q1")
+    assert fake.quota_units_consumed - before == 50
+
+
+@pytest.mark.asyncio
+async def test_fake_delete_video_idempotent_on_missing_id() -> None:
+    """delete_video on an absent id does not raise — mirrors YouTube's idempotent delete."""
+    fake = FakeYoutubeClient()
+    # Should not raise; records the id and charges quota regardless.
+    await fake.delete_video("ghost-del")
+    assert "ghost-del" in fake.deleted_video_ids

@@ -82,6 +82,7 @@ vi.mock("recharts", () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  AlertTriangle: () => <span data-testid="alert-triangle-icon" />,
   Edit2: () => <span data-testid="edit2-icon" />,
   ExternalLink: () => null,
   Eye: () => null,
@@ -315,5 +316,70 @@ describe("VideoDetailModal — delete confirmation", () => {
     fireEvent.click(getByLabelText("Remover do catálogo"));
     expect(queryByTestId("edit-form")).toBeNull();
     expect(queryByTestId("delete-confirm")).toBeTruthy();
+  });
+});
+
+// ─── VideoDetailModal — permanent-delete (purge_remote) ──────────────────────
+
+describe("VideoDetailModal — permanent-delete confirmation", () => {
+  it("escalation link in delete panel opens permanent-delete panel", async () => {
+    const { getByLabelText, getByTestId, queryByTestId, fireEvent } =
+      await renderModal({ video });
+    // Open catalog-delete panel first.
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    expect(queryByTestId("purge-confirm")).toBeNull();
+    // Click the escalation link.
+    fireEvent.click(getByTestId("open-purge-confirm"));
+    expect(getByTestId("purge-confirm")).toBeTruthy();
+    // Catalog-delete panel should be gone now.
+    expect(queryByTestId("delete-confirm")).toBeNull();
+  });
+
+  it("permanent-delete submit button is disabled until the phrase is typed", async () => {
+    const { getByLabelText, getByTestId, getByRole, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    fireEvent.click(getByTestId("open-purge-confirm"));
+    // aria-label is forwarded by the Button mock; use that for the submit button.
+    const submitBtn = getByRole("button", {
+      name: "Confirmar exclusão permanente do YouTube",
+    }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+  });
+
+  it("permanent-delete submit button becomes enabled when the exact phrase is typed", async () => {
+    const { getByLabelText, getByTestId, getByRole, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    fireEvent.click(getByTestId("open-purge-confirm"));
+    const input = getByTestId("purge-confirm-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "EXCLUIR PERMANENTEMENTE" } });
+    const submitBtn = getByRole("button", {
+      name: "Confirmar exclusão permanente do YouTube",
+    }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(false);
+  });
+
+  it("permanent-delete Cancel button closes the panel", async () => {
+    const { getByLabelText, getByTestId, queryByTestId, getAllByText, fireEvent } =
+      await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    fireEvent.click(getByTestId("open-purge-confirm"));
+    expect(queryByTestId("purge-confirm")).toBeTruthy();
+    const cancelBtns = getAllByText("Cancelar");
+    fireEvent.click(cancelBtns[cancelBtns.length - 1]);
+    expect(queryByTestId("purge-confirm")).toBeNull();
+  });
+
+  it("default catalog-delete does NOT show the permanent-delete panel initially", async () => {
+    const { queryByTestId } = await renderModal({ video });
+    expect(queryByTestId("purge-confirm")).toBeNull();
+  });
+
+  it("permanent-delete panel shows the irreversibility warning copy", async () => {
+    const { getByLabelText, getByTestId, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    fireEvent.click(getByTestId("open-purge-confirm"));
+    const panel = getByTestId("purge-confirm");
+    expect(panel.textContent).toMatch(/permanentemente/i);
+    expect(panel.textContent).toMatch(/canal/i);
   });
 });

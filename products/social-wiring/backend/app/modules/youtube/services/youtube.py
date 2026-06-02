@@ -740,6 +740,43 @@ class YouTubeService:
 
         return updated
 
+    def delete_youtube_video(
+        self,
+        *,
+        org_id: UUID,
+        video_id: str,
+    ) -> None:
+        """Permanently delete a YouTube video from the channel via
+        ``videos.delete``.
+
+        **Quota cost: ~50 units.**
+
+        .. warning::
+            **IRREVERSIBLE.** This call permanently removes the video from
+            the YouTube channel. There is no undo, no recycle bin, and no
+            YouTube Data API method to restore a deleted video. Callers
+            MUST obtain explicit double-confirmation from the operator
+            before invoking this method — the router enforces the
+            ``purge_remote=True`` opt-in gate.
+
+        The catalog row is NOT touched here — the router removes it only
+        after this call returns successfully, ensuring the video is never
+        orphaned in a half-deleted state.
+
+        Raises:
+            YouTubeNotConnected: when no credentials are stored for the org.
+            YouTubeServiceError: on any YouTube API error.
+        """
+        creds = self._fresh_credentials(org_id)
+        client = self._youtube_client(creds)
+
+        try:
+            _run_sync(client.delete_video(video_id))
+        except HttpError as exc:
+            raise YouTubeServiceError(_format_http_error(exc)) from exc
+        except ValueError as exc:
+            raise YouTubeServiceError(str(exc)) from exc
+
     # ─── Internals ────────────────────────────────────────────────────
     def _fresh_credentials(self, org_id: UUID) -> Credentials:
         """Load + refresh-if-stale + persist-if-changed.

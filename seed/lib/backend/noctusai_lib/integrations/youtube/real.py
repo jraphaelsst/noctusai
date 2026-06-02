@@ -914,6 +914,36 @@ class RealYoutubeClient:
             )
         return updated
 
+    async def delete_video(self, video_id: str) -> None:
+        """Permanently delete a YouTube video via ``videos.delete``.
+
+        **Quota cost: ~50 units.** ``videos.delete`` is charged at the
+        same tier as ``videos.update``.
+
+        **IRREVERSIBLE** — this call permanently removes the video from
+        the channel. YouTube has no restore API; once deleted the video
+        is gone from Studio, analytics, and all embeds. Callers MUST
+        obtain explicit double-confirmation from the operator before
+        invoking this method.
+
+        **Requires OAuth** — ``videos.delete`` is a write; an API-key-only
+        client cannot delete. Raises ``ValueError`` at call time when no
+        OAuth credentials were supplied (fail loud, per no-silent-errors)."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.delete_video requires oauth_credentials "
+                "(videos.delete is a write; an API key cannot delete videos)"
+            )
+        try:
+            self._service().videos().delete(id=video_id).execute()
+        except HttpError as exc:
+            logger.warning(
+                "youtube.delete_video_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
     async def get_processing_status(self, video_id: str) -> ProcessingStatus:
         """**1 quota unit** (`videos.list?part=status,processingDetails&id=<vid>`).
 

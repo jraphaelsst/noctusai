@@ -268,33 +268,59 @@ export function useUpdateVideo(options?: { onSuccess?: (updated: Video) => void 
 }
 
 // ─── Delete hook ────────────────────────────────────────────────────────
+
+/** Options for a delete call. ``purgeRemote`` is opt-in; the default is
+ * catalog-only (safe, re-syncable). */
+export interface DeleteVideoOptions {
+  youtubeVideoId: string;
+  /** When true, PERMANENTLY deletes the video from YouTube (irreversible).
+   * Defaults to false (catalog-only removal). */
+  purgeRemote?: boolean;
+}
+
 /**
  * useDeleteVideo — DELETE /api/videos/{youtube_video_id}
  *
- * Catalog-only removal — does NOT delete the real YouTube video. The row
- * can be recovered by running POST /api/videos/sync. Threads ``account_id``
- * from ``useActiveAccountStore`` like the other hooks.
+ * Two modes, controlled by ``purgeRemote``:
+ * - ``false`` (default): catalog-only removal — the real YouTube video is
+ *   NOT affected. The row can be recovered via POST /api/videos/sync.
+ * - ``true``: PERMANENTLY deletes the video from YouTube (irreversible —
+ *   no undo) and then removes the catalog row. Requires an explicit
+ *   operator double-confirmation before calling with this flag.
+ *
+ * Threads ``account_id`` from ``useActiveAccountStore`` like the other hooks.
  *
  * Usage:
  *   const { mutate: deleteVideo, isPending } = useDeleteVideo({ onSuccess: refresh });
- *   deleteVideo("dQw4w9WgXcQ");
+ *   // catalog-only:
+ *   deleteVideo({ youtubeVideoId: "dQw4w9WgXcQ" });
+ *   // permanent YouTube delete:
+ *   deleteVideo({ youtubeVideoId: "dQw4w9WgXcQ", purgeRemote: true });
  */
 export function useDeleteVideo(options?: { onSuccess?: () => void }) {
   const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
 
   return useMutation({
-    mutationFn: async (youtubeVideoId: string): Promise<void> => {
-      const params = storeAccountId
-        ? `?account_id=${encodeURIComponent(storeAccountId)}`
-        : "";
-      return api.delete(`/api/videos/${encodeURIComponent(youtubeVideoId)}${params}`);
+    mutationFn: async ({ youtubeVideoId, purgeRemote = false }: DeleteVideoOptions): Promise<boolean> => {
+      const params = new URLSearchParams();
+      if (storeAccountId) params.set("account_id", storeAccountId);
+      if (purgeRemote) params.set("purge_remote", "true");
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      await api.delete(`/api/videos/${encodeURIComponent(youtubeVideoId)}${qs}`);
+      // Return purgeRemote so onSuccess can show the correct toast without
+      // depending on the `variables` arg (which some mutation stubs don't forward).
+      return purgeRemote;
     },
-    onSuccess: () => {
-      toast.success("Video removido do catálogo");
+    onSuccess: (wasPurged: boolean) => {
+      if (wasPurged) {
+        toast.success("Video excluído permanentemente do YouTube");
+      } else {
+        toast.success("Video removido do catálogo");
+      }
       options?.onSuccess?.();
     },
     onError: (err: any) => {
-      toast.error(err?.message ?? "Falha ao remover o video do catálogo");
+      toast.error(err?.message ?? "Falha ao remover o video");
     },
   });
 }
