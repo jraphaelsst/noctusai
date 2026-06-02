@@ -5,12 +5,15 @@ The service is a pure-function-on-DB-rows aggregator — feed it seeded mock
 data and assert the shape it produces. Routers are tested separately at
 `tests/routers/test_admin_router.py`.
 
-Mock note: `MockSupabaseClient`'s `.eq()` / `.in_()` are validator-only
-no-ops, so the tests seed only the rows they expect each query to return.
-The service-side `_count_by_status` / Python filters do the real bucketing.
+Mock note: `MockSupabaseClient`'s `.eq()` / `.in_()` are no-ops for most
+ops, but `.gte()`/`.lte()` ARE evaluated literally — so `placed_at` dates
+for `pedidos_this_month` MUST fall within the current calendar month
+(computed from `date.today()`), matching the same source used by
+`admin_service._month_bounds()`. Static May-2026 dates broke in June.
 """
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import MagicMock
 
 from noctusai_lib.testing import (
@@ -20,6 +23,12 @@ from noctusai_lib.testing import (
 )
 
 from app.services import admin_service
+
+# Dates relative to the current month so `dashboard_metrics`'s
+# `_month_bounds()` (which uses `date.today()`) always includes them.
+_TODAY = date.today()
+_THIS_MONTH_START = _TODAY.replace(day=1).isoformat()        # e.g. "2026-06-01"
+_THIS_MONTH_MID = _TODAY.replace(day=min(8, _TODAY.day)).isoformat()  # e.g. "2026-06-08" or earlier
 
 
 ORG_ID = "org-test-123"
@@ -52,8 +61,8 @@ class TestDashboardMetrics:
             {"id": "dist-3", "org_id": ORG_ID, "status": "inativo"},
         ])
         db.set_table_data(admin_service.PEDIDOS_TABLE, [
-            {"id": "p1", "status": "enviado", "placed_at": "2026-05-01"},
-            {"id": "p2", "status": "entregue", "placed_at": "2026-05-08"},
+            {"id": "p1", "status": "enviado", "placed_at": _THIS_MONTH_START},
+            {"id": "p2", "status": "entregue", "placed_at": _THIS_MONTH_MID},
         ])
         db.set_table_data(admin_service.SELLOUT_TABLE, [
             {"id": "s1", "org_id": ORG_ID, "status": "pendente"},
