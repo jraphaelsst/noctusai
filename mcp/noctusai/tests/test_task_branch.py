@@ -1296,3 +1296,130 @@ def test_hook_chatter_on_stdout_does_not_yield_conflict_when_rebase_refused(tmp_
     assert res["conflicted_files"] == []
     # Must be dirty_blocked (the rebase was refused, not conflicted).
     assert res["status"] == "dirty_blocked"
+
+
+# ── Three required regression tests per the SLICE D brief ──
+# (a) worktree dirty ONLY with union-merge ledgers → NOT blocked
+# (b) clean rebase emitting hook chatter on stdout/stderr → status != 'conflict'
+# (c) genuinely dirty non-ledger file → STILL blocked (regression guard)
+
+def test_worktree_dirty_only_with_all_union_merge_ledgers_not_blocked():
+    """(a) Regression: a worktree dirty ONLY with all four gitattributes
+    merge=union append-only ledgers (vector-costs, auto-improvement,
+    worktree-salvage, branch-tree) must NOT be blocked — they are all in
+    _BENIGN_REFRESH_PATTERNS, auto-stashed, and integrate returns integrated."""
+    stash_pushed = []
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "stash":
+                if "pop" in cmd:
+                    return (0, "", "")
+                stash_pushed.append(True)
+                return (0, "", "")
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    # All four union-merge ledger files dirty — no real task files.
+    all_ledgers = (
+        " M project-history/vector-costs.ndjson\n"
+        " M project-history/auto-improvement.ndjson\n"
+        " M project-history/worktree-salvage.ndjson\n"
+        " M project-history/branch-tree.ndjson\n"
+    )
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        status_output=all_ledgers,
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "integrated", (
+        f"expected integrated — all four union-merge ledgers are benign, got {res!r}")
+    assert res["exit_code"] == 0
+    assert stash_pushed, "stash push must be called for the union-merge ledgers"
+    # branch-tree.ndjson specifically is included in _BENIGN_REFRESH_PATTERNS
+    assert any("branch-tree.ndjson" in p for p in T._BENIGN_REFRESH_PATTERNS), (
+        "branch-tree.ndjson must be in _BENIGN_REFRESH_PATTERNS")
+
+
+def test_clean_rebase_with_hook_chatter_on_stdout_stderr_not_conflict():
+    """(b) Regression: a clean rebase that emits heavy hook chatter on stdout/stderr
+    (noc-graph / embedding-refresh output) must NOT produce status='conflict'.
+    The rebase succeeds (rc=0) and returns status=integrated regardless of chatter."""
+    chatter_stdout = (
+        "Refreshing noc-graph cache...\n"
+        "CONFLICT (content): Merge conflict in foo.py\n"  # chatter that looks like a conflict
+        "Embedding 128 KB chunks in auto-improvement...\n"
+        "branch-tree: 7 new entries written\n"
+    )
+    chatter_stderr = (
+        "warning: noc-graph: stale source_sha, refreshing\n"
+        "warning: auto-improvement: appended 3 entries\n"
+    )
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "rebase" and "--abort" not in cmd:
+            # Rebase SUCCEEDS (rc=0) but dumps hook chatter on both streams.
+            return (0, chatter_stdout, chatter_stderr)
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        status_output="",  # worktree is clean before rebase
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] == "integrated", (
+        f"hook chatter on stdout/stderr (even conflict-looking text) must not produce "
+        f"conflict when rebase rc=0; got {res!r}")
+    assert res["exit_code"] == 0
+    assert res.get("conflicted_files") is None or res.get("conflicted_files") == []
+
+
+def test_genuinely_dirty_non_ledger_file_still_blocked():
+    """(c) Regression guard: a non-ledger real task file (not in _BENIGN_REFRESH_PATTERNS)
+    must still block integrate — the benign-stash logic must never silently bypass a real
+    conflict. Even when benign ledger files are stashed first (the correct code path when
+    both benign and real files are present), the rebase must fail on the real dirty file
+    and integrate must NOT push. status must be 'conflict' or 'dirty_blocked'."""
+    push_calls = []
+
+    def runner(cmd, cwd=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            inner_sub = cmd[3] if len(cmd) > 3 else ""
+            if inner_sub == "push":
+                push_calls.append(cmd)
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    # A genuine task-work file alongside a benign ledger — the real file must
+    # block even after the benign ledger is stashed. The rebase fails on the
+    # real file (conflicted) so we never reach the push.
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": "e1 z"},
+        head_sha="b0",
+        rebase_rcs=[1],
+        conflicts=["products/myapp/backend/api.py"],
+        # Both a real file AND a benign ledger — the real file must dominate.
+        status_output=(
+            " M products/myapp/backend/api.py\n"
+            " M project-history/branch-tree.ndjson\n"
+        ),
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
+    assert res["status"] in ("conflict", "dirty_blocked"), (
+        f"a non-ledger real file must block integrate; got {res!r}")
+    assert res["exit_code"] == 1
+    # CRITICAL: must NEVER push a conflicted/dirty state to dev.
+    assert not push_calls, (
+        f"must NEVER push when real task files are dirty; push_calls={push_calls}")

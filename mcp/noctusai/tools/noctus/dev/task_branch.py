@@ -21,8 +21,9 @@ lifecycle so it is one call, not a hand-typed ritual:
                 AGENT-CONTEXT.md, KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md,
                 project-history/vector-costs.ndjson, project-history/
                 auto-improvement.ndjson, project-history/worktree-salvage.ndjson,
-                .claude/cache/*) are auto-stashed before the rebase and restored
-                after, so a clean FF rebase is never blocked by them. Only real
+                project-history/branch-tree.ndjson, .claude/cache/*) are
+                auto-stashed before the rebase and restored after, so a clean
+                FF rebase is never blocked by them. Only real
                 conflicts surface. A rebase REFUSED before starting (hook chatter
                 re-dirties after stash) is surfaced as status=dirty_blocked
                 (not status=conflict) so the caller sees dirty files, not phantom
@@ -94,17 +95,19 @@ _BANNED_TOKENS = (
 # the rebase and pops the stash after. Patterns are fnmatch-style relative paths
 # (as printed by `git status --porcelain`, XY-code stripped).
 #
-# All three project-history/*.ndjson ledger files are gitattributes merge=union
+# All four project-history/*.ndjson ledger files are gitattributes merge=union
 # append-only logs churned by post-checkout/post-merge cache-settle hooks
-# (noc-graph/auto-improvement/worktree-salvage). They are reconstructable and
-# never contain task work — so they are benign for the purpose of the rebase
-# pre-check and should be auto-stashed rather than blocking integrate.
+# (noc-graph/auto-improvement/worktree-salvage/branch-tree). They are
+# reconstructable and never contain task work — so they are benign for the
+# purpose of the rebase pre-check and should be auto-stashed rather than
+# blocking integrate.
 _BENIGN_REFRESH_PATTERNS = (
     "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
     "KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md",
     "project-history/vector-costs.ndjson",
     "project-history/auto-improvement.ndjson",
     "project-history/worktree-salvage.ndjson",
+    "project-history/branch-tree.ndjson",
     ".claude/cache/*",
 )
 
