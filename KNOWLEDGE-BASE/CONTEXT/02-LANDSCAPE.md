@@ -49,7 +49,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 
 <!-- kb-counts:start:database -->
 - **Schemas (10):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 311** distributed across the schemas.
+- **Tables: 321** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.
