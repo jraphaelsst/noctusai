@@ -29,6 +29,15 @@ import tools.noctus.dev.branch_pointer as BP  # noqa: E402
 from tools.noctus.dev.refresh_all_caches import should_skip_cache_refresh  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _autofill_session_env(monkeypatch):
+    """`append`/`update` auto-fill `session` from CLAUDE_CODE_SESSION_ID (a row is
+    NEVER written session=null — check_branch_tree_mirror gates that). Set a
+    deterministic id so unit tests exercise the always-fill path regardless of
+    whether the pytest host is inside a live Claude session (CI is not)."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "test-session-id")
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _row(
     branch: str,
@@ -231,6 +240,37 @@ class TestAppend:
         assert rows[0]["branch"] == "feat/my-tool"
         assert rows[0]["status"] == "on_going"
         assert rows[0]["agent"] == "my-tool"
+        # Auto-filled the owning session (never null) — from the env fixture.
+        assert rows[0]["session"] == "test-session-id"
+
+    def test_append_autofills_session_from_env(self, tmp_path, monkeypatch):
+        """append(session=None) resolves the session from CLAUDE_CODE_SESSION_ID."""
+        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+        ledger.parent.mkdir(parents=True)
+        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-xyz-123")
+        result = BP.append(
+            branch="feat/s", base="origin/dev", commit="abc", role="engineer",
+            agent="s", parent="tech-lead", paths=[], status="on_going",
+            brief="s", session=None, push_dev=False, runner=FakeRunner(),
+        )
+        assert result["ok"] is True
+        assert result["row"]["session"] == "sess-xyz-123"
+
+    def test_append_errors_when_session_unresolvable(self, tmp_path, monkeypatch):
+        """No env + no transcript → append refuses rather than writing null."""
+        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+        ledger.parent.mkdir(parents=True)
+        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.setattr(BP, "_resolve_session_id", lambda: None)
+        result = BP.append(
+            branch="feat/s", base="origin/dev", commit="abc", role="engineer",
+            agent="s", parent="tech-lead", paths=[], status="on_going",
+            brief="s", session=None, push_dev=False, runner=FakeRunner(),
+        )
+        assert result["ok"] is False
+        assert "session could not be auto-resolved" in result["error"]
 
     def test_append_invalid_status_rejected(self, tmp_path, monkeypatch):
         ledger = tmp_path / "project-history" / "branch-tree.ndjson"

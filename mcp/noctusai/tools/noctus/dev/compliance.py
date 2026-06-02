@@ -12264,6 +12264,47 @@ def check_branch_tree_mirror(
                 "severity": "high",
             })
 
+    # ── Session-populated invariant (ALL rows, incl. terminal/historical) ────
+    # Every pointer MUST carry a non-empty `session` — the owning Claude session,
+    # the claude-tree's session coordinate (KB §2). branch_pointer auto-fills it
+    # from CLAUDE_CODE_SESSION_ID (→ newest-transcript fallback) so live appends
+    # are never null; this gate catches any null/blank that still slips in
+    # (legacy rows, an out-of-band hand-edit, a context without the env var).
+    # Scans EVERY row, not just latest-per-branch — a historical null is drift.
+    if ledger.exists():
+        try:
+            null_session: list[tuple[int, str]] = []
+            for line_no, raw in enumerate(
+                ledger.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    r = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                sess = r.get("session")
+                if sess is None or (isinstance(sess, str) and not sess.strip()):
+                    null_session.append((line_no, r.get("branch", "?")))
+            if null_session:
+                sample = ", ".join(f"L{ln}:{br}" for ln, br in null_session[:6])
+                issues.append({
+                    "product": "<platform>",
+                    "file": "project-history/branch-tree.ndjson",
+                    "issue": (
+                        f"{len(null_session)} branch-tree pointer(s) carry a null/empty "
+                        f"`session` ({sample}{'…' if len(null_session) > 6 else ''}). Every "
+                        "pointer MUST record its owning Claude session id. New appends "
+                        "auto-fill it from CLAUDE_CODE_SESSION_ID via `noctus.dev.branch_pointer`; "
+                        "backfill legacy rows with the owning session (then mirror). "
+                        "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2 (claude-tree: the session)."
+                    ),
+                    "severity": "high",
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("check_branch_tree_mirror: session scan failed (%s)", exc)
+
     if not ledger.exists():
         # No ledger yet — only flag if a specific branch was requested.
         if branch is not None:

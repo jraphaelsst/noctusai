@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -110,6 +111,43 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"shipped", "canceled", "stale"})
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_session_id() -> str | None:
+    """Best-effort current Claude Code session id for branch-pointer auto-fill.
+
+    The `session` field is the claude-tree's owning-session coordinate (KB §2)
+    and MUST never be null — `check_branch_tree_mirror` hard-blocks a push when
+    any pointer carries a null/empty session. So `append`/`update` auto-fill it
+    from here when the caller passes none.
+
+    Resolution order (most → least precise):
+      1. ``$CLAUDE_CODE_SESSION_ID`` — the harness sets this to the live session
+         UUID; the precise, always-current source.
+      2. The stem of the newest ``*.jsonl`` transcript in this repo's Claude
+         project dir (``~/.claude/projects/<encoded-cwd>/``) — the actively
+         written transcript is the current session. Fallback when the env var
+         is absent (older CLI, certain spawn paths).
+
+    Returns None only when neither resolves (e.g. a non-Claude CI/cron context);
+    `append` then errors rather than writing a null (no silent-null).
+    """
+    env = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if env and env.strip():
+        return env.strip()
+    try:
+        encoded = "-" + str(REPO_ROOT).strip("/").replace("/", "-")
+        proj_dir = Path.home() / ".claude" / "projects" / encoded
+        transcripts = sorted(
+            proj_dir.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if transcripts:
+            return transcripts[0].stem
+    except Exception:  # noqa: BLE001 — best-effort; fall through to None
+        pass
+    return None
 
 
 def _run(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
@@ -260,6 +298,20 @@ def append(
     if role not in ROLES:
         return {"ok": False, "error": f"role must be one of {sorted(ROLES)}; got {role!r}"}
 
+    # Auto-fill the owning Claude session so a pointer is NEVER session=null
+    # (check_branch_tree_mirror hard-blocks a push when any row is null).
+    if session is None:
+        session = _resolve_session_id()
+    if not session or not str(session).strip():
+        return {
+            "ok": False,
+            "error": (
+                "session could not be auto-resolved (CLAUDE_CODE_SESSION_ID unset and no "
+                "transcript found) — pass session= explicitly; a branch-tree pointer may "
+                "never be written with a null/empty session"
+            ),
+        }
+
     row: dict[str, Any] = {
         "ts": _now_iso(),
         "branch": branch,
@@ -337,6 +389,18 @@ def update(
     if new_status not in STATUSES:
         return {"ok": False, "error": f"status must be one of {sorted(STATUSES)}; got {new_status!r}"}
 
+    # Carry forward the prior session; auto-fill if the prior row predates the
+    # always-fill rule (legacy null) so the delta row is never session=null.
+    carried_session = prev.get("session") or _resolve_session_id()
+    if not carried_session or not str(carried_session).strip():
+        return {
+            "ok": False,
+            "error": (
+                "session could not be carried forward or auto-resolved — pass it on the "
+                "originating append; a branch-tree pointer may never be session=null"
+            ),
+        }
+
     row: dict[str, Any] = {
         "ts": _now_iso(),
         "branch": branch,
@@ -346,7 +410,7 @@ def update(
         "role": prev.get("role", ""),
         "agent": prev.get("agent", ""),
         "parent": prev.get("parent", ""),
-        "session": prev.get("session"),
+        "session": carried_session,
         "paths": paths if paths is not None else prev.get("paths", []),
         "status": new_status,
         "brief": brief if brief is not None else prev.get("brief", ""),

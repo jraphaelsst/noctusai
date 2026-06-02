@@ -2697,6 +2697,40 @@ class TestBranchTreeMirror:
         assert drift_issues, f"Expected mirror drift issue, got: {issues}"
         assert drift_issues[0]["severity"] == "high"
 
+    def test_null_session_flagged(self, tmp_path):
+        """A pointer with a null/empty session → high-severity session gate fires.
+
+        The session field is the claude-tree's owning-session coordinate and must
+        never be null (branch_pointer auto-fills it from CLAUDE_CODE_SESSION_ID);
+        a null is drift the keeper hard-blocks. Scans ALL rows, incl. terminal.
+        """
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        self._write_ledger(repo, [
+            '{"branch":"feat/a","base":"origin/dev","commit":"abc","role":"orchestrator",'
+            '"agent":"tech-lead","parent":"origin/dev","session":null,"status":"shipped"}',
+            '{"branch":"feat/b","base":"origin/dev","commit":"def","role":"engineer",'
+            '"agent":"x","parent":"tech-lead","session":"","status":"on_going"}',
+        ])
+        issues = check_branch_tree_mirror(repo_root=tmp_path)
+        sess = [i for i in issues if "session" in i["issue"]]
+        assert sess, f"Expected null-session gate to fire, got: {issues}"
+        assert sess[0]["severity"] == "high"
+        assert "2 branch-tree pointer" in sess[0]["issue"]
+
+    def test_populated_session_passes(self, tmp_path):
+        """All rows carry a non-empty session → no session gate issue."""
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        self._write_ledger(repo, [
+            '{"branch":"feat/a","base":"origin/dev","commit":"abc","role":"orchestrator",'
+            '"agent":"tech-lead","parent":"origin/dev",'
+            '"session":"fe29a1ad-88aa-414e-8f9f-36385c40f1bd","status":"shipped"}',
+        ])
+        issues = check_branch_tree_mirror(repo_root=tmp_path)
+        sess = [i for i in issues if "session" in i["issue"]]
+        assert not sess, f"Expected no session issue, got: {sess}"
+
     def test_invalid_status_flagged(self, tmp_path):
         """A pointer with an invalid status value → issue."""
         import json
@@ -2736,6 +2770,7 @@ class TestBranchTreeMirror:
             "role": "engineer",
             "agent": "backend-engineer",
             "parent": "feat/orchestrator",
+            "session": "2026-01-01-old-work",  # session-populated invariant
         })
         self._write_ledger(repo, [row])
         # Audit mode should find no non-terminal branches.
