@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@hookform/resolvers": "^3.10.0",
+    "@hookform/resolvers": "^5.4.0",
     "@noctusai/lib": "file:../../../seed/lib/frontend",
     "@noctusai/seed": "file:../../../seed/framework/frontend",
     "@radix-ui/react-alert-dialog": "^1.1.14",
