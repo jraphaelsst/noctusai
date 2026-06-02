@@ -12,12 +12,99 @@
 # JWTs published by the upstream SDK). We do NOT redefine rules here —
 # the bundled defaults cover AWS, GCP, Stripe, GitHub, generic high-entropy
 # strings, private keys, etc.
+#
+# Custom rules added 2026-06-02:
+#   n8n-workflow-api-key-header  — catches "x-api-key"/"x-API-Key"/"api-key"/
+#     "api_key"/"apiKey" header values in n8n JSON workflows that are long
+#     literals instead of $env pointers.  Root cause of the pdf.co key leak
+#     that sat undetected for ~35 days: templates/ was blanket-excluded from
+#     scanning.  Path exclusion narrowed to *.env.example files only.
+#
+#   n8n-workflow-token-param     — catches "token"/"authorization"/"bearer"
+#     query-param values that look like real secrets.  Root cause of the
+#     Infosimples token leak (same blanket-path-exclusion failure).
+#
+# Allowlist for env-pointer form (={{ $env.VAR_NAME }}) added so the
+# CORRECT replacement pattern never trips the rules.
 
 [extend]
 useDefault = true
 
-# Repo-wide allowlist. `regexes` matches the LEAKED VALUE itself (not file
-# path). `paths` matches file path. Either match = false positive suppressed.
+# ─── Custom rules ────────────────────────────────────────────────────────────
+#
+# Rule: n8n-workflow-api-key-header
+# Target: n8n HTTP Request nodes that embed a literal API-key value in a
+#   header whose name is one of the common API-key header names.
+#
+# JSON shape that triggers:
+#   { "name": "x-api-key", "value": "<real-secret>" }
+#
+# The regex captures the entire matched fragment including the secret value so
+# gitleaks can apply entropy checks.  secretGroup=2 tells gitleaks to measure
+# entropy on the VALUE portion only (the captured key literal), avoiding the
+# low-entropy header-name prefix from polluting the entropy sample.
+#
+# Regex breakdown:
+#   "name"\s*:\s*"               — JSON "name" key start
+#   (?:x-api-key|x-API-Key|X-API-KEY|api[-_]key|apiKey|API[-_]KEY)
+#                                — credential header name variants
+#   "[,\s\n]*                    — close quote, optional comma/whitespace/newline
+#   "value"\s*:\s*"              — JSON "value" key
+#   ([A-Za-z0-9@._/+\-]{20,})    — capture group 2: the secret (≥20 chars,
+#                                   alphanumeric + chars common in API keys)
+#   "                            — close quote
+#
+# Min entropy 3.0 on secretGroup=2 filters out model names ("gpt-4.1-mini"),
+# short strings ("2via"), and email addresses that happen to be short.
+[[rules]]
+id          = "n8n-workflow-api-key-header"
+description = "n8n workflow template: literal API-key in x-api-key / api-key header value (should be ={{ $env.VAR }})"
+regex       = '''"name"\s*:\s*"(?:x-api-key|x-API-Key|X-API-KEY|api[-_]key|apiKey|API[-_]KEY)"[,\s\n]*"value"\s*:\s*"([A-Za-z0-9@._/+\-]{20,})"'''
+secretGroup = 1
+entropy     = 3.0
+keywords    = ["x-api-key", "x-API-Key", "X-API-KEY", "api-key", "api_key", "apiKey", "API-KEY", "API_KEY"]
+
+  [rules.allowlist]
+  description = "n8n $env pointer is the correct pattern — not a secret"
+  regexTarget = "match"
+  regexes = [
+    # n8n env-pointer form: ={{ $env.SOME_VAR_NAME }}
+    # This is the CORRECT replacement for hardcoded credentials.
+    '''\{\{[^}]*\$env\.[A-Z0-9_]+[^}]*\}\}''',
+  ]
+
+# ─── Custom rule: n8n-workflow-token-param ───────────────────────────────────
+#
+# Rule: n8n-workflow-token-param
+# Target: n8n HTTP Request nodes that embed a literal secret in a query
+#   parameter or header whose name is "token", "authorization", "bearer",
+#   or similar.
+#
+# JSON shape that triggers (Infosimples pattern):
+#   { "name": "token", "value": "<real-secret>" }
+#
+# Same entropy threshold as above.  "token" alone is an extremely common
+# field name, so we require ≥ 3.5 entropy (slightly higher) to reduce FPs
+# from short safe values like "2via" that happen to appear in "value" fields.
+[[rules]]
+id          = "n8n-workflow-token-param"
+description = "n8n workflow template: literal secret in token / authorization query-param or header (should be ={{ $env.VAR }})"
+regex       = '''"name"\s*:\s*"(?:token|authorization|bearer|secret|password|passwd|access_token|auth_token|api_token|AUTH[-_]TOKEN|ACCESS[-_]TOKEN)"[,\s\n]*"value"\s*:\s*"([A-Za-z0-9@._/+\-]{20,})"'''
+secretGroup = 1
+entropy     = 3.5
+keywords    = ["token", "authorization", "bearer", "secret", "password", "access_token", "auth_token", "api_token"]
+
+  [rules.allowlist]
+  description = "n8n $env pointer is the correct pattern — not a secret"
+  regexTarget = "match"
+  regexes = [
+    '''\{\{[^}]*\$env\.[A-Z0-9_]+[^}]*\}\}''',
+  ]
+
+# ─── Repo-wide allowlist ─────────────────────────────────────────────────────
+#
+# `regexes` matches the LEAKED VALUE itself (not file path).
+# `paths`   matches file path.  Either match = false positive suppressed.
 [allowlist]
 description = "Known-safe public values that ship in the repo"
 regexTarget = "match"
@@ -39,6 +126,13 @@ regexes = [
   # Pattern: `tok_<state>_<seq>` (e.g. `tok_pending_001`) — fabricated
   # OAuth flow placeholders, not real bearer tokens.
   '''tok_[a-z]+_[a-z0-9_]{1,20}''',
+
+  # n8n env-pointer form in workflow JSON — the CORRECT safe replacement.
+  # Pattern: ={{ $env.VAR_NAME }} — resolves at runtime from container env.
+  # This allowlist entry covers the global scan (both custom rules above
+  # also carry per-rule allowlists, but this ensures default rules don't
+  # fire on env-pointer values either).
+  '''\{\{[^}]*\$env\.[A-Z0-9_]+[^}]*\}\}''',
 ]
 
 paths = [
@@ -62,6 +156,11 @@ paths = [
   '''CLAUDE\.md$''',
   '''.*/CLAUDE/.*\.md$''',
 
-  # Templates ship placeholder env-files for scaffold.
-  '''templates/.*''',
+  # NOTE: `templates/.*` was intentionally REMOVED here on 2026-06-02.
+  # It was the root cause of the ~35-day undetected pdf.co + Infosimples
+  # credential leak: a blanket path exclusion that silently suppressed ALL
+  # scanning of templates/n8n/*.json.  The only template files that warrant
+  # exclusion are *.env.example placeholders — covered by the \.env\.example$
+  # rule above.  n8n workflow JSON files are live workflow exports and MUST
+  # be scanned.
 ]
