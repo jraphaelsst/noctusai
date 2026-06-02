@@ -30,6 +30,7 @@ from tools.noctus.seed.scan_fusions import (
 )
 from tools.noctus.seed.scan_optimizations import scan_optimizations
 from tools.noctus.seed.scan_repetition import scan_repetition
+from tools.noctus.seed.search_capabilities import search_capabilities
 from tools.noctus.seed.specify_capability import specify_capability
 
 
@@ -1969,3 +1970,361 @@ class TestScanOptimizationsLiveTree:
         # — both are acceptable.
         assert isinstance(result["findings"], list)
         assert "estimated_savings_loc_total" in result["summary"]
+
+
+# ─── search_capabilities ───────────────────────────────────────────────────
+
+
+def _synthetic_repo(tmp_path: Path) -> Path:
+    """Build a minimal synthetic repo tree (lib + framework) for test seam."""
+    lib_root = tmp_path / "seed" / "lib" / "backend" / "noctusai_lib"
+    fw_root = tmp_path / "seed" / "framework" / "backend" / "noctusai_seed"
+
+    # integrations layer — youtube-like module
+    (lib_root / "integrations" / "youtube").mkdir(parents=True)
+    (lib_root / "integrations" / "youtube" / "protocol.py").write_text(
+        '"""YouTube integration module."""\n\n'
+        "class YoutubeClient:\n"
+        '    """YouTube Data API v3 client contract."""\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (lib_root / "integrations" / "youtube" / "factory.py").write_text(
+        '"""Factory for YoutubeClient."""\n\n'
+        "def make_youtube_client():\n"
+        '    """Create a configured YoutubeClient."""\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    # domain layer — helper
+    (lib_root / "domain" / "helpers").mkdir(parents=True)
+    (lib_root / "domain" / "helpers" / "text.py").write_text(
+        '"""Text utilities."""\n\n'
+        "def truncate(text: str, limit: int = 100) -> str:\n"
+        '    """Truncate a string to limit characters."""\n'
+        "    return text[:limit]\n",
+        encoding="utf-8",
+    )
+
+    # framework module
+    fw_root.mkdir(parents=True)
+    (fw_root / "app.py").write_text(
+        '"""App factory."""\n\n'
+        "def create_product_app(name: str) -> object:\n"
+        '    """Create a product FastAPI application."""\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    return tmp_path
+
+
+def _synthetic_tools(tmp_path: Path) -> Path:
+    """Build a minimal synthetic tools dir with two fake MCP tools."""
+    tools_dir = tmp_path / "tools" / "noctus" / "dev"
+    tools_dir.mkdir(parents=True)
+
+    (tools_dir / "task_branch.py").write_text(
+        '"""noctus.dev.task_branch tool."""\n\n'
+        "def task_branch(action: str, branch: str = \"\") -> dict:\n"
+        '    """Start or finish a task branch in the repository.\n\n'
+        "    Returns:\n"
+        '        ``{"branch": str, "worktree": str}``\n'
+        '    """\n'
+        "    return {}\n\n"
+        "def register(server) -> None:\n"
+        "    @server.tool(\n"
+        '        name="noctus.dev.task_branch",\n'
+        '        description="Start or finish a task branch in the repository.",\n'
+        "    )\n"
+        "    def _shim(action: str, branch: str = \"\") -> dict:\n"
+        "        return task_branch(action=action, branch=branch)\n",
+        encoding="utf-8",
+    )
+    (tools_dir / "kb_search.py").write_text(
+        '"""noctus.dev.kb_search tool."""\n\n'
+        "def kb_search(query: str, limit: int = 10) -> dict:\n"
+        '    """Search knowledge base articles by keyword.\n\n'
+        "    Returns:\n"
+        '        ``{"results": [...], "total": int}``\n'
+        '    """\n'
+        "    return {}\n\n"
+        "def register(server) -> None:\n"
+        "    @server.tool(\n"
+        '        name="noctus.dev.kb_search",\n'
+        '        description="Search knowledge base articles by keyword.",\n'
+        "    )\n"
+        "    def _shim(query: str, limit: int = 10) -> dict:\n"
+        "        return kb_search(query=query, limit=limit)\n",
+        encoding="utf-8",
+    )
+
+    return tmp_path / "tools"
+
+
+class TestSearchCapabilitiesSearch:
+    """Mode=search over synthetic seams — no real-repo writes."""
+
+    def test_search_returns_lib_hits(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="youtube", surface="lib", repo_root=repo)
+        assert result["mode"] == "search"
+        assert result["total_matched"] >= 2
+        names = [r["import_path"] for r in result["results"]]
+        assert any("YoutubeClient" in n for n in names)
+        assert any("make_youtube_client" in n for n in names)
+
+    def test_search_returns_mcp_hits(self, tmp_path):
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(query="task", surface="mcp", tools_root=tools)
+        assert result["mode"] == "search"
+        assert result["total_matched"] >= 1
+        names = [r["tool_name"] for r in result["results"]]
+        assert "noctus.dev.task_branch" in names
+
+    def test_search_surface_all_merges_both(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        tools = _synthetic_tools(tmp_path)
+        # query="branch" matches both lib framework app AND mcp task_branch
+        result = search_capabilities(
+            query="branch", surface="all", repo_root=repo, tools_root=tools
+        )
+        surfaces = {r["surface"] for r in result["results"]}
+        assert "mcp" in surfaces
+
+    def test_empty_query_returns_all_bounded_by_limit(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="", surface="lib", limit=3, repo_root=repo)
+        assert result["returned"] <= 3
+
+    def test_limit_cap_respected_and_dropped_reported(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result_all = search_capabilities(query="", surface="lib", limit=200, repo_root=repo)
+        total = result_all["total_matched"]
+        result_capped = search_capabilities(query="", surface="lib", limit=2, repo_root=repo)
+        assert result_capped["returned"] == 2
+        if total > 2:
+            assert result_capped["dropped"] == total - 2
+
+    def test_layer_filter_restricts_to_layer(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="", surface="lib", layer="integrations", repo_root=repo)
+        for r in result["results"]:
+            assert r["layer"] == "integrations"
+
+    def test_kind_filter_restricts_to_kind(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="", surface="lib", kind="class", repo_root=repo)
+        for r in result["results"]:
+            assert r["kind"] == "class"
+
+    def test_namespace_filter_restricts_to_namespace(self, tmp_path):
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(
+            query="", surface="mcp", namespace="noctus.dev", tools_root=tools
+        )
+        for r in result["results"]:
+            assert r["namespace"].startswith("noctus.dev")
+
+    def test_search_result_lib_row_shape(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="truncate", surface="lib", repo_root=repo)
+        assert result["total_matched"] >= 1
+        row = result["results"][0]
+        assert "surface" in row and row["surface"] == "lib"
+        assert "import_path" in row
+        assert "kind" in row
+        assert "layer" in row
+        assert "summary" in row
+        assert "score" in row
+
+    def test_search_result_mcp_row_shape(self, tmp_path):
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(query="knowledge", surface="mcp", tools_root=tools)
+        assert result["total_matched"] >= 1
+        row = result["results"][0]
+        assert row["surface"] == "mcp"
+        assert "tool_name" in row
+        assert "namespace" in row
+        assert "summary" in row
+        assert "score" in row
+
+    def test_no_results_for_unknown_query(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(
+            query="xyzzy_not_real_capability_9999",
+            surface="all",
+            repo_root=repo,
+            tools_root=tools,
+        )
+        assert result["total_matched"] == 0
+        assert result["results"] == []
+        assert result["dropped"] == 0
+
+    def test_results_ranked_by_score_desc(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(query="youtube", surface="lib", repo_root=repo)
+        scores = [r["score"] for r in result["results"]]
+        assert scores == sorted(scores, reverse=True)
+
+
+class TestSearchCapabilitiesSummary:
+    def test_summary_lib_has_expected_keys(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(mode="summary", surface="lib", repo_root=repo)
+        assert result["mode"] == "summary"
+        lib = result["lib"]
+        assert "total" in lib
+        assert "by_layer" in lib
+        assert "by_kind" in lib
+        assert lib["total"] > 0
+
+    def test_summary_mcp_has_expected_keys(self, tmp_path):
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(mode="summary", surface="mcp", tools_root=tools)
+        assert result["mode"] == "summary"
+        mcp = result["mcp"]
+        assert "total" in mcp
+        assert "by_namespace" in mcp
+        assert mcp["total"] == 2
+        assert "noctus.dev" in mcp["by_namespace"]
+
+    def test_summary_all_returns_both(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(
+            mode="summary", surface="all", repo_root=repo, tools_root=tools
+        )
+        assert "lib" in result
+        assert "mcp" in result
+
+    def test_summary_lib_counts_match_totals(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(mode="summary", surface="lib", repo_root=repo)
+        lib = result["lib"]
+        by_layer_sum = sum(lib["by_layer"].values())
+        # framework counts under "framework" key in by_layer
+        assert by_layer_sum == lib["total"]
+
+    def test_summary_layer_filter_reduces_total(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        all_result = search_capabilities(mode="summary", surface="lib", repo_root=repo)
+        integrations_result = search_capabilities(
+            mode="summary", surface="lib", layer="integrations", repo_root=repo
+        )
+        assert integrations_result["lib"]["total"] <= all_result["lib"]["total"]
+
+
+class TestSearchCapabilitiesDetail:
+    def test_detail_lib_found_exact(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(
+            mode="detail",
+            query="noctusai_lib.integrations.youtube.protocol.YoutubeClient",
+            surface="lib",
+            repo_root=repo,
+        )
+        assert result["mode"] == "detail"
+        assert result["found"] is True
+        item = result["item"]
+        assert item["import_path"] == "noctusai_lib.integrations.youtube.protocol.YoutubeClient"
+        assert item["kind"] == "class"
+        assert item["layer"] == "integrations"
+        assert "YouTube Data API" in item["docstring"]
+        assert "class YoutubeClient" in item["signature"]
+
+    def test_detail_lib_function_has_signature(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(
+            mode="detail",
+            query="noctusai_lib.integrations.youtube.factory.make_youtube_client",
+            surface="lib",
+            repo_root=repo,
+        )
+        assert result["found"] is True
+        item = result["item"]
+        assert "make_youtube_client" in item["signature"]
+        assert item["docstring"]
+
+    def test_detail_mcp_found_exact(self, tmp_path):
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(
+            mode="detail",
+            query="noctus.dev.task_branch",
+            surface="mcp",
+            tools_root=tools,
+        )
+        assert result["found"] is True
+        item = result["item"]
+        assert item["tool_name"] == "noctus.dev.task_branch"
+        assert "task_branch" in item["signature"]
+        assert item["docstring"]
+
+    def test_detail_not_found_returns_false(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(
+            mode="detail",
+            query="noctusai_lib.does_not_exist.SomeMissingClass",
+            surface="lib",
+            repo_root=repo,
+        )
+        assert result["found"] is False
+        assert result["item"] is None
+
+    def test_detail_empty_query_returns_error(self, tmp_path):
+        repo = _synthetic_repo(tmp_path)
+        result = search_capabilities(mode="detail", query="", surface="lib", repo_root=repo)
+        assert result["found"] is False
+        assert "error" in result
+
+    def test_detail_surface_all_tries_lib_then_mcp(self, tmp_path):
+        """surface=all should find lib entries when they match."""
+        repo = _synthetic_repo(tmp_path)
+        tools = _synthetic_tools(tmp_path)
+        result = search_capabilities(
+            mode="detail",
+            query="noctusai_lib.domain.helpers.text.truncate",
+            surface="all",
+            repo_root=repo,
+            tools_root=tools,
+        )
+        assert result["found"] is True
+        assert result["surface"] == "lib"
+
+
+class TestSearchCapabilitiesLiveTree:
+    """Smoke tests against the real repo — no writes, bounded output."""
+
+    def test_live_search_youtube_returns_lib_hits(self):
+        result = search_capabilities(query="youtube", surface="lib", limit=10)
+        assert result["total_matched"] >= 4  # YoutubeClient + variants
+        assert all(r["surface"] == "lib" for r in result["results"])
+
+    def test_live_summary_mcp_counts_200plus_tools(self):
+        result = search_capabilities(mode="summary", surface="mcp")
+        assert result["mcp"]["total"] >= 100  # live tree has 218+ tools
+
+    def test_live_detail_task_branch(self):
+        result = search_capabilities(
+            mode="detail", query="noctus.dev.task_branch", surface="mcp"
+        )
+        assert result["found"] is True
+        item = result["item"]
+        assert "task_branch" in item["signature"].lower()
+        assert item["docstring"]
+
+    def test_live_summary_lib_total_plausible(self):
+        result = search_capabilities(mode="summary", surface="lib")
+        # Should be several hundred public symbols across 6 layers + framework
+        assert result["lib"]["total"] >= 200
+
+    def test_live_search_never_exceeds_limit(self):
+        result = search_capabilities(query="", surface="all", limit=25)
+        assert result["returned"] <= 25
+
+    def test_live_dropped_reported_honestly(self):
+        result = search_capabilities(query="", surface="all", limit=5)
+        assert result["returned"] == 5
+        assert result["dropped"] == result["total_matched"] - 5

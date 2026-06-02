@@ -7,6 +7,9 @@ Read-only diagnostics (today):
 - ``list_capabilities`` — enumerate what the seed currently provides (factories
   in ``noctusai_seed``, library exports in ``noctusai_lib``). So future
   scaffolds inherit instead of inventing.
+- ``search_capabilities`` — unified DISCOVERY over seed lib + all MCP tools.
+  Three modes (search/summary/detail) — bounded payload, never the 203KB dump.
+  The go-to tool before inventing anything new.
 - ``audit_drift`` — for files that mirror ``templates/product-seed/`` shapes,
   diff each product against the canonical. Surface convergence candidates.
 - ``report`` — rollup that cross-references scan_repetition + audit_drift
@@ -41,6 +44,7 @@ def register_all(server) -> None:
     from . import scan_fusions
     from . import scan_optimizations
     from . import scan_repetition
+    from . import search_capabilities
     from . import specify_capability
 
     absorb_file.register(server)
@@ -50,6 +54,7 @@ def register_all(server) -> None:
     scan_fusions.register(server)
     scan_optimizations.register(server)
     scan_repetition.register(server)
+    search_capabilities.register(server)
     specify_capability.register(server)
 
 
