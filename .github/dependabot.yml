@@ -1,0 +1,171 @@
+version: 2
+
+# Dependabot configuration for NoctusAI.
+#
+# WHY THIS FILE EXISTS — root cause fix for the "Dependency Graph" CI failure:
+#   GitHub's dependency-graph scanner auto-walks every requirements.txt it
+#   finds and chokes on editable local-path installs:
+#     -e seed/lib/backend
+#     -e seed/framework/backend
+#   These are relative filesystem paths that resolve in the container/venv but
+#   are unresolvable by the remote Dependabot updater — it has no access to
+#   the local checkout structure.
+#
+# THE FIX — Option B: scope pip to pyproject.toml directories only.
+#   When this file exists, Dependabot ONLY scans the directories listed here
+#   (it does NOT auto-scan the whole tree).  By pointing pip updates at the
+#   canonical pyproject.toml manifests (seed/lib/backend, seed/framework/backend,
+#   mcp/noctusai, dev_team) we get real PyPI dep tracking without hitting any
+#   editable path installs.
+#
+#   Product requirements.txt files (products/*/backend/requirements.txt) are
+#   INTENTIONALLY OMITTED — they are deployment-assembly files that compose:
+#     (a) the -e seed/* editable installs (local, unresolvable remotely), and
+#     (b) versioned PyPI deps that are ALREADY declared in the pyproject.toml
+#         manifests above.
+#   Scanning them would double-report known deps AND fail on (a) every time.
+#
+#   mcp/noctusai is also INTENTIONALLY OMITTED from the pip section because its
+#   requirements.txt carries "-e ../../seed/lib/backend" alongside pyproject.toml.
+#   Dependabot scans ALL pip manifests in a directory; pointing it here would
+#   re-introduce the same failure.  The dep surface (openai, mcp, pydantic, ...)
+#   is already covered by seed/lib/backend's pyproject.toml.
+#
+# NEEDS-CI-VERIFICATION: the next push that runs the Dependency Graph workflow
+# should go green once Dependabot no longer attempts the editable-path manifests.
+
+updates:
+  # ── Python (pip) ──────────────────────────────────────────────────────────
+  # Only scan the canonical pyproject.toml manifests — no editable path deps.
+
+  - package-ecosystem: "pip"
+    # seed/lib/backend pyproject.toml: all platform-wide runtime deps
+    # (fastapi, pydantic, supabase, openai, cryptography, redis, …)
+    directory: "/seed/lib/backend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "python"
+
+  - package-ecosystem: "pip"
+    # seed/framework/backend pyproject.toml: structural seed deps
+    # (noctusai-lib, fastapi, supabase, httpx, …)
+    directory: "/seed/framework/backend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "python"
+
+  - package-ecosystem: "pip"
+    # dev_team pyproject.toml: agno multi-agent dev team deps
+    # (agno, anthropic, pydantic, …)
+    directory: "/dev_team"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "python"
+
+  # ── npm (frontend) ────────────────────────────────────────────────────────
+  # Shared library + framework frontends are the canonical npm dep sources.
+  # Product frontends are also tracked for security alerts.
+
+  - package-ecosystem: "npm"
+    directory: "/seed/lib/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/seed/framework/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/core/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/social-wiring/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/adconnect/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/daily-life/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/erp-imobiliario/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/knowledge-extractor/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/personal-finance/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/therapy-platform/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  - package-ecosystem: "npm"
+    directory: "/products/dev-team/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
