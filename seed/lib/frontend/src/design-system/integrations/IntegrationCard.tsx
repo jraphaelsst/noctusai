@@ -35,6 +35,9 @@ import {
 } from "lucide-react";
 
 import { cn } from "../../utils";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
 import type {
   IntegrationAccount,
   IntegrationAccountPatch,
@@ -97,17 +100,12 @@ export function resolveStatusBadge(status: IntegrationStatus): StatusBadgeConfig
 function StatusBadge({ status }: { status: IntegrationStatus }) {
   const { label, className, showSpinner } = resolveStatusBadge(status);
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold",
-        className,
-      )}
-    >
+    <Badge className={className}>
       {showSpinner && (
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
       )}
       {label}
-    </span>
+    </Badge>
   );
 }
 
@@ -145,8 +143,9 @@ function ActionsMenu({
 
   return (
     <div className="relative" ref={menuRef}>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon"
         aria-label="Mais ações"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -155,10 +154,9 @@ function ActionsMenu({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
       >
         <MoreHorizontal className="h-4 w-4" />
-      </button>
+      </Button>
 
       {open && (
         <div
@@ -265,7 +263,7 @@ function EditForm({ account, config, busy, onSave, onCancel }: EditFormProps) {
           >
             {field.label}
           </label>
-          <input
+          <Input
             id={`ic-edit-${account.id}-${field.key}`}
             type={field.inputType ?? "text"}
             placeholder={field.placeholder}
@@ -274,16 +272,17 @@ function EditForm({ account, config, busy, onSave, onCancel }: EditFormProps) {
             onChange={(e) =>
               setDraft((prev) => ({ ...prev, [field.key]: e.target.value }))
             }
-            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50"
           />
         </div>
       ))}
 
       <div className="flex items-center gap-2 pt-1">
-        <button
+        <Button
           type="submit"
+          variant="primary"
+          size="sm"
           disabled={busy}
-          className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+          aria-label="Salvar"
         >
           {busy ? (
             <Loader2 className="h-3 w-3 animate-spin" />
@@ -291,16 +290,17 @@ function EditForm({ account, config, busy, onSave, onCancel }: EditFormProps) {
             <Check className="h-3 w-3" />
           )}
           Salvar
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
         >
           <X className="h-3 w-3" />
           Cancelar
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -476,18 +476,18 @@ export function IntegrationCard({
 
           {/* Edit toggle */}
           {onSave && config && config.editableFields.length > 0 && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               aria-label={editMode ? "Cancelar edição" : "Editar conta"}
               disabled={busy}
               onClick={() => setEditMode((v) => !v)}
               className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
                 editMode ? "text-primary" : "text-muted-foreground",
               )}
             >
               <Pencil className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           )}
 
           {/* Actions menu */}

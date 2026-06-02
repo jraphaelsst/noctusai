@@ -37,6 +37,26 @@ export { PoweredByFooter } from "./components/PoweredByFooter";
 export { AcceptInvitePage } from "./components/AcceptInvitePage";
 export type { AcceptInvitePageProps } from "./components/AcceptInvitePage";
 
+// UI primitives — generic, token-aligned building blocks.
+// Badge / Button / Dialog / Input are consumed by integration organs and
+// available to all products that import from `@noctusai/lib/design-system`.
+export { Badge } from "./ui/Badge";
+export type { BadgeProps, BadgeVariant } from "./ui/Badge";
+
+export { Button } from "./ui/Button";
+export type { ButtonProps, ButtonVariant, ButtonSize } from "./ui/Button";
+
+export { Dialog, DialogHeader, DialogBody, DialogFooter } from "./ui/Dialog";
+export type {
+  DialogProps,
+  DialogHeaderProps,
+  DialogBodyProps,
+  DialogFooterProps,
+} from "./ui/Dialog";
+
+export { Input } from "./ui/Input";
+export type { InputProps } from "./ui/Input";
+
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 
 export { LLMProviderSelector } from "./components/LLMProviderSelector";
