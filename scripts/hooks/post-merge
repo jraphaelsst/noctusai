@@ -56,27 +56,13 @@ fi
 echo "[post-merge] $(echo "$CHANGED" | wc -l | tr -d ' ') file(s) changed; checking caches..."
 
 if have_py; then
-    # ─── kb-embeddings (advisory, non-blocking)
-    if echo "$CHANGED" | grep -qE '^KNOWLEDGE-BASE/.+\.md$'; then
-        echo "[post-merge] KB docs changed — refreshing kb-embeddings cache..."
-        "$PY" "$CLI" --refresh-kb-embeddings 2>&1 | tail -2 || \
-            echo "[post-merge]   ↳ kb-embeddings refresh skipped (provider unreachable or no key)."
-    fi
-
-    # ─── code-embeddings (advisory, non-blocking)
-    if echo "$CHANGED" | grep -qE '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$'; then
-        echo "[post-merge] Code source changed — refreshing code-embeddings cache..."
-        "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || \
-            echo "[post-merge]   ↳ code-embeddings refresh skipped (provider unreachable or no key)."
-    fi
-
-    # ─── corpus-embeddings (advisory, non-blocking) — CHANGELOG / templates /
-    # .claude/agents/ FULL body / .claude/skills/ / PROJECT-HISTORY.
-    if echo "$CHANGED" | grep -qE '^(CHANGELOG\.md$|templates/.+\.md$|\.claude/agents/.+\.md$|\.claude/skills/.+/SKILL\.md$|project-history/PROJECT-HISTORY\.md$)'; then
-        echo "[post-merge] Corpus source changed — refreshing corpus-embeddings cache..."
-        "$PY" "$CLI" --refresh-corpus-embeddings 2>&1 | tail -2 || \
-            echo "[post-merge]   ↳ corpus-embeddings refresh skipped (provider unreachable or no key)."
-    fi
+    # ─── CACHE-TIMING RELOCATION (2026-06-01): the EXPENSIVE refreshes
+    # (kb/code/corpus OpenAI embeddings + noc-graph rebuild, below) are DEFERRED
+    # out of intermediate worktree merges/pulls — they were the multi-minute lag.
+    # They now fire ONLY at the dev-delivery push (pre-push, gated on dev) and
+    # lazily on read. Only the CHEAP zero-OpenAI structural settles run here
+    # (auto-improvement / agent-context / keeper-patterns) so keeper gates stay
+    # fresh in-session. KB § PATTERNS/architect/branch-tree-tracking.md §3.
 
     # ─── auto-improvement cache (blocking on failure — it's high-severity)
     if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
@@ -92,14 +78,8 @@ if have_py; then
             echo "[post-merge]   ↳ agent-context refresh skipped (advisory)."
     fi
 
-    # ─── noc-graph cache (8th keeper-mirror; structured graph for orientation)
-    # Refresh on any change to a graph-input surface: code / KB / harness /
-    # landscape / cli / auto-improvement / project-history.
-    if echo "$CHANGED" | grep -qE '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$'; then
-        echo "[post-merge] Graph-input surface changed — refreshing noc-graph cache..."
-        "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 || \
-            echo "[post-merge]   ↳ noc-graph refresh skipped (advisory)."
-    fi
+    # ─── noc-graph cache: DEFERRED to dev-delivery push + lazy-on-read (see the
+    # cache-timing note above). Intentionally NOT rebuilt on intermediate merges.
 
     # ─── keeper-patterns cache
     if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then

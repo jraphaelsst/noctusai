@@ -92,6 +92,22 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # graph inputs: code, KB, harness surfaces (agents/skills/commands).
         if grep -qE '\.(py|md)$|^\.claude/'      <<<"$changed"; then graph=1;  fi
 
+        # CACHE-TIMING RELOCATION (2026-06-01): the EXPENSIVE refreshes (kb/code/
+        # corpus OpenAI embeddings + noc-graph rebuild) fire ONLY when DELIVERING to
+        # a shared branch (dev/main/prod) — the "final push" boundary. An
+        # intermediate push (a feat/* branch) defers them (they self-heal lazily on
+        # read + at the eventual dev delivery). The CHEAP zero-OpenAI structural
+        # settles (keeper / agent-context / auto-improvement) still run on any push
+        # so keeper gates stay fresh. KB § branch-tree-tracking §3 (cache-refresh-timing rule).
+        delivering=0
+        while read -r _lr _lo r_ref _ro; do
+            [[ "$r_ref" =~ ^refs/heads/(dev|main|prod)$ ]] && delivering=1
+        done <<< "$PUSH_LINES"
+        if [[ -z "$force" && "$delivering" -eq 0 ]]; then
+            echo "[pre-push] intermediate push (not dev/main/prod) — deferring expensive cache refresh (embeddings + noc-graph)."
+            kb=0; code=0; md=0; graph=0
+        fi
+
         # Branch-tree pointer pushes are cache-EXEMPT (tracking metadata, not
         # graph-input) — KB § branch-tree-tracking §3 "Cache-sync discipline".
         # If the push touches ONLY cache-exempt paths, force every flag off so a

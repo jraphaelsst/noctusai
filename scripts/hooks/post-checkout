@@ -72,25 +72,17 @@ fi
 echo "[post-checkout] branch switch changed cache-relevant files; refreshing..."
 
 if have_py; then
-    if echo "$CHANGED" | grep -qE '^KNOWLEDGE-BASE/.+\.md$'; then
-        "$PY" "$CLI" --refresh-kb-embeddings 2>&1 | tail -2 || true
-    fi
-    if echo "$CHANGED" | grep -qE '^(mcp|noctusai_lib|products/seed)/.+\.(py|ts|tsx)$'; then
-        "$PY" "$CLI" --refresh-code-embeddings 2>&1 | tail -2 || true
-    fi
-    if echo "$CHANGED" | grep -qE '^(CHANGELOG\.md$|templates/.+\.md$|\.claude/agents/.+\.md$|\.claude/skills/.+/SKILL\.md$|project-history/PROJECT-HISTORY\.md$)'; then
-        "$PY" "$CLI" --refresh-corpus-embeddings 2>&1 | tail -2 || true
-    fi
+    # ─── CACHE-TIMING RELOCATION (2026-06-01): EXPENSIVE refreshes (kb/code/corpus
+    # OpenAI embeddings + noc-graph rebuild) are DEFERRED out of intermediate branch
+    # switches — they fire ONLY at the dev-delivery push (pre-push) + lazily on read.
+    # Only the CHEAP zero-OpenAI structural settles run here. KB § branch-tree-tracking §3.
     if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
         "$PY" "$CLI" --refresh-auto-improvement-cache 2>&1 | tail -2 || true
     fi
     if echo "$CHANGED" | grep -qE '^\.claude/agents/.+\.md$|^KNOWLEDGE-BASE/'; then
         "$PY" "$CLI" --refresh-agent-context-cache 2>&1 | tail -2 || true
     fi
-    # noc-graph (8th keeper-mirror)
-    if echo "$CHANGED" | grep -qE '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$'; then
-        "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 || true
-    fi
+    # noc-graph + embeddings: DEFERRED to dev-delivery push + lazy-on-read (above note).
     if echo "$CHANGED" | grep -qE '^mcp/noctusai/tools/noctus/dev/compliance\.py$'; then
         "$PY" "$CLI" --refresh-keeper-cache 2>&1 | tail -2 || true
     fi

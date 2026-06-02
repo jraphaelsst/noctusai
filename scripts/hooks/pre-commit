@@ -286,12 +286,13 @@ fi
 # of that source corpus, so an extractor change busts the sha and rebuilds too.
 # Belt-and-suspenders with the lazy-on-read `_ensure_fresh_on_read` gate.
 # KB § PATTERNS/architect/noc-graph.md · KB § PATTERNS/common/cache-auto-freshness.md.
-STAGED_GRAPH_INPUT=$(git diff --cached --name-only 2>/dev/null | grep -E '^(seed|mcp|products)/.+\.(py|ts|tsx)$|^KNOWLEDGE-BASE/|^\.claude/(agents|skills|commands)/|^CLAUDE(\.md|/)|^(CONTEXTUALIZE|CHANGELOG)\.md$|^project-history/(PROJECT-HISTORY\.md|auto-improvement\.ndjson)$|^mcp/noctusai/cli\.py$' || true)
-if [[ -n "$STAGED_GRAPH_INPUT" ]] && have_py; then
-    echo "[pre-commit] Graph-input surface staged — refreshing noc-graph cache (only-stale)..."
-    "$PY" "$CLI" --refresh-noc-graph 2>&1 | tail -2 | sed 's/^/[pre-commit] noc-graph: /' || \
-        echo "[pre-commit]   ↳ noc-graph refresh skipped (advisory)."
-fi
+# CACHE-TIMING RELOCATION (2026-06-01): the noc-graph rebuild is DEFERRED out of
+# intermediate commits — it was the multi-minute per-commit lag. The graph now
+# rebuilds ONLY at the dev-delivery push (pre-push, gated on dev destination) and
+# lazily on read (`noctus.graph.* _ensure_fresh_on_read`). Intermediate worktree
+# commits never pay it; check_noc_graph_cache_freshness is advisory so a stale
+# graph never blocks. KB § PATTERNS/architect/branch-tree-tracking.md §3 (cache-refresh-timing rule).
+:  # noc-graph refresh intentionally NOT run on intermediate commits
 
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
 # Third in the keeper-mirror family. When the auto-improvement ndjson is
