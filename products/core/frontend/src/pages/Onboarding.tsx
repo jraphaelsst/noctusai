@@ -75,6 +75,8 @@ export function Onboarding() {
   const [companyCnpj, setCompanyCnpj] = useState('');
   const [companyTelefone, setCompanyTelefone] = useState('');
   const [companyEndereco, setCompanyEndereco] = useState('');
+  const [orgType, setOrgType] = useState<'individual' | 'company'>('individual');
+  const [numberOfUsers, setNumberOfUsers] = useState<number>(1);
 
   // Step 2: Plan selection
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -156,6 +158,8 @@ export function Onboarding() {
       cnpj: companyCnpj,
       telefone: companyTelefone,
       endereco: companyEndereco,
+      org_type: orgType,
+      number_of_users: orgType === 'company' ? numberOfUsers : 1,
     });
   }
 
@@ -283,6 +287,65 @@ export function Onboarding() {
           {/* Step 1: Company Details */}
           {currentStep === 0 && (
             <div className="mt-6 space-y-4">
+              {/* Org type selection */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">
+                  Tipo de conta
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    data-testid="org-type-individual"
+                    className={`rounded-lg border p-3 text-left transition-colors ${
+                      orgType === 'individual'
+                        ? 'border-primary bg-primary/5 ring-2 ring-primary'
+                        : 'border-border bg-card hover:border-primary/50'
+                    }`}
+                    onClick={() => {
+                      setOrgType('individual');
+                      setNumberOfUsers(1);
+                    }}
+                  >
+                    <div className="text-sm font-medium text-foreground">Individual</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">Uso pessoal</div>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="org-type-company"
+                    className={`rounded-lg border p-3 text-left transition-colors ${
+                      orgType === 'company'
+                        ? 'border-primary bg-primary/5 ring-2 ring-primary'
+                        : 'border-border bg-card hover:border-primary/50'
+                    }`}
+                    onClick={() => setOrgType('company')}
+                  >
+                    <div className="text-sm font-medium text-foreground">Empresa</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">Time ou organizacao</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Number of users — visible only for company, fades in/out */}
+              <div
+                data-testid="number-of-users-field"
+                className={`overflow-hidden transition-all duration-300 ${
+                  orgType === 'company' ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'
+                }`}
+              >
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Numero de funcionarios
+                </label>
+                <input
+                  type="number"
+                  data-testid="number-of-users-input"
+                  value={numberOfUsers}
+                  min={1}
+                  onChange={e => setNumberOfUsers(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  required={orgType === 'company'}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
               <div>
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Nome da empresa

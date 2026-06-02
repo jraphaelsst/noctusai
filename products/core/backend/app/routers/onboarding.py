@@ -101,7 +101,7 @@ async def complete_onboarding_step(
     steps = org.data.get("onboarding_steps") or DEFAULT_STEPS.copy()
     steps[body.step] = True
 
-    # If company_details step, also update org info
+    # If company_details step, also update org info (incl. org_type + number_of_users)
     if body.step == "company_details" and body.data:
         update_data = {}
         if body.data.get("nome"):
@@ -112,6 +112,12 @@ async def complete_onboarding_step(
             update_data["telefone"] = body.data["telefone"]
         if body.data.get("endereco"):
             update_data["endereco"] = body.data["endereco"]
+        if body.data.get("org_type") in ("individual", "company"):
+            update_data["org_type"] = body.data["org_type"]
+        if body.data.get("number_of_users") is not None:
+            n = int(body.data["number_of_users"])
+            if n >= 1:
+                update_data["number_of_users"] = n
         if update_data:
             db.table("organizations").update(update_data).eq("id", org_id).execute()
 

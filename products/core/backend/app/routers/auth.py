@@ -7,6 +7,7 @@ GET   /api/auth/me       — Get current user profile + org
 POST  /api/auth/logout   — Invalidate session
 """
 import logging
+import re
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -21,6 +22,24 @@ from noctusai_lib.config.product_urls import resolve_product_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+_SLUG_PREFIX = {"individual": "indv", "company": "comp"}
+
+
+def _slugify(text: str) -> str:
+    """Generate a URL-safe slug from text (max 44 chars, leaving room for prefix_)."""
+    slug = text.lower().strip()
+    slug = re.sub(r'[^\w\s-]', '', slug)
+    slug = re.sub(r'[\s_]+', '-', slug)
+    slug = re.sub(r'-+', '-', slug)
+    return slug[:44]
+
+
+def _make_org_slug(base_name: str, org_type: str) -> str:
+    """Build a prefixed slug: 'indv_<base>' or 'comp_<base>'."""
+    prefix = _SLUG_PREFIX.get(org_type, "indv")
+    base = _slugify(base_name)
+    return f"{prefix}_{base}"
 
 
 @router.post("/signup")
@@ -42,12 +61,14 @@ async def signup(request: Request, body: SignupRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro no cadastro: {str(e)}")
 
-    # 2. Create organization (append suffix if slug already taken)
-    base_slug = body.empresa.strip().lower().replace(" ", "-")
-    slug = base_slug
+    # 2. Create organization with org_type, number_of_users, and prefixed slug.
+    #    Slug format: 'indv_<base>' for individuals, 'comp_<base>' for companies.
+    org_type = body.org_type
+    number_of_users = body.number_of_users
+    slug = _make_org_slug(body.empresa.strip(), org_type)
     existing_slug = db.table("organizations").select("id").eq("slug", slug).execute()
     if existing_slug.data:
-        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+        slug = f"{slug}-{uuid.uuid4().hex[:6]}"
 
     org_data = {
         "nome": body.empresa.strip(),
@@ -55,6 +76,8 @@ async def signup(request: Request, body: SignupRequest):
         "plano": "free",
         "owner_id": user.id,
         "category": "normal",
+        "org_type": org_type,
+        "number_of_users": number_of_users,
     }
     org_result = db.table("organizations").insert(org_data).execute()
     if not org_result.data:

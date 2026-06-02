@@ -1,7 +1,7 @@
 """Request/response schemas for `app.routers.onboarding`."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -18,3 +18,12 @@ class CompanyDetailsUpdate(StrictHttpModel):
     cnpj: Optional[str] = Field(default=None, max_length=18)
     telefone: Optional[str] = Field(default=None, max_length=20)
     endereco: Optional[str] = Field(default=None, max_length=500)
+    org_type: Optional[Literal["individual", "company"]] = Field(
+        default=None,
+        description="Org type — 'individual' or 'company'. Updates the organization record.",
+    )
+    number_of_users: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Number of users (>= 1). Required when org_type='company'.",
+    )

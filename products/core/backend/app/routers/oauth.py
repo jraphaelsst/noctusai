@@ -41,12 +41,23 @@ PROVIDERS = [
 
 
 def _slugify(text: str) -> str:
-    """Generate a URL-safe slug from text."""
+    """Generate a URL-safe slug from text (max 44 chars, leaving room for prefix_)."""
     slug = text.lower().strip()
     slug = re.sub(r'[^\w\s-]', '', slug)
     slug = re.sub(r'[\s_]+', '-', slug)
     slug = re.sub(r'-+', '-', slug)
-    return slug[:50]
+    return slug[:44]
+
+
+def _make_org_slug(base_name: str, org_type: str = "individual") -> str:
+    """Build a prefixed slug: 'indv_<base>' or 'comp_<base>'.
+
+    OAuth signups default to 'individual' — the user can update org_type
+    later via the onboarding company_details step.
+    """
+    prefix = "comp" if org_type == "company" else "indv"
+    base = _slugify(base_name)
+    return f"{prefix}_{base}"
 
 
 @router.get("/providers")
@@ -120,9 +131,10 @@ async def oauth_callback(
     elif user_meta.get("name"):
         nome = user_meta["name"]
 
-    # Create organization (append suffix if slug already taken)
+    # Create organization (append suffix if slug already taken).
+    # OAuth signups default to 'individual' — user updates org_type in onboarding.
     org_name = f"Org de {nome}"
-    org_slug = _slugify(nome)
+    org_slug = _make_org_slug(nome, org_type="individual")
 
     existing_slug = db.table("organizations").select("id").eq("slug", org_slug).execute()
     if existing_slug.data:
@@ -134,6 +146,8 @@ async def oauth_callback(
         "slug": org_slug,
         "plano": "free",
         "owner_id": user_id,
+        "org_type": "individual",
+        "number_of_users": 1,
         "onboarding_completed": False,
         "onboarding_steps": {
             "company_details": False,

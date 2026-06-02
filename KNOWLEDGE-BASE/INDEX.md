@@ -198,6 +198,8 @@ KNOWLEDGE-BASE/
 │   │   ├── 03-PF.md
 │   │   └── 04-THERAPY.md
 │   └── PRODUCTS/           ← per-product design docs (multi-feature slices that don't belong in a single INTEGRATIONS/backend doc)
+│       ├── core/
+│       │   └── SIGNUP-ONBOARDING-JOURNEY.md ← e2e signup→onboarding→org→noctus_users→JWT-claim→RLS chain; org_type (individual/company) + slug-prefix model + number_of_users; where each piece lives; migration 039; test coverage map
 │       └── social-wiring/
 │           └── INTEGRATIONS-MULTI-ACCOUNT.md ← multi-account integration credentials (integration_accounts table; seed-shape-vs-primitive-consume rule; YouTube OAuth v1; 3-step extension recipe)
 ├── INSTRUCTIONS/           ← agent development / skill design
