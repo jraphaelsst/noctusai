@@ -155,24 +155,48 @@ export interface VideoDetailModalProps {
   onUpdated?: (updated: Video) => void;
   /** Called after a successful delete so the parent list refreshes. */
   onDeleted?: () => void;
+  /**
+   * Open the modal straight into a mode — set by a row's inline Edit/Delete
+   * icon. `null`/omitted = plain view (the row-click default).
+   */
+  initialMode?: "edit" | "delete" | null;
 }
 
-export function VideoDetailModal({
+/**
+ * Outer gate — intentionally hook-free. The parent mounts this unconditionally
+ * with `video` toggling null↔set; if the hooks lived here, that toggle would
+ * change the hook count between renders of the SAME mounted component and
+ * violate the Rules of Hooks ("Rendered more hooks than during the previous
+ * render"). Keeping hooks in the inner component (mounted only when a video
+ * exists, and keyed by video id so switching videos resets form state) makes
+ * the hook count stable for every mounted instance.
+ */
+export function VideoDetailModal(props: VideoDetailModalProps) {
+  if (!props.video) return null;
+  return (
+    <VideoDetailContent
+      key={props.video.youtube_video_id}
+      {...props}
+      video={props.video}
+    />
+  );
+}
+
+function VideoDetailContent({
   video,
   onClose,
   onUpdated,
   onDeleted,
-}: VideoDetailModalProps) {
-  if (!video) return null;
-
+  initialMode = null,
+}: VideoDetailModalProps & { video: Video }) {
   // ─── Edit form state ──────────────────────────────────────────────────────
-  const [editOpen, setEditOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(initialMode === "edit");
   const [editTitle, setEditTitle] = useState(video.title ?? "");
   const [editDescription, setEditDescription] = useState(video.description ?? "");
   const [editPrivacy, setEditPrivacy] = useState<PrivacyStatus>(
     video.privacy_status ?? "private",
   );
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(initialMode === "delete");
   const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState("");
 
@@ -218,7 +242,7 @@ export function VideoDetailModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-2xl rounded-xl bg-background shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-4xl rounded-xl bg-background shadow-2xl overflow-hidden max-h-[92vh] overflow-y-auto">
         {/* Action buttons (edit / delete / close) */}
         <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
           <Button
@@ -263,7 +287,7 @@ export function VideoDetailModal({
 
         {/* Thumbnail */}
         {video.thumbnail_url && (
-          <div className="relative h-48 w-full overflow-hidden bg-muted">
+          <div className="relative h-64 w-full overflow-hidden bg-muted">
             <img
               src={video.thumbnail_url}
               alt=""

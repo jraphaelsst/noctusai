@@ -16,6 +16,10 @@
  * Sorting: header clicks on Data/Visualizações toggle asc/desc client-side.
  * Pagination: "Carregar mais" button uses cursor from the parent hook.
  * Row click: calls onRowClick(video) so the parent can open the detail modal.
+ * Ações column: per-row Edit / Delete icon buttons (always visible so the CRUD
+ *   affordance is discoverable without opening the modal). Their clicks
+ *   stopPropagation so they don't ALSO trigger the row's onRowClick → the
+ *   parent opens the modal directly in edit/delete mode via onEdit/onDelete.
  *
  * Usage:
  *   <ChannelContentTable
@@ -24,7 +28,9 @@
  *     loadingMore={loadingMore}
  *     hasMore={hasMore}
  *     onLoadMore={loadMore}
- *     onRowClick={(v) => setSelectedVideo(v)}
+ *     onRowClick={(v) => openModal(v, "view")}
+ *     onEdit={(v) => openModal(v, "edit")}
+ *     onDelete={(v) => openModal(v, "delete")}
  *   />
  */
 import { useMemo, useState } from "react";
@@ -32,6 +38,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
+  Edit2,
   Eye,
   Globe,
   Heart,
@@ -41,6 +48,7 @@ import {
   Link as LinkIcon,
   PlaySquare,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -154,6 +162,10 @@ export interface ChannelContentTableProps {
   hasMore?: boolean;
   onLoadMore?: () => void;
   onRowClick?: (video: Video) => void;
+  /** Open the detail modal straight into the edit form for this video. */
+  onEdit?: (video: Video) => void;
+  /** Open the detail modal straight into the delete confirmation for this video. */
+  onDelete?: (video: Video) => void;
   /** Empty-state message when items is empty + not loading */
   emptyMessage?: string;
 }
@@ -165,6 +177,8 @@ export function ChannelContentTable({
   hasMore = false,
   onLoadMore,
   onRowClick,
+  onEdit,
+  onDelete,
   emptyMessage = "Nenhum vídeo no cache. Clique em Sincronizar.",
 }: ChannelContentTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>(null);
@@ -250,11 +264,20 @@ export function ChannelContentTable({
             <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Curtidas
             </th>
+            <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Ações
+            </th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((video) => (
-            <VideoRow key={video.id} video={video} onRowClick={onRowClick} />
+            <VideoRow
+              key={video.id}
+              video={video}
+              onRowClick={onRowClick}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
           ))}
         </tbody>
       </table>
@@ -276,9 +299,13 @@ export function ChannelContentTable({
 function VideoRow({
   video,
   onRowClick,
+  onEdit,
+  onDelete,
 }: {
   video: Video;
   onRowClick?: (v: Video) => void;
+  onEdit?: (v: Video) => void;
+  onDelete?: (v: Video) => void;
 }) {
   return (
     <tr
@@ -372,6 +399,41 @@ function VideoRow({
           <Heart className="h-3.5 w-3.5 text-muted-foreground" />
           {fmtNum(video.like_count)}
         </span>
+      </td>
+
+      {/* Ações — inline CRUD. stopPropagation so the icon click does NOT also
+          fire the row's onRowClick (which would open the modal in view mode).
+          Always visible (not hover-only) so the affordance is discoverable;
+          they brighten on row hover. */}
+      <td className="px-3 py-3 align-middle">
+        <div className="flex items-center justify-end gap-1 opacity-70 transition-opacity group-hover:opacity-100">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            aria-label={`Editar ${video.title ?? video.youtube_video_id}`}
+            title="Editar"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit?.(video);
+            }}
+          >
+            <Edit2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-destructive hover:text-destructive"
+            aria-label={`Excluir ${video.title ?? video.youtube_video_id}`}
+            title="Excluir"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.(video);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </td>
     </tr>
   );

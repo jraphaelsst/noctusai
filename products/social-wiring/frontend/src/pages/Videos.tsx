@@ -31,8 +31,10 @@ type FormatTab = "videos" | "shorts";
 
 // ─── Sub-panel: one kind (video | short) ────────────────────────────────────
 
+type ModalMode = "view" | "edit" | "delete";
+
 function KindPanel({ kind }: { kind: "video" | "short" }) {
-  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [selected, setSelected] = useState<{ video: Video; mode: ModalMode } | null>(null);
 
   const {
     items,
@@ -64,14 +66,18 @@ function KindPanel({ kind }: { kind: "video" | "short" }) {
           loadingMore={loadingMore}
           hasMore={hasMore}
           onLoadMore={loadMore}
-          onRowClick={setSelectedVideo}
+          onRowClick={(v) => setSelected({ video: v, mode: "view" })}
+          onEdit={(v) => setSelected({ video: v, mode: "edit" })}
+          onDelete={(v) => setSelected({ video: v, mode: "delete" })}
           emptyMessage={emptyMsg}
         />
       )}
 
       <VideoDetailModal
-        video={selectedVideo}
-        onClose={() => setSelectedVideo(null)}
+        video={selected?.video ?? null}
+        initialMode={selected && selected.mode !== "view" ? selected.mode : null}
+        onClose={() => setSelected(null)}
+        onDeleted={() => setSelected(null)}
       />
     </>
   );

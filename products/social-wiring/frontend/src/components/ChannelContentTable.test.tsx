@@ -44,8 +44,8 @@ vi.mock("@/components/ui/badge", () => ({
   ),
 }));
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, onClick, disabled }: any) => (
-    <button onClick={onClick} disabled={disabled}>{children}</button>
+  Button: ({ children, onClick, disabled, "aria-label": ariaLabel, title }: any) => (
+    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel} title={title}>{children}</button>
   ),
 }));
 vi.mock("@/components/ui/skeleton", () => ({
@@ -57,6 +57,7 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => null,
   ChevronUp: () => null,
   ChevronsUpDown: () => null,
+  Edit2: () => <span data-icon="edit" />,
   Eye: () => <span data-icon="eye" />,
   Globe: () => <span data-icon="globe" />,
   Heart: () => <span data-icon="heart" />,
@@ -66,6 +67,7 @@ vi.mock("lucide-react", () => ({
   Link: () => <span data-icon="link" />,
   PlaySquare: () => <span data-icon="playsquare" />,
   Sparkles: () => <span data-icon="sparkles" />,
+  Trash2: () => <span data-icon="trash" />,
 }));
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
@@ -239,8 +241,9 @@ describe("ChannelContentTable — empty/loading states", () => {
 describe("ChannelContentTable — row interaction", () => {
   it("calls onRowClick with the video when a row is clicked", async () => {
     const onRowClick = vi.fn();
-    const { getByRole, fireEvent } = await renderTable({ onRowClick });
-    const row = getByRole("button");
+    const { container, fireEvent } = await renderTable({ onRowClick });
+    const row = container.querySelector("tbody tr[role='button']") as HTMLElement;
+    expect(row).toBeTruthy();
     fireEvent.click(row);
     expect(onRowClick).toHaveBeenCalledOnce();
     expect(onRowClick).toHaveBeenCalledWith(expect.objectContaining({
@@ -252,8 +255,47 @@ describe("ChannelContentTable — row interaction", () => {
 describe("ChannelContentTable — multiple rows", () => {
   it("renders all provided videos", async () => {
     const items = [baseVideo, unlistedVideo, privateVideo];
-    const { getAllByRole } = await renderTable({ items });
-    const rows = getAllByRole("button");
+    const { container } = await renderTable({ items });
+    const rows = container.querySelectorAll("tbody tr");
     expect(rows.length).toBe(3);
+  });
+});
+
+describe("ChannelContentTable — inline CRUD actions", () => {
+  it("renders an 'Ações' column header", async () => {
+    const { container } = await renderTable();
+    const headerTexts = Array.from(container.querySelectorAll("th")).map((th) => th.textContent ?? "");
+    expect(headerTexts.some((t) => /Ações/i.test(t))).toBe(true);
+  });
+
+  it("renders per-row Edit + Excluir action buttons", async () => {
+    const { getByLabelText } = await renderTable();
+    expect(getByLabelText(`Editar ${baseVideo.title}`)).toBeTruthy();
+    expect(getByLabelText(`Excluir ${baseVideo.title}`)).toBeTruthy();
+  });
+
+  it("clicking the row Edit icon calls onEdit and does NOT bubble to onRowClick", async () => {
+    const onEdit = vi.fn();
+    const onRowClick = vi.fn();
+    const { getByLabelText, fireEvent } = await renderTable({ onEdit, onRowClick });
+    fireEvent.click(getByLabelText(`Editar ${baseVideo.title}`));
+    expect(onEdit).toHaveBeenCalledOnce();
+    expect(onEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ youtube_video_id: baseVideo.youtube_video_id }),
+    );
+    // stopPropagation: the row's onRowClick must NOT also fire.
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it("clicking the row Excluir icon calls onDelete and does NOT bubble to onRowClick", async () => {
+    const onDelete = vi.fn();
+    const onRowClick = vi.fn();
+    const { getByLabelText, fireEvent } = await renderTable({ onDelete, onRowClick });
+    fireEvent.click(getByLabelText(`Excluir ${baseVideo.title}`));
+    expect(onDelete).toHaveBeenCalledOnce();
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ youtube_video_id: baseVideo.youtube_video_id }),
+    );
+    expect(onRowClick).not.toHaveBeenCalled();
   });
 });

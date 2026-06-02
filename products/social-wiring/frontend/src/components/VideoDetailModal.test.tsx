@@ -157,6 +157,24 @@ describe("VideoDetailModal — closed state", () => {
   });
 });
 
+describe("VideoDetailModal — initialMode (opened from a row's inline action)", () => {
+  it("opens straight into the edit form when initialMode='edit'", async () => {
+    const { getByTestId } = await renderModal({ video, initialMode: "edit" });
+    expect(getByTestId("edit-form")).toBeTruthy();
+  });
+
+  it("opens straight into the delete confirmation when initialMode='delete'", async () => {
+    const { getByTestId } = await renderModal({ video, initialMode: "delete" });
+    expect(getByTestId("delete-confirm")).toBeTruthy();
+  });
+
+  it("opens in plain view (no edit form / no delete panel) when initialMode is omitted", async () => {
+    const { queryByTestId } = await renderModal({ video });
+    expect(queryByTestId("edit-form")).toBeNull();
+    expect(queryByTestId("delete-confirm")).toBeNull();
+  });
+});
+
 describe("VideoDetailModal — open state", () => {
   it("renders the video title", async () => {
     const { getByText } = await renderModal({ video });
