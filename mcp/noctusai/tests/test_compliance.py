@@ -2483,3 +2483,285 @@ class TestMethodologyDocRefs:
             f"real repo — must fix before committing:\n"
             + "\n".join(f"  {i['file']}: {i['issue'][:120]}" for i in issues)
         )
+
+
+# ---------------------------------------------------------------------------
+# TestOpenDriftHasResolutionHandle — check_open_drift_has_resolution_handle
+#
+# Stage-4 keeper (2026-06-01): every OPEN auto-improvement entry past s1
+# must carry a `resolve_when` handle so it can self-close / auto-promote.
+# Pins true-positive (missing handle) and false-positive shapes.
+# ---------------------------------------------------------------------------
+
+
+class TestOpenDriftHasResolutionHandle:
+    """Regression suite for check_open_drift_has_resolution_handle.
+
+    Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
+    """
+
+    def _mk_ledger(self, tmp: Path, lines: list[str]) -> Path:
+        """Write a minimal auto-improvement.ndjson under tmp."""
+        ph = tmp / "project-history"
+        ph.mkdir(parents=True, exist_ok=True)
+        ledger = ph / "auto-improvement.ndjson"
+        ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return tmp
+
+    def test_no_ledger_returns_no_issues(self, tmp_path):
+        """When the ledger does not exist (fresh repo), no issues reported."""
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_path)
+        assert issues == []
+
+    def test_s1_emergent_exempt(self, tmp_path):
+        """s1-emergent entries are exempt — too freshly surfaced."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        row = json.dumps({
+            "ts": "2026-06-01T00:00:00", "status": "s1-emergent",
+            "target": "some drift", "description": "fresh",
+        })
+        self._mk_ledger(tmp_path, [row])
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_path) == []
+
+    def test_terminal_statuses_exempt(self, tmp_path):
+        """closed and s4-keeper are terminal — no resolution handle needed."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        rows = [
+            json.dumps({"ts": "2026-06-01", "status": "closed", "target": "t1",
+                        "description": "done"}),
+            json.dumps({"ts": "2026-06-01", "status": "s4-keeper", "target": "t2",
+                        "description": "promoted"}),
+        ]
+        self._mk_ledger(tmp_path, rows)
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_path) == []
+
+    def test_s2_without_resolve_when_flagged(self, tmp_path):
+        """s2-memory entry with no resolve_when → issue with severity medium."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        row = json.dumps({
+            "ts": "2026-06-01T00:00:00", "status": "s2-memory",
+            "target": "some unresolved drift", "description": "needs handle",
+        })
+        self._mk_ledger(tmp_path, [row])
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "medium"
+        assert "resolve_when" in issues[0]["issue"]
+        assert "s2-memory" in issues[0]["issue"]
+
+    def test_s3_codified_without_resolve_when_flagged(self, tmp_path):
+        """s3-codified entry with no resolve_when → issue."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        row = json.dumps({
+            "ts": "2026-06-01T00:00:00", "status": "s3-codified",
+            "target": "pending KB doc", "description": "no handle",
+        })
+        self._mk_ledger(tmp_path, [row])
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "medium"
+
+    def test_s2_with_resolve_when_passes(self, tmp_path):
+        """s2-memory entry WITH a resolve_when handle → no issue."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        row = json.dumps({
+            "ts": "2026-06-01T00:00:00", "status": "s2-memory",
+            "target": "drift with handle", "description": "handled",
+            "resolve_when": "keeper:check_some_detector",
+        })
+        self._mk_ledger(tmp_path, [row])
+        assert check_open_drift_has_resolution_handle(repo_root=tmp_path) == []
+
+    def test_mixed_ledger_only_flags_missing(self, tmp_path):
+        """Only the handleless OPEN entries are flagged; clean entries pass."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        rows = [
+            json.dumps({"ts": "2026-06-01", "status": "s2-memory",
+                        "target": "a", "description": "no handle"}),
+            json.dumps({"ts": "2026-06-01", "status": "s2-memory",
+                        "target": "b", "description": "has handle",
+                        "resolve_when": "grep_max:0:someterm@some/path"}),
+            json.dumps({"ts": "2026-06-01", "status": "s1-emergent",
+                        "target": "c", "description": "exempt"}),
+            json.dumps({"ts": "2026-06-01", "status": "closed",
+                        "target": "d", "description": "terminal"}),
+        ]
+        self._mk_ledger(tmp_path, rows)
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_path)
+        assert len(issues) == 1
+        assert "a" in issues[0]["issue"]
+
+    def test_malformed_lines_skipped_gracefully(self, tmp_path):
+        """Malformed JSON lines are skipped without raising."""
+        import json
+        from tools.noctus.dev.compliance import check_open_drift_has_resolution_handle
+        ph = tmp_path / "project-history"
+        ph.mkdir(parents=True)
+        ledger = ph / "auto-improvement.ndjson"
+        ledger.write_text(
+            '{"status": "s2-memory", "target": "x"}\n'  # missing resolve_when
+            'NOT_JSON\n'
+            '\n',
+            encoding="utf-8",
+        )
+        issues = check_open_drift_has_resolution_handle(repo_root=tmp_path)
+        # Only the valid s2 entry without resolve_when is flagged.
+        assert len(issues) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestBranchTreeMirror — check_branch_tree_mirror
+#
+# Pre-push keeper: ledger + mirror must be byte-identical, every active
+# branch pointer must be present with valid git refs and metadata.
+# Pins true-positive (drifted mirror, bad status, missing fields) and
+# false-positive shapes (absent ledger, terminal branches skip).
+# ---------------------------------------------------------------------------
+
+
+class TestBranchTreeMirror:
+    """Regression suite for check_branch_tree_mirror.
+
+    Per KB § PATTERNS/compliance/testing.md § Regression-test-the-detector.
+    """
+
+    def _mk_repo(self, tmp: Path) -> Path:
+        """Init a minimal bare git repo under tmp so git calls succeed."""
+        import subprocess
+        subprocess.run(["git", "init", "-b", "main", str(tmp)],
+                       capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp), "config", "user.email", "t@t.com"],
+                       capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp), "config", "user.name", "T"],
+                       capture_output=True, check=True)
+        # Commit an empty file so HEAD exists.
+        (tmp / "README.md").write_text("init", encoding="utf-8")
+        subprocess.run(["git", "-C", str(tmp), "add", "README.md"],
+                       capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp), "commit", "-m", "init"],
+                       capture_output=True, check=True)
+        (tmp / "project-history").mkdir(parents=True, exist_ok=True)
+        return tmp
+
+    def _head_sha(self, repo: Path) -> str:
+        import subprocess
+        r = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+
+    def _write_ledger(self, repo: Path, lines: list[str]) -> None:
+        """Write identical ledger + mirror."""
+        content = "\n".join(lines) + "\n" if lines else ""
+        (repo / "project-history" / "branch-tree.ndjson").write_text(
+            content, encoding="utf-8"
+        )
+        (repo / "project-history" / "branch-tree.mirror.ndjson").write_text(
+            content, encoding="utf-8"
+        )
+
+    def test_no_ledger_no_branch_returns_no_issues(self, tmp_path):
+        """No ledger and no specific branch → nothing to audit, no issues."""
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        self._mk_repo(tmp_path)
+        issues = check_branch_tree_mirror(repo_root=tmp_path)
+        assert issues == []
+
+    def test_no_ledger_with_specific_branch_flags(self, tmp_path):
+        """No ledger but a specific branch is requested → flags missing pointer."""
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        self._mk_repo(tmp_path)
+        issues = check_branch_tree_mirror(branch="feat/xyz", repo_root=tmp_path)
+        assert len(issues) == 1
+        assert "missing" in issues[0]["issue"].lower() or "No pointer" in issues[0]["issue"]
+
+    def test_mirror_drift_flagged(self, tmp_path):
+        """Ledger and mirror with different content → issue about drift."""
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        ph = repo / "project-history"
+        ph.mkdir(parents=True, exist_ok=True)
+        ledger_content = '{"branch":"feat/x","status":"on_going"}\n'
+        mirror_content = '{"branch":"feat/x","status":"shipped"}\n'
+        (ph / "branch-tree.ndjson").write_text(ledger_content, encoding="utf-8")
+        (ph / "branch-tree.mirror.ndjson").write_text(mirror_content, encoding="utf-8")
+        issues = check_branch_tree_mirror(repo_root=tmp_path)
+        # At least one issue about the mirror drift.
+        drift_issues = [i for i in issues if "DRIFTED" in i["issue"] or "mirror" in i["issue"].lower()]
+        assert drift_issues, f"Expected mirror drift issue, got: {issues}"
+        assert drift_issues[0]["severity"] == "high"
+
+    def test_invalid_status_flagged(self, tmp_path):
+        """A pointer with an invalid status value → issue."""
+        import json
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        sha = self._head_sha(repo)
+        row = json.dumps({
+            "branch": "feat/test-invalid",
+            "base": "origin/dev",
+            "commit": sha,
+            "ts": "2026-06-01T00:00:00+00:00",
+            "status": "invalid_status_xyz",
+            "role": "engineer",
+            "agent": "backend-engineer",
+            "parent": "feat/parent",
+        })
+        self._write_ledger(repo, [row])
+        issues = check_branch_tree_mirror(branch="feat/test-invalid", repo_root=repo)
+        status_issues = [i for i in issues if "invalid_status_xyz" in i["issue"]]
+        assert status_issues, f"Expected invalid-status issue, got: {issues}"
+        assert status_issues[0]["severity"] == "high"
+
+    def test_terminal_branch_skipped_in_audit_mode(self, tmp_path):
+        """In audit mode (branch=None), terminal (shipped/canceled) branches
+        are not checked — only non-terminal ones are audited."""
+        import json
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        sha = self._head_sha(repo)
+        # Write a shipped branch — terminal, should not appear in audit.
+        row = json.dumps({
+            "branch": "feat/old-work",
+            "base": "origin/dev",
+            "commit": sha,
+            "ts": "2026-01-01T00:00:00+00:00",
+            "status": "shipped",
+            "role": "engineer",
+            "agent": "backend-engineer",
+            "parent": "feat/orchestrator",
+        })
+        self._write_ledger(repo, [row])
+        # Audit mode should find no non-terminal branches.
+        issues = check_branch_tree_mirror(repo_root=repo)
+        # No issues about shipped branch (even though commit may be in history).
+        non_parity = [i for i in issues if "DRIFTED" not in i.get("issue", "")]
+        assert non_parity == [], f"Shipped branch should be skipped in audit, got: {non_parity}"
+
+    def test_missing_role_agent_parent_flagged(self, tmp_path):
+        """Claude-tree fields (role/agent/parent) missing → issues for each."""
+        import json
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        repo = self._mk_repo(tmp_path)
+        sha = self._head_sha(repo)
+        row = json.dumps({
+            "branch": "feat/incomplete",
+            "base": "origin/dev",
+            "commit": sha,
+            "ts": "2026-06-01T00:00:00+00:00",
+            "status": "on_going",
+            "role": "",
+            "agent": "",
+            "parent": "",
+        })
+        self._write_ledger(repo, [row])
+        issues = check_branch_tree_mirror(branch="feat/incomplete", repo_root=repo)
+        field_issues = [i for i in issues if "missing claude-tree field" in i["issue"]]
+        # role, agent, parent all missing → 3 field issues.
+        assert len(field_issues) == 3, f"Expected 3 missing-field issues, got: {field_issues}"

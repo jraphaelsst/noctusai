@@ -46,7 +46,16 @@ BASELINE_PATH = _TESTS_DIR / "compliance_baseline.json"
 #   "Seed drift:"  — seed-version stamp lag (pre-commit HEAD vs post-commit SHA)
 #   "Archive entry" — archive-staleness (date-relative)
 #   "Dispatcher"    — dispatcher-staleness (date-relative)
-ENV_ARTIFACT_PREFIXES = ("Seed drift:", "Archive entry", "Dispatcher")
+ENV_ARTIFACT_PREFIXES = (
+    "Seed drift:",
+    "Archive entry",
+    "Dispatcher",
+    # "Worktree " — per-worktree uncommitted-state issues depend entirely on which
+    # worktrees exist on the current machine. check_drift_fix_compliance emits these
+    # under the "Worktree `<path>`" prefix; they are machine-state artifacts, not
+    # code regressions. Added 2026-06-02.
+    "Worktree ",
+)
 
 # Substring classes (matched ANYWHERE in the issue text — the discriminating
 # token does NOT lead the message). The seed-version stamp
