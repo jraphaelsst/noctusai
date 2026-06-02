@@ -33,14 +33,23 @@ import re
 import shlex
 import subprocess
 import time as _time
+import urllib.error
+import urllib.request
 from typing import Any, Callable
+
+# Browser User-Agent — Cloudflare WAF blocks the default urllib signature
+# (same rule as sso_smoke / Hostinger MCP; error 1010 without this).
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 # Non-compose docker subcommands the tool may run. Excludes rmi/prune/rm/system
 # (would destroy the rollback image) by omission. `exec` is read-only here (only
 # curls the in-container /api/health for the active probe); `commit` snapshots
 # the running container into the :previous rollback image (additive, never
 # destructive).
-_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit"})
+_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart"})
 # `docker compose` sub-actions the tool may run. Excludes down/rm/kill/stop.
 _COMPOSE_ALLOWED = frozenset({"pull", "up"})
 # Asserted-absent by the colocated safety test (defense in depth beyond the
@@ -128,6 +137,48 @@ def _poll_health(runner, sleep, container: str, timeout: int, interval: int,
     return "timeout", states
 
 
+
+# ── Tunnel name — the cloudflared container that routes the public hostname
+#    to the product origin. One restart re-resolves all stale in-flight
+#    connections from the pre-recreate container. ──
+_TUNNEL_CONTAINER = "noctus-tunnel"
+
+
+def _restart_tunnel(runner) -> tuple[bool, str]:
+    """docker restart noctus-tunnel after a successful deploy so cloudflared
+    drops its stale origin connection and picks up the new container.
+    Returns (ok, msg). Idempotent — safe to call even if the tunnel is not
+    running (returns ok=False with a warning; never raises)."""
+    rc, _out, err = _docker(runner, "restart", _TUNNEL_CONTAINER)
+    if rc == 0:
+        return True, f"noctus-tunnel restarted (origin connection re-resolved)"
+    return False, f"noctus-tunnel restart returned rc={rc}: {err.strip()!r} (tunnel may be down)"
+
+
+def _curl_edge(hostname: str, timeout: int = 20) -> tuple[bool, str]:
+    """GET the public hostname with a browser UA and assert a non-timeout
+    response. CF WAF blocks non-browser UAs (error 1010), so _UA is mandatory.
+    Returns (ok, detail). ok=True on any HTTP response (including 3xx/4xx/5xx)
+    because those prove the CF edge reached the origin — only a timeout or
+    connection error indicates a stale tunnel.
+    Injectable via the `http` parameter of `deploy_image` (same signature:
+    `(hostname: str) -> (bool, str)`)."""
+    req = urllib.request.Request(
+        hostname,
+        headers={"User-Agent": _UA},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return True, f"edge reachable: HTTP {resp.status}"
+    except urllib.error.HTTPError as exc:
+        # Any HTTP status (incl. 4xx/5xx) proves the edge forwarded to the origin
+        return True, f"edge reachable: HTTP {exc.code}"
+    except Exception as exc:
+        # Timeout or connection error — tunnel still stale
+        return False, f"edge timeout/unreachable after tunnel restart: {exc}"
+
+
 def deploy_image(
     product: str,
     ssh_host: str = "noctus-vps",
@@ -143,9 +194,15 @@ def deploy_image(
     run_remote: Callable[[list[str]], tuple[int, str, str]] | None = None,
     sleep: Callable[[float], None] | None = None,
     now: Callable[[], _dt.datetime] | None = None,
+    edge_hostname: str | None = None,
+    http: Callable | None = None,
 ) -> dict[str, Any]:
     """Atomic image redeploy of `product` with C2 rollback. Dry-run unless
-    `confirm`. status ∈ {planned, up_to_date, deployed, rolled_back, error}.
+    `confirm`. After a successful recreate, restarts noctus-tunnel so
+    cloudflared re-resolves its origin connection (leg a). When
+    `edge_hostname` is provided, also curls the public hostname with a
+    browser UA to confirm CF-edge reachability (leg b).
+    status ∈ {planned, up_to_date, deployed, rolled_back, error}.
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "exit_code": 1, "error": "product required"}
@@ -266,9 +323,34 @@ def deploy_image(
     health, states = _poll_health(runner, napper, container, health_timeout, poll_interval,
                                   port=port, startup_grace=startup_grace)
     if health == "healthy":
-        return {**base, "status": "deployed", "exit_code": 0,
-                "new_image_id": new_image_id, "health": health, "health_states": states, "port": port,
-                "message": f"deployed {product} on {new_image_id[:19]} — healthy."}
+        # ── LEG (a): tunnel re-resolve — restart cloudflared so the stale
+        #    pre-recreate origin connection is dropped. Only on real deploys
+        #    (confirm=True + a recreate actually happened). ──
+        tunnel_ok, tunnel_msg = _restart_tunnel(runner)
+        # ── LEG (b): edge reachability — curl the public hostname with a
+        #    browser UA to assert CF edge → origin is live (not a 524-class
+        #    timeout). Skip when edge_hostname is not provided. ──
+        edge_ok: bool | None = None
+        edge_detail: str | None = None
+        if edge_hostname:
+            edge_fn = http or _curl_edge
+            edge_ok, edge_detail = edge_fn(edge_hostname)
+        result: dict = {
+            **base, "status": "deployed", "exit_code": 0,
+            "new_image_id": new_image_id, "health": health, "health_states": states, "port": port,
+            "tunnel_restart": tunnel_ok, "tunnel_msg": tunnel_msg,
+            "message": f"deployed {product} on {new_image_id[:19]} — healthy.",
+        }
+        if edge_ok is True:
+            result["edge_check"] = edge_detail
+        elif edge_ok is False:
+            result["edge_warning"] = (
+                f"edge still unreachable after tunnel restart — "  # noqa: ISC001
+                f"{edge_detail}; manual fix: docker restart {_TUNNEL_CONTAINER}"
+            )
+        if not tunnel_ok:
+            result["tunnel_warning"] = tunnel_msg
+        return result
 
     # ── ROLLBACK (C2) ──
     r = _rollback(f"New image {new_image_id[:19]} was {health}.", new_image_id)
@@ -305,4 +387,4 @@ def register(server) -> None:
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm)
 
 
-__all__ = ["deploy_image", "_poll_health", "_DOCKER_ALLOWED", "_COMPOSE_ALLOWED", "_BANNED_TOKENS", "register"]
+__all__ = ["deploy_image", "_poll_health", "_restart_tunnel", "_curl_edge", "_DOCKER_ALLOWED", "_COMPOSE_ALLOWED", "_BANNED_TOKENS", "_TUNNEL_CONTAINER", "register"]

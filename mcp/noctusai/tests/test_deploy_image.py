@@ -32,7 +32,8 @@ class FakeDocker:
     IMG = "ghcr.io/jraphaelsst/noctus-core"
 
     def __init__(self, running="G0", latest="NEW", health=("up",), snapshot_sticks=True,
-                 pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000"):
+                 pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000",
+                 tunnel_restart_rc=0):
         self.running = running
         self.tags = {f"{self.IMG}:latest": latest}
         self.health = list(health)
@@ -40,6 +41,7 @@ class FakeDocker:
         self.snapshot_sticks = snapshot_sticks
         self.pull_rc, self.up_rc = pull_rc, up_rc
         self.container_found, self.image_present, self.port = container_found, image_present, port
+        self.tunnel_restart_rc = tunnel_restart_rc
         self.calls: list[list[str]] = []
 
     def _id_of(self, ref_or_id):
@@ -57,6 +59,8 @@ class FakeDocker:
             if "ExposedPorts" in tmpl:
                 return (0, (self.port + "/tcp ") if self.port else "", "")
             return (0, "running\n", "")  # .State.Status
+        if cmd[:2] == ["docker", "restart"]:  # tunnel restart
+            return (self.tunnel_restart_rc, "", "" if self.tunnel_restart_rc == 0 else "no such container")
         if cmd[:2] == ["docker", "commit"]:  # snapshot: commit container → :previous
             if not self.snapshot_sticks:
                 return (1, "", "commit failed")
@@ -248,3 +252,160 @@ def test_tool_registers_with_dotted_name():
 
     DI.register(_Srv())
     assert captured["name"] == "noctus.dev.deploy_image"
+
+
+# ── tunnel-restart + edge-reachability legs ───────────────────────
+
+def test_deployed_restarts_tunnel_on_success():
+    """After a healthy deploy, noctus-tunnel must be restarted (leg a)."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    # restart should have been called on noctus-tunnel
+    restart_calls = [c for c in f.calls if c[:2] == ["docker", "restart"]]
+    assert restart_calls, "docker restart not called after successful deploy"
+    assert restart_calls[0] == ["docker", "restart", "noctus-tunnel"]
+    assert r["tunnel_restart"] is True
+    assert "tunnel_msg" in r
+
+
+def test_tunnel_restart_not_called_on_dry_run():
+    """Dry-run must never restart the tunnel."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=False)
+    assert r["status"] == "planned"
+    restart_calls = [c for c in f.calls if c[:2] == ["docker", "restart"]]
+    assert not restart_calls, "docker restart emitted during dry-run"
+
+
+def test_tunnel_restart_not_called_on_rollback():
+    """Failed deploy that triggers rollback must NOT restart the tunnel."""
+    f = FakeDocker(running="G0", latest="BROKEN", health=("down", "up"))
+    r = _run(f, confirm=True)
+    assert r["status"] == "rolled_back"
+    restart_calls = [c for c in f.calls if c[:2] == ["docker", "restart"]]
+    assert not restart_calls, "docker restart emitted after rolled_back"
+
+
+def test_tunnel_restart_not_called_on_up_to_date():
+    """up_to_date (no recreate) must not restart the tunnel."""
+    f = FakeDocker(running="SAME", latest="SAME")
+    r = _run(f, confirm=True)
+    assert r["status"] == "up_to_date"
+    restart_calls = [c for c in f.calls if c[:2] == ["docker", "restart"]]
+    assert not restart_calls, "docker restart emitted on up_to_date"
+
+
+def test_tunnel_restart_failure_surfaces_warning():
+    """If the tunnel restart fails, the deploy still reports deployed but
+    includes tunnel_warning so the operator knows."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), tunnel_restart_rc=1)
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"  # deploy itself succeeded
+    assert r["tunnel_restart"] is False
+    assert "tunnel_warning" in r
+
+
+def test_edge_check_ok_when_hostname_provided_and_reachable():
+    """When edge_hostname is provided and the fake http returns ok=True,
+    edge_check is present in the result."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+
+    def _fake_http(hostname):
+        assert "https://" in hostname
+        return True, "edge reachable: HTTP 200"
+
+    r = DI.deploy_image(
+        "core", run_remote=f, sleep=lambda s: None, now=_now,
+        confirm=True, startup_grace=0, poll_interval=5,
+        edge_hostname="https://core.noctusai.com.br",
+        http=_fake_http,
+    )
+    assert r["status"] == "deployed"
+    assert r.get("edge_check") == "edge reachable: HTTP 200"
+    assert "edge_warning" not in r
+
+
+def test_edge_check_surfaces_warning_when_unreachable():
+    """When edge_hostname is provided and the fake http returns ok=False,
+    edge_warning must be present and contain a manual-fix hint."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+
+    def _fake_http(hostname):
+        return False, "edge timeout/unreachable after tunnel restart: timed out"
+
+    r = DI.deploy_image(
+        "core", run_remote=f, sleep=lambda s: None, now=_now,
+        confirm=True, startup_grace=0, poll_interval=5,
+        edge_hostname="https://core.noctusai.com.br",
+        http=_fake_http,
+    )
+    assert r["status"] == "deployed"  # still deployed; warning is advisory
+    assert "edge_warning" in r
+    assert "docker restart" in r["edge_warning"]
+    assert "edge_check" not in r
+
+
+def test_edge_check_skipped_when_no_hostname():
+    """When edge_hostname is not provided, neither edge_check nor edge_warning
+    should appear in the result."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    assert "edge_check" not in r
+    assert "edge_warning" not in r
+
+
+def test_restart_in_docker_allowlist():
+    """'restart' must be in _DOCKER_ALLOWED so the tunnel restart doesn't raise."""
+    assert "restart" in DI._DOCKER_ALLOWED
+
+
+def test_curl_edge_returns_true_on_http_error_response():
+    """_curl_edge returns ok=True for any HTTP status (including 4xx/5xx) —
+    that proves CF forwarded to the origin. Only a connection error → ok=False."""
+    import urllib.error
+    import urllib.response
+    import io
+
+    # Simulate HTTP 403 (CF WAF block, but edge reached origin) — ok=True
+    class _FakeSocket:
+        def read(self, *a): return b""
+        def readinto(self, buf): return 0
+        def readline(self, *a): return b""
+
+    # We test the exception branch directly via a fake HTTPError
+    exc = urllib.error.HTTPError(
+        url="https://core.example.com", code=403, msg="Forbidden",
+        hdrs={}, fp=io.BytesIO(b""),
+    )
+
+    def _fake_urlopen(req, timeout):
+        raise exc
+
+    # Monkey-patch urllib.request.urlopen for this narrow test
+    orig = urllib.request.urlopen
+    urllib.request.urlopen = _fake_urlopen
+    try:
+        ok, detail = DI._curl_edge("https://core.example.com")
+        assert ok is True
+        assert "403" in detail
+    finally:
+        urllib.request.urlopen = orig
+
+
+def test_curl_edge_returns_false_on_timeout():
+    """_curl_edge returns ok=False for a connection timeout."""
+    import urllib.request
+
+    def _fake_urlopen(req, timeout):
+        raise TimeoutError("timed out")
+
+    orig = urllib.request.urlopen
+    urllib.request.urlopen = _fake_urlopen
+    try:
+        ok, detail = DI._curl_edge("https://core.example.com")
+        assert ok is False
+        assert "unreachable" in detail
+    finally:
+        urllib.request.urlopen = orig
