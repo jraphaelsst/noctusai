@@ -12,8 +12,10 @@
 -- (migration + service + router + schema + page) and replace the
 -- placeholder `title`/`description` columns with your real fields.
 --
--- RLS mirrors seed.invitations (the `org_id = jwt.org_id` subquery shape the
--- scaffold convention uses). Full CRUD ⇒ a policy per command.
+-- RLS uses public.current_org_id() — the SECURITY DEFINER trusted-table resolver
+-- declared in 001_seed.sql. auth.jwt() ->> 'org_id' (top-level) is always NULL
+-- in Supabase; see memory/feedback_rls_never_key_on_user_metadata.md.
+-- Full CRUD ⇒ a policy per command.
 -- ============================================================================
 
 CREATE TABLE seed.examples (
@@ -30,20 +32,20 @@ ALTER TABLE seed.examples ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "examples_select_own_org" ON seed.examples
     FOR SELECT TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE POLICY "examples_insert_own_org" ON seed.examples
     FOR INSERT TO authenticated
-    WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    WITH CHECK (org_id = current_org_id());
 
 CREATE POLICY "examples_update_own_org" ON seed.examples
     FOR UPDATE TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid)
-    WITH CHECK (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id())
+    WITH CHECK (org_id = current_org_id());
 
 CREATE POLICY "examples_delete_own_org" ON seed.examples
     FOR DELETE TO authenticated
-    USING (org_id = ((SELECT auth.jwt()) ->> 'org_id')::uuid);
+    USING (org_id = current_org_id());
 
 CREATE INDEX idx_seed_examples_org ON seed.examples(org_id);
 CREATE INDEX idx_seed_examples_ativo ON seed.examples(org_id, ativo);
