@@ -66,7 +66,16 @@ ENV_ARTIFACT_PREFIXES = (
 # an environment artifact of WHERE the scan ran, not a code regression, so it
 # is excluded both sides of the gate (added 2026-05-25, sibling of the
 # "Seed drift:" prefix which covers the stamp-LAG variant).
-ENV_ARTIFACT_SUBSTRINGS = ("_version_static.py",)
+# "cache STALE" — every Tier-1 keeper-mirror cache (keeper-pattern / agent-context /
+# noc-graph / corpus-/memory-/auto-improvement-embeddings) lives in the git-common-dir
+# and is UNTRACKED; its source_sha-vs-live-source comparison is machine/timing state
+# (the cache is rebuilt per-environment, and a hermetic CI run can observe a transient
+# sha skew between the prime step and the check even after --refresh-*-cache). Cache
+# freshness has its OWN dedicated `check_*_cache_freshness` keepers (each with a
+# regression test, structural ones heal-on-contact), so it is gated there — NOT in the
+# code-health regression baseline, where it only produces non-deterministic flap.
+# (added 2026-06-02 — auto-improvement cache STALE flapped the CI gate.)
+ENV_ARTIFACT_SUBSTRINGS = ("_version_static.py", "cache STALE")
 
 
 def is_env_artifact(issue_text: str) -> bool:

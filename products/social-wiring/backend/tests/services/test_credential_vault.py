@@ -135,7 +135,10 @@ class TestMetadataColumnRoundTrip:
         store.put(
             str(org),
             "youtube",
-            {"access_token": "AT", "refresh_token": "RT"},
+            {
+                "access_token": "PLAINTEXT-ACCESS-TOKEN-MARKER",
+                "refresh_token": "PLAINTEXT-REFRESH-TOKEN-MARKER",
+            },
             metadata={
                 "channel_id": "UC123",
                 "channel_title": "My Channel",
@@ -151,9 +154,11 @@ class TestMetadataColumnRoundTrip:
         assert payload["scopes"] == ["a", "b"]
         # No "metadata" json column on this absorbed table.
         assert "metadata" not in payload
-        # Secret is encrypted at rest, never plaintext.
-        assert "AT" not in payload["encrypted_tokens"]
-        assert "RT" not in payload["encrypted_tokens"]
+        # Secret is encrypted at rest, never plaintext. Use long distinctive
+        # markers: a short token (e.g. "AT") collides by chance with the random
+        # Fernet base64 blob, making the assertion flaky (caught 2026-06-02).
+        assert "PLAINTEXT-ACCESS-TOKEN-MARKER" not in payload["encrypted_tokens"]
+        assert "PLAINTEXT-REFRESH-TOKEN-MARKER" not in payload["encrypted_tokens"]
 
     def test_get_reinflates_metadata_from_columns(
         self, fernet_key
