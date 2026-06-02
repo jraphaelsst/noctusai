@@ -8637,6 +8637,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/code-recurrence-baseline.md",
     "CONTEXT/PATTERNS/common/dont-block-on-background.md",
     "CONTEXT/PATTERNS/common/eight-way-sync.md",
+    "CONTEXT/PATTERNS/common/gate-methodology-sync.md",  # universal commons: meta-rule for ALL lenses that author a gate — gate ships with its compliance-by-construction mechanism
     "CONTEXT/PATTERNS/common/extractor-correctness-vs-mirror.md",
     "CONTEXT/PATTERNS/common/cache-locking-discipline.md",
     "CONTEXT/PATTERNS/common/versioning.md",
