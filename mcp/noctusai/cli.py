@@ -167,6 +167,7 @@ def main():
     parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
     parser.add_argument("--check-consent-routes", action="store_true", help="Keeper: seed consent routes (/consent, /consent/privacy-policy, /consent/terms-of-use) must stay mounted in seed/framework/frontend/src/app.tsx + exported from index.ts; no product may shadow them with a local re-declaration. Severity high. KB § PATTERNS/frontend/consent-routes-mandate.md.")
+    parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
@@ -1166,6 +1167,19 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.check_branch_tree_mirror is not None:
+        from tools.noctus.dev.compliance import check_branch_tree_mirror
+        branch_arg = None if args.check_branch_tree_mirror == "__all__" else args.check_branch_tree_mirror
+        issues = check_branch_tree_mirror(branch=branch_arg)
+        if not issues:
+            label = branch_arg or "all non-terminal branches"
+            print(f"  {GREEN}✓ branch-tree-mirror: {label} — pointer intact.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} branch-tree-mirror issue(s) (HARD-BLOCK):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
 
     elif args.check_dangling_remote_branches:
         from tools.noctus.dev.compliance import check_dangling_remote_branches

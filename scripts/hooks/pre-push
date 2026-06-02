@@ -154,6 +154,44 @@ if [[ -z "${NOCTUS_SKIP_COSTLOG_COMMIT:-}" && -n "$REPO_ROOT_PP" ]]; then
     fi
 fi
 
+# ─── branch-tree mirror keeper (§5, hard-block on dev push) ────────────────
+# For every non-delete branch being pushed TO dev, check that a valid branch-pointer
+# exists in project-history/branch-tree.ndjson.  We skip this on protected-branch
+# (main/prod) pushes (those are sanctioned deploys, not everyday-work pushes) and
+# when the Python environment isn't available.
+# branch-tree.ndjson itself is EXCLUDED from all cache-refresh triggers (§3
+# cache-sync discipline); a push touching ONLY that file is fast-path here.
+if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
+    while read -r l_ref l_oid r_ref r_oid; do
+        [[ -z "${l_ref:-}" ]] && continue
+        # Skip deletes.
+        [[ "$l_oid" =~ $ZERO_RE ]] && continue
+        # Skip pushes to protected branches (main/prod) — sanctioned deploy, not everyday work.
+        [[ "${r_ref:-}" =~ $PROTECTED_RE ]] && continue
+        # Only check pushes whose remote target is refs/heads/dev (the integration branch)
+        # OR whose local branch is a feat/* / fix/* / chore/* work branch.
+        # Derive the branch name from the local ref.
+        _bt_branch="${l_ref#refs/heads/}"
+        # Skip if the branch is dev itself (the integration branch has no pointer).
+        [[ "$_bt_branch" == "dev" ]] && continue
+        # Run the keeper for this branch — any high finding = block.
+        echo "[pre-push] branch-tree mirror check for '$_bt_branch'..."
+        _bt_out="$("$PY_PP" "$CLI_PP" --check-branch-tree-mirror "$_bt_branch" 2>&1)"
+        _bt_rc=$?
+        if [[ $_bt_rc -ne 0 ]]; then
+            echo "" >&2
+            echo "🔴 pre-push: branch-tree mirror keeper BLOCKED push of '$_bt_branch'." >&2
+            echo "$_bt_out" >&2
+            echo "" >&2
+            echo "   Fix by running the branch_pointer call named above, then re-push." >&2
+            echo "   KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5." >&2
+            blocked=1
+        else
+            echo "[pre-push] branch-tree mirror: $( echo "$_bt_out" | tail -1 | sed 's/^[[:space:]]*//' )"
+        fi
+    done <<< "$PUSH_LINES"
+fi
+
 # ─── branch protection (reads the captured push lines) ──────────────────
 while read -r local_ref local_oid remote_ref remote_oid; do
     [[ -z "${remote_ref:-}" ]] && continue

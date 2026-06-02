@@ -12199,6 +12199,370 @@ def check_dangling_remote_branches(
     return issues
 
 
+def check_branch_tree_mirror(
+    branch: str | None = None,
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """Pre-push HARD-BLOCK keeper (§5 of KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md).
+
+    For the branch being pushed (or ``branch`` when called directly), enforces:
+
+    1. A latest pointer EXISTS in ``project-history/branch-tree.ndjson``
+       AND is non-stale (its ``commit`` resolves in git; ``ts`` not more than
+       72 h behind the branch tip's author date).
+    2. Git-tree ↔ claude-tree mirror is intact:
+       - git side: ``branch``, ``base``, ``commit`` all resolve.
+       - claude side: ``role``, ``agent``, ``parent`` all populated.
+       - Consistency: an engineer's ``base`` fork-point corresponds to its
+         ``parent`` orchestrator's branch (base is either ``origin/dev`` or a
+         ``feat/*`` branch that exists); an orchestrator's ``base`` is
+         ``origin/dev``.
+    3. ``status`` ∈ {on_going, shipped, blocked, canceled, stale, deferred}.
+    4. No contradiction: not ``shipped`` while the branch tip is ahead of the
+       recorded ``commit`` (un-pushed commits exist beyond the pointer).
+
+    Fast by design: reads the ndjson file + git refs only (no cache I/O,
+    no network, no OpenAI). Pre-push overhead is a few ms.
+
+    Block messages name the exact ``branch_pointer`` call to fix the issue.
+
+    When ``branch`` is None the check scans ALL non-terminal (on_going,
+    blocked) branches found in the file so it can be run as a general audit.
+    The pre-push hook passes the pushed branch explicitly.
+
+    Severity: ``high`` (hard-block — push to dev is refused until fixed).
+
+    KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.
+    """
+    import datetime as _dt
+    import json
+    import subprocess
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "branch-tree.ndjson"
+
+    if not ledger.exists():
+        # No ledger yet — only flag if a specific branch was requested.
+        if branch is not None:
+            issues.append({
+                "product": "<platform>",
+                "file": "project-history/branch-tree.ndjson",
+                "issue": (
+                    f"branch-tree ledger missing. No pointer exists for '{branch}'. "
+                    "Run `noctus.dev.branch_pointer action=append branch=<b> ...` to create one. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3."
+                ),
+                "severity": "high",
+            })
+        return issues
+
+    # ── Parse ledger → latest row per branch ─────────────────────────────────
+    latest_by_branch: dict[str, dict] = {}
+    try:
+        for raw_line in ledger.read_text(encoding="utf-8").splitlines():
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                row = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            b = row.get("branch")
+            if not b:
+                continue
+            existing = latest_by_branch.get(b)
+            if existing is None or (row.get("ts", "") > existing.get("ts", "")):
+                latest_by_branch[b] = row
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("check_branch_tree_mirror: could not read ledger (%s)", exc)
+        issues.append({
+            "product": "<platform>",
+            "file": "project-history/branch-tree.ndjson",
+            "issue": (
+                f"branch-tree ledger unreadable ({exc!s:.120}). "
+                "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+            ),
+            "severity": "high",
+        })
+        return issues
+
+    _VALID_STATUSES = {"on_going", "shipped", "blocked", "canceled", "stale", "deferred"}
+    _TERMINAL_STATUSES = {"shipped", "canceled", "stale", "deferred"}
+
+    # ── Determine which branches to check ────────────────────────────────────
+    if branch is not None:
+        branches_to_check = [branch]
+    else:
+        # Audit mode: check all non-terminal branches in the ledger.
+        branches_to_check = [
+            b for b, row in latest_by_branch.items()
+            if row.get("status") not in _TERMINAL_STATUSES
+        ]
+
+    def _git(*args: str, timeout: int = 5) -> tuple[int, str]:
+        """Run a git command; return (returncode, stdout)."""
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(root)] + list(args),
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+            return r.returncode, r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return -1, ""
+
+    def _commit_exists(sha: str) -> bool:
+        if not sha or len(sha) < 4:
+            return False
+        rc, _ = _git("cat-file", "-e", f"{sha}^{{commit}}")
+        return rc == 0
+
+    def _branch_exists(ref: str) -> bool:
+        """True if ref resolves as a local branch, remote branch, or is origin/dev."""
+        rc, _ = _git("rev-parse", "--verify", ref)
+        if rc == 0:
+            return True
+        # also try as a remote ref
+        rc2, _ = _git("rev-parse", "--verify", f"refs/remotes/{ref}")
+        return rc2 == 0
+
+    def _commit_ahead(branch_ref: str, base_sha: str) -> bool:
+        """True if branch_ref has commits that come after base_sha."""
+        rc, _ = _git("rev-parse", "--verify", branch_ref)
+        if rc != 0:
+            return False  # branch doesn't exist locally — can't tell
+        rc2, out2 = _git("rev-list", "--count", f"{base_sha}..{branch_ref}")
+        if rc2 != 0:
+            return False
+        try:
+            return int(out2.strip()) > 0
+        except ValueError:
+            return False
+
+    def _branch_tip_ts(branch_ref: str) -> _dt.datetime | None:
+        """Return the author-date of the branch tip as an aware UTC datetime."""
+        rc, out = _git("log", "-1", "--format=%aI", branch_ref)
+        if rc != 0 or not out.strip():
+            return None
+        try:
+            return _dt.datetime.fromisoformat(out.strip())
+        except (ValueError, TypeError):
+            return None
+
+    _STALE_HOURS = 72  # pointer ts more than this behind branch tip → stale
+
+    for b in branches_to_check:
+        row = latest_by_branch.get(b)
+        file_ref = "project-history/branch-tree.ndjson"
+
+        # ── 1a. Pointer missing ───────────────────────────────────────────────
+        if row is None:
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"No branch-pointer found for '{b}'. "
+                    "Create one BEFORE branching: "
+                    "`noctus.dev.branch_pointer action=append branch=<b> base=<base> "
+                    "commit=<sha> role=<role> agent=<agent> parent=<parent> "
+                    "paths=[...] status=on_going brief=<brief>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3 step 2."
+                ),
+                "severity": "high",
+            })
+            continue
+
+        recorded_commit = (row.get("commit") or "").strip()
+        recorded_status = (row.get("status") or "").strip()
+        recorded_ts = (row.get("ts") or "").strip()
+        recorded_base = (row.get("base") or "").strip()
+        recorded_role = (row.get("role") or "").strip()
+        recorded_agent = (row.get("agent") or "").strip()
+        recorded_parent = (row.get("parent") or "").strip()
+
+        # ── 3. Status enum ────────────────────────────────────────────────────
+        if recorded_status not in _VALID_STATUSES:
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"branch-pointer for '{b}' has invalid status '{recorded_status}'. "
+                    f"Must be one of {sorted(_VALID_STATUSES)}. "
+                    "Fix: `noctus.dev.branch_pointer action=update branch=<b> status=<valid>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                ),
+                "severity": "high",
+            })
+
+        # ── 1b. Commit resolves ───────────────────────────────────────────────
+        if not recorded_commit:
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"branch-pointer for '{b}' is missing 'commit'. "
+                    "Fix: `noctus.dev.branch_pointer action=update branch='{b}' commit=<current-sha>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3 step 3."
+                ),
+                "severity": "high",
+            })
+        elif not _commit_exists(recorded_commit):
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"branch-pointer for '{b}' records commit '{recorded_commit}' "
+                    "which does NOT resolve in this repo. The pointer is out of date or "
+                    "the commit was never fetched. "
+                    "Fix: `noctus.dev.branch_pointer action=update branch='{b}' commit=<real-sha>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3 step 3."
+                ),
+                "severity": "high",
+            })
+        else:
+            # ── 1c. Non-stale: ts not absurdly behind branch tip ──────────────
+            if recorded_ts:
+                try:
+                    ptr_dt = _dt.datetime.fromisoformat(recorded_ts)
+                    # Make offset-aware if naive (assume UTC).
+                    if ptr_dt.tzinfo is None:
+                        ptr_dt = ptr_dt.replace(tzinfo=_dt.timezone.utc)
+                    tip_dt = _branch_tip_ts(b)
+                    if tip_dt is not None:
+                        if tip_dt.tzinfo is None:
+                            tip_dt = tip_dt.replace(tzinfo=_dt.timezone.utc)
+                        lag_hours = (tip_dt - ptr_dt).total_seconds() / 3600
+                        if lag_hours > _STALE_HOURS:
+                            issues.append({
+                                "product": "<platform>",
+                                "file": file_ref,
+                                "issue": (
+                                    f"branch-pointer for '{b}' is stale: "
+                                    f"pointer ts={recorded_ts} is {lag_hours:.1f} h behind "
+                                    f"the branch tip (>{_STALE_HOURS} h threshold). "
+                                    "Update on every commit: "
+                                    "`noctus.dev.branch_pointer action=update branch=<b> "
+                                    "commit=<new-sha> notes=<...>`. "
+                                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3 step 3."
+                                ),
+                                "severity": "high",
+                            })
+                except (ValueError, TypeError):
+                    pass  # unparseable ts — skip staleness check silently
+
+        # ── 2. Git side: base resolves ────────────────────────────────────────
+        if not recorded_base:
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"branch-pointer for '{b}' is missing 'base'. "
+                    "Fix: `noctus.dev.branch_pointer action=update branch='{b}' base=<fork-point>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                ),
+                "severity": "high",
+            })
+        elif not _branch_exists(recorded_base):
+            issues.append({
+                "product": "<platform>",
+                "file": file_ref,
+                "issue": (
+                    f"branch-pointer for '{b}' records base '{recorded_base}' "
+                    "which does not resolve as a local or remote ref. "
+                    "Fix: `noctus.dev.branch_pointer action=update branch='{b}' base=<real-base>`. "
+                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                ),
+                "severity": "high",
+            })
+
+        # ── 2. Claude side: role/agent/parent populated ───────────────────────
+        for field, val in [("role", recorded_role), ("agent", recorded_agent), ("parent", recorded_parent)]:
+            if not val:
+                issues.append({
+                    "product": "<platform>",
+                    "file": file_ref,
+                    "issue": (
+                        f"branch-pointer for '{b}' is missing claude-tree field '{field}'. "
+                        f"Fix: `noctus.dev.branch_pointer action=update branch='{b}' {field}=<value>`. "
+                        "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                    ),
+                    "severity": "high",
+                })
+
+        # ── 2. Consistency: role-aware base/parent pairing ────────────────────
+        if recorded_role and recorded_base and recorded_parent:
+            if recorded_role == "orchestrator":
+                # Orchestrator MUST fork from origin/dev.
+                if recorded_base != "origin/dev":
+                    issues.append({
+                        "product": "<platform>",
+                        "file": file_ref,
+                        "issue": (
+                            f"branch-pointer for orchestrator '{b}' has base='{recorded_base}' "
+                            "but orchestrators MUST fork from 'origin/dev'. "
+                            "Fix: `noctus.dev.branch_pointer action=update branch='{b}' base=origin/dev`. "
+                            "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                        ),
+                        "severity": "high",
+                    })
+            elif recorded_role == "engineer":
+                # Engineer's base should correspond to a feat/* branch (not origin/dev directly,
+                # unless the engineer is branching straight off dev — which is allowed when the
+                # orchestrator IS dev itself).  We only flag the hard mismatch: base is a branch
+                # that exists AND parent claims a different orchestrator branch that also exists
+                # AND neither matches.
+                if recorded_parent and recorded_parent != "origin/dev":
+                    # parent should be a branch and base should resolve near it.
+                    parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
+                    base_rc, base_sha = _git("rev-parse", "--verify", recorded_base)
+                    if parent_rc == 0 and base_rc == 0 and parent_sha and base_sha:
+                        # Check if base is an ancestor of or equal to parent — normal.
+                        anc_rc, _ = _git("merge-base", "--is-ancestor", base_sha, parent_sha)
+                        is_anc = anc_rc == 0
+                        same = parent_sha == base_sha
+                        # If parent exists as a branch name, base should be that branch or its tip.
+                        # Soft check: only flag when base resolves to a commit that has NO
+                        # ancestor relation with parent at all (completely unrelated trees).
+                        if not is_anc and not same:
+                            # One more check: is parent an ancestor of base? (base is AHEAD of parent — OK)
+                            rev_anc_rc, _ = _git("merge-base", "--is-ancestor", parent_sha, base_sha)
+                            if rev_anc_rc != 0:
+                                issues.append({
+                                    "product": "<platform>",
+                                    "file": file_ref,
+                                    "issue": (
+                                        f"branch-pointer for engineer '{b}': "
+                                        f"base='{recorded_base}' and parent='{recorded_parent}' "
+                                        "are unrelated git histories — the fork-point should be "
+                                        "on the orchestrator's branch. "
+                                        "Fix: `noctus.dev.branch_pointer action=update branch='{b}' "
+                                        "base=<correct-fork>`. "
+                                        "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2."
+                                    ),
+                                    "severity": "high",
+                                })
+
+        # ── 4. No contradiction: shipped but ahead of recorded commit ─────────
+        if recorded_status == "shipped" and recorded_commit and _commit_exists(recorded_commit):
+            # Check if the local branch ref has commits beyond the recorded one.
+            if _commit_ahead(b, recorded_commit):
+                issues.append({
+                    "product": "<platform>",
+                    "file": file_ref,
+                    "issue": (
+                        f"branch-pointer for '{b}' is marked 'shipped' but the local branch "
+                        f"is AHEAD of the recorded commit '{recorded_commit}'. "
+                        "Either the pointer is stale (update it) or the branch was never truly shipped. "
+                        "Fix: `noctus.dev.branch_pointer action=update branch='{b}' "
+                        "commit=<tip-sha> status=on_going` (then ship properly) or verify merge. "
+                        "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3 step 4."
+                    ),
+                    "severity": "high",
+                })
+
+    return issues
+
+
 def register(server) -> None:
     desc_validate = "Check seed compliance for all products. Returns score 0-100."
 
