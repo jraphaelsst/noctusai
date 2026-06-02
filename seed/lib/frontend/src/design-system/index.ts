@@ -122,9 +122,12 @@ export type { DigestCardProps } from "./ai";
 // Integration card organ — config-driven card for provider integration accounts.
 // Driven by PROVIDER_CARD_CONFIG (youtube + whatsapp shipped); extend the registry
 // to add more providers — the card component needs no changes.
+// ClientCredentialPanel composes IntegrationCard with a per-client tab selector
+// and CRUD affordances — the reusable per-client credential management organ.
 export {
   IntegrationCard,
   IntegrationCardModal,
+  ClientCredentialPanel,
   resolveStatusBadge,
   PROVIDER_CARD_CONFIG,
   getProviderConfig,
@@ -132,6 +135,8 @@ export {
 export type {
   IntegrationCardProps,
   IntegrationCardModalProps,
+  ClientCredentialPanelProps,
+  ClientRef,
   IntegrationAccount,
   IntegrationAccountPatch,
   IntegrationStatus,

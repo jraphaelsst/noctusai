@@ -35,6 +35,8 @@ export interface AddAccountModalProps {
   provider: string;
   providerConfig: IntegrationProvider;
   onClose: () => void;
+  /** When set, the new account will be scoped to this client. */
+  clientId?: string | null;
 }
 
 // Tutorial copy per provider (v1)
@@ -57,6 +59,7 @@ export default function AddAccountModal({
   provider,
   providerConfig,
   onClose,
+  clientId,
 }: AddAccountModalProps) {
   const createMutation = useCreateAccount();
   const oauthMutation = useStartYouTubeOAuth();
@@ -80,7 +83,7 @@ export default function AddAccountModal({
   async function handleOAuth() {
     if (!oauthReady) return;
     try {
-      await oauthMutation.mutateAsync(undefined);
+      await oauthMutation.mutateAsync(clientId != null ? { clientId } : undefined);
       // window.location.assign fires in mutation onSuccess; toast for feedback
       toast.info("Redirecting to Google sign-in...");
     } catch (err: any) {
@@ -108,6 +111,7 @@ export default function AddAccountModal({
         provider,
         account_label: label.trim(),
         credential: fields,
+        ...(clientId != null ? { client_id: clientId } : {}),
       });
       toast.success("Conta adicionada com sucesso");
       onClose();

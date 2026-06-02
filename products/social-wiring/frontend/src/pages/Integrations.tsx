@@ -1,29 +1,29 @@
 /**
- * Integrations page — multi-account credential management.
+ * Integrations page — multi-account credential management with per-client
+ * grouping.
  *
  * Lists all non-WAHA providers (YouTube, Meta, n8n, Google Drive, Gmail).
- * Groups accounts by provider. Each provider section shows:
- *   · Header: display name + "Add account" button
- *   · Account rows: label, metadata snippet, default badge, set-default + delete
- *   · Empty state per provider
+ * Each provider section uses the seed `ClientCredentialPanel` organ which
+ * adds client-tab filtering + full CRUD affordances to the existing
+ * `IntegrationCard` cells.
  *
  * WAHA is explicitly excluded — use the Conexao page for WhatsApp connections.
  *
  * NOTE: `ProviderSection` is exported so Conexoes.tsx can re-use it.
+ *
+ * Canonical import rule: UI organs come from `@noctusai/lib/design-system`.
+ * No per-product re-implementation of the credential card or client panel.
  */
 import { useState } from "react";
-import { Loader2, Plus, Star, StarOff, Trash2, Plug } from "lucide-react";
+import { Loader2, Plug } from "lucide-react";
 import { toast } from "sonner";
 
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,91 +39,95 @@ import AddAccountModal from "@/components/AddAccountModal";
 import {
   useIntegrationProviders,
   useIntegrationAccounts,
+  useUpdateAccount,
   useSetDefaultAccount,
   useDeleteAccount,
+  useSyncAccount,
   type IntegrationAccount,
   type IntegrationProvider,
 } from "@/hooks/useIntegrationAccounts";
+import { useClients } from "@/hooks/useClients";
 
-// ─── Account row ─────────────────────────────────────────────────────────────
+// Seed organs — canonical per-client credential CRUD panel + detail modal.
+import {
+  ClientCredentialPanel,
+  IntegrationCardModal as CredentialModal,
+} from "@noctusai/lib/design-system";
+import type { IntegrationAccount as SeedAccount } from "@noctusai/lib/design-system";
 
-function metadataSnippet(metadata: Record<string, unknown>): string {
-  const entries = Object.entries(metadata)
-    .filter(([, v]) => typeof v === "string" || typeof v === "number")
-    .slice(0, 2);
-  return entries.map(([k, v]) => `${k}: ${v}`).join(" · ");
+// ─── ProviderSection ──────────────────────────────────────────────────────────
+
+export interface ProviderSectionProps {
+  providerConfig: IntegrationProvider;
 }
 
-function AccountRow({
-  account,
-  onDelete,
-  onSetDefault,
-}: {
-  account: IntegrationAccount;
-  onDelete: (acc: IntegrationAccount) => void;
-  onSetDefault: (id: string) => void;
-}) {
-  const snippet = metadataSnippet(account.metadata ?? {});
+export function ProviderSection({ providerConfig }: ProviderSectionProps) {
+  const provider = providerConfig.id;
 
-  return (
-    <div className="flex items-center justify-between gap-4 border-b py-3 last:border-0">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          {account.account_label}
-          {account.is_default && (
-            <Badge variant="default" className="gap-1 text-[10px]">
-              <Star className="h-2.5 w-2.5" />
-              Padrao
-            </Badge>
-          )}
-        </div>
-        {snippet && (
-          <p className="truncate text-xs text-muted-foreground">{snippet}</p>
-        )}
-      </div>
-      <div className="flex items-center gap-1">
-        {!account.is_default && (
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Definir como padrao"
-            onClick={() => onSetDefault(account.id)}
-          >
-            <StarOff className="h-4 w-4 text-muted-foreground" />
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Remover conta"
-          onClick={() => onDelete(account)}
-        >
-          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-        </Button>
-      </div>
-    </div>
-  );
-}
+  const { data: accounts = [], isLoading: accountsLoading, isError: accountsError } =
+    useIntegrationAccounts(provider);
+  const { data: clients = [], isLoading: clientsLoading } = useClients();
 
-// ─── Provider section ─────────────────────────────────────────────────────────
-
-export function ProviderSection({ providerConfig }: { providerConfig: IntegrationProvider }) {
-  // providerConfig.id is the canonical identifier (not .name)
-  const { data: accounts = [], isLoading } = useIntegrationAccounts(providerConfig.id);
-  const setDefault = useSetDefaultAccount();
+  const updateMutation = useUpdateAccount();
+  const setDefaultMutation = useSetDefaultAccount();
   const deleteMutation = useDeleteAccount();
+  const syncMutation = useSyncAccount();
 
   const [addOpen, setAddOpen] = useState(false);
+  const [addClientId, setAddClientId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<IntegrationAccount | null>(null);
+  const [modalAccount, setModalAccount] = useState<SeedAccount | null>(null);
+  const [busyAccountId, setBusyAccountId] = useState<string | null>(null);
 
-  async function handleSetDefault(id: string) {
+  // ── Handlers ───────────────────────────────────────────────────────────
+
+  function handleAdd(clientId: string | null) {
+    setAddClientId(clientId);
+    setAddOpen(true);
+  }
+
+  async function handleSave(account: IntegrationAccount, patch: Record<string, string | null>) {
+    setBusyAccountId(account.id);
     try {
-      await setDefault.mutateAsync(id);
-      toast.success("Conta padrao atualizada");
+      await updateMutation.mutateAsync({
+        id: account.id,
+        account_label: patch.account_label ?? undefined,
+      });
+      toast.success("Conta atualizada");
     } catch (err: any) {
-      toast.error("Erro ao definir conta padrao", {
+      toast.error("Erro ao salvar conta", {
         description: err?.message ?? "Tente novamente",
       });
+    } finally {
+      setBusyAccountId(null);
+    }
+  }
+
+  async function handleSetDefault(account: IntegrationAccount) {
+    setBusyAccountId(account.id);
+    try {
+      await setDefaultMutation.mutateAsync(account.id);
+      toast.success("Conta padrão atualizada");
+    } catch (err: any) {
+      toast.error("Erro ao definir conta padrão", {
+        description: err?.message ?? "Tente novamente",
+      });
+    } finally {
+      setBusyAccountId(null);
+    }
+  }
+
+  async function handleSync(account: IntegrationAccount) {
+    setBusyAccountId(account.id);
+    try {
+      await syncMutation.mutateAsync(account.id);
+      toast.success("Conta sincronizada");
+    } catch (err: any) {
+      toast.error("Erro ao sincronizar conta", {
+        description: err?.message ?? "Tente novamente",
+      });
+    } finally {
+      setBusyAccountId(null);
     }
   }
 
@@ -140,55 +144,58 @@ export function ProviderSection({ providerConfig }: { providerConfig: Integratio
     }
   }
 
+  const isLoading = accountsLoading || clientsLoading;
+
+  // Map product IntegrationAccount[] to the seed SeedAccount[] shape (same
+  // field names — cast is safe; both types mirror the same BE contract).
+  const seedAccounts = accounts as unknown as SeedAccount[];
+  const seedClients = clients.map((c) => ({
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+  }));
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">{providerConfig.display_name}</CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Adicionar conta
-          </Button>
-        </div>
-        {accounts.length > 0 && (
-          <CardDescription>
-            {accounts.length} conta{accounts.length !== 1 ? "s" : ""} configurada{accounts.length !== 1 ? "s" : ""}
-          </CardDescription>
-        )}
+        <CardTitle className="text-base">{providerConfig.display_name}</CardTitle>
       </CardHeader>
 
       <CardContent>
-        {isLoading ? (
-          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Carregando...
-          </div>
-        ) : accounts.length === 0 ? (
-          <div className="rounded-md border border-dashed bg-muted/20 py-6 text-center text-sm text-muted-foreground">
-            Nenhuma conta ainda. Adicione a primeira.
-          </div>
-        ) : (
-          <div>
-            {accounts.map((acc) => (
-              <AccountRow
-                key={acc.id}
-                account={acc}
-                onDelete={setConfirmDelete}
-                onSetDefault={handleSetDefault}
-              />
-            ))}
-          </div>
-        )}
+        <ClientCredentialPanel
+          accounts={seedAccounts}
+          clients={seedClients}
+          provider={provider}
+          isLoading={isLoading}
+          error={accountsError ? new Error("Erro ao carregar contas") : null}
+          busyAccountId={busyAccountId}
+          onAdd={handleAdd}
+          onSave={handleSave as any}
+          onDelete={(acc) => setConfirmDelete(acc as unknown as IntegrationAccount)}
+          onSetDefault={handleSetDefault as any}
+          onSync={handleSync as any}
+          onOpenModal={(acc) => setModalAccount(acc)}
+        />
       </CardContent>
 
-      {/* Add modal — passes providerConfig.id as the provider identifier */}
+      {/* Add account modal */}
       {addOpen && (
         <AddAccountModal
-          provider={providerConfig.id}
+          provider={provider}
           providerConfig={providerConfig}
-          onClose={() => setAddOpen(false)}
+          clientId={addClientId}
+          onClose={() => {
+            setAddOpen(false);
+            setAddClientId(null);
+          }}
         />
       )}
+
+      {/* Detail modal */}
+      <CredentialModal
+        account={modalAccount}
+        onClose={() => setModalAccount(null)}
+      />
 
       {/* Delete confirm */}
       <AlertDialog
@@ -199,8 +206,9 @@ export function ProviderSection({ providerConfig }: { providerConfig: Integratio
           <AlertDialogHeader>
             <AlertDialogTitle>Remover conta?</AlertDialogTitle>
             <AlertDialogDescription>
-              A conta &ldquo;{confirmDelete?.account_label}&rdquo; sera removida permanentemente.
-              Videos e publicacoes existentes nao serao afetados.
+              A conta &ldquo;{confirmDelete?.account_label}&rdquo; sera
+              removida permanentemente. Videos e publicacoes existentes nao
+              serao afetados.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -245,8 +253,9 @@ export default function Integrations() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Integracoes</h1>
           <p className="text-sm text-muted-foreground">
-            Gerencie as contas dos seus provedores (YouTube, Meta, n8n, Google Drive, Gmail).
-            Para conexoes WhatsApp, use a pagina Conexao.
+            Gerencie as contas dos seus provedores (YouTube, Meta, n8n, Google
+            Drive, Gmail). Use as abas para filtrar por cliente. Para conexoes
+            WhatsApp, use a pagina Conexao.
           </p>
         </div>
       </div>
