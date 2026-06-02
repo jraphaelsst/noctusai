@@ -92,7 +92,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
@@ -123,7 +123,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
 
@@ -201,7 +201,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: npm
           cache-dependency-path: products/personal-finance/frontend/package-lock.json
 
@@ -228,7 +228,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
 
@@ -267,7 +267,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
