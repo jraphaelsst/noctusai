@@ -8,6 +8,8 @@ version: 1.0.0
 
 An absorption is a methodology-epoch merge: bring the source in, audit completeness, interrogate before deleting anything, scaffold + full seed-reconcile, port pilot-first, refactor to the house container shape, retire only when the user signs off.
 
+> **Two flavors.** A **sibling seed-workspace** (built *for* noc, outside it) → the 10 gates below as-is. A **foreign production platform** (a real third-party app that knows nothing of noc) → run the **learning-absorption refinement first**: absorption is **seed-capability-uplift, not product-port** — the foreign platform is a *teacher*; its proven capabilities become hardened **seed organs**; the new `<slug>-noc` product is the *last consumer* (born consuming them, drift-free by construction via `check_canonical_organ_consumption`); the whole fleet gains. Front-load a **learning phase**: deep diagnose → **neutral** per-capability compare (don't assume they're better OR worse) → **salvage the idea behind the bad code** (a "noc supersedes" verdict is on the CODE, not the FUNCTIONALITY — decrypt the rationale, fix the execution, absorb the functionality) → re-confirm value → seed-uplift → pilots → fleet. → `KB § GUIDES/absorb-seed-workspace.md` ("learning-absorption refinement").
+
 ## Workflow (gates)
 
 1. **Snapshot** the source repo state.

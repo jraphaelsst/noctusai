@@ -259,6 +259,54 @@ is proportional to (epoch gap) × (product surface).
 
 ---
 
+## The learning-absorption refinement (orbity 2026-06-02)
+
+The `social-wiring` flow above absorbs a **sibling seed-workspace** — code built *for* noc, outside it, that we fold in. The **orbity** absorption generalized the procedure to a harder case: a **fully-foreign production platform** (a real Brazilian marketing-agency SaaS — React + Supabase, 73 edge functions, 296 migrations) that knows nothing of noc's seed. That forced three refinements. They compose with the 10 gates; they do not replace them.
+
+### Refinement 1 · Absorption is **seed-capability-uplift, not product-port**
+
+The instinct is to land the foreign platform as `products/<slug>/`. **Resist it.** A foreign platform is a *teacher*, not cargo. Its battle-tested capabilities (proven by a real business using them daily) become **hardened seed organs**; the new noc product is *born already consuming* those organs, the same as every other product.
+
+```
+foreign platform (real-business-proven capability)
+   → learn the INTENT (not the code)
+   → harden as a canonical SEED organ on noc's disciplined seam
+   → pilot-products-first (prove on 1-3 cousins)
+   → the new <slug>-noc product is the LAST consumer (validates the organ end-to-end)
+   → the whole fleet gains the organ as a side-effect
+```
+
+Why this is the no-drift path: there is exactly **one** canonical implementation (the organ). The absorbed product consumes it via named seams; it never re-implements it. `check_canonical_organ_consumption` enforces this — so *"propagate the improvement back to the absorbed product without drift"* is automatic **by construction**. The anti-pattern (port into a product silo) forks the capability, inherits the foreign platform's weaknesses, and yields zero platform gain. **The absorbed product is the last consumer of the organs it taught the seed to grow.**
+
+This **inverts the emphasis of Gate 5/6**: for a foreign-platform absorption the *primary deliverable is the seed organs* (platform uplift). Gate 4 scaffolds a thin **consumer shell**; Gate 5 becomes **seed-UPLIFT** (build/extend the organs, pilot-first); Gate 6's port is the product consuming them (the propagate-back leg, drift-free by construction).
+
+### Refinement 2 · Knowledge-absorption-FIRST — diagnose + compare neutrally before any port
+
+Before scaffolding or porting, run an explicit **learning phase** whose deliverable is a durable doc set (land it in KB before any teardown — `persistent-files-absorption`):
+
+1. **Deep structural diagnosis** — parallel read-only lenses over the foreign tree (FE / backend / schema+RLS / integrations / domain-flows + targeted deep-dives on the highest-value capabilities). Faithful capture of *procedures, flows, automations, rules* — the operational knowledge a real business encoded.
+2. **Neutral capability comparison** — audit **both** codebases and compare per-capability. **Do NOT assume the foreign platform is better (or worse).** The verdict cuts both ways: where it's ahead is a *learning target*; where noc is ahead, the lesson is *don't adopt their weaker approach*. Ground both sides on evidence; an honest baseline of *our own* maturity is half the work.
+3. **Capability → seed-organ map** — each learning maps to a specific organ to build/extend, its pilot consumers, and the **fleet-wide propagation gain**.
+
+### Refinement 3 · Salvage the idea behind the bad code (bad-code decryption)
+
+A *"noc supersedes"* verdict is a judgment on the **CODE, never automatically on the FUNCTIONALITY.** A foreign platform's drift/errors can **encrypt a valuable idea, poorly executed.** For each weakness, decrypt the **rationale** (why did they build it that way — usually speed / a real API gap / fast-iteration debt), judge whether the **idea** is valuable, and decide:
+
+- 🟩 **SALVAGE-IDEA / FIX-CODE** — valuable idea, poor execution → re-implement clean on noc's seam (e.g. Orbity's write-only `monthly_snapshots` → snapshot-as-read-source-of-truth; `Math.random()` mock-data fallback → graceful "data unavailable", never fabricate; TS+PLpgSQL dual-impl → one engine, many trigger sources).
+- 🟦 **ABSORB-AS-IS** — good idea *and* execution → port the technique faithfully (e.g. prepaid-BRL balance regex; accent-folded pt-BR matching; CAPI quality-feedback loop).
+- 🟥 **SKIP — noc supersedes** — the code is just bad; noc has the better mechanism. **The functionality is still absorbed — through noc's clean organ, not their code** (e.g. plaintext tokens, open `USING(true)` RLS, missing webhook HMAC). The bad code usually still teaches a confirming lesson.
+- ⬜ **SKIP — no value** — hygiene debt / dead code.
+
+Every 🟥 row still gets its capability absorbed; the salvage pass exists precisely so a *"they do it worse"* comparison verdict doesn't throw away a valuable idea trapped in bad execution.
+
+### Refinement 4 · The end-to-end foreign-platform absorption procedure
+
+The generalized loop (a foreign platform, vs a sibling workspace): **take a non-noc structure → analyze & diagnose deeply → learn & neutrally compare → salvage the valuable ideas behind the bad code, fixing the execution → re-confirm the value → bring the capability in-home as a seed organ → propagate to pilots to validate the procedure → propagate to the whole fleet (the absorbed product included, as the last consumer).** The standard 10 gates then carry the scaffold→reconcile→port→teardown→container legs; these four refinements front-load a learning phase and re-aim the reconcile at the seed.
+
+> Reference instance: the orbity diagnosis doc set (faithful procedures, neutral 16-capability comparison, bad-code salvage evaluation, seed-first uplift strategy) — absorbed into `KB § ABSORPTIONS/orbity/`.
+
+---
+
 ## Anti-patterns (each cost real time on social-wiring)
 
 - Planning a reconcile that depends on reading the sibling *later* (strands
