@@ -306,6 +306,14 @@ def _to_db_value(table: str, column: str, value: Any) -> Any:
         return json.dumps(value or [])
     if column in BOOL_COLUMNS.get(table, set()) and value is not None:
         return 1 if value else 0
+    # Generic fallback: supabase-py serialises dict/list for JSONB columns
+    # automatically, but SQLite needs TEXT.  Any dict or list that reaches
+    # here was NOT in the explicit JSON_COLUMNS allowlist, which means the
+    # column is a JSONB column on the Postgres side (e.g. metadata,
+    # channel_info on integration_accounts).  Serialise to JSON string so
+    # the dev SQLite store accepts the value.
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
     return value
 
 

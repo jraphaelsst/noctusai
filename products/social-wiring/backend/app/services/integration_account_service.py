@@ -217,7 +217,7 @@ class IntegrationAccountService:
             "provider": provider,
             "account_label": account_label.strip(),
             "encrypted_credential": encrypted_str,
-            "metadata": json.dumps(metadata or {}),
+            "metadata": metadata or {},
             "is_default": is_default,
             "status": status,
         }
@@ -256,7 +256,7 @@ class IntegrationAccountService:
         if account_label is not None:
             updates["account_label"] = account_label.strip()
         if metadata is not None:
-            updates["metadata"] = json.dumps(metadata)
+            updates["metadata"] = metadata
         if is_default is not None:
             updates["is_default"] = is_default
             if is_default:
@@ -385,7 +385,7 @@ class IntegrationAccountService:
         if metadata is not None:
             existing_meta = self._row_to_account(row).metadata
             merged = {**existing_meta, **metadata}
-            updates["metadata"] = json.dumps(merged)
+            updates["metadata"] = merged
         resp = (
             self._table()
             .update(updates)
@@ -419,7 +419,7 @@ class IntegrationAccountService:
 
         self._require_row(account_id, org_id)
         updates: dict = {
-            "channel_info": json.dumps(channel_info),
+            "channel_info": channel_info,
             "status": status,
             "last_synced_at": last_synced_at.isoformat() if hasattr(last_synced_at, "isoformat") else last_synced_at,
             "updated_at": datetime.now(timezone.utc).isoformat(),
