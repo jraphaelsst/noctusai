@@ -341,6 +341,55 @@ class FakeYoutubeClient:
             }
         )
 
+    async def update_video(
+        self,
+        video_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        privacy_status: str | None = None,
+    ) -> VideoFull:
+        """~50 quota units (mirrors ``videos.update``).
+
+        Merges the provided fields onto the matching entry in
+        :attr:`owned_videos` (the ``VideoFull`` corpus). If the video is not
+        found in ``owned_videos``, raises ``ValueError`` mirroring the Real
+        adapter's "video deleted" branch.
+
+        The merge behavior mirrors the Real adapter's GOTCHA handling: when
+        only ``description`` is provided, the existing ``title`` and
+        ``category_id`` are preserved (no field-erasure). Only the
+        non-``None`` arguments replace the existing values.
+
+        Returns a new :class:`VideoFull` with the merged fields. The
+        :attr:`owned_videos` list is updated in-place so subsequent calls
+        see the new state."""
+        self._charge(50)
+        for i, v in enumerate(self.owned_videos):
+            if v.id == video_id:
+                merged = VideoFull(
+                    id=v.id,
+                    title=(title[:TITLE_MAX_LEN] if title is not None else v.title),
+                    description=(description if description is not None else v.description),
+                    channel_id=v.channel_id,
+                    published_at=v.published_at,
+                    duration_seconds=v.duration_seconds,
+                    duration_iso=v.duration_iso,
+                    thumbnail_url=v.thumbnail_url,
+                    privacy_status=(privacy_status if privacy_status is not None else v.privacy_status),
+                    view_count=v.view_count,
+                    like_count=v.like_count,
+                    comment_count=v.comment_count,
+                    tags=v.tags,
+                    category_id=v.category_id,
+                )
+                self.owned_videos[i] = merged
+                return merged
+        raise ValueError(
+            f"videos.list returned no items for video_id={video_id!r} — "
+            "video not found in FakeYoutubeClient.owned_videos."
+        )
+
     async def get_processing_status(self, video_id: str) -> ProcessingStatus:
         """1 quota unit (mirrors `videos.list?part=status,processingDetails`).
 

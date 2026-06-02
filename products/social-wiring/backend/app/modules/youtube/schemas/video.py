@@ -78,3 +78,33 @@ class VideoSyncResult(BaseModel):
     pages: int = 0
     quota_units_estimated: int = 0
     last_synced_at: datetime
+
+
+class VideoUpdateIn(BaseModel):
+    """Request body for PATCH /api/videos/{youtube_video_id}.
+
+    All fields are optional — only the provided fields are written through
+    to YouTube and mirrored to the catalog. An empty body is a no-op
+    (returns the current VideoOut unchanged).
+
+    Validation mirrors the YouTube Data API constraints:
+    - ``title``: 1–100 characters (YT hard limit; enforced here so the
+      error is surfaced before a quota-unit is spent).
+    - ``description``: ≤5000 characters (YT limit).
+    - ``privacy_status``: one of the three canonical values."""
+
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="snippet.title — 1-100 chars (YouTube hard limit).",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=5000,
+        description="snippet.description — ≤5000 chars (YouTube hard limit).",
+    )
+    privacy_status: PrivacyStatus | None = Field(
+        default=None,
+        description="status.privacyStatus — public | unlisted | private.",
+    )

@@ -32,7 +32,7 @@ from app.dependencies import (
     get_settings,
     get_user_client,
 )
-from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult
+from app.modules.youtube.schemas.video import VideoListResponse, VideoOut, VideoSyncResult, VideoUpdateIn
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured)
 from app.services.account_credentials import build_youtube_service_for_org
@@ -302,6 +302,226 @@ def sync_videos(
         pages=0,
         quota_units_estimated=3,  # uploads-playlist path: ~3 units/page
         last_synced_at=_dt.now(_tz.utc),
+    )
+
+
+# ─── PATCH /api/videos/{youtube_video_id} — metadata write-through ─────
+@router.patch("/{youtube_video_id}", response_model=VideoOut)
+def update_video(
+    youtube_video_id: str,
+    body: VideoUpdateIn,
+    account_id: Optional[UUID] = Query(default=None),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> VideoOut:
+    """Write-through metadata update to YouTube + catalog mirror.
+
+    Applies the caller's changes to the live YouTube video (via
+    ``videos.update``) and then mirrors those changes into the local
+    catalog table (``youtube_videos`` for kind=video,
+    ``youtube_shorts`` for kind=short — checks both).
+
+    All fields are optional. An empty body is a no-op and returns the
+    current VideoOut unchanged (reads catalog only, no YouTube call).
+
+    **Quota cost: ~50 units** when any field is provided (``videos.update``
+    costs 50 units; see seed adapter docstring for the snippet/status
+    parts breakdown).
+
+    Errors mirror ``POST /api/videos/sync``:
+    - 404 when the video is not in the local catalog
+    - 409 when the YouTube account is not connected
+      (``YouTubeNotConnected``)
+    - 502 on YouTube API errors (``YouTubeServiceError``)
+    - 503 on encryption-key gap
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    admin = get_admin_client()
+    user_sb = get_user_client(token)
+
+    # 1. Locate the catalog row to determine the table (video vs short).
+    catalog_table: str | None = None
+    catalog_kind: str | None = None
+    for table_name, kind in [("youtube_videos", "video"), ("youtube_shorts", "short")]:
+        builder = (
+            user_sb
+            .schema(_SCHEMA)
+            .table(table_name)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("youtube_video_id", youtube_video_id)
+            .limit(1)
+        )
+        if account_id is not None:
+            builder = builder.eq("account_id", str(account_id))
+        resp = builder.execute()
+        if resp.data:
+            catalog_table = table_name
+            catalog_kind = kind
+            break
+
+    if catalog_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"video {youtube_video_id!r} not in catalog. "
+                "Run POST /api/videos/sync to refresh from YouTube."
+            ),
+        )
+
+    # 2. Short-circuit: nothing to update — return current catalog row.
+    if body.title is None and body.description is None and body.privacy_status is None:
+        builder = (
+            user_sb
+            .schema(_SCHEMA)
+            .table(catalog_table)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("youtube_video_id", youtube_video_id)
+            .limit(1)
+        )
+        if account_id is not None:
+            builder = builder.eq("account_id", str(account_id))
+        row_resp = builder.execute()
+        row = row_resp.data[0] if row_resp.data else {}
+        return _row_to_out(row, kind=catalog_kind)
+
+    # 3. Write-through to YouTube via the service layer.
+    from app.modules.youtube.services.youtube import YouTubeNotConnected, YouTubeServiceError
+
+    try:
+        yt_svc = build_youtube_service_for_org(admin, cfg, account_id=account_id)
+    except EncryptionNotConfigured as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        yt_svc.update_video_metadata(
+            org_id=org_id,
+            video_id=youtube_video_id,
+            title=body.title,
+            description=body.description,
+            privacy_status=body.privacy_status,
+        )
+    except YouTubeNotConnected as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{exc} Connect via Settings → YouTube before updating.",
+        ) from exc
+    except YouTubeServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"YouTube API failed: {exc}",
+        ) from exc
+
+    # 4. Mirror the changes into the catalog (admin client for write).
+    update_patch: dict = {}
+    if body.title is not None:
+        update_patch["title"] = body.title
+    if body.description is not None:
+        update_patch["description"] = body.description
+    if body.privacy_status is not None:
+        update_patch["privacy_status"] = body.privacy_status
+
+    if update_patch:
+        from datetime import datetime as _dt, timezone as _tz
+        update_patch["synced_at"] = _dt.now(_tz.utc).isoformat()
+        (
+            admin
+            .schema(_SCHEMA)
+            .table(catalog_table)
+            .update(update_patch)
+            .eq("org_id", str(org_id))
+            .eq("youtube_video_id", youtube_video_id)
+            .execute()
+        )
+
+    # 5. Re-read the updated row and return as VideoOut.
+    builder = (
+        user_sb
+        .schema(_SCHEMA)
+        .table(catalog_table)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("youtube_video_id", youtube_video_id)
+        .limit(1)
+    )
+    if account_id is not None:
+        builder = builder.eq("account_id", str(account_id))
+    updated_resp = builder.execute()
+    updated_row = updated_resp.data[0] if updated_resp.data else {}
+    return _row_to_out(updated_row, kind=catalog_kind)
+
+
+# ─── DELETE /api/videos/{youtube_video_id} — catalog-only removal ──────
+@router.delete("/{youtube_video_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def delete_video(
+    youtube_video_id: str,
+    account_id: Optional[UUID] = Query(default=None),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+):
+    """Catalog-only delete (re-syncable). Does NOT delete the real YouTube video.
+
+    Removes the row from ``youtube_videos`` (kind=video) or
+    ``youtube_shorts`` (kind=short) — whichever contains the video. The
+    ``youtube_video_snapshots`` history is NOT touched so trend data is
+    preserved. The deleted row can be recovered by running
+    ``POST /api/videos/sync``.
+
+    **IMPORTANT:** This endpoint intentionally does NOT call the YouTube
+    Data API delete. Deleting a YouTube video is irreversible and must
+    remain a deliberate operator action via the YouTube Studio UI.
+    This is a local catalog management operation only.
+
+    Returns 204 No Content on success.
+    Returns 404 when the video is not found in the catalog (already
+    removed or never synced).
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_sb = get_user_client(token)
+    admin = get_admin_client()
+
+    # Find the catalog table.
+    catalog_table: str | None = None
+    for table_name, _kind in [("youtube_videos", "video"), ("youtube_shorts", "short")]:
+        builder = (
+            user_sb
+            .schema(_SCHEMA)
+            .table(table_name)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("youtube_video_id", youtube_video_id)
+            .limit(1)
+        )
+        if account_id is not None:
+            builder = builder.eq("account_id", str(account_id))
+        resp = builder.execute()
+        if resp.data:
+            catalog_table = table_name
+            break
+
+    if catalog_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"video {youtube_video_id!r} not in catalog. "
+                "Run POST /api/videos/sync to refresh from YouTube."
+            ),
+        )
+
+    (
+        admin
+        .schema(_SCHEMA)
+        .table(catalog_table)
+        .delete()
+        .eq("org_id", str(org_id))
+        .eq("youtube_video_id", youtube_video_id)
+        .execute()
     )
 
 

@@ -325,5 +325,54 @@ class YoutubeClient(Protocol):
                 this explicitly rather than returning a sentinel."""
         ...
 
+    async def update_video(
+        self,
+        video_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        privacy_status: str | None = None,
+    ) -> VideoFull:
+        """Update mutable metadata for an existing YouTube video.
+
+        **Quota cost: ~50 units/update** — ``videos.update`` costs 50 units
+        per call regardless of which ``part=`` slices are written. Only the
+        parts that actually change are sent (``snippet`` when ``title`` or
+        ``description`` is non-None; ``status`` when ``privacy_status`` is
+        non-None) so a privacy-only update avoids a ``snippet`` write and vice
+        versa.
+
+        **GOTCHA — ``snippet`` part requires ``title`` AND ``categoryId``:**
+        YouTube's ``videos.update?part=snippet`` rejects the call if
+        ``snippet.title`` or ``snippet.categoryId`` is absent, even when only
+        the description is being changed. The Real adapter fetches the existing
+        video's snippet first (``get_video_full``) and merges the caller's
+        values on top so the required fields are always present. Callers do NOT
+        need to pass the current title just to change the description.
+
+        **Requires OAuth** — ``videos.update`` is a write; an API-key-only
+        client cannot update metadata. The Real adapter raises ``ValueError``
+        at call time if no OAuth credentials were supplied.
+
+        Args:
+            video_id: YouTube video id to update.
+            title: New ``snippet.title``. ``None`` = keep existing.
+            description: New ``snippet.description``. ``None`` = keep existing.
+            privacy_status: New ``status.privacyStatus`` (``"public"`` /
+                ``"unlisted"`` / ``"private"``). ``None`` = keep existing.
+
+        Returns:
+            The updated video as a :class:`VideoFull` (re-fetched after the
+            write so the returned state matches YouTube's authoritative
+            record, not the caller's input).
+
+        Raises:
+            ValueError: when no OAuth credentials were supplied, or when
+                ``videos.list`` returns no items for ``video_id`` (the video
+                was deleted between the fetch and the update — treat as a
+                404 at the call site).
+            HttpError: on YouTube API errors (quota, permission, etc.)."""
+        ...
+
 
 __all__ = ["YoutubeClient"]

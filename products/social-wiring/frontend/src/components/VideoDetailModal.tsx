@@ -9,17 +9,23 @@
  *   - Views-over-time line chart from /api/youtube/videos/{id}/trend
  *     (reuses local ViewsChart, adapted for snapshot points vs cumulative series)
  *   - Empty trend state: "Sem histórico ainda — sincronize para acumular snapshots."
+ *   - Edit form (title / description / visibility) → PATCH /api/videos/{id}
+ *   - Delete button → confirmation dialog → DELETE /api/videos/{id}
+ *     (catalog-only removal — does NOT delete the real YouTube video)
  *
  * Opens when video row is clicked; closed via onClose().
  * Fetches trend data via useVideoTrend — data flows only when videoId is set.
  */
+import { useState } from "react";
 import {
+  Edit2,
   ExternalLink,
   Eye,
   Heart,
   Loader2,
   MessageCircle,
   PlaySquare,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -37,7 +43,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import { formatDuration, type Video } from "@/hooks/useVideos";
+import {
+  formatDuration,
+  type PrivacyStatus,
+  type Video,
+  useDeleteVideo,
+  useUpdateVideo,
+} from "@/hooks/useVideos";
 import { useVideoTrend } from "@/hooks/useVideoTrend";
 
 function fmtNum(n: number): string {
@@ -136,10 +148,54 @@ function VideoTrendChart({
 export interface VideoDetailModalProps {
   video: Video | null;
   onClose: () => void;
+  /** Called after a successful update so the parent list refreshes. */
+  onUpdated?: (updated: Video) => void;
+  /** Called after a successful delete so the parent list refreshes. */
+  onDeleted?: () => void;
 }
 
-export function VideoDetailModal({ video, onClose }: VideoDetailModalProps) {
+export function VideoDetailModal({
+  video,
+  onClose,
+  onUpdated,
+  onDeleted,
+}: VideoDetailModalProps) {
   if (!video) return null;
+
+  // ─── Edit form state ──────────────────────────────────────────────────────
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTitle, setEditTitle] = useState(video.title ?? "");
+  const [editDescription, setEditDescription] = useState(video.description ?? "");
+  const [editPrivacy, setEditPrivacy] = useState<PrivacyStatus>(
+    video.privacy_status ?? "private",
+  );
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  const { mutate: updateVideo, isPending: isUpdating } = useUpdateVideo({
+    onSuccess: (updated) => {
+      setEditOpen(false);
+      onUpdated?.(updated);
+    },
+  });
+
+  const { mutate: deleteVideo, isPending: isDeleting } = useDeleteVideo({
+    onSuccess: () => {
+      setDeleteConfirmOpen(false);
+      onClose();
+      onDeleted?.();
+    },
+  });
+
+  const handleSave = () => {
+    updateVideo({
+      youtubeVideoId: video.youtube_video_id,
+      body: {
+        title: editTitle.trim() || undefined,
+        description: editDescription,
+        privacy_status: editPrivacy,
+      },
+    });
+  };
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${video.youtube_video_id}`;
   const duration = formatDuration(video.duration);
@@ -155,16 +211,45 @@ export function VideoDetailModal({ video, onClose }: VideoDetailModalProps) {
       }}
     >
       <div className="relative w-full max-w-2xl rounded-xl bg-background shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
-        {/* Close button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute right-3 top-3 z-10"
-          onClick={onClose}
-          aria-label="Fechar"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        {/* Action buttons (edit / delete / close) */}
+        <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setEditTitle(video.title ?? "");
+              setEditDescription(video.description ?? "");
+              setEditPrivacy(video.privacy_status ?? "private");
+              setEditOpen((v) => !v);
+              setDeleteConfirmOpen(false);
+            }}
+            aria-label="Editar video"
+            title="Editar"
+          >
+            <Edit2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-destructive hover:text-destructive"
+            onClick={() => {
+              setDeleteConfirmOpen((v) => !v);
+              setEditOpen(false);
+            }}
+            aria-label="Remover do catálogo"
+            title="Remover do catálogo"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Fechar"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
 
         {/* Thumbnail */}
         {video.thumbnail_url && (
@@ -279,6 +364,131 @@ export function VideoDetailModal({ video, onClose }: VideoDetailModalProps) {
                 </Badge>
               )}
             </div>
+          )}
+
+          {/* Edit form (inline, collapsible) */}
+          {editOpen && (
+            <Card data-testid="edit-form">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Editar video</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground" htmlFor="edit-title">
+                    Título
+                  </label>
+                  <input
+                    id="edit-title"
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    maxLength={100}
+                    disabled={isUpdating}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                    placeholder="Título do video"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground" htmlFor="edit-description">
+                    Descrição
+                  </label>
+                  <textarea
+                    id="edit-description"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    maxLength={5000}
+                    rows={4}
+                    disabled={isUpdating}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-y"
+                    placeholder="Descrição do video"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground" htmlFor="edit-privacy">
+                    Visibilidade
+                  </label>
+                  <select
+                    id="edit-privacy"
+                    value={editPrivacy}
+                    onChange={(e) => setEditPrivacy(e.target.value as PrivacyStatus)}
+                    disabled={isUpdating}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    <option value="public">Público</option>
+                    <option value="unlisted">Não listado</option>
+                    <option value="private">Privado</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    onClick={handleSave}
+                    disabled={isUpdating || !editTitle.trim()}
+                    aria-label="Salvar alterações"
+                  >
+                    {isUpdating ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Salvando…
+                      </>
+                    ) : (
+                      "Salvar"
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditOpen(false)}
+                    disabled={isUpdating}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Delete confirmation panel */}
+          {deleteConfirmOpen && (
+            <Card
+              className="border-destructive/40 bg-destructive/5"
+              data-testid="delete-confirm"
+            >
+              <CardContent className="space-y-3 pt-4">
+                <p className="text-sm font-medium">Remover do catálogo?</p>
+                <p className="text-sm text-muted-foreground">
+                  Isso remove apenas o card local. O video no YouTube{" "}
+                  <strong>não é afetado</strong> e pode ser restaurado via
+                  "Sincronizar". Os snapshots de histórico são preservados.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => deleteVideo(video.youtube_video_id)}
+                    disabled={isDeleting}
+                    aria-label="Confirmar remoção do catálogo"
+                  >
+                    {isDeleting ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Removendo…
+                      </>
+                    ) : (
+                      "Remover do catálogo"
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteConfirmOpen(false)}
+                    disabled={isDeleting}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Trend chart */}

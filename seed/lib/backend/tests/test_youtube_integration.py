@@ -2074,3 +2074,99 @@ def test_classify_short_unknown_duration_low_needs_probe() -> None:
     assert c.is_short is False
     assert c.confidence == "low"
     assert c.needs_probe is True
+
+
+# ============================================================================
+# FakeYoutubeClient.update_video — Phase 7 (feat/yt-card-crud)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_title_only() -> None:
+    """update_video with only title changes title; description + privacy preserved."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("vid1", title="Old title")])
+    updated = await fake.update_video("vid1", title="New title")
+    assert updated.id == "vid1"
+    assert updated.title == "New title"
+    assert updated.description == "owned desc"       # unchanged
+    assert updated.privacy_status == "private"       # unchanged
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_description_only() -> None:
+    """update_video with only description does not erase title or privacy."""
+    fake = FakeYoutubeClient(
+        owned_videos=[_video_full("vid2", title="Keep me", description="old desc")]
+    )
+    updated = await fake.update_video("vid2", description="new desc")
+    assert updated.title == "Keep me"
+    assert updated.description == "new desc"
+    assert updated.privacy_status == "private"
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_privacy_only() -> None:
+    """update_video with only privacy_status does not erase title/description."""
+    fake = FakeYoutubeClient(
+        owned_videos=[_video_full("vid3", privacy_status="private")]
+    )
+    updated = await fake.update_video("vid3", privacy_status="public")
+    assert updated.privacy_status == "public"
+    assert updated.title == f"Owned video vid3"    # unchanged
+    assert updated.description == "owned desc"     # unchanged
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_all_fields() -> None:
+    """update_video with all three fields applies all changes at once."""
+    fake = FakeYoutubeClient(
+        owned_videos=[
+            _video_full("vid4", title="T", description="D", privacy_status="private")
+        ]
+    )
+    updated = await fake.update_video(
+        "vid4",
+        title="T2",
+        description="D2",
+        privacy_status="unlisted",
+    )
+    assert updated.title == "T2"
+    assert updated.description == "D2"
+    assert updated.privacy_status == "unlisted"
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_mutates_owned_videos_list() -> None:
+    """After update_video the owned_videos list reflects the new state."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("vid5", title="Before")])
+    await fake.update_video("vid5", title="After")
+    # The list was updated in-place.
+    assert fake.owned_videos[0].title == "After"
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_title_clipped_to_max() -> None:
+    """update_video clips the title to TITLE_MAX_LEN (100 chars) like the Real adapter."""
+    from noctusai_lib.integrations.youtube.types import TITLE_MAX_LEN
+
+    long_title = "A" * 200
+    fake = FakeYoutubeClient(owned_videos=[_video_full("vid6")])
+    updated = await fake.update_video("vid6", title=long_title)
+    assert len(updated.title) == TITLE_MAX_LEN
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_charges_50_quota_units() -> None:
+    """update_video charges exactly 50 quota units per call."""
+    fake = FakeYoutubeClient(owned_videos=[_video_full("vid7")])
+    before = fake.quota_units_consumed
+    await fake.update_video("vid7", title="Charged")
+    assert fake.quota_units_consumed - before == 50
+
+
+@pytest.mark.asyncio
+async def test_fake_update_video_missing_id_raises_value_error() -> None:
+    """update_video raises ValueError when the video_id is not in owned_videos."""
+    fake = FakeYoutubeClient()
+    with pytest.raises(ValueError, match="no items"):
+        await fake.update_video("ghost-id", title="X")

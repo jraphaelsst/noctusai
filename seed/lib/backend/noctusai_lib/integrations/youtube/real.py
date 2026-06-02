@@ -821,6 +821,99 @@ class RealYoutubeClient:
             )
             raise
 
+    async def update_video(
+        self,
+        video_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        privacy_status: str | None = None,
+    ) -> VideoFull:
+        """Update mutable metadata via ``videos.update``.
+
+        **Quota cost: ~50 units/update** — ``videos.update`` costs 50 units
+        per call. Only the parts that actually change are included in the
+        request (``snippet`` when ``title``/``description`` is non-None;
+        ``status`` when ``privacy_status`` is non-None).
+
+        **GOTCHA — ``snippet`` part requires ``title`` AND ``categoryId``:**
+        YouTube rejects ``videos.update?part=snippet`` when ``snippet.title``
+        or ``snippet.categoryId`` is missing. This adapter fetches the
+        existing video full-projection first (1 unit), merges the caller's
+        values on top, and then writes only what changed (≤49 more units for
+        the update). Callers can pass only the fields they want to change.
+
+        **Requires OAuth** — ``videos.update`` is a write. Raises
+        ``ValueError`` at call time when no OAuth credentials were supplied.
+
+        Returns the re-fetched :class:`VideoFull` after the write so the
+        returned state is YouTube's authoritative record.
+
+        Raises:
+            ValueError: when no OAuth credentials supplied OR ``get_video_full``
+                returns ``None`` (video deleted between fetch and update).
+            HttpError: on YouTube API errors (quota, permission, etc.)."""
+        if self._oauth_credentials is None:
+            raise ValueError(
+                "RealYoutubeClient.update_video requires oauth_credentials "
+                "(videos.update is a write; an API key cannot update metadata)"
+            )
+
+        parts: list[str] = []
+        body: dict[str, Any] = {"id": video_id}
+
+        if title is not None or description is not None:
+            # Fetch existing snippet to supply the required title + categoryId
+            # fields when only description is changing (YouTube rejects the
+            # update if either is absent).
+            existing = await self.get_video_full(video_id)
+            if existing is None:
+                raise ValueError(
+                    f"videos.list returned no items for video_id={video_id!r} — "
+                    "may have been deleted or is not accessible."
+                )
+            body["snippet"] = {
+                "title": (title if title is not None else existing.title)[:TITLE_MAX_LEN],
+                "description": (description if description is not None else existing.description),
+                "categoryId": existing.category_id or "22",
+                "tags": list(existing.tags) if existing.tags else [],
+            }
+            parts.append("snippet")
+
+        if privacy_status is not None:
+            body["status"] = {"privacyStatus": privacy_status}
+            parts.append("status")
+
+        if not parts:
+            # No-op: nothing to update — re-fetch and return current state.
+            existing = await self.get_video_full(video_id)
+            if existing is None:
+                raise ValueError(
+                    f"videos.list returned no items for video_id={video_id!r}"
+                )
+            return existing
+
+        try:
+            self._service().videos().update(
+                part=",".join(parts),
+                body=body,
+            ).execute()
+        except HttpError as exc:
+            logger.warning(
+                "youtube.update_video_http_error video_id=%s status=%s",
+                video_id,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+
+        # Re-fetch the updated state as the authoritative record.
+        updated = await self.get_video_full(video_id)
+        if updated is None:
+            raise ValueError(
+                f"videos.list returned no items for video_id={video_id!r} after update"
+            )
+        return updated
+
     async def get_processing_status(self, video_id: str) -> ProcessingStatus:
         """**1 quota unit** (`videos.list?part=status,processingDetails&id=<vid>`).
 

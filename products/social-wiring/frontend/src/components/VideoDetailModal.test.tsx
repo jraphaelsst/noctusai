@@ -24,6 +24,8 @@ vi.mock("@noctusai/seed/infra", () => ({
   api: {
     get: vi.fn(() => Promise.resolve({ points: [] })),
     post: vi.fn(() => Promise.resolve({})),
+    patch: vi.fn(() => Promise.resolve({})),
+    delete: vi.fn(() => Promise.resolve(undefined)),
   },
 }));
 
@@ -44,15 +46,17 @@ vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children }: any) => <span data-testid="badge">{children}</span>,
 }));
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, onClick, asChild, "aria-label": ariaLabel, ...rest }: any) =>
+  Button: ({ children, onClick, asChild, "aria-label": ariaLabel, disabled, title, ...rest }: any) =>
     asChild ? (
       React_stub_passthrough({ children, onClick })
     ) : (
-      <button onClick={onClick} aria-label={ariaLabel}>{children}</button>
+      <button onClick={onClick} aria-label={ariaLabel} disabled={disabled} title={title}>{children}</button>
     ),
 }));
 vi.mock("@/components/ui/card", () => ({
-  Card: ({ children }: any) => <div>{children}</div>,
+  Card: ({ children, "data-testid": testId, className }: any) => (
+    <div data-testid={testId} className={className}>{children}</div>
+  ),
   CardContent: ({ children }: any) => <div>{children}</div>,
   CardHeader: ({ children }: any) => <div>{children}</div>,
   CardTitle: ({ children }: any) => <div>{children}</div>,
@@ -78,13 +82,34 @@ vi.mock("recharts", () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  Edit2: () => <span data-testid="edit2-icon" />,
   ExternalLink: () => null,
   Eye: () => null,
   Heart: () => null,
   Loader2: () => <span data-testid="loader" />,
   MessageCircle: () => null,
   PlaySquare: () => null,
+  Trash2: () => <span data-testid="trash2-icon" />,
   X: () => <span>X</span>,
+}));
+
+// ─── TanStack react-query stub (minimal: useMutation) ────────────────────────
+
+const mockUpdateMutate = vi.fn();
+const mockDeleteMutate = vi.fn();
+
+vi.mock("@tanstack/react-query", () => ({
+  useMutation: vi.fn(({ onSuccess, onError }: any) => {
+    // Expose the onSuccess / onError so tests can trigger them manually.
+    return {
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+      _onSuccess: onSuccess,
+      _onError: onError,
+    };
+  }),
+  useQueryClient: vi.fn(() => ({ invalidateQueries: vi.fn() })),
 }));
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
@@ -196,5 +221,99 @@ describe("VideoDetailModal — trend chart states", () => {
     // The trend hook should be called with the youtube_video_id
     const firstCall = mockUseVideoTrend.mock.calls[0];
     expect(firstCall[0]).toBe(video.youtube_video_id);
+  });
+});
+
+// ─── VideoDetailModal — Edit form ─────────────────────────────────────────────
+
+describe("VideoDetailModal — edit form", () => {
+  it("renders the edit button", async () => {
+    const { getByLabelText } = await renderModal({ video });
+    expect(getByLabelText("Editar video")).toBeTruthy();
+  });
+
+  it("shows the edit form when the edit button is clicked", async () => {
+    const { getByLabelText, getByTestId, fireEvent } = await renderModal({ video });
+    const editBtn = getByLabelText("Editar video");
+    fireEvent.click(editBtn);
+    expect(getByTestId("edit-form")).toBeTruthy();
+  });
+
+  it("edit form contains title, description, and visibility inputs", async () => {
+    const { getByLabelText, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Editar video"));
+    expect(getByLabelText("Título")).toBeTruthy();
+    expect(getByLabelText("Descrição")).toBeTruthy();
+    expect(getByLabelText("Visibilidade")).toBeTruthy();
+  });
+
+  it("edit form Save button is present after opening", async () => {
+    const { getByLabelText, getByRole, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Editar video"));
+    expect(getByRole("button", { name: "Salvar alterações" })).toBeTruthy();
+  });
+
+  it("edit form Cancel button closes the form", async () => {
+    const { getByLabelText, getByText, queryByTestId, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Editar video"));
+    expect(queryByTestId("edit-form")).toBeTruthy();
+    fireEvent.click(getByText("Cancelar"));
+    expect(queryByTestId("edit-form")).toBeNull();
+  });
+
+  it("edit form closes when edit button is clicked again (toggle)", async () => {
+    const { getByLabelText, queryByTestId, fireEvent } = await renderModal({ video });
+    const editBtn = getByLabelText("Editar video");
+    fireEvent.click(editBtn);
+    expect(queryByTestId("edit-form")).toBeTruthy();
+    fireEvent.click(editBtn);
+    expect(queryByTestId("edit-form")).toBeNull();
+  });
+});
+
+// ─── VideoDetailModal — Delete confirmation ───────────────────────────────────
+
+describe("VideoDetailModal — delete confirmation", () => {
+  it("renders the delete (trash) button", async () => {
+    const { getByLabelText } = await renderModal({ video });
+    expect(getByLabelText("Remover do catálogo")).toBeTruthy();
+  });
+
+  it("shows the delete confirmation panel when the delete button is clicked", async () => {
+    const { getByLabelText, getByTestId, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    expect(getByTestId("delete-confirm")).toBeTruthy();
+  });
+
+  it("delete confirmation panel explains it is catalog-only (pt-BR copy)", async () => {
+    const { getByLabelText, getByTestId, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    const panel = getByTestId("delete-confirm");
+    expect(panel.textContent).toMatch(/catálogo/i);
+    expect(panel.textContent).toMatch(/YouTube/i);
+  });
+
+  it("delete confirmation panel has a 'Remover do catálogo' confirm button", async () => {
+    const { getByLabelText, getByRole, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    expect(getByRole("button", { name: "Confirmar remoção do catálogo" })).toBeTruthy();
+  });
+
+  it("Cancel button in delete panel hides the panel", async () => {
+    const { getByLabelText, queryByTestId, getAllByText, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    expect(queryByTestId("delete-confirm")).toBeTruthy();
+    const cancelBtns = getAllByText("Cancelar");
+    fireEvent.click(cancelBtns[cancelBtns.length - 1]);
+    expect(queryByTestId("delete-confirm")).toBeNull();
+  });
+
+  it("clicking delete hides the edit form", async () => {
+    const { getByLabelText, queryByTestId, fireEvent } = await renderModal({ video });
+    fireEvent.click(getByLabelText("Editar video"));
+    expect(queryByTestId("edit-form")).toBeTruthy();
+    fireEvent.click(getByLabelText("Remover do catálogo"));
+    expect(queryByTestId("edit-form")).toBeNull();
+    expect(queryByTestId("delete-confirm")).toBeTruthy();
   });
 });

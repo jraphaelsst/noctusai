@@ -685,6 +685,61 @@ class YouTubeService:
 
         return upload.video_id
 
+    def update_video_metadata(
+        self,
+        *,
+        org_id: UUID,
+        video_id: str,
+        title: str | None = None,
+        description: str | None = None,
+        privacy_status: str | None = None,
+    ) -> "VideoFull":
+        """Update title, description, and/or privacy for an existing video.
+
+        Write-through to the YouTube Data API via ``videos.update``.
+
+        **Quota cost: ~50 units/update** — the update itself costs 50 units.
+        When the ``snippet`` part is needed (title or description change),
+        the seed adapter internally fetches the existing snippet first (1
+        unit) before the update write (49 units) to satisfy YouTube's
+        requirement that ``snippet.title`` + ``snippet.categoryId`` are
+        always present even when only changing the description.
+
+        Delegates to ``YoutubeClient.update_video`` (Phase 7 of
+        social-wiring video CRUD — feat/yt-card-crud).
+
+        Returns:
+            The updated :class:`VideoFull` re-fetched from the YouTube API
+            after the write so the returned state is authoritative.
+
+        Raises:
+            YouTubeNotConnected: when no credentials are stored for the org.
+            YouTubeServiceError: on any YouTube API error or missing video.
+        """
+        if privacy_status is not None and privacy_status not in ("public", "unlisted", "private"):
+            raise YouTubeServiceError(
+                f"privacy_status must be public/unlisted/private, got {privacy_status!r}"
+            )
+
+        creds = self._fresh_credentials(org_id)
+        client = self._youtube_client(creds)
+
+        try:
+            updated = _run_sync(
+                client.update_video(
+                    video_id,
+                    title=title,
+                    description=description,
+                    privacy_status=privacy_status,
+                )
+            )
+        except HttpError as exc:
+            raise YouTubeServiceError(_format_http_error(exc)) from exc
+        except ValueError as exc:
+            raise YouTubeServiceError(str(exc)) from exc
+
+        return updated
+
     # ─── Internals ────────────────────────────────────────────────────
     def _fresh_credentials(self, org_id: UUID) -> Credentials:
         """Load + refresh-if-stale + persist-if-changed.

@@ -4,8 +4,13 @@
  *   useVideos     — paginated list (cursor-based "load more")
  *   useVideoSync  — POST /api/videos/sync; returns the SyncResult so the
  *                   UI can show "synced N videos in M pages"
+ *   useUpdateVideo — PATCH /api/videos/{id}; write-through to YouTube +
+ *                    catalog mirror; on success calls onSuccess to refresh
+ *   useDeleteVideo — DELETE /api/videos/{id}; catalog-only removal;
+ *                    on success calls onSuccess to refresh
  */
 import { useCallback, useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
@@ -186,6 +191,13 @@ export function useVideos(options: UseVideosOptions = {}) {
   };
 }
 
+// ─── Update body type ───────────────────────────────────────────────────
+export interface VideoUpdateBody {
+  title?: string | null;
+  description?: string | null;
+  privacy_status?: PrivacyStatus | null;
+}
+
 // ─── Sync hook ─────────────────────────────────────────────────────────
 export function useVideoSync(onComplete?: () => void) {
   const [pending, setPending] = useState(false);
@@ -215,4 +227,74 @@ export function useVideoSync(onComplete?: () => void) {
   }, [onComplete]);
 
   return { sync, pending, lastResult };
+}
+
+// ─── Update hook ────────────────────────────────────────────────────────
+/**
+ * useUpdateVideo — PATCH /api/videos/{youtube_video_id}
+ *
+ * Write-through to YouTube (title / description / privacy_status) then
+ * mirrors the change to the local catalog. All fields are optional.
+ * Threads ``account_id`` from ``useActiveAccountStore`` like the other hooks.
+ *
+ * Usage:
+ *   const { mutate: updateVideo, isPending } = useUpdateVideo({ onSuccess: refresh });
+ *   updateVideo({ youtubeVideoId: "abc", body: { title: "New title" } });
+ */
+export function useUpdateVideo(options?: { onSuccess?: (updated: Video) => void }) {
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+
+  return useMutation({
+    mutationFn: async ({
+      youtubeVideoId,
+      body,
+    }: {
+      youtubeVideoId: string;
+      body: VideoUpdateBody;
+    }): Promise<Video> => {
+      const params = storeAccountId
+        ? `?account_id=${encodeURIComponent(storeAccountId)}`
+        : "";
+      return api.patch<Video>(`/api/videos/${encodeURIComponent(youtubeVideoId)}${params}`, body);
+    },
+    onSuccess: (updated) => {
+      toast.success("Video atualizado com sucesso");
+      options?.onSuccess?.(updated);
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao atualizar o video");
+    },
+  });
+}
+
+// ─── Delete hook ────────────────────────────────────────────────────────
+/**
+ * useDeleteVideo — DELETE /api/videos/{youtube_video_id}
+ *
+ * Catalog-only removal — does NOT delete the real YouTube video. The row
+ * can be recovered by running POST /api/videos/sync. Threads ``account_id``
+ * from ``useActiveAccountStore`` like the other hooks.
+ *
+ * Usage:
+ *   const { mutate: deleteVideo, isPending } = useDeleteVideo({ onSuccess: refresh });
+ *   deleteVideo("dQw4w9WgXcQ");
+ */
+export function useDeleteVideo(options?: { onSuccess?: () => void }) {
+  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+
+  return useMutation({
+    mutationFn: async (youtubeVideoId: string): Promise<void> => {
+      const params = storeAccountId
+        ? `?account_id=${encodeURIComponent(storeAccountId)}`
+        : "";
+      return api.delete(`/api/videos/${encodeURIComponent(youtubeVideoId)}${params}`);
+    },
+    onSuccess: () => {
+      toast.success("Video removido do catálogo");
+      options?.onSuccess?.();
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao remover o video do catálogo");
+    },
+  });
 }
