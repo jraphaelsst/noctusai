@@ -51,12 +51,13 @@ User clicked "Connect YouTube" on `/configuracoes` → Google `redirect_uri_mism
 - `POST /api/integrations/accounts/{id}/sync` → `IntegrationAccount` (live channel-info refresh → status validated/error).
 - YT data surfaces accept `?account_id=<uuid>` (omitted → org default): `GET /api/youtube/dashboard…`, `/api/videos…`. Shapes unchanged, account-scoped.
 
-### Phase-2 slices
-- [ ] **P2-BE** — migrations `007_clients.sql` + `008_integration_accounts_client_channel.sql`; `clients_service`+`clients_router`; `integration_account_service` (+client_id/status/channel_info/last_synced_at + `update_channel_info`); `account_credentials` switching seam (`account_id` → `MultiAccountCredentialStore` + `build_*_for_org`) + `sync_channel_info`; `ChannelInfo.thumbnail_url`; OAuth callback writes channel_info/status; dashboard/videos `account_id` Query. Tests.
-- [ ] **P2-FE-lib** — `IntegrationCard` + `IntegrationCardModal` + `PROVIDER_CARD_CONFIG` (YT+WAHA blocks) in `seed/lib/frontend/src/design-system/`; lib index export; config unit tests.
-- [ ] **P2-FE-app** — `Conexoes.tsx` card-listing grouped by client; Clients CRUD page; account/client switcher → `account_id` into YT hooks; `useClients.ts`; extend `useIntegrationAccounts` (client filter + sync); render-test card usage.
-- [ ] **P2-KEEPER** — `check_consent_routes_mounted` + CI + keeper-pattern cache; `KB § PATTERNS/frontend/consent-routes-mandate.md` + INDEX + CLAUDE.md §1 + memory (8-way sync).
-- [ ] **P2-DEPLOY** — integrate → FF → apply 007/008 (verify PG `security_invoker`) → dev-validation gate → bless+promote → CI → deploy social-wiring + Core.
+### Phase-2 slices — ALL SHIPPED (prod `06118329`, 2026-06-02)
+- [x] **P2-BE** (`17484c93`+`d19b4602`) — migrations 007/008; clients_service+router; account channel-object columns + `update_channel_info`; `account_credentials` switching seam (`account_id`) + `sync_channel_info`; `ChannelInfo.thumbnail_url`; OAuth callback writes channel_info/status; dashboard/videos `account_id`. 638 tests green.
+- [x] **P2-FE-lib** (`70efce67`) — `IntegrationCard`+`IntegrationCardModal`+`PROVIDER_CARD_CONFIG` (YT+WAHA) in `@noctusai/lib`; lib export; 70 tests; dual-React harness confirmed resolved.
+- [x] **P2-FE-app** (`1e27a6d7`+`f8448461`) — `Conexoes.tsx` cards grouped by client; `ClientManagementModal` (inline, no nav route); `useClients`+`useSyncAccount`; `AccountSwitcher`+`ConnectedAccountSwitcher` mounted on YouTube+Dashboard; YT data hooks default to the active-account store. **Wiring-audit caught built-but-not-wired switcher → fixed.** 46 tests.
+- [x] **P2-KEEPER** (`86298341`) — `check_consent_routes_mounted` + `--check-consent-routes` + 11 tests + KB `consent-routes-mandate.md` + CLAUDE.md §1 + memory.
+- [x] **P2-DEPLOY** (`06118329`) — migrations applied (PG17 `security_invoker` ✓, RLS-clean) → dev gate (smoke 10/10 + predeploy READY) → bless main → promote prod (backup `ab9f8e5e`) → CI ✓ → deploy social-wiring+core → **edge-verified** (`/api/clients`=401, `/conexoes`=200). Tunnel restart needed post-recreate (logged).
+- [x] **P2-SEED-FIXES** (`f8448461`+`241827d6`) — seed vitest localStorage setup (kills per-file polyfills) + local-watch supervised-watcher/no-empty-dist (dev SPA 503 resilience).
 
 ## Decision log
 - 2026-06-01 — roadmap created; branch isolated; S0 next.
@@ -67,5 +68,19 @@ User clicked "Connect YouTube" on `/configuracoes` → Google `redirect_uri_mism
 - Per-upload account picker vs. always-default? (Default-account v1; per-upload picker = follow-up unless user asks.)
 - `social.noctusai.com` alias — register too? (Canonical = `social-wiring.noctusai.com`; alias optional.)
 
-## Retrospective
-_(on close)_
+## Retrospective (Phase 2 close — 2026-06-02)
+
+**Shipped:** the full multi-account/per-client vertical, live on prod. Canonical `clients` entity (brand-owners folded in 1:1, branding re-pointed, `mc_brand_owners` → security_invoker compat view). Per-account channel objects (status + cached `channel_info` + `last_synced_at`). The mandated config-driven `IntegrationCard` `@noctusai/lib` organ (scales to N providers via `PROVIDER_CARD_CONFIG`). Live account/client data-switching wired into YouTube+Dashboard. Consent-routes keeper. Two seed dev-infra root-fixes.
+
+**What worked:** contract-first dispatch (3 file-disjoint Wave-1 slices in parallel, zero merge conflicts on real code); PG-version + live-data de-risk BEFORE writing migrations (0 brand-owners → fold-in was structural, trivial); the dev-validation gate + edge-verify caught real issues pre/at-deploy.
+
+**Friction → fixes (all logged):**
+1. **Built-but-not-wired** in dispatched FE (switcher created, mounted nowhere, hook param nobody passed) — caught by an integrate-time wiring-audit, fixed inline. → memory `feedback_dispatch_review_wiring_audit`.
+2. **JSONB double-encode parity bug** (service `json.dumps` into JSONB → string on real PG, masked by read-path decode + the SQLite test Fake) — non-breaking, queued as a parity-tested root-fix slice. → ledger.
+3. **vitest jsdom lacks localStorage** — root-fixed at the seed factory (shared setup), per-file polyfills removed.
+4. **local-watch dev SPA 503** — watcher emptied dist then died unsupervised → root-fixed (supervised + emptyOutDir:false).
+5. **`task_branch` integrate false-conflict** (hook stdout + ledger ndjson churn misread as dirty) ×2 — logged.
+6. **noc-graph full-rebuild on every graph-touching commit** (no incremental) — 1-2 min/commit drag — logged.
+7. **`cloudflared` stale origin after `deploy_image` recreate** — social hostname edge-timeout despite healthy container; `noctus-tunnel` restart fixed it — logged (deploy_image should re-signal the tunnel + edge-check).
+
+**Open follow-ups (deferred):** JSONB double-encode root-fix slice · WAHA full card treatment (multi-account/QR via the organ) · drop `mc_brand_owners_legacy`+`brand_owner_id`+old index once consumers confirmed off them · Insta/Meta provider config blocks · the 7 logged tool/infra improvements (codification pipeline) · initial channel_info auto-populate on connect (folds into the JSONB slice).
