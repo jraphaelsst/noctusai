@@ -10,14 +10,19 @@
 ```
 User signs up / OAuth login
     └─> organizations row created  (org_type, number_of_users, prefixed slug)
-    └─> noctus_users row created   (org_id FK, org_role='owner')
-    └─> user_metadata.org_id stamped  ← THIS is what the JWT carries
-            └─> auth.jwt()->>'org_id' in Supabase RLS
+    └─> noctus_users row created   (org_id FK, org_role='owner')  ← THE RLS SOURCE OF TRUTH
+            └─> public.current_org_id()  (SECURITY DEFINER) reads
+                noctus_users WHERE id = auth.uid()
                     └─> every product's RLS policy evaluates to the right org
+    └─> user_metadata.org_id stamped  (app-convenience signal ONLY — see §5;
+        user_metadata is client-editable ⇒ NEVER trusted for RLS)
 ```
 
 **Invariant:** no account-creation path may exit without completing all three legs above.
-`test_signup_org_guarantee.py` + `test_oauth_router.py` enforce this.
+`test_signup_org_guarantee.py` + `test_oauth_router.py` enforce this. The
+`noctus_users` row is the leg RLS actually depends on (`current_org_id()` reads
+it via `auth.uid()`); the `user_metadata` stamp is belt-and-suspenders, not the
+authorization path.
 
 ---
 
@@ -68,26 +73,41 @@ Helper: `_make_org_slug(base_name, org_type)` in `auth.py` and `oauth.py`
 
 ---
 
-## 5. JWT claim chain
+## 5. How RLS resolves the org (the trusted path)
 
-Supabase embeds `user_metadata` top-level in the JWT access token.
+> ⚠️ **Superseded model (do NOT reintroduce):** earlier RLS read the org claim
+> straight off the JWT — `auth.jwt() ->> 'org_id'`. That was broken **and**
+> insecure: (a) Supabase nests app-set claims under `user_metadata`, so the
+> top-level claim is NULL → RLS stripped every row; (b) `user_metadata` is
+> **client-editable** (`supabase.auth.updateUser({ data: { org_id } })`), so
+> keying RLS on it is a privilege-escalation hole (Supabase advisor flags
+> `rls_references_user_metadata`). See `memory/feedback_rls_never_key_on_user_metadata`.
+
+**Current model — derive the org from a trusted, server-controlled table:**
 
 ```sql
--- RLS helper function (migration 001):
-CREATE OR REPLACE FUNCTION get_current_org_id() RETURNS uuid AS
-$$ SELECT (SELECT (auth.jwt() ->> 'org_id'))::uuid; $$;
+-- The single org-resolution function every RLS policy calls (fleet-wide).
+CREATE OR REPLACE FUNCTION public.current_org_id() RETURNS uuid
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+  AS $$ SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid()); $$;
+-- policies: USING (org_id = public.current_org_id())
 ```
 
-`auth.jwt() ->> 'org_id'` reads `user_metadata.org_id`.
+`auth.uid()` is the cryptographically-signed subject — the user cannot forge it —
+so the resolved org is always the caller's real `noctus_users.org_id`. This is
+exactly why the **`noctus_users` leg of the signup chain is non-negotiable**: it
+is what authorization reads. A forged `user_metadata.org_id` is ignored.
 
-**Stamp timing:**
+**`user_metadata.org_id` stamp — app-convenience only (NOT authorization):**
 - Email signup: stamped immediately after org insert via `update_user_by_id`
 - OAuth signup: same, in the callback handler
 - SSO session: re-stamped on each `/api/sso/session` call (picks up org changes)
+- It is read by the FE/app for display/routing; it is **never** the RLS source.
 
-**Legacy users (7 without org_id in metadata):** the stamp was missing on creation.
-Fix: call `update_user_by_id` with `{"user_metadata": {"org_id": <noctus_users.org_id>}}` for each.
-The `/api/sso/session` endpoint will also re-stamp on next SSO login.
+**Legacy users without a `noctus_users` row:** the org guarantee here backfills
+both legs. The authorization fix for any orgless user is to ensure the
+`noctus_users` row exists with the right `org_id` (what `current_org_id()` reads),
+not to re-stamp `user_metadata`.
 
 ---
 

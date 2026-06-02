@@ -42,7 +42,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 11 | 20 | 20 | 17 | 59 | 654 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| **Total** | **176** | **185** | **265** | **151** | **438** | **5,234** |
+| **Total** | **176** | **185** | **265** | **151** | **438** | **5,244** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
