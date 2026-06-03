@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -28,6 +28,10 @@ const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // CRM module
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const Funil = lazy(() => import("@/pages/Funil"));
+// Tasks + Agenda + Routines module
+const Tarefas = lazy(() => import("@/pages/Tarefas"));
+const Agenda = lazy(() => import("@/pages/Agenda"));
+const Rotinas = lazy(() => import("@/pages/Rotinas"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -51,6 +55,17 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
       { name: "Funil", href: "/funil", icon: Kanban, route: "funil" },
+    ],
+  },
+  {
+    key: "operacoes",
+    label: "Operações",
+    icon: ClipboardList,
+    defaultOpen: true,
+    items: [
+      { name: "Tarefas", href: "/tarefas", icon: ClipboardList, route: "tarefas" },
+      { name: "Agenda", href: "/agenda", icon: CalendarDays, route: "agenda" },
+      { name: "Rotinas", href: "/rotinas", icon: RefreshCw, route: "rotinas" },
     ],
   },
 ];
@@ -78,6 +93,17 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Funil", href: "/funil", icon: Kanban },
     ],
   },
+  {
+    key: "operacoes",
+    label: "Operações",
+    icon: ClipboardList,
+    defaultOpen: true,
+    items: [
+      { name: "Tarefas", href: "/tarefas", icon: ClipboardList },
+      { name: "Agenda", href: "/agenda", icon: CalendarDays },
+      { name: "Rotinas", href: "/rotinas", icon: RefreshCw },
+    ],
+  },
 ];
 
 const Layout = createProductLayout({
@@ -97,6 +123,9 @@ export default createProductApp({
     { path: "/financeiro", component: Financeiro },
     { path: "/clientes", component: Clientes },
     { path: "/funil", component: Funil },
+    { path: "/tarefas", component: Tarefas },
+    { path: "/agenda", component: Agenda },
+    { path: "/rotinas", component: Rotinas },
   ],
   Layout,
   ...infra.appConfig,
