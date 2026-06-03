@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -25,6 +25,9 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 // `app/routers/example_router.py`.
 const Example = lazy(() => import("@/pages/Example"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
+// CRM module
+const Clientes = lazy(() => import("@/pages/Clientes"));
+const Funil = lazy(() => import("@/pages/Funil"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -40,6 +43,16 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Financeiro", href: "/financeiro", icon: DollarSign, route: "financeiro" },
     ],
   },
+  {
+    key: "crm",
+    label: "CRM",
+    icon: UserCheck,
+    defaultOpen: true,
+    items: [
+      { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
+      { name: "Funil", href: "/funil", icon: Kanban, route: "funil" },
+    ],
+  },
 ];
 
 const NAV_FALLBACK: NavGroup[] = [
@@ -53,6 +66,16 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Financeiro", href: "/financeiro", icon: DollarSign },
+    ],
+  },
+  {
+    key: "crm",
+    label: "CRM",
+    icon: UserCheck,
+    defaultOpen: true,
+    items: [
+      { name: "Clientes", href: "/clientes", icon: UserCheck },
+      { name: "Funil", href: "/funil", icon: Kanban },
     ],
   },
 ];
@@ -72,6 +95,8 @@ export default createProductApp({
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro", component: Financeiro },
+    { path: "/clientes", component: Clientes },
+    { path: "/funil", component: Funil },
   ],
   Layout,
   ...infra.appConfig,
