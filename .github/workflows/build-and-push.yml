@@ -63,7 +63,7 @@ jobs:
       GHCR_USERNAME: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v5  # Node 24 (v4 was Node 20, deprecated)
+      - uses: actions/checkout@v6  # Node 24 (v4 was Node 20, deprecated)
         with:
           fetch-depth: 0   # need the push range (before..after) to scope the build to CHANGED products
 
