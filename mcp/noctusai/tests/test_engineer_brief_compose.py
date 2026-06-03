@@ -180,10 +180,18 @@ class TestGracefulDegrade:
         assert result["suggested_agent"] == "backend-engineer"
 
     def test_no_exception_when_all_caches_absent(self):
-        """No ImportError should bubble up — all cache queries are guarded."""
+        """No ImportError should bubble up — all cache queries are guarded;
+        compose_brief always returns a brief + a valid agent slug.
+
+        The SPECIFIC routing winner is semantic-corpus-dependent (it shifts as
+        owned-KB centroids evolve) and is NOT what this test guards — the
+        forced-fallback agent (backend-engineer) is asserted deterministically
+        by ``test_fallback_agent_when_no_embedding``. Pinning a live winner here
+        made the test brittle (it flipped when an architect-owned KB doc grew).
+        """
         result = compose_brief(target_files=_STUB_FILES, description=_STUB_DESC)
         assert "brief" in result
-        assert result["suggested_agent"] == "backend-engineer"
+        assert isinstance(result["suggested_agent"], str) and result["suggested_agent"]
 
 
 class TestAgentRouting:
