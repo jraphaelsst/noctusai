@@ -33,6 +33,7 @@ from app.routers.financial_router import router as financial_router
 from app.routers.tasks_router import router as tasks_router
 from app.routers.agenda_router import router as agenda_router
 from app.routers.meta_ads_router import router as meta_ads_router
+from app.routers.automation_router import router as automation_router
 
 app = create_product_app(
     name="Orbity",
@@ -55,6 +56,8 @@ app = create_product_app(
         agenda_router,     # /api/agenda/events/* — calendar events + GCal sync seam
         # Meta Ads / Tráfego (Wave 3)
         meta_ads_router,   # /api/meta-ads/* — ad accounts, campaigns, metrics, sync, aggregate
+        # WhatsApp Automation Flow Engine (Wave 3)
+        automation_router, # /api/automation/* — flows, steps, executions, run-due
     ],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
