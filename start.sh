@@ -60,6 +60,7 @@ PRODUCTS=(
   "dev-team:Dev Team:8009:8123"
   "social-wiring:Social Wiring:8011:8160"
   "knowledge-extractor:Knowledge Extractor:8012:8140"
+  "orbity:Orbity:8010:8140"
 )
 # END_PRODUCTS_REGISTRY
 
