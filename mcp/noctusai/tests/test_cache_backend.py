@@ -27,6 +27,7 @@ class TestCatalog:
             "memory-embeddings",
             "corpus-embeddings",
             "noc-graph",
+            "absorptions",
         }
 
     def test_known_caches_stable_order(self):
