@@ -105,3 +105,21 @@ When the work is **below the inline cutoff** OR the architect chooses inline for
 **Why this matters:** inline-without-empersonation drifts into generalist mode — all the same patterns get applied uniformly regardless of domain, missing the domain-specific discipline each specialist owns. Empersonation preserves the specialist value during inline work.
 
 The rule mirrors dispatch decisions; only difference is empersonation vs. delegation. Same routing logic. Same `owns_kb` boundaries.
+
+---
+
+## The over-inlining anti-pattern (don't revert to solo-builder)
+
+The failure mode this whole pattern exists to prevent: the tech-lead dispatches one wave, then **does the entire long tail inline itself** — deploy, migrations, conflict resolution, follow-up fixes, the FE — serially, over hours. It is slow (O(1 worker) when O(N engineers) was available) **and** it ships incomplete (a solo serial builder runs out of session before the work is done; N parallel engineers each finish their slice). Observed 2026-06-03 (orbity absorption→prod): 2 backend engineers dispatched, then everything else hand-built inline, FE left raw.
+
+**The orchestrator's leverage is fan-out, not throughput-of-one.** What the tech-lead inlines is *only* the genuinely orchestrator-owned work: git/merge/promote/deploy, cross-engineer conflict resolution, the single-owner live mutations (DB/DNS), and verification. **Not** the bulk page/service/test build — that is always a dispatch.
+
+**Triggers (halt-and-dispatch):**
+- **3rd consecutive inline build step** ⇒ stop, ask "why isn't this a dispatched engineer?", dispatch. The default answer is "it is."
+- **"This is taking me a long time inline"** ⇒ that *is* the signal to break the task into engineer slices and fan out, not to grind.
+- **A big module / multi-file feature** ⇒ break it down and dispatch per-slice; never build it solo because "I'm already in the file."
+- **Connected BE↔FE** ⇒ author the contract, dispatch BOTH sides in parallel from the start (see `fe-be-contract-first-dispatch.md`) — never BE-now / FE-someday.
+
+**Keep a fleet running:** when a wave lands, the next wave's engineers should already be dispatched. Idle orchestrator time = under-utilization. Pair builders with auditors (wiring-audit / compliance) so built ≠ wired is caught (`KB § PATTERNS/common/...` dispatch-review-wiring-audit).
+
+Under-parallelizing is a *form of under-building* — you shipped less because you didn't fan out — so this composes with the realism rule (build maximally; realism governs the claim, not the ambition).
