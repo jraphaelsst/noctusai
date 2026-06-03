@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -36,6 +36,8 @@ const Relatorios = lazy(() => import("@/pages/Relatorios"));
 // Meta Ads / Tráfego module
 const Trafego = lazy(() => import("@/pages/Trafego"));
 const Automacao = lazy(() => import("@/pages/Automacao"));
+// Content / Social Studio module
+const Conteudo = lazy(() => import("@/pages/Conteudo"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -97,6 +99,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Automacao", href: "/automacao", icon: Zap, route: "automacao" },
+    ],
+  },
+  {
+    key: "conteudo",
+    label: "Conteúdo",
+    icon: Megaphone,
+    defaultOpen: true,
+    items: [
+      { name: "Conteúdo", href: "/conteudo", icon: Megaphone, route: "conteudo" },
     ],
   },
 ];
@@ -162,6 +173,15 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Automacao", href: "/automacao", icon: Zap },
     ],
   },
+  {
+    key: "conteudo",
+    label: "Conteúdo",
+    icon: Megaphone,
+    defaultOpen: true,
+    items: [
+      { name: "Conteúdo", href: "/conteudo", icon: Megaphone },
+    ],
+  },
 ];
 
 const Layout = createProductLayout({
@@ -187,6 +207,7 @@ export default createProductApp({
     { path: "/relatorios", component: Relatorios },
     { path: "/trafego", component: Trafego },
     { path: "/automacao", component: Automacao },
+    { path: "/conteudo", component: Conteudo },
   ],
   Layout,
   ...infra.appConfig,
