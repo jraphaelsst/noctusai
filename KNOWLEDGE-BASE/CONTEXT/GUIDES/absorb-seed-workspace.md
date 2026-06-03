@@ -256,6 +256,7 @@ is proportional to (epoch gap) × (product surface).
   refactored to it on absorption (`KB § PATTERNS/devops/containerization.md § 12a`).
 - **Pilot-products-first cadence** — `KB § PATTERNS/architect/project-execution.md § 2.12`.
 - **verify-the-seed-ships-it 4 shapes** — `KB § PATTERNS/backend/seed-fake-real-adapter.md`.
+- **Absorption-state tracking** — absorption *state* (lifecycle stage + per-capability uplift/de-reference status) is a **derived ndjson→sqlite ledger** (`project-history/absorptions.ndjson`, the 9th keeper-mirror cache), **never a hand-maintained INDEX row** — the same "derive, never hand-maintain a parallel count" rule as Gate 2's promotion-map, applied to the foreign-platform capability-uplift shape (`gen_promotions_index` covers only the sibling-workspace manifest). Log/read via `noctus.dev.absorption_{log,status}`. → `KB § PATTERNS/common/absorption-tracking.md`.
 
 ---
 
