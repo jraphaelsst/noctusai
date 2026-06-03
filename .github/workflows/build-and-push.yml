@@ -68,7 +68,7 @@ jobs:
           fetch-depth: 0   # need the push range (before..after) to scope the build to CHANGED products
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3  # @v3 major-pin auto-gets the Node 24 patch
+        uses: docker/setup-buildx-action@v4  # @v3 major-pin auto-gets the Node 24 patch
 
       - name: Require VITE secrets (fail-closed — never push a broken-FE image)
         run: |
