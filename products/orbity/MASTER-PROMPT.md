@@ -1,4 +1,4 @@
-# {{PRODUCT_NAME}} — MASTER-PROMPT
+# Orbity — MASTER-PROMPT
 
 > Authoritative development guide for the seed reference product.
 
@@ -13,10 +13,10 @@ Minimal reference implementation proving the NoctusAI seed framework works end-t
 ### Backend (19 lines in main.py)
 
 ```
-products/{{PRODUCT_SLUG}}/backend/app/
-  main.py              → create_product_app("{{PRODUCT_NAME}}", "{{SCHEMA_NAME}}", settings)
+products/orbity/backend/app/
+  main.py              → create_product_app("Orbity", "orbity", settings)
   config.py            → SeedSettings(ProductSettings) — no extra fields
-  database.py          → create_database_module(settings, "{{SCHEMA_NAME}}")
+  database.py          → create_database_module(settings, "orbity")
   dependencies.py      → create_dependencies(db)
   rate_limit.py        → create_product_limiter(settings)
   routers/             → EMPTY — framework provides health, team, notifications
@@ -25,9 +25,9 @@ products/{{PRODUCT_SLUG}}/backend/app/
 ### Frontend (App.tsx uses framework factories)
 
 ```
-products/{{PRODUCT_SLUG}}/frontend/src/
+products/orbity/frontend/src/
   App.tsx              → createProductApp() + createProductLayout()
-  vite.config.ts       → createViteConfig({ port: {{FRONTEND_PORT}} }) — 3 lines
+  vite.config.ts       → createViteConfig({ port: 8140 }) — 3 lines
   pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
   hooks/               → useNotificacoes (from seed lib)
   components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
@@ -36,7 +36,7 @@ products/{{PRODUCT_SLUG}}/frontend/src/
 
 ### Database
 
-Schema: `{{SCHEMA_NAME}}` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+Schema: `orbity` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
 
 ## What the framework provides automatically
 
@@ -68,8 +68,8 @@ Do NOT edit `templates/product-seed/` directly.
 ## Testing
 
 ```bash
-cd products/{{PRODUCT_SLUG}}/backend && pytest  # 6 tests
-cd products/{{PRODUCT_SLUG}}/frontend && npx vite build  # must build clean
+cd products/orbity/backend && pytest  # 6 tests
+cd products/orbity/frontend && npx vite build  # must build clean
 ```
 
 ## Dependencies

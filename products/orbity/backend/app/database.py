@@ -1,5 +1,5 @@
 """
-Database clients for {{PRODUCT_NAME}}.
+Database clients for Orbity.
 
 Thin wrapper around the seed framework's DatabaseModule.
 Kept for backward compatibility with tests and any imports.

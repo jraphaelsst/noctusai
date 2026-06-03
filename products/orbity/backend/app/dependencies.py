@@ -1,5 +1,5 @@
 """
-Dependencies for {{PRODUCT_NAME}}.
+Dependencies for Orbity.
 
 This file is the canonical reference every new product inherits via
 ``scaffold_product``. The auth dep ``get_current_user_org`` is wired

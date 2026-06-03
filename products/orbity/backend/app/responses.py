@@ -1,5 +1,5 @@
 """
-Standardized response utilities for the {{PRODUCT_NAME}} API.
+Standardized response utilities for the Orbity API.
 
 Re-exports everything from the shared package so that existing
 ``from app.responses import ...`` imports continue to work.

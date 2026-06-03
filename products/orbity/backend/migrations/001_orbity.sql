@@ -11,14 +11,14 @@
 -- ============================================================
 SET search_path = orbity, public;
 
-CREATE SCHEMA IF NOT EXISTS {{SCHEMA_NAME}};
+CREATE SCHEMA IF NOT EXISTS orbity;
 
 -- Grant usage to authenticated users (required for PostgREST)
-GRANT USAGE ON SCHEMA {{SCHEMA_NAME}} TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA {{SCHEMA_NAME}} TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA {{SCHEMA_NAME}} TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+GRANT USAGE ON SCHEMA orbity TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA orbity TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA orbity TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA orbity GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA orbity GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 
 
 -- ============================================================================
@@ -45,7 +45,7 @@ $f$;
 -- Page status (feature flags)
 -- ============================================================================
 
-CREATE TABLE {{SCHEMA_NAME}}.status_pagina (
+CREATE TABLE orbity.status_pagina (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome_pagina TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'producao' CHECK (status IN ('producao', 'desenvolvimento', 'desativado')),
@@ -53,12 +53,12 @@ CREATE TABLE {{SCHEMA_NAME}}.status_pagina (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-ALTER TABLE {{SCHEMA_NAME}}.status_pagina ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orbity.status_pagina ENABLE ROW LEVEL SECURITY;
 
 -- Note: this policy intentionally does NOT use `rls_subquery_policy` — that
 -- helper always emits `TO authenticated`, but `todos_veem_producao` is an
 -- anonymous-readable policy (anon role too).
-CREATE POLICY "todos_veem_producao" ON {{SCHEMA_NAME}}.status_pagina
+CREATE POLICY "todos_veem_producao" ON orbity.status_pagina
     FOR SELECT USING (status = 'producao');
 
 
@@ -66,7 +66,7 @@ CREATE POLICY "todos_veem_producao" ON {{SCHEMA_NAME}}.status_pagina
 -- Invitations
 -- ============================================================================
 
-CREATE TABLE {{SCHEMA_NAME}}.invitations (
+CREATE TABLE orbity.invitations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL,
     email TEXT NOT NULL,
@@ -78,25 +78,25 @@ CREATE TABLE {{SCHEMA_NAME}}.invitations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE {{SCHEMA_NAME}}.invitations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orbity.invitations ENABLE ROW LEVEL SECURITY;
 
 -- Uses public.current_org_id() — the SECURITY DEFINER trusted-table resolver.
 -- NOTE: the scaffold regression test in test_scaffold.py was updated in the
 -- same commit (011_rls_current_org_id) to assert current_org_id() instead
 -- of the old jwt()-based form.
-CREATE POLICY "invitations_select_own_org" ON {{SCHEMA_NAME}}.invitations
+CREATE POLICY "invitations_select_own_org" ON orbity.invitations
     FOR SELECT TO authenticated
     USING (org_id = current_org_id());
 
-CREATE INDEX idx_{{SCHEMA_NAME}}_invitations_org ON {{SCHEMA_NAME}}.invitations(org_id);
-CREATE INDEX idx_{{SCHEMA_NAME}}_invitations_token ON {{SCHEMA_NAME}}.invitations(token);
+CREATE INDEX idx_orbity_invitations_org ON orbity.invitations(org_id);
+CREATE INDEX idx_orbity_invitations_token ON orbity.invitations(token);
 
 
 -- ============================================================================
 -- Seed pages
 -- ============================================================================
 
-INSERT INTO {{SCHEMA_NAME}}.status_pagina (nome_pagina, status) VALUES
+INSERT INTO orbity.status_pagina (nome_pagina, status) VALUES
     ('dashboard', 'producao'),
     ('equipe', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;

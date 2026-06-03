@@ -1,5 +1,5 @@
 import { useNavigate, Link } from "react-router-dom";
-import { {{PRODUCT_ICON}} } from "lucide-react";
+import { Box } from "lucide-react";
 import { LoginForm } from "@noctusai/lib/design-system";
 import { supabase } from '@noctusai/seed/infra';
 import { env } from "@noctusai/lib";
@@ -13,8 +13,8 @@ export default function Login() {
   return (
     <div className="relative">
       <LoginForm
-        brandIcon={{{PRODUCT_ICON}}}
-        brandTitle="{{PRODUCT_NAME}}"
+        brandIcon={Box}
+        brandTitle="Orbity"
         brandSubtitle="A minimal NoctusAI product"
         supabase={supabase}
         onSuccess={() => navigate("/")}

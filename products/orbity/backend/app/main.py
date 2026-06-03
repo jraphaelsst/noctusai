@@ -1,10 +1,10 @@
 """
-NoctusAI {{PRODUCT_NAME}} — Reference Implementation
+NoctusAI Orbity — Reference Implementation
 
 The simplest possible product. Just the spine, no domain code.
 Proves that the seed framework works end-to-end.
 
-Run with: uvicorn app.main:app --reload --port {{BACKEND_PORT}}
+Run with: uvicorn app.main:app --reload --port 8010
 
 LLM access is inherited automatically — `create_product_app()` auto-wires
 credential resolution + the default multi-provider LLMConfig. If this

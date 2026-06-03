@@ -1,5 +1,5 @@
 /**
- * API surface for {{PRODUCT_NAME}}.
+ * API surface for Orbity.
  *
  * Re-exports the shared `api` client from the seed boundary so product
  * code imports from `@/lib/api` instead of reaching into

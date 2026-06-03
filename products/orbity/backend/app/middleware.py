@@ -1,5 +1,5 @@
 """
-Middleware namespace shortcut for {{PRODUCT_NAME}}.
+Middleware namespace shortcut for Orbity.
 
 Re-exports everything from the shared package so product code can
 ``from app.middleware import CorrelationIdMiddleware`` etc. without

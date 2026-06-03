@@ -1,4 +1,4 @@
-"""Rate limiter for {{PRODUCT_NAME}} — delegates to framework."""
+"""Rate limiter for Orbity — delegates to framework."""
 from noctusai_seed.rate_limit import create_product_limiter
 from app.config import settings
 

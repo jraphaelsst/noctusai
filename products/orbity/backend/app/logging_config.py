@@ -1,5 +1,5 @@
 """
-Structured logging namespace shortcut for {{PRODUCT_NAME}}.
+Structured logging namespace shortcut for Orbity.
 
 Re-exports everything from the shared package so product code can
 ``from app.logging_config import configure_logging, JSONFormatter``

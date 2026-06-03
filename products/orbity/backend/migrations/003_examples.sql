@@ -18,7 +18,7 @@
 -- Full CRUD ⇒ a policy per command.
 -- ============================================================================
 
-CREATE TABLE {{SCHEMA_NAME}}.examples (
+CREATE TABLE orbity.examples (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL,
     title TEXT NOT NULL,
@@ -28,24 +28,24 @@ CREATE TABLE {{SCHEMA_NAME}}.examples (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE {{SCHEMA_NAME}}.examples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orbity.examples ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "examples_select_own_org" ON {{SCHEMA_NAME}}.examples
+CREATE POLICY "examples_select_own_org" ON orbity.examples
     FOR SELECT TO authenticated
     USING (org_id = current_org_id());
 
-CREATE POLICY "examples_insert_own_org" ON {{SCHEMA_NAME}}.examples
+CREATE POLICY "examples_insert_own_org" ON orbity.examples
     FOR INSERT TO authenticated
     WITH CHECK (org_id = current_org_id());
 
-CREATE POLICY "examples_update_own_org" ON {{SCHEMA_NAME}}.examples
+CREATE POLICY "examples_update_own_org" ON orbity.examples
     FOR UPDATE TO authenticated
     USING (org_id = current_org_id())
     WITH CHECK (org_id = current_org_id());
 
-CREATE POLICY "examples_delete_own_org" ON {{SCHEMA_NAME}}.examples
+CREATE POLICY "examples_delete_own_org" ON orbity.examples
     FOR DELETE TO authenticated
     USING (org_id = current_org_id());
 
-CREATE INDEX idx_{{SCHEMA_NAME}}_examples_org ON {{SCHEMA_NAME}}.examples(org_id);
-CREATE INDEX idx_{{SCHEMA_NAME}}_examples_ativo ON {{SCHEMA_NAME}}.examples(org_id, ativo);
+CREATE INDEX idx_orbity_examples_org ON orbity.examples(org_id);
+CREATE INDEX idx_orbity_examples_ativo ON orbity.examples(org_id, ativo);

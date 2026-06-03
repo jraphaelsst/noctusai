@@ -24,7 +24,7 @@ import logging
 from app.config import settings
 
 
-SECRET_BYTES = b"{{PRODUCT_SLUG}}-webhook-secret-bytes"
+SECRET_BYTES = b"orbity-webhook-secret-bytes"
 SECRET_B64 = base64.b64encode(SECRET_BYTES).decode("ascii")
 SVIX_ID = "msg_test_1"
 SVIX_TS = "1700000000"

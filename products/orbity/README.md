@@ -1,23 +1,23 @@
-# {{PRODUCT_NAME}}
+# Orbity
 
 Minimal reference implementation — the spine with no organs. Proves that both seed packages (`noctusai_lib` + `noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend) work end-to-end. Source of truth for the product template (`templates/product-seed/`).
 
 ## Stack
 
-- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port {{BACKEND_PORT}})
-- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port {{FRONTEND_PORT}})
+- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port 8010)
+- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port 8140)
 - **Build**: `createViteConfig()` from seed framework (3-line vite.config.ts)
-- **Database**: Supabase (schema: `{{SCHEMA_NAME}}`)
+- **Database**: Supabase (schema: `orbity`)
 - **Auth**: SSO + direct login
 
 ## Running
 
 ```bash
 # Backend
-uvicorn app.main:app --reload --port {{BACKEND_PORT}} --app-dir products/{{PRODUCT_SLUG}}/backend
+uvicorn app.main:app --reload --port 8010 --app-dir products/orbity/backend
 
 # Frontend
-cd products/{{PRODUCT_SLUG}}/frontend && npm run dev
+cd products/orbity/frontend && npm run dev
 ```
 
 ## What it proves
@@ -34,5 +34,5 @@ cd products/{{PRODUCT_SLUG}}/frontend && npm run dev
 ## Tests
 
 ```bash
-cd products/{{PRODUCT_SLUG}}/backend && pytest  # 6 tests
+cd products/orbity/backend && pytest  # 6 tests
 ```

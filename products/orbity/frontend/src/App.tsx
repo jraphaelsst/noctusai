@@ -1,5 +1,5 @@
 /**
- * {{PRODUCT_NAME}} App — the simplest possible product.
+ * Orbity App — the simplest possible product.
  *
  * Infrastructure comes from @/infra (one file, one createProductInfra call).
  * Structure comes from createProductApp + createProductLayout.
@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, {{PRODUCT_ICON}}, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -55,8 +55,8 @@ const NAV_FALLBACK: NavGroup[] = [
 ];
 
 const Layout = createProductLayout({
-  brandIcon: {{PRODUCT_ICON}},
-  brandTitle: "{{PRODUCT_NAME}}",
+  brandIcon: Box,
+  brandTitle: "Orbity",
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
   ...infra.appConfig,

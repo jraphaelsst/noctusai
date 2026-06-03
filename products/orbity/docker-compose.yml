@@ -1,6 +1,6 @@
 # Canonical per-product compose fragment — SINGLE CONTAINER.
 #
-# Project: containerization-single-container. This file at products/{{PRODUCT_SLUG}}/
+# Project: containerization-single-container. This file at products/orbity/
 # is the reference; every other product's docker-compose.yml is generated
 # from it by scripts/propagate-composes.sh (slug + port substitution +
 # per-product VITE args). When the pattern evolves, edit THIS file and
@@ -27,10 +27,10 @@
 # first (start.sh orders this in Phase 5).
 
 services:
-  {{PRODUCT_SLUG}}:
+  orbity:
     build:
       context: ../..
-      dockerfile: products/{{PRODUCT_SLUG}}/backend/Dockerfile
+      dockerfile: products/orbity/backend/Dockerfile
       # ONE container, ONE shape (project: containerization-single-env).
       # The local fleet builds the `runtime-watch` target: same single
       # container, plus node + the watch entrypoint (vite build --watch +
@@ -45,15 +45,15 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: dev-noctus-{{PRODUCT_SLUG}}
-    image: ghcr.io/jraphaelsst/noctus-{{PRODUCT_SLUG}}:${NOCTUS_IMAGE_TAG:-dev}
+    container_name: dev-noctus-orbity
+    image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     # Source bind-mounted → edits reflect with no rebuild: vite
     # build --watch refreshes dist/, uvicorn --reload restarts on .py.
     volumes:
-      - ./backend:/app/products/{{PRODUCT_SLUG}}/backend
-      - ./frontend:/app/products/{{PRODUCT_SLUG}}/frontend
+      - ./backend:/app/products/orbity/backend
+      - ./frontend:/app/products/orbity/frontend
       # Anonymous volume — MUST come after the ./frontend bind-mount. The
       # host frontend/ dir has darwin-arm64 node_modules (or none); without
       # this it shadows the image's linux node_modules → the watch
@@ -61,7 +61,7 @@ services:
       # '@rollup/rollup-linux-*'". Docker seeds an anonymous volume from
       # the image layer on first create, so the container keeps its own
       # platform-correct node_modules while source stays live-editable.
-      - /app/products/{{PRODUCT_SLUG}}/frontend/node_modules
+      - /app/products/orbity/frontend/node_modules
       - ../../seed:/app/seed
       # Same shadow problem as above, for the SEED framework/lib FE
       # node_modules: the ../../seed bind-mount (node_modules-less in any
@@ -73,7 +73,7 @@ services:
       - /app/seed/framework/frontend/node_modules
       - /app/seed/lib/frontend/node_modules
     ports:
-      - "{{BACKEND_PORT}}:{{BACKEND_PORT}}"
+      - "8010:8010"
     networks:
       - noctus-net
     # Restart policy is a dev↔prod-divergent knob (deploy-config-contract).
@@ -83,28 +83,28 @@ services:
     # containers (the 2026-05-29 stale-container drift). KB § PATTERNS/devops/deploy-config-contract.md.
     restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:{{BACKEND_PORT}}/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8010/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
 
-  {{PRODUCT_SLUG}}-tunnel:
+  orbity-tunnel:
     # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at
     # this product's single container. `--protocol http2` forces TCP from
     # the start (QUIC/UDP dies behind NATs in ~5min and cannot
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: dev-noctus-{{PRODUCT_SLUG}}-tunnel
-    command: tunnel --no-autoupdate --protocol http2 --url http://{{PRODUCT_SLUG}}:{{BACKEND_PORT}}
+    container_name: dev-noctus-orbity-tunnel
+    command: tunnel --no-autoupdate --protocol http2 --url http://orbity:8010
     depends_on:
-      {{PRODUCT_SLUG}}:
+      orbity:
         condition: service_healthy
     networks:
       - noctus-net
     restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
     profiles:
-      - tunnel-{{PRODUCT_SLUG}}
+      - tunnel-orbity
       - tunnel-all
 
 networks:

@@ -1,5 +1,5 @@
 /**
- * Shared utility functions for {{PRODUCT_NAME}} frontend.
+ * Shared utility functions for Orbity frontend.
  *
  * Re-exports the canonical helpers from `@noctusai/lib/utils` so product
  * code imports `cn`, `formatDate`, `getTodayAtMidnight`, `stripTime`

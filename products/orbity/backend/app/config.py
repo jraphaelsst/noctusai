@@ -1,5 +1,5 @@
 """
-{{PRODUCT_NAME}} configuration.
+Orbity configuration.
 
 Extends the framework's ProductSettings — minimal additions to support
 the inherited skeletons (webhook receiver, etc.).
@@ -8,7 +8,7 @@ from noctusai_seed import ProductSettings
 
 
 class SeedSettings(ProductSettings):
-    """{{PRODUCT_NAME}} specific settings."""
+    """Orbity specific settings."""
 
     cors_origins: str = "@registry:own:seed"
 

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { {{PRODUCT_ICON}}, ArrowRight } from "lucide-react";
+import { Box, ArrowRight } from "lucide-react";
 import { env } from "@noctusai/lib";
 
 // canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
@@ -11,9 +11,9 @@ export default function Landing() {
       {/* ── Navbar ─────────────────────────────────────── */}
       <header className="h-16 border-b border-border bg-card px-4 sm:px-8 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2">
-          <{{PRODUCT_ICON}} className="h-7 w-7 text-primary" />
+          <Box className="h-7 w-7 text-primary" />
           <span className="text-xl font-bold text-primary">
-            {{PRODUCT_NAME}}
+            Orbity
           </span>
         </Link>
         <Link
@@ -28,8 +28,8 @@ export default function Landing() {
       <section className="py-20 sm:py-28 px-4 text-center bg-gradient-to-b from-primary/5 to-background flex-1 flex flex-col items-center justify-center">
         <div className="max-w-3xl mx-auto space-y-6">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-medium">
-            <{{PRODUCT_ICON}} className="h-4 w-4" />
-            NoctusAI {{PRODUCT_NAME}}
+            <Box className="h-4 w-4" />
+            NoctusAI Orbity
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
             A minimal NoctusAI product
@@ -60,9 +60,9 @@ export default function Landing() {
       <footer className="border-t bg-card py-8 px-4 mt-auto">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <{{PRODUCT_ICON}} className="h-5 w-5 text-primary" />
+            <Box className="h-5 w-5 text-primary" />
             <span className="font-semibold text-primary">
-              {{PRODUCT_NAME}}
+              Orbity
             </span>
           </div>
           <p className="text-xs text-muted-foreground">

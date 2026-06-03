@@ -1,6 +1,6 @@
 import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
-import { {{PRODUCT_ICON}}, Users, CheckCircle2 } from "lucide-react";
+import { Box, Users, CheckCircle2 } from "lucide-react";
 
 export default function Dashboard() {
   const { user } = useAuthStore();
@@ -10,11 +10,11 @@ export default function Dashboard() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <{{PRODUCT_ICON}} className="h-6 w-6 text-primary" />
+        <Box className="h-6 w-6 text-primary" />
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            Welcome to {{PRODUCT_NAME}}
+            Welcome to Orbity
           </p>
         </div>
       </div>

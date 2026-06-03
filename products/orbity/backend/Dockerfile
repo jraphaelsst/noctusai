@@ -40,8 +40,8 @@ ARG VITE_SUPABASE_PUBLISHABLE_KEY=
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 ARG VITE_CORE_URL=
 ENV VITE_CORE_URL=${VITE_CORE_URL}
-COPY products/seed/frontend/package*.json ./products/seed/frontend/
-WORKDIR /app/products/seed/frontend
+COPY products/orbity/frontend/package*.json ./products/orbity/frontend/
+WORKDIR /app/products/orbity/frontend
 # Drop the host lockfile before install: package-lock.json is generated on
 # the dev's machine (darwin-arm64) and PINS the platform-optional native
 # binaries (rollup/esbuild/lightningcss/@swc) to that os/cpu. npm honours
@@ -51,8 +51,8 @@ WORKDIR /app/products/seed/frontend
 RUN --mount=type=cache,target=/root/.npm \
     rm -f package-lock.json \
     && npm install --no-audit --no-fund
-COPY products/seed/frontend ./
-RUN npm run build   # → /app/products/seed/frontend/dist
+COPY products/orbity/frontend ./
+RUN npm run build   # → /app/products/orbity/frontend/dist
 
 # ── runtime: API + SPA on one port ──────────────────────────────────────
 FROM noctus-seed-backend-base:dev AS runtime
@@ -63,7 +63,7 @@ WORKDIR /app
 
 # Product-specific Python deps (seed lib/framework already in the base
 # venv; strip the `-e seed/` editable lines — they're inherited).
-COPY products/seed/backend/requirements.txt /tmp/requirements.txt
+COPY products/orbity/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
     && pip install -r /tmp/req.clean.txt
@@ -71,9 +71,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # pip install -e /opt/dev_team). Seed has none.
 
 # Product backend code + the built SPA.
-COPY products/seed/backend/ ./products/seed/backend/
-COPY --from=frontend-build /app/products/seed/frontend/dist ./products/seed/frontend/dist
-ENV SERVE_SPA_DIR=/app/products/seed/frontend/dist
+COPY products/orbity/backend/ ./products/orbity/backend/
+COPY --from=frontend-build /app/products/orbity/frontend/dist ./products/orbity/frontend/dist
+ENV SERVE_SPA_DIR=/app/products/orbity/frontend/dist
 
 # Non-root user — created LAST (pip install above ran as root, before this).
 # chown ONLY /app — NOT /opt/venv. /opt/venv (~276MB) comes from the SHARED
@@ -86,13 +86,13 @@ ENV SERVE_SPA_DIR=/app/products/seed/frontend/dist
 RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app
 USER noctus
 
-EXPOSE 8004
+EXPOSE 8010
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8004/api/health || exit 1
+    CMD curl -fsS http://localhost:8010/api/health || exit 1
 # Default CMD = plain uvicorn over the BAKED dist → this image is a
 # self-contained, shippable artifact (deploy/CI run it as-is).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
-     "--port", "8004", "--app-dir", "products/seed/backend"]
+     "--port", "8010", "--app-dir", "products/orbity/backend"]
 
 # ── runtime-watch: SAME single container, local live-rebuild ────────────
 # ONE container, ONE shape, ONE command (`./start.sh`). The local
@@ -147,7 +147,7 @@ RUN apt-get update \
 # build stage; runtime-watch (glibc) must install them itself. The
 # compose pairs this with anon volumes on these nested node_modules so
 # the ../../seed bind-mount doesn't re-mask them (§3.2b).
-COPY products/seed/frontend/package*.json ./products/seed/frontend/
+COPY products/orbity/frontend/package*.json ./products/orbity/frontend/
 COPY seed/framework/frontend/package*.json /app/seed/framework/frontend/
 COPY seed/lib/frontend/package*.json /app/seed/lib/frontend/
 # Same lockfile-pins-wrong-platform-optional bug as frontend-build, here on
@@ -161,7 +161,7 @@ COPY seed/lib/frontend/package*.json /app/seed/lib/frontend/
 # tarballs. Cache mount above amortizes after the first successful pass.
 ARG NPM_RETRY="--fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000"
 RUN --mount=type=cache,target=/root/.npm \
-    cd products/seed/frontend \
+    cd products/orbity/frontend \
     && rm -f package-lock.json \
     && npm install --no-audit --no-fund ${NPM_RETRY} \
     && cd /app/seed/framework/frontend \
@@ -174,7 +174,7 @@ COPY seed/docker/local-watch.sh /usr/local/bin/local-watch
 RUN chmod +x /usr/local/bin/local-watch \
     && chown -R noctus:noctus /app
 USER noctus
-ENV PRODUCT_SLUG=seed PRODUCT_PORT=8004
+ENV PRODUCT_SLUG=orbity PRODUCT_PORT=8010
 # Same-origin SPA, single-container — local-watch builds the SPA via
 # `vite build --watch` at container-start; vite's `define` rewrites
 # `import.meta.env.VITE_BACKEND_API_URL` to `window.location.origin`
