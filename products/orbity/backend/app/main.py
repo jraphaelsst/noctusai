@@ -30,6 +30,8 @@ from app.routers.webhook_router import router as webhook_router
 from app.routers.clients_router import router as clients_router
 from app.routers.crm_router import router as crm_router, capture_router
 from app.routers.financial_router import router as financial_router
+from app.routers.tasks_router import router as tasks_router
+from app.routers.agenda_router import router as agenda_router
 
 app = create_product_app(
     name="Orbity",
@@ -47,6 +49,9 @@ app = create_product_app(
         capture_router,    # /api/capture/{org_id} — public lead capture
         # Financial Core (Wave 2)
         financial_router,  # /api/financial/* — contracts, expenses, revenues, cash-flow
+        # Tasks + Agenda (Wave 2)
+        tasks_router,      # /api/tasks/* + /api/routines/* — tasks, routines
+        agenda_router,     # /api/agenda/events/* — calendar events + GCal sync seam
     ],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its

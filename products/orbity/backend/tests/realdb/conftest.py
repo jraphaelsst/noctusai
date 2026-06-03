@@ -2,16 +2,19 @@
 Fixtures for real-DB integration tests against a live Supabase instance
 (orbity schema).
 
-Uses the service-role key (bypasses RLS) for CRUD operations.
-The `fin_db` client targets the ``orbity`` schema.
-`core_db` targets ``public`` for org management.
+Uses the service-role key (bypasses RLS) for setup/teardown + CRUD. RLS
+isolation is tested explicitly with anon/per-org user-scoped clients.
+
+`core_db` targets ``public`` (org management); `orbity_db`/`fin_db` target
+the ``orbity`` schema (both are the service-role client — kept as two names
+so the financial and tasks/agenda realdb suites each read naturally).
 
 Tests skip automatically when SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY are
 not set (CI without secrets, or local dev without a Supabase project).
 
-IMPORTANT: These tests require migration 006_financial_core.sql to be applied
-to the live Supabase project BEFORE running. The tech-lead applies migrations
-at integration time.
+IMPORTANT: requires migrations 006_financial_core.sql + 007_tasks_agenda.sql
+applied to the live Supabase project BEFORE running. The tech-lead applies
+migrations at integration time.
 """
 from __future__ import annotations
 
@@ -37,9 +40,16 @@ def _get_credentials():
 
 @pytest.fixture(scope="session")
 def core_db():
-    """Service-role client for the public schema (org management)."""
+    """Service-role client for the public schema (org/user management)."""
     url, key = _get_credentials()
     return create_client(url, key)
+
+
+@pytest.fixture(scope="session")
+def orbity_db():
+    """Service-role client for the orbity schema."""
+    url, key = _get_credentials()
+    return create_client(url, key, options=ClientOptions(schema="orbity"))
 
 
 @pytest.fixture(scope="session")
@@ -71,6 +81,34 @@ def test_org(core_db):
     slug = f"test-financial-{uuid.uuid4().hex[:8]}"
     org = core_db.table("organizations").insert({
         "nome": f"RealDB Financial Test {slug}",
+        "slug": slug,
+        "plano": "free",
+        "category": "test",
+    }).execute().data[0]
+    yield org
+    core_db.table("organizations").delete().eq("id", org["id"]).execute()
+
+
+@pytest.fixture(scope="session")
+def test_org_a(core_db):
+    """Create a test organization A, yield it, then delete on teardown."""
+    slug = f"test-tasks-a-{uuid.uuid4().hex[:8]}"
+    org = core_db.table("organizations").insert({
+        "nome": f"RealDB Tasks Test A {slug}",
+        "slug": slug,
+        "plano": "free",
+        "category": "test",
+    }).execute().data[0]
+    yield org
+    core_db.table("organizations").delete().eq("id", org["id"]).execute()
+
+
+@pytest.fixture(scope="session")
+def test_org_b(core_db):
+    """Create a test organization B for RLS isolation tests."""
+    slug = f"test-tasks-b-{uuid.uuid4().hex[:8]}"
+    org = core_db.table("organizations").insert({
+        "nome": f"RealDB Tasks Test B {slug}",
         "slug": slug,
         "plano": "free",
         "category": "test",
