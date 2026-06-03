@@ -64,6 +64,8 @@ jobs:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5  # Node 24 (v4 was Node 20, deprecated)
+        with:
+          fetch-depth: 0   # need the push range (before..after) to scope the build to CHANGED products
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3  # @v3 major-pin auto-gets the Node 24 patch
@@ -75,14 +77,56 @@ jobs:
             exit 1
           fi
 
+      # Scope the build to what actually changed — mirrors the DEPLOY side
+      # (noctus.dev.promote / deploy_pull already report `rebuild: [<slug>...]`).
+      # Drift fixed 2026-06-03: a push used to rebuild the WHOLE fleet because it
+      # passed no `products` arg → build-and-push.sh's "empty = ALL" default fired.
+      #   • workflow_dispatch → honor the explicit `products` input (empty = ALL).
+      #   • push touching seed/** or the build scripts → ALL (shared base changed).
+      #   • push touching only products/<slug>/ → just those slugs.
+      #   • push with no usable base (first push / force) → ALL (safe default).
+      #   • push touching none of the above (e.g. only a deleted file) → SKIP.
+      - name: Determine products to build (changed-only scoping)
+        id: scope
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=dispatch" >> "$GITHUB_OUTPUT"
+            echo "products=${{ github.event.inputs.products }}" >> "$GITHUB_OUTPUT"
+            echo "scope: workflow_dispatch → '${{ github.event.inputs.products }}' (empty = ALL)"; exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
+            echo "scope: no usable base ($BEFORE) → ALL (safe default)"; exit 0
+          fi
+          CHANGED="$(git diff --name-only "$BEFORE" "${{ github.sha }}")"
+          echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
+          if echo "$CHANGED" | grep -qE '^(seed/|scripts/infra/build-(and-push|base-images)\.sh$)'; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
+            echo "scope: seed/ or build-script changed → ALL (shared base)"; exit 0
+          fi
+          SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+          if [ -z "$SLUGS" ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
+            echo "scope: no product/<slug> files changed → SKIP build"; exit 0
+          fi
+          echo "mode=subset" >> "$GITHUB_OUTPUT"; echo "products=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "scope: changed products → '$SLUGS'"
+
       - name: Build + push (seed bases + product images)
+        if: steps.scope.outputs.mode != 'none'
         run: |
           set -euo pipefail
           TAG="${{ github.event.inputs.image_tag }}"
           if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
-          PRODUCTS="${{ github.event.inputs.products }}"
-          echo "Building + pushing at tag: $TAG (+ :latest) — products: ${PRODUCTS:-ALL}"
+          PRODUCTS="${{ steps.scope.outputs.products }}"
+          echo "Building + pushing at tag: $TAG (+ :latest) — mode=${{ steps.scope.outputs.mode }} products: ${PRODUCTS:-ALL}"
           NOCTUS_IMAGE_TAG="$TAG" bash scripts/infra/build-and-push.sh $PRODUCTS
+
+      - name: Skip note (nothing to build)
+        if: steps.scope.outputs.mode == 'none'
+        run: echo "No product/<slug> image changes in this push — nothing to build."
 
       - name: Summary
         if: always()
