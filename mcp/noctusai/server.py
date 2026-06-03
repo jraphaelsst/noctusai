@@ -51,6 +51,22 @@ def build_server() -> FastMCP:
             "`noctus.dev.agent_context` first when starting a fresh session."
         ),
     )
+    # Default structured_output=False fleet-wide. The toolkit's tools return
+    # plain JSON (dicts / lists / unions), NOT pydantic BaseModels. Newer
+    # mcp/pydantic builds a structured-output model FROM each tool's return
+    # annotation and raises PydanticUserError on any non-BaseModel return
+    # (`list[...]`, `dict | list`, …) — which aborts register_all and leaves the
+    # ENTIRE server with zero tools. Disabling structured output makes the
+    # return annotation informational (not a schema source) and restores the
+    # pre-structured-output content contract. A tool that genuinely wants
+    # structured output can still pass structured_output=True explicitly.
+    _orig_tool = server.tool
+
+    def _tool(*args, **kwargs):
+        kwargs.setdefault("structured_output", False)
+        return _orig_tool(*args, **kwargs)
+
+    server.tool = _tool  # type: ignore[method-assign]
     register_all(server)
     return server
 

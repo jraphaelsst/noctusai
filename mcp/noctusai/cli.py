@@ -746,6 +746,20 @@ def main():
         for i in issues:
             sev_color = RED if i.get("severity") == "high" else YELLOW
             print(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
+        # Make blocking-vs-advisory unmistakable: the commit aborts ONLY on the
+        # high-severity issue(s). Embedding-cache staleness is severity=warning
+        # (the pre-push hook batch-refreshes them) — it never blocks, so do NOT
+        # manually `--refresh-*` to "unblock" a commit. (Misreading a warning as
+        # the blocker is a recurring operator-error; this line closes it.)
+        n_high = sum(1 for i in issues if i.get("severity") == "high")
+        n_warn = len(issues) - n_high
+        if any_high:
+            blockers = "; ".join(i.get("symbol", "?") for i in issues if i.get("severity") == "high")
+            print(f"  {RED}✗ BLOCKED by {n_high} high-severity issue(s):{RESET} {blockers}")
+            if n_warn:
+                print(f"  {YELLOW}  ({n_warn} advisory warning(s) — NOT blocking; embeddings refresh at push, don't manually refresh){RESET}")
+        else:
+            print(f"  {YELLOW}⚠ {n_warn} advisory warning(s) — NOT blocking (commit proceeds); embeddings refresh at push.{RESET}")
         sys.exit(1 if any_high else 0)
     elif args.settle_structural_caches:
         from tools.noctus.dev.refresh_all_caches import settle_structural_caches
