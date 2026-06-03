@@ -38,7 +38,7 @@ def _row(**over) -> dict:
 
 
 def _svc(rows=None):
-    db = MockSupabaseClient(data=rows, schema="{{SCHEMA_NAME}}")
+    db = MockSupabaseClient(data=rows, schema="orbity")
     return db, ExampleService(db, org_id=ORG)
 
 

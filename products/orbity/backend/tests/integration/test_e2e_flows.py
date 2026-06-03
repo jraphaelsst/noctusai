@@ -1,5 +1,5 @@
 """
-E2E tests for the {{PRODUCT_NAME}} — validates the seed framework's standard
+E2E tests for the Orbity — validates the seed framework's standard
 routers work as complete user journeys.
 
 These tests prove the framework itself works. If these fail, every product
@@ -18,7 +18,7 @@ from noctusai_lib.testing import (
 
 
 class TestFrameworkEndpoints(FrameworkEndpointsSuite):
-    expected_product_name = "{{PRODUCT_NAME}}"
+    expected_product_name = "Orbity"
 
 
 class TestTeamFlow(TeamFlowSuite):

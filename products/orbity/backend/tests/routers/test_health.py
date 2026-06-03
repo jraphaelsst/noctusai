@@ -9,4 +9,4 @@ from noctusai_lib.testing import HealthCheckSuite
 
 
 class TestHealthCheck(HealthCheckSuite):
-    expected_product_name = "{{PRODUCT_NAME}}"
+    expected_product_name = "Orbity"

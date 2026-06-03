@@ -1,15 +1,26 @@
 """
-Pytest configuration and shared fixtures for {{PRODUCT_NAME}} backend tests.
+Pytest configuration and shared fixtures for orbity backend tests.
 
 The seed product uses the framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
+
+Parallel-worktree venv shadowing: same purge-and-reinsert pattern as erp
+(mirrors seed/lib/backend/tests/conftest.py). The editable finder for
+noctusai_lib can point at a sibling worktree; this conftest pops those
+finders and inserts the current repo root so tests resolve against THIS
+checkout's seed source.
 """
 import sys as _sys
 from pathlib import Path as _Path
 
-_LIB = _Path(__file__).resolve().parents[4] / "{{SCHEMA_NAME}}" / "lib" / "backend"
-if str(_LIB) not in _sys.path:
-    _sys.path.insert(0, str(_LIB))
+_REPO = _Path(__file__).resolve().parents[4]  # .../noctusai
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+
+for _p in (_LIB, _FRAMEWORK):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
+
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",
@@ -18,6 +29,7 @@ _spec = _ilu.spec_from_file_location(
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -43,7 +55,7 @@ def pytest_configure(config):
 
 @pytest.fixture
 def client():
-    mock_sb = MockSupabaseClient()
+    mock_sb = MockSupabaseClient(schema="orbity")
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
         MockUser(org_id="test-org-123")
     ))
@@ -58,7 +70,6 @@ def client():
         from app.main import app
         # Per-fixture re-bind of the seed's consent module to THIS test's
         # mock_sb. Idempotent — safe even if no consent features registered.
-        # See KB § PATTERNS/testing.md § Consent-guard product conftest pattern.
         bind_consent_module_to_mock(mock_sb)
 
         tc = TestClient(app)

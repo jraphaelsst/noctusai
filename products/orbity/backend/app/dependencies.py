@@ -30,7 +30,7 @@ from noctusai_lib.api.auth import (
 )
 from app.config import settings
 
-_db = create_database_module(settings, schema="{{SCHEMA_NAME}}")
+_db = create_database_module(settings, schema="orbity")
 _deps = create_dependencies(_db)
 
 # Canonical auth deps — wire via the factory so FastAPI sees only

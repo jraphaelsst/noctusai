@@ -7,7 +7,7 @@ Kept for backward compatibility with tests and any imports.
 from noctusai_seed import create_database_module
 from app.config import settings
 
-_db = create_database_module(settings, schema="{{SCHEMA_NAME}}")
+_db = create_database_module(settings, schema="orbity")
 
 get_supabase_client = _db.get_client
 get_core_client = _db.get_core_client
