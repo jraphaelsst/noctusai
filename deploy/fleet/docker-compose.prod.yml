@@ -212,6 +212,20 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── orbity 8010 — agency operating-system (absorbed from sistema-orbity) ─
+  orbity:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-orbity
+    expose:
+      - "8010"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8010/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
 networks:
   noctus-net:
     name: noctus-net
