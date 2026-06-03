@@ -161,3 +161,4 @@
 {"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/absorption-tracking-cache", "branch": "feat/absorption-tracking-cache", "sha": "75c2ce3a380f0f0c61adbd3789fc14e94167916a", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-06-03T08:17:44.920255+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 2, "remote_unique_aged_count": 0}
 {"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/fix-build-server-and-gate-clarity", "branch": "feat/fix-build-server-and-gate-clarity", "sha": "0ddc331f364fd52070b6f8325731780c205de7d9", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-build", "branch": "feat/orbity-build", "sha": "b6c6f73be1dde3ecfb3fc4420d1ac2d33075eb74", "reason": "task_branch cleanup (learn-before-delete)"}
