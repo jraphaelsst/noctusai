@@ -17,6 +17,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/digest-seed.md
   - CONTEXT/PATTERNS/backend/scheduling-seed.md
   - CONTEXT/PATTERNS/backend/metas-seed.md
+  - CONTEXT/PATTERNS/backend/migrate-product-mcp-tool.md
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
   - CONTEXT/PATTERNS/backend/chatbot-operational-readiness.md
   - CONTEXT/PATTERNS/backend/boundary-contract-tests.md
@@ -65,7 +66,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 
 ## Owned KB depth (canonical territory)
 **Backend patterns** → `KB § PATTERNS/backend/backend.md` · `KB § PATTERNS/backend/pydantic-strict-http.md` · `KB § PATTERNS/backend/di-test-seam.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md`.
-**Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md`.
+**Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md` · `KB § PATTERNS/backend/migrate-product-mcp-tool.md`.
 **Domain (per-product backend)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/05-AI-FEATURES.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md`.
 **LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md`.

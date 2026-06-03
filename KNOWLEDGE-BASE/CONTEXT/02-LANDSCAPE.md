@@ -43,15 +43,15 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 11 | 20 | 20 | 17 | 59 | 654 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| Orbity | 8 | 8 | 14 | 12 | 23 | 384 |
-| **Total** | **184** | **193** | **279** | **163** | **461** | **5,628** |
+| Orbity | 11 | 12 | 14 | 12 | 33 | 658 |
+| **Total** | **187** | **197** | **279** | **163** | **471** | **5,902** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 339** distributed across the schemas.
+- **Tables: 348** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.

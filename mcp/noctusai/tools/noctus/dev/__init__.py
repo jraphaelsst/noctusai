@@ -71,6 +71,7 @@ def register_all(server) -> None:
     from . import lgpd
     from . import master_prompts
     from . import merge_debt
+    from . import migrate_product
     from . import mole
     from . import outline
     from . import outline_python
@@ -180,6 +181,7 @@ def register_all(server) -> None:
     lgpd.register(server)
     master_prompts.register(server)
     merge_debt.register(server)
+    migrate_product.register(server)
     mole.register(server)
     outline.register(server)
     outline_python.register(server)
