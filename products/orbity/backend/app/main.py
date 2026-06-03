@@ -35,6 +35,7 @@ from app.routers.agenda_router import router as agenda_router
 from app.routers.meta_ads_router import router as meta_ads_router
 from app.routers.automation_router import router as automation_router
 from app.routers.social_content_router import router as social_content_router, approve_router
+from app.routers.reports_router import router as reports_router, public_reports_router
 
 app = create_product_app(
     name="Orbity",
@@ -47,11 +48,11 @@ app = create_product_app(
         example_router,
         webhook_router,
         # CRM Wave 1
-        clients_router,          # /api/clients  — clients CRUD
-        crm_router,              # /api/crm/*    — leads, funil, scoring
-        capture_router,          # /api/capture/{org_id} — public lead capture
+        clients_router,    # /api/clients  — clients CRUD
+        crm_router,        # /api/crm/*    — leads, funil, scoring
+        capture_router,    # /api/capture/{org_id} — public lead capture
         # Financial Core (Wave 2)
-        financial_router,        # /api/financial/* — contracts, expenses, revenues, cash-flow
+        financial_router,  # /api/financial/* — contracts, expenses, revenues, cash-flow
         # Tasks + Agenda (Wave 2)
         tasks_router,      # /api/tasks/* + /api/routines/* — tasks, routines
         agenda_router,     # /api/agenda/events/* — calendar events + GCal sync seam
@@ -62,6 +63,9 @@ app = create_product_app(
         # Social/Content Studio (Wave 3)
         social_content_router,   # /api/content/* — campaigns, posts, approvals (authed)
         approve_router,          # /api/content/approve/{token} — public client approval
+        # Reports organ (Wave 3)
+        reports_router,          # /api/reports/* — authenticated CRUD + generate
+        public_reports_router,   # /api/reports/public/{token} — unauthenticated token read
     ],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
