@@ -43,8 +43,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 11 | 20 | 20 | 17 | 59 | 654 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| Orbity | 7 | 7 | 10 | 5 | 20 | 293 |
-| **Total** | **183** | **192** | **275** | **156** | **458** | **5,537** |
+| Orbity | 7 | 7 | 14 | 12 | 20 | 293 |
+| **Total** | **183** | **192** | **279** | **163** | **458** | **5,537** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
