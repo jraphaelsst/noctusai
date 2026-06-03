@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -24,6 +24,7 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 // `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
 // `app/routers/example_router.py`.
 const Example = lazy(() => import("@/pages/Example"));
+const Financeiro = lazy(() => import("@/pages/Financeiro"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -36,6 +37,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Financeiro", href: "/financeiro", icon: DollarSign, route: "financeiro" },
     ],
   },
 ];
@@ -50,6 +52,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Financeiro", href: "/financeiro", icon: DollarSign },
     ],
   },
 ];
@@ -68,6 +71,7 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
+    { path: "/financeiro", component: Financeiro },
   ],
   Layout,
   ...infra.appConfig,
