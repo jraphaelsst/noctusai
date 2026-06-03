@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -32,6 +32,7 @@ const Funil = lazy(() => import("@/pages/Funil"));
 const Tarefas = lazy(() => import("@/pages/Tarefas"));
 const Agenda = lazy(() => import("@/pages/Agenda"));
 const Rotinas = lazy(() => import("@/pages/Rotinas"));
+const Relatorios = lazy(() => import("@/pages/Relatorios"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -66,6 +67,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Tarefas", href: "/tarefas", icon: ClipboardList, route: "tarefas" },
       { name: "Agenda", href: "/agenda", icon: CalendarDays, route: "agenda" },
       { name: "Rotinas", href: "/rotinas", icon: RefreshCw, route: "rotinas" },
+    ],
+  },
+  {
+    key: "relatorios",
+    label: "Relatórios",
+    icon: FileBarChart2,
+    defaultOpen: true,
+    items: [
+      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
     ],
   },
 ];
@@ -104,6 +114,15 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Rotinas", href: "/rotinas", icon: RefreshCw },
     ],
   },
+  {
+    key: "relatorios",
+    label: "Relatórios",
+    icon: FileBarChart2,
+    defaultOpen: true,
+    items: [
+      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2 },
+    ],
+  },
 ];
 
 const Layout = createProductLayout({
@@ -126,6 +145,7 @@ export default createProductApp({
     { path: "/tarefas", component: Tarefas },
     { path: "/agenda", component: Agenda },
     { path: "/rotinas", component: Rotinas },
+    { path: "/relatorios", component: Relatorios },
   ],
   Layout,
   ...infra.appConfig,
