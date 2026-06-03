@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2 } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -33,6 +33,8 @@ const Tarefas = lazy(() => import("@/pages/Tarefas"));
 const Agenda = lazy(() => import("@/pages/Agenda"));
 const Rotinas = lazy(() => import("@/pages/Rotinas"));
 const Relatorios = lazy(() => import("@/pages/Relatorios"));
+// Meta Ads / Tráfego module
+const Trafego = lazy(() => import("@/pages/Trafego"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -76,6 +78,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
+    ],
+  },
+  {
+    key: "trafego",
+    label: "Tráfego",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
     ],
   },
 ];
@@ -123,6 +134,15 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Relatórios", href: "/relatorios", icon: FileBarChart2 },
     ],
   },
+  {
+    key: "trafego",
+    label: "Tráfego",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { name: "Tráfego", href: "/trafego", icon: Target },
+    ],
+  },
 ];
 
 const Layout = createProductLayout({
@@ -146,6 +166,7 @@ export default createProductApp({
     { path: "/agenda", component: Agenda },
     { path: "/rotinas", component: Rotinas },
     { path: "/relatorios", component: Relatorios },
+    { path: "/trafego", component: Trafego },
   ],
   Layout,
   ...infra.appConfig,
