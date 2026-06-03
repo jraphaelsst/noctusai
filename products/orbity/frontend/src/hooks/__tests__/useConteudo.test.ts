@@ -58,6 +58,8 @@ import {
   useCreateCampaign,
   useCreatePost,
   useCreateApproval,
+  usePublicApproval,
+  useDecideApproval,
 } from "@/hooks/useConteudo";
 
 // ---------------------------------------------------------------------------
@@ -400,5 +402,123 @@ describe("useCreateApproval", () => {
       "/api/content/posts/post-1/approvals",
       expect.objectContaining({ expires_in_days: 7 }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sample data — public approval
+// ---------------------------------------------------------------------------
+
+const PUBLIC_APPROVAL = {
+  approval_id: "apv-pub-1",
+  post_id: "post-1",
+  token: "tok-pub-abc",
+  status: "pending" as const,
+  expires_at: "2099-06-30T00:00:00Z",
+  decided_at: null,
+  post: {
+    id: "post-1",
+    platform: "instagram" as const,
+    caption: "Caption de aprovação de conteúdo",
+    hashtags: "#orbity #social",
+    media_url: null,
+    scheduled_for: "2026-06-20T10:00:00Z",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Tests: usePublicApproval (no auth)
+// ---------------------------------------------------------------------------
+
+describe("usePublicApproval", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("loading state — query is in-flight", () => {
+    mockGet.mockImplementation(() => new Promise(() => {}));
+    const { result } = renderHook(() => usePublicApproval("tok-pub-abc"), {
+      wrapper: makeWrapper(),
+    });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("success state — returns post + approval metadata", async () => {
+    mockGet.mockResolvedValue(PUBLIC_APPROVAL);
+    const { result } = renderHook(() => usePublicApproval("tok-pub-abc"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith("/api/content/approve/tok-pub-abc");
+    const pub = result.current.data as typeof PUBLIC_APPROVAL;
+    expect(pub.status).toBe("pending");
+    expect(pub.post.platform).toBe("instagram");
+    expect(pub.post.caption).toBe("Caption de aprovação de conteúdo");
+  });
+
+  it("error state — expired or not found (404/410)", async () => {
+    mockGet.mockRejectedValue(new Error("Approval expired or not found"));
+    const { result } = renderHook(() => usePublicApproval("tok-expired"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toContain("expired");
+  });
+
+  it("disabled when token is null — no fetch occurs", () => {
+    mockGet.mockImplementation(() => new Promise(() => {}));
+    const { result } = renderHook(() => usePublicApproval(null), {
+      wrapper: makeWrapper(),
+    });
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: useDecideApproval mutation (no auth)
+// ---------------------------------------------------------------------------
+
+describe("useDecideApproval", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("posts approval decision to correct endpoint", async () => {
+    mockPost.mockResolvedValue({ ok: true });
+    const { result } = renderHook(() => useDecideApproval("tok-pub-abc"), {
+      wrapper: makeWrapper(),
+    });
+    await result.current.mutateAsync({ decision: "approved" });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/content/approve/tok-pub-abc",
+      expect.objectContaining({ decision: "approved" }),
+    );
+  });
+
+  it("posts revision decision with feedback", async () => {
+    mockPost.mockResolvedValue({ ok: true });
+    const { result } = renderHook(() => useDecideApproval("tok-pub-abc"), {
+      wrapper: makeWrapper(),
+    });
+    await result.current.mutateAsync({ decision: "revision", feedback: "Precisa de ajustes na legenda" });
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/content/approve/tok-pub-abc",
+      expect.objectContaining({
+        decision: "revision",
+        feedback: "Precisa de ajustes na legenda",
+      }),
+    );
+  });
+
+  it("error state — surfaces mutation error", async () => {
+    mockPost.mockRejectedValue(new Error("Falha ao registrar decisão"));
+    const { result } = renderHook(() => useDecideApproval("tok-pub-abc"), {
+      wrapper: makeWrapper(),
+    });
+    await expect(
+      result.current.mutateAsync({ decision: "approved" }),
+    ).rejects.toThrow("Falha ao registrar decisão");
   });
 });

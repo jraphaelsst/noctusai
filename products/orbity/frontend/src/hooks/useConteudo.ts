@@ -324,3 +324,59 @@ export function useCreateApproval() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Public approval — token-gated, no auth required
+//
+// GET  /api/content/approve/{token}  → PublicApproval (200) | 404 | 410
+// POST /api/content/approve/{token}  → { ok: true } (200)
+//
+// Both endpoints take NO JWT. Plain fetch is used (no api client auth header).
+// Mirror of usePublicReport in useRelatorios.ts.
+// ---------------------------------------------------------------------------
+
+export interface PublicApprovalPost {
+  id: string;
+  platform: Platform;
+  caption: string | null;
+  hashtags: string | null;
+  media_url: string | null;
+  scheduled_for: string | null;
+}
+
+export interface PublicApproval {
+  approval_id: string;
+  post_id: string;
+  token: string;
+  status: ApprovalStatus;
+  expires_at: string;
+  decided_at: string | null;
+  post: PublicApprovalPost;
+}
+
+export type ApprovalDecision = "approved" | "revision";
+
+export interface DecideApprovalPayload {
+  decision: ApprovalDecision;
+  feedback?: string;
+}
+
+export function usePublicApproval(token: string | null) {
+  return useQuery({
+    queryKey: ["public-approval", token],
+    queryFn: async () => {
+      return api.get<PublicApproval>(`/api/content/approve/${token}`);
+    },
+    enabled: !!token,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+export function useDecideApproval(token: string | null) {
+  return useMutation({
+    mutationFn: async (payload: DecideApprovalPayload) => {
+      return api.post<{ ok: boolean }>(`/api/content/approve/${token}`, payload);
+    },
+  });
+}

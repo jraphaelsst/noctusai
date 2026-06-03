@@ -18,6 +18,9 @@ const Login = lazy(() => import("@/pages/Login"));
 const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
+// Public pages — no auth required
+const RelatorioPublico = lazy(() => import("@/pages/RelatorioPublico"));
+const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Placeholder domain page — rename + replace per
@@ -194,6 +197,10 @@ const Layout = createProductLayout({
 });
 
 export default createProductApp({
+  publicRoutes: [
+    { path: "/relatorio/:token", component: RelatorioPublico },
+    { path: "/aprovar/:token", component: AprovacaoPublica },
+  ],
   routes: [
     { path: "/", component: Dashboard },
     { path: "/example", component: Example },
