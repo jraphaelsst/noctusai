@@ -95,9 +95,18 @@ A scaffolded product gets working SSO + nav **by construction**, no per-product 
 4. core CORS allows the new origin in prod via `@registry:all` → `PRODUCT_URL_<SLUG>`;
    in dev via the `.env` `CORS_ORIGINS` house-port band.
 
-**Residual manual steps at deploy time** (NOT scaffold-time): set the new product's
-`PRODUCT_URL_<SLUG>` in the VPS `.env` (prod nav + CORS), and ensure its house port is
-within the dev `.env` `CORS_ORIGINS` band. See [[feedback_product_url_base_house_port]].
+**CORS is by-construction via the registry-derived PRODUCT_URL roster** — no manual
+per-product step required.  Run `noctus.dev.ensure_product_url_roster(confirm=True)` once
+(or after any new product joins the registry) to write the closed, registry-derived
+`PRODUCT_URL_<SLUG>` block into the VPS `.env` and recreate the core container.
+Short-name overrides are preserved; convention products are pattern-filled automatically.
+An open `*.noctusai.com` regex was **rejected** (subdomain-takeover risk on an endpoint
+that returns session tokens).  `predeploy_check` carries a `cors_roster_complete` backstop
+(read-only advisory) that flags any slug without a resolvable origin before deploy; the
+tool is the fix.  See § 9.
+
+Only remaining deploy-time manual step: ensure the new product's house port is within the
+dev `.env` `CORS_ORIGINS` band. See [[feedback_product_url_base_house_port]].
 
 ## 7 · The recurrence (provenance)
 
@@ -109,6 +118,36 @@ in prod) + nav (`localhost:5173` → dead link). Fix = correct getters + drive e
 consumer to them (all products, pilots + non-pilots) + the keeper. Siblings:
 [[feedback_sso_core_url_seed_resolution]] · [[feedback_product_url_base_house_port]] ·
 `boundary-contract-tests.md` B1.
+
+## 9 · Registry-derived CORS roster (by-construction — `noctus.dev.ensure_product_url_roster`)
+
+core's `derive_cors_origins` (source b) reads explicit `PRODUCT_URL_<SLUG>` env vars
+from the container environment — it does **not** consult `start.sh` (absent in the slim
+prod image) and `PRODUCT_URL_PATTERN` alone is invisible at container runtime. Every new
+product must therefore have an explicit `PRODUCT_URL_<SLUG>` in the VPS `.env` for its
+prod origin to appear in core's CORS allowlist.
+
+`noctus.dev.ensure_product_url_roster` automates this:
+
+- Parses `start.sh` registry → derives the full desired roster.
+- Reads the remote VPS `.env` over SSH.
+- **Preserves** existing short-name overrides (e.g. `PRODUCT_URL_ERP_IMOBILIARIO=https://erp.noctusai.com`).
+- **Pattern-fills** gaps for convention products (`PRODUCT_URL_ORBITY=https://orbity.noctusai.com`).
+- Renders a sentinel-bounded managed block (`# BEGIN_PRODUCT_URL_ROSTER` / `# END_PRODUCT_URL_ROSTER`).
+- Safe-writes the block (temp+mv, never partial) and optionally recreates core.
+- Idempotent: running twice → `status='up_to_date'`, no write.
+
+**Backstop** in `predeploy_check` (`check='cors_roster_complete'`): flags any registry
+slug with no resolvable CORS origin before the deploy goes out.  Read-only/advisory —
+the tool is the fix.
+
+Security rationale: `*.noctusai.com` regex CORS was rejected — the `/api/sso/session`
+endpoint returns session tokens; an open subdomain-regex exposes them to subdomain-
+takeover on any unclaimed `x.noctusai.com`.  The closed registry-derived set is the
+correct boundary.
+
+Born 2026-06-04 (`feat/sso-cors-roster-by-construction`) after orbity's SSO broke
+("Failed to fetch") because no `PRODUCT_URL_ORBITY` existed on the VPS.
 
 ## 8 · Verifying the live chain (dynamic e2e)
 

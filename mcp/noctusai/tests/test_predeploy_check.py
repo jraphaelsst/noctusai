@@ -397,6 +397,93 @@ def test_prod_env_path_threads_to_default_runner(tmp_path, monkeypatch):
     assert r["status"] == "ready"  # pattern resolves the roster, no violations
 
 
+# ── cors_roster_complete (backstop — B4 container env) ───────────────────────
+# Pure auditor checks that every slug has PRODUCT_URL_<SLUG> OR PRODUCT_URL_PATTERN.
+
+def test_cors_roster_complete_in_default_checks():
+    assert "cors_roster_complete" in PC.DEFAULT_CHECKS
+
+
+def test_audit_cors_roster_clean_with_pattern():
+    a = PC.audit_cors_roster_complete(
+        ["core", "orbity"],
+        {"PRODUCT_URL_PATTERN": "https://{slug}.noctusai.com"},
+    )
+    assert a["violations"] == []
+    assert a["checked"] == 2
+
+
+def test_audit_cors_roster_clean_with_explicit_overrides():
+    a = PC.audit_cors_roster_complete(
+        ["core", "orbity"],
+        {
+            "PRODUCT_URL_CORE": "https://noctusai.com",
+            "PRODUCT_URL_ORBITY": "https://orbity.noctusai.com",
+        },
+    )
+    assert a["violations"] == []
+
+
+def test_audit_cors_roster_missing_origin_flags_slug():
+    """Slug with no override AND no pattern → violation (the orbity shape)."""
+    a = PC.audit_cors_roster_complete(["orbity", "core"], {})
+    assert len(a["violations"]) == 2
+    assert any("orbity" in v for v in a["violations"])
+    assert any("ensure_product_url_roster" in v for v in a["violations"])
+
+
+def test_audit_cors_roster_partial_overrides_flags_only_missing():
+    """core has override but orbity is missing and there's no pattern → only orbity flagged."""
+    a = PC.audit_cors_roster_complete(
+        ["core", "orbity"],
+        {"PRODUCT_URL_CORE": "https://noctusai.com"},
+    )
+    assert len(a["violations"]) == 1
+    assert "orbity" in a["violations"][0]
+
+
+def test_classify_cors_roster_missing_is_known():
+    msg = "cors_roster_complete VIOLATED: no CORS origin resolvable for 'orbity': ..."
+    c = PC.classify_failure(msg)
+    assert c is not None and c["class_id"] == "cors_roster_missing"
+    assert "ensure_product_url_roster" in c["suggested_fix"]
+    assert c["auto_fixable"] is False
+
+
+def test_cors_roster_runner_skips_without_snapshot(monkeypatch, tmp_path):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is True  # skip is not a failure
+    assert "SKIPPED" in msg
+
+
+def test_cors_roster_runner_skips_on_empty_roster(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_PATTERN=https://{slug}.noctusai.com\n")
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: [])
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg
+
+
+def test_cors_roster_runner_clean_with_pattern(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_PATTERN=https://{slug}.noctusai.com\n")
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "orbity"])
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is True
+    assert "ok" in msg.lower()
+
+
+def test_cors_roster_runner_blocks_on_missing_origin(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_CORE=https://noctusai.com\n")  # no pattern, no orbity
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "orbity"])
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is False
+    assert "orbity" in msg
+
+
 def test_load_roster_slugs_returns_list_against_real_tree():
     from settings import REPO_ROOT  # noqa: E402
 

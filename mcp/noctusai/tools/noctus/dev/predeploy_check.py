@@ -50,6 +50,7 @@ DEFAULT_CHECKS: list[str] = [
     "backend_tests",
     "deploy_local_gitignored",  # D3 — every deploy_state.DEPLOY_LOCAL_FILES pattern is gitignored
     "prod_config_parity",  # value-correctness: prod env resolves a non-localhost URL per product
+    "cors_roster_complete",  # backstop: every registry slug has a CORS-resolvable origin
 ]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
@@ -153,6 +154,27 @@ _KNOWN: list[dict[str, Any]] = [
             "git rm --cached <path> + add the path (or its **/ glob) to .gitignore, "
             "then re-render the file in-place on the box. See deploy_state.py + "
             "KB § GUIDES/production-deploy.md § 2a (P4/D3)."
+        ),
+        "auto_fixable": False,
+    },
+    {
+        "class_id": "cors_roster_missing",
+        "rx": re.compile(r"CORS roster INCOMPLETE|no CORS origin resolvable for|cors_roster_complete VIOLATED"),
+        "boundary": "B4 container env",
+        "explanation": (
+            "One or more registry slugs have no resolvable CORS origin: neither "
+            "PRODUCT_URL_<SLUG> nor PRODUCT_URL_PATTERN is set for them in the "
+            "VPS .env. core's CORS allowlist is derived from explicit "
+            "PRODUCT_URL_<SLUG> env vars (the slim prod container ships no start.sh, "
+            "so PRODUCT_URL_PATTERN alone is invisible there). A missing origin means "
+            "the product's SSO POST is rejected with a CORS error ('Failed to fetch')."
+        ),
+        "suggested_fix": (
+            "Run `noctus.dev.ensure_product_url_roster(confirm=True)` to write the "
+            "closed, registry-derived PRODUCT_URL roster into the VPS .env and "
+            "recreate core. Short-name products (erp-imobiliario → erp.noctusai.com) "
+            "keep their existing overrides; new products (e.g. orbity) are "
+            "pattern-filled automatically. See KB § PATTERNS/frontend/core-url-routing.md § 6."
         ),
         "auto_fixable": False,
     },
@@ -293,6 +315,44 @@ def audit_prod_config_parity(
     }
 
 
+def audit_cors_roster_complete(
+    roster_slugs: list[str], env: dict[str, str] | None
+) -> dict[str, Any]:
+    """Pure backstop: assert every registry slug has a resolvable CORS origin.
+
+    core's ``derive_cors_origins`` (source b) reads explicit ``PRODUCT_URL_<SLUG>``
+    env vars directly — it does NOT rely on ``start.sh`` (absent in the slim prod
+    container). A slug with neither ``PRODUCT_URL_<SLUG>`` nor ``PRODUCT_URL_PATTERN``
+    will be absent from core's CORS allowlist → the product's SSO POST is
+    rejected ("Failed to fetch"). This is exactly the drift that broke orbity's SSO.
+
+    Read-only / advisory: the tool that FIXES this is
+    ``noctus.dev.ensure_product_url_roster``.
+
+    Returns ``{source, checked, violations}``.
+    """
+    env = dict(env or {})
+    pattern_set = bool((env.get(_PROD_URL_PATTERN_KEY) or "").strip())
+    violations: list[str] = []
+
+    for slug in roster_slugs:
+        key = _slug_env_key(slug)
+        has_override = bool((env.get(key) or "").strip())
+        if not has_override and not pattern_set:
+            violations.append(
+                f"no CORS origin resolvable for '{slug}': neither {key} nor "
+                f"{_PROD_URL_PATTERN_KEY} is set — core's CORS allowlist will "
+                "exclude this product's prod origin (the orbity 'Failed to fetch' "
+                "shape). Fix: run `noctus.dev.ensure_product_url_roster(confirm=True)`."
+            )
+
+    return {
+        "source": "cors-roster-check",
+        "checked": len(roster_slugs),
+        "violations": violations,
+    }
+
+
 def _parse_env_file(text: str) -> dict[str, str]:
     """Minimal ``.env`` parser (KEY=VALUE; ignores blanks / ``#`` comments /
     ``export `` prefix; strips one layer of matching quotes). Config-file
@@ -402,6 +462,32 @@ def _default_run_check(
         return True, (
             f"prod-config parity ok — {audit['checked']} product(s) resolve a "
             f"non-localhost prod URL ({env_path.name})"
+        )
+    if check == "cors_roster_complete":
+        # Backstop: every registry slug must have a resolvable CORS origin for
+        # core's allowlist. SKIPs loudly (ok=True) when no prod env snapshot is
+        # available (same pattern as prod_config_parity — dev .env excluded).
+        # The FIX is `noctus.dev.ensure_product_url_roster(confirm=True)`.
+        env_path = _resolve_prod_env_path(root, prod_env_path)
+        if env_path is None:
+            return True, (
+                "cors_roster_complete SKIPPED — no prod env snapshot resolvable "
+                "(pass prod_env_path, set NOCTUS_PROD_ENV_FILE, or add a "
+                ".env.prod/.env.production at the repo root)."
+            )
+        roster = _load_roster_slugs(root)
+        if not roster:
+            return True, (
+                "cors_roster_complete SKIPPED — empty product roster "
+                "(start.sh registry unreadable from here)."
+            )
+        env = _parse_env_file(env_path.read_text(encoding="utf-8"))
+        audit = audit_cors_roster_complete(roster, env)
+        if audit["violations"]:
+            return False, "cors_roster_complete VIOLATED: " + "; ".join(audit["violations"])
+        return True, (
+            f"cors_roster_complete ok — {audit['checked']} product(s) have a "
+            f"resolvable CORS origin ({env_path.name})"
         )
     return False, f"unknown check '{check}'"
 
@@ -569,6 +655,7 @@ __all__ = [
     "classify_failure",
     "audit_deploy_local",
     "audit_prod_config_parity",
+    "audit_cors_roster_complete",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",
     "register",
