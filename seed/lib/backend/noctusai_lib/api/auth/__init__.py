@@ -472,6 +472,15 @@ def verify_sso_token_factory(settings) -> Callable[[str], dict]:
     Raises `HTTPException(401)` on expired / invalid / non-SSO tokens.
     """
     def verify_sso_token(token: str) -> dict:
+        # NOC-REMEDIATE[security]: `aud` is a fixed bridge constant and the minted
+        # `product` claim is NOT verified here — so a token issued for product A is,
+        # at the JWT layer, valid if redeemed for product B. Bounded today because
+        # core is the SOLE verifier (products are couriers that POST back to core's
+        # /api/sso/session). BEFORE a 2nd identity-source product consumes these
+        # factories, bind the audience to the product: pass an expected slug into
+        # verify (e.g. verify_sso_token(token, expected_product=...)) and assert
+        # payload["product"], or mint aud=f"noctusai-sso:{slug}". (security review
+        # 2026-06-04, warning-2.)
         try:
             payload = jwt.decode(
                 token,
