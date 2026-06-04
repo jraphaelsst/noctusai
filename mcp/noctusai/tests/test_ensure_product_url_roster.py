@@ -267,6 +267,28 @@ class TestEnsureProductUrlRosterOrchestration:
         assert result["ok"] is True
         if result["status"] == "applied":
             assert len(t.recreated) == 1
+            # project_dir must be threaded through so docker compose runs from the
+            # deploy root (dirname of the .env), not SSH's default home (/root).
+            assert t.recreated_in == "/opt/noctus/noctusai"
+
+    def test_real_transport_recreate_cds_into_project_dir(self):
+        """SubprocessSshTransport.recreate_core must cd into project_dir before
+        docker compose (else the relative compose path resolves against /root)."""
+        from unittest import mock
+        from tools.noctus.dev.ensure_product_url_roster import SubprocessSshTransport
+
+        captured = {}
+
+        def _fake_run(argv, capture_output, text):
+            captured["cmd"] = argv[-1]
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        tr = SubprocessSshTransport(ssh_host="noctus-vps")
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            ok, err = tr.recreate_core("deploy/fleet/docker-compose.prod.yml",
+                                       "/opt/noctus/noctusai")
+        assert ok is True and err == ""
+        assert captured["cmd"].startswith("cd /opt/noctus/noctusai && docker compose")
 
     def test_ssh_read_failure_returns_error(self):
         t = FakeSshTransport(read_ok=False)

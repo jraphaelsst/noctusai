@@ -281,8 +281,9 @@ class SshTransport(Protocol):
         """Safe-write the remote .env (temp + mv).  Returns (ok, error)."""
         ...  # pragma: no cover
 
-    def recreate_core(self, compose_file: str) -> tuple[bool, str]:
-        """docker compose up -d --force-recreate --no-deps core.  Returns (ok, error)."""
+    def recreate_core(self, compose_file: str, project_dir: str) -> tuple[bool, str]:
+        """docker compose up -d --force-recreate --no-deps core, run from
+        ``project_dir`` (the compose file path is relative to it).  Returns (ok, error)."""
         ...  # pragma: no cover
 
 
@@ -323,8 +324,9 @@ class FakeSshTransport:
             return True, ""
         return False, "fake-write-failure"
 
-    def recreate_core(self, compose_file: str) -> tuple[bool, str]:
+    def recreate_core(self, compose_file: str, project_dir: str) -> tuple[bool, str]:
         self.recreated.append(compose_file)
+        self.recreated_in: str = project_dir
         if self.recreate_ok:
             return True, ""
         return False, "fake-recreate-failure"
@@ -405,8 +407,12 @@ class SubprocessSshTransport:
 
         return True, ""
 
-    def recreate_core(self, compose_file: str) -> tuple[bool, str]:
+    def recreate_core(self, compose_file: str, project_dir: str) -> tuple[bool, str]:
+        # The compose file path is relative to the project root on the VPS; SSH's
+        # default CWD is the login home (/root), so cd into project_dir first or
+        # docker compose can't find deploy/fleet/docker-compose.prod.yml.
         cmd = (
+            f"cd {shlex.quote(project_dir)} && "
             f"docker compose -f {shlex.quote(compose_file)} "
             f"up -d --force-recreate --no-deps core"
         )
@@ -555,7 +561,11 @@ def ensure_product_url_roster(
 
         # ── 6. Optional: recreate core ─────────────────────────────────────────
         if recreate_core:
-            ok_rc, rc_err = t.recreate_core(_DOCKER_COMPOSE_FILE)
+            # The compose path is relative to the deploy project root, which is
+            # the directory holding the .env (e.g. /opt/noctus/noctusai).
+            import os as _os
+            project_dir = _os.path.dirname(env_path) or "/opt/noctus/noctusai"
+            ok_rc, rc_err = t.recreate_core(_DOCKER_COMPOSE_FILE, project_dir)
             if not ok_rc:
                 # Non-fatal: .env is already correct; surface the recreate failure.
                 logger.warning(
