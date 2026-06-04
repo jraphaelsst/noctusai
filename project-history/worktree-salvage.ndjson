@@ -166,3 +166,4 @@
 {"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-prod-onboard", "branch": "feat/orbity-prod-onboard", "sha": "679d0838d8620e0c65eb2259eb47f5652d30b6ed", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-tasks-agenda", "branch": "feat/orbity-tasks-agenda", "sha": "8ab937799f64fdb632589cebbbfd6253ab7e8024", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-06-03", "event": "worktree-sweep", "path": ".claude/worktrees/ci-build-scope-changed-products", "branch": "feat/ci-build-scope-changed-products", "sha": "2a9f3f9e0b26466664c7ac389603f48f3434633b", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-06-04T12:01:05.223002+00:00", "kind": "salvage-before-delete:branch", "target": "feat/sso-cors-pattern-regex", "dry_run": false, "ok": true, "preserved": []}
