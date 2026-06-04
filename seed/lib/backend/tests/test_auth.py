@@ -14,8 +14,15 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
+import datetime
+
+import jwt as _jwt_pkg
+
 from noctusai_lib.api.auth import (
+    SSO_AUDIENCE,
+    SSO_ISSUER,
     SSOSessionCache,
+    _sso_secret,
     create_sso_token_factory,
     make_get_current_user_org,
     make_require_role,
@@ -30,6 +37,7 @@ class _Settings:
     jwt_secret: str = "test-secret-do-not-use-in-prod"
     jwt_algorithm: str = "HS256"
     sso_token_expiration_minutes: int = 10
+    sso_jwt_secret: str = ""  # empty → falls back to jwt_secret (back-compat)
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +66,9 @@ class TestSSOTokenFactories:
         assert payload["role"] == "user"  # default
         assert payload["org_role"] == "member"  # default
         assert payload["type"] == "sso"
+        # Hardening assertions: iss/aud must be present after round-trip.
+        assert payload["iss"] == SSO_ISSUER
+        assert payload["aud"] == SSO_AUDIENCE
 
     def test_roles_are_carried_into_payload(self):
         s = _Settings()
@@ -100,10 +111,19 @@ class TestSSOTokenFactories:
         assert "inválido" in exc.value.detail
 
     def test_non_sso_token_type_rejected(self):
-        import jwt as _jwt_pkg
         s = _Settings()
-        # Mint a token with type != 'sso' manually.
-        payload = {"sub": "u", "type": "session"}
+        # Mint a fully valid token (iss/aud/exp/iat all present) but with
+        # type != 'sso' to exercise the explicit type guard AFTER claim
+        # validation passes.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        payload = {
+            "sub": "u",
+            "type": "session",
+            "iss": SSO_ISSUER,
+            "aud": SSO_AUDIENCE,
+            "exp": now + datetime.timedelta(minutes=5),
+            "iat": now,
+        }
         token = _jwt_pkg.encode(payload, s.jwt_secret, algorithm=s.jwt_algorithm)
         verify = verify_sso_token_factory(s)
         with pytest.raises(HTTPException) as exc:
@@ -120,6 +140,190 @@ class TestSSOTokenFactories:
         token = mint_a(user_id="u", org_id="o", product_slug="p", email="e@x.com")
         with pytest.raises(HTTPException):
             verify_b(token)
+
+
+# ---------------------------------------------------------------------------
+# SSO JWT hardening — iss/aud/required-claims/leeway/dedicated-secret
+# (security follow-up: 2026-06-04)
+# ---------------------------------------------------------------------------
+
+
+def _mint_raw(payload: dict, secret: str, algorithm: str = "HS256") -> str:
+    """Craft a raw JWT directly — bypasses the factory so we can omit claims."""
+    return _jwt_pkg.encode(payload, secret, algorithm=algorithm)
+
+
+def _base_valid_payload(minutes_from_now: float = 5.0) -> dict:
+    """Return a minimal valid SSO payload (all required claims present)."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return {
+        "sub": "u1",
+        "type": "sso",
+        "iss": SSO_ISSUER,
+        "aud": SSO_AUDIENCE,
+        "exp": now + datetime.timedelta(minutes=minutes_from_now),
+        "iat": now,
+    }
+
+
+class TestSSOTokenHardening:
+    """iss/aud/required-claims/leeway/dedicated-secret hardening tests.
+
+    All assertions use strict ``== 401`` per the auth-boundary false-green rule.
+    """
+
+    # --- missing required claims ---
+
+    def test_missing_iss_rejected(self):
+        s = _Settings()
+        payload = _base_valid_payload()
+        del payload["iss"]
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_missing_aud_rejected(self):
+        s = _Settings()
+        payload = _base_valid_payload()
+        del payload["aud"]
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_wrong_iss_rejected(self):
+        s = _Settings()
+        payload = _base_valid_payload()
+        payload["iss"] = "evil-issuer"
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_wrong_aud_rejected(self):
+        s = _Settings()
+        payload = _base_valid_payload()
+        payload["aud"] = "wrong-audience"
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_different_secret_rejected(self):
+        """A token signed with a different secret → 401 (signature failure)."""
+        s_mint = _Settings(jwt_secret="minter-secret")
+        s_verify = _Settings(jwt_secret="verifier-different-secret")
+        mint = create_sso_token_factory(s_mint)
+        verify = verify_sso_token_factory(s_verify)
+        token = mint(user_id="u", org_id="o", product_slug="p", email="e@x.com")
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    # --- leeway ---
+
+    def test_token_within_leeway_still_verifies(self):
+        """A token that expired 5 s ago still verifies within the 10 s leeway."""
+        s = _Settings()
+        # Craft a token with exp 5 seconds in the past.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        payload = _base_valid_payload()
+        payload["exp"] = now - datetime.timedelta(seconds=5)
+        payload["iat"] = now - datetime.timedelta(seconds=10)
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        # Should NOT raise — 5 s past < 10 s leeway.
+        result = verify(token)
+        assert result["type"] == "sso"
+
+    def test_token_beyond_leeway_rejected(self):
+        """A token that expired 15 s ago is rejected — beyond the 10 s leeway."""
+        s = _Settings()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        payload = _base_valid_payload()
+        payload["exp"] = now - datetime.timedelta(seconds=15)
+        payload["iat"] = now - datetime.timedelta(seconds=20)
+        token = _mint_raw(payload, s.jwt_secret)
+        verify = verify_sso_token_factory(s)
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    # --- dedicated sso_jwt_secret ---
+
+    def test_dedicated_secret_used_when_set(self):
+        """With sso_jwt_secret set, mint+verify use it (round-trip succeeds)."""
+        s = _Settings(jwt_secret="product-secret", sso_jwt_secret="dedicated-sso-secret")
+        mint = create_sso_token_factory(s)
+        verify = verify_sso_token_factory(s)
+        token = mint(user_id="u", org_id="o", product_slug="p", email="e@x.com")
+        payload = verify(token)
+        assert payload["sub"] == "u"
+        assert payload["iss"] == SSO_ISSUER
+        assert payload["aud"] == SSO_AUDIENCE
+
+    def test_dedicated_secret_decouples_from_jwt_secret(self):
+        """Token minted under jwt_secret (no dedicated) does NOT verify when
+        dedicated sso_jwt_secret is set at verify time — proves decoupling."""
+        s_without_dedicated = _Settings(jwt_secret="shared-secret", sso_jwt_secret="")
+        s_with_dedicated = _Settings(jwt_secret="shared-secret", sso_jwt_secret="dedicated-sso-secret")
+        mint = create_sso_token_factory(s_without_dedicated)
+        verify = verify_sso_token_factory(s_with_dedicated)
+        token = mint(user_id="u", org_id="o", product_slug="p", email="e@x.com")
+        # Token was signed with jwt_secret; verifier expects dedicated_sso_secret → fail.
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_dedicated_secret_reverse_decoupling(self):
+        """Token minted with dedicated secret does NOT verify when verifier
+        falls back to jwt_secret (dedicated unset at verify)."""
+        s_with_dedicated = _Settings(jwt_secret="shared-secret", sso_jwt_secret="dedicated-sso-secret")
+        s_without_dedicated = _Settings(jwt_secret="shared-secret", sso_jwt_secret="")
+        mint = create_sso_token_factory(s_with_dedicated)
+        verify = verify_sso_token_factory(s_without_dedicated)
+        token = mint(user_id="u", org_id="o", product_slug="p", email="e@x.com")
+        with pytest.raises(HTTPException) as exc:
+            verify(token)
+        assert exc.value.status_code == 401
+
+    def test_back_compat_empty_sso_jwt_secret_uses_jwt_secret(self):
+        """With sso_jwt_secret empty, falls back to jwt_secret — back-compat
+        round-trip works identically to the pre-hardening behaviour."""
+        s = _Settings(jwt_secret="my-secret", sso_jwt_secret="")
+        mint = create_sso_token_factory(s)
+        verify = verify_sso_token_factory(s)
+        token = mint(user_id="u2", org_id="o2", product_slug="erp", email="b@x.com")
+        payload = verify(token)
+        assert payload["sub"] == "u2"
+
+    def test_sso_secret_helper_empty_string_fallback(self):
+        """_sso_secret returns jwt_secret when sso_jwt_secret is '' or whitespace."""
+        s = _Settings(jwt_secret="base", sso_jwt_secret="")
+        assert _sso_secret(s) == "base"
+        s2 = _Settings(jwt_secret="base", sso_jwt_secret="   ")
+        assert _sso_secret(s2) == "base"
+
+    def test_sso_secret_helper_dedicated_returned_when_set(self):
+        """_sso_secret returns sso_jwt_secret when it's non-empty."""
+        s = _Settings(jwt_secret="base", sso_jwt_secret="dedicated")
+        assert _sso_secret(s) == "dedicated"
+
+    def test_sso_secret_helper_no_sso_jwt_secret_attr(self):
+        """_sso_secret falls back gracefully when settings has no sso_jwt_secret attr."""
+        @dataclass
+        class _LegacySettings:
+            jwt_secret: str = "legacy-secret"
+            jwt_algorithm: str = "HS256"
+            sso_token_expiration_minutes: int = 10
+
+        s = _LegacySettings()
+        assert _sso_secret(s) == "legacy-secret"
 
 
 # ---------------------------------------------------------------------------

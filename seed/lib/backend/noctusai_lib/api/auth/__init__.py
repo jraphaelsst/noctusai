@@ -20,8 +20,10 @@ reimplementing.
   and use the resulting `require_role(*roles)` at every router site.
 - **NEW** `create_sso_token_factory(settings)` — returns a token-mint callable
   parameterized by product settings (`jwt_secret`, `jwt_algorithm`,
-  `sso_token_expiration_minutes`).
+  `sso_token_expiration_minutes`). Tokens carry `iss=noctusai` /
+  `aud=noctusai-sso`; signed with `sso_jwt_secret` when set, else `jwt_secret`.
 - **NEW** `verify_sso_token_factory(settings)` — returns a token-verify callable.
+  Validates `iss` / `aud` / required claims; 10 s clock-skew leeway.
 - **NEW** `SSOSessionCache(ttl_seconds=300)` — thread-safe in-memory cache with
   per-key locks and explicit invalidation API.
 
@@ -42,6 +44,27 @@ import jwt
 from fastapi import Header, HTTPException
 
 from noctusai_lib.primitives.timeutil import now_utc
+
+# ---------------------------------------------------------------------------
+# SSO-token identity constants — fixed so mint and verify can NEVER drift
+# out of symmetry regardless of how settings are composed across products.
+# Using constants (not settings fields) means there is no configuration
+# surface that could produce a mint/verify mismatch in any deployment.
+# ---------------------------------------------------------------------------
+SSO_ISSUER = "noctusai"        # who minted it — the core SSO bridge
+SSO_AUDIENCE = "noctusai-sso"  # token purpose — distinct from session JWTs
+
+
+def _sso_secret(settings) -> str:
+    """Dedicated SSO-bridge signing secret when configured, else jwt_secret.
+
+    Setting ``SSO_JWT_SECRET`` on core decouples bridge-token signing from
+    per-product session signing so a leaked product ``jwt_secret`` cannot
+    forge SSO identities.  Empty default → zero-config back-compat (falls
+    back to ``jwt_secret``).
+    """
+    dedicated = (getattr(settings, "sso_jwt_secret", "") or "").strip()
+    return dedicated or settings.jwt_secret
 
 
 def first_or_none(result) -> Optional[dict]:
@@ -431,12 +454,14 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
             "role": role,
             "org_role": org_role,
             "type": "sso",
+            "iss": SSO_ISSUER,
+            "aud": SSO_AUDIENCE,
             "exp": now_utc() + datetime.timedelta(
                 minutes=settings.sso_token_expiration_minutes
             ),
             "iat": now_utc(),
         }
-        return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+        return jwt.encode(payload, _sso_secret(settings), algorithm=settings.jwt_algorithm)
 
     return create_sso_token
 
@@ -450,8 +475,12 @@ def verify_sso_token_factory(settings) -> Callable[[str], dict]:
         try:
             payload = jwt.decode(
                 token,
-                settings.jwt_secret,
+                _sso_secret(settings),
                 algorithms=[settings.jwt_algorithm],
+                issuer=SSO_ISSUER,
+                audience=SSO_AUDIENCE,
+                leeway=10,  # seconds of clock-skew tolerance for exp/iat/nbf
+                options={"require": ["exp", "iat", "iss", "aud", "type"]},
             )
             if payload.get("type") != "sso":
                 raise HTTPException(status_code=401, detail="Token não é SSO")

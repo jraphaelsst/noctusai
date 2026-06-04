@@ -30,6 +30,12 @@ class BaseAppSettings(BaseSettings):
     # JWT / SSO
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
+    # Optional dedicated signing secret for SSO bridge tokens (core-only).
+    # When set, SSO tokens are signed with this secret instead of jwt_secret,
+    # decoupling bridge-token signing from per-product session signing.
+    # A leaked product jwt_secret cannot forge SSO identities when this is set.
+    # Empty default → falls back to jwt_secret (zero-config back-compat).
+    sso_jwt_secret: str = ""
 
     # App
     cors_origins: str = "http://localhost:5173,http://localhost:8080,http://localhost:3000"
