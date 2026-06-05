@@ -6,3 +6,18 @@
 project-history/vector-costs.ndjson      merge=union
 project-history/auto-improvement.ndjson  merge=union
 project-history/*.ndjson                 merge=union
+
+# Docs carrying auto-generated `<!-- kb-counts:start:X -->…:end:X -->` inventory
+# blocks. The counts are DETERMINISTICALLY regenerated from the tree by the
+# pre-commit hook + auto-staged into every commit, so two parallel branches that
+# each add files to the SAME product both bump the same inventory row/grand-total
+# → a default 3-way merge reports a conflict on pure machine churn (observed
+# 2026-06-05 integrating two file-disjoint social-wiring branches). `union` is
+# WRONG here (it duplicates table rows); instead the `kb-counts` driver
+# re-derives the block from the merged tree (correct) and still surfaces any
+# genuine PROSE conflict outside the blocks. Driver = scripts/hooks/merge-kb-counts.sh,
+# registered (local git config) by scripts/hooks/install-hooks.sh.
+# KB § PATTERNS/common/auto-generated-merge-drivers.md
+KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md   merge=kb-counts
+KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md      merge=kb-counts
+KNOWLEDGE-BASE/AGENT-CONTEXT.md          merge=kb-counts

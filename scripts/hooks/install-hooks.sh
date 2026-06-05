@@ -38,6 +38,16 @@ ln -s "$REPO_ROOT/scripts/hooks/pre-push" "$HOOKS_DIR/pre-push"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-push"
 echo "  pre-push: gate main/prod pushes (NOCTUS_ALLOW_MAIN_PUSH=1 to deploy) + refuse force/delete"
 
+# ─── merge driver: kb-counts (regenerate auto-derived inventory blocks on merge)
+# `.gitattributes` maps the count-block-bearing KB docs to merge=kb-counts; the
+# driver itself is per-repo git config (NOT committable), so wire it here. Without
+# it, two parallel branches that bump the same product's inventory row conflict on
+# pure machine churn at rebase/integrate. KB § PATTERNS/common/auto-generated-merge-drivers.md
+chmod +x "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh"
+git -C "$REPO_ROOT" config merge.kb-counts.name "regenerate auto-derived kb-counts blocks; surface real prose conflicts"
+git -C "$REPO_ROOT" config merge.kb-counts.driver "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh %O %A %B %P"
+echo "  merge driver: kb-counts (regenerate inventory blocks; no churn conflicts)"
+
 # ─── post-merge: auto-refresh caches after git pull / merge.
 # Without this, `git pull` brings in remote KB / code changes but the
 # local caches stay stale (no commit boundary means pre-commit doesn't fire).

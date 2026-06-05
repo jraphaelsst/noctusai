@@ -41,10 +41,10 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 11 | 20 | 20 | 17 | 59 | 668 |
+| Social Wiring | 11 | 20 | 21 | 17 | 59 | 668 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 11 | 12 | 20 | 20 | 33 | 658 |
-| **Total** | **187** | **197** | **285** | **171** | **471** | **5,916** |
+| **Total** | **187** | **197** | **286** | **171** | **471** | **5,916** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

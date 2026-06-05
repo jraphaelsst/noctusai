@@ -8628,6 +8628,8 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/agent-context-architecture.md",
     "CONTEXT/PATTERNS/common/self-branching-mode.md",
     "CONTEXT/PATTERNS/common/branching.md",
+    "CONTEXT/PATTERNS/common/auto-generated-merge-drivers.md",  # universal commons: git merge-driver policy for auto-generated content (ndjson union + kb-counts regen driver) — branching/merge infra every integrate touches, sibling of branching.md, no single-agent owner
+
     "CONTEXT/PATTERNS/common/harness-overlay-worktree-divergence.md",
     "CONTEXT/PATTERNS/common/proposals-and-improvements.md",
     "CONTEXT/PATTERNS/common/verify-seed-on-fork-base.md",
