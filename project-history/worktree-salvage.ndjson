@@ -169,3 +169,4 @@
 {"ts": "2026-06-04T12:01:05.223002+00:00", "kind": "salvage-before-delete:branch", "target": "feat/sso-cors-pattern-regex", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-06-05", "event": "worktree-sweep", "path": ".claude/worktrees/waha-swagger-creds-match-dashboard", "branch": "feat/waha-swagger-creds-match-dashboard", "sha": "9b9bca306970a0b9cb0a117a4167e133a05ffb8e", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-06-05", "event": "worktree-sweep", "path": ".claude/worktrees/waha-prod-swagger-env-passthrough", "branch": "feat/waha-prod-swagger-env-passthrough", "sha": "392bb5828c122971f693c784e8b04e43115eb048", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-06-05", "event": "worktree-sweep", "path": ".claude/worktrees/kb-counts-merge-driver", "branch": "feat/kb-counts-merge-driver", "sha": "7595a544ff5ba806f601f99d122fb139bf031afe", "reason": "task_branch cleanup (learn-before-delete)"}
