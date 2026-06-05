@@ -143,7 +143,7 @@ async function renderWhatsAppConnections() {
   const { WhatsAppConnections } = await import("./Conexao");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(WhatsAppConnections)), ...rtl };
+  return { ...rtl.render(React.createElement(WhatsAppConnections)), fireEvent: rtl.fireEvent };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────
@@ -304,18 +304,18 @@ describe("Create → QR auto-flow", () => {
     });
 
     const rtl = await import("@testing-library/react");
-    const { getByTestId, fireEvent } = rtl.render(
+    const { getByTestId } = rtl.render(
       React.createElement((await import("./Conexao")).WhatsAppConnections),
     );
 
-    fireEvent.click(getByTestId("btn-nova-conexao"));
-    fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
+    rtl.fireEvent.click(getByTestId("btn-nova-conexao"));
+    rtl.fireEvent.change(getByTestId("create-conn-label") as HTMLInputElement, {
       target: { value: "Test" },
     });
-    fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
+    rtl.fireEvent.change(getByTestId("create-conn-apikey") as HTMLInputElement, {
       target: { value: "key" },
     });
-    fireEvent.click(getByTestId("create-conn-submit"));
+    rtl.fireEvent.click(getByTestId("create-conn-submit"));
 
     await rtl.act(async () => {
       successCallback?.(newLine);
