@@ -5,6 +5,14 @@ NEVER leaves the backend (no field carries it on any response). Live WAHA
 state (status / QR / paired account) is fetched per-line and surfaced through
 the ``*StatusOut`` / ``*QrOut`` shapes, mirroring the seed
 ``whatsapp_admin_router`` DTOs but addressed by ``connection_id``.
+
+Contract v2 (social-waha-connect-backend):
+  - Create payload shrinks to {label, api_key}.  ``base_url``,
+    ``session_name``, and ``webhook_url`` are no longer user-provided; the
+    router derives them server-side. Unknown extra fields are silently ignored
+    by pydantic's default; callers MUST NOT rely on extra fields being stored.
+  - Response exposes ``webhook_url`` (the auto-minted per-connection token URL)
+    and ``session_name`` (informational, auto-generated unique value).
 """
 from __future__ import annotations
 
@@ -17,13 +25,16 @@ from pydantic import BaseModel, Field
 
 # ─── CRUD ────────────────────────────────────────────────────────────────
 class WhatsAppConnectionCreate(BaseModel):
+    """Inbound create payload.
+
+    Only ``label`` and ``api_key`` are meaningful — ``base_url``,
+    ``session_name``, and ``webhook_url`` are derived server-side and ignored
+    if present. Extra fields are silently dropped (pydantic default) so
+    existing callers that still pass them do not break.
+    """
+
     label: str = Field(..., min_length=1, max_length=120)
     api_key: str = Field(..., min_length=1, max_length=2048)
-    # Optional — the router defaults base_url to the configured WAHA server
-    # so the common case is just label + API key.
-    base_url: Optional[str] = Field(default=None, max_length=2048)
-    session_name: str = Field(default="default", min_length=1, max_length=120)
-    webhook_url: Optional[str] = Field(default=None, max_length=2048)
 
 
 class WhatsAppConnectionUpdate(BaseModel):
@@ -36,7 +47,15 @@ class WhatsAppConnectionUpdate(BaseModel):
 
 
 class WhatsAppConnectionOut(BaseModel):
-    """A line as shown in the listing — no secret material."""
+    """A line as shown in the listing — no secret material.
+
+    ``webhook_url`` is the auto-minted per-connection inbound URL
+    (``…/api/whatsapp/webhook/{token}``).  It is read-only and derived from
+    the stored ``webhook_token``; callers should treat it as informational
+    (display, WAHA dashboard check).
+    ``session_name`` is the auto-generated unique WAHA session name
+    (``sw-<hex>``) — informational, useful for WAHA dashboard correlation.
+    """
 
     id: UUID
     label: str

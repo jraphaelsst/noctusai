@@ -8,11 +8,23 @@ Only text messages are processed; media messages are acknowledged but
 not acted on (future: image/video attachments could be an alternate
 upload path).
 
-Auth note: this endpoint does NOT use the standard JWT auth because
+Auth note: these endpoints do NOT use the standard JWT auth because
 WAHA's webhook calls carry no Authorization header. Sender validation
-is handled by the phone number whitelist in settings. The endpoint
-itself is public but useless without a valid WAHA instance forwarding
-real messages.
+is handled by the phone number whitelist in settings.
+
+Two receiver routes are provided:
+
+  POST /api/whatsapp/webhook
+      Legacy global route (back-compat). Uses the product-level HMAC
+      secret from settings when set.
+
+  POST /api/whatsapp/webhook/{token}
+      Per-connection token-scoped route. The token is an opaque secret
+      minted on connection create; it resolves to a specific connection
+      record (org / user / session). Unknown token → generic 404 (no
+      token enumeration). HMAC check uses the same global HMAC secret
+      when configured. Processing delegates to the shared
+      ``_process_waha_body`` helper — identical pipeline, no forked logic.
 """
 from __future__ import annotations
 
@@ -38,11 +50,13 @@ from noctusai_lib.integrations.vista import (
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
 )
+from app.services.credential_vault import EncryptionNotConfigured
 from app.services.media_service import ResolvedMedia, make_media_service
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample
 from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
+from app.services.whatsapp_connection_store import build_whatsapp_connection_store
 from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
@@ -163,32 +177,22 @@ def _resolve_default_org(admin_supabase) -> UUID | None:
     return None
 
 
-@router.post("/webhook")
-async def whatsapp_webhook(request: Request) -> Response:
-    """WAHA webhook endpoint.
+async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Response:
+    """Shared WAHA envelope processor.
 
-    Always returns 200 to prevent WAHA from retrying. Processing
-    failures are logged but never surfaced as HTTP errors — WAHA
-    doesn't understand them and would just retry indefinitely.
+    Handles envelope validation, event routing, dedup (Redis SETNX + DB),
+    media resolution, auth check, and message dispatch. Called by both the
+    legacy global route and the per-connection token-scoped route so the
+    logic is not forked.
+
+    ``event_source`` is used for WAHA sample recording / log context only
+    (e.g. ``"webhook"`` or ``"webhook/token"``).
+
+    Always returns a ``200 OK`` Response (WAHA doesn't understand our errors
+    and would retry indefinitely on non-200; processing failures are logged).
     """
-    raw_body = await request.body()
-    if settings.waha_webhook_hmac_secret:
-        signature = request.headers.get("X-Webhook-Hmac-SHA256", "")
-        expected = hmac.new(
-            settings.waha_webhook_hmac_secret.encode("utf-8"),
-            raw_body,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            logger.warning("WhatsApp webhook rejected: invalid HMAC signature")
-            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        body = json.loads(raw_body.decode("utf-8"))
-    except Exception:
-        return Response(status_code=status.HTTP_200_OK)
     record_waha_sample(
-        source="webhook",
+        source=event_source,
         direction="waha_to_app",
         event_type=str(body.get("event") or "unknown") if isinstance(body, dict) else "unknown",
         payload=body,
@@ -263,7 +267,6 @@ async def whatsapp_webhook(request: Request) -> Response:
     # "audio recebido — não suportado" and "[Audio transcrito] ola tudo
     # bem? gostaria de saber sobre o ONE5555".
     resolved_media: ResolvedMedia | None = None
-    media_obj = payload.media if isinstance(payload.media, object) else None
     media_url = None
     media_mimetype = None
     media_filename = None
@@ -429,6 +432,98 @@ async def whatsapp_webhook(request: Request) -> Response:
         )
 
     return Response(status_code=status.HTTP_200_OK)
+
+
+def _verify_hmac(raw_body: bytes, request: Request, hmac_secret: str) -> bool:
+    """Return True if the HMAC signature on the request is valid.
+
+    Factored out so both the legacy and token-scoped routes reuse the
+    same verification logic without copy-paste."""
+    signature = request.headers.get("X-Webhook-Hmac-SHA256", "")
+    expected = hmac.new(
+        hmac_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+@router.post("/webhook")
+async def whatsapp_webhook(request: Request) -> Response:
+    """WAHA webhook endpoint (legacy global route).
+
+    Always returns 200 to prevent WAHA from retrying. Processing
+    failures are logged but never surfaced as HTTP errors — WAHA
+    doesn't understand them and would just retry indefinitely.
+    """
+    raw_body = await request.body()
+    if settings.waha_webhook_hmac_secret:
+        if not _verify_hmac(raw_body, request, settings.waha_webhook_hmac_secret):
+            logger.warning("WhatsApp webhook rejected: invalid HMAC signature")
+            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        body = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        return Response(status_code=status.HTTP_200_OK)
+
+    return await _process_waha_body(body, event_source="webhook")
+
+
+@router.post("/webhook/{token}")
+async def whatsapp_webhook_by_token(token: str, request: Request) -> Response:
+    """Per-connection token-scoped WAHA webhook endpoint.
+
+    Resolves the connection via the opaque ``token`` path parameter.
+    Unknown token → 404 (generic, no token enumeration). Delegates
+    to the shared ``_process_waha_body`` pipeline — identical processing
+    to the legacy ``/webhook`` route.
+
+    HMAC check uses the same global ``waha_webhook_hmac_secret`` when
+    configured. No JWT — WAHA calls carry no Authorization header.
+    """
+    # Build the store with service-role admin client (no JWT — this is a
+    # public webhook endpoint). Encryption key is needed only to build the
+    # store object, not to decrypt the API key (token lookup is plaintext).
+    # Unknown token → 404. Any config gap → 404 (don't leak config state
+    # to unauthenticated callers).
+    try:
+        store = build_whatsapp_connection_store(
+            get_admin_client(), encryption_key=settings.encryption_key
+        )
+    except EncryptionNotConfigured:
+        logger.warning(
+            "whatsapp_webhook_by_token: encryption not configured, cannot resolve token"
+        )
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+
+    connection = store.get_by_webhook_token(token)
+    if connection is None:
+        # Do NOT log the token value — it's a secret routing credential.
+        logger.debug("whatsapp_webhook_by_token: unknown token (404)")
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+
+    logger.debug(
+        "whatsapp_webhook_by_token: resolved connection id=%s session=%s",
+        connection.id,
+        connection.session_name,
+    )
+
+    raw_body = await request.body()
+    if settings.waha_webhook_hmac_secret:
+        if not _verify_hmac(raw_body, request, settings.waha_webhook_hmac_secret):
+            logger.warning(
+                "WhatsApp token-webhook rejected: invalid HMAC (connection=%s)",
+                connection.id,
+            )
+            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        body = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        return Response(status_code=status.HTTP_200_OK)
+
+    return await _process_waha_body(body, event_source=f"webhook/{connection.id}")
 
 
 __all__ = ["router"]

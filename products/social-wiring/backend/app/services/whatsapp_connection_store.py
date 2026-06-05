@@ -49,7 +49,13 @@ _UNSET: Any = object()
 class WhatsAppConnectionRecord:
     """One connection line. ``api_key`` is populated ONLY when a caller
     explicitly asks the store to decrypt it (live WAHA ops); it is ``None``
-    on the listing path so the secret never rides a list response."""
+    on the listing path so the secret never rides a list response.
+
+    ``webhook_token`` is the opaque routing token stored in the DB column added
+    by migration 005. It is always populated (non-null after backfill). The
+    public webhook URL is derived from this token by the router so it survives
+    domain changes without a DB migration.
+    """
 
     id: UUID
     org_id: UUID
@@ -61,6 +67,7 @@ class WhatsAppConnectionRecord:
     created_at: Any
     updated_at: Any
     api_key: Optional[str] = None
+    webhook_token: Optional[str] = None
 
 
 class WhatsAppConnectionStore:
@@ -102,6 +109,7 @@ class WhatsAppConnectionStore:
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
             api_key=api_key,
+            webhook_token=row.get("webhook_token"),
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -154,6 +162,7 @@ class WhatsAppConnectionStore:
         api_key: str,
         session_name: str = "default",
         webhook_url: Optional[str] = None,
+        webhook_token: Optional[str] = None,
     ) -> WhatsAppConnectionRecord:
         payload = {
             "org_id": str(org_id),
@@ -163,10 +172,32 @@ class WhatsAppConnectionStore:
             "session_name": session_name or "default",
             "encrypted_api_key": self._encrypt(api_key),
             "webhook_url": webhook_url,
+            "webhook_token": webhook_token,
         }
         resp = self._table().insert(payload).execute()
         rows = list(resp.data or [])
         return self._record(rows[0] if rows else payload)
+
+    def get_by_webhook_token(
+        self, token: str
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """Look up a connection by its opaque webhook token (service-role path).
+
+        Used by the token-scoped inbound webhook receiver to resolve which
+        connection (org / user / session) an incoming WAHA call belongs to.
+        Unknown token returns ``None``; the caller must map that to a generic
+        404 without leaking which tokens exist.
+        """
+        resp = (
+            self._table()
+            .select("*")
+            .eq("webhook_token", token)
+            .execute()
+        )
+        rows = list(resp.data or [])
+        if not rows:
+            return None
+        return self._record(rows[0])
 
     def update_connection(
         self,

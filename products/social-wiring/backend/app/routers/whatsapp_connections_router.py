@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import base64
 import logging
+import secrets
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     get_whatsapp_client,
@@ -197,25 +199,98 @@ async def create_connection(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg: SocialWiringSettings = Depends(get_settings),
+    waha_factory: Any = Depends(get_waha_client_factory),
 ) -> WhatsAppConnectionOut:
+    """Create a new WAHA connection line.
+
+    Accepts ONLY ``label`` and ``api_key``; every other field is derived
+    server-side:
+
+    - ``base_url``      — ``cfg.waha_base_url`` (the shared WAHA server).
+                          Empty → 503 (no WAHA configured).
+    - ``session_name``  — ``sw-<hex6>`` (unique per-connection WAHA session).
+                          NEVER reuses "default" so multiple users on the same
+                          WAHA server do not collide.
+    - ``webhook_token`` — ``secrets.token_urlsafe(24)`` opaque routing token.
+    - ``webhook_url``   — ``resolve_product_url('social-wiring') + /api/whatsapp/webhook/{token}``.
+                          ValueError from resolver → 503.
+
+    After persisting: calls ``start_session()`` then ``set_webhook()`` on the
+    WAHA client. WAHA 409/422 on start are tolerated (handled inside the
+    client). Real WAHA errors on webhook → 502.
+    """
     user, _token, raw_org = auth
-    # Default the WAHA server URL to the product's configured instance so the
-    # common case is just label + API key.
-    base_url = (body.base_url or cfg.waha_base_url or "").strip()
+
+    # ── 1. Resolve the WAHA server ─────────────────────────────────────
+    base_url = (cfg.waha_base_url or "").strip()
     if not base_url:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="base_url is required (no WAHA server configured to default to)",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WAHA server not configured (WAHA_BASE_URL is empty)",
         )
+
+    # ── 2. Derive unique session name (multi-account-safe) ─────────────
+    session_name = f"sw-{secrets.token_hex(6)}"
+
+    # ── 3. Mint webhook token + build public URL ────────────────────────
+    webhook_token = secrets.token_urlsafe(24)
+    try:
+        product_base = resolve_product_url("social-wiring")
+    except ValueError as exc:
+        logger.error("Cannot resolve social-wiring product URL for webhook: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Cannot build webhook URL: product URL not configured "
+                "(set PRODUCT_URL_SOCIAL_WIRING or PRODUCT_URL_PATTERN)"
+            ),
+        ) from exc
+    webhook_url = f"{product_base}/api/whatsapp/webhook/{webhook_token}"
+
+    # ── 4. Persist ─────────────────────────────────────────────────────
     record = store.create_connection(
         org_id=coerce_org_uuid(raw_org),
         user_id=_coerce_user_uuid(user),
         label=body.label.strip(),
         base_url=base_url,
         api_key=body.api_key.strip(),
-        session_name=body.session_name.strip() or "default",
-        webhook_url=(body.webhook_url or None),
+        session_name=session_name,
+        webhook_url=webhook_url,
+        webhook_token=webhook_token,
     )
+
+    # ── 5. Wire WAHA: start session then register webhook ───────────────
+    # Build the client directly from the request-time plain key (the stored
+    # record has api_key=None; we have the plain key in body). This avoids
+    # an unnecessary decrypt round-trip and keeps the pattern clean.
+    client = waha_factory(
+        base_url=base_url or None,
+        api_key=body.api_key.strip(),
+        session=session_name,
+    )
+    # start_session tolerates 409/422 (already started) internally.
+    try:
+        await client.start_session()
+    except Exception as exc:
+        logger.warning(
+            "WAHA start_session failed for new connection %s (session=%s): %s",
+            record.id, session_name, exc,
+        )
+        # Non-fatal: the operator can trigger start manually via /start.
+        # Do not roll back the DB record — it's valid to create and start later.
+
+    try:
+        await client.set_webhook(webhook_url, ["message", "session.status"])
+    except Exception as exc:
+        logger.error(
+            "WAHA set_webhook failed for connection %s (session=%s): %s",
+            record.id, session_name, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WAHA webhook registration failed: {exc}",
+        ) from exc
+
     return _out(record)
 
 

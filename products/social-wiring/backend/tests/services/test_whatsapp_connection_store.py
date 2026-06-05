@@ -38,9 +38,11 @@ CREATE TABLE whatsapp_connections (
     session_name TEXT NOT NULL DEFAULT 'default',
     encrypted_api_key TEXT NOT NULL,
     webhook_url TEXT,
+    webhook_token TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (org_id, user_id, label)
+    UNIQUE (org_id, user_id, label),
+    UNIQUE (webhook_token)
 );
 """
 
@@ -171,6 +173,32 @@ class TestListUpdateDelete:
         assert store.update_connection(
             connection_id=uuid4(), org_id=_ORG, user_id=_USER, label="x"
         ) is None
+
+
+class TestWebhookToken:
+    def test_create_stores_webhook_token(self, store):
+        rec = _make(store, webhook_token="tok-abc123")
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        assert got is not None
+        assert got.webhook_token == "tok-abc123"
+
+    def test_get_by_webhook_token_found(self, store):
+        rec = _make(store, webhook_token="tok-xyz789")
+        found = store.get_by_webhook_token("tok-xyz789")
+        assert found is not None
+        assert found.id == rec.id
+        assert found.label == rec.label
+
+    def test_get_by_webhook_token_unknown(self, store):
+        _make(store, webhook_token="tok-known")
+        assert store.get_by_webhook_token("tok-unknown") is None
+
+    def test_get_by_webhook_token_no_api_key_exposed(self, store):
+        """Token lookup never decrypts the API key (service-role path)."""
+        _make(store, api_key="secret-key", webhook_token="tok-safe")
+        found = store.get_by_webhook_token("tok-safe")
+        assert found is not None
+        assert found.api_key is None
 
 
 class TestFactory:

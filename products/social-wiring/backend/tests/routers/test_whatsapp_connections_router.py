@@ -11,9 +11,18 @@ symbols or the external integration):
 Auth + the 503-on-config-gap path come from the shared ``client`` fixture
 (MockSupabaseClient + default empty ENCRYPTION_KEY). Per
 ``KB § PATTERNS/di-test-seam.md`` (Class-B).
+
+Contract v2 changes (social-waha-connect-backend):
+  - Create payload shrinks to {label, api_key}.
+  - ``base_url`` / ``session_name`` / ``webhook_url`` are server-derived.
+  - Auto-unique ``session_name`` (``sw-<hex6>``) — never "default".
+  - Auto ``webhook_token`` + public ``webhook_url`` built from the resolver.
+  - ``set_webhook`` is called on create with the token URL.
+  - New POST /api/whatsapp/webhook/{token} route.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -25,6 +34,8 @@ from noctusai_lib.integrations.whatsapp import FakeWahaClient
 from app.services.whatsapp_connection_store import WhatsAppConnectionStore
 from app.sqlite_client import SQLiteClient
 
+_PRODUCT_BASE = "https://social.noctusai.com"
+
 _SCHEMA = """
 CREATE TABLE whatsapp_connections (
     id TEXT PRIMARY KEY,
@@ -35,22 +46,33 @@ CREATE TABLE whatsapp_connections (
     session_name TEXT NOT NULL DEFAULT 'default',
     encrypted_api_key TEXT NOT NULL,
     webhook_url TEXT,
+    webhook_token TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (org_id, user_id, label)
+    UNIQUE (org_id, user_id, label),
+    UNIQUE (webhook_token)
 );
 """
 
 
 @pytest.fixture
-def connections_client(client, tmp_path: Path):
+def connections_client(client, tmp_path: Path, override_settings, monkeypatch):
     """`client` + a SQLite-backed store + a Fake WAHA factory via the router's
-    DI seams. Yields the auth'd client; tears the overrides down."""
+    DI seams. Also configures ``waha_base_url`` via the settings DI seam and
+    sets ``PRODUCT_URL_SOCIAL_WIRING`` env var so ``resolve_product_url``
+    returns a deterministic value in tests. Yields (auth_client, fakes_dict);
+    tears all overrides down."""
     from app.main import app
     from app.routers.whatsapp_connections_router import (
         get_connection_store,
         get_waha_client_factory,
     )
+
+    # ── Settings: configure waha_base_url so create can resolve the server ──
+    override_settings(waha_base_url="https://waha.example.com")
+
+    # ── Product URL: deterministic via env var (no network / no DB) ──────────
+    monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", _PRODUCT_BASE)
 
     db_path = tmp_path / "router_conn.sqlite3"
     with sqlite3.connect(db_path) as conn:
@@ -82,8 +104,9 @@ def connections_client(client, tmp_path: Path):
             app.dependency_overrides[dep] = prev
 
 
-def _create(c, *, label="Atendimento SP", base_url="https://waha.example.com", api_key="k", **extra):
-    body = {"label": label, "base_url": base_url, "api_key": api_key, **extra}
+def _create(c, *, label="Atendimento SP", api_key="k"):
+    """Create a connection via the v2 contract: only label + api_key."""
+    body = {"label": label, "api_key": api_key}
     return c.post("/api/whatsapp/connections", json=body)
 
 
@@ -94,20 +117,74 @@ class TestCrud:
         assert resp.status_code == 201, resp.text
         created = resp.json()
         assert created["label"] == "Vendas RJ"
-        assert created["base_url"] == "https://waha.example.com"
         assert "api_key" not in created  # secret never leaves the backend
 
         listed = c.get("/api/whatsapp/connections")
         assert listed.status_code == 200
         assert [r["id"] for r in listed.json()] == [created["id"]]
 
-    def test_create_requires_base_url_when_no_waha_configured(self, connections_client):
+    def test_create_derives_base_url_from_config(self, connections_client):
+        """base_url is set from cfg.waha_base_url, not from the request."""
         c, _ = connections_client
-        resp = c.post(
-            "/api/whatsapp/connections", json={"label": "X", "api_key": "k"}
+        resp = _create(c)
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["base_url"] == "https://waha.example.com"
+
+    def test_create_derives_unique_session_name(self, connections_client):
+        """session_name is auto-generated (sw-<hex6>) — never 'default'."""
+        c, _ = connections_client
+        resp1 = _create(c, label="Line 1")
+        resp2 = _create(c, label="Line 2")
+        assert resp1.status_code == 201, resp1.text
+        assert resp2.status_code == 201, resp2.text
+
+        s1 = resp1.json()["session_name"]
+        s2 = resp2.json()["session_name"]
+        assert s1 != "default", "session_name must not be 'default'"
+        assert s2 != "default", "session_name must not be 'default'"
+        assert s1 != s2, "each connection gets a unique session name"
+        assert s1.startswith("sw-"), f"session name should start with 'sw-', got {s1!r}"
+
+    def test_create_derives_webhook_url_from_resolver(self, connections_client):
+        """webhook_url is built from resolve_product_url + /api/whatsapp/webhook/{token}."""
+        c, _ = connections_client
+        resp = _create(c)
+        assert resp.status_code == 201, resp.text
+        webhook_url = resp.json()["webhook_url"]
+        assert webhook_url is not None
+        assert webhook_url.startswith(f"{_PRODUCT_BASE}/api/whatsapp/webhook/"), (
+            f"Expected token URL starting with {_PRODUCT_BASE}/api/whatsapp/webhook/, "
+            f"got {webhook_url!r}"
         )
-        # No body base_url + default settings.waha_base_url == "" → 422.
-        assert resp.status_code == 422, resp.text
+        # Token is a non-empty path segment after the prefix
+        token_part = webhook_url.split("/api/whatsapp/webhook/")[-1]
+        assert len(token_part) >= 10, "webhook token should be non-trivially long"
+
+    def test_create_calls_set_webhook_with_token_url(self, connections_client):
+        """set_webhook is invoked on create and the FakeWahaClient records it."""
+        c, fakes = connections_client
+        resp = _create(c)
+        assert resp.status_code == 201, resp.text
+        session_name = resp.json()["session_name"]
+        webhook_url = resp.json()["webhook_url"]
+
+        # The FakeWahaClient keyed by session_name should have the webhook config.
+        assert session_name in fakes, (
+            f"Expected fake client for session {session_name!r}; got keys {list(fakes)}"
+        )
+        fake = fakes[session_name]
+        assert fake.webhook_config is not None, "set_webhook was not called"
+        assert fake.webhook_config["url"] == webhook_url
+        assert "message" in fake.webhook_config["events"]
+        assert "session.status" in fake.webhook_config["events"]
+
+    def test_create_calls_start_session(self, connections_client):
+        """start_session is called on create."""
+        c, fakes = connections_client
+        resp = _create(c)
+        assert resp.status_code == 201, resp.text
+        session_name = resp.json()["session_name"]
+        assert fakes[session_name].start_count == 1
 
     def test_update_label(self, connections_client):
         c, _ = connections_client
@@ -151,15 +228,20 @@ class TestLiveOps:
 
     def test_start_then_qr(self, connections_client):
         c, fakes = connections_client
-        cid = _create(c).json()["id"]
-        assert c.post(f"/api/whatsapp/connections/{cid}/start").status_code == 200
-        assert fakes["default"].start_count == 1
+        created = _create(c).json()
+        cid = created["id"]
+        session_name = created["session_name"]
+        resp = c.post(f"/api/whatsapp/connections/{cid}/start")
+        assert resp.status_code == 200
+        # start_count includes the create-time call (1) + explicit /start (1)
+        assert fakes[session_name].start_count == 2
 
     def test_logout(self, connections_client):
         c, fakes = connections_client
-        cid = _create(c).json()["id"]
-        fakes_default = c.post(f"/api/whatsapp/connections/{cid}/start")  # ensure session exists
-        assert fakes_default.status_code == 200
+        created = _create(c).json()
+        cid = created["id"]
+        resp = c.post(f"/api/whatsapp/connections/{cid}/start")
+        assert resp.status_code == 200
         resp = c.post(f"/api/whatsapp/connections/{cid}/logout")
         assert resp.status_code == 200, resp.text
 
@@ -184,3 +266,112 @@ class TestConfigGap:
         override_settings(encryption_key="")
         resp = client.get("/api/whatsapp/connections")
         assert resp.status_code == 503, resp.text
+
+    def test_missing_waha_base_url_503(self, connections_client, override_settings):
+        """Empty waha_base_url → 503 (no silent fallback)."""
+        c, _ = connections_client
+        override_settings(waha_base_url="")
+        resp = c.post("/api/whatsapp/connections", json={"label": "X", "api_key": "k"})
+        assert resp.status_code == 503, resp.text
+
+    def test_missing_product_url_503(self, connections_client, monkeypatch):
+        """Unresolvable product URL → 503."""
+        c, _ = connections_client
+        # Remove the env var so resolve_product_url raises ValueError.
+        monkeypatch.delenv("PRODUCT_URL_SOCIAL_WIRING", raising=False)
+        monkeypatch.delenv("PRODUCT_URL_PATTERN", raising=False)
+        resp = c.post("/api/whatsapp/connections", json={"label": "X", "api_key": "k"})
+        assert resp.status_code == 503, resp.text
+
+
+class TestTokenWebhookRoute:
+    """Token-scoped inbound webhook route tests.
+
+    The route resolves the connection by the opaque token, then runs the
+    same processing pipeline as the legacy /webhook route.
+
+    Because the webhook route builds the store directly from settings
+    (not through the connections_client DI override), we wire up a store
+    with a known token directly in the DB here.
+    """
+
+    @pytest.fixture
+    def token_webhook_db(self, tmp_path: Path):
+        """A SQLite-backed store with one seeded row at a known token."""
+        from app.services.whatsapp_connection_store import WhatsAppConnectionStore
+        from app.sqlite_client import SQLiteClient
+        from cryptography.fernet import Fernet
+        from uuid import uuid4
+
+        db_path = tmp_path / "wh_token.sqlite3"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(_SCHEMA)
+
+        fernet = Fernet(Fernet.generate_key())
+        store = WhatsAppConnectionStore(SQLiteClient(db_path), fernet=fernet)
+        rec = store.create_connection(
+            org_id=__import__("uuid").UUID("00000000-0000-4000-8000-000000000001"),
+            user_id=__import__("uuid").UUID("00000000-0000-4000-8000-0000000000aa"),
+            label="Token Test",
+            base_url="https://waha.example.com",
+            api_key="test-key",
+            session_name="sw-aabbcc",
+            webhook_url=f"{_PRODUCT_BASE}/api/whatsapp/webhook/KNOWNTOKEN",
+            webhook_token="KNOWNTOKEN",
+        )
+        return db_path, store, rec, fernet
+
+    def test_unknown_token_404(self, client):
+        resp = client.post(
+            "/api/whatsapp/webhook/totally-unknown-token-xyz",
+            json={"event": "message", "session": "default", "payload": {}},
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_known_token_processes_message(self, client, override_settings, token_webhook_db, monkeypatch):
+        """A valid token resolves the connection and the route returns 200.
+
+        Uses ``patch`` on the module-level ``build_whatsapp_connection_store``
+        in ``app.routers.whatsapp_router`` — this is a Class-C seam (the
+        route builds the store directly; no DI slot exists for this path).
+        We are patching the external store FACTORY, not any of our own guards.
+        """
+        from unittest.mock import patch
+
+        db_path, store, rec, fernet = token_webhook_db
+
+        with patch(
+            "app.routers.whatsapp_router.build_whatsapp_connection_store",
+            return_value=store,
+        ):
+            resp = client.post(
+                "/api/whatsapp/webhook/KNOWNTOKEN",
+                json={
+                    "event": "session.status",
+                    "session": "sw-aabbcc",
+                    "payload": {"status": "WORKING"},
+                },
+            )
+        # The route always 200-acks WAHA payloads.
+        assert resp.status_code == 200, resp.text
+
+    def test_unknown_token_no_leak(self, client):
+        """Unknown token returns 404 with no information about the token space."""
+        resp = client.post(
+            "/api/whatsapp/webhook/notthere",
+            json={"event": "message"},
+        )
+        assert resp.status_code == 404
+        # Response body should be generic (not reference the token).
+        body_text = resp.text
+        assert "notthere" not in body_text
+
+    def test_known_token_with_encryption_not_configured_404(self, client, override_settings):
+        """When encryption key is missing the store can't be built; return 404
+        (not 503) to avoid leaking config state to unauthenticated callers."""
+        override_settings(encryption_key="")
+        resp = client.post(
+            "/api/whatsapp/webhook/sometoken",
+            json={"event": "message"},
+        )
+        assert resp.status_code == 404, resp.text
