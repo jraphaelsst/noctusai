@@ -20,6 +20,15 @@ Per endpoint, authored as the single source of truth both engineers reference:
 
 Verify the contract against existing code when a side already exists — **do not assume**; extracting it is exactly where you catch the drift. The pinned contract is the **acceptance gate for BOTH** slices.
 
+## A shapes-only contract is necessary but NOT sufficient (2026-06-05 refinement)
+The first *clean-from-the-start* run (social-wiring WAHA connect: BE + FE dispatched against one contract) matched with **zero field/envelope drift** — the shapes contract worked exactly as designed. But three smaller drifts slipped through because the contract pinned only *shapes*. For a **stateful / connected** feature (sessions, webhooks, external services), the contract must ALSO pin:
+- **Side-effects + state-after** — what the response leaves ALREADY DONE, not just its shape. *(The slip: the contract didn't say "`create()` already `start_session()`s," so the FE independently fired start on detail-open → a redundant double-start. Idempotent here, but it's avoidable drift.)* Rule: every *"after this call, X is already true"* belongs in the contract.
+- **Error taxonomy** — enumerate `status → cause → user-facing message`, not just "show error states." *(Here: `502` = upstream WAHA `set_webhook` failed · `503` = `waha_base_url`/`encryption_key`/`resolve_product_url` unconfigured · `404` = unknown webhook token. The FE handled them generically because the map wasn't pinned.)*
+- **Strictness** — are extra/removed request fields IGNORED or REJECTED? *(BE dropped `extra="forbid"` to silently ignore the now-removed `session`/`server`/`webhook` fields — a reasonable but contract-level decision the contract should state.)*
+- **Deprecations** — when the contract change makes a prior endpoint/action vestigial (here the FE `configureWebhook` action, now that the webhook is auto-minted server-side), NAME it so the consumer drops it instead of leaving an orphan.
+
+The discriminator: a **stateless data-fetch** endpoint is fully captured by shapes; a **stateful/action** endpoint (mutates external state, triggers a side-effect, gates on config) needs the four above or the consumer re-derives behaviour and drifts.
+
 ## The flow (tech-lead view)
 1. **Author/extract the contract skeleton** first (from the existing side if present; verify field-by-field). This step IS the drift-catch.
 2. **Embed it verbatim in BOTH briefs** — the BE brief builds endpoints *to* it; the FE brief consumes *to* it. No rediscovery tax; no divergent assumptions.
