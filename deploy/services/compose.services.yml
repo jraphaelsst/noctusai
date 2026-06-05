@@ -110,6 +110,12 @@ services:
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?set WHATSAPP_API_KEY in .env.services}
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
+      # Swagger UI (/docs) basic-auth mirrors the dashboard creds (same env vars)
+      # so one login covers both surfaces. Without these passed through here the
+      # container ignores the WHATSAPP_SWAGGER_* lines in .env.services (this
+      # service has no env_file:, so .env.services is interpolation-only).
+      WHATSAPP_SWAGGER_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
       WAHA_GOWS_PATH: /app/gows
       WAHA_GOWS_SOCKET: /tmp/gows.sock
       WAHA_ZIPPER: ZIPUNZIP
