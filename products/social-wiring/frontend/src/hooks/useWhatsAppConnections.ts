@@ -21,8 +21,11 @@ import { api } from "@noctusai/seed/infra";
 export interface WhatsAppConnectionLine {
   id: string;
   label: string;
+  /** Derived by the backend; read-only in the UI. */
   base_url: string;
+  /** Derived by the backend; read-only in the UI. */
   session_name: string;
+  /** Derived public webhook URL returned by the backend on create/update. */
   webhook_url: string | null;
   created_at: string;
   updated_at: string;
@@ -45,20 +48,23 @@ export interface WhatsAppConnectionQr {
   png_base64: string | null;
 }
 
+/**
+ * Create payload — backend derives session_name, base_url, and webhook_url.
+ * Only label + api_key are user-supplied.
+ */
 export interface CreateConnectionBody {
   label: string;
   api_key: string;
-  base_url?: string;
-  session_name?: string;
-  webhook_url?: string;
 }
 
+/**
+ * Update payload — only the user-editable fields: label and optionally a new
+ * api_key (write-only; omit to leave unchanged).
+ * base_url, session_name, and webhook_url are backend-derived; not sent.
+ */
 export interface UpdateConnectionBody {
   label?: string;
   api_key?: string;
-  base_url?: string;
-  session_name?: string;
-  webhook_url?: string;
 }
 
 export interface WebhookResult {
