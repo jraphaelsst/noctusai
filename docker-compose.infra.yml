@@ -63,6 +63,10 @@ services:
       WAHA_API_KEY: ${WAHA_API_KEY:-}
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      # Swagger basic-auth mirrors the dashboard creds (same env vars) so the
+      # two stay in sync — one login for both dashboard and /docs (Swagger UI).
+      WHATSAPP_SWAGGER_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
       WHATSAPP_DEFAULT_ENGINE: WEBJS
     ports:
       - "3000:3000"
