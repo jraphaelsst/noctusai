@@ -328,22 +328,23 @@ class TestTokenWebhookRoute:
         )
         assert resp.status_code == 404, resp.text
 
-    def test_known_token_processes_message(self, client, override_settings, token_webhook_db, monkeypatch):
+    def test_known_token_processes_message(self, client, override_settings, token_webhook_db):
         """A valid token resolves the connection and the route returns 200.
 
-        Uses ``patch`` on the module-level ``build_whatsapp_connection_store``
-        in ``app.routers.whatsapp_router`` — this is a Class-C seam (the
-        route builds the store directly; no DI slot exists for this path).
-        We are patching the external store FACTORY, not any of our own guards.
+        Injects the seeded store via the ``get_token_webhook_store`` DI seam
+        (``app.dependency_overrides``) — the same override pattern the
+        connections_client fixture uses for ``get_connection_store``. We do NOT
+        patch the module-level factory; overriding the seam keeps the real route
+        wiring exercised (no-monkey-patch-internals).
         """
-        from unittest.mock import patch
+        from app.main import app
+        from app.routers.whatsapp_router import get_token_webhook_store
 
         db_path, store, rec, fernet = token_webhook_db
 
-        with patch(
-            "app.routers.whatsapp_router.build_whatsapp_connection_store",
-            return_value=store,
-        ):
+        _prev = app.dependency_overrides.get(get_token_webhook_store)
+        app.dependency_overrides[get_token_webhook_store] = lambda: store
+        try:
             resp = client.post(
                 "/api/whatsapp/webhook/KNOWNTOKEN",
                 json={
@@ -352,6 +353,11 @@ class TestTokenWebhookRoute:
                     "payload": {"status": "WORKING"},
                 },
             )
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_token_webhook_store, None)
+            else:
+                app.dependency_overrides[get_token_webhook_store] = _prev
         # The route always 200-acks WAHA payloads.
         assert resp.status_code == 200, resp.text
 

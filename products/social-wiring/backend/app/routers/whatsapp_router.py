@@ -36,7 +36,7 @@ from pathlib import Path
 from uuid import UUID
 
 import redis
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from noctusai_lib.domain.chatbot import QueuedConversationMessage
 
@@ -470,8 +470,29 @@ async def whatsapp_webhook(request: Request) -> Response:
     return await _process_waha_body(body, event_source="webhook")
 
 
+def get_token_webhook_store():
+    """DI seam for the token-webhook store (service-role admin client; no JWT).
+
+    Returns ``None`` when encryption isn't configured so the route can 404
+    without leaking config state. This is the injectable seam tests override
+    (``app.dependency_overrides[get_token_webhook_store]``) — never patch the
+    module-level factory (that trips the no-monkey-patch-internals rule and
+    stops exercising the real wiring).
+    """
+    try:
+        return build_whatsapp_connection_store(
+            get_admin_client(), encryption_key=settings.encryption_key
+        )
+    except EncryptionNotConfigured:
+        return None
+
+
 @router.post("/webhook/{token}")
-async def whatsapp_webhook_by_token(token: str, request: Request) -> Response:
+async def whatsapp_webhook_by_token(
+    token: str,
+    request: Request,
+    store=Depends(get_token_webhook_store),
+) -> Response:
     """Per-connection token-scoped WAHA webhook endpoint.
 
     Resolves the connection via the opaque ``token`` path parameter.
@@ -482,16 +503,11 @@ async def whatsapp_webhook_by_token(token: str, request: Request) -> Response:
     HMAC check uses the same global ``waha_webhook_hmac_secret`` when
     configured. No JWT — WAHA calls carry no Authorization header.
     """
-    # Build the store with service-role admin client (no JWT — this is a
-    # public webhook endpoint). Encryption key is needed only to build the
-    # store object, not to decrypt the API key (token lookup is plaintext).
-    # Unknown token → 404. Any config gap → 404 (don't leak config state
-    # to unauthenticated callers).
-    try:
-        store = build_whatsapp_connection_store(
-            get_admin_client(), encryption_key=settings.encryption_key
-        )
-    except EncryptionNotConfigured:
+    # Store is built by the get_token_webhook_store DI seam (service-role admin
+    # client; no JWT — this is a public webhook endpoint). It returns None on a
+    # config gap (encryption unconfigured) → 404, so we never leak config state
+    # to unauthenticated callers. Unknown token → 404. Token lookup is plaintext.
+    if store is None:
         logger.warning(
             "whatsapp_webhook_by_token: encryption not configured, cannot resolve token"
         )
