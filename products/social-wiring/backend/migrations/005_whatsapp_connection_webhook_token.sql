@@ -15,7 +15,10 @@
 -- Forward-only + idempotent within the apply window. Apply to the
 -- noctusai Supabase (social_wiring schema) AFTER 004 is applied.
 
-SET search_path = social_wiring, public;
+-- `extensions` is on the search_path because pgcrypto's gen_random_bytes lives
+-- in the `extensions` schema on Supabase (NOT public) — without it the backfill
+-- errors 42883 "function gen_random_bytes(integer) does not exist".
+SET search_path = social_wiring, public, extensions;
 
 -- Step 1: add column nullable first (required before backfill).
 ALTER TABLE social_wiring.whatsapp_connections
@@ -24,8 +27,9 @@ ALTER TABLE social_wiring.whatsapp_connections
 -- Step 2: backfill existing rows with a fresh random hex token
 --   encode(gen_random_bytes(18), 'hex') produces 36 hex chars — same entropy
 --   as secrets.token_hex(18) on the Python side, URL-safe, WAHA-safe.
+--   Schema-qualified so it resolves regardless of search_path quirks.
 UPDATE social_wiring.whatsapp_connections
-    SET webhook_token = encode(gen_random_bytes(18), 'hex')
+    SET webhook_token = encode(extensions.gen_random_bytes(18), 'hex')
     WHERE webhook_token IS NULL;
 
 -- Step 3: enforce NOT NULL.
