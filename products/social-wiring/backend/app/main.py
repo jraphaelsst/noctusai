@@ -116,6 +116,7 @@ def _register_media_wiring() -> ModuleRegistration:
 
 
 from app.modules.email_marketing import register as _register_email_marketing
+from app.modules.mailchimp import register as _mailchimp
 from app.modules.media_creation import register as _register_media_creation
 from app.modules.scheduling import register as _scheduling
 from app.modules.youtube import register as _youtube
@@ -129,6 +130,7 @@ MODULES = [
     _register_email_marketing,
     _scheduling,
     _register_media_creation,
+    _mailchimp,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
