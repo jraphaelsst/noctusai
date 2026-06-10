@@ -18,33 +18,29 @@ from contextlib import asynccontextmanager
 from noctusai_lib.primitives.exceptions import AppException
 
 
-# ── Local error classes (normative Protocol §2 hierarchy) ────────────────────
-# These mirror the noctusai_lib.integrations.mailchimp error hierarchy.
-# Once slice A lands, the product can import those directly; until then
-# these local definitions keep the router layer working.
+# ── Error classes: the seed hierarchy, re-exported ───────────────────────────
+# Single source of truth: noctusai_lib.integrations.mailchimp (slice A).
+# The real adapter raises THESE classes — local redefinitions would make the
+# except-clauses below silently miss them (identity ≠ name).
 
-class MailchimpError(Exception):
-    """Base for all Mailchimp adapter errors."""
+from noctusai_lib.integrations.mailchimp import (  # noqa: E402
+    MailchimpAuthError,
+    MailchimpError,
+    MailchimpNotFoundError,
+    MailchimpRateLimitedError,
+    MailchimpRejectedError,
+    MailchimpUnreachableError,
+)
 
-
-class MailchimpAuthError(MailchimpError):
-    """Mailchimp returned 401 or 403."""
-
-
-class MailchimpNotFoundError(MailchimpError):
-    """Mailchimp returned 404."""
-
-
-class MailchimpRateLimitedError(MailchimpError):
-    """Mailchimp returned 429."""
-
-
-class MailchimpRejectedError(MailchimpError):
-    """Mailchimp returned 400/422 — ``args[0]`` carries the MC detail message."""
-
-
-class MailchimpUnreachableError(MailchimpError):
-    """Network / timeout / 5xx from Mailchimp."""
+__all__ = [
+    "MailchimpAuthError",
+    "MailchimpError",
+    "MailchimpNotFoundError",
+    "MailchimpRateLimitedError",
+    "MailchimpRejectedError",
+    "MailchimpUnreachableError",
+    "translate_mailchimp_errors",
+]
 
 
 # ── Translation context manager ──────────────────────────────────────────────
