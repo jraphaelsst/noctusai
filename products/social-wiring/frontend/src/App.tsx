@@ -34,6 +34,10 @@ import {
   Share2,
   Wand2,
   Youtube,
+  UserRound,
+  List,
+  FileText,
+  Send,
 } from "lucide-react";
 
 // Pages
@@ -51,6 +55,11 @@ const Conexoes = lazy(() => import("@/pages/Conexoes"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
 const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
 const EmailMarketing = lazy(() => import("@/pages/EmailMarketing"));
+const Contatos = lazy(() => import("@/pages/Contatos"));
+const EmailListas = lazy(() => import("@/pages/EmailListas"));
+const EmailTemplates = lazy(() => import("@/pages/EmailTemplates"));
+const EmailCampanhas = lazy(() => import("@/pages/EmailCampanhas"));
+const EmailMarketingConfig = lazy(() => import("@/pages/EmailMarketingConfig"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 // Nav
@@ -63,8 +72,20 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
-      { name: "Email Marketing", href: "/email-marketing", icon: Mail, route: "email_marketing" },
+      { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
+    ],
+  },
+  {
+    key: "email",
+    label: "Email Marketing",
+    icon: Mail,
+    defaultOpen: false,
+    items: [
+      { name: "Listas", href: "/email-marketing/listas", icon: List, route: "email_listas" },
+      { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
+      { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
+      { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2, route: "email_config" },
     ],
   },
   {
@@ -98,8 +119,20 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
-      { name: "Email Marketing", href: "/email-marketing", icon: Mail },
+      { name: "Contatos", href: "/contatos", icon: UserRound },
       { name: "YouTube", href: "/youtube", icon: Youtube },
+    ],
+  },
+  {
+    key: "email",
+    label: "Email Marketing",
+    icon: Mail,
+    defaultOpen: false,
+    items: [
+      { name: "Listas", href: "/email-marketing/listas", icon: List },
+      { name: "Templates", href: "/email-marketing/templates", icon: FileText },
+      { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send },
+      { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2 },
     ],
   },
   {
@@ -137,7 +170,13 @@ export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/media-creation", component: MediaCreation },
-    { path: "/email-marketing", component: EmailMarketing },
+    // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
+    { path: "/email-marketing", component: EmailCampanhas },
+    { path: "/contatos", component: Contatos },
+    { path: "/email-marketing/listas", component: EmailListas },
+    { path: "/email-marketing/templates", component: EmailTemplates },
+    { path: "/email-marketing/campanhas", component: EmailCampanhas },
+    { path: "/email-marketing/configuracao", component: EmailMarketingConfig },
     { path: "/youtube", component: YouTube },
     // Unified connections page (new canonical route)
     { path: "/conexoes", component: Conexoes },
