@@ -66,7 +66,7 @@ def _capturing_transport(
 
 
 # ---------------------------------------------------------------------------
-# Patch helper: inject a MockTransport into httpx.AsyncClient
+# Client builder: inject a MockTransport via the constructor seam
 # ---------------------------------------------------------------------------
 
 
@@ -79,41 +79,10 @@ def _make_client(
     body: dict[str, Any] | None = None,
 ) -> tuple[HttpxMailchimpClient, httpx.MockTransport | None]:
     dc = server_prefix or "us6"
-    client = HttpxMailchimpClient(api_key, server_prefix=dc)
-    # Override _request to use the given transport.
     if transport is None:
         transport = _json_transport(status=status, body=body)
-    # Monkey-patch the internal _request to inject the transport.
-    original_request = client._request
-
-    async def patched_request(
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: dict[str, Any] | None = None,
-        body_bytes: bytes | None = None,
-    ) -> dict[str, Any]:
-        url = f"{client._base_url}/{path.lstrip('/')}"
-        try:
-            async with httpx.AsyncClient(transport=transport) as http:
-                kwargs: dict[str, Any] = {
-                    "auth": ("anystring", client._api_key),
-                    "params": params,
-                }
-                if body_bytes is not None:
-                    kwargs["content"] = body_bytes
-                    kwargs["headers"] = {"Content-Type": "application/json"}
-                elif json is not None:
-                    kwargs["json"] = json
-
-                response = await http.request(method, url, **kwargs)
-        except (httpx.TransportError, httpx.TimeoutException) as exc:
-            from noctusai_lib.integrations.mailchimp.types import MailchimpUnreachableError
-            raise MailchimpUnreachableError(str(exc), status=0) from exc
-        return HttpxMailchimpClient._translate(response)
-
-    client._request = patched_request  # type: ignore[method-assign]
+    # Constructor transport seam — the suite exercises the REAL _request path.
+    client = HttpxMailchimpClient(api_key, server_prefix=dc, transport=transport)
     return client, transport
 
 

@@ -60,10 +60,19 @@ class HttpxMailchimpClient:
     thread-safe; use one instance per request or per coroutine chain.
     """
 
-    def __init__(self, api_key: str, *, server_prefix: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        server_prefix: str,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._api_key = api_key
         self._server_prefix = server_prefix
         self._base_url = f"https://{server_prefix}.api.mailchimp.com/3.0"
+        # Test seam: an httpx.MockTransport here lets suites exercise the REAL
+        # _request path without monkey-patching. None → httpx default transport.
+        self._transport = transport
 
     # ------------------------------------------------------------------
     # Internal HTTP primitive
@@ -85,7 +94,7 @@ class HttpxMailchimpClient:
         """
         url = f"{self._base_url}/{path.lstrip('/')}"
         try:
-            async with httpx.AsyncClient() as http:
+            async with httpx.AsyncClient(transport=self._transport) as http:
                 kwargs: dict[str, Any] = {
                     "auth": ("anystring", self._api_key),
                     "params": params,
