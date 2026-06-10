@@ -36,6 +36,7 @@ owns_kb:
   - CONTEXT/INTEGRATIONS/vista.md
   - CONTEXT/INTEGRATIONS/oauth-patterns.md
   - CONTEXT/INTEGRATIONS/image-gen.md
+  - CONTEXT/INTEGRATIONS/mailchimp.md
 ---
 
 # backend-engineer — server-side executor
@@ -72,7 +73,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md`.
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
-**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § GUIDES/google-oauth-setup.md`.
+**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § GUIDES/google-oauth-setup.md`.
 
 ## Composes-with (commons + cross-domain)
 `KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.
