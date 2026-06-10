@@ -79,9 +79,11 @@ class TestSSOTokenFlow:
         # Decode the token to verify org_role is embedded
         import jwt as pyjwt
         from app.config import settings
+        from noctusai_lib.api.auth import SSO_AUDIENCE, SSO_ISSUER
         payload = pyjwt.decode(
             data["sso_token"], settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            audience=SSO_AUDIENCE, issuer=SSO_ISSUER,
         )
         assert payload["org_role"] == "admin"
         assert payload["org_id"] == "org-1"

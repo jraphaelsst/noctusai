@@ -26,7 +26,11 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Header({ name, periodStart, periodEnd }: { name: string; periodStart: string; periodEnd: string }) {
+// NOTE: a report-title banner, NOT the authenticated app-chrome `Header` organ
+// (`@noctusai/lib`). This is a public, unauthenticated page (no user/logout/theme
+// context), so the canonical Header does not apply — named distinctly to avoid a
+// false canonical-organ collision.
+function ReportHeader({ name, periodStart, periodEnd }: { name: string; periodStart: string; periodEnd: string }) {
   const fmt = (d: string) =>
     new Date(d + "T00:00:00").toLocaleDateString("pt-BR", {
       day: "2-digit",
@@ -196,7 +200,7 @@ function ErrorState({ message }: { message: string }) {
 function EmptyState({ report }: { report: PublicReport }) {
   return (
     <PageShell>
-      <Header
+      <ReportHeader
         name={report.name}
         periodStart={report.period_start}
         periodEnd={report.period_end}
@@ -232,7 +236,7 @@ export default function RelatorioPublico() {
 
   return (
     <PageShell>
-      <Header
+      <ReportHeader
         name={data.name}
         periodStart={data.period_start}
         periodEnd={data.period_end}

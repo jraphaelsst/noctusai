@@ -13,6 +13,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from app.config import settings
+from noctusai_lib.api.auth import SSO_AUDIENCE, SSO_ISSUER
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +209,15 @@ def _make_sso_token(
     email="user@test.com", org_id="org-123", expired=False, token_type="sso",
     role="user", org_role="member", product="therapy-platform",
 ):
-    """Create a valid SSO JWT token for testing."""
+    """Create a valid SSO JWT token for testing.
+
+    Mirrors the canonical `create_sso_token` contract in
+    `noctusai_lib.api.auth`: the hardened `verify_sso_token` REQUIRES
+    `iss`/`aud`/`iat`/`exp`/`type` and validates issuer/audience, so a token
+    missing those claims is rejected with 401. Sign with the dedicated SSO
+    secret when configured, else `jwt_secret` (mirrors `_sso_secret`).
+    """
+    now = int(time.time())
     payload = {
         "sub": "user-uid-123",
         "email": email,
@@ -217,9 +226,13 @@ def _make_sso_token(
         "org_role": org_role,
         "product": product,
         "type": token_type,
-        "exp": (int(time.time()) - 600) if expired else (int(time.time()) + 300),
+        "iss": SSO_ISSUER,
+        "aud": SSO_AUDIENCE,
+        "iat": now,
+        "exp": (now - 600) if expired else (now + 300),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    secret = (getattr(settings, "sso_jwt_secret", "") or "").strip() or settings.jwt_secret
+    return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
 
 
 def _mock_generate_link(email_otp="123456"):
@@ -359,7 +372,12 @@ class TestSSOSessionTokenValidation:
 
     def test_token_without_email(self, sso_session_client):
         client, _ = sso_session_client
-        payload = {"sub": "uid", "type": "sso", "exp": int(time.time()) + 300}
+        # Otherwise-valid SSO token (passes verify_sso_token) but missing email,
+        # so the router reaches its 400 "sem email" branch rather than 401.
+        payload = {
+            "sub": "uid", "type": "sso", "iss": SSO_ISSUER, "aud": SSO_AUDIENCE,
+            "iat": int(time.time()), "exp": int(time.time()) + 300,
+        }
         token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
         resp = client.post("/api/sso/session", json={"token": token})
@@ -503,7 +521,10 @@ class TestSSOTokenOrgRole:
         assert resp.status_code == 200
 
         sso_token = resp.json()["sso_token"]
-        payload = jwt.decode(sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
+            audience=SSO_AUDIENCE, issuer=SSO_ISSUER,
+        )
         assert payload["org_role"] == "owner"
         assert payload["role"] == "user"
 
@@ -526,7 +547,10 @@ class TestSSOTokenOrgRole:
         assert resp.status_code == 200
 
         sso_token = resp.json()["sso_token"]
-        payload = jwt.decode(sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            sso_token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
+            audience=SSO_AUDIENCE, issuer=SSO_ISSUER,
+        )
         assert payload["org_role"] == "member"
 
 
