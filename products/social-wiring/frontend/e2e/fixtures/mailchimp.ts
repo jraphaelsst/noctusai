@@ -86,9 +86,11 @@ export async function mockMailchimpConnectionInvalidKey(page: Page) {
       return route.fulfill({
         status: 400,
         contentType: 'application/json',
-        // api client extractErrorMessage handles data.detail as string —
-        // object form { code, message } is NOT extracted by the client.
-        body: JSON.stringify({ detail: 'Chave API inválida ou datacenter incorreto.' }),
+        // Real backend envelope (seed AppException handler): {error:{code,message}}
+        // — extractErrorMessage's first branch parses error.message.
+        body: JSON.stringify({
+          error: { code: 'mailchimp_rejected', message: 'Chave API inválida ou datacenter incorreto.' },
+        }),
       });
     }
     return route.continue();
@@ -197,7 +199,7 @@ export async function mockMailchimpSegmentsMemberError(page: Page) {
         status: 400,
         contentType: 'application/json',
         body: JSON.stringify({
-          detail: {
+          error: {
             code: 'mailchimp_rejected',
             message: 'O email não pertence à audiência.',
           },
