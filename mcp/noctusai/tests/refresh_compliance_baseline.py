@@ -75,7 +75,22 @@ ENV_ARTIFACT_PREFIXES = (
 # regression test, structural ones heal-on-contact), so it is gated there — NOT in the
 # code-health regression baseline, where it only produces non-deterministic flap.
 # (added 2026-06-02 — auto-improvement cache STALE flapped the CI gate.)
-ENV_ARTIFACT_SUBSTRINGS = ("_version_static.py", "cache STALE")
+# "auto-loaded memory index" / "is bloated — trim to title" — check_memory_md_index
+# fingerprints. MEMORY.md lives OUT-OF-REPO at `~/.claude/projects/<encoded-cwd>/
+# memory/MEMORY.md` (Claude-Code per-project store), so these `<memory>` issues are
+# machine-LOCAL state that CI never observes (the path is absent there). Leaving them
+# un-excluded means `refresh_compliance_baseline.py`, run on any machine with a bloated
+# local MEMORY.md, silently bakes machine-specific fingerprints into the committed
+# baseline — the same "silent baseline absorption" the regression gate exists to prevent.
+# Memory-index discipline has its OWN dedicated keeper (`check_memory_md_index`, gated at
+# `validate` + `--check-memory-md-index` with test_memory_md_index.py), so excluding it
+# here loses no coverage. (added 2026-06-10.)
+ENV_ARTIFACT_SUBSTRINGS = (
+    "_version_static.py",
+    "cache STALE",
+    "auto-loaded memory index must stay tight",
+    "is bloated — trim to title",
+)
 
 
 def is_env_artifact(issue_text: str) -> bool:

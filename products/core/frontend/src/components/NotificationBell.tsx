@@ -11,6 +11,7 @@
  * `TeamManagement.tsx`, `BillingSettings.tsx`) continue to import
  * `NotificationBell` from this file with no prop changes.
  */
+// @consumes-organ NotificationBell@1.0 +seam=hooks-binding
 import { NotificationBell as SharedNotificationBell } from '@noctusai/lib/design-system';
 import { createNotificationHooks } from '@noctusai/lib/notifications';
 import { useNavigate } from 'react-router-dom';
