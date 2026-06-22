@@ -283,11 +283,11 @@ describe("Create → QR auto-flow", () => {
     expect(getByTestId("dialog")).toBeTruthy();
   });
 
-  it("start mutation is triggered on autoStart (auto-fires on render)", async () => {
-    const startMutate = vi.fn();
+  it("restart mutation is triggered on autoStart (auto-fires on render)", async () => {
+    const restartMutate = vi.fn();
     mockUseWhatsAppConnectionActions.mockReturnValue({
       ...makeDefaultActions(),
-      start: { mutate: startMutate, isPending: false },
+      restart: { mutate: restartMutate, isPending: false },
     });
 
     // Render the ConnectionDetailDialog directly with autoStart=true
@@ -296,7 +296,7 @@ describe("Create → QR auto-flow", () => {
     // Since ConnectionDetailDialog is not exported, we test the autoStart
     // effect indirectly: if we create a line and trigger the success callback,
     // the WhatsAppConnections component will render the detail dialog with
-    // autoStart=true, which calls start.mutate(id) on first render.
+    // autoStart=true, which calls restart.mutate(id) on first render.
     const newLine = makeLine({ id: "conn-new" });
     let successCallback: ((line: any) => void) | undefined;
 
@@ -326,8 +326,8 @@ describe("Create → QR auto-flow", () => {
       successCallback?.(newLine);
     });
 
-    // autoStart=true causes start.mutate to be called with the new line's id
-    expect(startMutate).toHaveBeenCalledWith("conn-new");
+    // autoStart=true causes restart.mutate to be called with the new line's id
+    expect(restartMutate).toHaveBeenCalledWith("conn-new");
   });
 });
 
@@ -414,5 +414,76 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     rtl.fireEvent.click(getByTestId("btn-apikey-edit"));
     expect(queryByTestId("edit-conn-apikey")).toBeTruthy();
     expect(queryByTestId("edit-conn-apikey-display")).toBeNull();
+  });
+});
+
+describe("ConnectionDetailDialog — QR restart behavior", () => {
+  it("Gerar nova sessão / QR button triggers restart, not start", async () => {
+    const restartMutate = vi.fn();
+    const startMutate = vi.fn();
+    mockUseWhatsAppConnectionActions.mockReturnValue({
+      ...makeDefaultActions(),
+      start: { mutate: startMutate, isPending: false },
+      restart: { mutate: restartMutate, isPending: false },
+    });
+
+    const line = makeLine();
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnectionStatus.mockReturnValue({
+      data: {
+        connection_id: line.id,
+        status: "SCAN_QR_CODE",
+        paired: false,
+        me_id: null,
+        me_name: null,
+        session: line.session_name,
+        error: null,
+      },
+    });
+
+    const { getByTestId, getByText, fireEvent } = await renderWhatsAppConnections();
+    // Open the detail dialog
+    fireEvent.click(getByText("Atendimento SP").closest("button")!);
+
+    // Click "Gerar nova sessão / QR"
+    fireEvent.click(getByTestId("btn-start"));
+
+    expect(restartMutate).toHaveBeenCalledOnce();
+    expect(startMutate).not.toHaveBeenCalled();
+  });
+
+  it("auto-restart fires once on FAILED status and does not loop", async () => {
+    const restartMutate = vi.fn();
+    mockUseWhatsAppConnectionActions.mockReturnValue({
+      ...makeDefaultActions(),
+      restart: { mutate: restartMutate, isPending: false },
+    });
+
+    const line = makeLine();
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    // Status starts as FAILED (unpaired)
+    mockUseWhatsAppConnectionStatus.mockReturnValue({
+      data: {
+        connection_id: line.id,
+        status: "FAILED",
+        paired: false,
+        me_id: null,
+        me_name: null,
+        session: line.session_name,
+        error: null,
+      },
+    });
+
+    const rtl = await import("@testing-library/react");
+    const { getByText, fireEvent } = await renderWhatsAppConnections();
+
+    // Open detail dialog to trigger the auto-recovery useEffect
+    await rtl.act(async () => {
+      fireEvent.click(getByText("Atendimento SP").closest("button")!);
+    });
+
+    // restart must be called exactly once (not in a loop)
+    expect(restartMutate).toHaveBeenCalledTimes(1);
+    expect(restartMutate).toHaveBeenCalledWith(line.id);
   });
 });

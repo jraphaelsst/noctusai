@@ -12,7 +12,7 @@
  * mutations come from the product `/api/whatsapp/connections` router via the
  * `useWhatsAppConnections` hooks; this page is presentation only.
  */
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -301,14 +301,31 @@ function ConnectionDetailDialog({
     setEditApiKey("");
   };
 
-  // Trigger start on first render when autoStart=true and not already paired
+  const paired = !!status?.paired;
+
+  // Trigger restart on first render when autoStart=true and not already paired
   const [startFired, setStartFired] = useState(false);
-  if (autoStart && !startFired && !start.isPending) {
+  if (autoStart && !startFired && !restart.isPending) {
     setStartFired(true);
-    start.mutate(line.id);
+    restart.mutate(line.id);
   }
 
-  const paired = !!status?.paired;
+  // Auto-recovery: when unpaired and status flips to FAILED or STOPPED,
+  // fire restart ONCE. Re-arms after a non-failed status is observed.
+  const autoRecoveryFiredRef = useRef(false);
+  const liveStatus = status?.status;
+  useEffect(() => {
+    if (paired) return;
+    const isFailed = liveStatus === "FAILED" || liveStatus === "STOPPED";
+    if (isFailed && !autoRecoveryFiredRef.current && !restart.isPending && !start.isPending) {
+      autoRecoveryFiredRef.current = true;
+      restart.mutate(line.id);
+    }
+    // Re-arm when a non-failed status is observed (e.g. SCAN_QR_CODE, STARTING)
+    if (!isFailed && liveStatus != null) {
+      autoRecoveryFiredRef.current = false;
+    }
+  }, [liveStatus, paired, restart.isPending, start.isPending]);
 
   const run = (mut: typeof start, ok: string) =>
     mut.mutate(line.id, {
@@ -358,7 +375,7 @@ function ConnectionDetailDialog({
         {/* ── QR pairing — while unpaired ── */}
         {!paired && (
           <div className="space-y-2">
-            {(autoStart && start.isPending) ? (
+            {(autoStart && restart.isPending) ? (
               <div className="flex h-52 items-center justify-center gap-2 rounded-md border bg-muted/10 p-4 text-sm text-muted-foreground" data-testid="qr-starting">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 Iniciando sessão…
@@ -370,11 +387,11 @@ function ConnectionDetailDialog({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => run(start, "Sessão iniciada — escaneie o QR")}
-                disabled={start.isPending}
+                onClick={() => run(restart, "Nova sessão gerada — escaneie o QR")}
+                disabled={restart.isPending}
                 data-testid="btn-start"
               >
-                {start.isPending ? (
+                {restart.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
