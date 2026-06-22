@@ -56,6 +56,9 @@ class WhatsAppConnectionOut(BaseModel):
     ``session_name`` is the WAHA session name the line drives. On WAHA Core
     this is the single shared ``default`` session; on WAHA Plus it may be a
     per-connection value — informational, useful for WAHA dashboard correlation.
+    ``auto_reply_enabled`` is the per-connection chatbot toggle (migration 014,
+    default OFF).  When False the existing chatbot does not auto-reply; the
+    operator can chat manually via the inbox UI.
     """
 
     id: UUID
@@ -65,6 +68,7 @@ class WhatsAppConnectionOut(BaseModel):
     webhook_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    auto_reply_enabled: bool = False
 
 
 class WhatsAppConnectionApiKeyOut(BaseModel):
@@ -118,3 +122,56 @@ class WhatsAppWebhookResultOut(BaseModel):
     url: str
     events: list[str]
     status: Optional[str] = None
+
+
+# ── Per-connection chat inbox (014_whatsapp_chat_per_connection) ─────────────
+
+class ChatSummary(BaseModel):
+    """Inbox summary row: one entry per WhatsApp contact (JID) on a connection.
+
+    ``unread`` is 0 when there are no unread inbound messages (never null).
+    ``contact`` is the phone digits from the JID (best-effort display) — a
+    future enhancement can surface the WAHA pushname here.
+    """
+
+    chat_id: str = Field(..., description="WhatsApp contact JID (raw_sender)")
+    contact: str = Field(..., description="Display label — phone digits or raw JID")
+    last_message: str
+    last_message_at: str = Field(..., description="ISO 8601 UTC timestamp")
+    last_direction: str = Field(..., pattern="^(inbound|outbound)$")
+    unread: int = Field(..., ge=0)
+
+
+class MessageOut(BaseModel):
+    """One message in a chat thread."""
+
+    id: str
+    chat_id: str = Field(..., description="WhatsApp contact JID (raw_sender)")
+    direction: str = Field(..., pattern="^(inbound|outbound)$")
+    body: str
+    created_at: str = Field(..., description="ISO 8601 UTC timestamp")
+    provider_message_id: Optional[str] = None
+    structured_payload: Optional[dict] = None
+
+
+class SendMessageRequest(BaseModel):
+    """Inbound payload for POST …/chats/{chatId}/send.
+
+    ``text`` must be non-empty — an empty string is rejected with 422
+    (Pydantic min_length guard) before the router even calls WAHA.
+    """
+
+    text: str = Field(..., min_length=1, max_length=65536)
+
+
+class AutoReplyToggleRequest(BaseModel):
+    """Inbound payload for PUT …/auto-reply."""
+
+    enabled: bool
+
+
+class AutoReplyToggleOut(BaseModel):
+    """Response for PUT …/auto-reply."""
+
+    connection_id: UUID
+    auto_reply_enabled: bool

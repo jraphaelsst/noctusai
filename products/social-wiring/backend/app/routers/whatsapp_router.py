@@ -66,9 +66,14 @@ router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
 _UPLOAD_DIR = Path("/tmp/uploads")
 
 
-def _build_intake_service() -> WhatsAppIntakeService | None:
+def _build_intake_service(*, connection_id=None) -> WhatsAppIntakeService | None:
     """Wire the intake service. Returns None when critical config is
-    missing — the webhook will 200-ack but not process messages."""
+    missing — the webhook will 200-ack but not process messages.
+
+    ``connection_id`` is an optional UUID passed from the per-connection
+    token-scoped route so outbound messages persisted by the intake service
+    are tagged with the same connection (migration 014).
+    """
     authorized = [
         n.strip()
         for n in settings.whatsapp_authorized_numbers.split(",")
@@ -130,6 +135,7 @@ def _build_intake_service() -> WhatsAppIntakeService | None:
         youtube_service=youtube,
         upload_dir=_UPLOAD_DIR,
         org_id=org_id,
+        connection_id=connection_id,
     )
 
 
@@ -177,7 +183,12 @@ def _resolve_default_org(admin_supabase) -> UUID | None:
     return None
 
 
-async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Response:
+async def _process_waha_body(
+    body: dict,
+    *,
+    event_source: str = "webhook",
+    connection=None,
+) -> Response:
     """Shared WAHA envelope processor.
 
     Handles envelope validation, event routing, dedup (Redis SETNX + DB),
@@ -187,6 +198,15 @@ async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Re
 
     ``event_source`` is used for WAHA sample recording / log context only
     (e.g. ``"webhook"`` or ``"webhook/token"``).
+
+    ``connection`` is a :class:`WhatsAppConnectionRecord` resolved from the
+    per-connection token-scoped route.  When present:
+      - Inbound messages are tagged ``connection_id=connection.id``.
+      - The chatbot auto-reply fires ONLY when ``connection.auto_reply_enabled``
+        is True (default OFF — locked product decision for manual chat testing).
+    When absent (legacy global route) the old behaviour is preserved: inbound
+    messages are stored without connection_id and auto-reply is gated only on
+    ``settings.whatsapp_chatbot_enabled``.
 
     Always returns a ``200 OK`` Response (WAHA doesn't understand our errors
     and would retry indefinitely on non-200; processing failures are logged).
@@ -304,8 +324,10 @@ async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Re
         # chatbot to react to. ACK and move on.
         return Response(status_code=status.HTTP_200_OK)
 
-    # Build the intake service
-    intake = _build_intake_service()
+    # Build the intake service, threading the connection id for outbound tagging.
+    intake = _build_intake_service(
+        connection_id=connection.id if connection is not None else None
+    )
     if intake is None:
         logger.debug("WhatsApp intake not configured — dropping message")
         return Response(status_code=status.HTTP_200_OK)
@@ -326,6 +348,7 @@ async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Re
             provider_message_id=provider_message_id or None,
             authorized=True,
             structured_payload=resolved_media.structured_payload if resolved_media else None,
+            connection_id=connection.id if connection is not None else None,
         )
     except DuplicateMessage:
         logger.info(
@@ -378,9 +401,17 @@ async def _process_waha_body(body: dict, *, event_source: str = "webhook") -> Re
     # memory key — see WhatsAppIntakeService.canonical_session_id for why.
     canonical_session = intake.canonical_session_id(sender)
 
-    # Process the message
+    # Process the message.
+    # When a per-connection record is present, the auto_reply_enabled toggle
+    # gates the chatbot.  Default is OFF — operators can chat manually without
+    # the bot interfering.  The legacy global route preserves the old gate
+    # (settings.whatsapp_chatbot_enabled only, no connection context).
+    _auto_reply_allowed = (
+        connection.auto_reply_enabled if connection is not None
+        else True  # legacy route: respect only the settings gate below
+    )
     try:
-        if settings.whatsapp_chatbot_enabled and settings.openai_api_key:
+        if settings.whatsapp_chatbot_enabled and settings.openai_api_key and _auto_reply_allowed:
             # Buffer the inbound into the seed conversation buffer; the
             # ConversationWorker drains the queue after the debounce
             # window (settings.message_debounce_seconds, default 8s).
@@ -539,7 +570,11 @@ async def whatsapp_webhook_by_token(
     except Exception:
         return Response(status_code=status.HTTP_200_OK)
 
-    return await _process_waha_body(body, event_source=f"webhook/{connection.id}")
+    return await _process_waha_body(
+        body,
+        event_source=f"webhook/{connection.id}",
+        connection=connection,
+    )
 
 
 __all__ = ["router"]

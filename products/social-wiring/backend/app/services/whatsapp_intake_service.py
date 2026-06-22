@@ -227,6 +227,7 @@ class WhatsAppIntakeService:
         youtube_service,
         upload_dir,
         org_id: UUID,
+        connection_id: UUID | None = None,
     ):
         self._waha_base_url = waha_base_url
         self._waha_api_key = waha_api_key
@@ -238,6 +239,10 @@ class WhatsAppIntakeService:
         self._youtube = youtube_service
         self._upload_dir = upload_dir
         self._org_id = org_id
+        # Per-connection tag (migration 014). When set, outbound messages
+        # persisted via _reply() are tagged with this connection_id so the
+        # chat inbox can show the full conversation thread.
+        self._connection_id = connection_id
 
     @staticmethod
     def _normalize_numbers(numbers: list[str]) -> list[str]:
@@ -765,6 +770,7 @@ class WhatsAppIntakeService:
                     body=text,
                     provider_message_id=outbound_message_id,
                     authorized=True,
+                    connection_id=self._connection_id,
                 )
             except DuplicateMessage:
                 # Outbound dedup: shouldn't normally happen, but if WAHA

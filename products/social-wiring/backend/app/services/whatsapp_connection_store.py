@@ -55,6 +55,10 @@ class WhatsAppConnectionRecord:
     by migration 005. It is always populated (non-null after backfill). The
     public webhook URL is derived from this token by the router so it survives
     domain changes without a DB migration.
+
+    ``auto_reply_enabled`` added by migration 014: per-connection toggle that
+    gates the existing chatbot auto-reply.  Default OFF so operators can test
+    the manual chat UI without the bot interfering.
     """
 
     id: UUID
@@ -68,6 +72,7 @@ class WhatsAppConnectionRecord:
     updated_at: Any
     api_key: Optional[str] = None
     webhook_token: Optional[str] = None
+    auto_reply_enabled: bool = False
 
 
 class WhatsAppConnectionStore:
@@ -110,6 +115,7 @@ class WhatsAppConnectionStore:
             updated_at=row.get("updated_at"),
             api_key=api_key,
             webhook_token=row.get("webhook_token"),
+            auto_reply_enabled=bool(row.get("auto_reply_enabled", False)),
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -245,6 +251,36 @@ class WhatsAppConnectionStore:
             .execute()
         )
         return bool(resp.data)
+
+    def update_auto_reply(
+        self,
+        *,
+        connection_id: UUID,
+        org_id: UUID,
+        user_id: UUID,
+        enabled: bool,
+    ) -> Optional[WhatsAppConnectionRecord]:
+        """Toggle the per-connection auto-reply gate (migration 014).
+
+        Owner-scoped (org_id + user_id) — non-owner connection returns None
+        (caller maps to 404). The router intentionally separates this from
+        the general update_connection path to keep the intent explicit and
+        the field surface narrow.
+        """
+        patch: dict[str, Any] = {
+            "auto_reply_enabled": enabled,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        resp = (
+            self._table()
+            .update(patch)
+            .eq("id", str(connection_id))
+            .eq("org_id", str(org_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        rows = list(resp.data or [])
+        return self._record(rows[0]) if rows else None
 
 
 def build_whatsapp_connection_store(

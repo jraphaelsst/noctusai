@@ -39,6 +39,7 @@ CREATE TABLE whatsapp_connections (
     encrypted_api_key TEXT NOT NULL,
     webhook_url TEXT,
     webhook_token TEXT,
+    auto_reply_enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (org_id, user_id, label),

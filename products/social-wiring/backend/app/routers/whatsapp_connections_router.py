@@ -39,6 +39,7 @@ from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.integrations.whatsapp import (
@@ -54,6 +55,11 @@ from app.dependencies import (
     get_settings,
 )
 from app.schemas.whatsapp_connection import (
+    AutoReplyToggleOut,
+    AutoReplyToggleRequest,
+    ChatSummary,
+    MessageOut,
+    SendMessageRequest,
     WhatsAppConnectionApiKeyOut,
     WhatsAppConnectionCreate,
     WhatsAppConnectionOut,
@@ -64,6 +70,7 @@ from app.schemas.whatsapp_connection import (
     WhatsAppWebhookResultOut,
 )
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
+from app.services.message_store import MessageStore
 from app.services.whatsapp_connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
@@ -126,6 +133,7 @@ def _out(record: WhatsAppConnectionRecord) -> WhatsAppConnectionOut:
         webhook_url=record.webhook_url,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        auto_reply_enabled=record.auto_reply_enabled,
     )
 
 
@@ -548,6 +556,203 @@ async def configure_connection_webhook(
         url=url,
         events=body.events,
         status=waha_status,
+    )
+
+
+# ── Per-connection chat inbox ────────────────────────────────────────────────
+# DI seam: MessageStore is built here (admin client, owner's org_id). Tests
+# override ``get_message_store_for_org`` via app.dependency_overrides with a
+# SQLite-backed store — same Class-B pattern as get_connection_store above.
+
+def get_message_store_for_org(org_id: UUID) -> MessageStore:
+    """Build a MessageStore bound to the calling user's org.
+
+    Not a FastAPI Depends itself (org_id is resolved per-route after the
+    auth dep runs). Tests override the factory via a fixture that returns a
+    SQLiteClient-backed store (real persistence, no Supabase).
+    """
+    return MessageStore(admin_supabase=get_admin_client(), org_id=org_id)
+
+
+# Injectable seam so tests can swap the factory.
+def get_message_store_factory():
+    """DI seam — returns the ``get_message_store_for_org`` factory.
+
+    Override via ``app.dependency_overrides[get_message_store_factory]``
+    to inject a deterministic in-memory or SQLite store in tests.
+    """
+    return get_message_store_for_org
+
+
+@router.get("/{connection_id}/chats", response_model=list[ChatSummary])
+async def list_chats(
+    connection_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    msg_store_factory: Any = Depends(get_message_store_factory),
+) -> list[ChatSummary]:
+    """List all contacts that have exchanged messages on this connection.
+
+    Returns ``ChatSummary[]`` ordered by last_message_at DESC.  An empty
+    list (no messages yet) is 200 + [].  Non-owner / unknown connection → 404.
+    """
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_id = _coerce_user_uuid(user)
+    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+
+    msg_store: MessageStore = msg_store_factory(org_id)
+    rows = msg_store.list_chats(connection_id=connection_id)
+    return [ChatSummary(**r) for r in rows]
+
+
+@router.get("/{connection_id}/chats/{chat_id:path}/messages", response_model=list[MessageOut])
+async def list_messages(
+    connection_id: UUID,
+    chat_id: str,
+    limit: int = 50,
+    before: str | None = None,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    msg_store_factory: Any = Depends(get_message_store_factory),
+) -> list[MessageOut]:
+    """List messages for one chat thread (raw_sender = chatId), oldest-first.
+
+    ``before`` is an ISO 8601 UTC cursor — when set, only messages with
+    created_at < before are returned (page-backwards).
+    Non-owner / unknown connection → 404.
+    """
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_id = _coerce_user_uuid(user)
+    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+
+    msg_store: MessageStore = msg_store_factory(org_id)
+    rows = msg_store.list_messages(
+        connection_id=connection_id,
+        raw_sender=chat_id,
+        limit=min(limit, 200),
+        before=before,
+    )
+    return [MessageOut(**r) for r in rows]
+
+
+@router.post(
+    "/{connection_id}/chats/{chat_id:path}/send",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_message(
+    connection_id: UUID,
+    chat_id: str,
+    body: SendMessageRequest,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    waha_factory: Any = Depends(get_waha_client_factory),
+    msg_store_factory: Any = Depends(get_message_store_factory),
+) -> MessageOut:
+    """Send a text message on this connection to the given chatId.
+
+    Builds a WAHA client from the connection's decrypted credentials, calls
+    ``send_text``, persists the outbound message tagged with connection_id,
+    and returns the stored ``MessageOut``.
+
+    On WAHA failure returns 502 with ``{"error":{"code":"waha_send_failed",
+    "message":"…"}}``.  Empty ``text`` is rejected with 422 before WAHA is
+    called.
+    """
+    import datetime as _dt
+
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_id = _coerce_user_uuid(user)
+    record = _require_record(
+        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+    )
+
+    client = _waha_client(record, waha_factory)
+    try:
+        result = await client.send_text(chat_id, body.text)
+    except Exception as exc:
+        logger.error(
+            "WAHA send_text failed for connection %s chatId %s: %s",
+            connection_id, chat_id, exc,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": {"code": "waha_send_failed", "message": str(exc)}},
+        )
+
+    # Persist outbound tagged with connection_id. Do NOT persist on failure
+    # (the raise above ensures we only reach here on success).
+    from app.schemas.whatsapp import extract_waha_message_id  # local import avoids circular
+    provider_message_id = (
+        extract_waha_message_id(result) if isinstance(result, dict) else None
+    )
+    # session_id: the direct JID form works here — the chat inbox queries
+    # by raw_sender (not session_id), so the exact canonical form is not
+    # critical for the inbox read path. The chatbot recall path is separate.
+    session_id = chat_id
+    sent_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    msg_store: MessageStore = msg_store_factory(org_id)
+    stored = msg_store.record(
+        session_id=session_id,
+        raw_sender=chat_id,
+        direction="outbound",
+        body=body.text,
+        provider_message_id=provider_message_id,
+        authorized=True,
+        connection_id=connection_id,
+    )
+    # Re-read the created_at from the store so the response timestamp is
+    # accurate. We do a single list_messages call scoped to the just-inserted
+    # id via the raw list (no extra DB round-trip in the SQLite test path).
+    # In production Supabase the insert returns the row; we use the store's
+    # result id + the sent_at clock we captured pre-send as a best-effort ISO.
+    return MessageOut(
+        id=str(stored.id),
+        chat_id=chat_id,
+        direction="outbound",
+        body=body.text,
+        created_at=sent_at,
+        provider_message_id=stored.provider_message_id,
+        structured_payload=None,
+    )
+
+
+@router.put("/{connection_id}/auto-reply", response_model=AutoReplyToggleOut)
+async def toggle_auto_reply(
+    connection_id: UUID,
+    body: AutoReplyToggleRequest,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+) -> AutoReplyToggleOut:
+    """Toggle the per-connection chatbot auto-reply gate.
+
+    ``enabled: true``  → the existing chatbot runs on inbound messages.
+    ``enabled: false`` → inbound is stored but NO auto-reply fires (default).
+    Non-owner / unknown connection → 404.
+    """
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_id = _coerce_user_uuid(user)
+    # Ownership check — ensures the connection exists and belongs to this user.
+    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+
+    record = store.update_auto_reply(
+        connection_id=connection_id,
+        org_id=org_id,
+        user_id=user_id,
+        enabled=body.enabled,
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="connection not found"
+        )
+    return AutoReplyToggleOut(
+        connection_id=connection_id,
+        auto_reply_enabled=record.auto_reply_enabled,
     )
 
 

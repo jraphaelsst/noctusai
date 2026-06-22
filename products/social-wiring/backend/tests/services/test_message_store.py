@@ -45,6 +45,7 @@ def sqlite_db(tmp_path: Path) -> SQLiteClient:
         body TEXT NOT NULL,
         authorized INTEGER NOT NULL DEFAULT 0,
         structured_payload TEXT,
+        connection_id TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX idx_session ON conversation_messages(session_id, created_at DESC);
