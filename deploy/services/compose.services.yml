@@ -86,8 +86,13 @@ services:
       N8N_LOG_LEVEL: info
       N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
       # Workflow template credentials — referenced via {{ $env.* }} expressions.
-      PDF_CO_API_KEY: ${PDF_CO_API_KEY:?set PDF_CO_API_KEY in .env.services}
-      INFOSIMPLES_API_TOKEN: ${INFOSIMPLES_API_TOKEN:?set INFOSIMPLES_API_TOKEN in .env.services}
+      # Optional: the running n8n had these UNSET (they were lost together with
+      # .env.services when production-deploy-migration was archived). Relaxed
+      # from `:?` to optional so the project stays compose-manageable; the
+      # PDF.co / Infosimples workflows stay inert until real values are supplied
+      # in .env.services. NOC-REMEDIATE[config-gap]: recover the two keys + set them.
+      PDF_CO_API_KEY: ${PDF_CO_API_KEY:-}
+      INFOSIMPLES_API_TOKEN: ${INFOSIMPLES_API_TOKEN:-}
       # NOTE: this n8n stores its DB as SQLite inside n8n-data (no DB_POSTGRESDB_* in the
       # Coolify config). The postgres service above is preserved but n8n does NOT use it —
       # verify what (if anything) uses postgres before final Coolify teardown.
@@ -106,7 +111,9 @@ services:
     environment:
       WHATSAPP_HOOK_URL: https://n8n.noctusai.com/webhook/webhook
       WHATSAPP_HOOK_EVENTS: message
-      WHATSAPP_DEFAULT_ENGINE: GOWS
+      # NOWEB auto-refreshes the pairing QR; GOWS expires it after ~20s and marks
+      # the session FAILED (a hostile pairing UX). NOWEB is WAHA-Core-supported.
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?set WHATSAPP_API_KEY in .env.services}
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
