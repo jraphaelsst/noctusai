@@ -15,10 +15,12 @@ Auth + the 503-on-config-gap path come from the shared ``client`` fixture
 Contract v2 changes (social-waha-connect-backend):
   - Create payload shrinks to {label, api_key}.
   - ``base_url`` / ``session_name`` / ``webhook_url`` are server-derived.
-  - Auto-unique ``session_name`` (``sw-<hex6>``) — never "default".
+  - ``session_name`` is the configured WAHA session (``"default"``) — WAHA Core
+    permits only the single ``default`` session.
   - Auto ``webhook_token`` + public ``webhook_url`` built from the resolver.
   - ``set_webhook`` is called on create with the token URL.
   - New POST /api/whatsapp/webhook/{token} route.
+  - GET /{id}/api-key reveals the decrypted key (owner-scoped, reveal-only).
 """
 from __future__ import annotations
 
@@ -130,8 +132,9 @@ class TestCrud:
         assert resp.status_code == 201, resp.text
         assert resp.json()["base_url"] == "https://waha.example.com"
 
-    def test_create_derives_unique_session_name(self, connections_client):
-        """session_name is auto-generated (sw-<hex6>) — never 'default'."""
+    def test_create_uses_configured_session_name(self, connections_client):
+        """session_name is the configured WAHA session ("default") — WAHA Core
+        permits only the single 'default' session, so every line drives it."""
         c, _ = connections_client
         resp1 = _create(c, label="Line 1")
         resp2 = _create(c, label="Line 2")
@@ -140,10 +143,27 @@ class TestCrud:
 
         s1 = resp1.json()["session_name"]
         s2 = resp2.json()["session_name"]
-        assert s1 != "default", "session_name must not be 'default'"
-        assert s2 != "default", "session_name must not be 'default'"
-        assert s1 != s2, "each connection gets a unique session name"
-        assert s1.startswith("sw-"), f"session name should start with 'sw-', got {s1!r}"
+        assert s1 == "default", f"expected configured 'default' session, got {s1!r}"
+        assert s2 == "default", f"expected configured 'default' session, got {s2!r}"
+
+    def test_reveal_api_key_returns_decrypted_owner_scoped(self, connections_client):
+        """GET /{id}/api-key reveals the decrypted key (the one deliberate
+        secret-bearing path); a real Fernet round-trip through the store."""
+        c, _ = connections_client
+        created = _create(c, label="Reveal me", api_key="super-secret-key").json()
+        resp = c.get(f"/api/whatsapp/connections/{created['id']}/api-key")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["connection_id"] == created["id"]
+        assert body["api_key"] == "super-secret-key"
+
+    def test_reveal_api_key_404_for_unknown_line(self, connections_client):
+        """A line the caller doesn't own (here: unknown id) is 404, never a leak."""
+        import uuid
+
+        c, _ = connections_client
+        resp = c.get(f"/api/whatsapp/connections/{uuid.uuid4()}/api-key")
+        assert resp.status_code == 404, resp.text
 
     def test_create_derives_webhook_url_from_resolver(self, connections_client):
         """webhook_url is built from resolve_product_url + /api/whatsapp/webhook/{token}."""

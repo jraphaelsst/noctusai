@@ -4,7 +4,9 @@
  * Wraps the product `/api/whatsapp/connections` router (per-user "lines"):
  * list/create/update/delete + per-line live ops (status / QR / start /
  * restart / logout / webhook). One line = one WAHA server URL + session +
- * API key; the API key is write-only (encrypted at rest, never returned).
+ * API key; the API key is write-only on every path EXCEPT the explicit,
+ * owner-scoped reveal (`useRevealApiKey` → GET /{id}/api-key), used only by the
+ * eye toggle in the connection modal.
  *
  * Built on @tanstack/react-query (v5) directly — same engine the seed
  * single-session hooks use, here for the multi-line surface. queryFns never
@@ -75,6 +77,12 @@ export interface WebhookResult {
   status: string | null;
 }
 
+/** Decrypted API key for one line — returned ONLY by the reveal endpoint. */
+export interface ApiKeyReveal {
+  connection_id: string;
+  api_key: string;
+}
+
 const BASE = "/api/whatsapp/connections";
 const KEY = ["whatsapp", "connections"] as const;
 
@@ -111,6 +119,17 @@ export function useWhatsAppConnectionMutations() {
   });
 
   return { create, update, remove };
+}
+
+/**
+ * Reveal the decrypted API key for one line on demand (eye toggle in the
+ * modal). Modelled as a mutation so the plaintext secret is NEVER persisted in
+ * the react-query cache — it lives only in the caller's local state while shown.
+ */
+export function useRevealApiKey() {
+  return useMutation<ApiKeyReveal, unknown, string>({
+    mutationFn: (id) => api.get<ApiKeyReveal>(`${BASE}/${id}/api-key`),
+  });
 }
 
 // ─── Per-line live state ─────────────────────────────────────────────────────

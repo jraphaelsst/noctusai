@@ -54,6 +54,7 @@ from app.dependencies import (
     get_settings,
 )
 from app.schemas.whatsapp_connection import (
+    WhatsAppConnectionApiKeyOut,
     WhatsAppConnectionCreate,
     WhatsAppConnectionOut,
     WhatsAppConnectionQrOut,
@@ -208,9 +209,12 @@ async def create_connection(
 
     - ``base_url``      — ``cfg.waha_base_url`` (the shared WAHA server).
                           Empty → 503 (no WAHA configured).
-    - ``session_name``  — ``sw-<hex6>`` (unique per-connection WAHA session).
-                          NEVER reuses "default" so multiple users on the same
-                          WAHA server do not collide.
+    - ``session_name``  — ``cfg.waha_session`` (``"default"`` by default).
+                          WAHA Core only permits the single ``default`` session,
+                          so the line drives it directly. (On WAHA Plus, where
+                          multiple named sessions are allowed, point
+                          ``WAHA_SESSION`` at a per-tenant value to isolate
+                          accounts.)
     - ``webhook_token`` — ``secrets.token_urlsafe(24)`` opaque routing token.
     - ``webhook_url``   — ``resolve_product_url('social-wiring') + /api/whatsapp/webhook/{token}``.
                           ValueError from resolver → 503.
@@ -229,8 +233,11 @@ async def create_connection(
             detail="WAHA server not configured (WAHA_BASE_URL is empty)",
         )
 
-    # ── 2. Derive unique session name (multi-account-safe) ─────────────
-    session_name = f"sw-{secrets.token_hex(6)}"
+    # ── 2. Resolve the WAHA session name ───────────────────────────────
+    # WAHA Core supports ONLY the single "default" session, so we drive the
+    # configured session (default: "default") rather than minting a unique
+    # per-connection name. WAHA Plus users can repoint WAHA_SESSION per tenant.
+    session_name = (cfg.waha_session or "default").strip()
 
     # ── 3. Mint webhook token + build public URL ────────────────────────
     webhook_token = secrets.token_urlsafe(24)
@@ -369,6 +376,34 @@ async def get_connection_status(
         )
     return _status_from_session(
         payload, connection_id=connection_id, session=record.session_name
+    )
+
+
+@router.get("/{connection_id}/api-key", response_model=WhatsAppConnectionApiKeyOut)
+async def reveal_connection_api_key(
+    connection_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+) -> WhatsAppConnectionApiKeyOut:
+    """Reveal the decrypted API key for ONE owner-scoped line.
+
+    The single, deliberate place a stored secret leaves the backend — gated by
+    the same owner scope as every live op (``user_id`` + ``org_id`` filter) and
+    driven only by an explicit user action (the eye toggle in the connection
+    modal). A decrypt failure (ENCRYPTION_KEY drift / tampered ciphertext)
+    surfaces as 503 via ``_require_record(decrypt=True)``; a non-owner / missing
+    line is 404. Reveal-only: never call this on a list/get path.
+    """
+    user, _token, raw_org = auth
+    record = _require_record(
+        store,
+        connection_id=connection_id,
+        org_id=coerce_org_uuid(raw_org),
+        user_id=_coerce_user_uuid(user),
+        decrypt=True,
+    )
+    return WhatsAppConnectionApiKeyOut(
+        connection_id=connection_id, api_key=record.api_key or ""
     )
 
 

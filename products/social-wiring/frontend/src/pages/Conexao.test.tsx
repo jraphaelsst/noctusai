@@ -34,6 +34,7 @@ const mockUseWhatsAppConnectionMutations = vi.fn();
 const mockUseWhatsAppConnectionStatus = vi.fn();
 const mockUseWhatsAppConnectionQr = vi.fn();
 const mockUseWhatsAppConnectionActions = vi.fn();
+const mockUseRevealApiKey = vi.fn();
 
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnections: mockUseWhatsAppConnections,
@@ -41,6 +42,7 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionStatus: mockUseWhatsAppConnectionStatus,
   useWhatsAppConnectionQr: mockUseWhatsAppConnectionQr,
   useWhatsAppConnectionActions: mockUseWhatsAppConnectionActions,
+  useRevealApiKey: mockUseRevealApiKey,
 }));
 
 // Minimal UI stubs
@@ -135,6 +137,10 @@ beforeEach(() => {
   mockUseWhatsAppConnectionStatus.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionActions.mockReturnValue(makeDefaultActions());
+  mockUseRevealApiKey.mockReturnValue({
+    mutateAsync: vi.fn().mockResolvedValue({ connection_id: "c", api_key: "revealed-key" }),
+    isPending: false,
+  });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -286,7 +292,6 @@ describe("Create → QR auto-flow", () => {
 
     // Render the ConnectionDetailDialog directly with autoStart=true
     const { default: React } = await import("react");
-    const { ConnectionDetailDialogTestExport } = await import("./Conexao").catch(() => ({ ConnectionDetailDialogTestExport: null }));
 
     // Since ConnectionDetailDialog is not exported, we test the autoStart
     // effect indirectly: if we create a line and trigger the success callback,
@@ -380,5 +385,34 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
     fireEvent.click(getByText("Atendimento SP").closest("button")!);
 
     expect(getByTestId("paired-success")).toBeTruthy();
+  });
+
+  it("API key field: masked by default → eye reveals → pencil enters edit mode", async () => {
+    const revealMutate = vi
+      .fn()
+      .mockResolvedValue({ connection_id: "conn-1", api_key: "revealed-key" });
+    mockUseRevealApiKey.mockReturnValue({ mutateAsync: revealMutate, isPending: false });
+    const line = makeLine();
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+
+    const rtl = await import("@testing-library/react");
+    const { getByText, getByTestId, queryByTestId } = await renderWhatsAppConnections();
+    rtl.fireEvent.click(getByText("Atendimento SP").closest("button")!);
+
+    // Masked by default; no editable input yet.
+    expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("••••••••");
+    expect(queryByTestId("edit-conn-apikey")).toBeNull();
+
+    // Eye → reveal the stored key via the owner-scoped endpoint.
+    await rtl.act(async () => {
+      rtl.fireEvent.click(getByTestId("btn-apikey-reveal"));
+    });
+    expect(revealMutate).toHaveBeenCalledWith(line.id);
+    expect((getByTestId("edit-conn-apikey-display") as HTMLInputElement).value).toBe("revealed-key");
+
+    // Pencil → edit (rotate) mode: an editable input replaces the masked display.
+    rtl.fireEvent.click(getByTestId("btn-apikey-edit"));
+    expect(queryByTestId("edit-conn-apikey")).toBeTruthy();
+    expect(queryByTestId("edit-conn-apikey-display")).toBeNull();
   });
 });

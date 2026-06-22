@@ -53,8 +53,9 @@ class WhatsAppConnectionOut(BaseModel):
     (``…/api/whatsapp/webhook/{token}``).  It is read-only and derived from
     the stored ``webhook_token``; callers should treat it as informational
     (display, WAHA dashboard check).
-    ``session_name`` is the auto-generated unique WAHA session name
-    (``sw-<hex>``) — informational, useful for WAHA dashboard correlation.
+    ``session_name`` is the WAHA session name the line drives. On WAHA Core
+    this is the single shared ``default`` session; on WAHA Plus it may be a
+    per-connection value — informational, useful for WAHA dashboard correlation.
     """
 
     id: UUID
@@ -64,6 +65,21 @@ class WhatsAppConnectionOut(BaseModel):
     webhook_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class WhatsAppConnectionApiKeyOut(BaseModel):
+    """The decrypted API key for ONE line — returned ONLY by the explicit,
+    owner-scoped reveal endpoint (``GET /{id}/api-key``).
+
+    This is the single deliberate exception to the "secret never rides a
+    response" rule that governs every other DTO here: the reveal is an explicit
+    user action (the eye toggle in the connection modal), owner-scoped by the
+    same auth+store filter as every live op, and never returned on a list/get
+    path. Treat it as sensitive — it carries the plaintext WAHA ``X-Api-Key``.
+    """
+
+    connection_id: UUID
+    api_key: str
 
 
 # ─── Live WAHA state (per line) ──────────────────────────────────────────

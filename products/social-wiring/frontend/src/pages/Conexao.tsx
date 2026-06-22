@@ -19,13 +19,17 @@ import {
   ChevronRight,
   CircleAlert,
   Clipboard,
+  Eye,
+  EyeOff,
   Loader2,
+  Pencil,
   Plus,
   Power,
   RefreshCw,
   Save,
   Smartphone,
   Trash2,
+  X,
 } from "lucide-react";
 
 import {
@@ -65,6 +69,7 @@ import {
   useWhatsAppConnectionStatus,
   useWhatsAppConnectionQr,
   useWhatsAppConnectionActions,
+  useRevealApiKey,
   type CreateConnectionBody,
   type UpdateConnectionBody,
   type WhatsAppConnectionLine,
@@ -257,10 +262,44 @@ function ConnectionDetailDialog({
   const { data: status } = useWhatsAppConnectionStatus(line.id);
   const { start, restart, logout } = useWhatsAppConnectionActions();
   const { update } = useWhatsAppConnectionMutations();
+  const reveal = useRevealApiKey();
 
   // Label edit + optional api_key rotation
   const [editLabel, setEditLabel] = useState(line.label);
   const [editApiKey, setEditApiKey] = useState("");
+  // API-key field UX: masked by default → eye reveals the stored key, pencil
+  // switches to edit (rotate) mode. The plaintext key lives only in local
+  // state while revealed; never cached.
+  const [keyMode, setKeyMode] = useState<"hidden" | "revealed" | "editing">("hidden");
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+
+  const onToggleReveal = async () => {
+    if (keyMode === "revealed") {
+      setKeyMode("hidden");
+      return;
+    }
+    try {
+      const res =
+        revealedKey != null
+          ? { api_key: revealedKey }
+          : await reveal.mutateAsync(line.id);
+      setRevealedKey(res.api_key);
+      setKeyMode("revealed");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Falha ao revelar a API key");
+    }
+  };
+
+  const startEditingKey = () => {
+    setKeyMode("editing");
+    setEditApiKey("");
+    setRevealedKey(null);
+  };
+
+  const cancelEditingKey = () => {
+    setKeyMode("hidden");
+    setEditApiKey("");
+  };
 
   // Trigger start on first render when autoStart=true and not already paired
   const [startFired, setStartFired] = useState(false);
@@ -392,18 +431,79 @@ function ConnectionDetailDialog({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="edit-apikey">
-              API key <span className="text-xs font-normal text-muted-foreground">(opcional — só para trocar)</span>
+              API key{" "}
+              <span className="text-xs font-normal text-muted-foreground">
+                {keyMode === "editing" ? "(digite a nova chave)" : "(toque no lápis para trocar)"}
+              </span>
             </Label>
-            <Input
-              id="edit-apikey"
-              type="password"
-              value={editApiKey}
-              onChange={(e) => setEditApiKey(e.target.value)}
-              placeholder="••••••••"
-              disabled={update.isPending}
-              autoComplete="off"
-              data-testid="edit-conn-apikey"
-            />
+            {keyMode === "editing" ? (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  id="edit-apikey"
+                  type="text"
+                  value={editApiKey}
+                  onChange={(e) => setEditApiKey(e.target.value)}
+                  placeholder="Nova API key (X-Api-Key da instância WAHA)"
+                  disabled={update.isPending}
+                  autoComplete="off"
+                  autoFocus
+                  className="font-mono"
+                  data-testid="edit-conn-apikey"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={cancelEditingKey}
+                  disabled={update.isPending}
+                  aria-label="Cancelar edição da API key"
+                  data-testid="btn-apikey-cancel"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  id="edit-apikey"
+                  type="text"
+                  readOnly
+                  value={keyMode === "revealed" ? revealedKey ?? "" : "••••••••"}
+                  className="font-mono"
+                  data-testid="edit-conn-apikey-display"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={onToggleReveal}
+                  disabled={reveal.isPending}
+                  aria-label={keyMode === "revealed" ? "Ocultar API key" : "Mostrar API key"}
+                  data-testid="btn-apikey-reveal"
+                >
+                  {reveal.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : keyMode === "revealed" ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={startEditingKey}
+                  aria-label="Editar API key"
+                  data-testid="btn-apikey-edit"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
