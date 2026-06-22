@@ -38,6 +38,7 @@ import {
   List,
   FileText,
   Send,
+  MessageCircle,
 } from "lucide-react";
 
 // Pages
@@ -61,6 +62,7 @@ const EmailTemplates = lazy(() => import("@/pages/EmailTemplates"));
 const EmailCampanhas = lazy(() => import("@/pages/EmailCampanhas"));
 const EmailMarketingConfig = lazy(() => import("@/pages/EmailMarketingConfig"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -95,6 +97,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Conexões", href: "/conexoes", icon: Link2, route: "conexao" },
+      { name: "Chat WhatsApp", href: "/whatsapp-chat", icon: MessageCircle, route: "whatsapp_chat" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
     ],
   },
@@ -142,6 +145,7 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Conexões", href: "/conexoes", icon: Link2 },
+      { name: "Chat WhatsApp", href: "/whatsapp-chat", icon: MessageCircle },
       { name: "Monitor", href: "/monitor", icon: Activity },
     ],
   },
@@ -185,6 +189,7 @@ export default createProductApp({
     // Back-compat: /conexao → standalone WAHA-only page
     { path: "/conexao", component: Conexao },
     { path: "/monitor", component: Monitor },
+    { path: "/whatsapp-chat", component: WhatsAppChat },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
   ],

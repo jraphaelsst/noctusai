@@ -31,6 +31,11 @@ export interface WhatsAppConnectionLine {
   webhook_url: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Whether the IA auto-reply is enabled for this connection.
+   * Defaults to false. Toggled via PUT /api/whatsapp/connections/{id}/auto-reply.
+   */
+  auto_reply_enabled: boolean;
 }
 
 export interface WhatsAppConnectionStatus {
