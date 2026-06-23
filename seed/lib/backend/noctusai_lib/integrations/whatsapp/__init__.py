@@ -16,6 +16,8 @@ Public surface:
   `phone_from_chat_id`, `build_send_text_body`,
   `rewrite_vendor_media_url`.
 - HTTP: `WahaClient` (sync + async send_text + download_media;
+  async list_chats + fetch_chat_messages — require NOWEB store enabled;
+  start/restart_session include noweb store config by default;
   external→internal media-URL rewrite).
 - Fake: `FakeWahaClient` — bi-directional in-memory deterministic
   (records `sent_messages`, accepts `inject_text` / `inject_inbound`,

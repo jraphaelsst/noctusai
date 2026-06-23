@@ -150,10 +150,28 @@ class WahaClient:
         session already exists / is already started — that is not an error
         for our purposes, so we fall back to the current session state
         instead of raising.
+
+        The NOWEB store config is included so that WAHA maintains and syncs
+        chat/message history. Without ``store.enabled=true`` + ``full_sync=true``
+        the NOWEB engine keeps no history — ``GET /api/{session}/chats`` returns
+        a 400 and the inbox stays empty until the first inbound webhook fires.
+        This is the canonical fleet default: any chat-capable product needs the
+        store on.
         """
+        payload = {
+            "config": {
+                "noweb": {
+                    "store": {
+                        "enabled": True,
+                        "full_sync": True,
+                    }
+                }
+            }
+        }
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             response = await client.post(
                 f"/api/sessions/{self.session}/start",
+                json=payload,
                 headers=self._headers(json=True),
             )
             if response.status_code in (409, 422):
@@ -166,10 +184,24 @@ class WahaClient:
 
         Triggers a fresh QR when the session is unpaired; preserves the
         paired account when credentials are still valid on disk.
+
+        Sends the same NOWEB store config as ``start_session`` so that a
+        restart after deploy also activates ``full_sync`` on the revived session.
         """
+        payload = {
+            "config": {
+                "noweb": {
+                    "store": {
+                        "enabled": True,
+                        "full_sync": True,
+                    }
+                }
+            }
+        }
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             response = await client.post(
                 f"/api/sessions/{self.session}/restart",
+                json=payload,
                 headers=self._headers(json=True),
             )
             response.raise_for_status()
@@ -235,6 +267,50 @@ class WahaClient:
             )
             response.raise_for_status()
             return _safe_json(response)
+
+    async def list_chats(self, limit: int = 50) -> list[dict[str, Any]]:
+        """GET /api/{session}/chats — list conversations from the NOWEB store.
+
+        Returns a list of chat objects as WAHA emits them:
+        ``{"id": {"_serialized": "..."}, "name": ..., "lastMessage": {...}}``.
+
+        Requires the session to have been started with the NOWEB store config
+        (``store.enabled=true, full_sync=true``). WAHA returns 400 when the
+        store is not enabled; callers should treat that as an empty list rather
+        than raising (use the graceful-fallback pattern in the router).
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.get(
+                f"/api/{self.session}/chats",
+                params={"limit": limit},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            body = response.json()
+            # WAHA returns a JSON array at the top level.
+            return body if isinstance(body, list) else []
+
+    async def fetch_chat_messages(
+        self, chat_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """GET /api/{session}/chats/{chatId}/messages — fetch message history.
+
+        Returns a list of message objects as WAHA emits them:
+        ``{"id": {"_serialized": ..., "id": ...}, "body": ..., "from": ...,
+           "timestamp": ..., "fromMe": ...}``.
+
+        ``chat_id`` is a WhatsApp JID such as ``5511999999999@c.us``.
+        Requires the NOWEB store to be enabled; callers handle the 400 case.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.get(
+                f"/api/{self.session}/chats/{chat_id}/messages",
+                params={"limit": limit},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body if isinstance(body, list) else []
 
     async def download_media(self, url: str) -> bytes:
         resolved = self._resolve_media_url(url)

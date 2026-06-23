@@ -35,6 +35,7 @@ from __future__ import annotations
 import base64
 import logging
 import secrets
+from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid5
 
@@ -584,14 +585,111 @@ def get_message_store_factory():
     return get_message_store_for_org
 
 
+def _waha_chat_to_summary(waha_chat: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a WAHA chat object to a ``ChatSummary``-shaped dict.
+
+    WAHA NOWEB chat shape (observed):
+        {"id": {"_serialized": "5511@c.us", ...}, "name": "Alice",
+         "lastMessage": {"body": "hi", "fromMe": false, "timestamp": 1718000000}}
+
+    Returns ``None`` when the shape is unrecognisable (defensive — never 500).
+    """
+    try:
+        raw_id = waha_chat.get("id") or {}
+        chat_id: str = raw_id if isinstance(raw_id, str) else raw_id.get("_serialized") or ""
+        if not chat_id:
+            return None
+        name: str = waha_chat.get("name") or waha_chat.get("pushName") or ""
+        contact: str = (
+            name
+            or chat_id
+            .replace("@c.us", "")
+            .replace("@s.whatsapp.net", "")
+            .replace("@lid", "")
+        )
+        last_msg = waha_chat.get("lastMessage") or {}
+        body: str = last_msg.get("body") or ""
+        ts_raw = last_msg.get("timestamp")  # Unix epoch seconds (int) from WAHA
+        if ts_raw:
+            from datetime import timezone  # noqa: PLC0415 — lazy import, not on hot path
+            last_message_at = datetime.fromtimestamp(
+                int(ts_raw), tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        else:
+            last_message_at = ""
+        from_me: bool = bool(last_msg.get("fromMe"))
+        return {
+            "chat_id": chat_id,
+            "contact": contact,
+            "last_message": body,
+            "last_message_at": last_message_at,
+            "last_direction": "outbound" if from_me else "inbound",
+            "unread": 0,  # WAHA provides unreadCount on some engines; default to 0
+        }
+    except Exception:  # noqa: BLE001 — defensive; malformed WAHA payload never crashes
+        return None
+
+
+def _waha_message_to_out(
+    waha_msg: dict[str, Any], *, chat_id: str
+) -> dict[str, Any] | None:
+    """Map a WAHA message object to a ``MessageOut``-shaped dict.
+
+    WAHA NOWEB message shape (observed):
+        {"id": {"_serialized": "...", "id": "BAE5..."}, "body": "hi",
+         "from": "5511@c.us", "timestamp": 1718000000, "fromMe": false}
+
+    Returns ``None`` when the shape is unrecognisable.
+    """
+    try:
+        from datetime import timezone  # noqa: PLC0415 — lazy import
+        msg_id_raw = waha_msg.get("id") or {}
+        provider_message_id: str | None = (
+            msg_id_raw.get("_serialized")
+            if isinstance(msg_id_raw, dict)
+            else (str(msg_id_raw) if msg_id_raw else None)
+        )
+        body: str = waha_msg.get("body") or ""
+        ts_raw = waha_msg.get("timestamp")
+        if ts_raw:
+            created_at = datetime.fromtimestamp(
+                int(ts_raw), tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        else:
+            created_at = ""
+        from_me: bool = bool(waha_msg.get("fromMe"))
+        direction = "outbound" if from_me else "inbound"
+        # Deterministic synthetic id: use provider id or a hash of (chat_id, ts, dir)
+        import hashlib  # noqa: PLC0415
+        row_id = provider_message_id or hashlib.sha1(  # noqa: S324 — not security-critical
+            f"{chat_id}:{ts_raw}:{direction}:{body[:32]}".encode()
+        ).hexdigest()[:16]
+        return {
+            "id": row_id,
+            "chat_id": chat_id,
+            "direction": direction,
+            "body": body,
+            "created_at": created_at,
+            "provider_message_id": provider_message_id,
+            "structured_payload": None,
+        }
+    except Exception:  # noqa: BLE001 — defensive
+        return None
+
+
 @router.get("/{connection_id}/chats", response_model=list[ChatSummary])
 async def list_chats(
     connection_id: UUID,
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     msg_store_factory: Any = Depends(get_message_store_factory),
+    waha_factory: Any = Depends(get_waha_client_factory),
 ) -> list[ChatSummary]:
     """List all contacts that have exchanged messages on this connection.
+
+    Merges WAHA live chat list (requires NOWEB store) with persisted
+    ``conversation_messages``.  When WAHA returns 400 (store not enabled)
+    or any other error, falls back to DB-only results — never 500.
 
     Returns ``ChatSummary[]`` ordered by last_message_at DESC.  An empty
     list (no messages yet) is 200 + [].  Non-owner / unknown connection → 404.
@@ -599,11 +697,49 @@ async def list_chats(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     user_id = _coerce_user_uuid(user)
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    record = _require_record(
+        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+    )
 
     msg_store: MessageStore = msg_store_factory(org_id)
-    rows = msg_store.list_chats(connection_id=connection_id)
-    return [ChatSummary(**r) for r in rows]
+    db_rows = msg_store.list_chats(connection_id=connection_id)
+
+    # ── Attempt to merge WAHA live chat list ─────────────────────────────
+    # Build index keyed by chat_id for dedup: DB rows are the authoritative
+    # source for unread counts + our own stored messages; WAHA provides
+    # conversations that predate the first webhook.
+    by_chat_id: dict[str, dict[str, Any]] = {r["chat_id"]: r for r in db_rows}
+
+    try:
+        client = _waha_client(record, waha_factory)
+        waha_chats = await client.list_chats()
+        for wc in waha_chats:
+            summary = _waha_chat_to_summary(wc)
+            if summary is None:
+                continue
+            cid = summary["chat_id"]
+            if cid not in by_chat_id:
+                # New chat only known to WAHA — add it.
+                by_chat_id[cid] = summary
+            else:
+                # DB row exists: keep DB unread count; update last_message if WAHA is newer.
+                db_entry = by_chat_id[cid]
+                waha_ts = summary.get("last_message_at") or ""
+                db_ts = db_entry.get("last_message_at") or ""
+                if waha_ts > db_ts:
+                    by_chat_id[cid] = {**summary, "unread": db_entry.get("unread", 0)}
+    except Exception as exc:  # noqa: BLE001 — graceful fallback; not a 500
+        logger.warning(
+            "WAHA list_chats unavailable for connection %s — falling back to DB only: %s",
+            connection_id, exc,
+        )
+
+    merged = sorted(
+        by_chat_id.values(),
+        key=lambda s: s.get("last_message_at") or "",
+        reverse=True,
+    )
+    return [ChatSummary(**r) for r in merged]
 
 
 @router.get("/{connection_id}/chats/{chat_id:path}/messages", response_model=list[MessageOut])
@@ -615,8 +751,14 @@ async def list_messages(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     msg_store_factory: Any = Depends(get_message_store_factory),
+    waha_factory: Any = Depends(get_waha_client_factory),
 ) -> list[MessageOut]:
     """List messages for one chat thread (raw_sender = chatId), oldest-first.
+
+    Merges WAHA history (requires NOWEB store) with persisted
+    ``conversation_messages``.  Deduplicates by ``provider_message_id``
+    when available; falls back to ``(direction, body[:32], created_at)``
+    fingerprint.  When WAHA is unavailable, falls back to DB-only.
 
     ``before`` is an ISO 8601 UTC cursor — when set, only messages with
     created_at < before are returned (page-backwards).
@@ -625,16 +767,59 @@ async def list_messages(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     user_id = _coerce_user_uuid(user)
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    actual_limit = min(limit, 200)
+    record = _require_record(
+        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+    )
 
     msg_store: MessageStore = msg_store_factory(org_id)
-    rows = msg_store.list_messages(
+    db_rows = msg_store.list_messages(
         connection_id=connection_id,
         raw_sender=chat_id,
-        limit=min(limit, 200),
+        limit=actual_limit,
         before=before,
     )
-    return [MessageOut(**r) for r in rows]
+
+    # ── Attempt to merge WAHA message history ────────────────────────────
+    # Dedup key: provider_message_id if non-null; else (direction, body[:32], created_at).
+    def _dedup_key(row: dict[str, Any]) -> str:
+        pmid = row.get("provider_message_id")
+        if pmid:
+            return f"pmid:{pmid}"
+        return f"fp:{row.get('direction')}:{(row.get('body') or '')[:32]}:{row.get('created_at')}"
+
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for row in db_rows:
+        k = _dedup_key(row)
+        if k not in seen:
+            seen.add(k)
+            merged.append(row)
+
+    try:
+        client = _waha_client(record, waha_factory)
+        waha_msgs = await client.fetch_chat_messages(chat_id, limit=actual_limit)
+        for wm in waha_msgs:
+            mapped = _waha_message_to_out(wm, chat_id=chat_id)
+            if mapped is None:
+                continue
+            if before and (mapped.get("created_at") or "") >= before:
+                continue
+            k = _dedup_key(mapped)
+            if k not in seen:
+                seen.add(k)
+                merged.append(mapped)
+    except Exception as exc:  # noqa: BLE001 — graceful fallback
+        logger.warning(
+            "WAHA fetch_chat_messages unavailable for connection %s chat %s — "
+            "falling back to DB only: %s",
+            connection_id, chat_id, exc,
+        )
+
+    # Sort oldest-first, cap at limit.
+    merged.sort(key=lambda m: m.get("created_at") or "")
+    merged = merged[:actual_limit]
+    return [MessageOut(**r) for r in merged]
 
 
 @router.post(

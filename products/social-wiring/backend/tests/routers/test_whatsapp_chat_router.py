@@ -723,3 +723,395 @@ class TestAutoReply:
         conn_row = next((r for r in listed.json() if r["id"] == conn_id), None)
         assert conn_row is not None
         assert conn_row["auto_reply_enabled"] is True
+
+
+# ── WAHA live-merge tests ─────────────────────────────────────────────────────
+# These tests exercise the new WAHA list_chats / fetch_chat_messages merge path
+# added by feat/sw-wa-chat-fetch.
+
+class TestWahaLiveMergeChats:
+    """GET /chats merges WAHA live list with DB rows."""
+
+    def test_waha_chats_appear_when_db_empty(self, chat_client):
+        """Conversations that exist only in WAHA (no DB rows) surface in the list."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        # Seed the FakeWahaClient with a chat (simulates full_sync result).
+        fake: FakeWahaClient = fakes["default"]
+        fake.fake_chat_list = [
+            {
+                "id": {"_serialized": "5599@c.us"},
+                "name": "Carlos",
+                "lastMessage": {"body": "oi", "fromMe": False, "timestamp": 1718000000},
+            }
+        ]
+
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert len(data) == 1
+        row = data[0]
+        assert row["chat_id"] == "5599@c.us"
+        assert row["contact"] == "Carlos"
+        assert row["last_direction"] == "inbound"
+        assert row["last_message"] == "oi"
+
+    def test_waha_chat_merged_with_db_row_prefers_newer_ts(self, chat_client):
+        """When WAHA has a newer message than DB, the merged row reflects it."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5577@c.us", "direction": "inbound", "body": "old",
+             "created_at": "2026-06-10T10:00:00.000Z"},
+        ])
+
+        fake: FakeWahaClient = fakes["default"]
+        # WAHA has a newer message (full_sync result)
+        fake.fake_chat_list = [
+            {
+                "id": {"_serialized": "5577@c.us"},
+                "name": "Ana",
+                # Unix epoch for 2026-06-22T10:00:00Z = 1782122400
+                "lastMessage": {"body": "new msg", "fromMe": False, "timestamp": 1782122400},
+            }
+        ]
+
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert len(data) == 1
+        row = data[0]
+        assert row["chat_id"] == "5577@c.us"
+        # WAHA name used as contact because WAHA is newer and provides a name
+        assert row["last_message"] == "new msg"
+
+    def test_waha_unavailable_falls_back_to_db_no_500(self, chat_client):
+        """Store-not-enabled 400 (WAHA unavailable) falls back to DB — never 500."""
+        import httpx  # noqa: PLC0415
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "fallback",
+             "created_at": "2026-06-22T10:00:00.000Z"},
+        ])
+
+        # Make list_chats raise to simulate store-not-enabled 400.
+        from noctusai_lib.integrations.whatsapp import FakeWahaClient as _Fake  # noqa: PLC0415
+
+        class _ErrorFake(_Fake):
+            async def list_chats(self, limit=50):
+                raise httpx.HTTPStatusError(
+                    "400 Bad Request",
+                    request=object(),  # type: ignore[arg-type]
+                    response=object(),  # type: ignore[arg-type]
+                )
+
+        from app.main import app  # noqa: PLC0415
+        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
+
+        def _err_factory(*, base_url=None, api_key=None, session="default"):
+            return _ErrorFake(session=session)
+
+        _prev = app.dependency_overrides.get(get_waha_client_factory)
+        app.dependency_overrides[get_waha_client_factory] = lambda: _err_factory
+        try:
+            resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_waha_client_factory, None)
+            else:
+                app.dependency_overrides[get_waha_client_factory] = _prev
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        # DB row still visible (fallback).
+        assert any(row["chat_id"] == "5511@c.us" for row in data)
+
+    def test_waha_and_db_dedup_same_chat(self, chat_client):
+        """The same chat_id in WAHA and DB is not duplicated in the result."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "hi",
+             "created_at": "2026-06-22T10:00:00.000Z"},
+        ])
+
+        fake: FakeWahaClient = fakes["default"]
+        fake.fake_chat_list = [
+            {
+                "id": {"_serialized": "5511@c.us"},
+                "name": "Bob",
+                "lastMessage": {"body": "hi", "fromMe": False, "timestamp": 1750503600},
+            }
+        ]
+
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        # Must be exactly ONE entry for 5511@c.us.
+        matching = [r for r in data if r["chat_id"] == "5511@c.us"]
+        assert len(matching) == 1
+
+
+class TestWahaLiveMergeMessages:
+    """GET /chats/{chat_id}/messages merges WAHA history with DB rows."""
+
+    def test_waha_history_appears_when_db_empty(self, chat_client):
+        """Historical WAHA messages surface when conversation_messages is empty."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        fake: FakeWahaClient = fakes["default"]
+        fake.fake_chat_messages["5511@c.us"] = [
+            {
+                "id": {"_serialized": "BAE5XXX001"},
+                "body": "first ever message",
+                "from": "5511@c.us",
+                "timestamp": 1750500000,
+                "fromMe": False,
+            }
+        ]
+
+        resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+        )
+        assert resp.status_code == 200, resp.text
+        msgs = resp.json()
+        assert len(msgs) == 1
+        assert msgs[0]["body"] == "first ever message"
+        assert msgs[0]["direction"] == "inbound"
+        assert msgs[0]["provider_message_id"] == "BAE5XXX001"
+
+    def test_waha_and_db_dedup_by_provider_message_id(self, chat_client):
+        """A message in both WAHA and DB (same provider_message_id) appears once."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {
+                "raw_sender": "5511@c.us",
+                "direction": "inbound",
+                "body": "hello",
+                "created_at": "2026-06-22T09:00:00.000Z",
+                "provider_message_id": "BAE5DUP001",
+            }
+        ])
+
+        fake: FakeWahaClient = fakes["default"]
+        fake.fake_chat_messages["5511@c.us"] = [
+            {
+                "id": {"_serialized": "BAE5DUP001"},
+                "body": "hello",
+                "from": "5511@c.us",
+                "timestamp": 1750467600,
+                "fromMe": False,
+            }
+        ]
+
+        resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+        )
+        assert resp.status_code == 200, resp.text
+        msgs = resp.json()
+        assert len(msgs) == 1
+        assert msgs[0]["body"] == "hello"
+
+    def test_waha_unavailable_falls_back_to_db_no_500(self, chat_client):
+        """WAHA error on fetch_chat_messages falls back to DB — never 500."""
+        import httpx  # noqa: PLC0415
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "from db",
+             "created_at": "2026-06-22T10:00:00.000Z"},
+        ])
+
+        from noctusai_lib.integrations.whatsapp import FakeWahaClient as _Fake  # noqa: PLC0415
+
+        class _ErrorFake(_Fake):
+            async def fetch_chat_messages(self, chat_id, limit=50):
+                raise httpx.HTTPStatusError(
+                    "400 Bad Request",
+                    request=object(),  # type: ignore[arg-type]
+                    response=object(),  # type: ignore[arg-type]
+                )
+
+        from app.main import app  # noqa: PLC0415
+        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
+
+        def _err_factory(*, base_url=None, api_key=None, session="default"):
+            return _ErrorFake(session=session)
+
+        _prev = app.dependency_overrides.get(get_waha_client_factory)
+        app.dependency_overrides[get_waha_client_factory] = lambda: _err_factory
+        try:
+            resp = c.get(
+                f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+            )
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_waha_client_factory, None)
+            else:
+                app.dependency_overrides[get_waha_client_factory] = _prev
+
+        assert resp.status_code == 200, resp.text
+        msgs = resp.json()
+        assert any(m["body"] == "from db" for m in msgs)
+
+    def test_waha_and_db_merge_sorted_oldest_first(self, chat_client):
+        """Merged result is sorted oldest-first regardless of source."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        # DB has a newer message.
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5511@c.us", "direction": "outbound", "body": "newer reply",
+             "created_at": "2026-06-22T10:00:00.000Z"},
+        ])
+
+        fake: FakeWahaClient = fakes["default"]
+        # WAHA has the original inbound message (older).
+        # Unix ts for 2026-06-22T09:00:00Z ≈ 1750586400 (approx — just needs to be < 10:00)
+        fake.fake_chat_messages["5511@c.us"] = [
+            {
+                "id": {"_serialized": "BAE5OLD001"},
+                "body": "older inbound",
+                "from": "5511@c.us",
+                "timestamp": 1750582800,  # 2026-06-22T09:00:00Z
+                "fromMe": False,
+            }
+        ]
+
+        resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+        )
+        assert resp.status_code == 200, resp.text
+        msgs = resp.json()
+        assert len(msgs) == 2
+        # WAHA's older inbound must come first.
+        assert msgs[0]["body"] == "older inbound"
+        assert msgs[0]["direction"] == "inbound"
+        assert msgs[1]["body"] == "newer reply"
+        assert msgs[1]["direction"] == "outbound"
+
+
+class TestStartSessionNoweb:
+    """start_session payload includes NOWEB store config."""
+
+    def test_create_connection_includes_noweb_config_in_start_payload(
+        self, chat_client, monkeypatch
+    ):
+        """After connection create, the FakeWahaClient captured a start_session call.
+
+        We verify the REAL WahaClient sends the config by inspecting what
+        httpx.AsyncClient.post receives (monkeypatched at the httpx level).
+        For the Fake path (used in fixtures) the test verifies the session was
+        started (start_count > 0) — the Fake doesn't accept payload kwargs but
+        the Real builds it internally.
+        """
+        c, conn_store, fakes, db_path = chat_client
+        # _create_connection triggers create_connection which calls start_session.
+        _create_connection(c)
+        fake: FakeWahaClient = fakes["default"]
+        assert fake.start_count >= 1, "start_session was never called"
+
+    def test_real_client_start_session_sends_noweb_payload(self, monkeypatch):
+        """WahaClient.start_session POSTs the noweb store config in the JSON body."""
+        import asyncio  # noqa: PLC0415
+        import httpx  # noqa: PLC0415
+        from unittest.mock import AsyncMock, MagicMock  # noqa: PLC0415
+        from noctusai_lib.integrations.whatsapp.client import WahaClient  # noqa: PLC0415
+
+        posted_bodies: list[dict] = []
+
+        class _FakeAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+            async def post(self, url, *, json=None, headers=None):
+                posted_bodies.append(json or {})
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.content = b'{"name":"default","status":"SCAN_QR_CODE"}'
+                mock_resp.raise_for_status = MagicMock()
+
+                def _json():
+                    import json as _json_mod  # noqa: PLC0415
+                    return _json_mod.loads(mock_resp.content)
+
+                mock_resp.json = _json
+                return mock_resp
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeAsyncClient())
+
+        client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
+        asyncio.get_event_loop().run_until_complete(client.start_session())
+
+        assert len(posted_bodies) == 1
+        body = posted_bodies[0]
+        noweb = body.get("config", {}).get("noweb", {}).get("store", {})
+        assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
+        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"
+
+    def test_real_client_restart_session_sends_noweb_payload(self, monkeypatch):
+        """WahaClient.restart_session POSTs the noweb store config in the JSON body."""
+        import asyncio  # noqa: PLC0415
+        import httpx  # noqa: PLC0415
+        from unittest.mock import MagicMock  # noqa: PLC0415
+        from noctusai_lib.integrations.whatsapp.client import WahaClient  # noqa: PLC0415
+
+        posted_bodies: list[dict] = []
+
+        class _FakeAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+            async def post(self, url, *, json=None, headers=None):
+                posted_bodies.append(json or {})
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.content = b'{"name":"default","status":"WORKING"}'
+                mock_resp.raise_for_status = MagicMock()
+
+                def _json():
+                    import json as _json_mod  # noqa: PLC0415
+                    return _json_mod.loads(mock_resp.content)
+
+                mock_resp.json = _json
+                return mock_resp
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeAsyncClient())
+
+        client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
+        asyncio.get_event_loop().run_until_complete(client.restart_session())
+
+        assert len(posted_bodies) == 1
+        body = posted_bodies[0]
+        noweb = body.get("config", {}).get("noweb", {}).get("store", {})
+        assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
+        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"

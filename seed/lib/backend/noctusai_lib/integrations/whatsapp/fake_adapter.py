@@ -50,6 +50,15 @@ class FakeWahaClient:
         self.webhook_config: dict[str, Any] | None = None
         self.restart_count = 0
         self.start_count = 0
+        # Capture the last payload passed to start/restart so tests can assert
+        # the NOWEB store config is included.
+        self.last_start_payload: dict[str, Any] | None = None
+        self.last_restart_payload: dict[str, Any] | None = None
+        # Pre-populated chat list for list_chats / fetch_chat_messages.
+        # Seed via client.fake_chats[chat_id] = [msg_dict, ...] and
+        # client.fake_chat_list = [chat_dict, ...].
+        self.fake_chat_list: list[dict[str, Any]] = []
+        self.fake_chat_messages: dict[str, list[dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -139,6 +148,27 @@ class FakeWahaClient:
             "config": {"webhooks": [self.webhook_config]},
         }
 
+    # ------------------------------------------------------------------
+    # Chat history — mirrors WahaClient.list_chats / fetch_chat_messages
+    # ------------------------------------------------------------------
+
+    async def list_chats(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return ``fake_chat_list[:limit]``.
+
+        Seed via ``client.fake_chat_list = [{...}, ...]`` before the call
+        to simulate a WAHA store that already has history.
+        """
+        return self.fake_chat_list[:limit]
+
+    async def fetch_chat_messages(
+        self, chat_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return ``fake_chat_messages[chat_id][:limit]``.
+
+        Seed via ``client.fake_chat_messages[chat_id] = [{...}, ...]``.
+        """
+        return self.fake_chat_messages.get(chat_id, [])[:limit]
+
     def simulate_pair(
         self, *, phone: str = "5511999999999", push_name: str = "Fake"
     ) -> None:
@@ -181,3 +211,5 @@ class FakeWahaClient:
         self.sent_messages.clear()
         self.inbound_queue.clear()
         self.media_bytes.clear()
+        self.fake_chat_list.clear()
+        self.fake_chat_messages.clear()

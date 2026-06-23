@@ -68,6 +68,12 @@ class WhatsAppClient(Protocol):
 
     def download_media_sync(self, url: str) -> bytes: ...
 
+    async def list_chats(self, limit: int = 50) -> list[dict[str, Any]]: ...
+
+    async def fetch_chat_messages(
+        self, chat_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]: ...
+
 
 # Legacy WAHA-prefixed aliases (kept for call-site portability).
 WahaMedia = WhatsAppMedia
