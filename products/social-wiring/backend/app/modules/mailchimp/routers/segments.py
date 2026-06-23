@@ -37,7 +37,7 @@ _require_client = make_require_mailchimp_client(require_audience=True)
 
 
 def _subscriber_hash(email: str) -> str:
-    return hashlib.md5(email.strip().lower().encode("utf-8")).hexdigest()
+    return hashlib.md5(email.strip().lower().encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
 
 
 def _segment_out(s) -> SegmentOut:

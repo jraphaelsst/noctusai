@@ -42,7 +42,7 @@ def subscriber_hash(email: str) -> str:
     '55502f40dc8b7c769880b10874abc9d0'
     """
     normalised = email.strip().lower()
-    return hashlib.md5(normalised.encode()).hexdigest()  # noqa: S324  (MD5 required by Mailchimp API)
+    return hashlib.md5(normalised.encode(), usedforsecurity=False).hexdigest()  # noqa: S324  (MD5 required by Mailchimp API)
 
 
 def parse_server_prefix(api_key: str) -> str:

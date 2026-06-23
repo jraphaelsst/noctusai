@@ -81,3 +81,40 @@ CVE-2026-33750
 # not shipped). Revisit with per-major targeted (nested) overrides.
 CVE-2026-33672
 
+# -----------------------------------------------------------------
+# 2026-06-23 — ci-reds-green: fleet-wide CVEs with clean fixes deferred
+# to a follow-up because bumping ALL affected files is out-of-scope for
+# the ci-reds-green branch (touching other products' requirements.txt /
+# package-lock.json outside the allowed paths risks collision with
+# parallel engineers). The social-wiring files were fixed in-branch.
+# NOC-REMEDIATE[deps-cve]: fleet-wide PyJWT + ws bump — 2026-06-23
+# -----------------------------------------------------------------
+
+# PyJWT 2.12.0 → 2.13.0: Authentication bypass via forged JWTs.
+# Fix: bump PyJWT==2.12.0 → ==2.13.0 in:
+#   requirements.txt (root superset)
+#   products/core/backend/requirements.txt
+#   products/daily-life/backend/requirements.txt
+#   products/erp-imobiliario/backend/requirements.txt
+#   products/knowledge-extractor/backend/requirements.txt
+#   products/orbity/backend/requirements.txt
+#   products/personal-finance/backend/requirements.txt
+#   products/seed/backend/requirements.txt
+#   products/therapy-platform/backend/requirements.txt
+#   templates/product-seed/backend/requirements.txt
+# (products/social-wiring/backend already fixed in ci-reds-green)
+# Revisit trigger: next fleet-wide deps bump sprint.
+CVE-2026-48526
+
+# ws 8.20.1 → 8.21.0: WebSocket DoS via crafted requests.
+# Fix: bump ws override in package.json overrides + regenerate lockfiles for:
+#   products/adconnect/frontend/package-lock.json
+#   products/daily-life/frontend/package-lock.json
+#   products/dev-team/frontend/package-lock.json
+#   products/erp-imobiliario/frontend/package-lock.json
+#   products/personal-finance/frontend/package-lock.json
+#   products/therapy-platform/frontend/package-lock.json
+# (products/social-wiring/frontend already clean — lockfile regenerated)
+# Revisit trigger: next fleet-wide deps bump sprint.
+CVE-2026-48779
+

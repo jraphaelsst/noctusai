@@ -490,7 +490,7 @@
   "products/social-wiring/frontend/src/hooks/useUpload.ts": 11,
   "products/social-wiring/frontend/src/hooks/useVideoTrend.ts": 3,
   "products/social-wiring/frontend/src/hooks/useVideos.ts": 16,
-  "products/social-wiring/frontend/src/hooks/useWhatsAppConnections.ts": 13,
+  "products/social-wiring/frontend/src/hooks/useWhatsAppConnections.ts": 15,
   "products/social-wiring/frontend/src/hooks/useWhatsAppIntake.ts": 4,
   "products/social-wiring/frontend/src/lib/api.ts": 0,
   "products/social-wiring/frontend/src/lib/apiBase.ts": 4,
