@@ -1067,7 +1067,7 @@ class TestStartSessionNoweb:
         monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeAsyncClient())
 
         client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
-        asyncio.get_event_loop().run_until_complete(client.start_session())
+        asyncio.run(client.start_session())
 
         assert len(posted_bodies) == 1
         body = posted_bodies[0]
@@ -1108,7 +1108,7 @@ class TestStartSessionNoweb:
         monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeAsyncClient())
 
         client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
-        asyncio.get_event_loop().run_until_complete(client.restart_session())
+        asyncio.run(client.restart_session())
 
         assert len(posted_bodies) == 1
         body = posted_bodies[0]
