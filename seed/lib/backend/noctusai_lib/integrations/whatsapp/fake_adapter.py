@@ -59,6 +59,10 @@ class FakeWahaClient:
         # client.fake_chat_list = [chat_dict, ...].
         self.fake_chat_list: list[dict[str, Any]] = []
         self.fake_chat_messages: dict[str, list[dict[str, Any]]] = {}
+        # Identity resolution: seed before calling get_contact/get_lid_phone/list_lids.
+        self.fake_contacts: dict[str, dict[str, Any]] = {}
+        self.fake_lid_phones: dict[str, str] = {}
+        self.fake_lids: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -169,6 +173,31 @@ class FakeWahaClient:
         """
         return self.fake_chat_messages.get(chat_id, [])[:limit]
 
+    # ------------------------------------------------------------------
+    # Identity resolution — mirrors WahaClient.get_contact/get_lid_phone/list_lids
+    # ------------------------------------------------------------------
+
+    async def get_contact(self, contact_id: str) -> dict[str, Any]:
+        """Return ``fake_contacts[contact_id]`` or ``{}`` if not seeded.
+
+        Seed via ``client.fake_contacts["5511@c.us"] = {"id": ..., "name": ...}``.
+        """
+        return self.fake_contacts.get(contact_id, {})
+
+    async def get_lid_phone(self, lid: str) -> str | None:
+        """Return ``fake_lid_phones[lid]`` or ``None`` if not seeded.
+
+        Seed via ``client.fake_lid_phones["33613018058989@lid"] = "5511974693365@c.us"``.
+        """
+        return self.fake_lid_phones.get(lid)
+
+    async def list_lids(self) -> list[dict[str, Any]]:
+        """Return ``fake_lids``.
+
+        Seed via ``client.fake_lids = [{"lid": "...", "pn": "..@c.us"}, ...]``.
+        """
+        return list(self.fake_lids)
+
     def simulate_pair(
         self, *, phone: str = "5511999999999", push_name: str = "Fake"
     ) -> None:
@@ -213,3 +242,6 @@ class FakeWahaClient:
         self.media_bytes.clear()
         self.fake_chat_list.clear()
         self.fake_chat_messages.clear()
+        self.fake_contacts.clear()
+        self.fake_lid_phones.clear()
+        self.fake_lids.clear()

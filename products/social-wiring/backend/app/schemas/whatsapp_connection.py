@@ -129,15 +129,31 @@ class WhatsAppWebhookResultOut(BaseModel):
 class ChatSummary(BaseModel):
     """Inbox summary row: one entry per WhatsApp contact (JID) on a connection.
 
+    ``chat_id`` is the CANONICAL send JID (``<phone>@c.us``) — de-duped
+    across all JID forms for the same human (``@c.us`` / ``@s.whatsapp.net``
+    / ``@lid``).  When the phone cannot be resolved the raw JID is kept.
+
+    ``contact`` is the best available display name: contacts table ``nome``
+    → WAHA name/pushname → phone digits → raw LID.
+
+    ``contact_id`` is the social_wiring.contacts.id UUID if this human has
+    been registered, else ``None``.
+
+    ``last_message_at`` is an ISO 8601 UTC string or ``null`` when there is
+    no usable timestamp (avoids "Invalid Date" in the FE).
+
     ``unread`` is 0 when there are no unread inbound messages (never null).
-    ``contact`` is the phone digits from the JID (best-effort display) — a
-    future enhancement can surface the WAHA pushname here.
     """
 
-    chat_id: str = Field(..., description="WhatsApp contact JID (raw_sender)")
-    contact: str = Field(..., description="Display label — phone digits or raw JID")
+    chat_id: str = Field(..., description="Canonical send JID (<phone>@c.us)")
+    contact: str = Field(..., description="Display label — name, phone, or raw JID")
+    contact_id: Optional[str] = Field(
+        default=None, description="contacts.id UUID if registered, else null"
+    )
     last_message: str
-    last_message_at: str = Field(..., description="ISO 8601 UTC timestamp")
+    last_message_at: Optional[str] = Field(
+        default=None, description="ISO 8601 UTC or null when no timestamp available"
+    )
     last_direction: str = Field(..., pattern="^(inbound|outbound)$")
     unread: int = Field(..., ge=0)
 

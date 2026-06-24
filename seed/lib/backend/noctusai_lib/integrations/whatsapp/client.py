@@ -323,6 +323,70 @@ class WahaClient:
             body = response.json()
             return body if isinstance(body, list) else []
 
+    # ------------------------------------------------------------------
+    # Contact identity resolution — WAHA 2026.x endpoints
+    # ------------------------------------------------------------------
+
+    async def get_contact(self, contact_id: str) -> dict[str, Any]:
+        """GET /api/contacts?contactId={contact_id}&session={session}.
+
+        For a phone-JID (``5511974693365@c.us``) returns::
+
+            {"id": "5511974693365@c.us",
+             "lid": "33613018058989@lid",
+             "name": "João Raphael",
+             "phoneNumber": "5511974693365@s.whatsapp.net"}
+
+        For a LID JID (``33613018058989@lid``) returns::
+
+            {"id": "33613018058989@lid", "pushname": "J. Raphael"}
+
+        Returns an empty dict on non-200 — callers must tolerate partial
+        data and log warnings; never silently swallow.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.get(
+                "/api/contacts",
+                params={"contactId": contact_id, "session": self.session},
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                return {}
+            return _safe_json(response)
+
+    async def get_lid_phone(self, lid: str) -> str | None:
+        """GET /api/{session}/lids/{lid} — resolve a LID to its phone JID.
+
+        Returns the ``pn`` field (e.g. ``5511974693365@c.us``) on success,
+        or ``None`` on 404 / any error.  Never raises — a missing LID
+        mapping is not an error condition.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.get(
+                f"/api/{self.session}/lids/{lid}",
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                return None
+            data = _safe_json(response)
+            return data.get("pn") or None
+
+    async def list_lids(self) -> list[dict[str, Any]]:
+        """GET /api/{session}/lids — bulk LID→phone map.
+
+        Returns a list of ``{"lid": "...", "pn": "..@c.us"}`` entries.
+        Returns an empty list on any error (WAHA not configured / unavailable).
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+            response = await client.get(
+                f"/api/{self.session}/lids",
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                return []
+            body = response.json()
+            return body if isinstance(body, list) else []
+
     async def download_media(self, url: str) -> bytes:
         resolved = self._resolve_media_url(url)
         async with httpx.AsyncClient(timeout=30) as client:

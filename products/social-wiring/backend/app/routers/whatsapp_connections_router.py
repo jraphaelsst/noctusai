@@ -70,6 +70,7 @@ from app.schemas.whatsapp_connection import (
     WhatsAppWebhookConfigRequest,
     WhatsAppWebhookResultOut,
 )
+from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
 from app.services.message_store import MessageStore
 from app.services.whatsapp_connection_store import (
@@ -77,6 +78,7 @@ from app.services.whatsapp_connection_store import (
     WhatsAppConnectionStore,
     build_whatsapp_connection_store,
 )
+from app.services.whatsapp_identity import ResolvedIdentity, build_lids_map_from_list
 
 logger = logging.getLogger(__name__)
 
@@ -585,42 +587,64 @@ def get_message_store_factory():
     return get_message_store_for_org
 
 
-def _waha_chat_to_summary(waha_chat: dict[str, Any]) -> dict[str, Any] | None:
+def _waha_chat_to_summary(
+    waha_chat: dict[str, Any],
+    *,
+    canonical_chat_id: str | None = None,
+    contact_display: str | None = None,
+    contact_id: str | None = None,
+) -> dict[str, Any] | None:
     """Map a WAHA chat object to a ``ChatSummary``-shaped dict.
 
     WAHA NOWEB chat shape (observed):
         {"id": {"_serialized": "5511@c.us", ...}, "name": "Alice",
          "lastMessage": {"body": "hi", "fromMe": false, "timestamp": 1718000000}}
 
+    ``canonical_chat_id``: when supplied (from identity dedup), this overrides
+    the raw JID from WAHA — the caller has already resolved the canonical phone-JID.
+
+    ``contact_display``: resolved display name (contacts table → WAHA name →
+    phone digits → raw LID) when supplied by the caller.
+
+    ``contact_id``: contacts.id UUID when the human is registered.
+
+    ``last_message_at`` is ``None`` (not "") when there is no usable timestamp
+    so the FE never renders "Invalid Date".
+
     Returns ``None`` when the shape is unrecognisable (defensive — never 500).
     """
     try:
         raw_id = waha_chat.get("id") or {}
-        chat_id: str = raw_id if isinstance(raw_id, str) else raw_id.get("_serialized") or ""
-        if not chat_id:
+        raw_chat_id: str = raw_id if isinstance(raw_id, str) else raw_id.get("_serialized") or ""
+        if not raw_chat_id:
             return None
-        name: str = waha_chat.get("name") or waha_chat.get("pushName") or ""
-        contact: str = (
-            name
-            or chat_id
-            .replace("@c.us", "")
-            .replace("@s.whatsapp.net", "")
-            .replace("@lid", "")
-        )
+        chat_id = canonical_chat_id or raw_chat_id
+        waha_name: str = waha_chat.get("name") or waha_chat.get("pushName") or ""
+        if contact_display:
+            contact: str = contact_display
+        else:
+            contact = waha_name or (
+                raw_chat_id
+                .replace("@c.us", "")
+                .replace("@s.whatsapp.net", "")
+                .replace("@lid", "")
+            )
         last_msg = waha_chat.get("lastMessage") or {}
         body: str = last_msg.get("body") or ""
         ts_raw = last_msg.get("timestamp")  # Unix epoch seconds (int) from WAHA
+        last_message_at: str | None
         if ts_raw:
             from datetime import timezone  # noqa: PLC0415 — lazy import, not on hot path
             last_message_at = datetime.fromtimestamp(
                 int(ts_raw), tz=timezone.utc
             ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         else:
-            last_message_at = ""
+            last_message_at = None  # FE guards on null; never emit ""
         from_me: bool = bool(last_msg.get("fromMe"))
         return {
             "chat_id": chat_id,
             "contact": contact,
+            "contact_id": contact_id,
             "last_message": body,
             "last_message_at": last_message_at,
             "last_direction": "outbound" if from_me else "inbound",
@@ -691,8 +715,16 @@ async def list_chats(
     ``conversation_messages``.  When WAHA returns 400 (store not enabled)
     or any other error, falls back to DB-only results — never 500.
 
-    Returns ``ChatSummary[]`` ordered by last_message_at DESC.  An empty
-    list (no messages yet) is 200 + [].  Non-owner / unknown connection → 404.
+    Identity dedup: builds a ONE-SHOT LID→phone map from WAHA ``list_lids()``
+    so that multiple JID forms of the same human collapse into one ChatSummary
+    (canonical chat_id = ``<phone>@c.us``; no N-per-chat WAHA calls).
+
+    Contact lookup: checks social_wiring.contacts for a registered record
+    per resolved phone to surface the stored nome and contact_id UUID.
+
+    Returns ``ChatSummary[]`` ordered by last_message_at DESC (null-last).
+    Empty list (no messages yet) is 200 + [].
+    Non-owner / unknown connection → 404.
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -704,30 +736,124 @@ async def list_chats(
     msg_store: MessageStore = msg_store_factory(org_id)
     db_rows = msg_store.list_chats(connection_id=connection_id)
 
-    # ── Attempt to merge WAHA live chat list ─────────────────────────────
-    # Build index keyed by chat_id for dedup: DB rows are the authoritative
-    # source for unread counts + our own stored messages; WAHA provides
-    # conversations that predate the first webhook.
-    by_chat_id: dict[str, dict[str, Any]] = {r["chat_id"]: r for r in db_rows}
+    # ── Build per-org contacts index (phone → {nome, id}) ────────────────────
+    # We need this regardless of whether WAHA is available.
+    contact_svc = ContactService(db=get_admin_client(), org_id=str(org_id))
+    all_contacts, _ = contact_svc.list_contacts(page=1, page_size=500)
+    # phone → {nome, contact_id}
+    phone_to_contact: dict[str, dict[str, Any]] = {}
+    for c in all_contacts:
+        wp = c.get("whatsapp_phone")
+        if wp:
+            phone_to_contact[wp] = {"nome": c.get("nome"), "contact_id": str(c["id"])}
 
+    # ── Attempt to build LID→phone map from WAHA ─────────────────────────────
+    lids_phone_map: dict[str, str] = {}  # lid_jid → phone_digits
     try:
         client = _waha_client(record, waha_factory)
+        lids_list = await client.list_lids()
+        lids_phone_map = build_lids_map_from_list(lids_list)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "WAHA list_lids unavailable for connection %s — identity dedup disabled: %s",
+            connection_id, exc,
+        )
+        # client may be partially built; reset so we don't try again below
+        client = None  # type: ignore[assignment]
+
+    def _canonical_phone(raw_jid: str) -> str | None:
+        """Resolve any JID to phone digits, or None when unknown."""
+        from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
+            is_lid,
+            normalize_phone,
+        )
+        if raw_jid.endswith("@lid"):
+            return lids_phone_map.get(raw_jid)
+        if raw_jid.endswith(("@c.us", "@s.whatsapp.net")):
+            return normalize_phone(raw_jid)
+        return None
+
+    def _resolve_contact_info(phone: str | None) -> tuple[str | None, str | None]:
+        """Return (nome, contact_id) for a resolved phone, or (None, None)."""
+        if not phone:
+            return None, None
+        entry = phone_to_contact.get(phone)
+        if not entry:
+            return None, None
+        return entry.get("nome"), entry.get("contact_id")
+
+    # ── Index DB rows using canonical phone as key ────────────────────────────
+    # DB rows keyed by raw_sender (JID as stored); remap to canonical chat_id.
+    by_canonical: dict[str, dict[str, Any]] = {}
+    for r in db_rows:
+        raw_cid = r["chat_id"]
+        phone = _canonical_phone(raw_cid)
+        canonical = f"{phone}@c.us" if phone else raw_cid
+        nome, cid = _resolve_contact_info(phone)
+        row = {
+            **r,
+            "chat_id": canonical,
+            "contact": nome or r.get("contact") or (phone or raw_cid),
+            "contact_id": cid,
+        }
+        if canonical not in by_canonical:
+            by_canonical[canonical] = row
+        else:
+            # Merge: keep latest last_message_at, add unread counts
+            existing = by_canonical[canonical]
+            existing_ts = existing.get("last_message_at") or ""
+            new_ts = row.get("last_message_at") or ""
+            if new_ts > existing_ts:
+                by_canonical[canonical] = {
+                    **row,
+                    "unread": existing.get("unread", 0) + row.get("unread", 0),
+                }
+            else:
+                existing["unread"] = existing.get("unread", 0) + row.get("unread", 0)
+
+    # ── Attempt to merge WAHA live chat list ─────────────────────────────────
+    try:
+        if client is None:
+            client = _waha_client(record, waha_factory)
         waha_chats = await client.list_chats()
         for wc in waha_chats:
-            summary = _waha_chat_to_summary(wc)
+            raw_id_obj = wc.get("id") or {}
+            raw_cid = raw_id_obj if isinstance(raw_id_obj, str) else (
+                raw_id_obj.get("_serialized") or ""
+            )
+            if not raw_cid:
+                continue
+            phone = _canonical_phone(raw_cid)
+            canonical = f"{phone}@c.us" if phone else raw_cid
+            nome, contact_id_val = _resolve_contact_info(phone)
+            waha_name = wc.get("name") or wc.get("pushName") or ""
+            display = nome or waha_name or (phone or raw_cid.split("@")[0])
+            summary = _waha_chat_to_summary(
+                wc,
+                canonical_chat_id=canonical,
+                contact_display=display,
+                contact_id=contact_id_val,
+            )
             if summary is None:
                 continue
-            cid = summary["chat_id"]
-            if cid not in by_chat_id:
-                # New chat only known to WAHA — add it.
-                by_chat_id[cid] = summary
+            if canonical not in by_canonical:
+                by_canonical[canonical] = summary
             else:
-                # DB row exists: keep DB unread count; update last_message if WAHA is newer.
-                db_entry = by_chat_id[cid]
+                db_entry = by_canonical[canonical]
                 waha_ts = summary.get("last_message_at") or ""
                 db_ts = db_entry.get("last_message_at") or ""
                 if waha_ts > db_ts:
-                    by_chat_id[cid] = {**summary, "unread": db_entry.get("unread", 0)}
+                    by_canonical[canonical] = {
+                        **summary,
+                        "unread": db_entry.get("unread", 0),
+                    }
+                # Prefer registered contact info when available
+                if db_entry.get("contact_id") and not by_canonical[canonical].get("contact_id"):
+                    by_canonical[canonical]["contact_id"] = db_entry["contact_id"]
+                if not _is_phone_like_display(by_canonical[canonical].get("contact") or ""):
+                    pass  # keep the better name already there
+                elif nome:
+                    by_canonical[canonical]["contact"] = nome
     except Exception as exc:  # noqa: BLE001 — graceful fallback; not a 500
         logger.warning(
             "WAHA list_chats unavailable for connection %s — falling back to DB only: %s",
@@ -735,11 +861,17 @@ async def list_chats(
         )
 
     merged = sorted(
-        by_chat_id.values(),
+        by_canonical.values(),
         key=lambda s: s.get("last_message_at") or "",
         reverse=True,
     )
     return [ChatSummary(**r) for r in merged]
+
+
+def _is_phone_like_display(display: str) -> bool:
+    """True when display is just digits/JID — a real name is better."""
+    import re  # noqa: PLC0415
+    return bool(re.match(r"^[\d+@.\-\s]+$", display))
 
 
 @router.get("/{connection_id}/chats/{chat_id:path}/messages", response_model=list[MessageOut])
@@ -772,46 +904,91 @@ async def list_messages(
         store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
     )
 
-    msg_store: MessageStore = msg_store_factory(org_id)
-    db_rows = msg_store.list_messages(
-        connection_id=connection_id,
-        raw_sender=chat_id,
-        limit=actual_limit,
-        before=before,
+    # ── Expand the requested chat_id to ALL its JID aliases ──────────────────
+    # chat_id from the FE is the canonical <phone>@c.us.  WAHA stored messages
+    # may be keyed as @c.us, @s.whatsapp.net, or @lid.  Expand so DB + WAHA
+    # queries cover all aliases.
+    from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
+        normalize_phone,
     )
+    jid_aliases: list[str] = [chat_id]
+    try:
+        client_for_lids = _waha_client(record, waha_factory)
+        lids_list = await client_for_lids.list_lids()
+        lids_map = build_lids_map_from_list(lids_list)
+        # phone digits from the requested canonical JID
+        phone_digits = normalize_phone(chat_id)
+        jid_aliases = [
+            f"{phone_digits}@c.us",
+            f"{phone_digits}@s.whatsapp.net",
+        ]
+        # add all @lid JIDs that map to this phone
+        for lid_jid, pdigits in lids_map.items():
+            if pdigits == phone_digits:
+                jid_aliases.append(lid_jid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "JID alias expansion failed for chat %s connection %s — using raw JID: %s",
+            chat_id, connection_id, exc,
+        )
+        client_for_lids = None  # type: ignore[assignment]
 
-    # ── Attempt to merge WAHA message history ────────────────────────────
-    # Dedup key: provider_message_id if non-null; else (direction, body[:32], created_at).
+    msg_store: MessageStore = msg_store_factory(org_id)
+    # Query DB for all aliases to get full history across JID forms
+    db_rows: list[dict[str, Any]] = []
+    seen_aliases: set[str] = set()
+    for alias in jid_aliases:
+        if alias in seen_aliases:
+            continue
+        seen_aliases.add(alias)
+        rows = msg_store.list_messages(
+            connection_id=connection_id,
+            raw_sender=alias,
+            limit=actual_limit,
+            before=before,
+        )
+        db_rows.extend(rows)
+
+    # ── Dedup key ─────────────────────────────────────────────────────────────
     def _dedup_key(row: dict[str, Any]) -> str:
         pmid = row.get("provider_message_id")
         if pmid:
             return f"pmid:{pmid}"
         return f"fp:{row.get('direction')}:{(row.get('body') or '')[:32]}:{row.get('created_at')}"
 
-    seen: set[str] = set()
+    seen_keys: set[str] = set()
     merged: list[dict[str, Any]] = []
     for row in db_rows:
         k = _dedup_key(row)
-        if k not in seen:
-            seen.add(k)
-            merged.append(row)
+        if k not in seen_keys:
+            seen_keys.add(k)
+            merged.append({**row, "chat_id": chat_id})  # normalise to canonical JID
 
+    # ── Attempt to merge WAHA message history across all aliases ─────────────
     try:
-        client = _waha_client(record, waha_factory)
-        waha_msgs = await client.fetch_chat_messages(chat_id, limit=actual_limit)
-        for wm in waha_msgs:
-            mapped = _waha_message_to_out(wm, chat_id=chat_id)
-            if mapped is None:
+        waha_client_ref = client_for_lids if client_for_lids is not None else _waha_client(record, waha_factory)
+        for alias in jid_aliases:
+            try:
+                waha_msgs = await waha_client_ref.fetch_chat_messages(alias, limit=actual_limit)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "WAHA fetch_chat_messages failed for alias %s connection %s: %s",
+                    alias, connection_id, exc,
+                )
                 continue
-            if before and (mapped.get("created_at") or "") >= before:
-                continue
-            k = _dedup_key(mapped)
-            if k not in seen:
-                seen.add(k)
-                merged.append(mapped)
+            for wm in waha_msgs:
+                mapped = _waha_message_to_out(wm, chat_id=chat_id)
+                if mapped is None:
+                    continue
+                if before and (mapped.get("created_at") or "") >= before:
+                    continue
+                k = _dedup_key(mapped)
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    merged.append(mapped)
     except Exception as exc:  # noqa: BLE001 — graceful fallback
         logger.warning(
-            "WAHA fetch_chat_messages unavailable for connection %s chat %s — "
+            "WAHA message fetch unavailable for connection %s chat %s — "
             "falling back to DB only: %s",
             connection_id, chat_id, exc,
         )

@@ -74,6 +74,13 @@ class WhatsAppClient(Protocol):
         self, chat_id: str, limit: int = 50
     ) -> list[dict[str, Any]]: ...
 
+    # Identity resolution — WAHA 2026.x contact endpoints
+    async def get_contact(self, contact_id: str) -> dict[str, Any]: ...
+
+    async def get_lid_phone(self, lid: str) -> str | None: ...
+
+    async def list_lids(self) -> list[dict[str, Any]]: ...
+
 
 # Legacy WAHA-prefixed aliases (kept for call-site portability).
 WahaMedia = WhatsAppMedia

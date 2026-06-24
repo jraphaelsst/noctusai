@@ -53,8 +53,10 @@ from noctusai_lib.integrations.vista import (
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.media_service import ResolvedMedia, make_media_service
 from app.services.message_store import DuplicateMessage, MessageStore
+from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.waha_response_registry import record_waha_sample
 from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
+from app.services.whatsapp_identity import resolve_identity
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
 from app.services.whatsapp_connection_store import build_whatsapp_connection_store
 from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
@@ -361,6 +363,41 @@ async def _process_waha_body(
         # A persistence error must NOT block the bot from replying — log
         # loudly and proceed. The Redis memory list still carries recall.
         logger.exception("conversation_messages insert failed; processing anyway")
+
+    # ── Best-effort contact auto-registration ────────────────────────────────
+    # For every inbound message, resolve the sender's identity and upsert
+    # it into social_wiring.contacts.  Failure NEVER blocks message ingestion.
+    # We need the WahaClient bound to this connection's credentials to call
+    # the WAHA identity endpoints.
+    if connection is not None:
+        try:
+            from noctusai_lib.integrations.whatsapp import get_whatsapp_client  # noqa: PLC0415
+            from app.services.credential_vault import CredentialStore  # noqa: PLC0415
+
+            _cred_store = CredentialStore(admin_client=get_admin_client())
+            _decrypted_key = _cred_store.decrypt(connection.encrypted_api_key)
+            _waha = get_whatsapp_client(
+                base_url=connection.base_url,
+                api_key=_decrypted_key,
+                session=connection.session_name,
+            )
+            _identity = await resolve_identity(_waha, sender)
+            if _identity.phone:
+                _contact_svc = ContactService(
+                    db=get_admin_client(), org_id=str(intake._org_id)
+                )
+                _contact_svc.upsert_whatsapp_contact(
+                    phone=_identity.phone,
+                    lids=_identity.lids,
+                    name=_identity.name or payload.pushName or None,
+                    jid=_identity.jid,
+                )
+        except Exception:
+            logger.warning(
+                "WhatsApp contact auto-register failed for sender=%s — continuing",
+                sender,
+                exc_info=True,
+            )
 
     # Auth check — unauthorized senders get a polite reply (not silent drop).
     # Once-per-conversation guard via Redis so we don't spam a denial loop
