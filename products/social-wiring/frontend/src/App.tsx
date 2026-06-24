@@ -61,6 +61,7 @@ const EmailListas = lazy(() => import("@/pages/EmailListas"));
 const EmailTemplates = lazy(() => import("@/pages/EmailTemplates"));
 const EmailCampanhas = lazy(() => import("@/pages/EmailCampanhas"));
 const EmailMarketingConfig = lazy(() => import("@/pages/EmailMarketingConfig"));
+const EmailMembros = lazy(() => import("@/pages/EmailMembros"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 
@@ -84,6 +85,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Mail,
     defaultOpen: false,
     items: [
+      { name: "Membros", href: "/email-marketing/membros", icon: Users, route: "email_membros" },
       { name: "Listas", href: "/email-marketing/listas", icon: List, route: "email_listas" },
       { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
       { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
@@ -132,6 +134,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Mail,
     defaultOpen: false,
     items: [
+      { name: "Membros", href: "/email-marketing/membros", icon: Users },
       { name: "Listas", href: "/email-marketing/listas", icon: List },
       { name: "Templates", href: "/email-marketing/templates", icon: FileText },
       { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send },
@@ -181,6 +184,7 @@ export default createProductApp({
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },
     { path: "/email-marketing/configuracao", component: EmailMarketingConfig },
+    { path: "/email-marketing/membros", component: EmailMembros },
     { path: "/youtube", component: YouTube },
     // Unified connections page (new canonical route)
     { path: "/conexoes", component: Conexoes },

@@ -48,9 +48,15 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Format ISO datetime as a relative label (e.g., "14:35", "Ontem", "20/06") */
-function relativeTime(iso: string): string {
+/**
+ * Format ISO datetime as a relative label (e.g., "14:35", "Ontem", "20/06").
+ * Returns "" when iso is null, empty, or not a valid date — never "Invalid Date".
+ */
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "";
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -62,9 +68,18 @@ function relativeTime(iso: string): string {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
-/** Strip the WhatsApp JID suffix to get a display name */
+/**
+ * Return the display name for a contact.
+ * The backend now sets contact = resolved name (e.g. "João Raphael") when
+ * available, otherwise the raw JID (e.g. "5511999998888@c.us").
+ * Strip the JID suffix only when the contact looks like a JID.
+ */
 function displayContact(contact: string): string {
-  return contact.replace(/@.*$/, "");
+  // If the value contains "@" it is a JID — strip the domain suffix
+  if (contact.includes("@")) {
+    return contact.replace(/@.*$/, "");
+  }
+  return contact;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────

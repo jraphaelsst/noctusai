@@ -34,9 +34,11 @@ const CONN_KEY = ["whatsapp", "connections"] as const;
 export interface ChatSummary {
   chat_id: string;
   contact: string;
+  /** Resolved contact name (server-side lookup) or raw JID */
+  contact_id: string | null;
   last_message: string;
-  /** ISO datetime string */
-  last_message_at: string;
+  /** ISO datetime string or null when no messages yet */
+  last_message_at: string | null;
   last_direction: "inbound" | "outbound";
   unread: number;
 }

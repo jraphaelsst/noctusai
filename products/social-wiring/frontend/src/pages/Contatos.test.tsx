@@ -1,15 +1,19 @@
 /**
- * Contatos.test.tsx — unit tests for the Mailchimp contacts page.
+ * Contatos.test.tsx — unit tests for the in-home platform contacts page.
+ *
+ * The Contatos page now shows LOCAL platform contacts (social_wiring.contacts)
+ * NOT Mailchimp members. No MailchimpGate wrapping.
  *
  * Covers:
- *   1. Gate renders NotConnected when connection.connected=false.
- *   2. Gate renders children when connection.connected=true.
- *   3. Loading state renders skeleton.
- *   4. Empty state renders when no contacts.
- *   5. Contact rows render email and status.
- *   6. Novo contato button opens upsert modal.
- *   7. Modal submit is disabled when email is empty (create mode).
- *   8. Archive button triggers archive mutation.
+ *   1. Loading state renders skeleton.
+ *   2. Empty state renders when no contacts.
+ *   3. Error state renders on failure.
+ *   4. Contact row renders nome as primary label + source badge.
+ *   5. Novo contato button opens upsert modal.
+ *   6. Modal submit disabled when email is empty (create mode).
+ *   7. Modal submit enabled when email is filled.
+ *   8. Archive button opens confirm dialog.
+ *   9. Confirm archive calls archive mutation.
  *
  * Mock strategy: one vi.mock per module (hoisted). All hooks configured per-test.
  */
@@ -21,24 +25,12 @@ afterEach(async () => {
 
 // ─── Hook mocks ─────────────────────────────────────────────────────────────
 
-const mockUseMailchimpConnection = vi.fn();
-const mockUseMailchimpContacts = vi.fn();
-const mockUseMailchimpContactMutations = vi.fn();
+const mockUseContacts = vi.fn();
+const mockUseContactMutations = vi.fn();
 
-vi.mock("@/hooks/useMailchimpConnection", () => ({
-  useMailchimpConnection: mockUseMailchimpConnection,
-  useMailchimpAudiences: vi.fn(() => ({ data: null })),
-  useMailchimpConnectionMutations: vi.fn(() => ({
-    put: { mutate: vi.fn(), isPending: false },
-    patch: { mutate: vi.fn(), isPending: false },
-    remove: { mutate: vi.fn(), isPending: false },
-  })),
-}));
-
-vi.mock("@/hooks/useMailchimpContacts", () => ({
-  useMailchimpContacts: mockUseMailchimpContacts,
-  useMailchimpContact: vi.fn(() => ({ data: null })),
-  useMailchimpContactMutations: mockUseMailchimpContactMutations,
+vi.mock("@/hooks/useContacts", () => ({
+  useContacts: mockUseContacts,
+  useContactMutations: mockUseContactMutations,
 }));
 
 // ─── UI stubs ────────────────────────────────────────────────────────────────
@@ -59,7 +51,7 @@ vi.mock("@/components/ui/card", () => ({
   CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 }));
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, onClick, disabled, "data-testid": dt, asChild, ...rest }: any) => (
+  Button: ({ children, onClick, disabled, "data-testid": dt, ...rest }: any) => (
     <button onClick={onClick} disabled={disabled} data-testid={dt} {...rest}>
       {children}
     </button>
@@ -103,7 +95,7 @@ vi.mock("@/components/ui/alert-dialog", () => ({
   AlertDialogCancel: ({ children }: any) => <button>{children}</button>,
 }));
 vi.mock("@/components/ui/select", () => ({
-  Select: ({ children, onValueChange }: any) => <div>{children}</div>,
+  Select: ({ children }: any) => <div>{children}</div>,
   SelectTrigger: ({ children }: any) => <div>{children}</div>,
   SelectValue: ({ placeholder }: any) => <span>{placeholder}</span>,
   SelectContent: ({ children }: any) => <div>{children}</div>,
@@ -116,42 +108,52 @@ vi.mock("react-router-dom", () => ({
   Link: ({ children, to }: any) => <a href={to}>{children}</a>,
   useNavigate: () => vi.fn(),
 }));
-vi.mock("date-fns", () => ({
-  format: () => "01/06/2026",
-}));
-vi.mock("date-fns/locale", () => ({
-  ptBR: {},
-}));
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
-const makeMember = (email = "joao@exemplo.com") => ({
-  email,
-  status: "subscribed",
-  first_name: "João",
-  last_name: "Silva",
+const makeContact = (overrides: Record<string, any> = {}) => ({
+  id: "contact-1",
+  org_id: "org-1",
+  nome: "João Silva",
+  email: "joao@exemplo.com",
+  telefone: "+5511999998888",
+  empresa: "Acme Ltda.",
   tags: ["vip"],
-  vip: true,
-  last_changed: "2026-06-01T10:00:00Z",
+  source: "manual",
+  status: "active",
+  whatsapp_phone: null,
+  whatsapp_lids: [],
+  whatsapp_jid: null,
+  created_at: "2026-06-01T10:00:00Z",
+  updated_at: null,
+  custom_fields: {},
+  ...overrides,
+});
+
+const makeContactsPage = (contacts: any[] = []) => ({
+  data: contacts,
+  pagination: {
+    page: 1,
+    page_size: 20,
+    total: contacts.length,
+    total_pages: 1,
+  },
 });
 
 const defaultMutations = () => ({
-  upsert: { mutate: vi.fn(), isPending: false },
+  create: { mutate: vi.fn(), isPending: false },
+  update: { mutate: vi.fn(), isPending: false },
   archive: { mutate: vi.fn(), isPending: false },
 });
 
 beforeEach(() => {
-  mockUseMailchimpConnection.mockReturnValue({
-    data: { connected: true },
-    isLoading: false,
-  });
-  mockUseMailchimpContacts.mockReturnValue({
-    data: { items: [], total: 0 },
+  mockUseContacts.mockReturnValue({
+    data: makeContactsPage([]),
     isLoading: false,
     isError: false,
     error: null,
   });
-  mockUseMailchimpContactMutations.mockReturnValue(defaultMutations());
+  mockUseContactMutations.mockReturnValue(defaultMutations());
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -165,29 +167,9 @@ async function renderContatos() {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe("Contatos — MailchimpGate", () => {
-  it("shows NotConnected when connection.connected=false", async () => {
-    mockUseMailchimpConnection.mockReturnValue({
-      data: { connected: false },
-      isLoading: false,
-    });
-    const { getByTestId } = await renderContatos();
-    expect(getByTestId("mailchimp-not-connected")).toBeTruthy();
-  });
-
-  it("shows loading skeleton while gate probe is in flight", async () => {
-    mockUseMailchimpConnection.mockReturnValue({
-      data: undefined,
-      isLoading: true,
-    });
-    const { getByTestId } = await renderContatos();
-    expect(getByTestId("mailchimp-gate-loading")).toBeTruthy();
-  });
-});
-
-describe("Contatos — loading / empty / error / success states", () => {
+describe("Contatos (in-home) — loading / empty / error / success states", () => {
   it("renders loading skeleton while contacts are fetching", async () => {
-    mockUseMailchimpContacts.mockReturnValue({
+    mockUseContacts.mockReturnValue({
       data: undefined,
       isLoading: true,
       isError: false,
@@ -201,43 +183,71 @@ describe("Contatos — loading / empty / error / success states", () => {
     expect(getByTestId("contatos-empty")).toBeTruthy();
   });
 
-  it("renders contact rows when data present", async () => {
-    mockUseMailchimpContacts.mockReturnValue({
-      data: { items: [makeMember()], total: 1 },
-      isLoading: false,
-      isError: false,
-    });
-    const { getByTestId } = await renderContatos();
-    expect(getByTestId("contato-row-joao@exemplo.com")).toBeTruthy();
-  });
-
   it("renders error card on failure", async () => {
-    mockUseMailchimpContacts.mockReturnValue({
+    mockUseContacts.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
-      error: { body: { detail: { message: "Erro de rede" } } },
+      error: new Error("Network Error"),
     });
     const { getByTestId } = await renderContatos();
     expect(getByTestId("contatos-error")).toBeTruthy();
   });
+
+  it("renders contact row with nome as primary label", async () => {
+    mockUseContacts.mockReturnValue({
+      data: makeContactsPage([makeContact()]),
+      isLoading: false,
+      isError: false,
+    });
+    const { getByTestId, getByText } = await renderContatos();
+    expect(getByTestId("contato-row-contact-1")).toBeTruthy();
+    expect(getByText("João Silva")).toBeTruthy();
+  });
+
+  it("renders source badge for WhatsApp contacts", async () => {
+    mockUseContacts.mockReturnValue({
+      data: makeContactsPage([makeContact({ source: "whatsapp", id: "contact-2" })]),
+      isLoading: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderContatos();
+    expect(getByTestId("source-badge-whatsapp")).toBeTruthy();
+  });
+
+  it("renders source badge for manual contacts", async () => {
+    mockUseContacts.mockReturnValue({
+      data: makeContactsPage([makeContact()]),
+      isLoading: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderContatos();
+    expect(getByTestId("source-badge-manual")).toBeTruthy();
+  });
+
+  it("does NOT render MailchimpGate (no mailchimp-not-connected testid)", async () => {
+    const { queryByTestId } = await renderContatos();
+    // The in-home page must never show the Mailchimp gate
+    expect(queryByTestId("mailchimp-not-connected")).toBeNull();
+    expect(queryByTestId("mailchimp-gate-loading")).toBeNull();
+  });
 });
 
-describe("Contatos — create modal", () => {
+describe("Contatos (in-home) — create modal", () => {
   it("Novo contato button opens modal", async () => {
     const { getByTestId, fireEvent } = await renderContatos();
     fireEvent.click(getByTestId("btn-novo-contato"));
     expect(getByTestId("dialog")).toBeTruthy();
   });
 
-  it("submit disabled when email is empty", async () => {
+  it("submit disabled when email is empty in create mode", async () => {
     const { getByTestId, fireEvent } = await renderContatos();
     fireEvent.click(getByTestId("btn-novo-contato"));
     const btn = getByTestId("contact-modal-submit") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
-  it("submit enabled when email is filled", async () => {
+  it("submit enabled when email is filled in create mode", async () => {
     const { getByTestId, fireEvent } = await renderContatos();
     fireEvent.click(getByTestId("btn-novo-contato"));
     fireEvent.change(getByTestId("contact-email-input") as HTMLInputElement, {
@@ -248,35 +258,32 @@ describe("Contatos — create modal", () => {
   });
 });
 
-describe("Contatos — archive", () => {
+describe("Contatos (in-home) — archive", () => {
   it("archive button opens confirm dialog", async () => {
-    mockUseMailchimpContacts.mockReturnValue({
-      data: { items: [makeMember()], total: 1 },
+    mockUseContacts.mockReturnValue({
+      data: makeContactsPage([makeContact()]),
       isLoading: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderContatos();
-    fireEvent.click(getByTestId("archive-contato-joao@exemplo.com"));
+    fireEvent.click(getByTestId("archive-contato-contact-1"));
     expect(getByTestId("alert-dialog")).toBeTruthy();
   });
 
-  it("confirm archive calls archive mutation", async () => {
+  it("confirm archive calls archive mutation with contact id", async () => {
     const archiveMutate = vi.fn();
-    mockUseMailchimpContactMutations.mockReturnValue({
+    mockUseContactMutations.mockReturnValue({
       ...defaultMutations(),
       archive: { mutate: archiveMutate, isPending: false },
     });
-    mockUseMailchimpContacts.mockReturnValue({
-      data: { items: [makeMember()], total: 1 },
+    mockUseContacts.mockReturnValue({
+      data: makeContactsPage([makeContact()]),
       isLoading: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderContatos();
-    fireEvent.click(getByTestId("archive-contato-joao@exemplo.com"));
+    fireEvent.click(getByTestId("archive-contato-contact-1"));
     fireEvent.click(getByTestId("confirm-archive-contato"));
-    expect(archiveMutate).toHaveBeenCalledWith(
-      "joao@exemplo.com",
-      expect.any(Object),
-    );
+    expect(archiveMutate).toHaveBeenCalledWith("contact-1", expect.any(Object));
   });
 });

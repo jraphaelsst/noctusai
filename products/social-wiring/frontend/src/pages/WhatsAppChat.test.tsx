@@ -122,6 +122,7 @@ const makeConn = (overrides: Partial<Record<string, any>> = {}) => ({
 const makeChat = (overrides: Partial<Record<string, any>> = {}) => ({
   chat_id: "5511999998888@c.us",
   contact: "5511999998888@c.us",
+  contact_id: null,
   last_message: "Olá, tudo bem?",
   last_message_at: new Date().toISOString(),
   last_direction: "inbound" as const,
@@ -421,5 +422,42 @@ describe("WhatsAppChat — auto-reply toggle", () => {
     const sw = getByTestId("auto-reply-switch");
     fireEvent.click(sw);
     expect(mutate).toHaveBeenCalledWith({ enabled: true });
+  });
+});
+
+describe("WhatsAppChat — resolved contact name + null timestamp safety", () => {
+  it("shows resolved contact name (not JID) when contact has no @", async () => {
+    const chat = makeChat({ contact: "João Raphael", contact_id: "c-123" });
+    mockUseWhatsAppChats.mockReturnValue({
+      data: [chat],
+      isLoading: false,
+      isError: false,
+    });
+    const { getByText } = await renderWhatsAppChat();
+    // Resolved name — must render as-is (no JID stripping)
+    expect(getByText("João Raphael")).toBeTruthy();
+  });
+
+  it("strips JID suffix when contact is a raw JID", async () => {
+    const chat = makeChat({ contact: "5511999998888@c.us" });
+    mockUseWhatsAppChats.mockReturnValue({
+      data: [chat],
+      isLoading: false,
+      isError: false,
+    });
+    const { getByText } = await renderWhatsAppChat();
+    expect(getByText("5511999998888")).toBeTruthy();
+  });
+
+  it("renders chat list without crashing when last_message_at is null", async () => {
+    const chat = makeChat({ last_message_at: null });
+    mockUseWhatsAppChats.mockReturnValue({
+      data: [chat],
+      isLoading: false,
+      isError: false,
+    });
+    // Should not throw — null timestamp must not produce "Invalid Date"
+    const { queryByText } = await renderWhatsAppChat();
+    expect(queryByText("Invalid Date")).toBeNull();
   });
 });
