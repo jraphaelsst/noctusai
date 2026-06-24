@@ -122,6 +122,24 @@ class ContactService:
                 logger.warning("Import skip: %s — %s", c.get("email"), e)
         return {"imported": len(rows), "total": len(contacts)}
 
+    def get_by_whatsapp_phone(self, phone: str) -> dict | None:
+        """Return the contact for (org_id, whatsapp_phone=phone), or None.
+
+        Cached identity lookup — lets hot-path read endpoints expand a chat's
+        JID aliases (whatsapp_lids) from OUR DB instead of a live WAHA call.
+        """
+        if not phone:
+            return None
+        result = (
+            self.db.table("contacts")
+            .select("*")
+            .eq("org_id", self.org_id)
+            .eq("whatsapp_phone", phone)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
     def upsert_whatsapp_contact(
         self,
         *,

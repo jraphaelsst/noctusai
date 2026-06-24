@@ -19,6 +19,14 @@ from noctusai_lib.integrations.whatsapp.mappers import (
     rewrite_vendor_media_url,
 )
 
+# 🔴 BOUNDARY: read/identity calls (chats, messages, contact, lids) hit WAHA in
+# request hot paths (chat-list render, message-thread render, inbound webhook).
+# They MUST be tightly bounded so WAHA latency/drift degrades gracefully instead
+# of hanging the request. The 2026-06-24 regression was an UNBOUNDED per-JID
+# fanout at the old 15-30s timeouts → ~49s thread loads + a blocked reply path.
+# Session-admin writes (start/restart/webhook/send) keep their longer timeouts.
+_WAHA_READ_TIMEOUT = 6.0
+
 
 class WahaSessionNotReady(RuntimeError):
     """Raised by ``get_qr`` when the session is not in ``SCAN_QR_CODE``.
@@ -290,7 +298,7 @@ class WahaClient:
         store is not enabled; callers should treat that as an empty list rather
         than raising (use the graceful-fallback pattern in the router).
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
             response = await client.get(
                 f"/api/{self.session}/chats",
                 params={"limit": limit},
@@ -313,7 +321,7 @@ class WahaClient:
         ``chat_id`` is a WhatsApp JID such as ``5511999999999@c.us``.
         Requires the NOWEB store to be enabled; callers handle the 400 case.
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
             response = await client.get(
                 f"/api/{self.session}/chats/{chat_id}/messages",
                 params={"limit": limit},
@@ -344,7 +352,7 @@ class WahaClient:
         Returns an empty dict on non-200 — callers must tolerate partial
         data and log warnings; never silently swallow.
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
             response = await client.get(
                 "/api/contacts",
                 params={"contactId": contact_id, "session": self.session},
@@ -361,7 +369,7 @@ class WahaClient:
         or ``None`` on 404 / any error.  Never raises — a missing LID
         mapping is not an error condition.
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
             response = await client.get(
                 f"/api/{self.session}/lids/{lid}",
                 headers=self._headers(),
@@ -377,7 +385,7 @@ class WahaClient:
         Returns a list of ``{"lid": "...", "pn": "..@c.us"}`` entries.
         Returns an empty list on any error (WAHA not configured / unavailable).
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
             response = await client.get(
                 f"/api/{self.session}/lids",
                 headers=self._headers(),

@@ -28,6 +28,7 @@ Two receiver routes are provided:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import hmac
 import hashlib
@@ -64,6 +65,60 @@ from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceE
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
+
+# ── Background contact auto-registration ──────────────────────────────────────
+# 🔴 BOUNDARY: identity resolution hits WAHA (get_lid_phone + get_contact). It
+# MUST NOT run on the inbound reply hot path — a slow WAHA there delayed/killed
+# the AI reply (2026-06-24 regression). We fire-and-forget it so the reply is
+# dispatched immediately; the resolved {phone, lids, name} lands in
+# social_wiring.contacts for the read endpoints. WAHA calls are bounded by the
+# seed client's short read timeout; any failure is swallowed with a warning.
+_bg_tasks: set = set()
+
+
+def _fire_and_forget(coro) -> None:
+    """Schedule a coroutine without blocking the caller; hold a ref vs GC."""
+    try:
+        task = asyncio.ensure_future(coro)
+    except RuntimeError:
+        # No running loop (e.g. a sync test context) — not hot-path critical.
+        coro.close()
+        return
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _register_contact_bg(
+    *,
+    base_url: str,
+    api_key: str | None,
+    session: str,
+    sender: str,
+    push_name: str | None,
+    org_id: str,
+) -> None:
+    """Resolve a sender's WhatsApp identity + upsert a contact. OFF the hot path."""
+    try:
+        from noctusai_lib.integrations.whatsapp import get_whatsapp_client  # noqa: PLC0415
+
+        waha = get_whatsapp_client(base_url=base_url, api_key=api_key, session=session)
+        identity = await resolve_identity(waha, sender)
+        if identity.phone:
+            ContactService(
+                db=get_admin_client(), org_id=org_id
+            ).upsert_whatsapp_contact(
+                phone=identity.phone,
+                lids=identity.lids,
+                name=identity.name or push_name or None,
+                jid=identity.jid,
+            )
+    except Exception:
+        logger.warning(
+            "WhatsApp contact auto-register failed for sender=%s — continuing",
+            sender,
+            exc_info=True,
+        )
+
 
 _UPLOAD_DIR = Path("/tmp/uploads")
 
@@ -369,32 +424,26 @@ async def _process_waha_body(
     # it into social_wiring.contacts.  Failure NEVER blocks message ingestion.
     # We need the WahaClient bound to this connection's credentials to call
     # the WAHA identity endpoints.
+    # Fire-and-forget: resolve identity + upsert contact AFTER the reply path,
+    # never blocking it (see _register_contact_bg). Decrypt is cheap + local;
+    # the WAHA calls happen inside the backgrounded coroutine.
     if connection is not None:
         try:
-            from noctusai_lib.integrations.whatsapp import get_whatsapp_client  # noqa: PLC0415
-            from app.services.credential_vault import CredentialStore  # noqa: PLC0415
-
             _cred_store = CredentialStore(admin_client=get_admin_client())
             _decrypted_key = _cred_store.decrypt(connection.encrypted_api_key)
-            _waha = get_whatsapp_client(
-                base_url=connection.base_url,
-                api_key=_decrypted_key,
-                session=connection.session_name,
+            _fire_and_forget(
+                _register_contact_bg(
+                    base_url=connection.base_url,
+                    api_key=_decrypted_key,
+                    session=connection.session_name,
+                    sender=sender,
+                    push_name=payload.pushName,
+                    org_id=str(intake._org_id),
+                )
             )
-            _identity = await resolve_identity(_waha, sender)
-            if _identity.phone:
-                _contact_svc = ContactService(
-                    db=get_admin_client(), org_id=str(intake._org_id)
-                )
-                _contact_svc.upsert_whatsapp_contact(
-                    phone=_identity.phone,
-                    lids=_identity.lids,
-                    name=_identity.name or payload.pushName or None,
-                    jid=_identity.jid,
-                )
         except Exception:
             logger.warning(
-                "WhatsApp contact auto-register failed for sender=%s — continuing",
+                "WhatsApp contact auto-register scheduling failed for sender=%s — continuing",
                 sender,
                 exc_info=True,
             )

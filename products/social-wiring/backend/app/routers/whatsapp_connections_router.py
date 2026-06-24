@@ -761,6 +761,18 @@ async def list_chats(
         # client may be partially built; reset so we don't try again below
         client = None  # type: ignore[assignment]
 
+    # 🔴 BOUNDARY: augment the LID→phone map from OUR OWN contacts' stored
+    # whatsapp_lids. So a registered human's @lid chat still resolves to its
+    # phone (→ contact name + dedup) even when WAHA's list_lids is slow or
+    # unavailable. Name display reads from our DB, not live WAHA. WAHA's map
+    # (when present) stays authoritative; this only fills gaps (setdefault).
+    for c in all_contacts:
+        wp = c.get("whatsapp_phone")
+        if not wp:
+            continue
+        for lid_jid in (c.get("whatsapp_lids") or []):
+            lids_phone_map.setdefault(lid_jid, wp)
+
     def _canonical_phone(raw_jid: str) -> str | None:
         """Resolve any JID to phone digits, or None when unknown."""
         from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
@@ -908,30 +920,37 @@ async def list_messages(
     # chat_id from the FE is the canonical <phone>@c.us.  WAHA stored messages
     # may be keyed as @c.us, @s.whatsapp.net, or @lid.  Expand so DB + WAHA
     # queries cover all aliases.
+    # 🔴 BOUNDARY: expand aliases from OUR cached contacts table — NO live WAHA
+    # call here. The previous version called list_lids() then fanned out a
+    # fetch_chat_messages() per alias, which at 15-30s timeouts produced ~49s
+    # thread loads (2026-06-24 regression). Aliases now come from the contact's
+    # stored whatsapp_lids (populated in the background on inbound).
     from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
         normalize_phone,
     )
+    phone_digits = normalize_phone(chat_id)
     jid_aliases: list[str] = [chat_id]
-    try:
-        client_for_lids = _waha_client(record, waha_factory)
-        lids_list = await client_for_lids.list_lids()
-        lids_map = build_lids_map_from_list(lids_list)
-        # phone digits from the requested canonical JID
-        phone_digits = normalize_phone(chat_id)
+    if phone_digits:
         jid_aliases = [
             f"{phone_digits}@c.us",
             f"{phone_digits}@s.whatsapp.net",
         ]
-        # add all @lid JIDs that map to this phone
-        for lid_jid, pdigits in lids_map.items():
-            if pdigits == phone_digits:
-                jid_aliases.append(lid_jid)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "JID alias expansion failed for chat %s connection %s — using raw JID: %s",
-            chat_id, connection_id, exc,
-        )
-        client_for_lids = None  # type: ignore[assignment]
+        try:
+            _contact = ContactService(
+                db=get_admin_client(), org_id=str(org_id)
+            ).get_by_whatsapp_phone(phone_digits)
+            if _contact:
+                for lid_jid in (_contact.get("whatsapp_lids") or []):
+                    if lid_jid not in jid_aliases:
+                        jid_aliases.append(lid_jid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cached alias lookup failed for chat %s connection %s — "
+                "phone-form aliases only: %s",
+                chat_id, connection_id, exc,
+            )
+    if chat_id not in jid_aliases:
+        jid_aliases.append(chat_id)
 
     msg_store: MessageStore = msg_store_factory(org_id)
     # Query DB for all aliases to get full history across JID forms
@@ -964,32 +983,28 @@ async def list_messages(
             seen_keys.add(k)
             merged.append({**row, "chat_id": chat_id})  # normalise to canonical JID
 
-    # ── Attempt to merge WAHA message history across all aliases ─────────────
+    # ── Best-effort WAHA history merge — ONE bounded call (canonical JID) ─────
+    # 🔴 BOUNDARY: a SINGLE fetch_chat_messages on the canonical chat_id, bounded
+    # by the seed's short read timeout. NOWEB keys individual-chat history under
+    # the phone @c.us JID, so one call covers it. NEW @lid-addressed messages are
+    # already in the DB rows above. WAHA slow / store-off / unexpected-shape →
+    # degrade to DB-only. NEVER a per-alias fanout (that was the ~49s bug).
     try:
-        waha_client_ref = client_for_lids if client_for_lids is not None else _waha_client(record, waha_factory)
-        for alias in jid_aliases:
-            try:
-                waha_msgs = await waha_client_ref.fetch_chat_messages(alias, limit=actual_limit)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "WAHA fetch_chat_messages failed for alias %s connection %s: %s",
-                    alias, connection_id, exc,
-                )
+        waha_client_ref = _waha_client(record, waha_factory)
+        waha_msgs = await waha_client_ref.fetch_chat_messages(chat_id, limit=actual_limit)
+        for wm in waha_msgs:
+            mapped = _waha_message_to_out(wm, chat_id=chat_id)
+            if mapped is None:
                 continue
-            for wm in waha_msgs:
-                mapped = _waha_message_to_out(wm, chat_id=chat_id)
-                if mapped is None:
-                    continue
-                if before and (mapped.get("created_at") or "") >= before:
-                    continue
-                k = _dedup_key(mapped)
-                if k not in seen_keys:
-                    seen_keys.add(k)
-                    merged.append(mapped)
+            if before and (mapped.get("created_at") or "") >= before:
+                continue
+            k = _dedup_key(mapped)
+            if k not in seen_keys:
+                seen_keys.add(k)
+                merged.append(mapped)
     except Exception as exc:  # noqa: BLE001 — graceful fallback
         logger.warning(
-            "WAHA message fetch unavailable for connection %s chat %s — "
-            "falling back to DB only: %s",
+            "WAHA history unavailable for connection %s chat %s — DB-only: %s",
             connection_id, chat_id, exc,
         )
 
