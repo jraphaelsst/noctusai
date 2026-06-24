@@ -73,6 +73,7 @@ class MessageStore:
         authorized: bool = True,
         structured_payload: dict[str, Any] | None = None,
         connection_id: UUID | None = None,
+        created_at: str | None = None,
     ) -> StoredMessage:
         """Insert a row.
 
@@ -103,6 +104,11 @@ class MessageStore:
             ),
             "connection_id": str(connection_id) if connection_id else None,
         }
+        # Explicit created_at preserves the ORIGINAL time for backfilled WAHA
+        # history (else the DB default now() would stamp old messages as "now"
+        # and wreck thread ordering). Omitted ⇒ DB default now() for live sends.
+        if created_at:
+            payload["created_at"] = created_at
         try:
             response = (
                 self._admin

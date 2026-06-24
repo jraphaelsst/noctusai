@@ -32,9 +32,11 @@ patching per ``KB § PATTERNS/di-test-seam.md``.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import secrets
+import time
 from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid5
@@ -72,7 +74,7 @@ from app.schemas.whatsapp_connection import (
 )
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
-from app.services.message_store import MessageStore
+from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.whatsapp_connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
@@ -83,6 +85,84 @@ from app.services.whatsapp_identity import ResolvedIdentity, build_lids_map_from
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/whatsapp/connections", tags=["WhatsApp"])
+
+# ── Background WAHA history sync ──────────────────────────────────────────────
+# 🔴 BOUNDARY: WAHA fetch_chat_messages is ~13s/call — far too slow for the
+# thread-render hot path (the FE polls every 3s). So list_messages serves from
+# OUR DB instantly and we sync WAHA history INTO conversation_messages in the
+# background (cache-the-external-data, rule #6). Debounced per chat so the
+# every-3s poll can't spawn a pile-up of slow background fetches against WAHA.
+_bg_sync_tasks: set = set()
+_last_history_sync: dict[str, float] = {}  # chat_id → monotonic ts of last sync
+_HISTORY_SYNC_COOLDOWN_S = 90.0
+
+
+def _fire_and_forget(coro) -> None:
+    """Schedule a coroutine without blocking; hold a ref so it isn't GC'd."""
+    try:
+        task = asyncio.ensure_future(coro)
+    except RuntimeError:
+        coro.close()
+        return
+    _bg_sync_tasks.add(task)
+    task.add_done_callback(_bg_sync_tasks.discard)
+
+
+async def _sync_waha_history_bg(
+    *,
+    record: WhatsAppConnectionRecord,
+    waha_factory: Any,
+    msg_store_factory: Any,
+    org_id: UUID,
+    connection_id: UUID,
+    chat_id: str,
+    limit: int,
+) -> None:
+    """Pull WAHA history for one chat into conversation_messages. OFF hot path.
+
+    ONE bounded WAHA call on the canonical JID (NOWEB keys individual-chat
+    history by the phone @c.us JID). Idempotent: MessageStore.record dedups by
+    provider_message_id. Original timestamps preserved via created_at. A failure
+    only means history isn't backfilled yet — never user-facing.
+    """
+    try:
+        client = _waha_client(record, waha_factory)
+        waha_msgs = await client.fetch_chat_messages(chat_id, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "background WAHA history sync fetch failed for chat %s conn %s: %s",
+            chat_id, connection_id, exc,
+        )
+        return
+    store = msg_store_factory(org_id)
+    synced = 0
+    for wm in waha_msgs:
+        mapped = _waha_message_to_out(wm, chat_id=chat_id)
+        if mapped is None:
+            continue
+        try:
+            store.record(
+                session_id=chat_id,
+                raw_sender=chat_id,
+                direction=mapped.get("direction") or "inbound",
+                body=mapped.get("body") or "",
+                provider_message_id=mapped.get("provider_message_id"),
+                connection_id=connection_id,
+                created_at=mapped.get("created_at") or None,
+            )
+            synced += 1
+        except DuplicateMessage:
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "background history record failed (chat %s conn %s): %s",
+                chat_id, connection_id, exc,
+            )
+    if synced:
+        logger.info(
+            "backfilled %d WAHA history message(s) for chat %s conn %s",
+            synced, chat_id, connection_id,
+        )
 
 
 # ─── DI seams ───────────────────────────────────────────────────────────────
@@ -983,29 +1063,25 @@ async def list_messages(
             seen_keys.add(k)
             merged.append({**row, "chat_id": chat_id})  # normalise to canonical JID
 
-    # ── Best-effort WAHA history merge — ONE bounded call (canonical JID) ─────
-    # 🔴 BOUNDARY: a SINGLE fetch_chat_messages on the canonical chat_id, bounded
-    # by the seed's short read timeout. NOWEB keys individual-chat history under
-    # the phone @c.us JID, so one call covers it. NEW @lid-addressed messages are
-    # already in the DB rows above. WAHA slow / store-off / unexpected-shape →
-    # degrade to DB-only. NEVER a per-alias fanout (that was the ~49s bug).
-    try:
-        waha_client_ref = _waha_client(record, waha_factory)
-        waha_msgs = await waha_client_ref.fetch_chat_messages(chat_id, limit=actual_limit)
-        for wm in waha_msgs:
-            mapped = _waha_message_to_out(wm, chat_id=chat_id)
-            if mapped is None:
-                continue
-            if before and (mapped.get("created_at") or "") >= before:
-                continue
-            k = _dedup_key(mapped)
-            if k not in seen_keys:
-                seen_keys.add(k)
-                merged.append(mapped)
-    except Exception as exc:  # noqa: BLE001 — graceful fallback
-        logger.warning(
-            "WAHA history unavailable for connection %s chat %s — DB-only: %s",
-            connection_id, chat_id, exc,
+    # ── WAHA history → DB sync (BACKGROUND, debounced) ───────────────────────
+    # 🔴 BOUNDARY: never fetch WAHA on this hot path — fetch_chat_messages is
+    # ~13s and the FE polls every 3s. Serve the DB rows NOW (instant); sync WAHA
+    # history INTO the DB in the background so a later poll renders it (rule #6:
+    # cache external data in our store). Debounced per chat so the 3s poll can't
+    # spawn a pile-up of slow background fetches.
+    now_mono = time.monotonic()
+    if now_mono - _last_history_sync.get(chat_id, 0.0) >= _HISTORY_SYNC_COOLDOWN_S:
+        _last_history_sync[chat_id] = now_mono
+        _fire_and_forget(
+            _sync_waha_history_bg(
+                record=record,
+                waha_factory=waha_factory,
+                msg_store_factory=msg_store_factory,
+                org_id=org_id,
+                connection_id=connection_id,
+                chat_id=chat_id,
+                limit=actual_limit,
+            )
         )
 
     # Sort oldest-first, cap at limit.

@@ -867,17 +867,30 @@ class TestWahaLiveMergeChats:
 class TestWahaLiveMergeMessages:
     """GET /chats/{chat_id}/messages merges WAHA history with DB rows."""
 
-    def test_waha_history_appears_when_db_empty(self, chat_client):
-        """Historical WAHA messages surface when conversation_messages is empty."""
+    def test_messages_hot_path_is_db_only_not_inline_waha(self, chat_client):
+        """Hot path serves DB rows ONLY; WAHA history is NOT fetched inline.
+
+        ``fetch_chat_messages`` is ~13s against the live server, so it is kept
+        OFF the render path (the FE polls every 3s). History is synced into the
+        DB by a debounced background task and surfaces on a later poll. Here the
+        DB has one message and WAHA has a DIFFERENT one — the response must
+        contain ONLY the DB row, proving WAHA is not merged inline.
+        """
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
+        org_id = _TEST_ORG_ID
+
+        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
+            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "db only",
+             "created_at": "2026-06-22T09:00:00.000Z"},
+        ])
 
         fake: FakeWahaClient = fakes["default"]
         fake.fake_chat_messages["5511@c.us"] = [
             {
                 "id": {"_serialized": "BAE5XXX001"},
-                "body": "first ever message",
+                "body": "waha inline (must NOT appear)",
                 "from": "5511@c.us",
                 "timestamp": 1750500000,
                 "fromMe": False,
@@ -888,11 +901,8 @@ class TestWahaLiveMergeMessages:
             f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
-        msgs = resp.json()
-        assert len(msgs) == 1
-        assert msgs[0]["body"] == "first ever message"
-        assert msgs[0]["direction"] == "inbound"
-        assert msgs[0]["provider_message_id"] == "BAE5XXX001"
+        bodies = [m["body"] for m in resp.json()]
+        assert bodies == ["db only"]
 
     def test_waha_and_db_dedup_by_provider_message_id(self, chat_client):
         """A message in both WAHA and DB (same provider_message_id) appears once."""
@@ -975,42 +985,32 @@ class TestWahaLiveMergeMessages:
         msgs = resp.json()
         assert any(m["body"] == "from db" for m in msgs)
 
-    def test_waha_and_db_merge_sorted_oldest_first(self, chat_client):
-        """Merged result is sorted oldest-first regardless of source."""
+    def test_messages_db_rows_sorted_oldest_first(self, chat_client):
+        """The thread response (DB-sourced) is sorted oldest-first.
+
+        Background sync writes WAHA history INTO the DB (with preserved
+        timestamps), so once present it sorts alongside live rows. Here we seed
+        two DB rows out of insertion order and assert oldest-first ordering.
+        """
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
         org_id = _TEST_ORG_ID
 
-        # DB has a newer message.
         _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
             {"raw_sender": "5511@c.us", "direction": "outbound", "body": "newer reply",
              "created_at": "2026-06-22T10:00:00.000Z"},
+            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "older inbound",
+             "created_at": "2026-06-22T09:00:00.000Z"},
         ])
-
-        fake: FakeWahaClient = fakes["default"]
-        # WAHA has the original inbound message (older).
-        # Unix ts for 2026-06-22T09:00:00Z ≈ 1750586400 (approx — just needs to be < 10:00)
-        fake.fake_chat_messages["5511@c.us"] = [
-            {
-                "id": {"_serialized": "BAE5OLD001"},
-                "body": "older inbound",
-                "from": "5511@c.us",
-                "timestamp": 1750582800,  # 2026-06-22T09:00:00Z
-                "fromMe": False,
-            }
-        ]
 
         resp = c.get(
             f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
         msgs = resp.json()
-        assert len(msgs) == 2
-        # WAHA's older inbound must come first.
-        assert msgs[0]["body"] == "older inbound"
+        assert [m["body"] for m in msgs] == ["older inbound", "newer reply"]
         assert msgs[0]["direction"] == "inbound"
-        assert msgs[1]["body"] == "newer reply"
         assert msgs[1]["direction"] == "outbound"
 
 
