@@ -54,6 +54,29 @@ def _safe_json(response: httpx.Response) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {"raw": parsed}
 
 
+def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build a FULL WAHA session-config payload — ALWAYS carries the NOWEB store.
+
+    🔴 WAHA's ``PUT /api/sessions/{name}`` (and the config on ``/start``) is a
+    full config REPLACE, not a merge: any key you omit is DROPPED. The
+    2026-06-23 empty-inbox bug was exactly this — ``set_webhook`` PUT a config
+    with only ``webhooks`` and clobbered the ``noweb.store`` block that
+    ``start_session`` had set, so the NOWEB engine kept no history and
+    ``GET /api/{session}/chats`` 400'd. The cure is structural: NO caller
+    hand-assembles a partial config; every config-writing path routes through
+    here so the store block is always present. ``full_sync`` backfills history
+    at authentication, so a FRESH pairing (logout → start → scan QR) is what
+    actually populates existing chats — a restart of an already-paired session
+    will not re-pull history.
+    """
+    config: dict[str, Any] = {
+        "noweb": {"store": {"enabled": True, "full_sync": True}}
+    }
+    if webhooks is not None:
+        config["webhooks"] = webhooks
+    return {"config": config}
+
+
 class WahaClient:
     """WAHA HTTP client with both sync and async send paths.
 
@@ -158,16 +181,7 @@ class WahaClient:
         This is the canonical fleet default: any chat-capable product needs the
         store on.
         """
-        payload = {
-            "config": {
-                "noweb": {
-                    "store": {
-                        "enabled": True,
-                        "full_sync": True,
-                    }
-                }
-            }
-        }
+        payload = _session_config()
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             response = await client.post(
                 f"/api/sessions/{self.session}/start",
@@ -187,17 +201,11 @@ class WahaClient:
 
         Sends the same NOWEB store config as ``start_session`` so that a
         restart after deploy also activates ``full_sync`` on the revived session.
+        (NOTE: WAHA 2026.x ignores a config body on ``/restart`` — it restarts
+        with the stored config — so the durable guarantee is that EVERY config
+        write, incl. ``set_webhook``, carries the store; see ``_session_config``.)
         """
-        payload = {
-            "config": {
-                "noweb": {
-                    "store": {
-                        "enabled": True,
-                        "full_sync": True,
-                    }
-                }
-            }
-        }
+        payload = _session_config()
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             response = await client.post(
                 f"/api/sessions/{self.session}/restart",
@@ -245,20 +253,23 @@ class WahaClient:
 
         WAHA restarts the session on a config change; the paired account
         survives (credentials persist on the WAHA volume).
+
+        🔴 The PUT is a full config REPLACE — so this re-asserts the NOWEB
+        store block alongside the webhook (via ``_session_config``). Sending
+        only ``webhooks`` here is what silently dropped the store and emptied
+        the chat inbox on 2026-06-23.
         """
-        payload = {
-            "config": {
-                "webhooks": [
-                    {
-                        "url": url,
-                        "events": events,
-                        "hmac": None,
-                        "retries": None,
-                        "customHeaders": None,
-                    }
-                ]
-            }
-        }
+        payload = _session_config(
+            webhooks=[
+                {
+                    "url": url,
+                    "events": events,
+                    "hmac": None,
+                    "retries": None,
+                    "customHeaders": None,
+                }
+            ]
+        )
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30) as client:
             response = await client.put(
                 f"/api/sessions/{self.session}",

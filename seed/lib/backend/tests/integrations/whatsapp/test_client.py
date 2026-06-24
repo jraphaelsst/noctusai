@@ -198,3 +198,58 @@ def test_download_media_sync_noop_rewrite_when_single_host(
     client.download_media_sync("https://waha.test/media/abc")
 
     assert fake_client.get.call_args[0][0] == "https://waha.test/media/abc"
+
+
+# ── _session_config: the anti-clobber guarantee (2026-06-23 empty-inbox bug) ──
+# WAHA's session-config PUT is a full REPLACE; every config write MUST re-assert
+# the NOWEB store or it gets dropped. These pin that contract structurally.
+
+from noctusai_lib.integrations.whatsapp.client import _session_config  # noqa: E402
+
+
+def test_session_config_always_includes_noweb_store() -> None:
+    cfg = _session_config()["config"]
+    assert cfg["noweb"]["store"]["enabled"] is True
+    assert cfg["noweb"]["store"]["full_sync"] is True
+    assert "webhooks" not in cfg  # no webhooks unless asked
+
+
+def test_session_config_with_webhooks_keeps_BOTH_webhooks_and_store() -> None:
+    # The regression: a webhook write must NOT drop the store block.
+    hooks = [{"url": "https://x/wh", "events": ["message"]}]
+    cfg = _session_config(webhooks=hooks)["config"]
+    assert cfg["webhooks"] == hooks
+    assert cfg["noweb"]["store"]["enabled"] is True
+    assert cfg["noweb"]["store"]["full_sync"] is True
+
+
+def test_set_webhook_put_body_reasserts_noweb_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set_webhook's PUT must carry the store block (anti-clobber)."""
+    import asyncio
+
+    captured: dict = {}
+
+    class _FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def put(self, url, *, json=None, headers=None):
+            captured["url"] = url
+            captured["json"] = json
+            resp = _make_response(200)
+            resp.content = b'{"name":"default"}'
+            return resp
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeAsyncClient())
+    client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
+    asyncio.run(client.set_webhook("https://x/wh", ["message", "session.status"]))
+
+    cfg = captured["json"]["config"]
+    assert cfg["webhooks"][0]["url"] == "https://x/wh"
+    assert cfg["noweb"]["store"]["enabled"] is True, "webhook PUT dropped the store!"
+    assert cfg["noweb"]["store"]["full_sync"] is True
