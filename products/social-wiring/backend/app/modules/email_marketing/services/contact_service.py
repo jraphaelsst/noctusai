@@ -8,17 +8,23 @@ from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
 
-# Matches strings that are either just digits (phone-as-name fallback) or
-# look like a JID (digits@domain), so we know the name field is not a real
-# display name and we should overwrite it with a better one.
-_PHONE_LIKE_RE = re.compile(r"^[\d+\s\-()@a-z.]+$", re.IGNORECASE)
+# A "phone-like" name carries no real display name — it is either bare
+# phone punctuation/digits (e.g. "+55 11 97469-3365", "5511974693365") or a
+# raw WhatsApp JID (digits@c.us / @s.whatsapp.net / @lid). Such a value should
+# be overwritten when we learn a real name. A name containing any LETTER
+# outside a known JID suffix (e.g. "Maria Josefina", "J. Raphael") is a REAL
+# name and must NOT be classified as phone-like — the earlier ``[a-z]`` in the
+# class matched every alphabetic name and clobbered real names.
+_PHONE_PUNCT_RE = re.compile(r"^[\d+\s\-().]+$")
+_BARE_JID_RE = re.compile(r"^\d+@(?:c\.us|s\.whatsapp\.net|lid)$", re.IGNORECASE)
 
 
 def _is_phone_like_name(name: str | None) -> bool:
     """True when ``name`` is empty, None, or looks like a phone / JID."""
     if not name:
         return True
-    return bool(_PHONE_LIKE_RE.match(name.strip()))
+    stripped = name.strip()
+    return bool(_PHONE_PUNCT_RE.match(stripped)) or bool(_BARE_JID_RE.match(stripped))
 
 
 class ContactService:
