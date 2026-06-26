@@ -867,14 +867,10 @@ class TestWahaLiveMergeChats:
 class TestWahaLiveMergeMessages:
     """GET /chats/{chat_id}/messages merges WAHA history with DB rows."""
 
-    def test_messages_hot_path_is_db_only_not_inline_waha(self, chat_client):
-        """Hot path serves DB rows ONLY; WAHA history is NOT fetched inline.
-
-        ``fetch_chat_messages`` is ~13s against the live server, so it is kept
-        OFF the render path (the FE polls every 3s). History is synced into the
-        DB by a debounced background task and surfaces on a later poll. Here the
-        DB has one message and WAHA has a DIFFERENT one — the response must
-        contain ONLY the DB row, proving WAHA is not merged inline.
+    def test_waha_history_merged_into_thread(self, chat_client):
+        """WAHA is the SOURCE OF TRUTH: its history merges into the thread
+        alongside DB rows (cached per chat to bound the ~13s fetch). Here the DB
+        has one message and WAHA has another — BOTH must appear in the thread.
         """
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
@@ -882,15 +878,15 @@ class TestWahaLiveMergeMessages:
         org_id = _TEST_ORG_ID
 
         _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "db only",
-             "created_at": "2026-06-22T09:00:00.000Z"},
+            {"raw_sender": "5511@c.us", "direction": "outbound", "body": "db reply",
+             "created_at": "2026-06-22T10:00:00.000Z"},
         ])
 
         fake: FakeWahaClient = fakes["default"]
         fake.fake_chat_messages["5511@c.us"] = [
             {
                 "id": {"_serialized": "BAE5XXX001"},
-                "body": "waha inline (must NOT appear)",
+                "body": "waha history msg",
                 "from": "5511@c.us",
                 "timestamp": 1750500000,
                 "fromMe": False,
@@ -902,7 +898,8 @@ class TestWahaLiveMergeMessages:
         )
         assert resp.status_code == 200, resp.text
         bodies = [m["body"] for m in resp.json()]
-        assert bodies == ["db only"]
+        assert "db reply" in bodies
+        assert "waha history msg" in bodies
 
     def test_waha_and_db_dedup_by_provider_message_id(self, chat_client):
         """A message in both WAHA and DB (same provider_message_id) appears once."""

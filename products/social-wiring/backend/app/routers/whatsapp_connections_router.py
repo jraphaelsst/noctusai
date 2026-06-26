@@ -32,7 +32,6 @@ patching per ``KB § PATTERNS/di-test-seam.md``.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import secrets
@@ -74,7 +73,7 @@ from app.schemas.whatsapp_connection import (
 )
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
-from app.services.message_store import DuplicateMessage, MessageStore
+from app.services.message_store import MessageStore
 from app.services.whatsapp_connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
@@ -86,83 +85,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/whatsapp/connections", tags=["WhatsApp"])
 
-# ── Background WAHA history sync ──────────────────────────────────────────────
-# 🔴 BOUNDARY: WAHA fetch_chat_messages is ~13s/call — far too slow for the
-# thread-render hot path (the FE polls every 3s). So list_messages serves from
-# OUR DB instantly and we sync WAHA history INTO conversation_messages in the
-# background (cache-the-external-data, rule #6). Debounced per chat so the
-# every-3s poll can't spawn a pile-up of slow background fetches against WAHA.
-_bg_sync_tasks: set = set()
-_last_history_sync: dict[str, float] = {}  # chat_id → monotonic ts of last sync
-_HISTORY_SYNC_COOLDOWN_S = 90.0
-
-
-def _fire_and_forget(coro) -> None:
-    """Schedule a coroutine without blocking; hold a ref so it isn't GC'd."""
-    try:
-        task = asyncio.ensure_future(coro)
-    except RuntimeError:
-        coro.close()
-        return
-    _bg_sync_tasks.add(task)
-    task.add_done_callback(_bg_sync_tasks.discard)
-
-
-async def _sync_waha_history_bg(
-    *,
-    record: WhatsAppConnectionRecord,
-    waha_factory: Any,
-    msg_store_factory: Any,
-    org_id: UUID,
-    connection_id: UUID,
-    chat_id: str,
-    limit: int,
-) -> None:
-    """Pull WAHA history for one chat into conversation_messages. OFF hot path.
-
-    ONE bounded WAHA call on the canonical JID (NOWEB keys individual-chat
-    history by the phone @c.us JID). Idempotent: MessageStore.record dedups by
-    provider_message_id. Original timestamps preserved via created_at. A failure
-    only means history isn't backfilled yet — never user-facing.
-    """
-    try:
-        client = _waha_client(record, waha_factory)
-        waha_msgs = await client.fetch_chat_messages(chat_id, limit=limit)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "background WAHA history sync fetch failed for chat %s conn %s: %s",
-            chat_id, connection_id, exc,
-        )
-        return
-    store = msg_store_factory(org_id)
-    synced = 0
-    for wm in waha_msgs:
-        mapped = _waha_message_to_out(wm, chat_id=chat_id)
-        if mapped is None:
-            continue
-        try:
-            store.record(
-                session_id=chat_id,
-                raw_sender=chat_id,
-                direction=mapped.get("direction") or "inbound",
-                body=mapped.get("body") or "",
-                provider_message_id=mapped.get("provider_message_id"),
-                connection_id=connection_id,
-                created_at=mapped.get("created_at") or None,
-            )
-            synced += 1
-        except DuplicateMessage:
-            continue
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "background history record failed (chat %s conn %s): %s",
-                chat_id, connection_id, exc,
-            )
-    if synced:
-        logger.info(
-            "backfilled %d WAHA history message(s) for chat %s conn %s",
-            synced, chat_id, connection_id,
-        )
+# ── Thread history cache ──────────────────────────────────────────────────────
+# WAHA is the SOURCE OF TRUTH for a chat thread (the full real conversation +
+# history). fetch_chat_messages is ~13s and the FE polls every 3s, so we cache
+# the WAHA result per (connection, chat) with a short TTL: the slow call runs at
+# most once per TTL, and an in-flight guard stops the poll burst from stampeding
+# concurrent fetches. Live DB rows are merged in fresh on every request, so a
+# message just sent (or the AI reply) shows immediately even on a cache hit.
+_THREAD_CACHE_TTL_S = 25.0
+_thread_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # key → (ts, msgs)
+_thread_inflight: set[str] = set()
 
 
 # ─── DI seams ───────────────────────────────────────────────────────────────
@@ -1063,26 +995,48 @@ async def list_messages(
             seen_keys.add(k)
             merged.append({**row, "chat_id": chat_id})  # normalise to canonical JID
 
-    # ── WAHA history → DB sync (BACKGROUND, debounced) ───────────────────────
-    # 🔴 BOUNDARY: never fetch WAHA on this hot path — fetch_chat_messages is
-    # ~13s and the FE polls every 3s. Serve the DB rows NOW (instant); sync WAHA
-    # history INTO the DB in the background so a later poll renders it (rule #6:
-    # cache external data in our store). Debounced per chat so the 3s poll can't
-    # spawn a pile-up of slow background fetches.
+    # ── Merge WAHA history (SOURCE OF TRUTH) — cached, stampede-guarded ───────
+    # WAHA holds the full real conversation (history + messages we didn't send).
+    # fetch_chat_messages is ~13s, so cache it per chat (TTL) and let only ONE
+    # request fetch at a time; concurrent polls reuse the last good cache (or DB
+    # only) until it fills. DB rows (merged above) cover anything not yet cached,
+    # so the thread is never blank and new messages show instantly.
+    cache_key = f"{connection_id}:{chat_id}"
     now_mono = time.monotonic()
-    if now_mono - _last_history_sync.get(chat_id, 0.0) >= _HISTORY_SYNC_COOLDOWN_S:
-        _last_history_sync[chat_id] = now_mono
-        _fire_and_forget(
-            _sync_waha_history_bg(
-                record=record,
-                waha_factory=waha_factory,
-                msg_store_factory=msg_store_factory,
-                org_id=org_id,
-                connection_id=connection_id,
-                chat_id=chat_id,
-                limit=actual_limit,
+    cached = _thread_cache.get(cache_key)
+    fresh = cached is not None and (now_mono - cached[0]) < _THREAD_CACHE_TTL_S
+    waha_mapped: list[dict[str, Any]] = []
+    if fresh:
+        waha_mapped = cached[1]
+    elif cache_key in _thread_inflight:
+        # Another request is already fetching — reuse stale cache if any.
+        waha_mapped = cached[1] if cached else []
+    else:
+        _thread_inflight.add(cache_key)
+        try:
+            waha_client_ref = _waha_client(record, waha_factory)
+            waha_msgs = await waha_client_ref.fetch_chat_messages(chat_id, limit=actual_limit)
+            waha_mapped = [
+                m for m in (_waha_message_to_out(wm, chat_id=chat_id) for wm in waha_msgs)
+                if m is not None
+            ]
+            _thread_cache[cache_key] = (now_mono, waha_mapped)
+        except Exception as exc:  # noqa: BLE001 — degrade to DB / last cache
+            logger.warning(
+                "WAHA history fetch failed for chat %s conn %s — using DB/last-cache: %s",
+                chat_id, connection_id, exc,
             )
-        )
+            waha_mapped = cached[1] if cached else []
+        finally:
+            _thread_inflight.discard(cache_key)
+
+    for mapped in waha_mapped:
+        if before and (mapped.get("created_at") or "") >= before:
+            continue
+        k = _dedup_key(mapped)
+        if k not in seen_keys:
+            seen_keys.add(k)
+            merged.append(mapped)
 
     # Sort oldest-first, cap at limit.
     merged.sort(key=lambda m: m.get("created_at") or "")

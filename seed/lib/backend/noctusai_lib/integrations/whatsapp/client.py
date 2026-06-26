@@ -26,6 +26,11 @@ from noctusai_lib.integrations.whatsapp.mappers import (
 # fanout at the old 15-30s timeouts → ~49s thread loads + a blocked reply path.
 # Session-admin writes (start/restart/webhook/send) keep their longer timeouts.
 _WAHA_READ_TIMEOUT = 6.0
+# fetch_chat_messages (full chat history) is inherently slow on NOWEB (~13s
+# observed) and is the SOURCE OF TRUTH for a thread, so it gets a longer budget.
+# Callers MUST cache the result (the thread endpoint caches per chat) so this
+# slow call happens at most once per TTL — never once per 3s poll.
+_WAHA_HISTORY_TIMEOUT = 20.0
 
 
 class WahaSessionNotReady(RuntimeError):
@@ -321,7 +326,7 @@ class WahaClient:
         ``chat_id`` is a WhatsApp JID such as ``5511999999999@c.us``.
         Requires the NOWEB store to be enabled; callers handle the 400 case.
         """
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_HISTORY_TIMEOUT) as client:
             response = await client.get(
                 f"/api/{self.session}/chats/{chat_id}/messages",
                 params={"limit": limit},
