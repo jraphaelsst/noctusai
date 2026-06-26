@@ -249,8 +249,9 @@ function ReadOnlyField({
   return (
     <div className="grid gap-1">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1.5 rounded-md border bg-muted/30 px-2.5 py-1.5">
-        <code className="flex-1 truncate text-xs font-mono" data-testid={testId}>
+      <div className="flex min-w-0 items-center gap-1.5 rounded-md border bg-muted/30 px-2.5 py-1.5">
+        {/* break-all ensures long URLs/tokens wrap instead of forcing horizontal scroll */}
+        <code className="min-w-0 flex-1 break-all text-xs font-mono" data-testid={testId}>
           {value}
         </code>
         {copyable && <CopyButton value={value} />}

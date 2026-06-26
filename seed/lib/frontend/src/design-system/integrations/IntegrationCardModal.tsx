@@ -117,10 +117,12 @@ export function IntegrationCardModal({
                 {section.fields.map((field) => (
                   <div
                     key={field.label}
-                    className="flex items-start justify-between gap-3 text-sm"
+                    // min-w-0 lets flex children shrink below their natural width so
+                    // a long URL in dd doesn't overflow the panel.
+                    className="flex items-start justify-between gap-3 text-sm min-w-0"
                   >
-                    <dt className="text-muted-foreground">{field.label}</dt>
-                    <dd className="text-right font-medium text-foreground break-all">
+                    <dt className="shrink-0 text-muted-foreground">{field.label}</dt>
+                    <dd className="text-right font-medium text-foreground break-all min-w-0">
                       {field.value}
                     </dd>
                   </div>

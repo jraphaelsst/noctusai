@@ -185,9 +185,8 @@ const whatsappConfig: ProviderCardConfig = {
     if (ci["phone"]) {
       fields.push({ label: "Telefone", value: str(ci["phone"]) });
     }
-    if (ci["webhook_url"]) {
-      fields.push({ label: "Webhook", value: str(ci["webhook_url"]) });
-    }
+    // webhook_url is intentionally omitted from the card face (long URL clutters
+    // the compact card). It remains accessible in the detail modal via modalSections().
     return fields;
   },
 

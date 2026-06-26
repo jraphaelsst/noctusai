@@ -49,7 +49,11 @@ export interface DialogBodyProps extends React.HTMLAttributes<HTMLDivElement> {}
 export function DialogBody({ className, children, ...props }: DialogBodyProps) {
   return (
     <div
-      className={cn("max-h-[70vh] overflow-y-auto px-6 py-5", className)}
+      // overflow-x-hidden: prevents horizontal scrollbar when a child (e.g. a long
+      // URL, token, or ID) is wider than the panel. Combined with break-words/break-all
+      // on value text, this is the design-system default: content wraps, never scrolls
+      // sideways. overflow-y-auto remains for tall content.
+      className={cn("max-h-[70vh] overflow-y-auto overflow-x-hidden px-6 py-5", className)}
       {...props}
     >
       {children}

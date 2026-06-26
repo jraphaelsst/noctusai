@@ -159,12 +159,14 @@ describe("providerCardConfig: whatsapp", () => {
     expect(cfg.primary(acc)).toBe("Atendimento");
   });
 
-  it("secondary includes session, phone, webhook fields", () => {
+  it("secondary includes session and phone; webhook is excluded from card face", () => {
     const fields = cfg.secondary(whatsappAccount);
     const labels = fields.map((f) => f.label);
     expect(labels).toContain("Sessão");
     expect(labels).toContain("Telefone");
-    expect(labels).toContain("Webhook");
+    // webhook_url is intentionally NOT shown on the card face (long URL clutters
+    // the compact card). It is still available in the detail modal via modalSections().
+    expect(labels).not.toContain("Webhook");
   });
 
   it("secondary skips absent channel_info fields", () => {
