@@ -12,7 +12,7 @@
  * mutations come from the product `/api/whatsapp/connections` router via the
  * `useWhatsAppConnections` hooks; this page is presentation only.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -30,6 +30,9 @@ import {
   Smartphone,
   Trash2,
   X,
+  Bot,
+  Hash,
+  MessageSquare,
 } from "lucide-react";
 
 import {
@@ -44,6 +47,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -70,6 +81,8 @@ import {
   useWhatsAppConnectionQr,
   useWhatsAppConnectionActions,
   useRevealApiKey,
+  useConnectionChats,
+  useToggleAutoReply,
   type CreateConnectionBody,
   type UpdateConnectionBody,
   type WhatsAppConnectionLine,
@@ -246,8 +259,304 @@ function ReadOnlyField({
   );
 }
 
+// ─── Authorized-numbers chip editor ──────────────────────────────────────────
+function AuthorizedNumbersEditor({
+  lineId,
+  initialNumbers,
+}: {
+  lineId: string;
+  initialNumbers: string[];
+}) {
+  const [numbers, setNumbers] = useState<string[]>(initialNumbers);
+  const [newNum, setNewNum] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { update } = useWhatsAppConnectionMutations();
+
+  const addNumber = useCallback(() => {
+    const n = newNum.trim();
+    if (!n || numbers.includes(n)) return;
+    setNumbers((prev) => [...prev, n]);
+    setNewNum("");
+  }, [newNum, numbers]);
+
+  const removeNumber = (n: string) =>
+    setNumbers((prev) => prev.filter((x) => x !== n));
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addNumber();
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await update.mutateAsync({ id: lineId, body: { authorized_numbers: numbers } });
+      toast.success("Números autorizados salvos");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Falha ao salvar números");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2" data-testid="authorized-numbers-editor">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <Hash className="h-3.5 w-3.5" />
+        Números autorizados
+      </div>
+
+      {/* Chips */}
+      {numbers.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {numbers.map((n) => (
+            <span
+              key={n}
+              className="inline-flex items-center gap-1 rounded-full border bg-muted px-2.5 py-0.5 text-xs font-mono"
+              data-testid="number-chip"
+            >
+              {n}
+              <button
+                type="button"
+                onClick={() => removeNumber(n)}
+                className="ml-0.5 rounded-full hover:text-destructive"
+                aria-label={`Remover ${n}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic" data-testid="numbers-empty-hint">
+          Vazio = todos os números são permitidos.
+        </p>
+      )}
+
+      {/* Add input */}
+      <div className="flex gap-2">
+        <Input
+          value={newNum}
+          onChange={(e) => setNewNum(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="+55119XXXXXXXX"
+          className="h-8 font-mono text-xs"
+          disabled={saving}
+          data-testid="number-input"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={addNumber}
+          disabled={!newNum.trim() || saving}
+          className="h-8"
+          data-testid="btn-add-number"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={save}
+        disabled={saving}
+        className="h-8"
+        data-testid="btn-save-numbers"
+      >
+        {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+        Salvar números
+      </Button>
+    </div>
+  );
+}
+
+// ─── Bound-chats picker ───────────────────────────────────────────────────────
+function BoundChatsEditor({
+  lineId,
+  initialChats,
+}: {
+  lineId: string;
+  initialChats: { chat_id: string; label: string }[];
+}) {
+  const [chats, setChats] = useState(initialChats);
+  const [selectedDropdown, setSelectedDropdown] = useState("");
+  const [manualId, setManualId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { update } = useWhatsAppConnectionMutations();
+
+  const {
+    data: availableChats,
+    isLoading: chatsLoading,
+    isError: chatsError,
+  } = useConnectionChats(lineId);
+
+  const addFromDropdown = useCallback(() => {
+    if (!selectedDropdown || !availableChats) return;
+    const found = availableChats.find((c) => c.chat_id === selectedDropdown);
+    if (!found) return;
+    if (chats.some((c) => c.chat_id === selectedDropdown)) return;
+    setChats((prev) => [...prev, { chat_id: found.chat_id, label: found.contact }]);
+    setSelectedDropdown("");
+  }, [selectedDropdown, availableChats, chats]);
+
+  const addManually = useCallback(() => {
+    const id = manualId.trim();
+    if (!id || chats.some((c) => c.chat_id === id)) return;
+    setChats((prev) => [...prev, { chat_id: id, label: id }]);
+    setManualId("");
+  }, [manualId, chats]);
+
+  const removeChat = (chatId: string) =>
+    setChats((prev) => prev.filter((c) => c.chat_id !== chatId));
+
+  const onManualKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addManually();
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await update.mutateAsync({ id: lineId, body: { bound_chats: chats } });
+      toast.success("Chats vinculados salvos");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Falha ao salvar chats");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2" data-testid="bound-chats-editor">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <MessageSquare className="h-3.5 w-3.5" />
+        Chats vinculados
+      </div>
+
+      {/* Selected chips */}
+      {chats.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {chats.map((c) => (
+            <span
+              key={c.chat_id}
+              className="inline-flex items-center gap-1 rounded-full border bg-muted px-2.5 py-0.5 text-xs"
+              data-testid="chat-chip"
+            >
+              <span className="max-w-[140px] truncate">{c.label}</span>
+              <button
+                type="button"
+                onClick={() => removeChat(c.chat_id)}
+                className="ml-0.5 rounded-full hover:text-destructive"
+                aria-label={`Remover chat ${c.label}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic" data-testid="chats-empty-hint">
+          Vazio = todos os chats são escutados.
+        </p>
+      )}
+
+      {/* Dropdown from live chat list */}
+      <div className="flex gap-2">
+        {chatsLoading ? (
+          <div className="flex h-9 flex-1 items-center gap-2 rounded-md border px-3 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Carregando chats…
+          </div>
+        ) : chatsError ? (
+          <div className="flex h-9 flex-1 items-center rounded-md border border-destructive/30 px-3 text-xs text-destructive">
+            Erro ao carregar chats.
+          </div>
+        ) : availableChats && availableChats.length > 0 ? (
+          <>
+            <Select
+              value={selectedDropdown}
+              onValueChange={setSelectedDropdown}
+              disabled={saving}
+            >
+              <SelectTrigger className="h-9 flex-1 text-xs" data-testid="chat-dropdown">
+                <SelectValue placeholder="Selecionar chat da lista…" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableChats
+                  .filter((c) => !chats.some((s) => s.chat_id === c.chat_id))
+                  .map((c) => (
+                    <SelectItem key={c.chat_id} value={c.chat_id} className="text-xs">
+                      {c.contact}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={addFromDropdown}
+              disabled={!selectedDropdown || saving}
+              className="h-9"
+              data-testid="btn-add-chat-dropdown"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        ) : (
+          <p className="h-9 flex-1 content-center text-xs text-muted-foreground">
+            Nenhum chat disponível — use entrada manual abaixo.
+          </p>
+        )}
+      </div>
+
+      {/* Manual JID fallback */}
+      <div className="flex gap-2">
+        <Input
+          value={manualId}
+          onChange={(e) => setManualId(e.target.value)}
+          onKeyDown={onManualKeyDown}
+          placeholder="JID manual (ex: 5511912345678@s.whatsapp.net)"
+          className="h-8 font-mono text-xs"
+          disabled={saving}
+          data-testid="manual-chat-input"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={addManually}
+          disabled={!manualId.trim() || saving}
+          className="h-8"
+          data-testid="btn-add-chat-manual"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={save}
+        disabled={saving}
+        className="h-8"
+        data-testid="btn-save-chats"
+      >
+        {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+        Salvar chats
+      </Button>
+    </div>
+  );
+}
+
 // ─── Detail / manage modal (per session) ─────────────────────────────────────
-function ConnectionDetailDialog({
+export function ConnectionDetailDialog({
   line,
   onClose,
   onRequestDelete,
@@ -263,6 +572,7 @@ function ConnectionDetailDialog({
   const { start, restart, logout } = useWhatsAppConnectionActions();
   const { update } = useWhatsAppConnectionMutations();
   const reveal = useRevealApiKey();
+  const toggleAutoReply = useToggleAutoReply();
 
   // Label edit + optional api_key rotation
   const [editLabel, setEditLabel] = useState(line.label);
@@ -350,7 +660,7 @@ function ConnectionDetailDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Smartphone className="h-5 w-5" />
@@ -374,7 +684,7 @@ function ConnectionDetailDialog({
 
         {/* ── QR pairing — while unpaired ── */}
         {!paired && (
-          <div className="space-y-2">
+          <div className="space-y-2 px-6 pt-5">
             {(autoStart && restart.isPending) ? (
               <div className="flex h-52 items-center justify-center gap-2 rounded-md border bg-muted/10 p-4 text-sm text-muted-foreground" data-testid="qr-starting">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -404,7 +714,7 @@ function ConnectionDetailDialog({
 
         {/* ── Paired success ── */}
         {paired && (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400" data-testid="paired-success">
+          <div className="mx-6 mt-5 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400" data-testid="paired-success">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
             <span>
               WhatsApp pareado
@@ -415,139 +725,186 @@ function ConnectionDetailDialog({
           </div>
         )}
 
-        <Separator />
-
-        {/* ── Read-only derived info ── */}
-        <div className="grid gap-2">
-          <ReadOnlyField
-            label="Sessão (derivado)"
-            value={line.session_name}
-            testId="detail-session-name"
-          />
-          <ReadOnlyField
-            label="Webhook de entrada"
-            value={line.webhook_url}
-            copyable
-            testId="detail-webhook-url"
-          />
-        </div>
-
-        <Separator />
-
-        {/* ── Editable fields ── */}
-        <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="edit-label">Nome</Label>
-            <Input
-              id="edit-label"
-              value={editLabel}
-              onChange={(e) => setEditLabel(e.target.value)}
-              disabled={update.isPending}
-              data-testid="edit-conn-label"
+        <div className="space-y-6 px-6 py-5">
+          {/* ── Read-only derived info ── */}
+          <div className="grid gap-2">
+            <ReadOnlyField
+              label="Sessão (derivado)"
+              value={line.session_name}
+              testId="detail-session-name"
+            />
+            <ReadOnlyField
+              label="Webhook de entrada"
+              value={line.webhook_url}
+              copyable
+              testId="detail-webhook-url"
             />
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="edit-apikey">
-              API key{" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                {keyMode === "editing" ? "(digite a nova chave)" : "(toque no lápis para trocar)"}
-              </span>
-            </Label>
-            {keyMode === "editing" ? (
-              <div className="flex items-center gap-1.5">
-                <Input
-                  id="edit-apikey"
-                  type="text"
-                  value={editApiKey}
-                  onChange={(e) => setEditApiKey(e.target.value)}
-                  placeholder="Nova API key (X-Api-Key da instância WAHA)"
-                  disabled={update.isPending}
-                  autoComplete="off"
-                  autoFocus
-                  className="font-mono"
-                  data-testid="edit-conn-apikey"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 shrink-0"
-                  onClick={cancelEditingKey}
-                  disabled={update.isPending}
-                  aria-label="Cancelar edição da API key"
-                  data-testid="btn-apikey-cancel"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <Input
-                  id="edit-apikey"
-                  type="text"
-                  readOnly
-                  value={keyMode === "revealed" ? revealedKey ?? "" : "••••••••"}
-                  className="font-mono"
-                  data-testid="edit-conn-apikey-display"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 shrink-0"
-                  onClick={onToggleReveal}
-                  disabled={reveal.isPending}
-                  aria-label={keyMode === "revealed" ? "Ocultar API key" : "Mostrar API key"}
-                  data-testid="btn-apikey-reveal"
-                >
-                  {reveal.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : keyMode === "revealed" ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 shrink-0"
-                  onClick={startEditingKey}
-                  aria-label="Editar API key"
-                  data-testid="btn-apikey-edit"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* ── Session actions ── */}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => run(restart, "Sessão reiniciada")}
-            disabled={restart.isPending}
-            data-testid="btn-restart"
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Reiniciar
-          </Button>
-          {paired && (
+          <Separator />
+
+          {/* ── Auto-reply toggle ── */}
+          <div className="flex items-center justify-between gap-3" data-testid="auto-reply-section">
+            <div className="flex items-center gap-2 text-sm">
+              <Bot className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="font-medium">Auto-reply IA</p>
+                <p className="text-xs text-muted-foreground">
+                  Respostas automáticas via IA para mensagens recebidas.
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={line.auto_reply_enabled}
+              onCheckedChange={(checked) =>
+                toggleAutoReply.mutate(
+                  { id: line.id, enabled: checked },
+                  {
+                    onSuccess: () =>
+                      toast.success(checked ? "Auto-reply ativado" : "Auto-reply desativado"),
+                    onError: (e: any) =>
+                      toast.error(e?.message ?? "Falha ao atualizar auto-reply"),
+                  },
+                )
+              }
+              disabled={toggleAutoReply.isPending}
+              data-testid="auto-reply-switch"
+            />
+          </div>
+
+          <Separator />
+
+          {/* ── Editable fields ── */}
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-label">Nome</Label>
+              <Input
+                id="edit-label"
+                value={editLabel}
+                onChange={(e) => setEditLabel(e.target.value)}
+                disabled={update.isPending}
+                data-testid="edit-conn-label"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-apikey">
+                API key{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  {keyMode === "editing" ? "(digite a nova chave)" : "(toque no lápis para trocar)"}
+                </span>
+              </Label>
+              {keyMode === "editing" ? (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    id="edit-apikey"
+                    type="text"
+                    value={editApiKey}
+                    onChange={(e) => setEditApiKey(e.target.value)}
+                    placeholder="Nova API key (X-Api-Key da instância WAHA)"
+                    disabled={update.isPending}
+                    autoComplete="off"
+                    autoFocus
+                    className="font-mono"
+                    data-testid="edit-conn-apikey"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    onClick={cancelEditingKey}
+                    disabled={update.isPending}
+                    aria-label="Cancelar edição da API key"
+                    data-testid="btn-apikey-cancel"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    id="edit-apikey"
+                    type="text"
+                    readOnly
+                    value={keyMode === "revealed" ? revealedKey ?? "" : "••••••••"}
+                    className="font-mono"
+                    data-testid="edit-conn-apikey-display"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    onClick={onToggleReveal}
+                    disabled={reveal.isPending}
+                    aria-label={keyMode === "revealed" ? "Ocultar API key" : "Mostrar API key"}
+                    data-testid="btn-apikey-reveal"
+                  >
+                    {reveal.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : keyMode === "revealed" ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0"
+                    onClick={startEditingKey}
+                    aria-label="Editar API key"
+                    data-testid="btn-apikey-edit"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Session actions ── */}
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => run(logout, "Conta desvinculada")}
-              disabled={logout.isPending}
-              data-testid="btn-logout"
+              onClick={() => run(restart, "Sessão reiniciada")}
+              disabled={restart.isPending}
+              data-testid="btn-restart"
             >
-              <Power className="mr-2 h-4 w-4" />
-              Desvincular
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Reiniciar
             </Button>
-          )}
+            {paired && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => run(logout, "Conta desvinculada")}
+                disabled={logout.isPending}
+                data-testid="btn-logout"
+              >
+                <Power className="mr-2 h-4 w-4" />
+                Desvincular
+              </Button>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* ── Authorized numbers ── */}
+          <AuthorizedNumbersEditor
+            lineId={line.id}
+            initialNumbers={line.authorized_numbers ?? []}
+          />
+
+          <Separator />
+
+          {/* ── Bound chats ── */}
+          <BoundChatsEditor
+            lineId={line.id}
+            initialChats={line.bound_chats ?? []}
+          />
         </div>
 
         <DialogFooter className="flex-row justify-between sm:justify-between">

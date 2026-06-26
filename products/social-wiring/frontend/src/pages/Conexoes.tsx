@@ -2,7 +2,9 @@
  * Conexoes — unified connections page.
  *
  * Sections:
- *   1. WhatsApp  — reuses WhatsAppConnections from Conexao.tsx (WAHA sessions)
+ *   1. WhatsApp  — card listing using the IntegrationCard lib organ (styled as
+ *                  seed IntegrationCard). Each card's modal opens the rich
+ *                  ConnectionDetailDialog from Conexao.tsx with QR+config panels.
  *   2. YouTube   — card listing using the IntegrationCard lib organ, grouped
  *                  by client ("Unassigned" for client_id=null).
  *                  Full card treatment: onSave / onDelete / onSetDefault / onSync
@@ -22,7 +24,7 @@
  * Handles ?account_created=<id> query param from the OAuth callback.
  */
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Link2,
@@ -31,6 +33,7 @@ import {
   Plus,
   Settings2,
   Smartphone,
+  Trash2,
   Users,
 } from "lucide-react";
 
@@ -38,12 +41,19 @@ import {
   IntegrationCard,
   IntegrationCardModal,
   type IntegrationAccount as LibIntegrationAccount,
+  type IntegrationStatus,
 } from "@noctusai/lib";
 
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 
-import { WhatsAppConnections } from "@/pages/Conexao";
+import { ConnectionDetailDialog } from "@/pages/Conexao";
+import {
+  useWhatsAppConnections,
+  useWhatsAppConnectionMutations,
+  useWhatsAppConnectionStatus,
+  type WhatsAppConnectionLine,
+} from "@/hooks/useWhatsAppConnections";
 import {
   useIntegrationAccounts,
   useUpdateAccount,
@@ -63,6 +73,202 @@ import { ClientManagementModal } from "@/components/ClientManagementModal";
 // is the upstream source of truth from 70efce67.
 function toLibAccount(acc: IntegrationAccount): LibIntegrationAccount {
   return acc as unknown as LibIntegrationAccount;
+}
+
+// ─── WAHA status → seed IntegrationStatus mapping ────────────────────────────
+function wahaStatusToIntegration(
+  wahaStatus: string | null | undefined,
+  paired: boolean,
+): IntegrationStatus {
+  if (paired) return "validated";
+  switch (wahaStatus) {
+    case "WORKING":
+      return "validated";
+    case "SCAN_QR_CODE":
+      return "wiring";
+    case "STARTING":
+      return "validating";
+    case "FAILED":
+      return "error";
+    case "STOPPED":
+      return "disconnected";
+    default:
+      return "disconnected";
+  }
+}
+
+// ─── Per-connection card (polls live status) ──────────────────────────────────
+function WhatsAppConnectionCard({
+  line,
+  onOpen,
+  onDelete,
+}: {
+  line: WhatsAppConnectionLine;
+  onOpen: (line: WhatsAppConnectionLine) => void;
+  onDelete: (line: WhatsAppConnectionLine) => void;
+}) {
+  const { data: status } = useWhatsAppConnectionStatus(line.id);
+  const integrationStatus = wahaStatusToIntegration(
+    status?.status ?? null,
+    !!status?.paired,
+  );
+
+  // Cast through unknown: org_id/created_at/updated_at are not available
+  // in the WAHA line model; the card only reads provider-indexed fields
+  // from channel_info, which we supply correctly.
+  const libAccount = {
+    id: line.id,
+    provider: "whatsapp",
+    account_label: line.label,
+    is_default: false,
+    client_id: null,
+    status: integrationStatus,
+    channel_info: {
+      session: line.session_name,
+      phone: status?.me_id ?? null,
+      webhook_url: line.webhook_url,
+    },
+    metadata: {},
+    last_synced_at: null,
+  } as unknown as LibIntegrationAccount;
+
+  return (
+    <div className="relative">
+      <IntegrationCard
+        account={libAccount}
+        onOpenModal={() => onOpen(line)}
+      />
+      {/* Per-card delete affordance overlaid as icon outside the card */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(line);
+        }}
+        className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+        aria-label={`Excluir conexão ${line.label}`}
+        data-testid="wa-card-delete"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ─── WhatsApp card section ─────────────────────────────────────────────────────
+function WhatsAppCardSection() {
+  const {
+    data: connections,
+    isLoading,
+    isError,
+  } = useWhatsAppConnections();
+  const { remove } = useWhatsAppConnectionMutations();
+
+  const [openLine, setOpenLine] = useState<WhatsAppConnectionLine | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WhatsAppConnectionLine | null>(null);
+
+  const onDelete = (line: WhatsAppConnectionLine) => setDeleteTarget(line);
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    remove.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        toast.success("Conexão excluída");
+        setDeleteTarget(null);
+      },
+      onError: (e: any) => toast.error(e?.message ?? "Falha ao excluir"),
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="wa-loading">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Carregando conexões WhatsApp…
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="wa-error">
+        Erro ao carregar conexões WhatsApp.
+      </div>
+    );
+  }
+
+  const list = connections ?? [];
+
+  return (
+    <div className="space-y-4" data-testid="wa-card-section">
+      {list.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-muted/20 px-6 py-8 text-center" data-testid="wa-empty">
+          <Smartphone className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Nenhuma conexão WhatsApp configurada.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {list.map((line) => (
+            <div key={line.id} className="group relative">
+              <WhatsAppConnectionCard
+                line={line}
+                onOpen={setOpenLine}
+                onDelete={onDelete}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Per-connection detail dialog */}
+      {openLine && (
+        <ConnectionDetailDialog
+          line={openLine}
+          onClose={() => setOpenLine(null)}
+          onRequestDelete={(l) => {
+            setDeleteTarget(l);
+            setOpenLine(null);
+          }}
+        />
+      )}
+
+      {/* Delete confirm */}
+      {deleteTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => e.target === e.currentTarget && setDeleteTarget(null)}
+        >
+          <div className="w-full max-w-sm rounded-lg border bg-background p-6 shadow-lg">
+            <h3 className="mb-2 font-semibold">Excluir conexão?</h3>
+            <p className="mb-6 text-sm text-muted-foreground">
+              "{deleteTarget.label}" será removida permanentemente.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={confirmDelete}
+                disabled={remove.isPending}
+                data-testid="wa-confirm-delete"
+              >
+                {remove.isPending ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                Excluir
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Client section header ───────────────────────────────────────────────────
@@ -407,11 +613,19 @@ export default function Conexoes() {
 
       {/* WhatsApp section */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Smartphone className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">WhatsApp</h2>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Smartphone className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">WhatsApp</h2>
+          </div>
+          <Button size="sm" variant="outline" asChild>
+            <Link to="/conexao">
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Nova conexão
+            </Link>
+          </Button>
         </div>
-        <WhatsAppConnections />
+        <WhatsAppCardSection />
       </section>
 
       <Separator />

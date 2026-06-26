@@ -20,6 +20,8 @@ export type { ClientCredentialPanelProps, ClientRef } from "./ClientCredentialPa
 export { PROVIDER_CARD_CONFIG, getProviderConfig } from "./providerCardConfig";
 export type { ProviderCardConfig, EditableField } from "./providerCardConfig";
 
+export { WhatsAppIcon } from "./WhatsAppIcon";
+
 export type {
   IntegrationAccount,
   IntegrationAccountPatch,

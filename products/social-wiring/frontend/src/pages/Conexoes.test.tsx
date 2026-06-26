@@ -60,11 +60,12 @@ vi.mock("@/hooks/useClients", () => ({
   useDeleteClient: mockDeleteClient,
 }));
 
-// WhatsApp (Conexao embeds WhatsAppConnections)
+// WhatsApp (Conexao / ConnectionDetailDialog are now imported by Conexoes)
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnections: vi.fn(() => ({ data: [], isLoading: false })),
   useWhatsAppConnectionMutations: vi.fn(() => ({
     create: { mutate: vi.fn(), isPending: false },
+    update: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
     remove: { mutate: vi.fn(), isPending: false },
   })),
   useWhatsAppConnectionStatus: vi.fn(() => ({ data: null })),
@@ -75,11 +76,15 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
     logout: { mutate: vi.fn(), isPending: false },
     configureWebhook: { mutate: vi.fn(), isPending: false },
   })),
+  useRevealApiKey: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useConnectionChats: vi.fn(() => ({ data: [], isLoading: false, isError: false })),
+  useToggleAutoReply: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 // react-router-dom
 vi.mock("react-router-dom", () => ({
   useSearchParams: vi.fn(() => [new URLSearchParams(), vi.fn()]),
+  Link: ({ children, to, ...rest }: any) => <a href={to} {...rest}>{children}</a>,
 }));
 
 // @noctusai/lib — stub IntegrationCard + IntegrationCardModal

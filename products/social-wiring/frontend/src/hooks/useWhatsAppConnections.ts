@@ -36,6 +36,31 @@ export interface WhatsAppConnectionLine {
    * Defaults to false. Toggled via PUT /api/whatsapp/connections/{id}/auto-reply.
    */
   auto_reply_enabled: boolean;
+  /**
+   * Allowlist of E.164 numbers permitted to trigger auto-reply / workflows.
+   * Empty array = ALL numbers are allowed.
+   */
+  authorized_numbers: string[];
+  /**
+   * Chats whose inbound messages are relayed. Each entry carries the WAHA
+   * chat_id (JID) plus a human-readable label.
+   * Empty array = ALL chats are listened.
+   */
+  bound_chats: { chat_id: string; label: string }[];
+}
+
+/**
+ * Chat summary returned by GET /api/whatsapp/connections/{id}/chats.
+ * `contact` is the display name; `chat_id` is the WAHA JID used as the key.
+ */
+export interface ChatSummary {
+  chat_id: string;
+  contact: string;
+  last_message: string;
+  last_message_at: string | null;
+  last_direction: string;
+  unread: number;
+  contact_id: string | null;
 }
 
 export interface WhatsAppConnectionStatus {
@@ -65,13 +90,18 @@ export interface CreateConnectionBody {
 }
 
 /**
- * Update payload — only the user-editable fields: label and optionally a new
- * api_key (write-only; omit to leave unchanged).
+ * Update payload — user-editable fields.
+ * - label: human-readable name
+ * - api_key: write-only rotation (omit to leave unchanged)
+ * - authorized_numbers: E.164 allowlist — [] means "all numbers"
+ * - bound_chats: listened chat list — [] means "all chats"
  * base_url, session_name, and webhook_url are backend-derived; not sent.
  */
 export interface UpdateConnectionBody {
   label?: string;
   api_key?: string;
+  authorized_numbers?: string[];
+  bound_chats?: { chat_id: string; label: string }[];
 }
 
 export interface WebhookResult {
@@ -179,6 +209,35 @@ export function useWhatsAppConnectionQr(
       if (data && !data.scannable) return false;
       return options?.pollMs ?? 8000;
     },
+  });
+}
+
+/**
+ * Chats available for a given connection line. Used to populate the bound-chats
+ * picker. Enabled only when a connectionId is provided; never fetches eagerly.
+ * Each ChatSummary: `contact` = display label, `chat_id` = WAHA JID key.
+ */
+export function useConnectionChats(connectionId: string | null) {
+  return useQuery<ChatSummary[]>({
+    queryKey: [...KEY, connectionId, "chats"],
+    queryFn: () =>
+      api.get<ChatSummary[]>(`${BASE}/${connectionId}/chats`),
+    enabled: !!connectionId,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Toggle the IA auto-reply flag for one connection.
+ * Uses PUT /api/whatsapp/connections/{id}/auto-reply with { enabled: boolean }.
+ * Invalidates the connections list so the card reflects the new value.
+ */
+export function useToggleAutoReply() {
+  const qc = useQueryClient();
+  return useMutation<WhatsAppConnectionLine, unknown, { id: string; enabled: boolean }>({
+    mutationFn: ({ id, enabled }) =>
+      api.put<WhatsAppConnectionLine>(`${BASE}/${id}/auto-reply`, { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
 

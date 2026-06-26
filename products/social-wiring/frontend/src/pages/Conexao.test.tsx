@@ -35,6 +35,8 @@ const mockUseWhatsAppConnectionStatus = vi.fn();
 const mockUseWhatsAppConnectionQr = vi.fn();
 const mockUseWhatsAppConnectionActions = vi.fn();
 const mockUseRevealApiKey = vi.fn();
+const mockUseConnectionChats = vi.fn();
+const mockUseToggleAutoReply = vi.fn();
 
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnections: mockUseWhatsAppConnections,
@@ -43,6 +45,8 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionQr: mockUseWhatsAppConnectionQr,
   useWhatsAppConnectionActions: mockUseWhatsAppConnectionActions,
   useRevealApiKey: mockUseRevealApiKey,
+  useConnectionChats: mockUseConnectionChats,
+  useToggleAutoReply: mockUseToggleAutoReply,
 }));
 
 // Minimal UI stubs
@@ -141,6 +145,8 @@ beforeEach(() => {
     mutateAsync: vi.fn().mockResolvedValue({ connection_id: "c", api_key: "revealed-key" }),
     isPending: false,
   });
+  mockUseConnectionChats.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mockUseToggleAutoReply.mockReturnValue({ mutate: vi.fn(), isPending: false });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

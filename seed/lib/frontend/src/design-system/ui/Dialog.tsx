@@ -33,7 +33,7 @@ export function DialogHeader({ className, children, ...props }: DialogHeaderProp
   return (
     <div
       className={cn(
-        "flex items-start justify-between gap-3 border-b border-border p-4",
+        "flex items-start justify-between gap-3 border-b border-border px-6 py-4",
         className,
       )}
       {...props}
@@ -49,7 +49,7 @@ export interface DialogBodyProps extends React.HTMLAttributes<HTMLDivElement> {}
 export function DialogBody({ className, children, ...props }: DialogBodyProps) {
   return (
     <div
-      className={cn("max-h-[60vh] overflow-y-auto p-4", className)}
+      className={cn("max-h-[70vh] overflow-y-auto px-6 py-5", className)}
       {...props}
     >
       {children}
@@ -64,7 +64,7 @@ export function DialogFooter({ className, children, ...props }: DialogFooterProp
   return (
     <div
       className={cn(
-        "flex justify-end border-t border-border px-4 py-3",
+        "flex justify-end border-t border-border px-6 py-4",
         className,
       )}
       {...props}
@@ -115,7 +115,7 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
       {/* Panel */}
       <div
         className={cn(
-          "relative w-full max-w-md rounded-lg border border-border bg-background shadow-lg",
+          "relative w-full max-w-2xl rounded-lg border border-border bg-background shadow-lg",
           className,
         )}
         onClick={(e) => e.stopPropagation()}

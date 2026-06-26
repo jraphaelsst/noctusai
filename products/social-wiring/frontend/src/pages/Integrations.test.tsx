@@ -57,11 +57,12 @@ vi.mock("@/hooks/useClients", () => ({
   useDeleteClient: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
-// WhatsApp connections hooks (needed by Conexoes which embeds WhatsAppConnections)
+// WhatsApp connections hooks (needed by Conexoes and ConnectionDetailDialog)
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnections: vi.fn(() => ({ data: [], isLoading: false })),
   useWhatsAppConnectionMutations: vi.fn(() => ({
     create: { mutate: vi.fn(), isPending: false },
+    update: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
     remove: { mutate: vi.fn(), isPending: false },
   })),
   useWhatsAppConnectionStatus: vi.fn(() => ({ data: null })),
@@ -72,11 +73,15 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
     logout: { mutate: vi.fn(), isPending: false },
     configureWebhook: { mutate: vi.fn(), isPending: false },
   })),
+  useRevealApiKey: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useConnectionChats: vi.fn(() => ({ data: [], isLoading: false, isError: false })),
+  useToggleAutoReply: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
-// react-router-dom (needed by Conexoes for useSearchParams)
+// react-router-dom (needed by Conexoes for useSearchParams + Link)
 vi.mock("react-router-dom", () => ({
   useSearchParams: vi.fn(() => [new URLSearchParams(), vi.fn()]),
+  Link: ({ children, to, ...rest }: any) => <a href={to} {...rest}>{children}</a>,
 }));
 
 // ─── UI-primitive mocks (JSX — single React instance) ──────────────────────

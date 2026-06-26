@@ -10,8 +10,9 @@
  * Adding a new provider: add a new entry to PROVIDER_CARD_CONFIG.
  * The card component reads the registry; zero card-code changes needed.
  */
-import type { LucideIcon } from "lucide-react";
-import { Youtube, MessageCircle } from "lucide-react";
+import * as React from "react";
+import { Youtube } from "lucide-react";
+import { WhatsAppIcon } from "./WhatsAppIcon";
 import type { IntegrationAccount, SecondaryField, ModalSection } from "./types";
 
 export interface EditableField {
@@ -31,8 +32,13 @@ export interface ProviderCardConfig {
   provider: string;
   /** Human-readable provider name shown in the card header. */
   displayName: string;
-  /** Lucide icon component — imported from lucide-react. */
-  icon: LucideIcon;
+  /**
+   * Icon component rendered in the card's circular badge.
+   * Accepts any React component that takes SVG props (className, etc.) —
+   * compatible with both Lucide icons and custom brand SVG components
+   * such as WhatsAppIcon.
+   */
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   /**
    * Optional accent CSS class applied to the provider icon wrapper
    * (e.g. "text-red-500" for YouTube brand red).
@@ -159,7 +165,7 @@ const youtubeConfig: ProviderCardConfig = {
 const whatsappConfig: ProviderCardConfig = {
   provider: "whatsapp",
   displayName: "WhatsApp",
-  icon: MessageCircle,
+  icon: WhatsAppIcon,
   accent: "text-green-500",
 
   primary(account) {
