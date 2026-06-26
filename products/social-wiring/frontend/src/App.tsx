@@ -38,7 +38,6 @@ import {
   List,
   FileText,
   Send,
-  MessageCircle,
   Building2,
 } from "lucide-react";
 
@@ -149,8 +148,8 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Smartphone,
     defaultOpen: true,
     items: [
+      { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Conexões", href: "/conexoes", icon: Link2 },
-      { name: "Chat WhatsApp", href: "/whatsapp-chat", icon: MessageCircle },
       { name: "Monitor", href: "/monitor", icon: Activity },
     ],
   },
@@ -194,7 +193,9 @@ export default createProductApp({
     { path: "/integrations", component: Conexoes },
     // Back-compat: /conexao → standalone WAHA-only page
     { path: "/conexao", component: Conexao },
+    { path: "/clientes", component: Clientes },
     { path: "/monitor", component: Monitor },
+    // /whatsapp-chat kept as unlisted route (removed from nav; Chat tab inside ClienteModal is now primary)
     { path: "/whatsapp-chat", component: WhatsAppChat },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
