@@ -18,7 +18,7 @@ project findings.)
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
@@ -73,6 +73,11 @@ class WhatsAppConnectionRecord:
     api_key: Optional[str] = None
     webhook_token: Optional[str] = None
     auto_reply_enabled: bool = False
+    # Migration 016 — per-connection intake config.
+    # authorized_numbers: empty list = all numbers allowed (not disabled).
+    # bound_chats: list of {"chat_id": str, "label": str} dicts; empty = all.
+    authorized_numbers: list[str] = field(default_factory=list)
+    bound_chats: list[dict] = field(default_factory=list)
 
 
 class WhatsAppConnectionStore:
@@ -116,6 +121,10 @@ class WhatsAppConnectionStore:
             api_key=api_key,
             webhook_token=row.get("webhook_token"),
             auto_reply_enabled=bool(row.get("auto_reply_enabled", False)),
+            # Migration 016 — defensive reads: un-migrated DB rows get empty
+            # lists (= all allowed / all listened), never a crash.
+            authorized_numbers=list(row.get("authorized_numbers") or []),
+            bound_chats=list(row.get("bound_chats") or []),
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -216,6 +225,8 @@ class WhatsAppConnectionStore:
         session_name: Optional[str] = None,
         api_key: Optional[str] = None,
         webhook_url: Any = _UNSET,
+        authorized_numbers: Any = _UNSET,
+        bound_chats: Any = _UNSET,
     ) -> Optional[WhatsAppConnectionRecord]:
         patch: dict[str, Any] = {}
         if label is not None:
@@ -228,6 +239,12 @@ class WhatsAppConnectionStore:
             patch["encrypted_api_key"] = self._encrypt(api_key)
         if webhook_url is not _UNSET:
             patch["webhook_url"] = webhook_url
+        # Migration 016 — JSONB list fields.  _UNSET = keep current value;
+        # an explicit [] = "allow all" / "listen to all" and IS written.
+        if authorized_numbers is not _UNSET:
+            patch["authorized_numbers"] = list(authorized_numbers)
+        if bound_chats is not _UNSET:
+            patch["bound_chats"] = list(bound_chats)
         patch["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         resp = (

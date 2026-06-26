@@ -228,11 +228,16 @@ class WhatsAppIntakeService:
         upload_dir,
         org_id: UUID,
         connection_id: UUID | None = None,
+        bound_chats: list[dict] | None = None,
     ):
         self._waha_base_url = waha_base_url
         self._waha_api_key = waha_api_key
         self._waha_session = waha_session
         self._redis = redis_client
+        # Migration 016 — per-connection authorized_numbers semantics:
+        # empty list = allow ALL senders (not disabled; distinct from the
+        # global env var where empty means the intake service returns None).
+        self._allow_all_senders: bool = not authorized_numbers
         self._authorized = set(self._normalize_numbers(authorized_numbers))
         self._crm = crm_service
         self._admin = admin_supabase
@@ -243,6 +248,37 @@ class WhatsAppIntakeService:
         # persisted via _reply() are tagged with this connection_id so the
         # chat inbox can show the full conversation thread.
         self._connection_id = connection_id
+        # Migration 016 — bound-chat gate.  Store both the raw JID form
+        # and the suffix-stripped form so matches work regardless of how
+        # WAHA surfaces the chat_id.  Empty set = no restriction (all chats).
+        self._bound_chat_ids: set[str] = set()
+        for bc in (bound_chats or []):
+            jid = (
+                bc.get("chat_id", "") if isinstance(bc, dict)
+                else getattr(bc, "chat_id", "")
+            )
+            if jid:
+                self._bound_chat_ids.add(jid)
+                self._bound_chat_ids.add(self._strip_jid_suffix(jid))
+
+    @staticmethod
+    def _strip_jid_suffix(jid: str) -> str:
+        """Strip WhatsApp JID suffixes to get bare digits.
+
+        Handles the three forms WAHA uses:
+          ``5511974693365@c.us``       → ``5511974693365``
+          ``5511974693365@s.whatsapp.net`` → ``5511974693365``
+          ``33613018058989@lid``        → ``33613018058989``
+
+        Used by both :meth:`is_authorized` (phone-form check) and
+        :meth:`is_chat_bound` (JID normalisation).
+        """
+        return (
+            jid
+            .replace("@c.us", "")
+            .replace("@s.whatsapp.net", "")
+            .replace("@lid", "")
+        )
 
     @staticmethod
     def _normalize_numbers(numbers: list[str]) -> list[str]:
@@ -257,6 +293,11 @@ class WhatsAppIntakeService:
     def is_authorized(self, phone: str) -> bool:
         """Check if the sender is in the whitelist.
 
+        When ``authorized_numbers`` was empty at construction time
+        (``self._allow_all_senders``), every sender is allowed — this is the
+        per-connection "allow all" semantic (migration 016).  It differs from
+        the global env var where empty means DISABLED.
+
         WAHA may identify the sender three different ways:
         - ``5511974693365@c.us`` — standard chat id, phone is the prefix.
         - ``5511974693365@s.whatsapp.net`` — alt suffix from some engines.
@@ -265,35 +306,55 @@ class WhatsAppIntakeService:
           on different chats can have different LIDs.
 
         Resolution order:
-        1. Direct whitelist hit (raw LID form `<digits>@lid` listed in
+        1. ``_allow_all_senders`` → True immediately (per-connection default).
+        2. Direct whitelist hit (raw LID form ``<digits>@lid`` listed in
            env wins for LID inbound).
-        2. Strip JID suffixes → phone form, check whitelist with the
-           `+` prefix.
-        3. Look up the LID→phone cache (populated by send-text responses)
+        3. Strip JID suffixes → phone form, check whitelist with the
+           ``+`` prefix.
+        4. Look up the LID→phone cache (populated by send-text responses)
            and recheck the phone whitelist.
         """
+        # 1) Per-connection "allow all" (empty authorized_numbers list).
+        if self._allow_all_senders:
+            return True
         raw = (phone or "").strip()
         if not raw:
             return False
-        # 1) LID literal whitelist (raw form: "33613018058989@lid")
+        # 2) LID literal whitelist (raw form: "33613018058989@lid")
         if raw.lower().endswith("@lid") and raw in self._authorized:
             return True
-        # 2) Phone form
-        clean = (
-            raw
-            .replace("@c.us", "")
-            .replace("@s.whatsapp.net", "")
-        )
+        # 3) Phone form — strip JID suffixes via shared helper
+        clean = self._strip_jid_suffix(raw)
         if "@lid" not in clean.lower():
             phone_candidate = clean if clean.startswith("+") else f"+{clean}"
             if phone_candidate in self._authorized:
                 return True
-        # 3) LID→phone cache lookup (opportunistic capture from outbound)
+        # 4) LID→phone cache lookup (opportunistic capture from outbound)
         if raw.lower().endswith("@lid"):
             cached_phone = self._lid_to_phone(raw)
             if cached_phone and cached_phone in self._authorized:
                 return True
         return False
+
+    def is_chat_bound(self, chat_id: str) -> bool:
+        """Return True if the chat is in the bound-chat set, or if no bound
+        chats are configured (empty set = listen to all chats).
+
+        An empty ``bound_chats`` list at construction means ALL chats are
+        listened to — this is the per-connection default (migration 016).
+
+        Both the raw JID form (``5511999887766@c.us``) and the suffix-stripped
+        form (``5511999887766``) are checked so operators can configure either
+        style and get a match.
+        """
+        if not self._bound_chat_ids:
+            return True
+        raw = (chat_id or "").strip()
+        if not raw:
+            # Empty chat_id is not meaningful — allow through (no gate).
+            return True
+        normalized = self._strip_jid_suffix(raw)
+        return raw in self._bound_chat_ids or normalized in self._bound_chat_ids
 
     # ─── LID ↔ phone cache (Redis-backed, populated by outbound sends) ─
     @staticmethod

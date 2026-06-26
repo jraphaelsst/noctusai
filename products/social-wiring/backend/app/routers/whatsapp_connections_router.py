@@ -59,6 +59,7 @@ from app.dependencies import (
 from app.schemas.whatsapp_connection import (
     AutoReplyToggleOut,
     AutoReplyToggleRequest,
+    BoundChat,
     ChatSummary,
     MessageOut,
     SendMessageRequest,
@@ -159,6 +160,9 @@ def _out(record: WhatsAppConnectionRecord) -> WhatsAppConnectionOut:
         created_at=record.created_at,
         updated_at=record.updated_at,
         auto_reply_enabled=record.auto_reply_enabled,
+        # Migration 016 — per-connection intake config.
+        authorized_numbers=record.authorized_numbers,
+        bound_chats=[BoundChat(**bc) for bc in record.bound_chats],
     )
 
 
@@ -347,6 +351,15 @@ async def update_connection(
     # 404 early if the line isn't the caller's.
     _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
 
+    # Use model_fields_set to distinguish "field absent from request" (keep
+    # current value) from "field supplied as []" (clear → means allow-all /
+    # listen-to-all).  We must NOT treat an explicit [] as "not supplied".
+    _extra: dict = {}
+    if "authorized_numbers" in body.model_fields_set and body.authorized_numbers is not None:
+        _extra["authorized_numbers"] = body.authorized_numbers
+    if "bound_chats" in body.model_fields_set and body.bound_chats is not None:
+        _extra["bound_chats"] = [bc.model_dump() for bc in body.bound_chats]
+
     record = store.update_connection(
         connection_id=connection_id,
         org_id=org_id,
@@ -356,6 +369,7 @@ async def update_connection(
         session_name=body.session_name.strip() if body.session_name is not None else None,
         api_key=body.api_key.strip() if body.api_key is not None else None,
         webhook_url=body.webhook_url if body.webhook_url is not None else None,
+        **_extra,
     )
     if record is None:
         raise HTTPException(

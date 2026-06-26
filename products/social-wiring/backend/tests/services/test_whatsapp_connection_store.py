@@ -40,6 +40,8 @@ CREATE TABLE whatsapp_connections (
     webhook_url TEXT,
     webhook_token TEXT,
     auto_reply_enabled INTEGER NOT NULL DEFAULT 0,
+    authorized_numbers TEXT NOT NULL DEFAULT '[]',
+    bound_chats TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (org_id, user_id, label),
@@ -214,3 +216,110 @@ class TestFactory:
     def test_valid_key_builds(self, sqlite_db, fernet_key):
         store = build_whatsapp_connection_store(sqlite_db, encryption_key=fernet_key)
         assert isinstance(store, WhatsAppConnectionStore)
+
+
+class TestConnectionSettings:
+    """Migration 016 — authorized_numbers + bound_chats per-connection config."""
+
+    def test_defaults_are_empty_lists(self, store):
+        rec = _make(store)
+        assert rec.authorized_numbers == []
+        assert rec.bound_chats == []
+
+    def test_update_authorized_numbers_stores_and_round_trips(self, store):
+        rec = _make(store)
+        updated = store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            authorized_numbers=["+5511999887766", "+5521988776655"],
+        )
+        assert updated is not None
+        assert updated.authorized_numbers == ["+5511999887766", "+5521988776655"]
+        # Verify persistence round-trip via fresh get.
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        assert got is not None
+        assert got.authorized_numbers == ["+5511999887766", "+5521988776655"]
+
+    def test_update_bound_chats_stores_and_round_trips(self, store):
+        rec = _make(store)
+        chats = [
+            {"chat_id": "5511999887766@c.us", "label": "Vendas"},
+            {"chat_id": "5521988776655@c.us", "label": ""},
+        ]
+        updated = store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            bound_chats=chats,
+        )
+        assert updated is not None
+        assert updated.bound_chats == chats
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        assert got is not None
+        assert got.bound_chats == chats
+
+    def test_clear_authorized_numbers_with_empty_list(self, store):
+        """Empty list = 'allow all', NOT disabled. Must persist as []."""
+        rec = _make(store)
+        store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            authorized_numbers=["+5511999887766"],
+        )
+        # Now clear with explicit [].
+        updated = store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            authorized_numbers=[],
+        )
+        assert updated is not None
+        assert updated.authorized_numbers == []
+
+    def test_omitting_field_does_not_overwrite_existing(self, store):
+        """_UNSET sentinel: update with no authorized_numbers kwarg keeps current value."""
+        rec = _make(store)
+        store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            authorized_numbers=["+5511999887766"],
+        )
+        # Patch only the label — authorized_numbers must stay.
+        store.update_connection(
+            connection_id=rec.id,
+            org_id=_ORG,
+            user_id=_USER,
+            label="Updated Label",
+        )
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        assert got is not None
+        assert got.authorized_numbers == ["+5511999887766"]
+        assert got.label == "Updated Label"
+
+    def test_record_with_missing_columns_degrades_gracefully(self, sqlite_db, fernet_key):
+        """Un-migrated DB rows (no authorized_numbers / bound_chats column)
+        must produce empty lists, not KeyError / AttributeError."""
+        from cryptography.fernet import Fernet as _Fernet
+        store = WhatsAppConnectionStore(sqlite_db, fernet=_Fernet(fernet_key.encode("utf-8")))
+        # Simulate a row that pre-dates migration 016 (lacks the new columns).
+        row = {
+            "id": str(__import__("uuid").uuid4()),
+            "org_id": str(_ORG),
+            "user_id": str(_USER),
+            "label": "Legacy",
+            "base_url": "https://waha.example.com",
+            "session_name": "default",
+            "encrypted_api_key": "ignored",
+            "webhook_url": None,
+            "webhook_token": None,
+            "auto_reply_enabled": False,
+            "created_at": None,
+            "updated_at": None,
+            # authorized_numbers and bound_chats are intentionally absent.
+        }
+        rec = WhatsAppConnectionStore._record(row)
+        assert rec.authorized_numbers == []
+        assert rec.bound_chats == []

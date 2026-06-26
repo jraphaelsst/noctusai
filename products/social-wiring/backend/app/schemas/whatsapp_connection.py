@@ -37,6 +37,23 @@ class WhatsAppConnectionCreate(BaseModel):
     api_key: str = Field(..., min_length=1, max_length=2048)
 
 
+class BoundChat(BaseModel):
+    """One entry in the per-connection ``bound_chats`` list.
+
+    ``chat_id`` is the WhatsApp JID of a chat the agent should listen to
+    (e.g. ``5511999887766@c.us`` for a DM, ``12027986...@g.us`` for a
+    group).  ``label`` is an optional display name for the FE — not used
+    by the intake logic.
+
+    Stored as a JSONB array in ``whatsapp_connections.bound_chats``.  The
+    intake service normalises both raw and suffix-stripped forms for
+    matching, so ``5511999887766@c.us`` and ``5511999887766`` both hit.
+    """
+
+    chat_id: str = Field(..., min_length=1, max_length=128)
+    label: str = Field(default="", max_length=200)
+
+
 class WhatsAppConnectionUpdate(BaseModel):
     label: Optional[str] = Field(default=None, min_length=1, max_length=120)
     # Re-supply the key only when rotating it; absent = keep the stored one.
@@ -44,6 +61,25 @@ class WhatsAppConnectionUpdate(BaseModel):
     base_url: Optional[str] = Field(default=None, max_length=2048)
     session_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     webhook_url: Optional[str] = Field(default=None, max_length=2048)
+    # Per-connection intake config (migration 016).
+    # Use model_fields_set to distinguish "not supplied" from "supplied as []".
+    # None (field absent from request) = keep current value.
+    # [] (explicit empty list) = clear → means "allow all" / "listen to all".
+    authorized_numbers: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Phone numbers / JIDs allowed to trigger the agent. "
+            "Empty list = all numbers allowed (not disabled — differs from the "
+            "global env var). Absent field = keep current value."
+        ),
+    )
+    bound_chats: Optional[list[BoundChat]] = Field(
+        default=None,
+        description=(
+            "Chats the agent listens to. Empty list = all chats. "
+            "Absent field = keep current value."
+        ),
+    )
 
 
 class WhatsAppConnectionOut(BaseModel):
@@ -59,6 +95,9 @@ class WhatsAppConnectionOut(BaseModel):
     ``auto_reply_enabled`` is the per-connection chatbot toggle (migration 014,
     default OFF).  When False the existing chatbot does not auto-reply; the
     operator can chat manually via the inbox UI.
+    ``authorized_numbers`` / ``bound_chats`` added by migration 016:
+      - authorized_numbers: empty list = all numbers allowed.
+      - bound_chats: empty list = all chats listened to.
     """
 
     id: UUID
@@ -69,6 +108,9 @@ class WhatsAppConnectionOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     auto_reply_enabled: bool = False
+    # Migration 016 — per-connection intake configuration.
+    authorized_numbers: list[str] = []
+    bound_chats: list[BoundChat] = []
 
 
 class WhatsAppConnectionApiKeyOut(BaseModel):

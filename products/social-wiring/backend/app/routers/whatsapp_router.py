@@ -123,24 +123,43 @@ async def _register_contact_bg(
 _UPLOAD_DIR = Path("/tmp/uploads")
 
 
-def _build_intake_service(*, connection_id=None) -> WhatsAppIntakeService | None:
+def _build_intake_service(*, connection=None) -> WhatsAppIntakeService | None:
     """Wire the intake service. Returns None when critical config is
     missing — the webhook will 200-ack but not process messages.
 
-    ``connection_id`` is an optional UUID passed from the per-connection
-    token-scoped route so outbound messages persisted by the intake service
-    are tagged with the same connection (migration 014).
+    When ``connection`` is a :class:`WhatsAppConnectionRecord` (per-connection
+    token-scoped route, migration 016):
+      - ``authorized_numbers`` comes from the connection record.
+        Empty list = allow ALL senders (per-connection default — differs from
+        the global env var where empty means DISABLED).
+      - ``bound_chats`` comes from the connection record.
+      - ``connection_id`` is derived from ``connection.id``.
+
+    When ``connection`` is None (legacy global route):
+      - ``authorized_numbers`` comes from ``settings.whatsapp_authorized_numbers``
+        (comma-separated env var).  Empty = DISABLED → returns None.
+      - ``bound_chats`` is None (all chats listened to).
+      - ``connection_id`` is None.
     """
-    authorized = [
-        n.strip()
-        for n in settings.whatsapp_authorized_numbers.split(",")
-        if n.strip()
-    ]
-    if not authorized:
-        logger.warning(
-            "whatsapp_authorized_numbers is empty — WhatsApp inbound disabled"
-        )
-        return None
+    if connection is not None:
+        # Per-connection route: empty list = allow all (NOT disabled).
+        authorized = list(connection.authorized_numbers or [])
+        bound_chats: list[dict] | None = list(connection.bound_chats or [])
+        _connection_id = connection.id
+    else:
+        # Legacy global route: empty = disabled.
+        authorized = [
+            n.strip()
+            for n in settings.whatsapp_authorized_numbers.split(",")
+            if n.strip()
+        ]
+        bound_chats = None
+        _connection_id = None
+        if not authorized:
+            logger.warning(
+                "whatsapp_authorized_numbers is empty — WhatsApp inbound disabled"
+            )
+            return None
 
     admin_supabase = get_admin_client()
 
@@ -192,7 +211,8 @@ def _build_intake_service(*, connection_id=None) -> WhatsAppIntakeService | None
         youtube_service=youtube,
         upload_dir=_UPLOAD_DIR,
         org_id=org_id,
-        connection_id=connection_id,
+        connection_id=_connection_id,
+        bound_chats=bound_chats,
     )
 
 
@@ -200,6 +220,7 @@ async def build_intake_service_for_processor(
     *,
     admin_supabase: object | None = None,
     org_id: UUID | None = None,
+    connection=None,
 ) -> WhatsAppIntakeService | None:
     """Async public alias of ``_build_intake_service`` for the
     conversation worker's processor.
@@ -210,11 +231,14 @@ async def build_intake_service_for_processor(
     future refactor that passes the lifespan-resolved admin client + org
     id directly; today the underlying ``_build_intake_service`` resolves
     both on its own.
+
+    ``connection`` (migration 016): optional :class:`WhatsAppConnectionRecord`
+    to forward per-connection ``authorized_numbers`` / ``bound_chats`` config.
     """
     # admin_supabase + org_id reserved for a future signature; pass-through
     # is intentional so callers don't break when we tighten the contract.
     del admin_supabase, org_id
-    return _build_intake_service()
+    return _build_intake_service(connection=connection)
 
 
 def _resolve_default_org(admin_supabase) -> UUID | None:
@@ -381,10 +405,9 @@ async def _process_waha_body(
         # chatbot to react to. ACK and move on.
         return Response(status_code=status.HTTP_200_OK)
 
-    # Build the intake service, threading the connection id for outbound tagging.
-    intake = _build_intake_service(
-        connection_id=connection.id if connection is not None else None
-    )
+    # Build the intake service — pass the full connection record so per-connection
+    # authorized_numbers and bound_chats config (migration 016) is wired in.
+    intake = _build_intake_service(connection=connection)
     if intake is None:
         logger.debug("WhatsApp intake not configured — dropping message")
         return Response(status_code=status.HTTP_200_OK)
@@ -447,6 +470,21 @@ async def _process_waha_body(
                 sender,
                 exc_info=True,
             )
+
+    # ── Bound-chat gate (migration 016) ─────────────────────────────────────────
+    # For per-connection routes: if the connection has a non-empty bound_chats
+    # list, drop messages from chats not in that list — silently, no reply.
+    # The message was already stored to the inbox above (operators can still
+    # see it), but the agent takes no action on an unbound chat.
+    # This gate fires BEFORE is_authorized so unbound chats never get even the
+    # "unauthorized number" reply.
+    if connection is not None and not intake.is_chat_bound(payload.chat_id or sender):
+        logger.debug(
+            "WhatsApp inbound from unbound chat %s (connection=%s) — dropping agent action",
+            payload.chat_id or sender,
+            connection.id,
+        )
+        return Response(status_code=status.HTTP_200_OK)
 
     # Auth check — unauthorized senders get a polite reply (not silent drop).
     # Once-per-conversation guard via Redis so we don't spam a denial loop
