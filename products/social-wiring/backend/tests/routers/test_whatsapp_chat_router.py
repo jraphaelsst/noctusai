@@ -758,6 +758,30 @@ class TestWahaLiveMergeChats:
         assert row["last_direction"] == "inbound"
         assert row["last_message"] == "oi"
 
+    def test_chat_name_resolved_via_get_contact_when_waha_chat_unnamed(self, chat_client):
+        """WAHA NOWEB chats carry no name → the list resolves it via get_contact
+        and shows the contact name instead of the number."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        fake: FakeWahaClient = fakes["default"]
+        fake.fake_chat_list = [
+            {
+                "id": {"_serialized": "5588@c.us"},
+                "name": None,  # NOWEB chats have no resolved name
+                "lastMessage": {"body": "ola", "fromMe": False, "timestamp": 1718000000},
+            }
+        ]
+        # get_contact supplies the display name.
+        fake.fake_contacts["5588@c.us"] = {"id": "5588@c.us", "name": "Marina Silva"}
+
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["contact"] == "Marina Silva"
+
     def test_waha_chat_merged_with_db_row_prefers_newer_ts(self, chat_client):
         """When WAHA has a newer message than DB, the merged row reflects it."""
         c, conn_store, fakes, db_path = chat_client

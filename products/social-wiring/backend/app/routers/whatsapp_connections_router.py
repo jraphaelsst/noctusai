@@ -96,6 +96,16 @@ _THREAD_CACHE_TTL_S = 25.0
 _thread_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # key → (ts, msgs)
 _thread_inflight: set[str] = set()
 
+# ── Chat-list name resolution ─────────────────────────────────────────────────
+# WAHA chat objects carry NO display name (verified: name=None on every chat),
+# so the chat list shows raw numbers. We resolve each chat's name via the fast
+# get_contact call (~0.1s) — cached per JID (TTL) so the 5s poll doesn't
+# re-resolve — and upsert into social_wiring.contacts so the name persists and
+# the Contacts page populates. A per-request budget bounds the first-load cost.
+_NAME_CACHE_TTL_S = 600.0
+_name_cache: dict[str, tuple[float, str]] = {}  # jid → (ts, name)  ("" = no name)
+_NAME_RESOLVE_BUDGET = 40  # max uncached get_contact calls per list_chats request
+
 
 # ─── DI seams ───────────────────────────────────────────────────────────────
 def get_connection_store(
@@ -883,6 +893,62 @@ async def list_chats(
             "WAHA list_chats unavailable for connection %s — falling back to DB only: %s",
             connection_id, exc,
         )
+
+    # ── Resolve missing names from WAHA get_contact (~0.1s), cached + persisted ─
+    # WAHA chats carry no name, so any chat still showing a number gets resolved
+    # via get_contact (fast), cached per JID (TTL) so the 5s poll doesn't
+    # re-resolve, and upserted into contacts (name persists + Contacts page
+    # populates → future polls read the DB, no WAHA call). Bounded per request.
+    name_client = client
+    if name_client is None:
+        try:
+            name_client = _waha_client(record, waha_factory)
+        except Exception:  # noqa: BLE001
+            name_client = None
+    if name_client is not None:
+        now_mono = time.monotonic()
+        contact_svc_w = ContactService(db=get_admin_client(), org_id=str(org_id))
+        resolved = 0
+        for canonical, entry in by_canonical.items():
+            display = entry.get("contact") or ""
+            if display and not _is_phone_like_display(display):
+                continue  # already has a real name
+            lookup_jid = entry.get("chat_id") or canonical
+            cached = _name_cache.get(lookup_jid)
+            if cached and (now_mono - cached[0]) < _NAME_CACHE_TTL_S:
+                if cached[1]:
+                    entry["contact"] = cached[1]
+                continue
+            if resolved >= _NAME_RESOLVE_BUDGET:
+                continue
+            resolved += 1
+            try:
+                info = await name_client.get_contact(lookup_jid)
+            except Exception:  # noqa: BLE001
+                info = {}
+            name = (info.get("name") or info.get("pushname") or "").strip()
+            _name_cache[lookup_jid] = (now_mono, name)
+            if not name:
+                continue
+            entry["contact"] = name
+            # Persist so the name sticks + the Contacts page populates.
+            phone = _canonical_phone(canonical) or _canonical_phone(lookup_jid)
+            if phone:
+                try:
+                    lid = info.get("lid")
+                    rec = contact_svc_w.upsert_whatsapp_contact(
+                        phone=phone,
+                        lids=[lid] if lid else [],
+                        name=name,
+                        jid=f"{phone}@c.us",
+                    )
+                    if rec.get("id") and not entry.get("contact_id"):
+                        entry["contact_id"] = str(rec["id"])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "contact upsert during list_chats failed for %s: %s",
+                        lookup_jid, exc,
+                    )
 
     merged = sorted(
         by_canonical.values(),
