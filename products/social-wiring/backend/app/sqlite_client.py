@@ -19,6 +19,9 @@ JSON_COLUMNS = {
     "credentials": {"scopes"},
     "upload_jobs": {"tags", "notify_recipients"},
     "video_cache": {"tags"},
+    # Migration 016: per-connection intake config stored as JSONB in Postgres.
+    # The SQLiteClient serialises these to JSON text on write; deserialise on read.
+    "whatsapp_connections": {"authorized_numbers", "bound_chats"},
 }
 
 BOOL_COLUMNS = {

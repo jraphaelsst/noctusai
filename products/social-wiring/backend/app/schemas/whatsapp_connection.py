@@ -31,10 +31,18 @@ class WhatsAppConnectionCreate(BaseModel):
     ``session_name``, and ``webhook_url`` are derived server-side and ignored
     if present. Extra fields are silently dropped (pydantic default) so
     existing callers that still pass them do not break.
+
+    ``client_id`` (migration 017): optional UUID linking the new connection
+    to an existing cliente.  Absent / null = unassigned.
     """
 
     label: str = Field(..., min_length=1, max_length=120)
     api_key: str = Field(..., min_length=1, max_length=2048)
+    # Migration 017 — optional cliente ownership at creation time.
+    client_id: Optional[UUID] = Field(
+        default=None,
+        description="Optional clients.id to link this connection to a cliente.",
+    )
 
 
 class BoundChat(BaseModel):
@@ -80,6 +88,18 @@ class WhatsAppConnectionUpdate(BaseModel):
             "Absent field = keep current value."
         ),
     )
+    # Migration 017 — optional cliente FK.
+    # Absent (field not in request) = keep current value.
+    # Null (explicit null) = clear the link (unassign from cliente).
+    # UUID = set the link.
+    # Uses model_fields_set to distinguish "not supplied" from "supplied as null".
+    client_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Optional clients.id. "
+            "Absent = keep current; null = unassign; UUID = assign to cliente."
+        ),
+    )
 
 
 class WhatsAppConnectionOut(BaseModel):
@@ -111,6 +131,8 @@ class WhatsAppConnectionOut(BaseModel):
     # Migration 016 — per-connection intake configuration.
     authorized_numbers: list[str] = []
     bound_chats: list[BoundChat] = []
+    # Migration 017 — optional cliente ownership.
+    client_id: Optional[UUID] = None
 
 
 class WhatsAppConnectionApiKeyOut(BaseModel):

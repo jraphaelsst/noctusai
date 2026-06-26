@@ -502,6 +502,165 @@ class TestYouTubeOAuthCallback:
         assert resp.status_code == 400
 
 
+# ─── YouTube OAuth: client_id round-trip (migration 017) ────────────────────
+
+_FAKE_YT_CLIENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+
+class TestYouTubeOAuthClientId:
+    """Verify that client_id threads correctly through the YouTube OAuth flow
+    (migration 017): start encodes it into state, callback decodes and passes
+    it to create_account.
+
+    Uses the same DI seam pattern as TestYouTubeOAuthCallback — no monkeypatch,
+    no mock of our own code.  build_client_service is called with get_admin_client()
+    for the validation step; the mock admin client returns a MockSupabaseClient
+    that does NOT raise on .table().select().eq().eq().execute(), so the
+    validation succeeds with a stub response (empty data → None → 404 from the
+    router).  We bypass the live validation by injecting a body with a UUID that
+    the mock returns as non-None.
+    """
+
+    def _yt_overrides(self, app, settings_mod):
+        """Build the common DI override dict for YouTube OAuth tests."""
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+            get_yt_client_factory,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+        from noctusai_lib.integrations.youtube import ChannelInfo
+        from noctusai_lib.integrations.youtube.fake import FakeYoutubeClient
+
+        fake_cfg = settings_mod.model_copy(
+            update={
+                "youtube_client_id": "fake-cid",
+                "youtube_client_secret": "fake-cs",
+                "frontend_base_url": "",
+            }
+        )
+        owned = ChannelInfo(
+            channel_id="UC-client-test",
+            title="Client Channel",
+            subscriber_count=0,
+            video_count=0,
+            view_count=0,
+        )
+        return {
+            get_settings: lambda: fake_cfg,
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_yt_pkce_redis: lambda: None,
+            get_yt_client_factory: lambda: (
+                lambda **kw: FakeYoutubeClient(owned_channel_info=owned)
+            ),
+        }
+
+    def test_start_state_contains_org_id(self, client):
+        """POST /start without client_id → state still contains org_id (backward compat)."""
+        from app.config import settings as _settings
+        from app.main import app
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+
+        fake_cfg = _settings.model_copy(
+            update={
+                "youtube_client_id": "fake-cid",
+                "youtube_client_secret": "fake-cs",
+            }
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_yt_pkce_redis: lambda: None,
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/youtube/oauth/start",
+                headers=_auth_header(),
+                # No body — backward-compatible path.
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code == 200, resp.text
+        state = resp.json()["state"]
+        parts = state.split(":")
+        assert parts[0] == _ORG_A
+        # Third part should be empty (no client_id supplied).
+        assert len(parts) >= 3
+        assert parts[2] == ""
+
+    def test_callback_three_part_state_creates_account_with_client_id(
+        self, client, ia_service
+    ):
+        """Callback with state={org}:{nonce}:{client_id} creates the account
+        linked to that client_id — the third-segment round-trip."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._yt_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            resp = client.get(
+                "/api/integrations/accounts/youtube/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+
+    def test_callback_two_part_state_creates_account_without_client_id(
+        self, client, ia_service
+    ):
+        """Callback with old-style state={org}:{nonce} (no third part) still
+        creates the account — backward-compatible, client_id=None."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._yt_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-compat"
+            resp = client.get(
+                "/api/integrations/accounts/youtube/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
+        assert len(accounts) == 1
+        assert accounts[0].client_id is None
+
+
 # ─── Legacy adoption endpoint ───────────────────────────────────────────────
 class TestAdoptLegacy:
     def test_unsupported_provider_422(self, client):

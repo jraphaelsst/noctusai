@@ -51,6 +51,7 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
     build_integration_account_service,
 )
+from app.services.clients_service import build_client_service
 from app.services.integration_providers import PROVIDERS
 from app.services.legacy_adoption import adopt_legacy_account
 
@@ -111,6 +112,17 @@ class IntegrationAccountUpdate(BaseModel):
 class YouTubeOAuthStartOut(BaseModel):
     auth_url: str
     state: str
+
+
+class YouTubeOAuthStartIn(BaseModel):
+    """Optional request body for POST /api/integrations/accounts/youtube/oauth/start.
+
+    ``client_id`` (migration 017): when supplied the new ``integration_accounts``
+    row is linked to the given cliente (must belong to the calling org).
+    Absent / null = no link (backward-compatible with callers that send no body).
+    """
+
+    client_id: Optional[UUID] = None
 
 
 # ─── DI seam ─────────────────────────────────────────────────────────────────
@@ -468,6 +480,7 @@ def get_yt_client_factory():
     response_model=YouTubeOAuthStartOut,
 )
 def youtube_oauth_start(
+    body: YouTubeOAuthStartIn = YouTubeOAuthStartIn(),
     auth: tuple = Depends(get_current_user_org),
     cfg: SocialWiringSettings = Depends(get_settings),
     provider=Depends(get_yt_oauth_provider),
@@ -475,9 +488,11 @@ def youtube_oauth_start(
 ) -> YouTubeOAuthStartOut:
     """Build a YouTube OAuth consent URL for the multi-account flow.
 
-    State token: ``{org_id}:{nonce}`` — org-scoped CSRF token that the
-    callback uses to resolve the tenant without trusting the redirect URI
-    alone. PKCE verifier persisted in Redis (10-min TTL, single-use).
+    State token: ``{org_id}:{nonce}:{client_id_or_empty}`` — org-scoped CSRF
+    token (extended by migration 017 to carry an optional cliente id through the
+    redirect round-trip).  Backward-compatible: callers that send no body get
+    the old two-part ``{org_id}:{nonce}`` behavior (empty third segment = no
+    link).  PKCE verifier persisted in Redis (10-min TTL, single-use).
     """
     import asyncio
 
@@ -493,13 +508,28 @@ def youtube_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
+    # Migration 017 — validate client_id belongs to the org before encoding.
+    client_id_str = ""
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id_str = str(body.client_id)
+
     # Derive the multi-account OAuth callback redirect URI (separate path from
     # /api/youtube/oauth/callback so both flows coexist).
     redirect_uri = _build_ia_youtube_redirect_uri(cfg)
 
     from app.modules.youtube.services.youtube import YOUTUBE_SCOPES
 
-    state = f"{org_id}:{secrets.token_urlsafe(16)}"
+    # State format: {org_id}:{nonce}:{client_id_or_empty}
+    # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
+    # three-part split in the callback is unambiguous.
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
     # Seed OAuthProvider methods are async; this endpoint is sync (AnyIO worker
     # thread), so bridge via asyncio.run — the same pattern the callback uses
     # for the YouTube client. `provider` (real GoogleProvider or an injected
@@ -554,12 +584,18 @@ def youtube_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    org_part, _, _nonce = state.partition(":")
-    if not org_part:
+    # State format: {org_id}:{nonce}:{client_id_or_empty} (migration 017 extended)
+    # Older two-part states "{org_id}:{nonce}" have no third segment → client_id_part = "".
+    # Split on the FIRST ":" then the LAST ":" to handle both two-part and three-part forms.
+    parts = state.split(":")
+    if len(parts) < 2 or not parts[0]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state token malformed.",
         )
+    org_part = parts[0]
+    # Third segment (index 2) is client_id when present; empty string = no link.
+    client_id_part = parts[2] if len(parts) >= 3 else ""
     try:
         org_id = UUID(org_part)
     except ValueError as exc:
@@ -567,6 +603,17 @@ def youtube_oauth_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
+
+    # Parse client_id from state (may be empty when caller sent no client_id).
+    _callback_client_id: Optional[UUID] = None
+    if client_id_part:
+        try:
+            _callback_client_id = UUID(client_id_part)
+        except ValueError:
+            logger.warning(
+                "integration_accounts: OAuth state carries non-UUID client_id_part=%r — ignoring",
+                client_id_part,
+            )
 
     if provider is None:
         raise HTTPException(
@@ -720,6 +767,8 @@ def youtube_oauth_callback(
             metadata=metadata,
             is_default=not youtube_accounts,  # first-ever account becomes default
             status="validated",
+            # Migration 017 — link to cliente when carried through OAuth state.
+            client_id=_callback_client_id,
         )
         # Write channel_info for the new account too (same as re-auth path).
         if _channel_info:

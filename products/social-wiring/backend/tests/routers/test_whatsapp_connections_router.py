@@ -52,6 +52,7 @@ CREATE TABLE whatsapp_connections (
     auto_reply_enabled INTEGER NOT NULL DEFAULT 0,
     authorized_numbers TEXT NOT NULL DEFAULT '[]',
     bound_chats TEXT NOT NULL DEFAULT '[]',
+    client_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (org_id, user_id, label),
@@ -404,3 +405,101 @@ class TestTokenWebhookRoute:
             json={"event": "message"},
         )
         assert resp.status_code == 404, resp.text
+
+
+# ── Migration 017: client_id threading tests ─────────────────────────────────
+
+_FAKE_CLIENT_ID = "11111111-1111-4111-8111-111111111111"
+
+
+class TestClientId:
+    """Verify that client_id flows through create → list-filter → update → clear
+    for the whatsapp_connections router (migration 017).
+
+    These tests wire the same SQLite store fixture used by TestCrud — the
+    _SCHEMA already includes the client_id column.  No live DB; no real clients
+    table validation (that's the service layer; router trusts the body).
+    """
+
+    def test_create_with_client_id_returns_client_id(self, connections_client):
+        """POST with client_id → 201 response includes client_id."""
+        c, _ = connections_client
+        resp = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "ClienteA", "api_key": "k", "client_id": _FAKE_CLIENT_ID},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["client_id"] == _FAKE_CLIENT_ID
+
+    def test_create_without_client_id_returns_null(self, connections_client):
+        """POST without client_id → client_id is null in response."""
+        c, _ = connections_client
+        resp = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "NoCliente", "api_key": "k"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["client_id"] is None
+
+    def test_list_filter_by_client_id_returns_only_matching(self, connections_client):
+        """GET ?client_id= returns only connections for that cliente."""
+        c, _ = connections_client
+        other_client_id = "22222222-2222-4222-8222-222222222222"
+
+        r1 = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "Conn Linked", "api_key": "k", "client_id": _FAKE_CLIENT_ID},
+        )
+        r2 = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "Conn Other", "api_key": "k", "client_id": other_client_id},
+        )
+        assert r1.status_code == 201 and r2.status_code == 201
+
+        resp = c.get(f"/api/whatsapp/connections?client_id={_FAKE_CLIENT_ID}")
+        assert resp.status_code == 200, resp.text
+        ids = [r["id"] for r in resp.json()]
+        assert r1.json()["id"] in ids
+        assert r2.json()["id"] not in ids
+
+    def test_update_assigns_client_id(self, connections_client):
+        """PATCH with client_id assigns the link."""
+        c, _ = connections_client
+        cid = _create(c, label="PatchMe").json()["id"]
+
+        resp = c.patch(
+            f"/api/whatsapp/connections/{cid}",
+            json={"client_id": _FAKE_CLIENT_ID},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["client_id"] == _FAKE_CLIENT_ID
+
+    def test_update_clears_client_id_with_null(self, connections_client):
+        """PATCH with explicit null client_id clears the link."""
+        c, _ = connections_client
+        cid = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "ClearMe", "api_key": "k", "client_id": _FAKE_CLIENT_ID},
+        ).json()["id"]
+
+        resp = c.patch(
+            f"/api/whatsapp/connections/{cid}",
+            json={"client_id": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["client_id"] is None
+
+    def test_update_without_client_id_field_keeps_existing(self, connections_client):
+        """PATCH omitting client_id does NOT clear it (sentinel behaviour)."""
+        c, _ = connections_client
+        cid = c.post(
+            "/api/whatsapp/connections",
+            json={"label": "KeepClient", "api_key": "k", "client_id": _FAKE_CLIENT_ID},
+        ).json()["id"]
+
+        resp = c.patch(
+            f"/api/whatsapp/connections/{cid}",
+            json={"label": "KeepClient Updated"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["client_id"] == _FAKE_CLIENT_ID
