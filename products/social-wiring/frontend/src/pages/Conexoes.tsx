@@ -552,10 +552,11 @@ function YouTubeCardSection({
         </div>
       )}
 
-      {/* Detail modal */}
+      {/* Detail modal — wider for connection details */}
       <IntegrationCardModal
         account={modalAccount ? toLibAccount(modalAccount) : null}
         onClose={() => setModalAccount(null)}
+        className="sm:max-w-2xl"
       />
     </div>
   );

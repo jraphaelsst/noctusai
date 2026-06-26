@@ -8,7 +8,7 @@
  *
  * Structure:
  *   Backdrop (fixed inset-0, bg-black/50) →
- *     Panel (white card, rounded-lg, max-w-md, border-border) →
+ *     Panel (white card, rounded-lg, max-w-md default, border-border) →
  *       children
  *
  * Accessibility:
@@ -115,7 +115,7 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
       {/* Panel */}
       <div
         className={cn(
-          "relative w-full max-w-2xl rounded-lg border border-border bg-background shadow-lg",
+          "relative w-full max-w-md rounded-lg border border-border bg-background shadow-lg",
           className,
         )}
         onClick={(e) => e.stopPropagation()}
