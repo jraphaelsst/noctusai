@@ -39,6 +39,7 @@ import {
   FileText,
   Send,
   MessageCircle,
+  Building2,
 } from "lucide-react";
 
 // Pages
@@ -64,6 +65,7 @@ const EmailMarketingConfig = lazy(() => import("@/pages/EmailMarketingConfig"));
 const EmailMembros = lazy(() => import("@/pages/EmailMembros"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
+const Clientes = lazy(() => import("@/pages/Clientes"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -98,8 +100,8 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Smartphone,
     defaultOpen: true,
     items: [
+      { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Conexões", href: "/conexoes", icon: Link2, route: "conexao" },
-      { name: "Chat WhatsApp", href: "/whatsapp-chat", icon: MessageCircle, route: "whatsapp_chat" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
     ],
   },

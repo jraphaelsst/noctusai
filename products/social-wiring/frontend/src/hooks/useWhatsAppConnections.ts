@@ -82,11 +82,14 @@ export interface WhatsAppConnectionQr {
 
 /**
  * Create payload — backend derives session_name, base_url, and webhook_url.
- * Only label + api_key are user-supplied.
+ * Only label + api_key are user-supplied. `client_id` is optional; when
+ * supplied the new connection is immediately owned by that cliente.
  */
 export interface CreateConnectionBody {
   label: string;
   api_key: string;
+  /** Assign to a cliente on creation. */
+  client_id?: string | null;
 }
 
 /**
@@ -238,6 +241,21 @@ export function useToggleAutoReply() {
     mutationFn: ({ id, enabled }) =>
       api.put<WhatsAppConnectionLine>(`${BASE}/${id}/auto-reply`, { enabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// ─── Client-scoped connections ───────────────────────────────────────────────
+/**
+ * List WhatsApp connections owned by a specific cliente.
+ * Maps to GET /api/whatsapp/connections?client_id=<id>.
+ * Used by the ClienteModal Chat tab + Contas tab to resolve WA connections.
+ */
+export function useClientWhatsAppConnections(clientId: string | null) {
+  return useQuery<WhatsAppConnectionLine[]>({
+    queryKey: [...KEY, "client", clientId],
+    queryFn: () =>
+      api.get<WhatsAppConnectionLine[]>(`${BASE}?client_id=${encodeURIComponent(clientId!)}`),
+    enabled: !!clientId,
   });
 }
 
