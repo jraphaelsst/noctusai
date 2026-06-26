@@ -41,6 +41,7 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useSetDefaultAccount: mockUseSetDefaultAccount,
   useDeleteAccount: mockUseDeleteAccount,
   useSyncAccount: mockUseSyncAccount,
+  useStartYouTubeOAuth: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/hooks/useClients", () => ({

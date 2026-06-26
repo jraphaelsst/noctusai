@@ -76,6 +76,7 @@ import {
   useSetDefaultAccount,
   useDeleteAccount,
   useSyncAccount,
+  useStartYouTubeOAuth,
   type IntegrationAccount,
   type IntegrationStatus,
 } from "@/hooks/useIntegrationAccounts";
@@ -279,6 +280,17 @@ function ContasTab({ client }: { client: Client }) {
   const setDefault = useSetDefaultAccount();
   const deleteAcc = useDeleteAccount();
   const syncAcc = useSyncAccount();
+  const youtubeOAuth = useStartYouTubeOAuth();
+
+  function handleConnectYouTube() {
+    youtubeOAuth.mutate(
+      { clientId: client.id },
+      {
+        onError: (e: unknown) =>
+          toast.error(e instanceof Error ? e.message : "Falha ao iniciar conexão."),
+      },
+    );
+  }
   const [busyAccId, setBusyAccId] = useState<string | null>(null);
 
   const [openIntAccount, setOpenIntAccount] = useState<IntegrationAccount | null>(null);
@@ -396,8 +408,24 @@ function ContasTab({ client }: { client: Client }) {
 
       {/* ── Integration accounts ──────────────────────────────────────────── */}
       <section className="space-y-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-          <Wifi className="h-3.5 w-3.5" /> Integrações
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            <Wifi className="h-3.5 w-3.5" /> Integrações
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleConnectYouTube}
+            disabled={youtubeOAuth.isPending}
+            className="h-7 text-xs"
+          >
+            {youtubeOAuth.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5 mr-1" />
+            )}
+            Conectar YouTube
+          </Button>
         </div>
         {loadingInt ? (
           <div className="space-y-2 pl-1">
