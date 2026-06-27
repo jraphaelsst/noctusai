@@ -16,14 +16,21 @@
  *   onClose — called when the dialog requests close
  */
 import { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
 import {
   AlertCircle,
+  Clock,
+  HardDrive,
   Loader2,
+  Mail,
+  Network,
   Plus,
   Settings2,
+  Share2,
   Smartphone,
   Trash2,
   Wifi,
+  Youtube,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -63,7 +70,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 // Domain imports
-import { ConnectionDetailDialog } from "@/pages/Conexao";
+import { ConnectionDetailDialog } from "@/components/ConnectionDetailDialog";
 import {
   useClientWhatsAppConnections,
   useWhatsAppConnectionMutations,
@@ -72,11 +79,13 @@ import {
 } from "@/hooks/useWhatsAppConnections";
 import {
   useIntegrationAccounts,
+  useCreateAccount,
   useUpdateAccount,
   useSetDefaultAccount,
   useDeleteAccount,
   useSyncAccount,
   useStartYouTubeOAuth,
+  useStartProviderOAuth,
   type IntegrationAccount,
   type IntegrationStatus,
 } from "@/hooks/useIntegrationAccounts";
@@ -106,6 +115,129 @@ function wahaStatusToIntegration(
     case "STOPPED":    return "disconnected";
     default:           return "disconnected";
   }
+}
+
+// ─── Provider catalog ────────────────────────────────────────────────────────
+
+type ConnectKind = "oauth" | "manual" | "soon";
+
+interface ProviderDef {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  connectKind: ConnectKind;
+}
+
+const PROVIDER_CATALOG: ProviderDef[] = [
+  { id: "youtube",      label: "YouTube",      icon: Youtube,   connectKind: "oauth"  },
+  { id: "gmail",        label: "Gmail",        icon: Mail,      connectKind: "oauth"  },
+  { id: "google_drive", label: "Google Drive", icon: HardDrive, connectKind: "oauth"  },
+  { id: "n8n",          label: "n8n",          icon: Network,   connectKind: "manual" },
+  { id: "meta",         label: "Meta",         icon: Share2,    connectKind: "soon"   },
+  { id: "mailchimp",    label: "Mailchimp",    icon: Mail,      connectKind: "soon"   },
+];
+
+// ─── N8n inline connect form ──────────────────────────────────────────────────
+
+function N8nConnectForm({
+  clientId,
+  onCancel,
+  onConnected,
+}: {
+  clientId: string;
+  onCancel: () => void;
+  onConnected: () => void;
+}) {
+  const [label, setLabel] = useState("n8n");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const createAccount = useCreateAccount();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!webhookUrl.trim()) {
+      toast.error("Webhook URL é obrigatório.");
+      return;
+    }
+    try {
+      await createAccount.mutateAsync({
+        provider: "n8n",
+        account_label: label.trim() || "n8n",
+        credential: { webhook_url: webhookUrl.trim(), api_key: apiKey.trim() },
+        client_id: clientId,
+      });
+      toast.success("n8n conectado com sucesso.");
+      onConnected();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Falha ao conectar n8n.");
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-2 space-y-2 rounded-md border bg-muted/20 p-3"
+      data-testid="n8n-connect-form"
+    >
+      <div className="space-y-1">
+        <Label htmlFor="n8n-label" className="text-xs">Label</Label>
+        <Input
+          id="n8n-label"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          className="h-7 text-xs"
+          disabled={createAccount.isPending}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="n8n-webhook" className="text-xs">Webhook URL *</Label>
+        <Input
+          id="n8n-webhook"
+          value={webhookUrl}
+          onChange={(e) => setWebhookUrl(e.target.value)}
+          placeholder="https://n8n.example.com/webhook/..."
+          className="h-7 text-xs font-mono"
+          disabled={createAccount.isPending}
+          data-testid="n8n-webhook-url"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="n8n-apikey" className="text-xs">API Key (opcional)</Label>
+        <Input
+          id="n8n-apikey"
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="••••••••"
+          className="h-7 text-xs"
+          disabled={createAccount.isPending}
+          data-testid="n8n-api-key"
+        />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs"
+          onClick={onCancel}
+          disabled={createAccount.isPending}
+        >
+          Cancelar
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          className="h-7 text-xs"
+          disabled={createAccount.isPending || !webhookUrl.trim()}
+          data-testid="n8n-connect-submit"
+        >
+          {createAccount.isPending && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+          Conectar
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 // ─── WA connection card (polls live status) ───────────────────────────────────
@@ -281,17 +413,11 @@ function ContasTab({ client }: { client: Client }) {
   const deleteAcc = useDeleteAccount();
   const syncAcc = useSyncAccount();
   const youtubeOAuth = useStartYouTubeOAuth();
+  const gmailOAuth = useStartProviderOAuth("gmail");
+  const driveOAuth = useStartProviderOAuth("google_drive");
 
-  function handleConnectYouTube() {
-    youtubeOAuth.mutate(
-      { clientId: client.id },
-      {
-        onError: (e: unknown) =>
-          toast.error(e instanceof Error ? e.message : "Falha ao iniciar conexão."),
-      },
-    );
-  }
   const [busyAccId, setBusyAccId] = useState<string | null>(null);
+  const [n8nFormOpen, setN8nFormOpen] = useState(false);
 
   const [openIntAccount, setOpenIntAccount] = useState<IntegrationAccount | null>(null);
 
@@ -406,54 +532,133 @@ function ContasTab({ client }: { client: Client }) {
 
       <Separator />
 
-      {/* ── Integration accounts ──────────────────────────────────────────── */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            <Wifi className="h-3.5 w-3.5" /> Integrações
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleConnectYouTube}
-            disabled={youtubeOAuth.isPending}
-            className="h-7 text-xs"
-          >
-            {youtubeOAuth.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5 mr-1" />
-            )}
-            Conectar YouTube
-          </Button>
+      {/* ── All-providers integration grid ────────────────────────────────── */}
+      <section className="space-y-2" data-testid="integrations-grid">
+        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          <Wifi className="h-3.5 w-3.5" /> Integrações
         </div>
+
         {loadingInt ? (
           <div className="space-y-2 pl-1">
-            <Skeleton className="h-16 w-full rounded-lg" />
-            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
           </div>
         ) : errorInt ? (
           <div className="flex items-center gap-2 text-xs text-destructive pl-1 py-2">
             <AlertCircle className="h-4 w-4" /> Erro ao carregar integrações.
           </div>
-        ) : intAccounts.length === 0 ? (
-          <p className="text-xs text-muted-foreground pl-1 py-2">
-            Nenhuma integração vinculada a este cliente.
-          </p>
         ) : (
-          <div className="grid gap-2 pl-1">
-            {intAccounts.map((acc) => (
-              <IntegrationCard
-                key={acc.id}
-                account={toLibAccount(acc)}
-                busy={busyAccId === acc.id}
-                onSave={(patch) => handleAccSave(acc.id, patch as Record<string, string | null>)}
-                onDelete={() => handleAccDelete(acc.id)}
-                onSetDefault={() => handleAccSetDefault(acc.id)}
-                onSync={() => handleAccSync(acc.id)}
-                onOpenModal={() => setOpenIntAccount(acc)}
-              />
-            ))}
+          <div className="grid gap-1.5 pl-1">
+            {PROVIDER_CATALOG.map((provider) => {
+              const accounts = intAccounts.filter((a) => a.provider === provider.id);
+              const ProviderIcon = provider.icon;
+
+              // If accounts exist — show IntegrationCard rows
+              if (accounts.length > 0) {
+                return (
+                  <div key={provider.id} className="space-y-1.5">
+                    {accounts.map((acc) => (
+                      <IntegrationCard
+                        key={acc.id}
+                        account={toLibAccount(acc)}
+                        busy={busyAccId === acc.id}
+                        onSave={(patch) => handleAccSave(acc.id, patch as Record<string, string | null>)}
+                        onDelete={() => handleAccDelete(acc.id)}
+                        onSetDefault={() => handleAccSetDefault(acc.id)}
+                        onSync={() => handleAccSync(acc.id)}
+                        onOpenModal={() => setOpenIntAccount(acc)}
+                      />
+                    ))}
+                  </div>
+                );
+              }
+
+              // No accounts — show greyed row with connect affordance
+              return (
+                <div key={provider.id} className="space-y-1">
+                  <div
+                    className="flex items-center justify-between rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 opacity-70"
+                    data-testid={`provider-row-${provider.id}`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ProviderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="text-sm font-medium text-muted-foreground truncate">
+                        {provider.label}
+                      </span>
+                    </div>
+
+                    {provider.connectKind === "soon" && (
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Clock className="h-3.5 w-3.5" />
+                        em breve
+                      </div>
+                    )}
+
+                    {provider.connectKind === "oauth" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        disabled={
+                          (provider.id === "youtube" && youtubeOAuth.isPending) ||
+                          (provider.id === "gmail" && gmailOAuth.isPending) ||
+                          (provider.id === "google_drive" && driveOAuth.isPending)
+                        }
+                        onClick={() => {
+                          const opts = { clientId: client.id };
+                          if (provider.id === "youtube") {
+                            youtubeOAuth.mutate(opts, {
+                              onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
+                            });
+                          } else if (provider.id === "gmail") {
+                            gmailOAuth.mutate(opts, {
+                              onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
+                            });
+                          } else if (provider.id === "google_drive") {
+                            driveOAuth.mutate(opts, {
+                              onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
+                            });
+                          }
+                        }}
+                        data-testid={`connect-btn-${provider.id}`}
+                      >
+                        {((provider.id === "youtube" && youtubeOAuth.isPending) ||
+                          (provider.id === "gmail" && gmailOAuth.isPending) ||
+                          (provider.id === "google_drive" && driveOAuth.isPending)) ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                        ) : (
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                        )}
+                        Conectar
+                      </Button>
+                    )}
+
+                    {provider.connectKind === "manual" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => setN8nFormOpen((prev) => !prev)}
+                        data-testid={`connect-btn-${provider.id}`}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        Conectar
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* n8n inline form */}
+                  {provider.id === "n8n" && n8nFormOpen && (
+                    <N8nConnectForm
+                      clientId={client.id}
+                      onCancel={() => setN8nFormOpen(false)}
+                      onConnected={() => setN8nFormOpen(false)}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

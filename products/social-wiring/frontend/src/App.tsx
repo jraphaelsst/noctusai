@@ -26,7 +26,6 @@ import {
   Users,
   Home,
   Mail,
-  Link2,
   Settings as SettingsIcon,
   Settings2,
   Smartphone,
@@ -51,8 +50,7 @@ const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const YouTube = lazy(() => import("@/pages/YouTube"));
-const Conexao = lazy(() => import("@/pages/Conexao"));
-const Conexoes = lazy(() => import("@/pages/Conexoes"));
+const RedirectToClientes = lazy(() => import("@/pages/RedirectToClientes"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
 const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
 const EmailMarketing = lazy(() => import("@/pages/EmailMarketing"));
@@ -100,7 +98,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
-      { name: "Conexões", href: "/conexoes", icon: Link2, route: "conexao" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
     ],
   },
@@ -149,7 +146,6 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: Building2 },
-      { name: "Conexões", href: "/conexoes", icon: Link2 },
       { name: "Monitor", href: "/monitor", icon: Activity },
     ],
   },
@@ -187,12 +183,10 @@ export default createProductApp({
     { path: "/email-marketing/configuracao", component: EmailMarketingConfig },
     { path: "/email-marketing/membros", component: EmailMembros },
     { path: "/youtube", component: YouTube },
-    // Unified connections page (new canonical route)
-    { path: "/conexoes", component: Conexoes },
-    // Back-compat: /integrations → Conexoes (OAuth callback redirect target)
-    { path: "/integrations", component: Conexoes },
-    // Back-compat: /conexao → standalone WAHA-only page
-    { path: "/conexao", component: Conexao },
+    // Retired routes — connection management now lives inside ClienteModal
+    { path: "/conexoes", component: RedirectToClientes },
+    { path: "/integrations", component: RedirectToClientes },
+    { path: "/conexao", component: RedirectToClientes },
     { path: "/clientes", component: Clientes },
     { path: "/monitor", component: Monitor },
     // /whatsapp-chat kept as unlisted route (removed from nav; Chat tab inside ClienteModal is now primary)

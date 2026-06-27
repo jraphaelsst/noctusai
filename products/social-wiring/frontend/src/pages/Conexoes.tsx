@@ -47,7 +47,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 
-import { ConnectionDetailDialog } from "@/pages/Conexao";
+import { ConnectionDetailDialog } from "@/components/ConnectionDetailDialog";
 import {
   useWhatsAppConnections,
   useWhatsAppConnectionMutations,

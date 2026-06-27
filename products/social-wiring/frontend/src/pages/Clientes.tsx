@@ -9,7 +9,9 @@
  *
  * Route: /clientes (registered in App.tsx lazy routes + status_pagina via migration 018).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
   AlertCircle,
   Building2,
@@ -299,6 +301,22 @@ export default function ClientesPage() {
 
   const [modalClient, setModalClient] = useState<Client | null>(null);
   const [modalTab, setModalTab] = useState<"contas" | "chat">("contas");
+
+  // Handle ?account_created=<id> from OAuth callback redirect
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const accountId = searchParams.get("account_created");
+    if (!accountId) return;
+    toast.success("Conta conectada com sucesso!", {
+      description: `ID da conta: ${accountId}`,
+    });
+    // Remove the param so it doesn't re-fire on re-render
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("account_created");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   function handleOpen(client: Client, tab: "contas" | "chat") {
     setModalClient(client);

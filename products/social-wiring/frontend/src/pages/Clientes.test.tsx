@@ -79,11 +79,19 @@ beforeEach(() => {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function renderClientes() {
+async function renderClientes(initialEntries: string[] = ["/"]) {
   const { default: Clientes } = await import("./Clientes");
   const React = (await import("react")).default;
+  const { MemoryRouter } = await import("react-router-dom");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(Clientes)), fireEvent: rtl.fireEvent };
+  return {
+    ...rtl.render(
+      React.createElement(MemoryRouter, { initialEntries },
+        React.createElement(Clientes),
+      ),
+    ),
+    fireEvent: rtl.fireEvent,
+  };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

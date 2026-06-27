@@ -282,3 +282,40 @@ export function useStartYouTubeOAuth() {
     },
   });
 }
+
+// ─── Generic OAuth start (Gmail, Google Drive, …) ────────────────────────────
+
+export interface ProviderOAuthStartOptions {
+  /** Assign the new account to this client after OAuth completes. */
+  clientId?: string | null;
+}
+
+/**
+ * useStartProviderOAuth — generic OAuth-start hook.
+ *
+ * POSTs to `/api/integrations/accounts/{provider}/oauth/start` with an
+ * optional `client_id` body field, then redirects the browser to the returned
+ * `auth_url`.  Mirror of `useStartYouTubeOAuth`.
+ *
+ * Usage:
+ *   const oauthStart = useStartProviderOAuth("gmail");
+ *   oauthStart.mutate({ clientId: client.id });
+ */
+export function useStartProviderOAuth(provider: string) {
+  return useMutation({
+    mutationFn: async (options?: ProviderOAuthStartOptions) => {
+      const body: Record<string, unknown> = {};
+      if (options?.clientId) body.client_id = options.clientId;
+      const res = await api.post<OAuthStartResponse>(
+        `/api/integrations/accounts/${provider}/oauth/start`,
+        body,
+      );
+      return res;
+    },
+    onSuccess: (res) => {
+      if (res?.auth_url) {
+        window.location.assign(res.auth_url);
+      }
+    },
+  });
+}

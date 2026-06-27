@@ -41,7 +41,9 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useSetDefaultAccount: mockUseSetDefaultAccount,
   useDeleteAccount: mockUseDeleteAccount,
   useSyncAccount: mockUseSyncAccount,
+  useCreateAccount: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useStartYouTubeOAuth: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartProviderOAuth: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -83,7 +85,7 @@ vi.mock("@noctusai/lib", () => ({
     ) : null,
 }));
 
-vi.mock("@/pages/Conexao", () => ({
+vi.mock("@/components/ConnectionDetailDialog", () => ({
   ConnectionDetailDialog: ({ line, onClose }: any) => (
     <div data-testid="connection-detail-dialog" data-line-id={line?.id}>
       <button onClick={onClose}>Fechar detalhe</button>
@@ -207,10 +209,14 @@ describe("ClienteModal — Contas tab", () => {
     expect(getAllByTestId("integration-card").length).toBe(2);
   });
 
-  it("shows empty text when no integration accounts", async () => {
+  it("shows the provider grid when no integration accounts exist", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByText } = await renderClienteModal({ defaultTab: "contas" });
-    expect(getByText(/Nenhuma integração vinculada/i)).toBeTruthy();
+    const { getByTestId, getAllByText } = await renderClienteModal({ defaultTab: "contas" });
+    // Provider grid is always rendered (greyed rows for unconnected providers)
+    expect(getByTestId("integrations-grid")).toBeTruthy();
+    // OAuth providers (YouTube, Gmail, Google Drive) show "Conectar" buttons
+    const conectarBtns = getAllByText(/Conectar/i);
+    expect(conectarBtns.length).toBeGreaterThanOrEqual(3);
   });
 
   it("shows WA connections when present", async () => {
