@@ -405,10 +405,10 @@ class TestYouTubeOAuthCallback:
                 if p is not None:
                     app.dependency_overrides[k] = p
 
-        # Should redirect to /integrations?account_created=<id>
+        # Should redirect to /clientes?account_created=<id>
         assert resp.status_code in (302, 303), resp.text
         location = resp.headers.get("location", "")
-        assert "integrations" in location
+        assert "clientes" in location
         assert "account_created=" in location
 
         # Verify the account was actually created in the SQLite store.
@@ -678,3 +678,441 @@ class TestAdoptLegacy:
         )
         assert resp.status_code == 200
         assert resp.json() is None
+
+
+# ─── YouTube OAuth redirect retarget ─────────────────────────────────────────
+class TestYouTubeRedirectClientes:
+    """Verify that the YouTube callback now redirects to /clientes, not /integrations."""
+
+    def test_callback_redirects_to_clientes(self, client, ia_service):
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_yt_oauth_provider,
+            get_yt_pkce_redis,
+            get_yt_client_factory,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+        from noctusai_lib.integrations.youtube import ChannelInfo
+        from noctusai_lib.integrations.youtube.fake import FakeYoutubeClient
+
+        fake_cfg = _settings.model_copy(
+            update={
+                "youtube_client_id": "fake-cid",
+                "youtube_client_secret": "fake-cs",
+                "frontend_base_url": "",
+            }
+        )
+        owned = ChannelInfo(
+            channel_id="UC_CLIENTES",
+            title="Clientes Channel",
+            subscriber_count=0,
+            video_count=0,
+            view_count=0,
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_yt_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_yt_pkce_redis: lambda: None,
+            get_yt_client_factory: lambda: (
+                lambda **kw: FakeYoutubeClient(owned_channel_info=owned)
+            ),
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-redir"
+            resp = client.get(
+                "/api/integrations/accounts/youtube/oauth/callback"
+                f"?code=code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        location = resp.headers.get("location", "")
+        assert "clientes" in location, f"expected /clientes redirect, got: {location}"
+        assert "account_created=" in location
+
+
+# ─── Gmail OAuth ──────────────────────────────────────────────────────────────
+class TestGmailOAuthStart:
+    def test_start_returns_auth_url_and_state(self, client):
+        """Gmail start with FakeOAuthProvider → returns auth_url + state."""
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_gmail_oauth_provider,
+            get_gmail_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+
+        fake_cfg = _settings.model_copy(
+            update={
+                "google_oauth_client_id": "fake-google-cid",
+                "google_oauth_client_secret": "fake-google-cs",
+            }
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_gmail_oauth_provider: lambda: FakeOAuthProvider(use_pkce=True),
+            get_gmail_pkce_redis: lambda: None,
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/gmail/oauth/start",
+                headers=_auth_header(),
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "auth_url" in body
+        assert "state" in body
+        assert _ORG_A in body["state"]
+
+    def test_start_503_when_google_oauth_not_configured(self, client):
+        """503 when GOOGLE_OAUTH_CLIENT_ID is empty."""
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+
+        fake_cfg = _settings.model_copy(
+            update={"google_oauth_client_id": "", "google_oauth_client_secret": ""}
+        )
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/gmail/oauth/start",
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
+class TestGmailOAuthCallback:
+    """Gmail callback — mirrors the YouTube callback test pattern.
+
+    No monkeypatch: uses DI seams (get_gmail_oauth_provider, get_gmail_pkce_redis).
+    Gmail has no channel info step — the callback uses a best-effort Gmail profile
+    fetch (mocked away via the DI seam override path below, since the FakeOAuthProvider
+    returns tokens that can't hit real Google APIs in tests).
+    """
+
+    def _gmail_overrides(self, app, settings_mod):
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_gmail_oauth_provider,
+            get_gmail_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+
+        fake_cfg = settings_mod.model_copy(
+            update={
+                "google_oauth_client_id": "fake-gcid",
+                "google_oauth_client_secret": "fake-gcs",
+                "frontend_base_url": "",
+            }
+        )
+        return {
+            get_settings: lambda: fake_cfg,
+            get_gmail_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_gmail_pkce_redis: lambda: None,
+        }
+
+    def test_callback_creates_gmail_account(self, client, ia_service):
+        """Gmail callback with FakeOAuthProvider → account created with
+        provider='gmail'; redirect to /clientes with account_created param.
+        Gmail profile fetch fails (no real API in test) → fallback label used."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._gmail_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:gmail-nonce"
+            resp = client.get(
+                "/api/integrations/accounts/gmail/oauth/callback"
+                f"?code=gmail-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        location = resp.headers.get("location", "")
+        assert "clientes" in location, f"expected /clientes redirect, got: {location}"
+        assert "account_created=" in location
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="gmail")
+        assert len(accounts) == 1
+        assert accounts[0].provider == "gmail"
+        assert accounts[0].status == "validated"
+
+    def test_callback_with_client_id_links_account(self, client, ia_service):
+        """client_id in state is decoded and stored on the gmail account row."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._gmail_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:gmail-nonce2:{_FAKE_YT_CLIENT_ID}"
+            resp = client.get(
+                "/api/integrations/accounts/gmail/oauth/callback"
+                f"?code=gmail-code2&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="gmail")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+
+    def test_callback_missing_code_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/gmail/oauth/callback?state=x",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_error_param_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/gmail/oauth/callback?error=access_denied",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+
+# ─── Google Drive OAuth ───────────────────────────────────────────────────────
+class TestDriveOAuthStart:
+    def test_start_returns_auth_url_and_state(self, client):
+        """Drive start with FakeOAuthProvider → returns auth_url + state."""
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+        from app.routers.integration_accounts_router import (
+            get_drive_oauth_provider,
+            get_drive_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+
+        fake_cfg = _settings.model_copy(
+            update={
+                "google_oauth_client_id": "fake-google-cid",
+                "google_oauth_client_secret": "fake-google-cs",
+            }
+        )
+        overrides = {
+            get_settings: lambda: fake_cfg,
+            get_drive_oauth_provider: lambda: FakeOAuthProvider(use_pkce=True),
+            get_drive_pkce_redis: lambda: None,
+        }
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/google_drive/oauth/start",
+                headers=_auth_header(),
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "auth_url" in body
+        assert "state" in body
+        assert _ORG_A in body["state"]
+
+    def test_start_503_when_google_oauth_not_configured(self, client):
+        from app.dependencies import get_settings
+        from app.config import settings as _settings
+        from app.main import app
+
+        fake_cfg = _settings.model_copy(
+            update={"google_oauth_client_id": "", "google_oauth_client_secret": ""}
+        )
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/google_drive/oauth/start",
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
+class TestDriveOAuthCallback:
+    """Drive callback — same pattern as Gmail callback tests."""
+
+    def _drive_overrides(self, app, settings_mod):
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_drive_oauth_provider,
+            get_drive_pkce_redis,
+        )
+        from noctusai_lib.security.oauth.fake import FakeOAuthProvider
+
+        fake_cfg = settings_mod.model_copy(
+            update={
+                "google_oauth_client_id": "fake-gcid",
+                "google_oauth_client_secret": "fake-gcs",
+                "frontend_base_url": "",
+            }
+        )
+        return {
+            get_settings: lambda: fake_cfg,
+            get_drive_oauth_provider: lambda: FakeOAuthProvider(use_pkce=False),
+            get_drive_pkce_redis: lambda: None,
+        }
+
+    def test_callback_creates_drive_account(self, client, ia_service):
+        """Drive callback with FakeOAuthProvider → account created with
+        provider='google_drive'; redirect to /clientes."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._drive_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:drive-nonce"
+            resp = client.get(
+                "/api/integrations/accounts/google_drive/oauth/callback"
+                f"?code=drive-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        location = resp.headers.get("location", "")
+        assert "clientes" in location, f"expected /clientes redirect, got: {location}"
+        assert "account_created=" in location
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="google_drive")
+        assert len(accounts) == 1
+        assert accounts[0].provider == "google_drive"
+        assert accounts[0].status == "validated"
+
+    def test_callback_with_client_id_links_account(self, client, ia_service):
+        """client_id in state is decoded and stored on the drive account row."""
+        from app.config import settings as _settings
+        from app.main import app
+
+        overrides = self._drive_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:drive-nonce2:{_FAKE_YT_CLIENT_ID}"
+            resp = client.get(
+                "/api/integrations/accounts/google_drive/oauth/callback"
+                f"?code=drive-code2&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="google_drive")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+
+    def test_callback_missing_code_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/google_drive/oauth/callback?state=x",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_error_param_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/google_drive/oauth/callback?error=access_denied",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+
+# ─── n8n manual create with client_id round-trip ─────────────────────────────
+class TestN8nClientIdRoundTrip:
+    """n8n is manual-key-only (no OAuth); verify client_id persists correctly
+    via the existing POST /api/integrations/accounts path.
+    Also confirms 'n8n' passes the integration_accounts CHECK constraint.
+    """
+
+    def test_n8n_create_with_client_id_round_trips(self, client, ia_service):
+        """Create an n8n account with a client_id; read it back and confirm the
+        client_id is stored (the field survives the Pydantic → service → DB round-trip).
+        No OAuth, no external call — pure CRUD validation."""
+        n8n_client_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        body = {
+            "provider": "n8n",
+            "account_label": "N8N Main",
+            "credential": {"webhook_url": "https://n8n.example.com/webhook/abc", "api_key": "n8n-key-123"},
+            "client_id": n8n_client_id,
+        }
+        resp = client.post("/api/integrations/accounts", json=body, headers=_auth_header())
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["provider"] == "n8n"
+        assert data["account_label"] == "N8N Main"
+        # credential must not appear in the response (Fernet-encrypted at rest).
+        assert "credential" not in data
+        assert "encrypted_credential" not in data
+
+        # Read back via the service directly to confirm client_id is stored.
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="n8n")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == n8n_client_id
+
+    def test_n8n_create_without_client_id(self, client, ia_service):
+        """n8n without client_id also creates successfully (optional field)."""
+        body = {
+            "provider": "n8n",
+            "account_label": "N8N Standalone",
+            "credential": {"webhook_url": "https://n8n.example.com/webhook/xyz"},
+        }
+        resp = client.post("/api/integrations/accounts", json=body, headers=_auth_header())
+        assert resp.status_code == 201, resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="n8n")
+        assert len(accounts) == 1
+        assert accounts[0].client_id is None

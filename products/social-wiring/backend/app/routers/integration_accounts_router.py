@@ -9,14 +9,21 @@ Endpoints:
     PATCH  /api/integrations/accounts/{id}/set-default → set as default for its provider
     DELETE /api/integrations/accounts/{id}     → delete
 
-    POST   /api/integrations/accounts/youtube/oauth/start    → {auth_url, state}
-    GET    /api/integrations/accounts/youtube/oauth/callback → exchange code, create account
+    POST   /api/integrations/accounts/youtube/oauth/start       → {auth_url, state}
+    GET    /api/integrations/accounts/youtube/oauth/callback    → exchange code, create account
+    POST   /api/integrations/accounts/gmail/oauth/start         → {auth_url, state}
+    GET    /api/integrations/accounts/gmail/oauth/callback      → exchange code, create account
+    POST   /api/integrations/accounts/google_drive/oauth/start  → {auth_url, state}
+    GET    /api/integrations/accounts/google_drive/oauth/callback → exchange code, create account
 
 Auth: ``Depends(get_current_user_org)`` throughout. The admin client is
 used for all DB writes (mirrors whatsapp_connections_router). The OAuth
 callback uses the admin client too (no JWT from Google's redirect).
 
 ENCRYPTION_KEY missing → 503 config-gap (mirrors credential_vault pattern).
+
+OAuth redirect target: all three callbacks redirect to ``/clientes?account_created=<id>``.
+``/integrations`` is a FE compat alias that stays valid.
 """
 from __future__ import annotations
 
@@ -28,6 +35,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
+from noctusai_lib.integrations.gmail import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE
 from noctusai_lib.integrations.youtube import make_youtube_client
 from noctusai_lib.security.oauth import GoogleProvider
 from pydantic import BaseModel, Field
@@ -109,13 +117,18 @@ class IntegrationAccountUpdate(BaseModel):
         extra = "forbid"
 
 
-class YouTubeOAuthStartOut(BaseModel):
+class OAuthStartOut(BaseModel):
+    """Common OAuth start response — authorization URL + CSRF state.
+
+    Shared by YouTube, Gmail, and Google Drive flows (DRY at N=3).
+    """
+
     auth_url: str
     state: str
 
 
-class YouTubeOAuthStartIn(BaseModel):
-    """Optional request body for POST /api/integrations/accounts/youtube/oauth/start.
+class OAuthStartIn(BaseModel):
+    """Common optional body for OAuth start endpoints.
 
     ``client_id`` (migration 017): when supplied the new ``integration_accounts``
     row is linked to the given cliente (must belong to the calling org).
@@ -123,6 +136,11 @@ class YouTubeOAuthStartIn(BaseModel):
     """
 
     client_id: Optional[UUID] = None
+
+
+# Backward-compat aliases so existing references (response_model, tests) keep working.
+YouTubeOAuthStartOut = OAuthStartOut
+YouTubeOAuthStartIn = OAuthStartIn
 
 
 # ─── DI seam ─────────────────────────────────────────────────────────────────
@@ -422,7 +440,13 @@ def sync_account(
 # continue to work unchanged.
 
 _YT_PKCE_KEY_PREFIX = "ia:youtube:oauth:pkce:"
-_YT_PKCE_TTL_SECONDS = 600  # 10 min
+_GMAIL_PKCE_KEY_PREFIX = "ia:gmail:oauth:pkce:"
+_DRIVE_PKCE_KEY_PREFIX = "ia:google_drive:oauth:pkce:"
+_YT_PKCE_TTL_SECONDS = 600  # 10 min — shared across all IA Google OAuth flows
+
+# Gmail and Drive OAuth scopes (seed constants where available; inline where not).
+_GMAIL_OAUTH_SCOPES = [GMAIL_SEND_SCOPE, GMAIL_READONLY_SCOPE]
+_DRIVE_OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 def _yt_pkce_redis_client():
@@ -473,6 +497,55 @@ def get_yt_client_factory():
     """DI seam: the YouTube client factory. Tests override to return a
     ``make_youtube_client(use_fake=True, ...)`` flavour."""
     return make_youtube_client
+
+
+# ─── Gmail OAuth DI seams ─────────────────────────────────────────────────────
+def get_gmail_oauth_provider(
+    cfg: SocialWiringSettings = Depends(get_settings),
+):
+    """GoogleProvider for the Gmail multi-account IA flow.
+
+    Uses ``GOOGLE_OAUTH_CLIENT_ID`` / ``GOOGLE_OAUTH_CLIENT_SECRET`` (shared
+    with Calendar — the same GCP OAuth client covers multiple Google APIs).
+    Returns ``None`` when not configured so the endpoint raises 503 after
+    input validation.
+    """
+    if not cfg.google_oauth_client_id or not cfg.google_oauth_client_secret:
+        return None
+    return GoogleProvider(
+        client_id=cfg.google_oauth_client_id,
+        client_secret=cfg.google_oauth_client_secret,
+        use_pkce=True,
+    )
+
+
+def get_gmail_pkce_redis():
+    """DI seam: PKCE-verifier Redis client for the Gmail IA flow."""
+    return _yt_pkce_redis_client()
+
+
+# ─── Drive OAuth DI seams ─────────────────────────────────────────────────────
+def get_drive_oauth_provider(
+    cfg: SocialWiringSettings = Depends(get_settings),
+):
+    """GoogleProvider for the Google Drive multi-account IA flow.
+
+    Same GCP OAuth client as Gmail / Calendar
+    (``GOOGLE_OAUTH_CLIENT_ID`` / ``GOOGLE_OAUTH_CLIENT_SECRET``).
+    Returns ``None`` when not configured.
+    """
+    if not cfg.google_oauth_client_id or not cfg.google_oauth_client_secret:
+        return None
+    return GoogleProvider(
+        client_id=cfg.google_oauth_client_id,
+        client_secret=cfg.google_oauth_client_secret,
+        use_pkce=True,
+    )
+
+
+def get_drive_pkce_redis():
+    """DI seam: PKCE-verifier Redis client for the Drive IA flow."""
+    return _yt_pkce_redis_client()
 
 
 @router.post(
@@ -780,37 +853,522 @@ def youtube_oauth_callback(
                 last_synced_at=_dt.now(_tz.utc),
             )
 
-    redirect_url = f"/integrations?account_created={account.id}"
+    redirect_url = f"/clientes?account_created={account.id}"
     if cfg.frontend_base_url:
         redirect_url = urljoin(
             cfg.frontend_base_url.rstrip("/") + "/",
-            f"integrations?account_created={account.id}",
+            f"clientes?account_created={account.id}",
         )
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
 
-def _build_ia_youtube_redirect_uri(cfg: SocialWiringSettings) -> str:
-    """Derive the redirect URI for the integration-accounts YouTube OAuth flow.
+def _build_ia_google_redirect_uri(cfg: SocialWiringSettings, provider: str) -> str:
+    """Build the OAuth callback redirect URI for an IA Google provider.
 
-    Derives from ``oauth_redirect_base_url`` (or ``tunnel_hostname``) when
-    set; falls back to the product's configured ``youtube_redirect_uri`` +
-    ``/accounts`` suffix to distinguish the two flows at Google's end.
+    Provider is the IA provider id (``'youtube'``, ``'gmail'``,
+    ``'google_drive'``).  Derives from ``oauth_redirect_base_url`` (or
+    ``tunnel_hostname``) when set so a single Cloudflare tunnel env var
+    routes all three flows correctly.
 
-    IMPORTANT: register this URI in the Google Cloud Console OAuth client.
+    IMPORTANT: every derived URI must be registered in the GCP OAuth client
+    (Authorized redirect URIs).
     """
     oauth_base = cfg.oauth_redirect_base_url or cfg.tunnel_hostname
     if oauth_base:
         base = oauth_base.rstrip("/")
-        return f"{base}/api/integrations/accounts/youtube/oauth/callback"
-    # Derive from the existing youtube_redirect_uri base to avoid introducing
-    # a new env var for the common case.
+        return f"{base}/api/integrations/accounts/{provider}/oauth/callback"
+    # Derive from the existing youtube_redirect_uri base to reuse the same
+    # env var for the common dev/tunnel case (avoids 3 separate env vars).
     base_uri = cfg.youtube_redirect_uri
     if base_uri.endswith("/api/youtube/oauth/callback"):
         return base_uri.replace(
             "/api/youtube/oauth/callback",
-            "/api/integrations/accounts/youtube/oauth/callback",
+            f"/api/integrations/accounts/{provider}/oauth/callback",
         )
-    return "http://localhost:8011/api/integrations/accounts/youtube/oauth/callback"
+    return f"http://localhost:8011/api/integrations/accounts/{provider}/oauth/callback"
+
+
+def _build_ia_youtube_redirect_uri(cfg: SocialWiringSettings) -> str:
+    """Backward-compat wrapper → delegates to the shared helper."""
+    return _build_ia_google_redirect_uri(cfg, "youtube")
+
+
+# ─── Gmail OAuth endpoints ────────────────────────────────────────────────────
+
+@router.post(
+    "/accounts/gmail/oauth/start",
+    response_model=OAuthStartOut,
+)
+def gmail_oauth_start(
+    body: OAuthStartIn = OAuthStartIn(),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    provider=Depends(get_gmail_oauth_provider),
+    redis_client=Depends(get_gmail_pkce_redis),
+) -> OAuthStartOut:
+    """Build a Gmail OAuth consent URL for the multi-account IA flow.
+
+    State format: ``{org_id}:{nonce}:{client_id_or_empty}`` (same as YouTube).
+    Scopes: ``gmail.send`` + ``gmail.readonly`` from the seed.
+    """
+    import asyncio
+
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured. "
+                "Set them in .env to enable Gmail OAuth."
+            ),
+        )
+
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    client_id_str = ""
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id_str = str(body.client_id)
+
+    redirect_uri = _build_ia_google_redirect_uri(cfg, "gmail")
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    auth_result = asyncio.run(
+        provider.authorization_url(
+            state=state, scopes=_GMAIL_OAUTH_SCOPES, redirect_uri=redirect_uri
+        )
+    )
+
+    if redis_client is not None and auth_result.code_verifier:
+        try:
+            redis_client.set(
+                f"{_GMAIL_PKCE_KEY_PREFIX}{state}",
+                auth_result.code_verifier,
+                ex=_YT_PKCE_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("integration_accounts: Gmail PKCE Redis write failed: %s", exc)
+
+    return OAuthStartOut(auth_url=auth_result.url, state=state)
+
+
+@router.get("/accounts/gmail/oauth/callback")
+def gmail_oauth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    provider=Depends(get_gmail_oauth_provider),
+    redis_client=Depends(get_gmail_pkce_redis),
+):
+    """Google redirect target for the Gmail multi-account IA flow.
+
+    Exchanges code → tokens, fetches the Gmail profile email address,
+    creates an ``integration_accounts`` row (provider=``'gmail'``), then
+    redirects to ``/clientes?account_created=<id>``.
+    """
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth flow returned an error: {error}",
+        )
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth callback missing code or state.",
+        )
+
+    parts = state.split(":")
+    if len(parts) < 2 or not parts[0]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token malformed.",
+        )
+    org_part = parts[0]
+    client_id_part = parts[2] if len(parts) >= 3 else ""
+    try:
+        org_id = UUID(org_part)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token does not encode a valid org_id.",
+        ) from exc
+
+    _callback_client_id: Optional[UUID] = None
+    if client_id_part:
+        try:
+            _callback_client_id = UUID(client_id_part)
+        except ValueError:
+            logger.warning(
+                "integration_accounts: Gmail OAuth state carries non-UUID "
+                "client_id_part=%r — ignoring",
+                client_id_part,
+            )
+
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured.",
+        )
+
+    import asyncio
+
+    redirect_uri = _build_ia_google_redirect_uri(cfg, "gmail")
+
+    code_verifier: Optional[str] = None
+    if redis_client is not None:
+        try:
+            key = f"{_GMAIL_PKCE_KEY_PREFIX}{state}"
+            code_verifier = redis_client.get(key)
+            if code_verifier:
+                redis_client.delete(key)
+        except Exception as exc:
+            logger.warning(
+                "integration_accounts: Gmail PKCE Redis read failed: %s", exc
+            )
+
+    try:
+        tokens = asyncio.run(
+            provider.exchange_code(
+                code=code,
+                state=state,
+                redirect_uri=redirect_uri,
+                code_verifier=code_verifier,
+            )
+        )
+    except Exception as exc:
+        logger.exception("integration_accounts: Gmail OAuth exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth code exchange failed: {exc}",
+        ) from exc
+
+    bundle = {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "scopes": tokens.scope or _GMAIL_OAUTH_SCOPES,
+        "expires_at": tokens.expires_at.isoformat() if tokens.expires_at else None,
+        **(tokens.raw or {}),
+    }
+
+    # Best-effort: fetch the Gmail account email via the Gmail profile endpoint.
+    email_address: Optional[str] = None
+    try:
+        from google.oauth2.credentials import Credentials as GCredentials
+        from googleapiclient.discovery import build as _gapi_build
+
+        _gcreds = GCredentials(
+            token=bundle.get("access_token"),
+            refresh_token=bundle.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=cfg.google_oauth_client_id,
+            client_secret=cfg.google_oauth_client_secret,
+            scopes=_GMAIL_OAUTH_SCOPES,
+        )
+        _gmail_svc = _gapi_build("gmail", "v1", credentials=_gcreds, cache_discovery=False)
+        profile = _gmail_svc.users().getProfile(userId="me").execute()
+        email_address = profile.get("emailAddress")
+    except Exception as exc:
+        logger.warning(
+            "integration_accounts: Gmail profile fetch failed for org_id=%s — "
+            "using fallback label: %s",
+            org_id,
+            exc,
+        )
+
+    account_label = email_address or f"Gmail account ({org_id})"
+    metadata = {
+        "email": email_address,
+        "scopes": bundle.get("scopes", _GMAIL_OAUTH_SCOPES),
+        "expires_at": bundle.get("expires_at"),
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
+    # Idempotent on email: re-connecting the same Gmail account re-auths it.
+    existing_accounts = svc.list_accounts(org_id, provider="gmail")
+    existing = (
+        next(
+            (a for a in existing_accounts if (a.metadata or {}).get("email") == email_address),
+            None,
+        )
+        if email_address
+        else None
+    )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+    else:
+        existing_labels = {a.account_label for a in existing_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels:
+            unique_label = f"{account_label} (2)"
+        account = svc.create_account(
+            org_id=org_id,
+            provider="gmail",
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not existing_accounts,
+            status="validated",
+            client_id=_callback_client_id,
+        )
+
+    redirect_url = f"/clientes?account_created={account.id}"
+    if cfg.frontend_base_url:
+        redirect_url = urljoin(
+            cfg.frontend_base_url.rstrip("/") + "/",
+            f"clientes?account_created={account.id}",
+        )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+# ─── Google Drive OAuth endpoints ────────────────────────────────────────────
+
+@router.post(
+    "/accounts/google_drive/oauth/start",
+    response_model=OAuthStartOut,
+)
+def drive_oauth_start(
+    body: OAuthStartIn = OAuthStartIn(),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    provider=Depends(get_drive_oauth_provider),
+    redis_client=Depends(get_drive_pkce_redis),
+) -> OAuthStartOut:
+    """Build a Google Drive OAuth consent URL for the multi-account IA flow.
+
+    Scopes: ``drive.readonly`` — read access to the user's Drive.
+    """
+    import asyncio
+
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured. "
+                "Set them in .env to enable Google Drive OAuth."
+            ),
+        )
+
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    client_id_str = ""
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id_str = str(body.client_id)
+
+    redirect_uri = _build_ia_google_redirect_uri(cfg, "google_drive")
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    auth_result = asyncio.run(
+        provider.authorization_url(
+            state=state, scopes=_DRIVE_OAUTH_SCOPES, redirect_uri=redirect_uri
+        )
+    )
+
+    if redis_client is not None and auth_result.code_verifier:
+        try:
+            redis_client.set(
+                f"{_DRIVE_PKCE_KEY_PREFIX}{state}",
+                auth_result.code_verifier,
+                ex=_YT_PKCE_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("integration_accounts: Drive PKCE Redis write failed: %s", exc)
+
+    return OAuthStartOut(auth_url=auth_result.url, state=state)
+
+
+@router.get("/accounts/google_drive/oauth/callback")
+def drive_oauth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    provider=Depends(get_drive_oauth_provider),
+    redis_client=Depends(get_drive_pkce_redis),
+):
+    """Google redirect target for the Drive multi-account IA flow.
+
+    Exchanges code → tokens, fetches the Drive account email via
+    ``drive.about.get``, creates an ``integration_accounts`` row
+    (provider=``'google_drive'``), then redirects to
+    ``/clientes?account_created=<id>``.
+    """
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth flow returned an error: {error}",
+        )
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth callback missing code or state.",
+        )
+
+    parts = state.split(":")
+    if len(parts) < 2 or not parts[0]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token malformed.",
+        )
+    org_part = parts[0]
+    client_id_part = parts[2] if len(parts) >= 3 else ""
+    try:
+        org_id = UUID(org_part)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token does not encode a valid org_id.",
+        ) from exc
+
+    _callback_client_id: Optional[UUID] = None
+    if client_id_part:
+        try:
+            _callback_client_id = UUID(client_id_part)
+        except ValueError:
+            logger.warning(
+                "integration_accounts: Drive OAuth state carries non-UUID "
+                "client_id_part=%r — ignoring",
+                client_id_part,
+            )
+
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured.",
+        )
+
+    import asyncio
+
+    redirect_uri = _build_ia_google_redirect_uri(cfg, "google_drive")
+
+    code_verifier: Optional[str] = None
+    if redis_client is not None:
+        try:
+            key = f"{_DRIVE_PKCE_KEY_PREFIX}{state}"
+            code_verifier = redis_client.get(key)
+            if code_verifier:
+                redis_client.delete(key)
+        except Exception as exc:
+            logger.warning(
+                "integration_accounts: Drive PKCE Redis read failed: %s", exc
+            )
+
+    try:
+        tokens = asyncio.run(
+            provider.exchange_code(
+                code=code,
+                state=state,
+                redirect_uri=redirect_uri,
+                code_verifier=code_verifier,
+            )
+        )
+    except Exception as exc:
+        logger.exception("integration_accounts: Drive OAuth exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth code exchange failed: {exc}",
+        ) from exc
+
+    bundle = {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "scopes": tokens.scope or _DRIVE_OAUTH_SCOPES,
+        "expires_at": tokens.expires_at.isoformat() if tokens.expires_at else None,
+        **(tokens.raw or {}),
+    }
+
+    # Best-effort: fetch the Drive account email via drive.about.get.
+    drive_email: Optional[str] = None
+    try:
+        from google.oauth2.credentials import Credentials as GCredentials
+        from googleapiclient.discovery import build as _gapi_build
+
+        _gcreds = GCredentials(
+            token=bundle.get("access_token"),
+            refresh_token=bundle.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=cfg.google_oauth_client_id,
+            client_secret=cfg.google_oauth_client_secret,
+            scopes=_DRIVE_OAUTH_SCOPES,
+        )
+        _drive_svc = _gapi_build("drive", "v3", credentials=_gcreds, cache_discovery=False)
+        about = _drive_svc.about().get(fields="user").execute()
+        drive_email = (about.get("user") or {}).get("emailAddress")
+    except Exception as exc:
+        logger.warning(
+            "integration_accounts: Drive about.get failed for org_id=%s — "
+            "using fallback label: %s",
+            org_id,
+            exc,
+        )
+
+    account_label = drive_email or f"Google Drive account ({org_id})"
+    metadata = {
+        "email": drive_email,
+        "scopes": bundle.get("scopes", _DRIVE_OAUTH_SCOPES),
+        "expires_at": bundle.get("expires_at"),
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
+    # Idempotent on email: re-connecting the same Drive account re-auths it.
+    existing_accounts = svc.list_accounts(org_id, provider="google_drive")
+    existing = (
+        next(
+            (a for a in existing_accounts if (a.metadata or {}).get("email") == drive_email),
+            None,
+        )
+        if drive_email
+        else None
+    )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+    else:
+        existing_labels = {a.account_label for a in existing_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels:
+            unique_label = f"{account_label} (2)"
+        account = svc.create_account(
+            org_id=org_id,
+            provider="google_drive",
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not existing_accounts,
+            status="validated",
+            client_id=_callback_client_id,
+        )
+
+    redirect_url = f"/clientes?account_created={account.id}"
+    if cfg.frontend_base_url:
+        redirect_url = urljoin(
+            cfg.frontend_base_url.rstrip("/") + "/",
+            f"clientes?account_created={account.id}",
+        )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
 
 __all__ = ["router"]
