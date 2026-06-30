@@ -71,11 +71,11 @@ from __future__ import annotations
 import logging
 import re
 import shlex
-import subprocess
 import uuid
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from settings import REPO_ROOT
+from ._vps_ssh import run_remote as _throttled_ssh
 
 from noctusai_lib.config.cors_registry import parse_products_registry
 
@@ -344,12 +344,9 @@ class SubprocessSshTransport:
         self._host = ssh_host
 
     def _run(self, cmd: str) -> tuple[int, str, str]:
-        r = subprocess.run(
-            ["ssh", self._host, cmd],
-            capture_output=True,
-            text=True,
-        )
-        return r.returncode, (r.stdout or ""), (r.stderr or "")
+        # Routed through the shared throttled + circuit-broken SSH chokepoint so
+        # the multi-step env-roster write can't burst-connect into a fail2ban ban.
+        return _throttled_ssh(self._host, cmd)
 
     def read_env(self, env_path: str) -> tuple[bool, str, str]:
         rc, out, err = self._run(f"cat {shlex.quote(env_path)}")

@@ -30,12 +30,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
-import shlex
-import subprocess
 import time as _time
 import urllib.error
 import urllib.request
 from typing import Any, Callable
+
+from ._vps_ssh import run_remote as _throttled_ssh
 
 # Browser User-Agent — Cloudflare WAF blocks the default urllib signature
 # (same rule as sso_smoke / Hostinger MCP; error 1010 without this).
@@ -65,9 +65,9 @@ _BAD = frozenset({"unhealthy", "exited", "dead"})
 
 
 def _run_remote_default(ssh_host: str, cmd: list[str]) -> tuple[int, str, str]:
-    remote = " ".join(shlex.quote(c) for c in cmd)
-    r = subprocess.run(["ssh", ssh_host, remote], capture_output=True, text=True)
-    return r.returncode, (r.stdout or ""), (r.stderr or "")
+    # Routed through the shared throttled + circuit-broken SSH chokepoint so a
+    # transient edge blip can never escalate into a fail2ban ban (`_vps_ssh`).
+    return _throttled_ssh(ssh_host, cmd)
 
 
 def _docker(runner, *args) -> tuple[int, str, str]:

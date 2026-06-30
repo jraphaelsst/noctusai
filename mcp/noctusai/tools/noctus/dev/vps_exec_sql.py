@@ -27,9 +27,10 @@ Methodology: KB § PATTERNS/common/dispatch-with-project-and-notes.md §Tooling.
 from __future__ import annotations
 
 import shlex
-import subprocess
 import uuid
 from typing import Any, Callable
+
+from ._vps_ssh import run_remote as _throttled_ssh
 
 
 DEFAULT_HOST = "noctus-vps"
@@ -37,13 +38,10 @@ TMP_DIR = "/tmp"
 
 
 def _run_remote_default(ssh_host: str, cmd: str) -> tuple[int, str, str]:
-    """Default SSH runner. Returns (returncode, stdout, stderr)."""
-    r = subprocess.run(
-        ["ssh", ssh_host, cmd],
-        capture_output=True,
-        text=True,
-    )
-    return r.returncode, (r.stdout or ""), (r.stderr or "")
+    """Default SSH runner. Returns (returncode, stdout, stderr). Routed through
+    the shared throttled + circuit-broken chokepoint (`_vps_ssh`) so the 4-step
+    exec-sql idiom can't burst-connect into a fail2ban ban during an edge blip."""
+    return _throttled_ssh(ssh_host, cmd)
 
 
 def exec_sql(

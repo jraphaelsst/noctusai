@@ -17,9 +17,9 @@ banned token is emitted). IO is injectable (`run_remote`) for zero-SSH tests.
 """
 from __future__ import annotations
 
-import shlex
-import subprocess
 from typing import Any, Callable
+
+from ._vps_ssh import run_remote as _throttled_ssh
 
 DEFAULT_HOST = "noctus-vps"
 DEFAULT_COMPOSE = "deploy/fleet/docker-compose.prod.yml"
@@ -33,9 +33,9 @@ _BANNED_TOKENS = ("rmi", "rm ", " rm", "kill", "down", "prune -a", "prune --all"
 
 
 def _run_remote_default(ssh_host: str, cmd: list[str]) -> tuple[int, str, str]:
-    remote = " ".join(shlex.quote(c) for c in cmd)
-    r = subprocess.run(["ssh", ssh_host, remote], capture_output=True, text=True)
-    return r.returncode, (r.stdout or ""), (r.stderr or "")
+    # Routed through the shared throttled + circuit-broken SSH chokepoint so the
+    # operate-layer fleet ops can't machine-gun the edge into a fail2ban ban.
+    return _throttled_ssh(ssh_host, cmd)
 
 
 def _runner(run_remote, ssh_host):

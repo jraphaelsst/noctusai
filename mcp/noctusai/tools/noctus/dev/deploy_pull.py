@@ -38,10 +38,10 @@ import datetime as _dt
 import os
 import re
 import shlex
-import subprocess
 from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
+from ._vps_ssh import run_remote as _throttled_ssh
 
 # git subcommands the tool is allowed to run remotely. The drill NEVER needs
 # reset/checkout/clean/push — keeping them off this list makes a destructive
@@ -139,11 +139,10 @@ def _resolve_remote_files(runner, repo_dir: str, patterns: list[str]) -> list[st
 
 
 def _default_run_remote(ssh_host: str, cmd: list[str]) -> tuple[int, str, str]:
-    """Run `cmd` (a list) on the remote via SSH; (rc, stdout, stderr). The list
-    is shell-quoted into one remote command string."""
-    remote = " ".join(shlex.quote(c) for c in cmd)
-    r = subprocess.run(["ssh", ssh_host, remote], capture_output=True, text=True)
-    return r.returncode, (r.stdout or ""), (r.stderr or "")
+    """Run `cmd` (a list) on the remote via SSH; (rc, stdout, stderr). Routed
+    through the shared throttled + circuit-broken chokepoint (`_vps_ssh`) so
+    repeated attempts during an edge blip never trip the VPS's fail2ban."""
+    return _throttled_ssh(ssh_host, cmd)
 
 
 def _git(runner, repo_dir: str, *args) -> tuple[int, str, str]:
