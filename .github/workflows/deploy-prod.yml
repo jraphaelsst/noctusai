@@ -1,0 +1,78 @@
+name: Deploy Prod (VPS git-FF pull)
+
+# Dispatchable prod deploy: fast-forwards the VPS checkout (/opt/noctus/noctusai)
+# to origin/prod (or origin/main) over CI. CI runners have open egress + can SSH
+# the VPS, so this works from environments that CANNOT make outbound :22
+# connections (e.g. a sandboxed agent). It does NOT supersede the source-of-truth
+# gate — `noctus.dev.release` bless/promote still decides WHAT is on prod; this
+# only pulls origin/prod onto the box.
+#
+# SECURITY: the SSH key is a FORCED-COMMAND key — its authorized_keys entry pins
+# command="…/scripts/deploy/prod-pull.sh",no-pty,no-port-forwarding, so the key
+# can ONLY run the safe §2a pull script. The client command (mode + ref) arrives
+# in $SSH_ORIGINAL_COMMAND and is re-validated (whitelist) on the VPS.
+#
+# DORMANT until provisioned: with NOCTUS_VPS_DEPLOY_PROD_KEY / NOCTUS_VPS_HOST
+# unset the job no-ops with a warning — safe to merge to prod inert.
+# Activation runbook: KB § CONTEXT/PATTERNS/devops/ci-deploy-prod.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Ref to fast-forward the VPS checkout to"
+        type: choice
+        options: [origin/prod, origin/main]
+        default: origin/prod
+      mode:
+        description: "dry-run (plan only) or apply (perform the FF)"
+        type: choice
+        options: [dry-run, apply]
+        default: dry-run
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: VPS git-FF pull
+    runs-on: ubuntu-latest
+    # Map secrets to job env — the `secrets` context is FORBIDDEN in step `if:`
+    # (it fails the workflow at STARTUP, 0s, no logs). Gate on a STEP OUTPUT
+    # derived from these env vars instead. (memory feedback_ci_secrets_in_if_startup_failure)
+    env:
+      VPS_DEPLOY_PROD_KEY: ${{ secrets.NOCTUS_VPS_DEPLOY_PROD_KEY }}
+      VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+    steps:
+      - name: Guard — dormant until the deploy key is provisioned
+        id: guard
+        run: |
+          if [[ -z "${VPS_DEPLOY_PROD_KEY:-}" || -z "${VPS_HOST:-}" ]]; then
+            echo "::warning::Deploy key not provisioned (NOCTUS_VPS_DEPLOY_PROD_KEY / NOCTUS_VPS_HOST unset) — see KB § PATTERNS/devops/ci-deploy-prod.md activation runbook. No-op."
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SSH the forced-command deploy
+        if: ${{ steps.guard.outputs.ready == '1' }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_DEPLOY_PROD_KEY" > ~/.ssh/deploy-prod-key
+          chmod 600 ~/.ssh/deploy-prod-key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "Triggering on $VPS_HOST: ${{ inputs.mode }} ${{ inputs.target }}"
+          # inputs are `choice`-constrained (no free text → no injection); the VPS
+          # forced-command script re-validates mode + ref (defense in depth).
+          ssh -i ~/.ssh/deploy-prod-key \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              root@"$VPS_HOST" "${{ inputs.mode }} ${{ inputs.target }}"
+
+      - name: Cleanup key
+        if: always()
+        run: rm -f ~/.ssh/deploy-prod-key

@@ -12,6 +12,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/dev-prod-parity.md
   - CONTEXT/PATTERNS/devops/ci-security-gates.md
   - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
+  - CONTEXT/PATTERNS/devops/ci-deploy-prod.md
   - CONTEXT/PATTERNS/devops/dev-main-ci-gates.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
   - CONTEXT/PATTERNS/devops/environment.md
@@ -55,6 +56,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **dev→main process — consistent, CI-enforced gates.** The consolidated map: which CI workflows gate `dev`/`main`, the green requirement, the bless→promote flow; every suite + baseline is CI-gated (an unenforced gate is silent debt). → `KB § PATTERNS/devops/dev-main-ci-gates.md`
 - **CI embedding-cache gate.** GitHub Actions workflow (`embedding-cache-gate.yml`) connecting CI to the shared prod pgvector cache; secrets `NOCTUS_VPS_DEPLOY_KEY` + `NOCTUS_VPS_HOST` + `NOCTUS_CACHE_POSTGRES_DSN`; conditional gating via `CACHE_TUNNEL_UP` env flag (hard-fail when tunnel up, soft-fail on fork PRs). → `KB § PATTERNS/devops/ci-embedding-cache-gate.md`
 - **SSH deploy-key restrictions.** `restrict` overrides `permitopen` on Ubuntu OpenSSH_9.6p1 — canonical pattern uses explicit `command="/bin/false",no-pty,no-X11-forwarding,no-agent-forwarding,permitopen=...`; verified during 2026-05-26 CI tunnel wiring for prod `noctus-cache-pg`. → `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md`
+- **CI-dispatchable prod deploy.** `deploy-prod.yml` (`workflow_dispatch`) fast-forwards the VPS checkout over CI so deploys work from egress-restricted envs (no outbound `:22`); forced-command deploy key (`command="…/prod-pull.sh"`) + ref-whitelist + §2a safe-pull (FF-only, backup, refuse non-FF/overlap); dormant until `NOCTUS_VPS_DEPLOY_PROD_KEY`/`NOCTUS_VPS_HOST` set; composes with `noctus.dev.release` bless/promote. → `KB § PATTERNS/devops/ci-deploy-prod.md`
 - **Push-time embedding-freshness gate.** Embed at the push boundary, not on every commit (v4.0 2026-05-27). pre-commit no longer refreshes kb/code embeddings; pre-push runs the refresh + soft-fails on missing key/provider. `NOCTUS_SKIP_EMBED_REFRESH=1` bypass for CI smoke pushes. → `KB § PATTERNS/common/push-time-embedding-gate.md`
 - **Memory + corpus embedding caches (6th + 7th).** v4.0 added two corpora: memory (out-of-repo feedback/reference/project notes via `memory_embeddings`) + corpus (in-repo CHANGELOG/templates/agents-full-body/skills/PROJECT-HISTORY via `corpus_embeddings`). Both mirror to prod pgvector via `cache_deploy_mirror`. Same refresh boundaries as kb/code. → `KB § PATTERNS/common/memory-embeddings.md` · `KB § PATTERNS/common/corpus-embeddings.md`
 - **OpenAI connector MCP** (`mcp/openai_mcp/`). 9 tools wrapping OpenAI API + the 4 search engines: embed / chat / vision / transcribe / search.{kb,code,memory,corpus} / diagnostics. Reuses noctusai venv. `.mcp.json` wire-up per-operator. → `KB § INTEGRATIONS/openai-mcp.md`
