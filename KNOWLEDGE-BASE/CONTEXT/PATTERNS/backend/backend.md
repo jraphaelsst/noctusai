@@ -214,6 +214,50 @@ Use the helpers from `noctusai_lib.responses`:
 - `paginated_response(data, total, page, page_size)` → `{data, pagination}`
 - `ok_response(message)` → `{ok: true, message}`
 
+## Error handling — `AppException`, not `HTTPException(detail=dict)`
+
+Domain/service code raising a **structured** error (machine-readable `code`)
+MUST raise `AppException` (or a subclass) from
+`noctusai_lib.primitives.exceptions` — **never** `HTTPException(detail={...})`.
+
+**Why:** the seed registers two handlers. `app_exception_handler` renders an
+`AppException` → `{"error": {"code", "message"[, "details"]}}` (via
+`format_error_response`). `http_exception_handler` renders any `HTTPException`
+but does `format_error_response(<mapped-code>, str(exc.detail))` — it
+**stringifies** `exc.detail`. So a dict detail is destroyed into a Python-repr
+string and the structured `code` is lost — clients parsing `error.code` get the
+generic `BAD_REQUEST`, not your `code`.
+
+```python
+# ❌ http_exception_handler stringifies the dict → {"error":{"code":"BAD_REQUEST",
+#    "message":"{'error': {'code': 'MAILCHIMP_KEY_INVALID', ...}}"}}
+raise HTTPException(status_code=400,
+                    detail={"error": {"code": "MAILCHIMP_KEY_INVALID", "message": "..."}})
+
+# ✅ app_exception_handler preserves {"error":{code, message}}
+from noctusai_lib.primitives.exceptions import AppException
+raise AppException(code="MAILCHIMP_KEY_INVALID", message="Chave Mailchimp inválida",
+                   status_code=400)
+```
+
+Subclasses cover the common shapes: `NotFoundError` (404),
+`ValidationError_` (400), `UnauthorizedError` (401), `ForbiddenError` (403),
+`ConflictError` (409), `InternalError` (500). A plain `HTTPException` with a
+**string** detail (no machine code needed) stays fine — the rule is narrow:
+**never pass a dict to `HTTPException(detail=...)`** and expect it to survive;
+reach for `AppException` whenever you need a structured `code`.
+
+**Two sibling traps from the same drift (mailchimp slice B, 2026-06-10):**
+- **conftest error-class redefinition = identity mismatch.** A product conftest
+  that *redefines* `AppException` instead of importing the seed class breaks
+  `except AppException` — the redefined-identity instance is never caught.
+  Import the class from `noctusai_lib.primitives.exceptions`; never shadow it.
+- **`async with` needs `@asynccontextmanager`.** A `@contextmanager`-decorated
+  async resource used under `async with` fails — use
+  `contextlib.asynccontextmanager` for async context managers.
+
+Seed handlers: `seed/lib/backend/noctusai_lib/primitives/exceptions.py`.
+
 ## N+1 zero tolerance
 
 - Reads: `.in_("id", ids)` — batch fetch.
