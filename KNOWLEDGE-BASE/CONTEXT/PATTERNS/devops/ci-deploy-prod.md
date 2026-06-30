@@ -15,7 +15,7 @@ without a local SSH path.
 ## Security model — forced-command + ref-whitelist (defense in depth)
 
 The deploy key is a **forced-command key**: its `authorized_keys` entry pins the
-command to `scripts/deploy/prod-pull.sh`, so the key can run ONLY the safe §2a
+command to `deploy/prod-pull.sh`, so the key can run ONLY the safe §2a
 pull script — it can never get a shell or run arbitrary commands. Same lockdown
 philosophy as the existing port-forward-only cache key
 (`command="/bin/false",permitopen="127.0.0.1:5432"`). The client's requested
@@ -48,11 +48,11 @@ reads the env vars and writes `ready=1`, and the SSH step gates on
 2. **On the VPS**, add the PUBLIC half to `root`'s `~/.ssh/authorized_keys` as a
    forced-command entry (one line):
    ```
-   command="/opt/noctus/noctusai/scripts/deploy/prod-pull.sh",no-pty,no-port-forwarding,no-X11-forwarding,no-agent-forwarding ssh-ed25519 AAAA... ci-deploy-prod
+   command="/opt/noctus/noctusai/deploy/prod-pull.sh",no-pty,no-port-forwarding,no-X11-forwarding,no-agent-forwarding ssh-ed25519 AAAA... ci-deploy-prod
    ```
 3. **On the VPS**, ensure the script is executable (it ships in the repo at that
    path, so it is present after any checkout — but `git` does not always preserve
-   the exec bit on a fresh clone): `chmod +x /opt/noctus/noctusai/scripts/deploy/prod-pull.sh`.
+   the exec bit on a fresh clone): `chmod +x /opt/noctus/noctusai/deploy/prod-pull.sh`.
    Bootstrap note (chicken-and-egg): the FIRST deploy that introduces this script
    must reach the VPS some other way (a manual `git pull` once, or the existing
    local `noctus.dev.deploy_pull`); thereafter the workflow is self-sufficient.

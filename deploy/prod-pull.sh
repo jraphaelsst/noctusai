@@ -3,7 +3,7 @@
 # prod-pull.sh — VPS-side forced-command target for the CI deploy key.
 #
 # The deploy key's authorized_keys entry pins:
-#   command="/opt/noctus/noctusai/scripts/deploy/prod-pull.sh",no-pty,
+#   command="/opt/noctus/noctusai/deploy/prod-pull.sh",no-pty,
 #   no-port-forwarding,no-X11-forwarding,no-agent-forwarding <pubkey>
 # so the key can run ONLY this script. The client's requested command
 # ("<mode> <ref>") arrives in $SSH_ORIGINAL_COMMAND — UNTRUSTED, so we

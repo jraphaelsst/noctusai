@@ -8,7 +8,7 @@ name: Deploy Prod (VPS git-FF pull)
 # only pulls origin/prod onto the box.
 #
 # SECURITY: the SSH key is a FORCED-COMMAND key — its authorized_keys entry pins
-# command="…/scripts/deploy/prod-pull.sh",no-pty,no-port-forwarding, so the key
+# command="…/deploy/prod-pull.sh",no-pty,no-port-forwarding, so the key
 # can ONLY run the safe §2a pull script. The client command (mode + ref) arrives
 # in $SSH_ORIGINAL_COMMAND and is re-validated (whitelist) on the VPS.
 #
