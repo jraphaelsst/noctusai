@@ -16,12 +16,17 @@ query   Resolve latest-per-branch from dev's copy; supports filtering by
         status, branch, agent, and collision-zone overlap.
 list    Live map: all non-terminal pointers (add terminal with include_terminal).
 
-Push idiom (FF-only to dev, retry-on-race)
-------------------------------------------
+Push idiom (rebase-onto-dev → FF-push, retry-on-race)
+-----------------------------------------------------
 Mirrors task_branch.cleanup + worktree_salvage FF-push-to-dev:
-  fetch dev → stage ONLY branch-tree.ndjson → commit → push HEAD:dev
-  (FF-only); single retry on concurrent-push race.  union-merge gitattribute
-  handles concurrent appends without conflicts.
+  stage ONLY the ledger+mirror → commit → fetch → divergence-guard →
+  rebase onto origin/dev → FF-push HEAD:dev; single retry on a concurrent-push
+  race.  The union-merge gitattribute makes the rebase conflict-free (the
+  ledger files are append-only), so a behind/diverged local dev (e.g. a peer
+  advanced origin/dev from a worktree) no longer wedges the push on a stale
+  base.  The divergence-guard REFUSES to push when a non-ledger commit is ahead
+  of origin/dev (never leak non-ledger work onto dev); a genuine rebase conflict
+  is aborted + surfaced, never force-resolved.
 
 Cache-exemption (contract §3 "Cache-sync discipline")
 ------------------------------------------------------
@@ -206,6 +211,95 @@ def _paths_overlap(a: list[str], b: list[str]) -> bool:
 
 
 # ── FF-push-to-dev (mirrors task_branch cleanup salvage-push idiom) ───────────
+def _ff_or_rebase_push_to_dev(
+    *,
+    run,
+    remote: str,
+    dev_branch: str,
+) -> dict[str, Any]:
+    """One fetch → divergence-guard → rebase-onto-origin/dev → FF-push attempt.
+
+    Precondition: the ledger commit is ALREADY made on HEAD.  Shared by the
+    initial push and the single concurrent-push-race retry so both legs take
+    the identical path (no naive "re-push the same stale commit" — that is the
+    bug this replaces: when local dev is BEHIND origin/dev the new commit sits
+    on a stale base and `push HEAD:dev` is rejected non-FF forever).
+
+    Returns a structured result:
+      * success           → {"ok": True, "status": "pushed", "pushed": True}
+      * non-ledger ahead  → {"ok": False, "retryable": False, "committed_locally": True, ...}
+      * rebase conflict   → {"ok": False, "retryable": False, "committed_locally": True, ...}
+      * push leg failed   → {"ok": False, "retryable": True,  "committed_locally": True, ...}
+
+    The caller decides whether to retry (retryable=True ⇒ a concurrent-push
+    re-fetch+re-rebase may clear it).
+    """
+    ledger_rels = set(_ledger_rels())
+    dev_ref = f"{remote}/{dev_branch}"
+
+    # 1. Fetch so origin/<dev> reflects any peer push (incl. a worktree's
+    #    task_branch integrate that advanced origin/dev under us).
+    run(["git", "fetch", remote])
+
+    # 2. Divergence guard — EVERY commit ahead of origin/<dev> must touch ONLY
+    #    the two cache-exempt ledger paths, else pushing HEAD:dev would leak
+    #    non-ledger work onto dev (drift 7761(2)).  Protective, not a fast-path.
+    rc_rl, out_rl, _ = run(["git", "rev-list", f"{dev_ref}..HEAD"])
+    ahead_shas = [s.strip() for s in (out_rl or "").splitlines() if s.strip()]
+    non_ledger_shas: list[str] = []
+    for sha in ahead_shas:
+        _rc_dt, out_dt, _ = run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha]
+        )
+        changed = [f.strip() for f in (out_dt or "").splitlines() if f.strip()]
+        if any(f not in ledger_rels for f in changed):
+            non_ledger_shas.append(sha)
+    if non_ledger_shas:
+        shas = ", ".join(s[:8] for s in non_ledger_shas)
+        return {
+            "ok": False,
+            "retryable": False,
+            "error": (
+                f"HEAD has non-ledger commit(s) ahead of {dev_ref} ({shas}) — "
+                "pointer commit landed locally but was NOT pushed, to avoid "
+                "leaking non-ledger work onto dev; reconcile the divergence then "
+                "re-push"
+            ),
+            "committed_locally": True,
+        }
+
+    # 3. Rebase the ledger-only ahead-commits onto the freshly-fetched
+    #    origin/<dev>.  Conflict-free by construction (the ledger files carry a
+    #    merge=union gitattribute + are append-only), so a behind/diverged base
+    #    replays cleanly.  A genuine conflict ⇒ abort + surface; NEVER
+    #    -X/force/auto-resolve.
+    rc_rb, _, err_rb = run(["git", "rebase", dev_ref])
+    if rc_rb != 0:
+        run(["git", "rebase", "--abort"])
+        return {
+            "ok": False,
+            "retryable": False,
+            "error": (
+                f"git rebase onto {dev_ref} reported a conflict "
+                f"({err_rb.strip()}); rebase aborted — manual resolution needed "
+                "before the pointer can push"
+            ),
+            "committed_locally": True,
+        }
+
+    # 4. FF-push HEAD → dev.
+    rc_p, _, err_p = run(["git", "push", remote, f"HEAD:refs/heads/{dev_branch}"])
+    if rc_p != 0:
+        return {
+            "ok": False,
+            "retryable": True,
+            "error": f"FF-push to {dev_branch} failed: {err_p.strip()}",
+            "committed_locally": True,
+        }
+
+    return {"ok": True, "status": "pushed", "pushed": True}
+
+
 def _push_ledger_to_dev(
     *,
     commit_msg: str,
@@ -213,21 +307,21 @@ def _push_ledger_to_dev(
     dev_branch: str = "dev",
     remote: str = "origin",
 ) -> dict[str, Any]:
-    """Stage ONLY branch-tree.ndjson → commit → FF-push to dev.
+    """Stage ONLY branch-tree.ndjson+mirror → commit → rebase-onto-dev → FF-push.
 
-    Idempotent: if the ledger is not dirty (nothing to commit), returns
-    ok=True with status=already_clean.  Single retry on concurrent-push race
-    (fetch + re-push).  Mirrors the task_branch.cleanup salvage-ledger push
-    pattern and the auto_improvement append-on-merge FF idiom.
+    Idempotent: if neither the ledger nor its mirror is dirty (nothing to
+    commit), returns ok=True with status=already_clean.  After committing, the
+    push leg is delegated to `_ff_or_rebase_push_to_dev` (fetch → divergence-
+    guard → rebase onto origin/dev → FF-push), retried ONCE on a retryable
+    push-leg failure (concurrent-push race).  A non-ledger-ahead guard refusal
+    or a rebase conflict is NOT retried — it is surfaced immediately with
+    committed_locally=True.
     """
     run = runner or _run
 
     # Ensure the file exists
     if not LEDGER_PATH.exists():
         return {"ok": False, "error": "branch-tree.ndjson does not exist; nothing to push"}
-
-    # Fetch to ensure we can do a FF push
-    run(["git", "fetch", remote])
 
     rels = list(_ledger_rels())
     # Check if either the ledger OR its mirror is dirty
@@ -247,19 +341,20 @@ def _push_ledger_to_dev(
         logger.warning("branch_pointer: git commit failed (%s)", err_c.strip())
         return {"ok": False, "error": f"git commit failed: {err_c.strip()}"}
 
-    # Push HEAD→dev (FF-only); retry once on concurrent-push race
-    rc_p, _, err_p = run(["git", "push", remote, f"HEAD:refs/heads/{dev_branch}"])
-    if rc_p != 0:
-        run(["git", "fetch", remote])
-        rc_p, _, err_p = run(["git", "push", remote, f"HEAD:refs/heads/{dev_branch}"])
-    if rc_p != 0:
+    # fetch → guard → rebase-onto-origin/dev → FF-push; retry ONCE on a
+    # retryable (concurrent-push-race) failure.
+    push_res = _ff_or_rebase_push_to_dev(run=run, remote=remote, dev_branch=dev_branch)
+    if not push_res["ok"] and push_res.get("retryable"):
+        push_res = _ff_or_rebase_push_to_dev(run=run, remote=remote, dev_branch=dev_branch)
+
+    if not push_res["ok"]:
         logger.warning(
-            "branch_pointer: push to %s failed after retry (%s); "
-            "commit landed locally — manual push needed", dev_branch, err_p.strip()
+            "branch_pointer: push to %s failed (%s); commit landed locally — "
+            "manual reconciliation needed", dev_branch, push_res.get("error", "")
         )
         return {
             "ok": False,
-            "error": f"FF-push to {dev_branch} failed after retry: {err_p.strip()}",
+            "error": push_res.get("error", f"FF-push to {dev_branch} failed"),
             "committed_locally": True,
         }
 

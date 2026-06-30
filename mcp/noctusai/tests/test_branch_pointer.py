@@ -535,6 +535,162 @@ class TestPushLedger:
         assert "FF-push" in result["error"] or "failed" in result["error"]
         assert result.get("committed_locally") is True
 
+    # ── rebase-onto-dev: the stale-primary-dev / divergence fix ───────────────
+    @staticmethod
+    def _setup_ledger(tmp_path, monkeypatch):
+        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text("{}\n", encoding="utf-8")
+        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
+        return ledger
+
+    def test_push_stale_primary_dev_rebases_then_pushes(self, tmp_path, monkeypatch):
+        """Local dev BEHIND origin/dev: initial push is non-FF; after
+        fetch+rebase the re-push succeeds.  Asserts a `git rebase` was issued
+        (the fix for the naive re-push-same-stale-commit bug)."""
+        self._setup_ledger(tmp_path, monkeypatch)
+        calls: list[list[str]] = []
+
+        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
+            calls.append(cmd)
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "status":
+                return 0, "M project-history/branch-tree.ndjson\n", ""
+            if sub in ("add", "commit", "fetch", "rebase"):
+                return 0, "", ""
+            if sub == "rev-list":
+                return 0, "deadbeef\n", ""  # one ahead commit
+            if sub == "diff-tree":
+                # ledger-only ahead commit (touches both ledger + mirror)
+                return 0, (
+                    "project-history/branch-tree.ndjson\n"
+                    "project-history/branch-tree.mirror.ndjson\n"
+                ), ""
+            if sub == "push":
+                push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
+                # First push rejected non-FF (stale base); retry succeeds.
+                if len(push_calls) == 1:
+                    return 1, "", "non-fast-forward"
+                return 0, "", ""
+            return 0, "", ""
+
+        result = BP._push_ledger_to_dev(
+            commit_msg="ptr", runner=_runner, dev_branch="dev"
+        )
+        assert result["ok"] is True
+        assert result["pushed"] is True
+        rebase_calls = [
+            c for c in calls if len(c) > 1 and c[1] == "rebase" and "--abort" not in c
+        ]
+        assert rebase_calls, "a `git rebase origin/dev` must be issued before the push"
+
+    def test_push_concurrent_race_retries_once(self, tmp_path, monkeypatch):
+        """Push rejected once (concurrent-push race), succeeds on the single
+        retry — exactly two push calls, ledger-only ahead commit."""
+        self._setup_ledger(tmp_path, monkeypatch)
+        calls: list[list[str]] = []
+
+        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
+            calls.append(cmd)
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "status":
+                return 0, "M project-history/branch-tree.ndjson\n", ""
+            if sub in ("add", "commit", "fetch", "rebase"):
+                return 0, "", ""
+            if sub == "rev-list":
+                return 0, "cafe1234\n", ""
+            if sub == "diff-tree":
+                return 0, "project-history/branch-tree.ndjson\n", ""
+            if sub == "push":
+                push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
+                return (1, "", "non-fast-forward") if len(push_calls) == 1 else (0, "", "")
+            return 0, "", ""
+
+        result = BP._push_ledger_to_dev(
+            commit_msg="ptr", runner=_runner, dev_branch="dev"
+        )
+        assert result["ok"] is True
+        push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
+        assert len(push_calls) == 2, "should retry exactly once on a concurrent-push race"
+
+    def test_push_refuses_non_ledger_ahead_commit(self, tmp_path, monkeypatch):
+        """An ahead-commit touches a NON-ledger file → guard refuses: ok=False,
+        committed_locally=True, error mentions non-ledger, and NO push to dev is
+        issued (it would leak the non-ledger commit onto dev)."""
+        self._setup_ledger(tmp_path, monkeypatch)
+        calls: list[list[str]] = []
+
+        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
+            calls.append(cmd)
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "status":
+                return 0, "M project-history/branch-tree.ndjson\n", ""
+            if sub in ("add", "commit", "fetch", "rebase"):
+                return 0, "", ""
+            if sub == "rev-list":
+                return 0, "feedface\n", ""
+            if sub == "diff-tree":
+                # ahead commit touches a NON-ledger source file
+                return 0, "mcp/noctusai/tools/noctus/dev/other.py\n", ""
+            if sub == "push":
+                return 0, "", ""  # would succeed if (wrongly) reached
+            return 0, "", ""
+
+        result = BP._push_ledger_to_dev(
+            commit_msg="ptr", runner=_runner, dev_branch="dev"
+        )
+        assert result["ok"] is False
+        assert result.get("committed_locally") is True
+        assert "non-ledger" in result["error"]
+        leaking_pushes = [c for c in calls if len(c) > 1 and c[1] == "push"]
+        assert not leaking_pushes, "must NOT push when an ahead-commit is non-ledger"
+
+    def test_push_rebase_conflict_aborts_no_force(self, tmp_path, monkeypatch):
+        """Rebase reports a conflict → `git rebase --abort` is issued, ok=False,
+        committed_locally=True, and NO force/`-X` flag ever appears in any
+        issued command (never auto-resolve)."""
+        self._setup_ledger(tmp_path, monkeypatch)
+        calls: list[list[str]] = []
+
+        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
+            calls.append(cmd)
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "status":
+                return 0, "M project-history/branch-tree.ndjson\n", ""
+            if sub in ("add", "commit", "fetch"):
+                return 0, "", ""
+            if sub == "rev-list":
+                return 0, "abc12345\n", ""
+            if sub == "diff-tree":
+                return 0, "project-history/branch-tree.ndjson\n", ""
+            if sub == "rebase":
+                if "--abort" in cmd:
+                    return 0, "", ""
+                return 1, "", "CONFLICT (content): merge conflict in branch-tree.ndjson"
+            if sub == "push":
+                return 0, "", ""
+            return 0, "", ""
+
+        result = BP._push_ledger_to_dev(
+            commit_msg="ptr", runner=_runner, dev_branch="dev"
+        )
+        assert result["ok"] is False
+        assert result.get("committed_locally") is True
+        assert "conflict" in result["error"].lower()
+        abort_calls = [
+            c for c in calls if len(c) > 1 and c[1] == "rebase" and "--abort" in c
+        ]
+        assert abort_calls, "`git rebase --abort` must be issued on a conflict"
+        # Never force/auto-resolve.
+        for c in calls:
+            assert "-X" not in c, f"no -X (auto-resolve) flag allowed: {c}"
+            assert "-f" not in c, f"no -f (force) flag allowed: {c}"
+            assert not any("--force" in tok for tok in c), f"no --force allowed: {c}"
+        # A conflict aborts BEFORE the push leg.
+        pushes = [c for c in calls if len(c) > 1 and c[1] == "push"]
+        assert not pushes, "must NOT push when the rebase conflicts"
+
 
 # ── noc_graph_cache exclusion ─────────────────────────────────────────────────
 class TestNocGraphExclusion:
