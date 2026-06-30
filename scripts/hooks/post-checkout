@@ -36,6 +36,19 @@ if [[ "$PREV_HEAD" == "$NEW_HEAD" ]]; then
     exit 0
 fi
 
+# Skip while a sequencer op is in progress (rebase/cherry-pick/merge/revert/am):
+# these do many intermediate checkouts, and refreshing here (esp. the
+# cost-ledger-appending memory-embed) dirties the tree → `git rebase` aborts with
+# "cannot rebase: You have unstaged changes". Freshness is covered by the final
+# checkout + pre-push refresh + lazy-on-read once the op finishes.
+case "${GIT_REFLOG_ACTION:-}" in
+    rebase*|cherry-pick*|revert*|merge*|am*) exit 0 ;;
+esac
+_gitdir="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
+for _m in rebase-merge rebase-apply CHERRY_PICK_HEAD MERGE_HEAD REVERT_HEAD sequencer; do
+    [[ -e "$_gitdir/$_m" ]] && exit 0
+done
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
