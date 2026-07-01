@@ -64,7 +64,16 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$VPS_DEPLOY_PROD_KEY" > ~/.ssh/deploy-prod-key
           chmod 600 ~/.ssh/deploy-prod-key
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # ssh-keyscan can transiently return nothing if the edge is briefly
+          # unreachable; under `set -e` that silently aborts the whole deploy with
+          # no message. Retry with backoff, and never let the bare call abort.
+          for i in 1 2 3; do
+            ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+            [ -s ~/.ssh/known_hosts ] && break
+            echo "::warning::ssh-keyscan attempt $i got no host key (transient edge?) — retrying in 5s"
+            sleep 5
+          done
+          [ -s ~/.ssh/known_hosts ] || { echo "::error::ssh-keyscan produced no host key after 3 tries — VPS edge unreachable"; exit 1; }
           echo "Triggering on $VPS_HOST: ${{ inputs.mode }} ${{ inputs.target }}"
           # inputs are `choice`-constrained (no free text → no injection); the VPS
           # forced-command script re-validates mode + ref (defense in depth).

@@ -736,7 +736,8 @@ def _waha_message_to_out(
         # Deterministic synthetic id: use provider id or a hash of (chat_id, ts, dir)
         import hashlib  # noqa: PLC0415
         row_id = provider_message_id or hashlib.sha1(  # noqa: S324 — not security-critical
-            f"{chat_id}:{ts_raw}:{direction}:{body[:32]}".encode()
+            f"{chat_id}:{ts_raw}:{direction}:{body[:32]}".encode(),
+            usedforsecurity=False,
         ).hexdigest()[:16]
         return {
             "id": row_id,

@@ -47,7 +47,10 @@ Fires after branch switch (git passes `flag=1` for branch checkouts, `0` for fil
 Notable behavior:
 - Skips file-level checkouts (no working-tree state change worth re-embedding).
 - Skips no-op checkouts where `prev == new`.
+- **Skips while a sequencer op is in progress** (rebase / cherry-pick / merge / revert / am — detected via `GIT_REFLOG_ACTION` + per-worktree state dirs). Refreshing mid-rebase appends a cost-ledger row that dirties the tree → `git rebase` aborts (`cannot rebase: You have unstaged changes`). The final checkout + pre-push cover freshness once the op finishes.
 - Fast-exits when no cache-relevant files changed in the diff.
+
+> **Testing a hook EDIT — gotcha.** The active hooks are `core.hooksPath` → the MAIN repo's `.git/hooks` → symlinks into the MAIN working-tree's `scripts/hooks/*`. So a hook edit made inside a WORKTREE is **not** exercised by a plain `git` command run from that worktree — git runs the MAIN tree's copy → a false-green "my hook fix works." To exercise a worktree's edited hook, override per-invocation: `git -c core.hooksPath=<worktree>/scripts/hooks <cmd>`. (Same harness-self-invisible-during-refactor shape.)
 
 ## `refresh_all_caches` orchestrator
 
