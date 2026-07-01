@@ -322,19 +322,14 @@ def _push_salvage_ledger_from_primary(
     leg needs ``add``/``commit``/``diff-tree`` which are intentionally off the
     safe allowlist; the push destination is hard-pinned to ``dev_branch`` so the
     dev-only-push boundary holds by construction.
+
+    The ``commit → fetch → divergence-guard → rebase-onto-origin/dev → FF-push``
+    idiom is the shared :func:`commit_and_ff_push_ledger` helper (the N=3 DRY
+    lift); this leg just supplies the path-scoped salvage commit message + maps
+    the structured result back to the ``bool`` contract (True iff pushed).
     """
-    def g(*args: str) -> tuple[int, str, str]:
-        return runner(["git", "-C", root, *args])
+    from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger  # lazy import
 
-    # Dirty-check the ledger ONLY — act solely when this cleanup appended a row.
-    rc_s, out_s, _ = g("status", "--porcelain", "--", rel_ledger)
-    if rc_s != 0 or not (out_s or "").strip():
-        return False  # clean (idempotent re-run) — nothing to commit/push
-
-    rc_a, _, err_a = g("add", rel_ledger)
-    if rc_a != 0:
-        logger.warning("task_branch.cleanup: salvage stage failed (%s)", (err_a or "").strip())
-        return False
     msg = (f"chore(salvage): record {rel_ledger} recovery pointer\n\n"
            "task_branch action=cleanup salvage-ledger entry (branch+SHA → "
            "worktree-salvage.ndjson, the tracked recovery-pointer ledger). "
@@ -342,53 +337,17 @@ def _push_salvage_ledger_from_primary(
            "+ rebase-onto-dev FF-pushed so the row lands on origin/dev even when "
            "dev advanced past the branch base (2026-06-30 rebase-integrated-slug "
            "lost-row fix); leaves the worktree clean for remove.")
-    rc_c, _, err_c = g("commit", "-m", msg, "--", rel_ledger)
-    if rc_c != 0:
-        logger.warning("task_branch.cleanup: salvage commit failed (%s)", (err_c or "").strip())
-        return False
-
-    dev_ref = f"{remote}/{dev_branch}"
-    err_p = ""
-    for attempt in (1, 2):  # single retry on the concurrent-push race
-        g("fetch", remote)
-        # Divergence guard — every commit ahead of origin/<dev> must touch ONLY
-        # the ledger file, else pushing HEAD:dev leaks non-ledger work onto dev.
-        rc_rl, out_rl, _ = g("rev-list", f"{dev_ref}..HEAD")
-        ahead = [s.strip() for s in (out_rl or "").splitlines() if s.strip()]
-        non_ledger: list[str] = []
-        for sha in ahead:
-            _rc_dt, out_dt, _ = g("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
-            changed = [f.strip() for f in (out_dt or "").splitlines() if f.strip()]
-            if any(f != rel_ledger for f in changed):
-                non_ledger.append(sha)
-        if non_ledger:
-            logger.warning(
-                "task_branch.cleanup: non-ledger commit(s) ahead of %s (%s) — salvage "
-                "row committed to local dev but NOT pushed (avoiding a non-ledger leak "
-                "onto dev); it ships with the next dev push",
-                dev_ref, ", ".join(s[:8] for s in non_ledger))
-            return False
-        # Rebase the ledger-only ahead-commit(s) onto the freshly-fetched
-        # origin/<dev> (conflict-free: union-merge + append-only). A genuine
-        # conflict ⇒ abort + surface; never -X/force/auto-resolve.
-        rc_rb, _, err_rb = g("rebase", dev_ref)
-        if rc_rb != 0:
-            g("rebase", "--abort")
-            logger.warning(
-                "task_branch.cleanup: salvage rebase onto %s conflicted (%s); aborted "
-                "— row stays on local dev, ships with the next dev push",
-                dev_ref, (err_rb or "").strip())
-            return False
-        rc_p, _, err_p = g("push", remote, f"HEAD:{dev_branch}")
-        if rc_p == 0:
-            return True
-        if verbose:
-            logger.debug("task_branch.cleanup: salvage push rejected on attempt %d "
-                         "(concurrent peer push) — re-fetch+rebase", attempt)
-    logger.warning(
-        "task_branch.cleanup: salvage FF-push to %s failed after retry (%s); commit "
-        "landed on local dev — ships with the next dev push", dev_branch, (err_p or "").strip())
-    return False
+    res = commit_and_ff_push_ledger(
+        runner=runner,
+        root=root,
+        rel_paths=[rel_ledger],
+        dev_branch=dev_branch,
+        remote=remote,
+        commit_msg=msg,
+        already_committed=False,
+        _log_prefix="task_branch.cleanup",
+    )
+    return bool(res.get("pushed"))
 
 
 def _stash_benign_artifacts(
