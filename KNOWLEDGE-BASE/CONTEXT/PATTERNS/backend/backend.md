@@ -466,6 +466,58 @@ helper is shape-agnostic.
 
 ---
 
+## Recurring CI-hygiene standards (create it correctly the first time)
+
+Three classes keep tripping CI reactively. Each now has an enforcing gate — but
+the point is to author correctly the first time so the gate never fires. Fixing
+these in CI is the slip; the standards below are the by-construction path.
+
+### 1. Non-security hashes → `usedforsecurity=False`
+
+A weak hash (`hashlib.md5` / `hashlib.sha1` / `hashlib.new("md5"|"sha1", ...)`)
+used for a NON-security purpose — a synthetic row id, a cache key, Mailchimp's
+`md5(lower(email))` subscriber-hash contract — MUST pass `usedforsecurity=False`,
+or **Bandit B324 (High)** hard-fails CI. A `# noqa: S324` comment silences one
+linter pass but is NOT the fix (a stricter Bandit run still hard-fails, and the
+comment lies about maturity). If a hash is genuinely security-critical, don't use
+a weak algorithm at all — use `sha256`+.
+
+```python
+# ❌ before — B324 red in CI
+row_id = hashlib.sha1(f"{chat_id}:{ts}:{direction}".encode()).hexdigest()[:16]
+
+# ✅ after — non-security synthetic id, correct by construction
+row_id = hashlib.sha1(
+    f"{chat_id}:{ts}:{direction}".encode(), usedforsecurity=False
+).hexdigest()[:16]
+```
+
+**Now enforced pre-commit** by `check_hashlib_usedforsecurity`
+(`mcp/noctusai/cli.py --check-hashlib-usedforsecurity`, AST-based, severity
+`error`, baseline 0). Recurred N=4 before codification: three MD5s fixed for the
+mailchimp module (`041a8d12`) + a fourth SHA1 in social-wiring whatsapp.
+
+### 2. Python deps pin to the fleet-standard version
+
+A new or bumped dependency in `products/<slug>/backend/requirements.txt` MUST
+match the version the rest of the fleet uses (the value in the other products'
+requirements + the root `requirements.txt`). A lone divergence trips
+`test_no_python_mismatches` (MCP suite). E.g. `PyJWT==2.12.0` is fleet-wide — a
+stray `PyJWT==2.13.0` was the 2026-06-30 red. Before bumping one product, bump
+the fleet (or don't diverge): grep the pin across `products/*/backend/requirements.txt`
++ root `requirements.txt`, land the same value everywhere in one commit.
+
+### 3. Product FE change → update the outline-corpus baseline SAME commit
+
+Editing `products/<slug>/frontend/src/**` shifts AST symbol counts. If a file
+drifts >5% from `mcp/noctusai/tests/fixtures/outline_corpus_baseline.json`, the
+`TestCorpusBaselineSnapshot` gate (MCP suite) goes red. Re-snapshot the drifted
+entries in the SAME commit as the FE change. The baseline is a **deliberate
+drift-detector** — update it consciously (review the delta), never blind-regen
+the whole file. See `feedback_outline_corpus_baseline_coupling`.
+
+---
+
 See also:
 - `../03-SEED-ARCHITECTURE.md` — how `create_product_app()` works
 - `../04-SHARED-LIBRARY.md` — catalog of reusable helpers

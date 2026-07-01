@@ -7314,6 +7314,153 @@ def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_hashlib_usedforsecurity` — a weak-hash call
+# (`hashlib.md5(...)` / `hashlib.sha1(...)` / `hashlib.new("md5"|"sha1", ...)`)
+# used for a NON-security purpose (synthetic ids, cache keys, Mailchimp's
+# md5-of-email contract) MUST pass `usedforsecurity=False`, or Bandit B324
+# (High severity) hard-fails CI. This recurred N=4: three MD5s fixed for the
+# mailchimp module (commit 041a8d12) + a fourth SHA1 in social-wiring's
+# whatsapp synthetic-id path (2026-06-30). CI-only detection kept fixing it
+# reactively; this AST keeper makes it correct-by-construction at authoring
+# time (baseline 0 — every current call already passes the kwarg).
+#
+# Scope = the Bandit scan scope: `products/*/backend/app/**/*.py` +
+# `seed/lib/backend/noctusai_lib/**/*.py`. AST-based (the AST-first rule);
+# a `# noqa: S324` comment does NOT satisfy it — the kwarg is the real fix
+# (noqa only silences Bandit's linter pass, not the CI hard-fail path, and it
+# lies about maturity). Severity `error`: Bandit blocks on B324, so we block
+# locally too — the whole point is to stop it reaching CI.
+# See KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.
+# ---------------------------------------------------------------------------
+
+_WEAK_HASH_NAMES = frozenset({"md5", "sha1", "md4", "sha"})
+
+
+def _call_has_usedforsecurity_kwarg(node: "ast.Call") -> bool:
+    """True if the call passes an explicit `usedforsecurity=` keyword (any
+    value) OR forwards `**kwargs`. Absence is what B324 fires on."""
+    for kw in node.keywords:
+        if kw.arg == "usedforsecurity":
+            return True
+        if kw.arg is None:  # `**kwargs` — cannot prove absence → don't flag
+            return True
+    return False
+
+
+def _weak_hash_ctor_name(node: "ast.Call") -> str | None:
+    """Return the weak-hash constructor name for a call, else None.
+
+    Matches `hashlib.md5(...)` / `hashlib.sha1(...)` (Attribute on `hashlib`),
+    the bare `md5(...)` / `sha1(...)` (`from hashlib import md5`), and
+    `hashlib.new("md5", ...)` / `new("sha1", ...)` where the first positional
+    arg is a weak-hash string literal.
+    """
+    func = node.func
+    # hashlib.<name>(...) or hashlib.new(...) / bare new(...)
+    if isinstance(func, ast.Attribute):
+        attr = func.attr
+        if attr in _WEAK_HASH_NAMES and isinstance(func.value, ast.Name) \
+                and func.value.id == "hashlib":
+            return attr
+        if attr == "new" and isinstance(func.value, ast.Name) \
+                and func.value.id == "hashlib":
+            return _hashlib_new_weak_name(node)
+    elif isinstance(func, ast.Name):
+        if func.id in _WEAK_HASH_NAMES:
+            return func.id
+        if func.id == "new":  # `from hashlib import new` — rare but covered
+            return _hashlib_new_weak_name(node)
+    return None
+
+
+def _hashlib_new_weak_name(node: "ast.Call") -> str | None:
+    """For a `new(...)` call, return the weak algo name if the first
+    positional arg is a weak-hash string literal, else None."""
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        algo = first.value.strip().lower()
+        if algo in _WEAK_HASH_NAMES:
+            return f'new("{algo}")'
+    return None
+
+
+def check_hashlib_usedforsecurity(repo_root: Path | None = None) -> list[dict]:
+    """Flag a weak-hash call missing `usedforsecurity=False` (Bandit B324).
+
+    Scans the Bandit scope — `products/*/backend/app/**/*.py` and
+    `seed/lib/backend/noctusai_lib/**/*.py` — for `hashlib.md5(...)`,
+    `hashlib.sha1(...)`, `hashlib.new("md5"|"sha1", ...)`, and their bare
+    `from hashlib import md5|sha1|new` forms. Any such call WITHOUT an explicit
+    `usedforsecurity=` keyword (or a forwarded `**kwargs`) is flagged.
+
+    The fix is the kwarg (`usedforsecurity=False` for a non-security use), NOT
+    a `# noqa: S324` comment — the kwarg is what makes the code correct by
+    construction; the comment only silences one linter pass and still lets the
+    CI Bandit hard-fail through on a stricter run. If a weak hash IS genuinely
+    security-critical, don't use it at all (use sha256+).
+
+    Severity `error` (Bandit blocks B324; baseline 0 on the live tree).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    scan_roots: list[tuple[str, Path]] = []
+    products_dir = root / "products"
+    if products_dir.exists():
+        for product_path in sorted(products_dir.iterdir()):
+            if not product_path.is_dir() or product_path.name.startswith("."):
+                continue
+            app_dir = product_path / "backend" / "app"
+            if app_dir.exists():
+                scan_roots.append((product_path.name, app_dir))
+    seed_lib = root / "seed" / "lib" / "backend" / "noctusai_lib"
+    if seed_lib.exists():
+        scan_roots.append(("seed-lib", seed_lib))
+
+    for product, scan_root in scan_roots:
+        for py in sorted(scan_root.rglob("*.py")):
+            norm = str(py).replace("\\", "/")
+            if "/node_modules/" in norm or "/__pycache__/" in norm:
+                continue
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+                logger.debug("compliance: cannot parse %s (%s)", py, exc)
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                ctor = _weak_hash_ctor_name(node)
+                if ctor is None:
+                    continue
+                if _call_has_usedforsecurity_kwarg(node):
+                    continue
+                try:
+                    rel = str(py.relative_to(root))
+                except ValueError:
+                    rel = str(py)
+                issues.append({
+                    "product": product,
+                    "file": rel,
+                    "line": node.lineno,
+                    "issue": (
+                        f"{rel}:{node.lineno} `hashlib.{ctor}(...)` is missing "
+                        f"`usedforsecurity=`: add usedforsecurity=False "
+                        f"(non-security use) — Bandit B324; or don't use a weak "
+                        f"hash for real security. See "
+                        f"KB § PATTERNS/backend/backend.md § Recurring CI-hygiene "
+                        f"standards."
+                    ),
+                    "severity": "error",
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_product_icon_registered` — every product ships a REAL icon.
 # A product's `icone` (core `public.products`) must render as an actual icon,
 # never as the bare text of an icon name. `ProductIcon`
@@ -8352,6 +8499,12 @@ def check_all_products() -> tuple[int, list]:
     # fixture into tests/conftest.py, else the in-memory slowapi limiter
     # leaks bucket state across tests → order-dependent 429 flake (N=6).
     all_issues.extend(check_limiter_conftest_import())
+    # hashlib-usedforsecurity CI-hygiene gate (2026-06-30, N=4) — a weak-hash
+    # call (hashlib.md5/sha1/new) for a non-security use MUST pass
+    # usedforsecurity=False or Bandit B324 hard-fails CI. Correct-by-construction
+    # pre-commit instead of reactive CI fixes.
+    # KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.
+    all_issues.extend(check_hashlib_usedforsecurity())
     # product-icon-registry coupling (2026-05-25) — every product ships a REAL
     # icon: an `icone` that ProductIcon renders as an SVG (registered name) or
     # an emoji, never a bare lucide name that shows as text (the "Sprout" bug).

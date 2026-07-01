@@ -24,6 +24,7 @@ from tools.noctus.dev.compliance import (  # noqa: E402
     check_branch_orphan,
     check_dispatcher_staleness,
     check_gitignore_drift,
+    check_hashlib_usedforsecurity,
     check_new_script_lacks_mcp_analog,
 )
 
@@ -402,3 +403,122 @@ class TestNewScriptLacksMcpAnalog:
         """The live repo tree must be clean (Phase 1 seeded the manifest
         with all 25 current scripts)."""
         assert check_new_script_lacks_mcp_analog() == []
+
+
+# ---------------------------------------------------------------------------
+# check_hashlib_usedforsecurity — Bandit B324 correct-by-construction gate
+# ---------------------------------------------------------------------------
+
+
+class TestHashlibUsedForSecurity:
+    """A weak-hash call (hashlib.md5/sha1/new) for a non-security use MUST
+    pass `usedforsecurity=False`, or Bandit B324 (High) hard-fails CI. The
+    keeper catches it at authoring time (AST-based; `# noqa` does not satisfy)."""
+
+    def _mk_app(self, tmp_path: Path, body: str, *, slug: str = "demo") -> Path:
+        """Create `<tmp_path>/products/<slug>/backend/app/mod.py` with `body`."""
+        app = tmp_path / "products" / slug / "backend" / "app"
+        app.mkdir(parents=True)
+        (app / "mod.py").write_text("import hashlib\n\n" + body)
+        return tmp_path
+
+    def test_bare_md5_flagged(self, tmp_path):
+        self._mk_app(tmp_path, "def f(x):\n    return hashlib.md5(x).hexdigest()\n")
+        issues = check_hashlib_usedforsecurity(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "error"
+        assert "usedforsecurity" in issues[0]["issue"]
+        assert issues[0]["product"] == "demo"
+
+    def test_md5_with_usedforsecurity_false_not_flagged(self, tmp_path):
+        self._mk_app(
+            tmp_path,
+            "def f(x):\n    return hashlib.md5(x, usedforsecurity=False).hexdigest()\n",
+        )
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_bare_sha1_flagged(self, tmp_path):
+        self._mk_app(tmp_path, "def f(x):\n    return hashlib.sha1(x).hexdigest()\n")
+        issues = check_hashlib_usedforsecurity(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "error"
+
+    def test_sha1_with_usedforsecurity_false_not_flagged(self, tmp_path):
+        self._mk_app(
+            tmp_path,
+            "def f(x):\n    return hashlib.sha1(x, usedforsecurity=False).hexdigest()\n",
+        )
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_noqa_comment_does_not_satisfy(self, tmp_path):
+        # A `# noqa: S324` silences the linter but NOT the CI hard-fail — the
+        # kwarg is the real fix; the keeper must still flag.
+        self._mk_app(
+            tmp_path,
+            "def f(x):\n    return hashlib.md5(x).hexdigest()  # noqa: S324\n",
+        )
+        assert len(check_hashlib_usedforsecurity(tmp_path)) == 1
+
+    def test_hashlib_new_weak_literal_flagged(self, tmp_path):
+        self._mk_app(tmp_path, "def f(x):\n    return hashlib.new('md5', x).hexdigest()\n")
+        issues = check_hashlib_usedforsecurity(tmp_path)
+        assert len(issues) == 1, issues
+        assert 'new("md5")' in issues[0]["issue"]
+
+    def test_hashlib_new_weak_literal_with_kwarg_not_flagged(self, tmp_path):
+        self._mk_app(
+            tmp_path,
+            "def f(x):\n    return hashlib.new('sha1', x, usedforsecurity=False).hexdigest()\n",
+        )
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_hashlib_new_strong_algo_ignored(self, tmp_path):
+        # sha256 via new() is not a weak hash — never flagged.
+        self._mk_app(tmp_path, "def f(x):\n    return hashlib.new('sha256', x).hexdigest()\n")
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_bare_imported_md5_flagged(self, tmp_path):
+        app = tmp_path / "products" / "demo" / "backend" / "app"
+        app.mkdir(parents=True)
+        (app / "mod.py").write_text(
+            "from hashlib import md5\n\ndef f(x):\n    return md5(x).hexdigest()\n"
+        )
+        issues = check_hashlib_usedforsecurity(tmp_path)
+        assert len(issues) == 1, issues
+
+    def test_sha256_never_flagged(self, tmp_path):
+        self._mk_app(tmp_path, "def f(x):\n    return hashlib.sha256(x).hexdigest()\n")
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_kwargs_forward_not_flagged(self, tmp_path):
+        # `**opts` may carry usedforsecurity — cannot prove absence, don't flag.
+        self._mk_app(
+            tmp_path,
+            "def f(x, **opts):\n    return hashlib.md5(x, **opts).hexdigest()\n",
+        )
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_seed_lib_scope_scanned(self, tmp_path):
+        seed = tmp_path / "seed" / "lib" / "backend" / "noctusai_lib" / "integrations"
+        seed.mkdir(parents=True)
+        (seed / "mapper.py").write_text(
+            "import hashlib\n\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n"
+        )
+        issues = check_hashlib_usedforsecurity(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["product"] == "seed-lib"
+
+    def test_out_of_scope_path_ignored(self, tmp_path):
+        # A weak hash OUTSIDE the Bandit scope (e.g. mcp/ tooling) is not scanned.
+        other = tmp_path / "mcp" / "noctusai"
+        other.mkdir(parents=True)
+        (other / "tool.py").write_text(
+            "import hashlib\n\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n"
+        )
+        assert check_hashlib_usedforsecurity(tmp_path) == []
+
+    def test_real_tree_baseline_zero(self):
+        """The live repo tree must be clean — every current weak-hash call in
+        the Bandit scope already passes usedforsecurity=False (041a8d12 fixed
+        the mailchimp MD5s; the whatsapp SHA1 was fixed on dev)."""
+        assert check_hashlib_usedforsecurity() == []

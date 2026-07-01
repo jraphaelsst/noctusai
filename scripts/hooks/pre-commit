@@ -220,6 +220,21 @@ if [[ -n "$STAGED_SRC" ]] && have_py; then
     fi
 fi
 
+# ─── 6b. hashlib usedforsecurity (blocking, only when backend-app/seed-lib .py staged) ──
+# Keeper `check_hashlib_usedforsecurity` + `KB § PATTERNS/backend/backend.md
+# § Recurring CI-hygiene standards`. A weak-hash call (hashlib.md5/sha1/new)
+# for a non-security use MUST pass usedforsecurity=False, or Bandit B324 (High)
+# hard-fails CI. Catch it at authoring time instead of reactively in CI (N=4).
+STAGED_BANDIT_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/.*\.py)$' || true)
+if [[ -n "$STAGED_BANDIT_PY" ]] && have_py; then
+    echo "[pre-commit] Checking weak-hash usedforsecurity= (Bandit B324)..."
+    if ! "$PY" "$CLI" --check-hashlib-usedforsecurity --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] hashlib-usedforsecurity check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add usedforsecurity=False to the flagged hashlib.md5/sha1 call (non-security use), or use sha256+ for real security." >&2
+        exit 1
+    fi
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),
