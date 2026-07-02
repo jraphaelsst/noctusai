@@ -39,7 +39,7 @@ app = create_product_app(
     limiter=limiter,
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
-    standard_routers=["health", "notificacoes", "ai_feedback"],
+    standard_routers=["health", "notificacoes", "ai_feedback", "status_paginas"],
     consent_features="app.services.ai_consent_features",
     routers=[
         auth.router,

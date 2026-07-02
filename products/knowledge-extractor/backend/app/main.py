@@ -29,6 +29,6 @@ app = create_product_app(
     settings=settings,
     version="0.1.0",
     limiter=limiter,
-    standard_routers=["health", "notificacoes", "team"],
+    standard_routers=["health", "notificacoes", "team", "status_paginas"],
     routers=[catalog_router, methodology_router, kb_router, runs_router],
 )

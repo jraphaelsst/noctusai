@@ -5,6 +5,8 @@ import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
 import { Switch } from '@noctusai/seed/components/ui/switch';
 import { Separator } from '@noctusai/seed/components/ui/separator';
+import { api } from '@noctusai/seed/infra';
+import { StatusPaginaPanel } from '@noctusai/lib';
 import { usePlatformSettings, useUpdatePlatformSetting } from '@/hooks/useSettings';
 
 interface SettingRow {
@@ -217,6 +219,12 @@ export default function AdminSettings() {
           ))}
         </div>
       )}
+
+      {/* Page-visibility control — the status_pagina write-side organ (seed lib).
+          This /admin/* route group is already admin-gated at the router. */}
+      <div className="mt-6">
+        <StatusPaginaPanel api={api} enabled />
+      </div>
     </div>
   );
 }

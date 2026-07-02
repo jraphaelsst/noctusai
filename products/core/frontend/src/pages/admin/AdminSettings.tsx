@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { StatusPaginaPanel } from '@noctusai/lib';
 
 interface PlatformSetting {
   key: string;
@@ -249,6 +250,13 @@ export function AdminSettings() {
           </div>
         </div>
       )}
+
+      {/* Page-visibility control — the status_pagina write-side organ (seed lib).
+          This /admin/* route group is already admin-gated by CoreLayout
+          (redirects non-admins before this component ever renders). */}
+      <div className="mt-6">
+        <StatusPaginaPanel api={api} enabled />
+      </div>
     </div>
   );
 }
