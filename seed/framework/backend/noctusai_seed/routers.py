@@ -9,6 +9,7 @@ Bundled routers live here:
   - "ai_outputs"   → `/api/ai/outputs` (per-entity AI-output lookup; P1 pattern)
   - "ai_feedback"  → `/api/ai/feedback` (thumbs feedback on AI outputs; P1)
   - "scheduler"    → `/api/scheduler/jobs[/{job_id}]` (read-only APScheduler view)
+  - "status_paginas" → `/api/status-paginas` (list + change page-visibility status; admin/dev-gated)
 
 Products declare which ones they want via the `standard_routers=[...]` kwarg
 on `create_product_app()`. `build_standard_routers()` resolves that list
@@ -232,6 +233,13 @@ def _build_whatsapp_admin_router(deps, settings, product_name: str, version: str
     return create_whatsapp_admin_router(deps, settings)
 
 
+def _build_status_paginas_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import — mirrors the other `_build_*` factories; keeps the
+    # module import off the hot path for products that opt out.
+    from noctusai_seed.status_pagina_router import _create_status_pagina_router
+    return _create_status_pagina_router(deps, settings, product_name)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -249,6 +257,7 @@ _STANDARD_ROUTERS = {
     "ai_feedback":  _build_ai_feedback_router,
     "scheduler":    _build_scheduler_router,
     "whatsapp_admin": _build_whatsapp_admin_router,
+    "status_paginas": _build_status_paginas_router,
 }
 
 

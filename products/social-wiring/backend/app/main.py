@@ -146,9 +146,14 @@ for _register in MODULES:
 
 # Static, keeper-auditable literal of the standard-router set the MODULES
 # seam resolves at runtime. The MODULES registration stays the runtime
-# source-of-truth; this asserts they agree (loud — no silent drift) and
-# gives check_standard_routers_audit a parseable list literal at the
-# create_product_app call site.
+# source-of-truth; this asserts they agree (loud — no silent drift).
+#
+# NOTE: this is the MODULE-CONTRIBUTED base only. Product-GLOBAL standard
+# routers (page-visibility, etc.) are NOT module-contributed — they are added
+# on top in the create_product_app `standard_routers` literal below. So that
+# opt-in list = _STANDARD_ROUTERS ∪ {product-global additions}; the two
+# literals intentionally differ. The create_product_app call site remains a
+# plain string-list literal so check_standard_routers_audit can parse it.
 _STANDARD_ROUTERS = ["health", "notificacoes", "team", "ai_outputs", "ai_feedback"]
 assert _standard == _STANDARD_ROUTERS, (
     f"standard_routers drift: MODULES resolved {_standard!r} but the "
@@ -162,7 +167,8 @@ app = create_product_app(
     settings=settings,
     version="0.1.0",
     limiter=limiter,
-    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback"],
+    # Module-contributed base (_STANDARD_ROUTERS) + product-global "status_paginas".
+    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback", "status_paginas"],
     routers=_routers,
     # Conversation buffer + worker — boots the seed-backed
     # ConversationBufferService and the polling worker that drains the

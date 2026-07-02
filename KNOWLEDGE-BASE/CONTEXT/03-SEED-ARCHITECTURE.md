@@ -162,7 +162,7 @@ This preserves DRY across model families and across future agents.
 ## Backend Framework API (`noctusai_seed`)
 
 ### `create_product_app(name, schema, settings, routers, *, standard_routers=(...), ...)`
-Creates a fully configured FastAPI app. Includes: logging, database clients, auth dependencies, CORS, Sentry, exception handlers, middleware, rate limiting. Products opt into the bundled standard routers via `standard_routers=[...]` — valid names are the keys of `noctusai_seed.routers._STANDARD_ROUTERS`: `"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`. Pass `[]` to opt out entirely. See § Standard routers below for the full per-router contract.
+Creates a fully configured FastAPI app. Includes: logging, database clients, auth dependencies, CORS, Sentry, exception handlers, middleware, rate limiting. Products opt into the bundled standard routers via `standard_routers=[...]` — valid names are the keys of `noctusai_seed.routers._STANDARD_ROUTERS`: `"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`, `"status_paginas"`. Pass `[]` to opt out entirely. See § Standard routers below for the full per-router contract.
 
 ### `ProductSettings`
 Base Pydantic settings class. Provides: jwt_secret (with production safety check), core_api_url, cors_origins. Products extend with domain fields.
@@ -174,11 +174,11 @@ Returns a DatabaseModule with: `get_client(token)` (user-authenticated), `get_ad
 Returns ProductDependencies with: `get_current_user()`, `get_user_role()`, `get_org_id()`, `get_user_client()`, `get_admin_client()`, `get_core_client()`.
 
 ### `build_standard_routers(deps, settings, product_name, version, names)`
-Returns only the named subset of standard routers. `names` is a sequence of strings drawn from the `_STANDARD_ROUTERS` registry keys (`"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`). Unknown names raise `ValueError` naming every invalid key and listing the valid set. Order is preserved. `create_product_app()` calls this internally based on the `standard_routers=[...]` kwarg — products don't invoke it directly.
+Returns only the named subset of standard routers. `names` is a sequence of strings drawn from the `_STANDARD_ROUTERS` registry keys (`"health"`, `"notificacoes"`, `"team"`, `"llm"`, `"ai_outputs"`, `"ai_feedback"`, `"scheduler"`, `"whatsapp_admin"`, `"status_paginas"`). Unknown names raise `ValueError` naming every invalid key and listing the valid set. Order is preserved. `create_product_app()` calls this internally based on the `standard_routers=[...]` kwarg — products don't invoke it directly.
 
 ### Standard routers
 
-The eight bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(standard_routers=[...])` time. Each opt-in is by registry key; unknown keys raise `ValueError`. Adding a new entry requires (a) registry, (b) `tests/test_build_standard_routers.py::test_registry_keys_match_documented_set` update, (c) this table — drift between any two breaks the test.
+The nine bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(standard_routers=[...])` time. Each opt-in is by registry key; unknown keys raise `ValueError`. Adding a new entry requires (a) registry, (b) `tests/test_build_standard_routers.py::test_registry_keys_match_documented_set` update, (c) this table — drift between any two breaks the test.
 
 | Key | Endpoints | Auth | Backing storage / data source |
 |---|---|---|---|
@@ -190,6 +190,9 @@ The eight bundled routers `_STANDARD_ROUTERS` resolves at `create_product_app(st
 | `ai_feedback` | POST `/api/ai/feedback`, GET `/api/ai/feedback?output_ref=` | `deps.get_current_user` (user-token client; RLS scopes per-user) | `<schema>.ai_feedback` |
 | `scheduler` | GET `/api/scheduler/jobs`, GET `/api/scheduler/jobs/{job_id}` | `deps.get_current_user` (platform-level — no per-org filter; scheduler state is infrastructure, not user data) | `noctusai_lib.api.scheduler.scheduler` (APScheduler `AsyncIOScheduler` singleton — read-only view of `get_jobs()`) |
 | `whatsapp_admin` | GET `/api/whatsapp/connection`, GET `/qr`, POST `/restart`, POST `/logout`, POST `/webhook` | `deps.get_current_user` | WAHA HTTP API via `noctusai_lib.integrations.whatsapp.get_whatsapp_client` (no DB — live WAHA session state; `FakeWahaClient` when `waha_base_url` unset) |
+| `status_paginas` | GET `/api/status-paginas`, PATCH `/api/status-paginas/{id}` | `deps.get_current_user` + role check (`platform_admin`/`owner`/`admin`/`dev`, else 403) | `<schema>.status_pagina` via `deps.get_admin_client()` (service-role — RLS exposes only `producao` reads + ships no UPDATE policy, so an admin must bypass) |
+
+**`status_paginas`**: product-GLOBAL page-visibility management (no `org_id` — the table is uniform per product). List every `status_pagina` row + change a row's `status` (`producao`/`desenvolvimento`/`desativado`); scope is change-status-only (no create/delete — rows are seeded per product migration). Both endpoints role-gate to `platform_admin`/`owner`/`admin`/`dev` (`_MANAGE_ROLES`, derived from `roles.ADMIN_ROLES ∪ DEV_ROLES` + the SSO super-role) and use the schema-scoped **admin/service-role** client (`get_admin_client()` → unqualified `admin.table("status_pagina")`) because the RLS only exposes `producao` to normal reads and has no UPDATE policy. `StatusPaginaOut` carries `tipo_pagina`/`updated_at` as **defensive-optional** (`row.get(...)`) — present on erp, absent on social-wiring/seed; the PATCH bumps `updated_at` only when that column exists. PATCH body is a `StrictHttpModel` (422 on unknown key; 400 on a status outside the 3 canonical values). Pilots: social-wiring + erp (the latter aligned to the 3-status `CHECK` via migration `037_status_pagina_desativado.sql`).
 
 **`whatsapp_admin`**: WAHA connection-admin surface for products running a WhatsApp chatbot — session status (`ConnectionStatusDTO`), QR pairing (`QrDTO`, always 200 so a polling UI has one contract; `WahaSessionNotReady` → `scannable:false`), restart/logout lifecycle, and webhook wiring. Client resolved via `get_whatsapp_client(base_url, api_key, session)` from `settings.waha_*` (getattr — a product opting in without the attrs fails loudly at request time, not import). Real ↔ Fake parity per `KB § PATTERNS/backend/seed-fake-real-adapter.md`.
 
@@ -497,7 +500,7 @@ Any product customization MUST flow through one of these seams. Any customizatio
 | Seam | Purpose | Used by |
 |---|---|---|
 | `routers=[...]` | Product-specific domain routers. Always used. | Every product. |
-| `standard_routers=[...]` | Opt into bundled seed routers (`health`, `notificacoes`, `team`, `llm`, `ai_outputs`, `ai_feedback`, `scheduler`, `whatsapp_admin`). | Every product (core: `["health"]`; therapy: `["health","notificacoes","llm"]`; etc.). |
+| `standard_routers=[...]` | Opt into bundled seed routers (`health`, `notificacoes`, `team`, `llm`, `ai_outputs`, `ai_feedback`, `scheduler`, `whatsapp_admin`, `status_paginas`). | Every product (core: `["health"]`; therapy: `["health","notificacoes","llm"]`; etc.). |
 | `limiter=` | Custom rate-limiter instance from `create_limiter(redis_url=...)`. | Every product. |
 | `lifespan_startup=` / `lifespan_shutdown=` | Async callables for scheduler start/stop, recovery tasks. | mailing, personal-finance, erp (schedulers). |
 | `llm_config=` | Override the default `LLMConfig` via `default_llm_config(**overrides)`. | Any product needing a non-default chat model, cache-off for sensitive content, etc. |
