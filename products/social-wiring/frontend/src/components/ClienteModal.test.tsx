@@ -69,6 +69,13 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useToggleAutoReply: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
+const mockUseMailchimpConnection = vi.fn();
+
+vi.mock("@/hooks/useMailchimp", () => ({
+  useMailchimpConnection: mockUseMailchimpConnection,
+  useUpsertMailchimpConnection: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 // ─── Component mocks ─────────────────────────────────────────────────────────
 
 vi.mock("@noctusai/lib", () => ({
@@ -154,6 +161,7 @@ beforeEach(() => {
   mockUseSetDefaultAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -239,6 +247,45 @@ describe("ClienteModal — Contas tab", () => {
     mockUseClientWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
     const { getByText } = await renderClienteModal({ defaultTab: "contas" });
     expect(getByText(/Nenhuma conexão WhatsApp/i)).toBeTruthy();
+  });
+});
+
+describe("ClienteModal — Mailchimp per-cliente connect", () => {
+  it("shows a manual Conectar affordance when not connected", async () => {
+    mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
+    const { getByTestId, queryByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    expect(getByTestId("provider-row-mailchimp")).toBeTruthy();
+    expect(getByTestId("connect-btn-mailchimp")).toBeTruthy();
+    // Form is collapsed until the user clicks Conectar
+    expect(queryByTestId("mailchimp-connect-form")).toBeNull();
+  });
+
+  it("toggles the inline API-key form on Conectar", async () => {
+    mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("connect-btn-mailchimp"));
+    expect(getByTestId("mailchimp-connect-form")).toBeTruthy();
+    expect(getByTestId("mailchimp-api-key")).toBeTruthy();
+  });
+
+  it("renders the connected indicator with audience when connected", async () => {
+    mockUseMailchimpConnection.mockReturnValue({
+      data: {
+        connected: true,
+        client_id: "client-1",
+        server_prefix: "us6",
+        audience_id: "aud-1",
+        audience_name: "Newsletter",
+        created_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      },
+      isLoading: false,
+    });
+    const { getByText, getByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    expect(getByText("Conectado")).toBeTruthy();
+    expect(getByText(/Newsletter/)).toBeTruthy();
+    // Re-configure re-opens the same form (pre-filled)
+    expect(getByTestId("mailchimp-reconfigure-btn")).toBeTruthy();
   });
 });
 

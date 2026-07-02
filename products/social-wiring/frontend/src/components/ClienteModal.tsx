@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertCircle,
+  CheckCircle2,
   Clock,
   HardDrive,
   Loader2,
@@ -94,6 +95,11 @@ import {
   useDeleteClient,
   type Client,
 } from "@/hooks/useClients";
+import {
+  useMailchimpConnection,
+  useUpsertMailchimpConnection,
+  type MailchimpConnection,
+} from "@/hooks/useMailchimp";
 import { WhatsAppChatWindow } from "@/components/WhatsAppChatWindow";
 
 // ─── Type helpers ─────────────────────────────────────────────────────────────
@@ -134,7 +140,7 @@ const PROVIDER_CATALOG: ProviderDef[] = [
   { id: "google_drive", label: "Google Drive", icon: HardDrive, connectKind: "oauth"  },
   { id: "n8n",          label: "n8n",          icon: Network,   connectKind: "manual" },
   { id: "meta",         label: "Meta",         icon: Share2,    connectKind: "soon"   },
-  { id: "mailchimp",    label: "Mailchimp",    icon: Mail,      connectKind: "soon"   },
+  { id: "mailchimp",    label: "Mailchimp",    icon: Mail,      connectKind: "manual" },
 ];
 
 // ─── N8n inline connect form ──────────────────────────────────────────────────
@@ -237,6 +243,212 @@ function N8nConnectForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+// ─── Mailchimp inline connect form (manual API-key) ───────────────────────────
+
+function MailchimpConnectForm({
+  clientId,
+  connection,
+  onCancel,
+  onConnected,
+}: {
+  clientId: string;
+  connection: MailchimpConnection | null;
+  onCancel: () => void;
+  onConnected: () => void;
+}) {
+  const [apiKey, setApiKey] = useState("");
+  const [serverPrefix, setServerPrefix] = useState(connection?.server_prefix ?? "");
+  const [audienceId, setAudienceId] = useState(connection?.audience_id ?? "");
+  const upsert = useUpsertMailchimpConnection();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!apiKey.trim()) {
+      toast.error("API key é obrigatória.");
+      return;
+    }
+    try {
+      await upsert.mutateAsync({
+        api_key: apiKey.trim(),
+        server_prefix: serverPrefix.trim() || undefined,
+        audience_id: audienceId.trim() || undefined,
+        client_id: clientId,
+      });
+      toast.success("Mailchimp conectado com sucesso.");
+      onConnected();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Falha ao conectar Mailchimp.");
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-2 space-y-2 rounded-md border bg-muted/20 p-3"
+      data-testid="mailchimp-connect-form"
+    >
+      <div className="space-y-1">
+        <Label htmlFor="mc-apikey" className="text-xs">API Key *</Label>
+        <Input
+          id="mc-apikey"
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="••••••••-us6"
+          className="h-7 text-xs font-mono"
+          disabled={upsert.isPending}
+          data-testid="mailchimp-api-key"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="mc-prefix" className="text-xs">Server prefix (opcional)</Label>
+        <Input
+          id="mc-prefix"
+          value={serverPrefix}
+          onChange={(e) => setServerPrefix(e.target.value)}
+          placeholder="us6"
+          className="h-7 text-xs font-mono"
+          disabled={upsert.isPending}
+          data-testid="mailchimp-server-prefix"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="mc-audience" className="text-xs">Audience ID (opcional)</Label>
+        <Input
+          id="mc-audience"
+          value={audienceId}
+          onChange={(e) => setAudienceId(e.target.value)}
+          placeholder="a1b2c3d4e5"
+          className="h-7 text-xs font-mono"
+          disabled={upsert.isPending}
+          data-testid="mailchimp-audience-id"
+        />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs"
+          onClick={onCancel}
+          disabled={upsert.isPending}
+        >
+          Cancelar
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          className="h-7 text-xs"
+          disabled={upsert.isPending || !apiKey.trim()}
+          data-testid="mailchimp-connect-submit"
+        >
+          {upsert.isPending && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+          {connection?.connected ? "Salvar" : "Conectar"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ─── Mailchimp provider row (per-cliente, separate endpoint) ───────────────────
+
+/**
+ * Mailchimp is NOT an IntegrationAccount — its connection lives on the dedicated
+ * /api/mailchimp/connection endpoint scoped by client_id. This row renders the
+ * connected indicator (with re-configure) OR the manual connect affordance +
+ * inline form, mirroring the greyed-row chrome used by the other providers.
+ */
+function MailchimpProviderRow({
+  clientId,
+  icon: ProviderIcon,
+  label,
+}: {
+  clientId: string;
+  icon: LucideIcon;
+  label: string;
+}) {
+  const { data: connection, isLoading } = useMailchimpConnection(clientId);
+  const [formOpen, setFormOpen] = useState(false);
+  const connected = !!connection?.connected;
+
+  const subtitle = connected
+    ? [connection?.audience_name, connection?.server_prefix]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+
+  return (
+    <div className="space-y-1">
+      <div
+        className={
+          connected
+            ? "flex items-center justify-between rounded-lg border bg-card px-3 py-2.5"
+            : "flex items-center justify-between rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 opacity-70"
+        }
+        data-testid="provider-row-mailchimp"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <ProviderIcon
+            className={`h-4 w-4 shrink-0 ${connected ? "text-primary" : "text-muted-foreground"}`}
+          />
+          <div className="min-w-0">
+            <span
+              className={`block text-sm font-medium truncate ${connected ? "text-foreground" : "text-muted-foreground"}`}
+            >
+              {label}
+            </span>
+            {subtitle && (
+              <span className="block text-xs text-muted-foreground truncate">
+                {subtitle}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {isLoading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        ) : connected ? (
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1 text-xs text-primary">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Conectado
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setFormOpen((p) => !p)}
+              data-testid="mailchimp-reconfigure-btn"
+            >
+              Reconfigurar
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setFormOpen((p) => !p)}
+            data-testid="connect-btn-mailchimp"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Conectar
+          </Button>
+        )}
+      </div>
+
+      {formOpen && (
+        <MailchimpConnectForm
+          clientId={clientId}
+          connection={connection ?? null}
+          onCancel={() => setFormOpen(false)}
+          onConnected={() => setFormOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -553,6 +765,19 @@ function ContasTab({ client }: { client: Client }) {
             {PROVIDER_CATALOG.map((provider) => {
               const accounts = intAccounts.filter((a) => a.provider === provider.id);
               const ProviderIcon = provider.icon;
+
+              // Mailchimp uses a dedicated per-cliente endpoint
+              // (/api/mailchimp/connection), not the IntegrationAccounts store.
+              if (provider.id === "mailchimp") {
+                return (
+                  <MailchimpProviderRow
+                    key={provider.id}
+                    clientId={client.id}
+                    icon={ProviderIcon}
+                    label={provider.label}
+                  />
+                );
+              }
 
               // If accounts exist — show IntegrationCard rows
               if (accounts.length > 0) {
