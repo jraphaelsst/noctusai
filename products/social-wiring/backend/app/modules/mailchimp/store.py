@@ -32,7 +32,12 @@ _TABLE = "mailchimp_connections"
 
 @dataclass(frozen=True)
 class MailchimpConnectionRecord:
-    """One per-org Mailchimp connection.
+    """One per-scope Mailchimp connection.
+
+    Scope = ``(org_id, client_id)``. ``client_id`` is ``None`` for the
+    org-level default connection, or the owning cliente's id for a
+    per-cliente connection (migration 019, mirrors integration_accounts /
+    whatsapp_connections).
 
     ``api_key`` is populated ONLY when the caller explicitly requests
     decryption (``decrypt=True``); it is ``None`` on the read/probe path so
@@ -46,6 +51,7 @@ class MailchimpConnectionRecord:
     created_at: Any
     updated_at: Any
     api_key: Optional[str] = None
+    client_id: Optional[UUID] = None
 
 
 class MailchimpConnectionStore:
@@ -74,9 +80,19 @@ class MailchimpConnectionStore:
             ) from exc
 
     @staticmethod
+    def _norm_client_id(value: Any) -> Optional[str]:
+        """Normalise a client_id (UUID / str / None / "") to a canonical
+        ``str`` or ``None`` for scope comparison."""
+        if value in (None, ""):
+            return None
+        return str(value)
+
+    @classmethod
     def _record(
-        row: dict[str, Any], *, api_key: Optional[str] = None
+        cls, row: dict[str, Any], *, api_key: Optional[str] = None
     ) -> MailchimpConnectionRecord:
+        raw_cid = row.get("client_id")
+        client_id = UUID(str(raw_cid)) if raw_cid not in (None, "") else None
         return MailchimpConnectionRecord(
             id=UUID(str(row["id"])),
             org_id=UUID(str(row["org_id"])),
@@ -85,27 +101,42 @@ class MailchimpConnectionStore:
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
             api_key=api_key,
+            client_id=client_id,
         )
+
+    def _fetch_scoped_row(
+        self, org_id: UUID, client_id: Optional[UUID]
+    ) -> Optional[dict[str, Any]]:
+        """Return the raw row for ``(org_id, client_id)`` scope or None.
+
+        Filtering by ``client_id IS NULL`` is done in Python (not ``.eq(col,
+        None)``): a ``= NULL`` predicate never matches on SQLite and PostgREST
+        needs ``is.null`` — resolving in-memory keeps the store portable across
+        both the dev SQLiteClient and the prod admin client. Row counts per org
+        are tiny (one org-default + one per cliente)."""
+        resp = self._table().select("*").eq("org_id", str(org_id)).execute()
+        target = self._norm_client_id(client_id)
+        for row in list(resp.data or []):
+            if self._norm_client_id(row.get("client_id")) == target:
+                return row
+        return None
 
     # ─── reads ────────────────────────────────────────────────────────────
     def get_connection(
         self,
         org_id: UUID,
         *,
+        client_id: Optional[UUID] = None,
         decrypt: bool = False,
     ) -> Optional[MailchimpConnectionRecord]:
-        """Fetch the org's single connection row. ``decrypt=True`` populates
+        """Fetch the connection row for ``(org_id, client_id)`` scope.
+
+        ``client_id=None`` resolves the org-level default (client_id IS NULL);
+        a UUID resolves that cliente's connection. ``decrypt=True`` populates
         ``record.api_key`` (only for the live-client path)."""
-        resp = (
-            self._table()
-            .select("*")
-            .eq("org_id", str(org_id))
-            .execute()
-        )
-        rows = list(resp.data or [])
-        if not rows:
+        row = self._fetch_scoped_row(org_id, client_id)
+        if row is None:
             return None
-        row = rows[0]
         api_key = self._decrypt(row["encrypted_api_key"]) if decrypt else None
         return self._record(row, api_key=api_key)
 
@@ -117,32 +148,66 @@ class MailchimpConnectionStore:
         api_key: str,
         server_prefix: str,
         audience_id: Optional[str] = None,
+        client_id: Optional[UUID] = None,
     ) -> MailchimpConnectionRecord:
-        """Insert-or-replace the org's single connection row."""
+        """Insert-or-replace the connection row for ``(org_id, client_id)``.
+
+        Read-then-write (not DB upsert): the at-most-one-per-scope invariant is
+        enforced by two PARTIAL unique indexes (migration 019), which cannot be
+        named as a PostgREST ``on_conflict`` target. Resolving the existing row
+        first (by scope) then updating it by primary key is portable across the
+        dev SQLiteClient and the prod admin client, and keeps NULL client_id
+        semantics correct."""
+        now = datetime.now(timezone.utc).isoformat()
+        existing = self._fetch_scoped_row(org_id, client_id)
+        if existing is not None:
+            patch: dict[str, Any] = {
+                "encrypted_api_key": self._encrypt(api_key),
+                "server_prefix": server_prefix,
+                "audience_id": audience_id,
+                "updated_at": now,
+            }
+            resp = (
+                self._table()
+                .update(patch)
+                .eq("id", str(existing["id"]))
+                .execute()
+            )
+            rows = list(resp.data or [])
+            return self._record(rows[0]) if rows else self.get_connection(
+                org_id, client_id=client_id
+            ) or self._record({**existing, **patch})
+
         payload: dict[str, Any] = {
             "org_id": str(org_id),
+            "client_id": str(client_id) if client_id is not None else None,
             "encrypted_api_key": self._encrypt(api_key),
             "server_prefix": server_prefix,
             "audience_id": audience_id,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": now,
         }
-        resp = (
-            self._table()
-            .upsert(payload, on_conflict="org_id")
-            .execute()
-        )
+        resp = self._table().insert(payload).execute()
         rows = list(resp.data or [])
         if not rows:
-            # Some SQLite test paths return empty data on upsert; re-read.
-            return self.get_connection(org_id) or self._record(payload)
+            # Some SQLite test paths return empty data on insert; re-read.
+            return self.get_connection(org_id, client_id=client_id) or self._record(
+                payload
+            )
         return self._record(rows[0])
 
     def set_audience(
         self,
         org_id: UUID,
         audience_id: str,
+        *,
+        client_id: Optional[UUID] = None,
     ) -> Optional[MailchimpConnectionRecord]:
-        """Update ``audience_id`` on the org's existing connection."""
+        """Update ``audience_id`` on the scoped connection (org-default when
+        ``client_id`` is None). Resolves the scoped row by id first so the
+        NULL-client_id case works on both clients."""
+        existing = self._fetch_scoped_row(org_id, client_id)
+        if existing is None:
+            return None
         patch: dict[str, Any] = {
             "audience_id": audience_id,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -150,17 +215,27 @@ class MailchimpConnectionStore:
         resp = (
             self._table()
             .update(patch)
-            .eq("org_id", str(org_id))
+            .eq("id", str(existing["id"]))
             .execute()
         )
         rows = list(resp.data or [])
         return self._record(rows[0]) if rows else None
 
-    def delete_connection(self, org_id: UUID) -> bool:
+    def delete_connection(
+        self,
+        org_id: UUID,
+        *,
+        client_id: Optional[UUID] = None,
+    ) -> bool:
+        """Delete the scoped connection (org-default when ``client_id`` is
+        None). Resolves the scoped row by id first."""
+        existing = self._fetch_scoped_row(org_id, client_id)
+        if existing is None:
+            return False
         resp = (
             self._table()
             .delete()
-            .eq("org_id", str(org_id))
+            .eq("id", str(existing["id"]))
             .execute()
         )
         return bool(resp.data)

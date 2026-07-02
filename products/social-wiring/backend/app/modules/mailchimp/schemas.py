@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -47,9 +48,14 @@ def parse_server_prefix(api_key: str) -> str:
 # ── Connection ────────────────────────────────────────────────────────────────
 
 class ConnectionPutBody(StrictHttpModel):
-    """PUT /connection — write-only api_key + optional audience_id."""
+    """PUT /connection — write-only api_key + optional audience_id.
+
+    ``client_id`` scopes the connection to a cliente (migration 019). Omit /
+    None → the org-level default connection. When set, it must belong to the
+    calling org (validated in the router)."""
     api_key: str
     audience_id: Optional[str] = None
+    client_id: Optional[UUID] = None
 
 
 class ConnectionPatchBody(StrictHttpModel):
@@ -58,8 +64,12 @@ class ConnectionPatchBody(StrictHttpModel):
 
 
 class ConnectionOut(BaseModel):
-    """GET /connection shape — always 200, nulls when disconnected."""
+    """GET /connection shape — always 200, nulls when disconnected.
+
+    ``client_id`` echoes the scope probed/written: None for the org-level
+    default, or the owning cliente's id (migration 019)."""
     connected: bool
+    client_id: Optional[UUID] = None
     server_prefix: Optional[str] = None
     audience_id: Optional[str] = None
     audience_name: Optional[str] = None

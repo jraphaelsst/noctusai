@@ -470,12 +470,34 @@ class ContractFakeMailchimpClient:
 _MAILCHIMP_SCHEMA = """
 CREATE TABLE IF NOT EXISTS mailchimp_connections (
     id            TEXT PRIMARY KEY,
-    org_id        TEXT NOT NULL UNIQUE,
+    org_id        TEXT NOT NULL,
+    client_id     TEXT,
     encrypted_api_key TEXT NOT NULL,
     server_prefix TEXT NOT NULL,
     audience_id   TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Mirror migration 019: at-most-one-per-scope via two partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_mc_conn_org_default
+    ON mailchimp_connections (org_id) WHERE client_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_mc_conn_org_client
+    ON mailchimp_connections (org_id, client_id) WHERE client_id IS NOT NULL;
+"""
+
+# clients table (subset of migration 007) — lets the connection PUT route's
+# client-ownership validation resolve a real cliente in tests.
+_CLIENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS clients (
+    id          TEXT PRIMARY KEY,
+    org_id      TEXT NOT NULL,
+    slug        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'real_estate_agent',
+    notes       TEXT,
+    created_by  TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -528,6 +550,57 @@ def mailchimp_client(client, tmp_path: Path):
             app.dependency_overrides.pop(dep, None)
         else:
             app.dependency_overrides[dep] = prev
+
+
+@pytest.fixture
+def mailchimp_client_with_clients(mailchimp_client, tmp_path: Path):
+    """``mailchimp_client`` + a SQLite-backed ``ClientService`` (migration 019).
+
+    Overrides the ``get_client_service`` DI seam so the connection PUT route's
+    cliente-ownership validation resolves against a real ``clients`` table.
+    Seeds ONE cliente owned by the test org (``test-org-123`` → its coerced
+    UUID) and ONE owned by a DIFFERENT org.
+
+    Yields ``(auth_client, store, fake, org_client_id, foreign_client_id)``
+    where ``org_client_id`` belongs to the caller's org (validation passes) and
+    ``foreign_client_id`` belongs to another org (validation → 404).
+    """
+    from uuid import uuid4
+
+    from app.dependencies import coerce_org_uuid
+    from app.main import app
+    from app.routers.clients_router import get_client_service
+    from app.services.clients_service import ClientService
+
+    org_id = coerce_org_uuid("test-org-123")
+    org_client_id = uuid4()
+    foreign_org_id = uuid4()
+    foreign_client_id = uuid4()
+
+    db_path = tmp_path / "mailchimp_clients_test.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(_CLIENTS_SCHEMA)
+        conn.executemany(
+            "INSERT INTO clients (id, org_id, slug, name, kind) VALUES (?,?,?,?,?)",
+            [
+                (str(org_client_id), str(org_id), "cliente-a", "Cliente A", "real_estate_agent"),
+                (str(foreign_client_id), str(foreign_org_id), "cliente-x", "Cliente X", "real_estate_agent"),
+            ],
+        )
+        conn.commit()
+
+    svc = ClientService(SQLiteClient(db_path))
+
+    c, store, fake = mailchimp_client
+    _prev = app.dependency_overrides.get(get_client_service)
+    app.dependency_overrides[get_client_service] = lambda: svc
+
+    yield c, store, fake, org_client_id, foreign_client_id
+
+    if _prev is None:
+        app.dependency_overrides.pop(get_client_service, None)
+    else:
+        app.dependency_overrides[get_client_service] = _prev
 
 
 @pytest.fixture
