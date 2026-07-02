@@ -79,7 +79,7 @@ services:
     # The `127.0.0.1:` prefix is the security carve-out — the port is reachable
     # ONLY from the VPS host's loopback; never from the public interface.
     # Tunneling clients reach it as `localhost:5432` after `ssh -L ... noctus-vps`.
-    # KB § PATTERNS/devops/prod-cache-container.md · projects/cache-pg-vps-bringup/PROJECT.md §7.
+    # KB § PATTERNS/devops/prod-cache-container.md.
     ports:
       - "127.0.0.1:5432:5432"
     environment:

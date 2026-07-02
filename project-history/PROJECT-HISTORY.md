@@ -5,6 +5,9 @@ _Source of truth: `project-history/ledger.ndjson` (see `projects/project-history
 
 | Date | Slug | Scope | Status | Total Tokens | Short Summary |
 | :--- | :--- | :--- | :--- | ---: | :--- |
+| 2026-07-02 | cache-pg-vps-bringup | cross-product | shipped | 41810 | **Created:** 2026-05-26 |
+| 2026-07-02 | daily-life-wiring | single-product | shipped | 29565 | **Created:** 2026-05-11 |
+| 2026-07-02 | erp-wiring | single-product | shipped | 67984 | **Created:** 2026-05-11 |
 | 2026-05-25 | fix-derive-cors-origins-house-port | cross-product | shipped | 2514 | **Created:** 2026-05-25 |
 | 2026-05-25 | fleet-rate-limiter-conftest-adoption | cross-product | shipped | 1211 | Fleet-wide adoption of the seed `reset_rate_limiter` autouse fixture + the `check_limiter_conftest_import` Stage-4 keeper. Closed 2026-05-25: grounding against the tree showed all limiter-bearing products already adopted it except knowledge-extractor (added in the close commit); the keeper already shipped + is wired into `check_all_products`. Success criteria met. |
 | 2026-05-25 | kit-connector-boilerplate-consolidation | cross-product | shipped | 22071 | **Created:** 2026-05-21 |

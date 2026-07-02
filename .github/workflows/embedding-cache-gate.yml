@@ -68,8 +68,8 @@ jobs:
         run: python mcp/noctusai/cli.py --check-prod-cache-reachable
 
       - name: Open SSH tunnel to prod cache-pg
-        # Phase 3 connectivity (Route A — KB § PATTERNS/common/dispatch-with-project-and-notes.md §4a.3
-        # of projects/cache-pg-vps-bringup/). The cache-pg container exposes
+        # Phase 3 connectivity (Route A — KB § PATTERNS/common/dispatch-with-project-and-notes.md §4a.3).
+        # The cache-pg container exposes
         # 5432 only on the VPS host's 127.0.0.1; CI tunnels via a restricted
         # deploy key (command="/bin/false",no-pty,permitopen="127.0.0.1:5432")
         # so the key can ONLY forward this port and CANNOT execute commands.
