@@ -3,7 +3,7 @@ import { useAuthStore } from '@noctusai/seed/infra';
 import { api } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, StatusPaginaPanel } from "@noctusai/lib";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -279,6 +279,13 @@ export default function Equipe() {
             </div>
           )}
         </section>
+      )}
+
+      {/* Page-visibility control — the status_pagina write-side organ (seed lib). */}
+      {isAdmin && (
+        <div className="mt-6">
+          <StatusPaginaPanel api={api} enabled />
+        </div>
       )}
 
       {/* Invite Modal */}

@@ -79,6 +79,10 @@ vi.mock("@noctusai/lib", () => ({
     org: { role: (metadata?.org_role as string) ?? "member" },
     noctus: {},
   }),
+  // StatusPaginaPanel is a react-query organ (seed lib) with its own
+  // dedicated test coverage (seed/lib/frontend/src/components/StatusPaginaPanel.test.tsx);
+  // this page-contract test doesn't wire a QueryClientProvider, so stub it.
+  StatusPaginaPanel: () => null,
 }));
 
 vi.mock("sonner", () => ({

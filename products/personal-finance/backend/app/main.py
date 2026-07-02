@@ -61,7 +61,7 @@ app = create_product_app(
     limiter=limiter,
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
-    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback"],
+    standard_routers=["health", "notificacoes", "team", "ai_outputs", "ai_feedback", "status_paginas"],
     consent_features="app.services.ai_consent_features",
     # Ops endpoints — `/_health` (liveness, always cheap) + `/_ready`
     # (readiness, may include vendor pings). Empty `liveness_hooks` keeps

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuthStore, api } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, StatusPaginaPanel } from "@noctusai/lib";
 
 interface Member {
   id: string;
@@ -241,6 +241,12 @@ export default function Equipe() {
             </div>
           )}
         </section>
+      )}
+
+      {isAdmin && (
+        <div className="mt-6">
+          <StatusPaginaPanel api={api} enabled />
+        </div>
       )}
 
       {showInviteModal && (
