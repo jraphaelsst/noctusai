@@ -15,9 +15,14 @@ state must be shared too — it lives in the git-common cache dir).
 Behaviour (all knobs env-overridable):
   • min inter-attempt interval (``NOCTUS_SSH_MIN_INTERVAL``, default 3s) — never burst.
   • circuit-breaker: after N consecutive CONNECTION failures
-    (``NOCTUS_SSH_CIRCUIT_FAILS``, default 3) OPEN the circuit for a cooldown
+    (``NOCTUS_SSH_CIRCUIT_FAILS``, default 2 → ≤4 real attempts escape, under the
+    prod VPS sshd maxretry of 5) OPEN the circuit for a cooldown
     (``NOCTUS_SSH_CIRCUIT_COOLDOWN``, default 600s ≥ typical fail2ban bantime).
     While OPEN, return immediately WITHOUT connecting. A success closes it.
+  • the read-modify-write of the shared state + the attempt itself run under an
+    exclusive cross-process/worktree file lock (``_state_lock``) so concurrent
+    tools SERIALIZE — no storm can form (measured: 8 concurrent tools escaped 48
+    attempts unlocked vs 4 locked). Degrades to a warned no-op if flock is absent.
   • failure classification — only a genuine CONNECTION failure (ssh's own exit 255
     or a connection-error stderr) counts toward the streak. A remote command that
     RAN and returned nonzero (the edge is healthy) never trips the circuit.
@@ -30,6 +35,7 @@ feedback_external_api_hot_path_boundaries (bound timeouts, degrade gracefully).
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 import logging
@@ -37,9 +43,15 @@ import os
 import shlex
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Sequence
+
+try:  # POSIX advisory file lock — degrade to a no-op lock on non-POSIX.
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover — Windows / no fcntl
+    _fcntl = None  # type: ignore[assignment]
 
 from .cache_backend import cache_dir
 
@@ -47,7 +59,11 @@ logger = logging.getLogger(__name__)
 
 # ── tuning knobs (env-overridable) ──────────────────────────────────────────
 _DEFAULT_MIN_INTERVAL = 3.0       # seconds between attempts to the same host
-_DEFAULT_CIRCUIT_FAILS = 3        # consecutive conn failures before OPEN
+_DEFAULT_CIRCUIT_FAILS = 2        # consecutive conn failures before OPEN.
+# WHY 2, not 3: each failing call makes up to 2 real ssh attempts (one backed-off
+# retry), so N calls = 2N attempts escape before the circuit opens. The prod VPS
+# sshd jail is maxretry=5 / findtime=600s (verified 2026-07-02). N=3 → 6 attempts
+# > 5 = could self-trip the ban on a single storm; N=2 → 4 attempts ≤ 5 (margin 1).
 _DEFAULT_CIRCUIT_COOLDOWN = 600.0  # seconds OPEN (≥ typical fail2ban bantime)
 _DEFAULT_CONNECT_TIMEOUT = 10     # ssh -o ConnectTimeout=<n>
 
@@ -144,11 +160,56 @@ def _load_state(state_path: Path) -> dict:
 def _save_state(state_path: Path, state: dict) -> None:
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = state_path.with_suffix(state_path.suffix + f".tmp.{os.getpid()}")
+        # Unique per writer (pid + thread) so concurrent writers in ONE process
+        # never stamp on each other's temp file (pid alone collides across
+        # threads → os.replace races to "No such file or directory").
+        tmp = state_path.with_suffix(
+            state_path.suffix + f".tmp.{os.getpid()}.{threading.get_ident()}"
+        )
         tmp.write_text(json.dumps(state, indent=2, sort_keys=True))
         os.replace(tmp, state_path)  # atomic on POSIX
     except OSError as exc:
         logger.warning("_vps_ssh: could not persist throttle state to %s (%s)", state_path, exc)
+
+
+@contextlib.contextmanager
+def _state_lock(state_path: Path):
+    """Exclusive cross-process/worktree lock held across the whole read-modify-
+    write + attempt critical section.
+
+    WHY (measured): fail2ban counts the WHOLE connection history, so the back-off
+    state must be updated atomically across concurrent tools. Without this lock an
+    unsynchronized read-modify-write of the failure counter loses increments and
+    the un-gated attempts fire as a burst — a stress test of 8 concurrent tools
+    let 48 real SSH attempts escape before lockout, vs a serial ceiling of 6.
+    Holding the lock across the attempt SERIALIZES VPS SSH (one in flight at a
+    time) so a storm can never form — which is the entire point of the throttle.
+
+    Degrades to a no-op (with a warning) if flock is unavailable — advisory infra
+    must never block a production deploy."""
+    if _fcntl is None:
+        yield
+        return
+    lock_path = state_path.with_suffix(state_path.suffix + ".lock")
+    fd = None
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+    except OSError as exc:  # lock unavailable → proceed unsynchronized, but say so
+        logger.warning("_vps_ssh: state lock unavailable (%s); proceeding unsynchronized", exc)
+        if fd is not None:
+            os.close(fd)
+            fd = None
+    try:
+        yield
+    finally:
+        if fd is not None:
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
 
 
 def _host_entry(state: dict, ssh_host: str) -> dict:
@@ -247,52 +308,58 @@ def run_remote(
     cooldown = _env_float("NOCTUS_SSH_CIRCUIT_COOLDOWN", _DEFAULT_CIRCUIT_COOLDOWN)
 
     remote_cmd = _normalize(argv)
-    state = _load_state(state_path)
-    entry = _host_entry(state, ssh_host)
 
-    # ── circuit OPEN? back off without connecting (unless forced) ──
-    open_until = entry["circuit_open_until"]
-    if open_until and now() < open_until and not forced:
-        msg = (
-            f"ssh circuit OPEN for {ssh_host}: {entry['consecutive_failure_count']} "
-            f"consecutive connection failures; backing off until {_iso(open_until)} "
-            f"to avoid tripping fail2ban. Pass force=True / set NOCTUS_SSH_FORCE=1 to "
-            f"override, or delete {state_path}."
-        )
-        logger.warning("_vps_ssh: %s", msg)
-        return 255, "", msg
+    # Hold the shared lock across the ENTIRE read-modify-write + attempt so that
+    # concurrent tools/worktrees/processes serialize (one SSH in flight at a time)
+    # and the failure counter can never lose an increment. State is (re-)read
+    # INSIDE the lock so the decision is made on the current shared value.
+    with _state_lock(state_path):
+        state = _load_state(state_path)
+        entry = _host_entry(state, ssh_host)
 
-    # ── min inter-attempt interval — sleep the remainder, never burst ──
-    last = entry["last_attempt_ts"]
-    if last:
-        elapsed = now() - last
-        remaining = min_interval - elapsed
-        if remaining > 0:
-            sleep(remaining)
-
-    # ── attempt (with ONE backed-off retry on a connection failure) ──
-    rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
-    if _is_connection_failure(rc, err):
-        sleep(min_interval)
-        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
-
-    # ── update shared state ──
-    entry["last_attempt_ts"] = now()
-    if _is_connection_failure(rc, err):
-        entry["consecutive_failure_count"] += 1
-        if entry["consecutive_failure_count"] >= circuit_fails:
-            entry["circuit_open_until"] = now() + cooldown
-            logger.warning(
-                "_vps_ssh: circuit OPENED for %s after %d consecutive connection "
-                "failures; backing off %.0fs until %s",
-                ssh_host, entry["consecutive_failure_count"], cooldown,
-                _iso(entry["circuit_open_until"]),
+        # ── circuit OPEN? back off without connecting (unless forced) ──
+        open_until = entry["circuit_open_until"]
+        if open_until and now() < open_until and not forced:
+            msg = (
+                f"ssh circuit OPEN for {ssh_host}: {entry['consecutive_failure_count']} "
+                f"consecutive connection failures; backing off until {_iso(open_until)} "
+                f"to avoid tripping fail2ban. Pass force=True / set NOCTUS_SSH_FORCE=1 to "
+                f"override, or delete {state_path}."
             )
-    else:
-        # Success OR remote-nonzero-but-connected → the edge is healthy; reset.
-        entry["consecutive_failure_count"] = 0
-        entry["circuit_open_until"] = 0.0
+            logger.warning("_vps_ssh: %s", msg)
+            return 255, "", msg
 
-    state[ssh_host] = entry
-    _save_state(state_path, state)
-    return rc, out, err
+        # ── min inter-attempt interval — sleep the remainder, never burst ──
+        last = entry["last_attempt_ts"]
+        if last:
+            elapsed = now() - last
+            remaining = min_interval - elapsed
+            if remaining > 0:
+                sleep(remaining)
+
+        # ── attempt (with ONE backed-off retry on a connection failure) ──
+        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
+        if _is_connection_failure(rc, err):
+            sleep(min_interval)
+            rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
+
+        # ── update shared state ──
+        entry["last_attempt_ts"] = now()
+        if _is_connection_failure(rc, err):
+            entry["consecutive_failure_count"] += 1
+            if entry["consecutive_failure_count"] >= circuit_fails:
+                entry["circuit_open_until"] = now() + cooldown
+                logger.warning(
+                    "_vps_ssh: circuit OPENED for %s after %d consecutive connection "
+                    "failures; backing off %.0fs until %s",
+                    ssh_host, entry["consecutive_failure_count"], cooldown,
+                    _iso(entry["circuit_open_until"]),
+                )
+        else:
+            # Success OR remote-nonzero-but-connected → the edge is healthy; reset.
+            entry["consecutive_failure_count"] = 0
+            entry["circuit_open_until"] = 0.0
+
+        state[ssh_host] = entry
+        _save_state(state_path, state)
+        return rc, out, err
