@@ -1,0 +1,40 @@
+name: StatusPaginaPanel
+path: seed/lib/frontend/src/components/StatusPaginaPanel.tsx
+phase: pilot-seed
+registered_at: '2026-07-02'
+validation_status: emerging
+known_facts:
+- Shared admin organ for page-visibility control — the WRITE side of the status_pagina
+  system whose READ side is the sibling usePageStatus hook (../page-status). Lists
+  every page and changes each page's status (producao/desenvolvimento/desativado)
+  via a native <select>, PATCHing on change.
+- Product-agnostic — takes the consuming product's own `api` client (structurally
+  `{ get, patch }`, satisfied by the seed ApiClient). Gating (owner/admin/dev) is the
+  CONSUMER's responsibility via the `enabled` prop; the backend enforces 403 regardless.
+- 'Contract: GET /api/status-paginas → 200 StatusPaginaRow[] (admin/dev only);
+  PATCH /api/status-paginas/{id} body { status } → 200 updated row.'
+- Uses react-query (useQuery/useMutation) — requires a QueryClientProvider in the host
+  tree, same wiring the sibling usePageStatus relies on (seed framework createProductApp
+  provides one). Uses sonner toast + design-system Badge/Button primitives.
+- Pilot consumers (2) — social-wiring Settings.tsx ("Visibilidade de páginas" tab) and
+  erp-imobiliario Admin.tsx (Card below user-roles). Both pre-gated to owner/admin/dev.
+errors_encountered: []
+drifts_surfaced:
+- 'ResourceManager (the canonical page-scoped CRUD organ) deliberately avoids react-query
+  ("products are not wired for react-query"), but the seed framework DOES wrap
+  QueryClientProvider (app.tsx) and usePageStatus already uses useQuery — so that comment
+  is conservative/stale. This organ follows the contract brief (react-query) safely.'
+alternatives_considered:
+- 'Self-contained useState + api pattern (like ResourceManager) — rejected in favour of
+  react-query per the dispatch contract; the query cache + invalidate gives free refresh
+  after PATCH and shares the [status-paginas] key with usePageStatus.'
+- 'Importing a product toast — rejected; uses sonner directly (a lib dep, same as
+  ResourceManager) plus optional onChanged/onError callbacks to stay product-agnostic.'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

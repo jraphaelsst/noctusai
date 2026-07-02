@@ -11,3 +11,10 @@ export type {
   ResourceField,
   ResourceFieldType,
 } from './ResourceManager';
+export { StatusPaginaPanel, STATUS_PAGINAS_QUERY_KEY } from './StatusPaginaPanel';
+export type {
+  StatusPaginaPanelProps,
+  StatusPaginaApi,
+  StatusPaginaRow,
+  StatusPaginaStatus,
+} from './StatusPaginaPanel';

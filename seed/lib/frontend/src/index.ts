@@ -66,6 +66,17 @@ export { createProductSupabase, assertSupabaseBuildEnv } from './supabase';
 export { ErrorBoundary, withErrorBoundary, SSOCallback, createAuthProvider, FakeModeBadge } from './components/index';
 export type { SSOCallbackProps, FakeModeBadgeProps, FakeModeBadgeVariant } from './components/index';
 
+// Page-visibility admin organ — the WRITE side of the status_pagina system
+// (the READ side is `usePageStatus`). Product-agnostic; takes the product's
+// own api client. Gate the `enabled` prop to owner/admin/dev.
+export { StatusPaginaPanel, STATUS_PAGINAS_QUERY_KEY } from './components/index';
+export type {
+  StatusPaginaPanelProps,
+  StatusPaginaApi,
+  StatusPaginaRow,
+  StatusPaginaStatus,
+} from './components/index';
+
 // Env-mode hook (drives FakeModeBadge; exposed for products that want to
 // branch on backend-adapter mode without rendering the badge directly).
 export { useEnvMode } from './hooks/useEnvMode';

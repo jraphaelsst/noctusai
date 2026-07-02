@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@noctusai/seed/infra';
+import { supabase, api } from '@noctusai/seed/infra';
+import { StatusPaginaPanel } from '@noctusai/lib';
 import { useIsAdmin } from '@/hooks/useUserRole';
 import { useProfiles } from '@/hooks/useProfiles';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
@@ -208,6 +209,12 @@ export default function Admin() {
           )}
         </CardContent>
       </Card>
+
+      {/* Page-visibility control — the status_pagina write-side organ (seed lib).
+          This Admin page is already admin-gated (returns null when !isAdmin). */}
+      <div className="mt-6">
+        <StatusPaginaPanel api={api} enabled />
+      </div>
 
       {selectedUser && (
         <AdicionarRoleModal

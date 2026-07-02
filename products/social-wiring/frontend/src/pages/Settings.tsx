@@ -29,6 +29,10 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
+import { useAuthStore } from "@noctusai/seed/infra";
+import { resolveSSOContext, StatusPaginaPanel } from "@noctusai/lib";
+import { api } from "@/lib/api";
+
 import {
   useRecipients,
   useKeysStatus,
@@ -307,8 +311,23 @@ function ApiKeysTab() {
   );
 }
 
+// ─── Visibilidade de paginas tab (owner/admin/dev) ──────────────────────
+// The status_pagina write-side organ lives in the seed lib and takes the
+// product's own api client — see StatusPaginaPanel (@noctusai/lib).
+function VisibilidadeTab() {
+  return <StatusPaginaPanel api={api} enabled />;
+}
+
 // ─── Page shell ────────────────────────────────────────────────────────
 export default function Settings() {
+  const { user } = useAuthStore();
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const isAdminOrDev =
+    ssoCtx.isProductAdmin ||
+    ssoCtx.org.role === "owner" ||
+    ssoCtx.org.role === "admin" ||
+    ssoCtx.org.role === "dev";
+
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8">
       <header className="mb-8">
@@ -319,9 +338,16 @@ export default function Settings() {
       </header>
 
       <Tabs defaultValue="notifications" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:max-w-xs">
+        <TabsList
+          className={`grid w-full ${
+            isAdminOrDev ? "grid-cols-3 sm:max-w-md" : "grid-cols-2 sm:max-w-xs"
+          }`}
+        >
           <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
+          {isAdminOrDev && (
+            <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="notifications" className="mt-6">
@@ -330,6 +356,11 @@ export default function Settings() {
         <TabsContent value="keys" className="mt-6">
           <ApiKeysTab />
         </TabsContent>
+        {isAdminOrDev && (
+          <TabsContent value="visibilidade" className="mt-6">
+            <VisibilidadeTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
