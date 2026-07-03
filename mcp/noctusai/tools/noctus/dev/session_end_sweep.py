@@ -36,14 +36,103 @@ KB § CONTEXT/PATTERNS/common/session-end-sweep.md.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Append-only, union-merge, cache-EXEMPT ledgers — the only paths safe to
+# auto-commit + FF-push at session close (a push touching only these never
+# triggers a cache/embedding refresh, so it can never spawn NEW churn).
+_LEDGER_PATHS = [
+    "project-history/vector-costs.ndjson",
+    "project-history/auto-improvement.ndjson",
+    "project-history/ledger.ndjson",
+    "project-history/worktree-salvage.ndjson",
+    "project-history/branch-tree.ndjson",
+]
+
+
+def _ledger_git_runner(cmd: list[str]) -> tuple[int, str, str]:
+    """git runner for `commit_and_ff_push_ledger`. `cmd` already starts with
+    'git' (the helper builds the full `git -C <root> …`). Runs with the refresh
+    + cost-log-auto-commit SKIP flags set, so the FF-push it issues canNOT trigger
+    an embedding refresh → canNOT append a fresh cost row → the delivery converges
+    in ONE push (this is what makes 'session ends local==remote' hold)."""
+    env = {**os.environ, "NOCTUS_SKIP_EMBED_REFRESH": "1", "NOCTUS_SKIP_COSTLOG_COMMIT": "1"}
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, r.stdout, r.stderr
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return 1, "", str(e)
+
+
+def deliver_trailing_ledgers(
+    repo_root: Path,
+    *,
+    dev_branch: str = "dev",
+    remote: str = "origin",
+    _runner: Callable[[list[str]], tuple[int, str, str]] | None = None,
+) -> dict[str, Any]:
+    """Auto-deliver any trailing append-only ledger churn (the recurring
+    `chore(cost-log)` commit + any dirty ledger row) from the PRIMARY dev checkout
+    to `origin/dev`, so a session ends `local==remote` with nothing that looks
+    like stale/pending work.
+
+    Safe by construction: reuses `commit_and_ff_push_ledger` (fetch → divergence-
+    guard that REFUSES if any NON-ledger commit is ahead → rebase → FF-push, never
+    force), runs the push with refresh SKIPPED so it can't spawn new churn, and
+    never raises. Returns a structured `{status, pushed, detail}`.
+    """
+    runner = _runner or _ledger_git_runner
+    root = str(repo_root)
+    dev_ref = f"{remote}/{dev_branch}"
+    try:
+        from ._ledger_push import commit_and_ff_push_ledger  # lazy — avoid import cycle
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "pushed": False, "error": f"ledger-push helper unavailable: {e}"}
+
+    # SAFETY: the push helper does `rebase origin/dev` + `push HEAD:dev`, so the
+    # primary checkout MUST be on `dev` — otherwise we'd rebase/push the wrong
+    # branch. If it isn't, skip cleanly (the churn ships on the next on-dev sweep).
+    rc_b, cur_branch, _ = runner(["git", "-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"])
+    if rc_b != 0 or (cur_branch or "").strip() != dev_branch:
+        return {"status": "skipped", "pushed": False,
+                "reason": f"primary checkout not on '{dev_branch}' (on '{(cur_branch or '').strip() or 'detached'}')"}
+
+    # Is any ledger path dirty (uncommitted), or is there a trailing committed row?
+    rc_s, out_s, _ = runner(["git", "-C", root, "status", "--porcelain", "--", *_LEDGER_PATHS])
+    dirty = bool((out_s or "").strip())
+    rc_a, out_a, _ = runner(["git", "-C", root, "rev-list", f"{dev_ref}..{dev_branch}"])
+    ahead = [s for s in (out_a or "").splitlines() if s.strip()]
+    if not dirty and not ahead:
+        return {"status": "clean", "pushed": False, "reason": "no trailing ledger churn"}
+
+    result = commit_and_ff_push_ledger(
+        runner=runner,
+        rel_paths=_LEDGER_PATHS,
+        dev_branch=dev_branch,
+        remote=remote,
+        root=root,
+        already_committed=not dirty,  # dirty → commit+push; clean-but-ahead → push existing
+        commit_msg=(
+            "chore(cost-log): deliver session ledger churn [auto]\n\n"
+            "Session-end auto-delivery (session_end_sweep) so dev ends local==remote "
+            "and the append-only ledger churn never lingers as apparent stale work.\n\n"
+            "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+        ) if dirty else None,
+    )
+    return {
+        "status": result.get("status", "error" if not result.get("ok") else "?"),
+        "pushed": bool(result.get("pushed", False)),
+        "detail": result,
+    }
 
 
 def _run_git(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
@@ -104,7 +193,7 @@ def _has_uncommitted(repo_root: Path, worktree_path: Path) -> bool:
     return bool(out.strip())
 
 
-def sweep(repo_root: Path | None = None) -> dict[str, Any]:
+def sweep(repo_root: Path | None = None, deliver_ledgers: bool = True) -> dict[str, Any]:
     """Survey all worktrees + orphan branches; classify each.
 
     Returns:
@@ -218,12 +307,25 @@ def sweep(repo_root: Path | None = None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # AUTO-DELIVER trailing ledger churn (the recurring `chore(cost-log)` commit +
+    # any dirty ledger row, incl. the sweep-summary row just appended above) →
+    # origin/dev, so the session ends local==remote with nothing that looks like
+    # stale/pending work. Best-effort, ledger-only, FF, refresh-skipped. Runs LAST
+    # (after the summary append) so it also delivers that row.
+    ledger_delivery: dict[str, Any] = {"status": "skipped", "reason": "deliver_ledgers=False"}
+    if deliver_ledgers:
+        try:
+            ledger_delivery = deliver_trailing_ledgers(repo_root)
+        except Exception as e:  # noqa: BLE001 — never fail the survey over delivery
+            ledger_delivery = {"status": "error", "pushed": False, "error": str(e)[:200]}
+
     return {
         "ok": True,
         "sweep_ts": _now_iso(),
         "worktrees": wt_findings,
         "orphan_branches": orphan_result,
         "remote_branches": remote_summary,
+        "ledger_delivery": ledger_delivery,
     }
 
 
