@@ -947,6 +947,7 @@ class TestReadPathRegression:
             "list_instagram_accounts",
             "list_instagram_media",
             "get_instagram_media_insights",
+            "get_instagram_account_insights",
             "publish_facebook_post",
             "publish_instagram_media",
             "publish_instagram_carousel",
@@ -960,6 +961,93 @@ class TestReadPathRegression:
                 assert callable(getattr(impl, name)), (
                     f"{type(impl).__name__} missing {name}"
                 )
+
+
+# ─── TestAccountInsights ──────────────────────────────────────────────────
+
+
+class TestAccountInsights:
+    """`get_instagram_account_insights` — the account-level (IG User)
+    insights read, distinct from the per-media call. Reuses the shared
+    `insights_from_body` mapper (same Graph `/{id}/insights` shape)."""
+
+    def test_fake_seeded_roundtrip(self):
+        fake = FakeMetaAdapter().seed(
+            account_insights={
+                "IG1": PostInsights(
+                    object_id="IG1",
+                    metrics={"reach": 1200, "profile_views": 40,
+                             "follower_count": 5},
+                )
+            }
+        )
+        ins = fake.get_instagram_account_insights("IG1")
+        assert ins.object_id == "IG1"
+        assert ins.metrics["reach"] == 1200
+        assert ins.metrics["follower_count"] == 5
+
+    def test_fake_unseeded_default_empty(self):
+        fake = FakeMetaAdapter()
+        ins = fake.get_instagram_account_insights("nope")
+        assert ins.object_id == "nope"
+        assert ins.metrics == {}
+
+    def test_fake_ignores_window_args_for_parity(self):
+        # The window/period/metric args exist for Protocol parity — the
+        # Fake accepts them without error and serves the seeded data.
+        fake = FakeMetaAdapter().seed(
+            account_insights={"IG1": PostInsights(object_id="IG1",
+                                                  metrics={"reach": 9})}
+        )
+        ins = fake.get_instagram_account_insights(
+            "IG1", metrics=["reach"], period="week", since=1, until=2
+        )
+        assert ins.metrics["reach"] == 9
+
+    def test_real_default_metrics_and_endpoint(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        captured = {}
+
+        def _get(url, **kw):
+            captured["url"] = url
+            captured["params"] = kw.get("params")
+            return _FakeResponse(
+                {"data": [
+                    {"name": "reach", "period": "day",
+                     "values": [{"value": 300}]},
+                    {"name": "profile_views", "period": "day",
+                     "values": [{"value": 12}]},
+                ]}
+            )
+
+        with patch.object(httpx, "get", side_effect=_get):
+            ins = a.get_instagram_account_insights("IG1")
+        assert ins.object_id == "IG1"
+        assert ins.metrics == {"reach": 300, "profile_views": 12}
+        assert captured["url"].endswith("IG1/insights")
+        # Default metric list + daily period; `impressions` deliberately
+        # absent (retired at account level in v22).
+        assert captured["params"]["metric"] == "reach,profile_views,follower_count"
+        assert captured["params"]["period"] == "day"
+        assert "impressions" not in captured["params"]["metric"]
+
+    def test_real_custom_metrics_and_window_passthrough(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        captured = {}
+
+        def _get(url, **kw):
+            captured["params"] = kw.get("params")
+            return _FakeResponse({"data": []})
+
+        with patch.object(httpx, "get", side_effect=_get):
+            a.get_instagram_account_insights(
+                "IG1", metrics=["reach"], period="days_28",
+                since=1000, until=2000,
+            )
+        assert captured["params"]["metric"] == "reach"
+        assert captured["params"]["period"] == "days_28"
+        assert captured["params"]["since"] == 1000
+        assert captured["params"]["until"] == 2000
 
 
 # ─── TestPollMediaStatus ──────────────────────────────────────────────────

@@ -73,6 +73,25 @@ IG_MEDIA_INSIGHT_METRICS = [
     "video_views",  # only meaningful for VIDEO / REELS
 ]
 
+# Account-level (IG User) insights — the `/{ig-user-id}/insights` endpoint,
+# distinct from the per-media `/{media-id}/insights` above. Conservative
+# default: the three long-stable `period=day` account metrics that need no
+# `metric_type=total_value` handling and no extra scope beyond
+# `instagram_manage_insights`. `impressions` was retired at the account level
+# in Graph v22 (kept only per-media, and even there via `views` in newer
+# versions) — deliberately EXCLUDED here so the default call never 400s on a
+# current app. Richer metrics (`accounts_engaged`, `total_interactions`,
+# `website_clicks`, `views`) are opt-in via the method's `metrics=` param once
+# the live account confirms which its app version exposes (calibrate against
+# the real token — mirrors the WAHA response-shape-drift discipline). The
+# adapter keeps the raw daily series on `PostInsights.raw`, so no metric's
+# per-day breakdown is lost even though `metrics` flattens to one number each.
+IG_ACCOUNT_INSIGHT_METRICS = [
+    "reach",
+    "profile_views",
+    "follower_count",
+]
+
 
 # ─── Datetime ─────────────────────────────────────────────────────────────
 
@@ -244,6 +263,7 @@ def insights_from_body(
 
 __all__ = [
     "IG_ACCOUNT_FIELDS",
+    "IG_ACCOUNT_INSIGHT_METRICS",
     "IG_MEDIA_FIELDS",
     "IG_MEDIA_INSIGHT_METRICS",
     "ME_FIELDS",

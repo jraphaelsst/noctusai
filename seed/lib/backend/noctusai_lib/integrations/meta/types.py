@@ -443,6 +443,16 @@ class MetaAdapter(Protocol):
 
     def get_instagram_media_insights(self, media_id: str) -> PostInsights: ...
 
+    def get_instagram_account_insights(
+        self,
+        ig_user_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights: ...
+
     # ─── Write / ads surface (additive — read callers unaffected) ──────
 
     def publish_facebook_post(

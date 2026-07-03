@@ -50,6 +50,7 @@ from noctusai_lib.integrations.meta._meta_api import MetaGraphError
 from noctusai_lib.integrations.meta.credentials import MetaCredentialResolver
 from noctusai_lib.integrations.meta.mappers import (
     IG_ACCOUNT_FIELDS,
+    IG_ACCOUNT_INSIGHT_METRICS,
     IG_MEDIA_FIELDS,
     IG_MEDIA_INSIGHT_METRICS,
     ME_FIELDS,
@@ -317,6 +318,47 @@ class MetaOAuthAdapter:
             version=self._version,
         )
         return insights_from_body(media_id, body)
+
+    def get_instagram_account_insights(
+        self,
+        ig_user_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights:
+        """Account-level (IG User) insights over a time window.
+
+        Hits `GET /{ig-user-id}/insights` — the account endpoint,
+        distinct from `get_instagram_media_insights`'s per-media call.
+        Needs the `instagram_manage_insights` scope, which reading your
+        OWN account's insights grants in a Development-mode app (no App
+        Review) — the flat `metrics` map is the summed/last value per
+        metric, and `raw` keeps the full per-day series so the snapshot
+        layer can persist a trend.
+
+        `metrics` defaults to `IG_ACCOUNT_INSIGHT_METRICS` (the stable
+        `period=day` trio). `since`/`until` are unix timestamps bounding
+        the window (Graph caps account insights at ~30 days per call);
+        omit for Graph's default recent window. `period` is Graph's
+        aggregation bucket (`day` | `week` | `days_28`)."""
+
+        params: dict[str, Any] = {
+            "metric": ",".join(metrics or IG_ACCOUNT_INSIGHT_METRICS),
+            "period": period,
+        }
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
+        body = _meta_api.graph_get(
+            f"{ig_user_id}/insights",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+        )
+        return insights_from_body(ig_user_id, body)
 
     # ─── Write / ads surface ──────────────────────────────────────────
 

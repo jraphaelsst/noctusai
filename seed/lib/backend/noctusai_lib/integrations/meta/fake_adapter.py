@@ -49,6 +49,7 @@ class FakeMetaAdapter:
         self._media_by_ig_user: dict[str, list[InstagramMedia]] = {}
         self._post_insights: dict[str, PostInsights] = {}
         self._media_insights: dict[str, PostInsights] = {}
+        self._account_insights: dict[str, PostInsights] = {}
         self._me: dict[str, str] = {}
         # Write-side recorders — deterministic in-memory simulation so
         # consumer/MCP tests exercise the real publish handler path.
@@ -83,6 +84,7 @@ class FakeMetaAdapter:
         media_by_ig_user: dict[str, list[InstagramMedia]] | None = None,
         post_insights: dict[str, PostInsights] | None = None,
         media_insights: dict[str, PostInsights] | None = None,
+        account_insights: dict[str, PostInsights] | None = None,
         me: dict[str, str] | None = None,
         ad_campaigns_by_account: dict[str, list[AdCampaign]] | None = None,
         ad_insights: dict[str, AdInsights] | None = None,
@@ -101,6 +103,8 @@ class FakeMetaAdapter:
             self._post_insights = dict(post_insights)
         if media_insights is not None:
             self._media_insights = dict(media_insights)
+        if account_insights is not None:
+            self._account_insights = dict(account_insights)
         if me is not None:
             self._me = dict(me)
         if ad_campaigns_by_account is not None:
@@ -158,6 +162,22 @@ class FakeMetaAdapter:
     def get_instagram_media_insights(self, media_id: str) -> PostInsights:
         return self._media_insights.get(
             media_id, PostInsights(object_id=media_id)
+        )
+
+    def get_instagram_account_insights(
+        self,
+        ig_user_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights:
+        # Deterministic: the window/period/metric args are accepted for
+        # Protocol parity but ignored — the Fake serves whatever was
+        # seeded for this account (or an empty insight object).
+        return self._account_insights.get(
+            ig_user_id, PostInsights(object_id=ig_user_id)
         )
 
     # ─── Write / ads surface (deterministic in-memory simulation) ──────
