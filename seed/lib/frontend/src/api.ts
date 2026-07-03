@@ -54,6 +54,17 @@ export interface CreateApiClientOptions {
    * with the new token before propagating the error.
    */
   onTokenExpired?: () => Promise<string | null>;
+  /**
+   * Called when a 401 could NOT be recovered — there was no token to send, OR
+   * `onTokenExpired` returned null / the retried request still 401'd. The session
+   * is dead: the server has rejected auth and no refresh restored it. The product
+   * should clear its auth state + redirect to login instead of leaving the user
+   * stranded on a shell that 401s every call ("[401] Token ausente" on every
+   * page). Invoked at most conceptually-once per dead session (the product's
+   * handler should be idempotent / re-entrancy-guarded, since many concurrent
+   * requests can 401 together). The 401 is still propagated to the caller.
+   */
+  onUnauthenticated?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +72,7 @@ export interface CreateApiClientOptions {
 // ---------------------------------------------------------------------------
 
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
-  const { getBaseUrl, getAuthToken, onTokenExpired } = options;
+  const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated } = options;
 
   async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -110,21 +121,31 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   }
 
   /**
-   * Execute a fetch request. If the response is 401 and `onTokenExpired` is
-   * configured, force a token refresh and retry the request exactly once.
+   * Execute a fetch request. On a 401: if `onTokenExpired` is configured, force a
+   * token refresh and retry exactly once. If the 401 cannot be recovered (no
+   * refresh, refresh returned null, or the retry ALSO 401'd), the session is dead
+   * → signal `onUnauthenticated` so the product bounces to login instead of
+   * stranding the user on a shell that 401s every call. The 401 is still returned
+   * (and thrown by `handleResponse`), but the redirect will already be in flight.
    */
   async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
     const response = await safeFetch(url, init);
+    if (response.status !== 401) return response;
 
-    if (response.status === 401 && onTokenExpired) {
+    if (onTokenExpired) {
       const freshToken = await onTokenExpired();
       if (freshToken) {
         const retryHeaders = { ...init.headers as Record<string, string> };
         retryHeaders['Authorization'] = `Bearer ${freshToken}`;
-        return safeFetch(url, { ...init, headers: retryHeaders });
+        const retry = await safeFetch(url, { ...init, headers: retryHeaders });
+        if (retry.status !== 401) return retry;
+        // refresh produced a token the server STILL rejects → session is dead.
       }
     }
 
+    // Unrecoverable 401 — the session is dead. Tell the product to log out +
+    // redirect (idempotent handler; concurrent 401s collapse to one redirect).
+    onUnauthenticated?.();
     return response;
   }
 

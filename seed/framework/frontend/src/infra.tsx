@@ -29,6 +29,39 @@ interface ProductInfraConfig {
   schema?: string;
 }
 
+// Re-entrancy guard: a page fires many requests at once, so a dead session
+// produces a BURST of 401s. Collapse them to a single logout + redirect.
+let _handlingDeadSession = false;
+
+/**
+ * A request came back 401 with no recovery (no token, or refresh failed / the
+ * retry still 401'd) — the session is dead. Clear the local auth state + sign
+ * out (purging the stale token from storage), which flips the app's `!user`
+ * gate in `createProductApp` and redirects to Landing/login. Without this the
+ * user is stranded on a logged-in-looking shell that 401s every call
+ * ("[401] Token ausente" on every page — the 2026-07-03 report).
+ *
+ * Idempotent (guarded); never redirects when already on a public auth route
+ * (/login, /sso) to avoid a loop; best-effort throughout (never throws into the
+ * fetch path). Clearing `user` drives a CLIENT-side redirect (React Router
+ * `<Navigate>`), so no full reload; `signOut()` also fires `onAuthStateChange`
+ * → `setUser(null)` as a belt.
+ */
+function handleDeadSession(supabase: { auth: { signOut?: () => Promise<unknown> } }, useAuthStore: {
+  getState: () => { setUser?: (u: null) => void };
+}): void {
+  if (_handlingDeadSession) return;
+  const path = typeof window !== "undefined" ? window.location.pathname : "";
+  if (path.startsWith("/login") || path.startsWith("/sso")) return;
+  _handlingDeadSession = true;
+  try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
+  try { void supabase.auth.signOut?.()?.catch?.(() => {}); } catch { /* best-effort */ }
+  // Reset the guard so a later genuine re-login → expiry can redirect again.
+  if (typeof window !== "undefined") {
+    window.setTimeout(() => { _handlingDeadSession = false; }, 3000);
+  }
+}
+
 /**
  * Creates all product infrastructure from a schema name.
  *
@@ -72,6 +105,9 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
       const { data: { session } } = await supabase.auth.refreshSession();
       return session?.access_token ?? null;
     },
+    // Dead session (401 the refresh couldn't recover) → clear auth + redirect to
+    // login, instead of stranding the user on a shell that 401s every call.
+    onUnauthenticated: () => handleDeadSession(supabase, useAuthStore),
   });
 
   // Auth provider
