@@ -221,3 +221,58 @@ def test_tool_registers_with_dotted_name():
 
     DP.register(_Srv())
     assert captured["name"] == "noctus.dev.deploy_pull"
+
+
+# ── auto-resolve cache-mirror DSN + tunnel (the recurring-skip fix) ──────────
+_RAW_DSN = "postgresql://noctus_cache:s3cr3t@noctus-cache-pg:5432/noctus_cache"
+
+
+def test_resolve_dsn_rewrites_host_to_tunnel_and_returns_cleanup():
+    """Happy path: fetch the VPS DSN, pick a port, open a tunnel → the DSN host is
+    rewritten to the loopback tunnel endpoint and a cleanup callable is returned."""
+    opened = {}
+    cleaned = {"n": 0}
+
+    def fake_open(host, port):
+        opened["host"], opened["port"] = host, port
+        return lambda: cleaned.__setitem__("n", cleaned["n"] + 1)
+
+    dsn, cleanup, reason = DP._resolve_cache_dsn_via_tunnel(
+        "noctus-vps", (lambda cmd: (0, "", "")),
+        _fetch=lambda h, r: _RAW_DSN, _open=fake_open, _port=lambda: 5599,
+    )
+    assert reason is None
+    assert dsn == "postgresql://noctus_cache:s3cr3t@127.0.0.1:5599/noctus_cache"
+    assert opened == {"host": "noctus-vps", "port": 5599}
+    cleanup()
+    assert cleaned["n"] == 1  # teardown wired
+
+
+def test_resolve_dsn_missing_env_degrades_to_reason():
+    dsn, cleanup, reason = DP._resolve_cache_dsn_via_tunnel(
+        "noctus-vps", (lambda cmd: (0, "", "")),
+        _fetch=lambda h, r: None, _open=lambda h, p: (lambda: None), _port=lambda: 5599,
+    )
+    assert dsn is None and cleanup is None
+    assert "not found" in reason
+
+
+def test_resolve_dsn_tunnel_failure_never_raises():
+    """A tunnel open failure degrades to (None, None, reason) — the deploy must not
+    crash over the additive mirror leg."""
+    def boom(host, port):
+        raise OSError("ssh: connect timed out")
+
+    dsn, cleanup, reason = DP._resolve_cache_dsn_via_tunnel(
+        "noctus-vps", (lambda cmd: (0, "", "")),
+        _fetch=lambda h, r: _RAW_DSN, _open=boom, _port=lambda: 5599,
+    )
+    assert dsn is None and cleanup is None
+    assert "tunnel failed" in reason and "OSError" in reason
+
+
+def test_fetch_cache_dsn_rejects_non_postgres_output():
+    """A grep miss (empty) or a non-DSN line must yield None, not a bogus DSN."""
+    assert DP._fetch_cache_dsn("h", lambda cmd: (0, "", "")) is None
+    assert DP._fetch_cache_dsn("h", lambda cmd: (1, _RAW_DSN, "")) is None  # rc!=0
+    assert DP._fetch_cache_dsn("h", lambda cmd: (0, _RAW_DSN + "\n", "")) == _RAW_DSN

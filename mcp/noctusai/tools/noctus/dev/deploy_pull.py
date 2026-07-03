@@ -38,6 +38,9 @@ import datetime as _dt
 import os
 import re
 import shlex
+import socket
+import subprocess
+import tempfile
 from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
@@ -143,6 +146,88 @@ def _default_run_remote(ssh_host: str, cmd: list[str]) -> tuple[int, str, str]:
     through the shared throttled + circuit-broken chokepoint (`_vps_ssh`) so
     repeated attempts during an edge blip never trip the VPS's fail2ban."""
     return _throttled_ssh(ssh_host, cmd)
+
+
+# ── auto-resolve the cache-mirror DSN + tunnel (so the mirror leg is not
+#    silently skipped every deploy just because no DSN is in the MCP env) ──
+_CACHE_DSN_ENV_PATH = "/opt/noctus/noctusai/deploy/fleet/.env.fleet"
+
+
+def _pick_free_port() -> int:
+    """An ephemeral loopback port (avoids colliding with a local Postgres on 5432)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+    finally:
+        s.close()
+
+
+def _fetch_cache_dsn(ssh_host: str, runner) -> str | None:
+    """Read `NOCTUS_CACHE_POSTGRES_DSN` from the VPS fleet env (root-owned, NOT in
+    git). Returns the raw DSN (host = docker-internal `noctus-cache-pg:5432`) or None."""
+    rc, out, _err = runner([
+        "sh", "-c",
+        f"grep '^NOCTUS_CACHE_POSTGRES_DSN=' {shlex.quote(_CACHE_DSN_ENV_PATH)} | cut -d= -f2-",
+    ])
+    dsn = (out or "").strip()
+    return dsn if (rc == 0 and dsn.startswith("postgresql")) else None
+
+
+def _open_cache_tunnel(ssh_host: str, local_port: int) -> Callable[[], None]:
+    """Open an SSH tunnel `local_port -> 127.0.0.1:5432` on `ssh_host` via a control
+    socket; return a cleanup callable that tears it down. Raises on failure (the
+    caller degrades to skip)."""
+    ctl = os.path.join(tempfile.gettempdir(), f"noc-mirror-tunnel-{local_port}-{os.getpid()}.sock")
+    subprocess.run(
+        ["ssh", "-M", "-S", ctl, "-o", "ExitOnForwardFailure=yes",
+         "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", "-fN",
+         "-L", f"{local_port}:127.0.0.1:5432", ssh_host],
+        check=True, capture_output=True, text=True, timeout=25,
+    )
+
+    def _cleanup() -> None:
+        try:
+            subprocess.run(["ssh", "-S", ctl, "-O", "exit", ssh_host],
+                           capture_output=True, text=True, timeout=10)
+        except Exception:  # noqa: BLE001 — teardown is best-effort
+            pass
+
+    return _cleanup
+
+
+def _resolve_cache_dsn_via_tunnel(
+    ssh_host: str,
+    runner,
+    *,
+    _fetch: Callable[..., str | None] | None = None,
+    _open: Callable[[str, int], Callable[[], None]] | None = None,
+    _port: Callable[[], int] | None = None,
+) -> tuple[str | None, Callable[[], None] | None, str | None]:
+    """Best-effort: fetch the cache DSN from the VPS + open a loopback tunnel so the
+    LOCAL mirror can reach prod pgvector WITHOUT the operator pre-opening one.
+
+    Returns `(dsn, cleanup, reason)`. On ANY failure returns `(None, None, reason)`
+    so the deploy degrades to the pre-existing skip behaviour — it NEVER raises into
+    the deploy path (the mirror is additive; the code is already deployed). `_fetch`
+    / `_open` / `_port` are test seams (inject to run with zero real SSH)."""
+    fetch = _fetch or _fetch_cache_dsn
+    opener = _open or _open_cache_tunnel
+    pick = _port or _pick_free_port
+    try:
+        raw = fetch(ssh_host, runner)
+        if not raw:
+            return None, None, (
+                f"auto-DSN: NOCTUS_CACHE_POSTGRES_DSN not found in {_CACHE_DSN_ENV_PATH} on {ssh_host}"
+            )
+        port = pick()
+        # Rewrite the docker-internal host (`@noctus-cache-pg:5432/`) to the tunnel
+        # endpoint. Match any host to be robust to future host naming.
+        dsn = re.sub(r"@[^/@]+:5432/", f"@127.0.0.1:{port}/", raw)
+        cleanup = opener(ssh_host, port)
+        return dsn, cleanup, None
+    except Exception as exc:  # noqa: BLE001 — never break the deploy over the mirror leg
+        return None, None, f"auto-DSN tunnel failed ({type(exc).__name__}: {exc})"
 
 
 def _git(runner, repo_dir: str, *args) -> tuple[int, str, str]:
@@ -266,18 +351,26 @@ def deploy_pull(
 
     # ── MIRROR (local SQLite caches → prod pgvector) ──
     # Runs LOCALLY (deploy_pull executes on the architect's machine; the mirror
-    # reads local .claude/cache/*.sqlite + writes via the SSH tunnel the
-    # architect opened to 127.0.0.1:5432). Surfaces but never silently swallows:
-    # if mirror_caches=True and no DSN is reachable, surface mirror_skipped with
-    # the named cause; if mirror errors, surface and flip the overall status
-    # to `partial` (code IS deployed, cache is stale).
+    # reads local .claude/cache/*.sqlite + writes via an SSH tunnel to
+    # 127.0.0.1:5432). DSN resolution order: explicit mirror_dsn → env
+    # NOCTUS_CACHE_POSTGRES_DSN → AUTO (fetch the DSN from the VPS fleet env +
+    # open a loopback tunnel ourselves — so the leg is not silently skipped every
+    # deploy just because the MCP server env lacks the DSN, the recurring gap).
+    # Surfaces but never silently swallows: if no DSN is reachable, surface
+    # skipped with the named cause; if mirror errors, surface + flip status to
+    # `partial` (code IS deployed, cache is stale). Auto-resolution NEVER breaks
+    # the deploy — it degrades to skip on any failure.
     mirror_result: dict[str, Any] = {"status": "skipped", "reason": "mirror_caches=False"}
     if mirror_caches:
         dsn = mirror_dsn or os.environ.get("NOCTUS_CACHE_POSTGRES_DSN")
+        tunnel_cleanup: Callable[[], None] | None = None
+        auto_reason: str | None = None
+        if not dsn:
+            dsn, tunnel_cleanup, auto_reason = _resolve_cache_dsn_via_tunnel(ssh_host, runner)
         if not dsn:
             mirror_result = {
                 "status": "skipped",
-                "reason": (
+                "reason": auto_reason or (
                     "no DSN — set NOCTUS_CACHE_POSTGRES_DSN env var or pass "
                     "mirror_dsn= explicitly (e.g. via SSH tunnel: "
                     "ssh -L 5432:127.0.0.1:5432 -fN noctus-vps then "
@@ -292,12 +385,17 @@ def deploy_pull(
                 else:
                     runner_fn = mirror_runner
                 mirror_result = runner_fn(confirm=True, dsn=dsn)
+                if tunnel_cleanup is not None and isinstance(mirror_result, dict):
+                    mirror_result.setdefault("dsn_source", "auto-tunnel")
             except Exception as exc:  # noqa: BLE001
                 mirror_result = {
                     "status": "error",
                     "ok": False,
                     "error": f"{type(exc).__name__}: {exc}",
                 }
+            finally:
+                if tunnel_cleanup is not None:
+                    tunnel_cleanup()
 
     mirror_failed = (
         mirror_caches
