@@ -82,6 +82,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.chat_router import router as chat_router
     from app.routers.google_router import router as google_router
     from app.routers.intake_monitor_router import router as intake_monitor_router
+    from app.routers.meta_insights_router import router as meta_insights_router
     from app.routers.meta_router import router as meta_router
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -95,6 +96,13 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.clients_router import (
         router as clients_router,
     )
+    from app.services.meta import scheduler as meta_insights_scheduler
+
+    # Register the daily IG-snapshot job on the seed scheduler now (import
+    # time) so it lands before `start_scheduler()` fires in app/lifespan.py
+    # — mirrors `app.modules.email_marketing.register()`'s
+    # `scheduler.configure()` call.
+    meta_insights_scheduler.configure()
 
     return ModuleRegistration(
         routers=[
@@ -108,6 +116,7 @@ def _register_media_wiring() -> ModuleRegistration:
             calendar_router,
             google_router,
             meta_router,
+            meta_insights_router,
             integration_accounts_router,
             clients_router,
         ],

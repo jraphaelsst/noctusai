@@ -34,13 +34,14 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.config import settings
-from app.dependencies import get_admin_client
-from app.services.credential_vault import (
-    CredentialStore, EncryptionNotConfigured, build_credential_store)
+from app.routers._meta_common import (
+    adapter_label as _adapter_label,
+    build_store as _build_store,
+    resolve_org_id as _resolve_org_id,
+)
 from app.services.meta import (
     META_PROVIDER,
     FakeMetaAdapter,
-    MetaOAuthAdapter,
     get_meta_adapter,
 )
 from noctusai_lib.integrations.meta._meta_api import (
@@ -88,37 +89,9 @@ class MetaScopesResponse(BaseModel):
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────
-def _build_store() -> CredentialStore:
-    try:
-        return build_credential_store(get_admin_client())
-    except EncryptionNotConfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
-
-def _resolve_org_id(raw: str | None) -> UUID:
-    """Mirror calendar_router's resolution: query string overrides
-    fall back to the local-dev org id while the Meta surface runs
-    without auth in front of it."""
-    if raw:
-        try:
-            return UUID(raw)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid org_id",
-            ) from exc
-    return UUID(settings.local_dev_org_id)
-
-
-def _adapter_label(adapter) -> str:
-    if isinstance(adapter, MetaOAuthAdapter):
-        return "oauth"
-    if isinstance(adapter, FakeMetaAdapter):
-        return "fake"
-    return type(adapter).__name__
+# _build_store / _resolve_org_id / _adapter_label live in
+# ``app.routers._meta_common`` (extracted so ``meta_insights_router``
+# reuses them without duplication) and are imported above.
 
 
 # ─── Status ────────────────────────────────────────────────────────────
