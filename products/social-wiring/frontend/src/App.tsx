@@ -33,6 +33,7 @@ import {
   Share2,
   Wand2,
   Youtube,
+  Instagram,
   UserRound,
   List,
   FileText,
@@ -63,6 +64,7 @@ const EmailMembros = lazy(() => import("@/pages/EmailMembros"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
+const InstagramInsights = lazy(() => import("@/pages/InstagramInsights"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -76,6 +78,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
+      { name: "Instagram", href: "/instagram-insights", icon: Instagram, route: "instagram_insights" },
     ],
   },
   {
@@ -124,6 +127,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Contatos", href: "/contatos", icon: UserRound },
       { name: "YouTube", href: "/youtube", icon: Youtube },
+      { name: "Instagram", href: "/instagram-insights", icon: Instagram },
     ],
   },
   {
@@ -183,6 +187,7 @@ export default createProductApp({
     { path: "/email-marketing/configuracao", component: EmailMarketingConfig },
     { path: "/email-marketing/membros", component: EmailMembros },
     { path: "/youtube", component: YouTube },
+    { path: "/instagram-insights", component: InstagramInsights },
     // Retired routes — connection management now lives inside ClienteModal
     { path: "/conexoes", component: RedirectToClientes },
     { path: "/integrations", component: RedirectToClientes },
