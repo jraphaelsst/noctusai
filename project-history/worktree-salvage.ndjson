@@ -203,3 +203,4 @@
 {"ts": "2026-07-04", "event": "worktree-sweep", "path": ".claude/worktrees/ig-account-insights", "branch": "feat/ig-account-insights", "sha": "162d5622243426870b150d88d0e049e0e12e7e80", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-04", "event": "worktree-sweep", "path": ".claude/worktrees/ig-insights-be", "branch": "feat/ig-insights-be", "sha": "a49b578c34bb4ac17bfbe2ec6ad308f13a5048cc", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-04", "event": "worktree-sweep", "path": ".claude/worktrees/ig-insights-fe", "branch": "feat/ig-insights-fe", "sha": "5b3c2de2459a7ba635b05c8714228fa3b9b2f326", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-04", "event": "worktree-sweep", "path": ".claude/worktrees/ig-insights-navrow", "branch": "feat/ig-insights-navrow", "sha": "f1f6ab999f36dcd9320b6712589f5148d7805cc2", "reason": "task_branch cleanup (learn-before-delete)"}
