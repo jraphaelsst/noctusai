@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -46,6 +47,8 @@ from app.schemas.settings import (
     KeyHealth,
     KeyStatusEntry,
     KeysStatus,
+    MetaAppConfigStatus,
+    MetaAppConfigUpdate,
     RecipientCreate,
     RecipientOut,
     RecipientUpdate,
@@ -55,12 +58,19 @@ from app.schemas.settings import (
     WahaTestResult,
 )
 from app.schemas.whatsapp import WAHASessionInfo, extract_waha_message_id
+from app.services.app_config_store import (
+    META_APP_ID_KEY,
+    META_APP_SECRET_KEY,
+    build_app_config_store,
+    resolve_meta_app_creds,
+)
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
 )
+from app.services.credential_vault import EncryptionNotConfigured
 from app.services.email_service import EmailNotConfigured, EmailService, EmailServiceError
 from app.services.message_store import DuplicateMessage, MessageStore
 from app.services.waha_response_registry import record_waha_sample
@@ -565,6 +575,116 @@ async def send_waha_test(
         phone=payload.phone,
         message_id=extract_waha_message_id(result),
     )
+
+
+# ─── Meta App config tab (Wave 2 — app-wide, DB-backed + env-fallback) ─
+def _require_admin(user: Any, context: str) -> None:
+    """403 unless ``user`` has owner/admin role on their org.
+
+    Same check-shape as ``app.routers.auth._require_admin_role`` (N=2 —
+    flagged as a `scoped-improvement:` in this dispatch's delivery note
+    rather than extracted mid-brief; that helper is also private/
+    module-local, so this one stays local too instead of reaching across
+    a router boundary for an underscore-prefixed symbol).
+    """
+    metadata = getattr(user, "user_metadata", None) or {}
+    role = metadata.get("org_role") or metadata.get("role")
+    if role not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{context} restricted to owner/admin roles",
+        )
+
+
+def get_app_config_store_dep():
+    """DI seam: the real app-config store, mapping a missing/malformed
+    ``ENCRYPTION_KEY`` to a 503 config-gap. Used by the WRITE endpoint —
+    persisting is meaningless without a usable Fernet key. Tests override
+    via ``app.dependency_overrides[get_app_config_store_dep]`` with a
+    ``FakeAppConfigStore``. Per KB § PATTERNS/backend/di-test-seam.md
+    (Class-B, service DI)."""
+    try:
+        return build_app_config_store()
+    except EncryptionNotConfigured as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+
+def get_app_config_store_optional_dep():
+    """Same store, but returns ``None`` instead of raising when
+    ``ENCRYPTION_KEY`` is missing/malformed. Used by the READ-ONLY status
+    path (+ ``_meta_app_status``'s ``resolve_meta_app_creds`` call) —
+    an unconfigured Fernet key is a valid state there (env-only
+    resolution), unlike the write endpoint above."""
+    try:
+        return build_app_config_store()
+    except EncryptionNotConfigured:
+        return None
+
+
+def _meta_app_status(cfg: SocialWiringSettings, store=None) -> MetaAppConfigStatus:
+    """Build the status response from the current DB-or-env resolution.
+
+    Never touches the secret value beyond a boolean/masked-id check —
+    safe to call from both the write endpoint's response and the
+    read-only status endpoint. ``cfg`` is the injected
+    ``Depends(get_settings)`` value (never the module singleton
+    directly) and ``store`` the injected app-config store (or ``None``)
+    so tests can override BOTH halves of the resolution via the existing
+    DI seams above."""
+    app_id, app_secret = resolve_meta_app_creds(settings=cfg, store=store)
+    app_id_masked = None
+    if app_id:
+        app_id_masked = app_id if len(app_id) <= 4 else f"...{app_id[-4:]}"
+    return MetaAppConfigStatus(
+        app_id_configured=bool(app_id),
+        app_secret_configured=bool(app_secret),
+        app_id_masked=app_id_masked,
+    )
+
+
+@router.put("/meta-app", response_model=MetaAppConfigStatus)
+def update_meta_app_config(
+    payload: MetaAppConfigUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    store=Depends(get_app_config_store_dep),
+) -> MetaAppConfigStatus:
+    """Admin-gated write for the Meta App ID / App Secret pair.
+
+    Persists into ``social_wiring.app_integration_config`` (migration
+    022) via the seed ``AppConfigStore`` — encrypted at rest, DB value
+    wins over the ``META_APP_ID`` / ``META_APP_SECRET`` env fallback.
+    ``app_secret`` is write-only and only overwritten when the caller
+    supplies a non-blank value (never echoed back in the response).
+    """
+    user, _token, _raw_org = auth
+    _require_admin(user, "Meta App config")
+
+    if payload.app_id is None and not payload.app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="provide at least one of app_id / app_secret",
+        )
+
+    if payload.app_id is not None:
+        store.put(META_APP_ID_KEY, payload.app_id.strip())
+    if payload.app_secret:  # blank/omitted never overwrites — write-only, opt-in
+        store.put(META_APP_SECRET_KEY, payload.app_secret)
+
+    return _meta_app_status(cfg, store=store)
+
+
+@router.get("/meta-app/status", response_model=MetaAppConfigStatus)
+def get_meta_app_config_status(
+    _auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    store=Depends(get_app_config_store_optional_dep),
+) -> MetaAppConfigStatus:
+    """Which half of the Meta App credential pair is configured (DB or
+    env) — never the secret itself."""
+    return _meta_app_status(cfg, store=store)
 
 
 def _extract_waha_session_status(payload) -> str | None:

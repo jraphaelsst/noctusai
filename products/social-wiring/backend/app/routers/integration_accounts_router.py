@@ -36,6 +36,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from noctusai_lib.integrations.gmail import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE
+from noctusai_lib.integrations.meta._meta_api import (
+    exchange_code_for_token,
+    exchange_for_long_lived_bundle,
+)
 from noctusai_lib.integrations.youtube import make_youtube_client
 from noctusai_lib.security.oauth import GoogleProvider
 from pydantic import BaseModel, Field
@@ -49,6 +53,7 @@ from app.dependencies import (
     get_user_client,
 )
 from app.config import SocialWiringSettings
+from app.services.app_config_store import resolve_meta_app_creds
 from app.services.credential_vault import (
     CredentialStoreError,
     EncryptionNotConfigured,
@@ -62,6 +67,7 @@ from app.services.integration_account_service import (
 from app.services.clients_service import build_client_service
 from app.services.integration_providers import PROVIDERS
 from app.services.legacy_adoption import adopt_legacy_account
+from app.services.meta import META_PROVIDER, MetaGraphError, MetaOAuthAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -891,6 +897,375 @@ def _build_ia_google_redirect_uri(cfg: SocialWiringSettings, provider: str) -> s
 def _build_ia_youtube_redirect_uri(cfg: SocialWiringSettings) -> str:
     """Backward-compat wrapper → delegates to the shared helper."""
     return _build_ia_google_redirect_uri(cfg, "youtube")
+
+
+# ─── Meta OAuth endpoints ─────────────────────────────────────────────────────
+# Per-client Meta connection (Wave 2, `wave2-contract.md` Slice 2A) — clones the
+# YouTube multi-account pair above. Not a Google flow (Facebook's OAuth dialog,
+# no PKCE) so it does NOT go through `_build_ia_google_redirect_uri` /
+# `get_yt_oauth_provider` — it builds its own consent URL + does its own code
+# exchange via the seed's `noctusai_lib.integrations.meta` helpers, exactly as
+# the existing org-scoped `meta_router.meta_oauth_start` / `_callback` do (this
+# is the SAME exchange logic, just persisting into store B —
+# `integration_accounts`, per-client — instead of store A —
+# `credential_vault`, per-org-only).
+
+# Pinned scope set (Wave 2 contract) — the full IG+Page surface the product's
+# Meta features consume (comments/DMs/insights + posting). Distinct from the
+# org-level `meta_router`'s auto-discovered/kitchen-sink scope resolution:
+# this per-client flow always requests this exact set so every client
+# connection has a consistent, predictable permission surface.
+META_IA_OAUTH_SCOPES: tuple[str, ...] = (
+    "instagram_basic",
+    "instagram_content_publish",
+    "instagram_manage_comments",
+    "instagram_manage_messages",
+    "instagram_manage_insights",
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "pages_manage_engagement",
+)
+
+
+def _build_ia_meta_redirect_uri(cfg: SocialWiringSettings) -> str:
+    """Redirect URI for the per-client Meta IA OAuth flow.
+
+    Mirrors ``_build_ia_google_redirect_uri``'s derivation shape (own
+    function, not a shared call, since Meta isn't a Google provider and
+    has no ``get_yt_oauth_provider``-style DI seam): derives from
+    ``oauth_redirect_base_url`` / ``tunnel_hostname`` when set (one env
+    var routes every IA OAuth flow, Meta included); falls back to
+    deriving from the org-level ``meta_oauth_redirect_uri`` when neither
+    is set; a localhost default for pure dev.
+
+    IMPORTANT: every derived URI must be registered as a valid OAuth
+    Redirect URI in the Meta App dashboard (App Review → Facebook Login
+    → Settings → Valid OAuth Redirect URIs).
+    """
+    oauth_base = cfg.oauth_redirect_base_url or cfg.tunnel_hostname
+    if oauth_base:
+        base = oauth_base.rstrip("/")
+        return f"{base}/api/integrations/accounts/meta/oauth/callback"
+    base_uri = cfg.meta_oauth_redirect_uri
+    if base_uri.endswith("/api/meta/oauth/callback"):
+        return base_uri.replace(
+            "/api/meta/oauth/callback",
+            "/api/integrations/accounts/meta/oauth/callback",
+        )
+    return "http://localhost:8011/api/integrations/accounts/meta/oauth/callback"
+
+
+@router.post(
+    "/accounts/meta/oauth/start",
+    response_model=OAuthStartOut,
+)
+def meta_oauth_start(
+    body: OAuthStartIn = OAuthStartIn(),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> OAuthStartOut:
+    """Build a Facebook consent URL for the multi-account per-client Meta
+    connection flow.
+
+    Mirrors ``youtube_oauth_start``: 3-part state
+    ``{org_id}:{nonce}:{client_id_or_empty}``; ``client_id`` is validated
+    against the calling org BEFORE it's encoded into the redirect
+    round-trip (never trust an unvalidated FK). App ID/secret resolve
+    DB-first (Settings-writable) with env fallback via
+    ``resolve_meta_app_creds`` — a 503 config-gap when neither is set,
+    same shape as the org-level ``meta_router.meta_oauth_start``.
+    """
+    app_id, app_secret = resolve_meta_app_creds(settings=cfg)
+    if not app_id or not app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "META_APP_ID / META_APP_SECRET not configured. Set them in "
+                ".env or Settings → Meta App to enable OAuth."
+            ),
+        )
+
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    # Migration 017-style client-link validation (mirrors youtube_oauth_start).
+    client_id_str = ""
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id_str = str(body.client_id)
+
+    redirect_uri = _build_ia_meta_redirect_uri(cfg)
+    # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
+    # three-part split in the callback is unambiguous (mirrors YouTube's state).
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+
+    from urllib.parse import urlencode
+
+    auth_params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "scope": ",".join(META_IA_OAUTH_SCOPES),
+        "response_type": "code",
+        "state": state,
+        # Re-ask for previously denied permissions on every flow — same
+        # rationale as the org-level meta_router flow.
+        "auth_type": "rerequest",
+    }
+    auth_url = (
+        f"https://www.facebook.com/{cfg.meta_graph_api_version}"
+        f"/dialog/oauth?{urlencode(auth_params)}"
+    )
+    return OAuthStartOut(auth_url=auth_url, state=state)
+
+
+@router.get("/accounts/meta/oauth/callback")
+def meta_oauth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    svc: IntegrationAccountService = Depends(get_account_service),
+):
+    """Facebook's redirect target for the multi-account per-client Meta flow.
+
+    Exchanges code → short-lived → long-lived user token (seed helpers,
+    identical to the org-level ``meta_router.meta_oauth_callback``),
+    probes ``/me`` + Pages + IG accounts for a channel label (best-effort
+    — a probe failure never blocks account creation), creates (or
+    re-authenticates, keyed on ``channel_id``) a store-B
+    ``integration_accounts`` row, then redirects to
+    ``/clientes?account_created=<id>``.
+
+    Uses the admin client throughout (no JWT in Facebook's redirect —
+    mirrors ``youtube_oauth_callback``).
+    """
+    if error:
+        detail = f"OAuth flow returned an error: {error}"
+        if error_description:
+            detail = f"{detail} — {error_description}"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth callback missing code or state.",
+        )
+
+    # State format: {org_id}:{nonce}:{client_id_or_empty} (mirrors YouTube's).
+    parts = state.split(":")
+    if len(parts) < 2 or not parts[0]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token malformed.",
+        )
+    try:
+        org_id = UUID(parts[0])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token does not encode a valid org_id.",
+        ) from exc
+
+    client_id_part = parts[2] if len(parts) >= 3 else ""
+    _callback_client_id: Optional[UUID] = None
+    if client_id_part:
+        try:
+            _callback_client_id = UUID(client_id_part)
+        except ValueError:
+            logger.warning(
+                "integration_accounts: Meta OAuth state carries non-UUID "
+                "client_id_part=%r — ignoring",
+                client_id_part,
+            )
+
+    app_id, app_secret = resolve_meta_app_creds(settings=cfg)
+    if not app_id or not app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="META_APP_ID / META_APP_SECRET not configured.",
+        )
+
+    redirect_uri = _build_ia_meta_redirect_uri(cfg)
+
+    # 1) code → short-lived user token (seed exchange — same helper the
+    # org-level flow uses; raises MetaGraphError on a Graph error envelope,
+    # never a silent falsey result).
+    try:
+        short_token = exchange_code_for_token(
+            code=code,
+            app_id=app_id,
+            app_secret=app_secret,
+            redirect_uri=redirect_uri,
+            version=cfg.meta_graph_api_version,
+        )
+    except MetaGraphError as exc:
+        logger.exception("integration_accounts: Meta OAuth code exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth code exchange failed: {exc}",
+        ) from exc
+    if not short_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Meta did not return an access_token from the code exchange.",
+        )
+
+    # 2) short → long-lived user token.
+    try:
+        long_bundle = exchange_for_long_lived_bundle(
+            short_token=short_token,
+            app_id=app_id,
+            app_secret=app_secret,
+            version=cfg.meta_graph_api_version,
+        )
+    except MetaGraphError as exc:
+        logger.exception("integration_accounts: Meta long-lived exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Long-lived token exchange failed: {exc}",
+        ) from exc
+
+    long_token = long_bundle.access_token or short_token
+    token_type = long_bundle.token_type or "bearer"
+    expires_in = long_bundle.expires_in
+
+    # 3) probe /me + Pages + IG accounts for a channel label — via a
+    # transient MetaOAuthAdapter over the fresh token (never persisted
+    # mid-probe). Reuses the seed adapter's typed Graph calls instead of
+    # hand-rolling a second copy of the /me + /me/accounts request shape
+    # (the org-level meta_router.meta_oauth_callback already owns that
+    # copy for the org-scoped flow — this is N=2 via the seed's own
+    # abstraction, not a 3rd fork). `system_user_token=` here just means
+    # "the bearer token this adapter authenticates every call with" — the
+    # token itself is the per-client long-lived USER token, not an actual
+    # Meta System User Token; the adapter draws no distinction for reads.
+    probe_adapter = MetaOAuthAdapter(
+        system_user_token=long_token, graph_version=cfg.meta_graph_api_version
+    )
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    channel_id: Optional[str] = None
+    channel_title: Optional[str] = None
+    try:
+        me = probe_adapter.me()
+        user_id = me.get("id")
+        user_name = me.get("name")
+    except MetaGraphError as exc:  # noqa: BLE001 — best-effort; account still created
+        logger.warning(
+            "integration_accounts: Meta /me probe failed during OAuth callback "
+            "for org_id=%s — using fallback label: %s",
+            org_id,
+            exc,
+        )
+    try:
+        pages = probe_adapter.list_facebook_pages()
+        ig_accounts = probe_adapter.list_instagram_accounts()
+        # IG account is the primary label when present (the product's Meta
+        # features are IG-first — comments/DMs/insights); a connected Page
+        # with no linked IG still gets a usable label.
+        if ig_accounts:
+            channel_id = ig_accounts[0].id
+            channel_title = ig_accounts[0].username
+        elif pages:
+            channel_id = pages[0].id
+            channel_title = pages[0].name
+    except MetaGraphError as exc:  # noqa: BLE001 — best-effort; account still created
+        logger.warning(
+            "integration_accounts: Meta pages/IG probe failed during OAuth "
+            "callback for org_id=%s — using fallback label: %s",
+            org_id,
+            exc,
+        )
+
+    bundle = {
+        "access_token": long_token,
+        "token_type": token_type,
+        "expires_in": expires_in,
+        "scope": ",".join(META_IA_OAUTH_SCOPES),
+        "user_id": user_id,
+        "user_name": user_name,
+    }
+    account_label = channel_title or user_name or f"Meta account ({org_id})"
+    metadata = {
+        "user_id": user_id,
+        "user_name": user_name,
+        "channel_id": channel_id,
+        "channel_title": channel_title,
+        "scopes": list(META_IA_OAUTH_SCOPES),
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    _channel_info: dict = {}
+    if channel_id:
+        _channel_info = {"channel_id": channel_id, "title": channel_title or ""}
+
+    # Idempotent on channel_id (mirrors youtube_oauth_callback) — reconnecting
+    # the same Page/IG account re-authenticates the existing row (persists the
+    # fresh token bundle) instead of inserting a duplicate.
+    meta_accounts = svc.list_accounts(org_id, provider=META_PROVIDER)
+    existing = (
+        next(
+            (a for a in meta_accounts if (a.metadata or {}).get("channel_id") == channel_id),
+            None,
+        )
+        if channel_id
+        else None
+    )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+        account = svc.update_channel_info(
+            account_id=existing.id,
+            org_id=org_id,
+            channel_info=_channel_info,
+            status="validated",
+            last_synced_at=_dt.now(_tz.utc),
+        )
+    else:
+        existing_labels = {a.account_label for a in meta_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels and channel_id:
+            unique_label = f"{account_label} · {channel_id[-6:]}"
+        account = svc.create_account(
+            org_id=org_id,
+            provider=META_PROVIDER,
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not meta_accounts,
+            status="validated",
+            client_id=_callback_client_id,
+        )
+        if _channel_info:
+            account = svc.update_channel_info(
+                account_id=account.id,
+                org_id=org_id,
+                channel_info=_channel_info,
+                status="validated",
+                last_synced_at=_dt.now(_tz.utc),
+            )
+
+    redirect_url = f"/clientes?account_created={account.id}"
+    if cfg.frontend_base_url:
+        redirect_url = urljoin(
+            cfg.frontend_base_url.rstrip("/") + "/",
+            f"clientes?account_created={account.id}",
+        )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
 
 # ─── Gmail OAuth endpoints ────────────────────────────────────────────────────

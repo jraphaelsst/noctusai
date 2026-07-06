@@ -1838,12 +1838,13 @@ class WhatsAppIntakeService:
 
         adapter, is_fake = await self._meta_adapter()
         if is_fake:
+            from app.services.app_config_store import resolve_meta_app_creds
+
+            app_id, app_secret = resolve_meta_app_creds()
             return {
                 "ok": False,
                 "error": "meta_not_connected",
-                "configured": bool(
-                    settings.meta_app_id and settings.meta_app_secret
-                ),
+                "configured": bool(app_id and app_secret),
                 "hint": (
                     "Meta nao esta conectado. Configure META_APP_ID + "
                     "META_APP_SECRET no .env e visite "

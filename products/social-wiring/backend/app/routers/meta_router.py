@@ -39,6 +39,7 @@ from app.routers._meta_common import (
     build_store as _build_store,
     resolve_org_id as _resolve_org_id,
 )
+from app.services.app_config_store import resolve_meta_app_creds
 from app.services.meta import (
     META_PROVIDER,
     FakeMetaAdapter,
@@ -106,7 +107,8 @@ def meta_status(org_id: str | None = Query(default=None)) -> MetaStatusResponse:
     """
     resolved_org = _resolve_org_id(org_id)
     has_system_user = bool(settings.meta_system_user_token)
-    has_oauth_pair = bool(settings.meta_app_id and settings.meta_app_secret)
+    app_id, app_secret = resolve_meta_app_creds()
+    has_oauth_pair = bool(app_id and app_secret)
     configured = has_system_user or has_oauth_pair
 
     try:
@@ -181,7 +183,8 @@ def meta_oauth_start(
     ``instagram_content_publish``) are NOT in the v1 default because
     they require app review and we're not posting yet.
     """
-    if not settings.meta_app_id or not settings.meta_app_secret:
+    app_id, app_secret = resolve_meta_app_creds()
+    if not app_id or not app_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="META_APP_ID / META_APP_SECRET not configured.",
@@ -196,8 +199,8 @@ def meta_oauth_start(
     # - If empty or "auto" → discover from Graph (fallback to kitchen-sink)
     scopes = resolve_oauth_scopes(
         configured=settings.meta_oauth_scopes,
-        app_id=settings.meta_app_id,
-        app_secret=settings.meta_app_secret,
+        app_id=app_id,
+        app_secret=app_secret,
     )
     raw = (settings.meta_oauth_scopes or "").strip()
     if raw and raw.lower() != "auto":
@@ -210,7 +213,7 @@ def meta_oauth_start(
     from urllib.parse import urlencode
 
     auth_params = {
-        "client_id": settings.meta_app_id,
+        "client_id": app_id,
         "redirect_uri": settings.meta_oauth_redirect_uri,
         "scope": ",".join(scopes),
         "response_type": "code",
@@ -256,7 +259,8 @@ def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
       ``GET /me/permissions`` with the stored user token. None if no
       consent yet.
     """
-    if not settings.meta_app_id or not settings.meta_app_secret:
+    app_id, app_secret = resolve_meta_app_creds()
+    if not app_id or not app_secret:
         return MetaScopesResponse(
             configured=[],
             discovered_from_graph=None,
@@ -265,21 +269,21 @@ def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
             declined_by_user=None,
             note=(
                 "META_APP_ID / META_APP_SECRET not configured — set them "
-                "in .env and restart to enable discovery."
+                "in .env (or Settings → Meta App) to enable discovery."
             ),
         )
 
     configured = resolve_oauth_scopes(
         configured=settings.meta_oauth_scopes,
-        app_id=settings.meta_app_id,
-        app_secret=settings.meta_app_secret,
+        app_id=app_id,
+        app_secret=app_secret,
     )
 
     discovered: list[str] | None = None
     try:
         discovered = discover_app_permissions(
-            app_id=settings.meta_app_id,
-            app_secret=settings.meta_app_secret,
+            app_id=app_id,
+            app_secret=app_secret,
         )
         # discover_app_permissions falls back to kitchen-sink on empty —
         # surface a None instead of the fallback so the UI distinguishes.
@@ -367,6 +371,7 @@ def meta_oauth_callback(
         ) from exc
 
     store = _build_store()
+    app_id, app_secret = resolve_meta_app_creds()
 
     # 1) code → short-lived user token. The seed exchange returns the
     # access-token string directly (raising MetaGraphError on a Graph
@@ -375,8 +380,8 @@ def meta_oauth_callback(
     try:
         short_token = exchange_code_for_token(
             code=code,
-            app_id=settings.meta_app_id,
-            app_secret=settings.meta_app_secret,
+            app_id=app_id,
+            app_secret=app_secret,
             redirect_uri=settings.meta_oauth_redirect_uri,
             version=settings.meta_graph_api_version,
         )
@@ -397,8 +402,8 @@ def meta_oauth_callback(
     try:
         long_bundle = exchange_for_long_lived_bundle(
             short_token=short_token,
-            app_id=settings.meta_app_id,
-            app_secret=settings.meta_app_secret,
+            app_id=app_id,
+            app_secret=app_secret,
             version=settings.meta_graph_api_version,
         )
     except MetaGraphError as exc:
@@ -437,8 +442,8 @@ def meta_oauth_callback(
     # was prompted with (not just the static env value).
     requested_scopes = resolve_oauth_scopes(
         configured=settings.meta_oauth_scopes,
-        app_id=settings.meta_app_id,
-        app_secret=settings.meta_app_secret,
+        app_id=app_id,
+        app_secret=app_secret,
     )
 
     stored_tokens = {

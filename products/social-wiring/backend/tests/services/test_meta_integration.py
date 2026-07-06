@@ -24,8 +24,17 @@ These tests cover the **product-side seam** only:
 """
 from __future__ import annotations
 
-from uuid import uuid4
+import sqlite3
+from pathlib import Path
+from uuid import UUID, uuid4
 
+import pytest
+from cryptography.fernet import Fernet
+
+from app.services.integration_account_service import (
+    IntegrationAccountNotFound,
+    IntegrationAccountService,
+)
 from app.services.meta import (
     META_PROVIDER,
     FacebookPage,
@@ -39,7 +48,9 @@ from app.services.meta import (
     MetaOAuthAdapter,
     PostInsights,
     get_meta_adapter,
+    get_meta_adapter_for_account,
 )
+from app.sqlite_client import SQLiteClient
 
 
 # ─── Product factory wrapper — auth resolution via the local call shape ──
@@ -231,3 +242,105 @@ class TestFakeAdapterThroughSeam:
         posts = adapter.list_facebook_posts("111", limit=10)
         assert posts[0].likes == 12
         assert adapter.list_facebook_posts("999") == []
+
+
+# ─── get_meta_adapter_for_account — Wave 2 per-client Meta seam ──────────
+# SQLite schema mirrors test_integration_account_service.py's DDL — a real
+# IntegrationAccountService (store B), not a mock, so decrypt_credential's
+# real round-trip is exercised.
+_IA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS integration_accounts (
+    id                  TEXT PRIMARY KEY,
+    org_id              TEXT NOT NULL,
+    provider            TEXT NOT NULL CHECK (provider IN ('youtube', 'google_drive', 'gmail', 'meta', 'n8n')),
+    account_label       TEXT NOT NULL,
+    encrypted_credential TEXT NOT NULL,
+    metadata            TEXT NOT NULL DEFAULT '{}',
+    is_default          INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    client_id           TEXT,
+    status              TEXT NOT NULL DEFAULT 'validated',
+    channel_info        TEXT NOT NULL DEFAULT '{}',
+    last_synced_at      TEXT,
+    UNIQUE (org_id, provider, account_label)
+);
+"""
+
+_ORG = UUID("00000000-0000-4000-8000-000000000001")
+_OTHER_ORG = UUID("00000000-0000-4000-8000-000000000002")
+
+
+@pytest.fixture
+def ia_sqlite_db(tmp_path: Path) -> SQLiteClient:
+    db_path = tmp_path / "ia.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(_IA_SCHEMA)
+    return SQLiteClient(db_path)
+
+
+@pytest.fixture
+def ia_svc(ia_sqlite_db: SQLiteClient) -> IntegrationAccountService:
+    fernet_key = Fernet.generate_key()
+    return IntegrationAccountService(ia_sqlite_db, fernet=Fernet(fernet_key))
+
+
+class TestGetMetaAdapterForAccount:
+    """``get_meta_adapter_for_account`` — store B (per-client
+    integration_accounts), distinct from ``get_meta_adapter``'s org-level
+    store A + system-user-token resolution above."""
+
+    def test_builds_user_oauth_adapter_for_existing_meta_account(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=META_PROVIDER,
+            account_label="Cliente IG",
+            credential_dict={"access_token": "USER-TOKEN-123"},
+        )
+
+        adapter = get_meta_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+        assert isinstance(adapter, MetaOAuthAdapter)
+        assert adapter.auth_mode == "user_oauth"
+        assert adapter._user_token() == "USER-TOKEN-123"
+
+    def test_raises_not_found_for_wrong_org(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=META_PROVIDER,
+            account_label="Cliente IG",
+            credential_dict={"access_token": "USER-TOKEN-123"},
+        )
+
+        with pytest.raises(IntegrationAccountNotFound):
+            get_meta_adapter_for_account(account.id, _OTHER_ORG, svc=ia_svc)
+
+    def test_raises_not_found_for_unknown_account(self, ia_svc):
+        with pytest.raises(IntegrationAccountNotFound):
+            get_meta_adapter_for_account(uuid4(), _ORG, svc=ia_svc)
+
+    def test_raises_value_error_for_non_meta_provider(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider="youtube",
+            account_label="Not Meta",
+            credential_dict={"access_token": "YT-TOKEN"},
+        )
+
+        with pytest.raises(ValueError, match="expected 'meta'"):
+            get_meta_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+    def test_accepts_string_ids(self, ia_svc):
+        """account_id / org_id may be passed as strings (e.g. from a
+        Wave 3 background job that only has the string form)."""
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=META_PROVIDER,
+            account_label="Cliente IG string-ids",
+            credential_dict={"access_token": "USER-TOKEN-456"},
+        )
+
+        adapter = get_meta_adapter_for_account(str(account.id), str(_ORG), svc=ia_svc)
+
+        assert isinstance(adapter, MetaOAuthAdapter)
+        assert adapter._user_token() == "USER-TOKEN-456"

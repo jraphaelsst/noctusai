@@ -1072,6 +1072,297 @@ class TestDriveOAuthCallback:
         assert resp.status_code == 400
 
 
+# ─── Meta OAuth: per-client connection (Wave 2) ──────────────────────────────
+class TestMetaOAuthStart:
+    """POST /accounts/meta/oauth/start — app creds resolve via
+    ``resolve_meta_app_creds`` (DB-first, env-fallback); ENCRYPTION_KEY is
+    empty in this test env so the DB leg raises EncryptionNotConfigured and
+    the resolver falls back to the injected settings, exercising the SAME
+    env-fallback path production hits before ENCRYPTION_KEY is set."""
+
+    @staticmethod
+    def _fake_cfg(app_id="fake-app-id", app_secret="fake-app-secret"):
+        from app.config import settings as _settings
+
+        return _settings.model_copy(
+            update={"meta_app_id": app_id, "meta_app_secret": app_secret}
+        )
+
+    def test_start_returns_auth_url_and_state(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/meta/oauth/start",
+                headers=_auth_header(),
+            )
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "auth_url" in body
+        assert "state" in body
+        assert "facebook.com" in body["auth_url"]
+        assert "client_id=fake-app-id" in body["auth_url"]
+        # The Wave 2-pinned scope set — not the org-level auto-discovered set.
+        for scope in (
+            "instagram_basic",
+            "instagram_content_publish",
+            "instagram_manage_comments",
+            "instagram_manage_messages",
+            "instagram_manage_insights",
+            "pages_show_list",
+            "pages_read_engagement",
+            "pages_manage_posts",
+            "pages_manage_engagement",
+        ):
+            assert scope in body["auth_url"], scope
+        assert _ORG_A in body["state"]
+        parts = body["state"].split(":")
+        assert len(parts) == 3
+        assert parts[2] == ""  # no client_id supplied → empty third segment
+
+    def test_start_503_when_app_creds_missing(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg(app_id="", app_secret="")
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/meta/oauth/start",
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+    def test_start_404_when_client_id_not_found(self, client):
+        """A client_id that doesn't resolve via build_client_service (the
+        mock admin client's default empty-select) 404s — never silently
+        proceeds with an unvalidated FK."""
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/meta/oauth/start",
+                json={"client_id": _FAKE_YT_CLIENT_ID},
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
+class TestMetaOAuthCallback:
+    """GET /accounts/meta/oauth/callback — exchanges code→token via the seed
+    helpers (patched at the httpx/Graph-API boundary — a genuinely external
+    service call, not our own code, per KB § PATTERNS/compliance/testing.md)
+    and probes /me + pages + IG via a stubbed ``MetaOAuthAdapter`` (same
+    external-call boundary; the seed adapter's Graph calls, not our logic)."""
+
+    @staticmethod
+    def _fake_cfg():
+        from app.config import settings as _settings
+
+        return _settings.model_copy(
+            update={
+                "meta_app_id": "fake-app-id",
+                "meta_app_secret": "fake-app-secret",
+                "frontend_base_url": "",
+            }
+        )
+
+    class _FakeProbeAdapter:
+        """Stand-in for MetaOAuthAdapter's probe surface — no network."""
+
+        def __init__(self, **_kw):
+            pass
+
+        def me(self):
+            return {"id": "USER1", "name": "Test User"}
+
+        def list_facebook_pages(self):
+            from noctusai_lib.integrations.meta.types import FacebookPage
+
+            return [FacebookPage(id="PAGE1", name="Test Page")]
+
+        def list_instagram_accounts(self):
+            from noctusai_lib.integrations.meta.types import InstagramAccount
+
+            return [InstagramAccount(id="IG1", username="test_ig")]
+
+    def _patched_exchange(self):
+        from noctusai_lib.integrations.meta.types import TokenBundle
+
+        return (
+            patch(
+                "app.routers.integration_accounts_router.exchange_code_for_token",
+                return_value="SHORT-TOKEN",
+            ),
+            patch(
+                "app.routers.integration_accounts_router.exchange_for_long_lived_bundle",
+                return_value=TokenBundle(
+                    access_token="LONG-TOKEN",
+                    token_type="bearer",
+                    expires_in=5184000,
+                ),
+            ),
+            patch(
+                "app.routers.integration_accounts_router.MetaOAuthAdapter",
+                side_effect=lambda **kw: self._FakeProbeAdapter(**kw),
+            ),
+        )
+
+    def test_callback_creates_account_with_ig_label(self, client, ia_service):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        p1, p2, p3 = self._patched_exchange()
+        try:
+            with p1, p2, p3:
+                state = f"{_ORG_A}:nonce123"
+                resp = client.get(
+                    "/api/integrations/accounts/meta/oauth/callback"
+                    f"?code=auth-code&state={state}",
+                    follow_redirects=False,
+                )
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+        assert resp.status_code in (302, 303), resp.text
+        location = resp.headers.get("location", "")
+        assert "clientes" in location
+        assert "account_created=" in location
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
+        assert len(accounts) == 1
+        acct = accounts[0]
+        # IG account is the preferred label source when present.
+        assert acct.metadata.get("channel_id") == "IG1"
+        assert acct.account_label == "test_ig"
+        assert acct.metadata.get("user_id") == "USER1"
+
+    def test_callback_reconnect_same_channel_is_idempotent(self, client, ia_service):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        p1, p2, p3 = self._patched_exchange()
+        try:
+            with p1, p2, p3:
+                state = f"{_ORG_A}:nonce-reconnect"
+                for _ in range(2):
+                    resp = client.get(
+                        "/api/integrations/accounts/meta/oauth/callback"
+                        f"?code=auth-code&state={state}",
+                        follow_redirects=False,
+                    )
+                    assert resp.status_code in (302, 303), resp.text
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
+        same = [a for a in accounts if a.metadata.get("channel_id") == "IG1"]
+        assert len(same) == 1, f"expected 1 account for IG1, got {len(same)}"
+
+    def test_callback_with_client_id_links_account(self, client, ia_service):
+        """State's third segment (client_id) round-trips onto the created
+        account — mirrors the YouTube client_id round-trip."""
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        p1, p2, p3 = self._patched_exchange()
+        try:
+            with p1, p2, p3:
+                state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+                resp = client.get(
+                    "/api/integrations/accounts/meta/oauth/callback"
+                    f"?code=auth-code&state={state}",
+                    follow_redirects=False,
+                )
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+        assert resp.status_code in (302, 303), resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+
+    def test_callback_missing_code_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/meta/oauth/callback?state=x",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_error_param_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/meta/oauth/callback?error=access_denied",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_malformed_state_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/meta/oauth/callback?code=c&state=no-org",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_503_when_app_creds_missing(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg().model_copy(
+            update={"meta_app_id": "", "meta_app_secret": ""}
+        )
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            state = f"{_ORG_A}:nonce-noapp"
+            resp = client.get(
+                "/api/integrations/accounts/meta/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
 # ─── n8n manual create with client_id round-trip ─────────────────────────────
 class TestN8nClientIdRoundTrip:
     """n8n is manual-key-only (no OAuth); verify client_id persists correctly

@@ -147,3 +147,30 @@ class WahaTestResult(BaseModel):
     phone: str
     message_id: str | None = None
     error: str | None = None
+
+
+# ─── Meta App config (Wave 2 — app-wide, DB-backed + env-fallback) ─────
+class MetaAppConfigUpdate(BaseModel):
+    """Inbound payload for PUT /settings/meta-app.
+
+    ``app_secret`` is write-only and OPTIONAL: omitted/blank leaves the
+    stored secret untouched (never overwritten by an accidental blank
+    submit — the FE never pre-fills it, so a re-save without editing the
+    secret must not silently wipe it). At least one field must be set.
+    """
+
+    app_id: str | None = None
+    app_secret: str | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class MetaAppConfigStatus(BaseModel):
+    """Outbound shape for PUT/GET /settings/meta-app* — NEVER the secret
+    itself, only whether each half of the pair is configured (DB or
+    env) plus a masked App ID for display confirmation."""
+
+    app_id_configured: bool
+    app_secret_configured: bool
+    app_id_masked: str | None = None
