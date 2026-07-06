@@ -6,14 +6,21 @@
  * This file only defines pages and nav — zero boilerplate.
  *
  * Nav:
- *   Principal     · Dashboard / Criação de mídia / Email Marketing / YouTube
- *   Conexões      · Conexões (unified: WhatsApp + YouTube + providers) / Monitor
+ *   Principal     · Dashboard / Criação de mídia / Contatos / YouTube / Meta / WhatsApp
+ *   Conexões      · Clientes / Monitor
  *   Configuração  · Configurações / Equipe
  *
  * The former "Integrações" nav item is folded into "Conexões" — both the
  * /conexoes and /integrations routes point to the same Conexoes page.
  * The former separate "Conexão" (WhatsApp-only) is now embedded inside Conexoes.
  * The standalone /conexao route is kept for back-compat (direct WAHA management).
+ *
+ * WhatsApp (`/whatsapp-chat`) is back in nav as of the SocialDashboardShell
+ * remodel (componentization wave, N=3) — it's now a full dashboard (Chat +
+ * Configurações subtabs), not just the connection-scoped Chat tab ClienteModal
+ * already surfaces. The `whatsapp_chat` status_pagina row already exists
+ * (migration 014, status='producao') from when this route was last in nav —
+ * no new migration needed to make it visible again.
  * pt-BR copy preserved.
  */
 import { lazy } from "react";
@@ -80,6 +87,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
+      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
     ],
   },
   {
@@ -129,6 +137,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Contatos", href: "/contatos", icon: UserRound },
       { name: "YouTube", href: "/youtube", icon: Youtube },
       { name: "Meta", href: "/meta", icon: Instagram },
+      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
     ],
   },
   {
@@ -197,7 +206,7 @@ export default createProductApp({
     { path: "/conexao", component: RedirectToClientes },
     { path: "/clientes", component: Clientes },
     { path: "/monitor", component: Monitor },
-    // /whatsapp-chat kept as unlisted route (removed from nav; Chat tab inside ClienteModal is now primary)
+    // WhatsApp — full dashboard (Chat + Configurações), back in nav (see header comment)
     { path: "/whatsapp-chat", component: WhatsAppChat },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },

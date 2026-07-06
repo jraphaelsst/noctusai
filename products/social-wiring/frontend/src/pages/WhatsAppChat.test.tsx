@@ -1,28 +1,40 @@
 /**
- * WhatsAppChat.tsx — unit tests for the WhatsApp chat UI.
+ * WhatsAppChat.tsx — unit tests for the WhatsApp dashboard page (Wave 5
+ * SocialDashboardShell remodel).
  *
- * Covers:
+ * The old bespoke 2-pane chat markup is gone — this page now composes:
+ *   - `SocialDashboardShell` (header + subtabs) — stubbed here (same
+ *     prop-capture pattern as `WhatsAppChatWindow.test.tsx` / `IgDMs.test.tsx`)
+ *     since the real `@noctusai/lib/design-system` barrel transitively
+ *     imports `useAIOutputFor` → `@noctusai/seed/infra`, which throws at
+ *     module-load time without `VITE_SUPABASE_URL`. The shell's OWN
+ *     tab-switching mechanics are covered by
+ *     `seed/lib/frontend/src/design-system/dashboard/SocialDashboardShell.test.tsx`.
+ *   - `WhatsAppChatWindow` (Chat subtab) — stubbed; its WhatsApp→ChatWindow
+ *     adapter mapping is covered by `components/WhatsAppChatWindow.test.tsx`.
+ *   - `ConnectionSettingsPanel` (Configurações subtab) — stubbed; the WAHA
+ *     management body itself has no dedicated test file (pre-existing gap,
+ *     inherited from the pre-extraction `ConnectionDetailDialog`).
+ *
+ * Coverage:
  *   1. Loading state while connections load.
- *   2. Empty state when no connections exist (link to /conexoes).
- *   3. Default-selects the first connection on load.
- *   4. Conversation list — loading skeleton shown while chats load.
- *   5. Conversation list — empty state when no chats.
- *   6. Conversation list — chat rows render with contact + last message.
- *   7. Thread — loading skeleton shown while messages load.
- *   8. Thread — empty state when no messages.
- *   9. Thread — inbound bubbles render on the left, outbound on the right.
- *  10. Composer — Send button is disabled when input is empty.
- *  11. Composer — Send button is enabled when input has text.
- *  12. Composer — Enter key triggers send.
- *  13. Auto-reply — Switch renders and calls useSetAutoReply on change.
- *  14. Auto-reply — Switch reflects connection.auto_reply_enabled.
+ *   2. Error state when connections fail to load.
+ *   3. Empty state when no connections exist (no shell, link to /conexoes).
+ *   4. Shell wiring: title/subtitle + subtab keys (chat, config).
+ *   5. Connection selector (accountSwitcher slot) — renders one button per
+ *      connection; clicking a button re-points the selected connection fed
+ *      to BOTH subtabs.
+ *   6. Deep-link default selection — `useActiveAccountStore.activeAccountId`
+ *      pre-selects a matching connection over the first-in-list default.
+ *   7. Chat subtab — renders `WhatsAppChatWindow` with the selected
+ *      connection's id + auto_reply_enabled.
+ *   8. Configurações subtab — renders `ConnectionSettingsPanel` with the
+ *      selected connection's full `line` object.
+ *   9. Configurações subtab delete — `onRequestDelete` opens the inline
+ *      confirm dialog; confirming calls the remove mutation.
  *
- * Mock strategy:
- *   · ONE vi.mock per module (hoisted). Multiple mocks of the same module
- *     collide; the last wins silently.
- *   · All hooks are vi.fn()s configured per-test in beforeEach.
- *   · localStorage/sessionStorage provisioned by the shared seed vitest
- *     setup (seed/framework/frontend/vitest.setup.ts) — no per-file polyfill.
+ * Mock strategy: ONE vi.mock per module (hoisted); hooks are vi.fn()s
+ * configured per-test in beforeEach.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -33,76 +45,56 @@ afterEach(async () => {
 // ─── Hook mocks ────────────────────────────────────────────────────────────
 
 const mockUseWhatsAppConnections = vi.fn();
+const mockUseWhatsAppConnectionMutations = vi.fn();
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnections: mockUseWhatsAppConnections,
+  useWhatsAppConnectionMutations: mockUseWhatsAppConnectionMutations,
 }));
 
-const mockUseWhatsAppChats = vi.fn();
-const mockUseWhatsAppChatMessages = vi.fn();
-const mockUseSendWhatsAppMessage = vi.fn();
-const mockUseSetAutoReply = vi.fn();
-vi.mock("@/hooks/useWhatsAppChats", () => ({
-  useWhatsAppChats: mockUseWhatsAppChats,
-  useWhatsAppChatMessages: mockUseWhatsAppChatMessages,
-  useSendWhatsAppMessage: mockUseSendWhatsAppMessage,
-  useSetAutoReply: mockUseSetAutoReply,
+const mockActiveAccountState = { activeAccountId: null as string | null };
+vi.mock("@/state/useActiveAccount", () => ({
+  useActiveAccountStore: (selector: (s: typeof mockActiveAccountState) => unknown) =>
+    selector(mockActiveAccountState),
 }));
 
-// ─── UI stubs ─────────────────────────────────────────────────────────────
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-vi.mock("@/components/ui/badge", () => ({
-  Badge: ({ children, className }: any) => (
-    <span data-testid="badge" className={className}>{children}</span>
-  ),
-}));
+// ─── UI stub ───────────────────────────────────────────────────────────────
+
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, onClick, disabled, "aria-label": al, ...rest }: any) => (
-    <button onClick={onClick} disabled={disabled} aria-label={al} {...rest}>
+  Button: ({ children, onClick, disabled, variant, ...rest }: any) => (
+    <button onClick={onClick} disabled={disabled} data-variant={variant} {...rest}>
       {children}
     </button>
   ),
 }));
-vi.mock("@/components/ui/input", () => ({
-  Input: ({ onChange, value, disabled, placeholder, "aria-label": al, onKeyDown, ...rest }: any) => (
-    <input
-      value={value}
-      onChange={onChange}
-      disabled={disabled}
-      placeholder={placeholder}
-      aria-label={al}
-      onKeyDown={onKeyDown}
-      {...rest}
-    />
-  ),
+
+// ─── Subtab-content stubs — capture props ─────────────────────────────────
+
+let lastChatWindowProps: any = null;
+vi.mock("@/components/WhatsAppChatWindow", () => ({
+  WhatsAppChatWindow: (props: any) => {
+    lastChatWindowProps = props;
+    return <div data-testid="chat-window-stub">{`chat:${props.connectionId}`}</div>;
+  },
 }));
-vi.mock("@/components/ui/avatar", () => ({
-  Avatar: ({ children, className }: any) => <div className={className}>{children}</div>,
+
+let lastConfigPanelProps: any = null;
+vi.mock("@/components/ConnectionDetailDialog", () => ({
+  ConnectionSettingsPanel: (props: any) => {
+    lastConfigPanelProps = props;
+    return <div data-testid="config-panel-stub">{`config:${props.line.id}`}</div>;
+  },
 }));
-vi.mock("@/components/ui/skeleton", () => ({
-  Skeleton: ({ className }: any) => <div data-testid="skeleton" className={className} />,
-}));
-vi.mock("@/components/ui/separator", () => ({
-  Separator: () => <hr />,
-}));
-vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange, disabled, "aria-label": al }: any) => (
-    <button
-      role="switch"
-      aria-checked={checked}
-      aria-label={al}
-      disabled={disabled}
-      onClick={() => onCheckedChange(!checked)}
-      data-testid="auto-reply-switch"
-    >
-      {checked ? "ON" : "OFF"}
-    </button>
-  ),
-}));
-vi.mock("@/components/ui/tooltip", () => ({
-  TooltipProvider: ({ children }: any) => <>{children}</>,
-  Tooltip: ({ children }: any) => <>{children}</>,
-  TooltipTrigger: ({ children, asChild }: any) => <>{children}</>,
-  TooltipContent: ({ children }: any) => <div data-testid="tooltip-content">{children}</div>,
+
+// ─── Shell stub — captures props for wiring assertions ────────────────────
+
+let lastShellProps: any = null;
+vi.mock("@noctusai/lib/design-system", () => ({
+  SocialDashboardShell: (props: any) => {
+    lastShellProps = props;
+    return null;
+  },
 }));
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
@@ -116,71 +108,30 @@ const makeConn = (overrides: Partial<Record<string, any>> = {}) => ({
   created_at: "2026-01-01",
   updated_at: "2026-01-01",
   auto_reply_enabled: false,
+  authorized_numbers: [],
+  bound_chats: [],
   ...overrides,
 });
-
-const makeChat = (overrides: Partial<Record<string, any>> = {}) => ({
-  chat_id: "5511999998888@c.us",
-  contact: "5511999998888@c.us",
-  contact_id: null,
-  last_message: "Olá, tudo bem?",
-  last_message_at: new Date().toISOString(),
-  last_direction: "inbound" as const,
-  unread: 2,
-  ...overrides,
-});
-
-const makeMessage = (
-  id: string,
-  direction: "inbound" | "outbound",
-  body: string,
-) => ({
-  id,
-  chat_id: "5511999998888@c.us",
-  direction,
-  body,
-  created_at: new Date().toISOString(),
-  provider_message_id: null,
-  structured_payload: null,
-});
-
-const makeSendMutation = (overrides: Partial<Record<string, any>> = {}) => ({
-  mutateAsync: vi.fn().mockResolvedValue({}),
-  isPending: false,
-  ...overrides,
-});
-
-const makeAutoReplyMutation = (overrides: Partial<Record<string, any>> = {}) => ({
-  mutate: vi.fn(),
-  isPending: false,
-  ...overrides,
-});
-
-// ─── Default hook returns ──────────────────────────────────────────────────
 
 beforeEach(() => {
+  lastChatWindowProps = null;
+  lastConfigPanelProps = null;
+  lastShellProps = null;
+  mockActiveAccountState.activeAccountId = null;
+
   mockUseWhatsAppConnections.mockReturnValue({
     data: [makeConn()],
     isLoading: false,
     isError: false,
   });
-  mockUseWhatsAppChats.mockReturnValue({
-    data: [],
-    isLoading: false,
-    isError: false,
+  mockUseWhatsAppConnectionMutations.mockReturnValue({
+    remove: { mutate: vi.fn(), isPending: false },
   });
-  mockUseWhatsAppChatMessages.mockReturnValue({
-    data: [],
-    isLoading: false,
-    isError: false,
-  });
-  mockUseSendWhatsAppMessage.mockReturnValue(makeSendMutation());
-  mockUseSetAutoReply.mockReturnValue(makeAutoReplyMutation());
 });
 
 // ─── Render helper ─────────────────────────────────────────────────────────
 
-async function renderWhatsAppChat() {
+async function renderPage() {
   const mod = await import("./WhatsAppChat");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
@@ -188,276 +139,142 @@ async function renderWhatsAppChat() {
   return { ...result, rtl };
 }
 
+function getSubtab(key: string) {
+  return lastShellProps.subtabs.find((s: any) => s.key === key);
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe("WhatsAppChat — connection states", () => {
   it("shows loading spinner while connections load", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({
-      data: [],
-      isLoading: true,
-      isError: false,
-    });
-    const { getByText } = await renderWhatsAppChat();
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: true, isError: false });
+    const { getByText } = await renderPage();
     expect(getByText("Carregando conexões...")).toBeTruthy();
   });
 
-  it("shows empty state when no connections exist with link to /conexoes", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderWhatsAppChat();
-    expect(getByText("Nenhuma conexão WhatsApp")).toBeTruthy();
-    expect(getByText("Conexões")).toBeTruthy();
+  it("shows an error message when connections fail to load", async () => {
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: true });
+    const { getByText } = await renderPage();
+    expect(getByText("Erro ao carregar conexões. Recarregue a página.")).toBeTruthy();
   });
 
-  it("shows connection selector buttons for each connection", async () => {
+  it("shows empty state (no shell) when no connections exist, with a link to /conexoes", async () => {
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByText } = await renderPage();
+    expect(getByText("Nenhuma conexão WhatsApp")).toBeTruthy();
+    expect(getByText("Conexões")).toBeTruthy();
+    expect(lastShellProps).toBeNull();
+  });
+});
+
+describe("WhatsAppChat — shell wiring", () => {
+  it("passes title/subtitle and Chat + Configurações subtabs to the shell", async () => {
+    await renderPage();
+    expect(lastShellProps.title).toBe("WhatsApp");
+    expect(lastShellProps.defaultSubtab).toBe("chat");
+    expect(lastShellProps.subtabs.map((s: any) => s.key)).toEqual(["chat", "config"]);
+    expect(lastShellProps.subtabs.map((s: any) => s.label)).toEqual(["Chat", "Configurações"]);
+  });
+});
+
+describe("WhatsAppChat — connection selector", () => {
+  it("renders one button per connection in the accountSwitcher slot", async () => {
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
       isLoading: false,
       isError: false,
     });
-    const { getByText } = await renderWhatsAppChat();
+    const { rtl } = await renderPage();
+    const { getByText } = rtl.render(lastShellProps.accountSwitcher);
     expect(getByText("SP")).toBeTruthy();
     expect(getByText("RJ")).toBeTruthy();
   });
-});
 
-describe("WhatsAppChat — conversation list", () => {
-  it("shows skeleton while chats are loading", async () => {
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [],
-      isLoading: true,
-      isError: false,
-    });
-    const { getAllByTestId } = await renderWhatsAppChat();
-    const skeletons = getAllByTestId("skeleton");
-    expect(skeletons.length).toBeGreaterThan(0);
-  });
-
-  it("shows empty state when no chats for the connection", async () => {
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderWhatsAppChat();
-    expect(getByText("Nenhuma conversa ainda nesta conexão.")).toBeTruthy();
-  });
-
-  it("renders chat rows with contact and last message", async () => {
-    const chat = makeChat({ contact: "5511999998888@c.us", last_message: "Olá!" });
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderWhatsAppChat();
-    // Contact stripped of JID suffix
-    expect(getByText("5511999998888")).toBeTruthy();
-    expect(getByText("Olá!")).toBeTruthy();
-  });
-
-  it("shows unread badge when chat has unread messages", async () => {
-    const chat = makeChat({ unread: 5 });
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderWhatsAppChat();
-    expect(getByText("5")).toBeTruthy();
-  });
-});
-
-describe("WhatsAppChat — thread", () => {
-  beforeEach(() => {
-    // Set up a chat list so we can select one
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [makeChat()],
-      isLoading: false,
-      isError: false,
-    });
-  });
-
-  async function renderAndOpenThread() {
-    const result = await renderWhatsAppChat();
-    const rtl = await import("@testing-library/react");
-    const chatRow = result.getByText("5511999998888");
-    rtl.fireEvent.click(chatRow.closest("button")!);
-    return { ...result, rtl };
-  }
-
-  it("shows loading skeleton while messages load", async () => {
-    mockUseWhatsAppChatMessages.mockReturnValue({
-      data: [],
-      isLoading: true,
-      isError: false,
-    });
-    const { getAllByTestId } = await renderAndOpenThread();
-    const skeletons = getAllByTestId("skeleton");
-    expect(skeletons.length).toBeGreaterThan(0);
-  });
-
-  it("shows empty state when no messages", async () => {
-    mockUseWhatsAppChatMessages.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderAndOpenThread();
-    expect(getByText("Nenhuma mensagem ainda.")).toBeTruthy();
-  });
-
-  it("renders inbound and outbound messages", async () => {
-    mockUseWhatsAppChatMessages.mockReturnValue({
-      data: [
-        makeMessage("m1", "inbound", "Bom dia!"),
-        makeMessage("m2", "outbound", "Tudo bem!"),
-      ],
-      isLoading: false,
-      isError: false,
-    });
-    const { getByText } = await renderAndOpenThread();
-    expect(getByText("Bom dia!")).toBeTruthy();
-    expect(getByText("Tudo bem!")).toBeTruthy();
-  });
-});
-
-describe("WhatsAppChat — composer", () => {
-  beforeEach(() => {
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [makeChat()],
-      isLoading: false,
-      isError: false,
-    });
-    mockUseWhatsAppChatMessages.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    });
-  });
-
-  async function renderWithOpenThread() {
-    const result = await renderWhatsAppChat();
-    const rtl = await import("@testing-library/react");
-    const chatRow = result.getByText("5511999998888");
-    rtl.fireEvent.click(chatRow.closest("button")!);
-    return { ...result, fireEvent: rtl.fireEvent };
-  }
-
-  it("Send button is disabled when input is empty", async () => {
-    const { getByLabelText } = await renderWithOpenThread();
-    const sendBtn = getByLabelText("Enviar mensagem");
-    expect((sendBtn as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("Send button is enabled when input has text", async () => {
-    const { getByLabelText, fireEvent } = await renderWithOpenThread();
-    const input = getByLabelText("Mensagem");
-    fireEvent.change(input, { target: { value: "Olá" } });
-    const sendBtn = getByLabelText("Enviar mensagem");
-    expect((sendBtn as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("Enter key triggers send", async () => {
-    const mutateAsync = vi.fn().mockResolvedValue({});
-    mockUseSendWhatsAppMessage.mockReturnValue({ mutateAsync, isPending: false });
-
-    const { getByLabelText, fireEvent } = await renderWithOpenThread();
-    const input = getByLabelText("Mensagem");
-    fireEvent.change(input, { target: { value: "Olá" } });
-    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
-
-    expect(mutateAsync).toHaveBeenCalledWith({ text: "Olá" });
-  });
-});
-
-describe("WhatsAppChat — auto-reply toggle", () => {
-  const chat = makeChat();
-
-  beforeEach(() => {
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
-      isLoading: false,
-      isError: false,
-    });
-    mockUseWhatsAppChatMessages.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    });
-  });
-
-  async function renderWithOpenThread(autoReplyEnabled = false) {
+  it("switching connections re-points both subtabs", async () => {
     mockUseWhatsAppConnections.mockReturnValue({
-      data: [makeConn({ auto_reply_enabled: autoReplyEnabled })],
+      data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
       isLoading: false,
       isError: false,
     });
-    const result = await renderWhatsAppChat();
-    const rtl = await import("@testing-library/react");
-    const chatRow = result.getByText("5511999998888");
-    rtl.fireEvent.click(chatRow.closest("button")!);
-    return { ...result, fireEvent: rtl.fireEvent };
-  }
+    const { rtl } = await renderPage();
 
-  it("Switch reflects auto_reply_enabled=false", async () => {
-    const { getByTestId } = await renderWithOpenThread(false);
-    const sw = getByTestId("auto-reply-switch");
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-  });
+    // Default selection is the first connection.
+    expect(getSubtab("chat").render().props.connection.id).toBe("c1");
 
-  it("Switch reflects auto_reply_enabled=true", async () => {
-    const { getByTestId } = await renderWithOpenThread(true);
-    const sw = getByTestId("auto-reply-switch");
-    expect(sw.getAttribute("aria-checked")).toBe("true");
-  });
+    // The accountSwitcher's onChange is the page's real setSelectedConnId —
+    // calling it re-renders the mounted WhatsAppChat instance (the shell
+    // mock returns null but the page component itself stays mounted).
+    rtl.act(() => {
+      lastShellProps.accountSwitcher.props.onChange("c2");
+    });
 
-  it("clicking Switch calls useSetAutoReply with toggled value", async () => {
-    const mutate = vi.fn();
-    mockUseSetAutoReply.mockReturnValue({ mutate, isPending: false });
-    const { getByTestId, fireEvent } = await renderWithOpenThread(false);
-    const sw = getByTestId("auto-reply-switch");
-    fireEvent.click(sw);
-    expect(mutate).toHaveBeenCalledWith({ enabled: true });
+    expect(getSubtab("chat").render().props.connection.id).toBe("c2");
+    expect(getSubtab("config").render().props.connection.id).toBe("c2");
   });
 });
 
-describe("WhatsAppChat — resolved contact name + null timestamp safety", () => {
-  it("shows resolved contact name (not JID) when contact has no @", async () => {
-    const chat = makeChat({ contact: "João Raphael", contact_id: "c-123" });
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
+describe("WhatsAppChat — deep-link default selection", () => {
+  it("prefers the active-account-store connection over the first-in-list default", async () => {
+    mockActiveAccountState.activeAccountId = "c2";
+    mockUseWhatsAppConnections.mockReturnValue({
+      data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
       isLoading: false,
       isError: false,
     });
-    const { getByText } = await renderWhatsAppChat();
-    // Resolved name — must render as-is (no JID stripping)
-    expect(getByText("João Raphael")).toBeTruthy();
+    await renderPage();
+    expect(getSubtab("chat").render().props.connection.id).toBe("c2");
   });
 
-  it("strips JID suffix when contact is a raw JID", async () => {
-    const chat = makeChat({ contact: "5511999998888@c.us" });
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
+  it("falls back to the first connection when the active account isn't a WA connection", async () => {
+    mockActiveAccountState.activeAccountId = "some-other-provider-account";
+    mockUseWhatsAppConnections.mockReturnValue({
+      data: [makeConn({ id: "c1", label: "SP" })],
       isLoading: false,
       isError: false,
     });
-    const { getByText } = await renderWhatsAppChat();
-    expect(getByText("5511999998888")).toBeTruthy();
+    await renderPage();
+    expect(getSubtab("chat").render().props.connection.id).toBe("c1");
+  });
+});
+
+describe("WhatsAppChat — Chat subtab", () => {
+  it("renders WhatsAppChatWindow with the selected connection's id and auto_reply_enabled", async () => {
+    mockUseWhatsAppConnections.mockReturnValue({
+      data: [makeConn({ id: "conn-9", auto_reply_enabled: true })],
+      isLoading: false,
+      isError: false,
+    });
+    const { rtl } = await renderPage();
+    rtl.render(getSubtab("chat").render());
+    expect(lastChatWindowProps.connectionId).toBe("conn-9");
+    expect(lastChatWindowProps.autoReplyEnabled).toBe(true);
+  });
+});
+
+describe("WhatsAppChat — Configurações subtab", () => {
+  it("renders ConnectionSettingsPanel with the selected connection's full line", async () => {
+    const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
+    const { rtl } = await renderPage();
+    rtl.render(getSubtab("config").render());
+    expect(lastConfigPanelProps.line).toEqual(conn);
   });
 
-  it("renders chat list without crashing when last_message_at is null", async () => {
-    const chat = makeChat({ last_message_at: null });
-    mockUseWhatsAppChats.mockReturnValue({
-      data: [chat],
-      isLoading: false,
-      isError: false,
+  it("onRequestDelete opens the inline confirm dialog; confirming calls the remove mutation", async () => {
+    const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
+    const mutate = vi.fn();
+    mockUseWhatsAppConnectionMutations.mockReturnValue({ remove: { mutate, isPending: false } });
+
+    const { rtl, getByText, getByTestId } = await renderPage();
+    rtl.render(getSubtab("config").render());
+
+    rtl.act(() => {
+      lastConfigPanelProps.onRequestDelete(conn);
     });
-    // Should not throw — null timestamp must not produce "Invalid Date"
-    const { queryByText } = await renderWhatsAppChat();
-    expect(queryByText("Invalid Date")).toBeNull();
+
+    expect(getByText('"Atendimento RJ" será removida permanentemente.')).toBeTruthy();
+    rtl.fireEvent.click(getByTestId("wa-confirm-delete"));
+    expect(mutate).toHaveBeenCalledWith("conn-9", expect.any(Object));
   });
 });
