@@ -1,20 +1,17 @@
 /**
- * InstagramInsights — Instagram account insights page (v1).
+ * IgVisaoGeral — Instagram "Visão geral" subtab of the Meta dashboard.
  *
- * Sections (loading / empty / error / success each):
- *   1. Connection status — `/api/meta/status`; adapter=="fake" OR
- *      consent_required → "Conectar Instagram" CTA (navigates the browser
- *      to `/api/meta/oauth/start`, which 302's to the FB consent dialog).
- *   2. IG account picker — shown only when >1 account.
- *   3. KPI row — seguidores / seguindo / posts / alcance / visitas ao perfil,
- *      reusing `MetricCard`.
- *   4. Followers-over-time trend — recharts line chart from `/snapshots`.
- *   5. Per-post table — `/media` (reach, curtidas, comentários, salvos).
- *   6. "Capturar agora" — POST `/snapshot`, invalidates the snapshots query.
+ * Ports the KPI row + followers trend + per-post table from the retired
+ * `InstagramInsights.tsx`, re-pointed from the local `AccountPicker` /
+ * `{ig_user_id}` path-param model to the shared `activeAccountId`
+ * (`useActiveAccountStore`, set by `<ConnectedAccountSwitcher provider="meta" />`
+ * in the dashboard shell).
  *
- * PT-BR copy throughout (Brazilian product).
+ * States: no account selected (empty) / context loading / no IG account on
+ * this connection (empty) / insights error banner / trend + posts each with
+ * their own loading/empty/error.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Camera,
   CircleAlert,
@@ -45,105 +42,21 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
 import { MetricCard } from "@/components/MetricCard";
-import { apiUrl } from "@/lib/apiBase";
+import { formatNumber } from "@/lib/formatNumber";
 import {
+  useActiveMetaAccountId,
   useCaptureIgSnapshot,
-  useIgAccounts,
   useIgInsights,
   useIgMedia,
   useIgSnapshots,
-  useMetaStatus,
-  type IGAccount,
-} from "@/hooks/useInstagramInsights";
-
-// ─── Number formatting (mirrors useDashboard.formatNumber) ──────────────────
-
-function formatNumber(n: number | null | undefined): string {
-  const v = n ?? 0;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toLocaleString("pt-BR");
-}
-
-// ─── Connection CTA ──────────────────────────────────────────────────────────
-
-function ConnectInstagramCard({ error }: { error?: string | null }) {
-  return (
-    <Card data-testid="ig-connect-card">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Instagram className="h-5 w-5" />
-          Conectar Instagram
-        </CardTitle>
-        <CardDescription>
-          Conecte sua conta comercial do Instagram (via Meta) para ver
-          seguidores, alcance e desempenho dos posts.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-destructive">
-            <CircleAlert className="h-4 w-4 shrink-0" />
-            {error}
-          </div>
-        )}
-        <Button
-          data-testid="ig-connect-btn"
-          onClick={() =>
-            window.location.assign(apiUrl("/api/meta/oauth/start"))
-          }
-        >
-          <Instagram className="mr-2 h-4 w-4" />
-          Conectar Instagram
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Account picker ──────────────────────────────────────────────────────────
-
-function AccountPicker({
-  accounts,
-  selectedId,
-  onSelect,
-}: {
-  accounts: IGAccount[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  if (accounts.length <= 1) return null;
-  return (
-    <div className="w-full max-w-xs space-y-1.5">
-      <Select value={selectedId ?? undefined} onValueChange={onSelect}>
-        <SelectTrigger data-testid="ig-account-select">
-          <SelectValue placeholder="Selecione uma conta" />
-        </SelectTrigger>
-        <SelectContent>
-          {accounts.map((a) => (
-            <SelectItem key={a.id} value={a.id}>
-              @{a.username}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
+  useMetaContext,
+} from "@/hooks/useMeta";
 
 // ─── Followers trend chart ───────────────────────────────────────────────────
 
-function FollowersTrendChart({ igUserId }: { igUserId: string }) {
-  const { data, isLoading, isError } = useIgSnapshots(igUserId, 90);
+function FollowersTrendChart({ accountId }: { accountId: string }) {
+  const { data, isLoading, isError } = useIgSnapshots(accountId, 90);
 
   const chartData = useMemo(
     () =>
@@ -221,8 +134,8 @@ function FollowersTrendChart({ igUserId }: { igUserId: string }) {
 
 // ─── Per-post table ───────────────────────────────────────────────────────────
 
-function PostsTable({ igUserId }: { igUserId: string }) {
-  const { data, isLoading, isError } = useIgMedia(igUserId, 25);
+function PostsTable({ accountId }: { accountId: string }) {
+  const { data, isLoading, isError } = useIgMedia(accountId, 25);
   const media = data?.media ?? [];
 
   if (isLoading) {
@@ -316,20 +229,76 @@ function PostsTable({ igUserId }: { igUserId: string }) {
   );
 }
 
-// ─── Account panel (KPIs + trend + posts + capture) ──────────────────────────
+// ─── Subtab ───────────────────────────────────────────────────────────────────
 
-function AccountPanel({ account }: { account: IGAccount }) {
-  const { data: insights, isLoading: insightsLoading } = useIgInsights(
-    account.id,
-    30,
-  );
-  const capture = useCaptureIgSnapshot(account.id);
+export default function IgVisaoGeral() {
+  const accountId = useActiveMetaAccountId();
+  const { data: context, isLoading: contextLoading, isError: contextError } =
+    useMetaContext(accountId);
+  const { data: insights, isLoading: insightsLoading } = useIgInsights(accountId, 30);
+  const capture = useCaptureIgSnapshot(accountId);
+
+  if (!accountId) {
+    return (
+      <Card>
+        <CardContent
+          className="p-6 text-center text-sm text-muted-foreground"
+          data-testid="ig-overview-no-account"
+        >
+          Selecione uma conta conectada acima para ver a visão geral do
+          Instagram.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (contextLoading) {
+    return (
+      <div className="space-y-4" data-testid="ig-overview-loading">
+        <Skeleton className="h-10 w-64" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 rounded-md" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (contextError) {
+    return (
+      <Card>
+        <CardContent
+          className="flex items-center gap-2 p-6 text-sm text-destructive"
+          data-testid="ig-overview-error"
+        >
+          <CircleAlert className="h-4 w-4 shrink-0" />
+          Erro ao carregar o contexto do Instagram.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const account = context?.instagram ?? null;
+
+  if (!account) {
+    return (
+      <Card>
+        <CardContent
+          className="p-6 text-center text-sm text-muted-foreground"
+          data-testid="ig-overview-empty"
+        >
+          Nenhuma conta do Instagram encontrada para esta conexão do Meta.
+        </CardContent>
+      </Card>
+    );
+  }
 
   const alcance = insights?.metrics?.reach ?? null;
   const visitas = insights?.metrics?.profile_views ?? null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="ig-overview-success">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-lg font-semibold">@{account.username}</div>
@@ -361,23 +330,10 @@ function AccountPanel({ account }: { account: IGAccount }) {
         </div>
       )}
 
-      {/* KPI row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <MetricCard
-          icon={Users}
-          label="Seguidores"
-          value={formatNumber(account.followers_count)}
-        />
-        <MetricCard
-          icon={UserPlus}
-          label="Seguindo"
-          value={formatNumber(account.follows_count)}
-        />
-        <MetricCard
-          icon={Grid3x3}
-          label="Posts"
-          value={formatNumber(account.media_count)}
-        />
+        <MetricCard icon={Users} label="Seguidores" value={formatNumber(account.followers_count)} />
+        <MetricCard icon={UserPlus} label="Seguindo" value={formatNumber(account.follows_count)} />
+        <MetricCard icon={Grid3x3} label="Posts" value={formatNumber(account.media_count)} />
         <MetricCard
           icon={Eye}
           label="Alcance (30d)"
@@ -392,7 +348,6 @@ function AccountPanel({ account }: { account: IGAccount }) {
         />
       </div>
 
-      {/* Trend */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -402,11 +357,10 @@ function AccountPanel({ account }: { account: IGAccount }) {
           <CardDescription>Últimos 90 dias, por snapshot.</CardDescription>
         </CardHeader>
         <CardContent>
-          <FollowersTrendChart igUserId={account.id} />
+          <FollowersTrendChart accountId={account.id} />
         </CardContent>
       </Card>
 
-      {/* Posts */}
       <Card>
         <CardHeader>
           <CardTitle>Posts recentes</CardTitle>
@@ -415,90 +369,9 @@ function AccountPanel({ account }: { account: IGAccount }) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <PostsTable igUserId={account.id} />
+          <PostsTable accountId={account.id} />
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-export default function InstagramInsights() {
-  const { data: status, isLoading: statusLoading } = useMetaStatus();
-
-  const needsConnect =
-    !statusLoading && (status?.adapter === "fake" || status?.consent_required);
-
-  const { data: accountsData, isLoading: accountsLoading, isError: accountsError } =
-    useIgAccounts(!statusLoading && !needsConnect);
-
-  const accounts = accountsData?.accounts ?? [];
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedId && accounts.length > 0) {
-      setSelectedId(accounts[0].id);
-    }
-  }, [accounts, selectedId]);
-
-  const selectedAccount = accounts.find((a) => a.id === selectedId) ?? null;
-
-  return (
-    <div className="container max-w-6xl space-y-6 py-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Instagram Insights</h1>
-        <p className="text-sm text-muted-foreground">
-          Seguidores, alcance e desempenho de posts da sua conta comercial do
-          Instagram.
-        </p>
-      </div>
-
-      {statusLoading ? (
-        <div className="space-y-4" data-testid="ig-status-loading">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-40 w-full" />
-        </div>
-      ) : needsConnect ? (
-        <ConnectInstagramCard error={status?.error} />
-      ) : accountsLoading ? (
-        <div className="space-y-4" data-testid="ig-accounts-loading">
-          <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-md" />
-            ))}
-          </div>
-        </div>
-      ) : accountsError ? (
-        <Card>
-          <CardContent
-            className="flex items-center gap-2 p-6 text-sm text-destructive"
-            data-testid="ig-accounts-error"
-          >
-            <CircleAlert className="h-4 w-4 shrink-0" />
-            Erro ao carregar contas do Instagram.
-          </CardContent>
-        </Card>
-      ) : accounts.length === 0 ? (
-        <Card>
-          <CardContent
-            className="p-6 text-center text-sm text-muted-foreground"
-            data-testid="ig-accounts-empty"
-          >
-            Nenhuma conta do Instagram encontrada para esta conexão do Meta.
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          <AccountPicker
-            accounts={accounts}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
-          {selectedAccount && <AccountPanel account={selectedAccount} />}
-        </div>
-      )}
     </div>
   );
 }

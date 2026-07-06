@@ -56,6 +56,22 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     mockClients.mockReturnValue({ data: [] });
   });
 
+  it("defaults to provider='youtube' for back-compat callers", async () => {
+    mockIntegrationAccounts.mockReturnValue({ data: [] });
+    const { render } = await import("@testing-library/react");
+    const { ConnectedAccountSwitcher } = await import("@/components/ConnectedAccountSwitcher");
+    render(<ConnectedAccountSwitcher />);
+    expect(mockIntegrationAccounts).toHaveBeenCalledWith({ provider: "youtube" });
+  });
+
+  it("threads a custom provider (e.g. 'meta') through to useIntegrationAccounts", async () => {
+    mockIntegrationAccounts.mockReturnValue({ data: [] });
+    const { render } = await import("@testing-library/react");
+    const { ConnectedAccountSwitcher } = await import("@/components/ConnectedAccountSwitcher");
+    render(<ConnectedAccountSwitcher provider="meta" />);
+    expect(mockIntegrationAccounts).toHaveBeenCalledWith({ provider: "meta" });
+  });
+
   it("clears a stale persisted activeAccountId absent from the live accounts", async () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({ activeAccountId: "dead-account", activeClientId: null });
