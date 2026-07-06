@@ -145,3 +145,13 @@ export type {
   ProviderCardConfig,
   EditableField,
 } from "./integrations";
+
+// Social dashboard shell organ — the shared container/header/network-toggle/
+// Radix-Tabs spine every social-account dashboard page (YouTube, Meta, ...)
+// otherwise hand-rolls. See KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend/frontend.md.
+export { SocialDashboardShell } from "./dashboard/SocialDashboardShell";
+export type {
+  SocialDashboardShellProps,
+  SocialDashboardNetwork,
+  SocialDashboardSubtab,
+} from "./dashboard/SocialDashboardShell";

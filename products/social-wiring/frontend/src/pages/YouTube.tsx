@@ -9,6 +9,9 @@
  *
  * Account switcher at top re-points every data hook via useActiveAccountStore.
  * All heavy panels are lazy so the initial paint is fast.
+ *
+ * The container/header/Radix-Tabs spine is `SocialDashboardShell`
+ * (`@noctusai/lib/design-system`) — shared with `MetaDashboard.tsx`.
  */
 import { lazy, Suspense, useState } from "react";
 import {
@@ -20,7 +23,10 @@ import {
   Upload as UploadIcon,
 } from "lucide-react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  SocialDashboardShell,
+  type SocialDashboardSubtab,
+} from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConnectedAccountSwitcher } from "@/components/ConnectedAccountSwitcher";
@@ -115,60 +121,32 @@ function KindTablePanel({ kind }: { kind: "video" | "short" }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+const SUBTABS: SocialDashboardSubtab[] = [
+  { key: "overview", label: "Visão geral", icon: BarChart3, render: () => <VisaoGeralPanel /> },
+  { key: "videos", label: "Vídeos", icon: PlaySquare, render: () => <KindTablePanel kind="video" /> },
+  { key: "shorts", label: "Shorts", icon: Smartphone, render: () => <KindTablePanel kind="short" /> },
+  {
+    key: "upload",
+    label: "Upload",
+    icon: UploadIcon,
+    render: () => (
+      <Suspense fallback={<PanelFallback />}>
+        <UploadPanel />
+      </Suspense>
+    ),
+  },
+];
+
 export default function YouTubePage() {
   return (
-    <div className="container max-w-7xl space-y-6 py-6">
-      {/* Page header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">YouTube</h1>
-          <p className="text-sm text-muted-foreground">
-            Visão geral, catálogo do canal e envios de vídeo, num só lugar.
-          </p>
-        </div>
-        {/* Live account/client switcher — re-points every YT data hook
-            (visão geral, vídeos, shorts) via the shared useActiveAccountStore. */}
-        <ConnectedAccountSwitcher />
-      </div>
-
-      <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap h-auto gap-0.5">
-          <TabsTrigger value="overview">
-            <BarChart3 className="mr-2 h-4 w-4" />
-            Visão geral
-          </TabsTrigger>
-          <TabsTrigger value="videos">
-            <PlaySquare className="mr-2 h-4 w-4" />
-            Vídeos
-          </TabsTrigger>
-          <TabsTrigger value="shorts">
-            <Smartphone className="mr-2 h-4 w-4" />
-            Shorts
-          </TabsTrigger>
-          <TabsTrigger value="upload">
-            <UploadIcon className="mr-2 h-4 w-4" />
-            Upload
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="mt-4">
-          <VisaoGeralPanel />
-        </TabsContent>
-
-        <TabsContent value="videos" className="mt-4">
-          <KindTablePanel kind="video" />
-        </TabsContent>
-
-        <TabsContent value="shorts" className="mt-4">
-          <KindTablePanel kind="short" />
-        </TabsContent>
-
-        <TabsContent value="upload" className="mt-4">
-          <Suspense fallback={<PanelFallback />}>
-            <UploadPanel />
-          </Suspense>
-        </TabsContent>
-      </Tabs>
-    </div>
+    <SocialDashboardShell
+      title="YouTube"
+      subtitle="Visão geral, catálogo do canal e envios de vídeo, num só lugar."
+      // Live account/client switcher — re-points every YT data hook (visão
+      // geral, vídeos, shorts) via the shared useActiveAccountStore.
+      accountSwitcher={<ConnectedAccountSwitcher />}
+      subtabs={SUBTABS}
+      defaultSubtab="overview"
+    />
   );
 }

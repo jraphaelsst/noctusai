@@ -1,0 +1,31 @@
+name: SocialDashboardShell
+path: seed/lib/frontend/src/design-system/dashboard/SocialDashboardShell.tsx
+phase: pilot-seed
+registered_at: "2026-07-06"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Extracted from products/social-wiring/frontend/src/pages/YouTube.tsx + pages/MetaDashboard.tsx — both pages shared the same container/header/network-toggle/Radix-Tabs spine, hand-rolled twice. N=2 at extraction time; the roadmapped WhatsApp page is the N=3 that formalizes the recurrence."
+  - "Subtab selection is internal uncontrolled state (defaultSubtab, falls back to subtabs[0]) with a self-heal effect: if the active key drops out of the current subtabs set (e.g. MetaDashboard's Facebook network has no 'dms' subtab), it resets rather than rendering a dead tab. Absorbed a useEffect both consuming pages used to hand-roll."
+  - "Network toggle (activeNetwork/onNetworkChange) is a CONTROLLED prop pair, not shell-owned state — the caller typically recomputes its subtabs array from the active network, so only the caller can own that transition."
+  - "accountSwitcher is a ReactNode slot, not a rendered-by-name component: the shell lives in @noctusai/lib and must stay decoupled from any product's data layer, while ConnectedAccountSwitcher (social-wiring) is product-local (org-scoped hooks + a product Zustand store). Callers pass the already-wired element."
+  - "Ships its own @noctusai/lib/design-system Tabs primitive (ui/tabs.tsx, @radix-ui/react-tabs) — the seed lib previously had no Tabs wrapper; this is the first design-system organ to need config-driven subtabs."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "The original brief's prop shape (`provider`/`providerLabel` passed straight through to a shell-rendered ConnectedAccountSwitcher) could not be absorbed as written — ConnectedAccountSwitcher is product-local, not seed-lib. Resolved via a generic `accountSwitcher?: ReactNode` slot instead."
+
+alternatives_considered:
+  - "Considered making the shell fetch/render ConnectedAccountSwitcher by name (import from a per-product registry) — rejected: couples @noctusai/lib to product-local data hooks, breaks the seed/product layering the rest of design-system honors (IntegrationCard etc. are pure/props-driven)."
+
+manual_validation_log: []
+
+integration_test_status: unit_tested
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
