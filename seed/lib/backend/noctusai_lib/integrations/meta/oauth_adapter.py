@@ -60,6 +60,7 @@ from noctusai_lib.integrations.meta.mappers import (
     ME_FIELDS,
     PAGE_FIELDS,
     PAGE_IG_FIELD,
+    PAGE_INSIGHT_METRICS,
     POST_FIELDS,
     POST_INSIGHT_METRICS,
     conversation_from_body,
@@ -280,6 +281,61 @@ class MetaOAuthAdapter:
             version=self._version,
         )
         return insights_from_body(post_id, body)
+
+    def get_facebook_page_insights(
+        self,
+        page_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights:
+        """Facebook Page-level insights (`GET /{page-id}/insights`).
+
+        Unlike every other batched insights call above, this one requests
+        each metric SEPARATELY — Meta has been retiring individual Page
+        Insights metrics on a rolling basis (a wave retired 2026-06-15), and
+        a single unsupported metric name 400s Graph's WHOLE batched call
+        when metrics are comma-joined. Per-metric isolation means a
+        retired/renamed metric only drops itself from the result (logged,
+        never raised) — the caller never loses the other metrics over one
+        bad name. `metrics` defaults to `PAGE_INSIGHT_METRICS` (calibrate
+        against the live Graph Explorer for the connected app; pass an
+        explicit list to override). `raw` accumulates every successful
+        metric's response row(s)."""
+
+        token = self._page_token(page_id)
+        requested = metrics or PAGE_INSIGHT_METRICS
+        params_base: dict[str, Any] = {"period": period}
+        if since is not None:
+            params_base["since"] = since
+        if until is not None:
+            params_base["until"] = until
+
+        merged_metrics: dict[str, int] = {}
+        merged_raw: list[dict[str, Any]] = []
+        for metric in requested:
+            try:
+                body = _meta_api.graph_get(
+                    f"{page_id}/insights",
+                    access_token=token,
+                    params={**params_base, "metric": metric},
+                    version=self._version,
+                )
+            except MetaGraphError as exc:
+                logger.warning(
+                    "facebook page insights: metric %s failed for page %s: "
+                    "%s — dropped (retired/unsupported for this app?)",
+                    metric, page_id, exc,
+                )
+                continue
+            parsed = insights_from_body(page_id, body)
+            merged_metrics.update(parsed.metrics)
+            merged_raw.extend(parsed.raw)
+        return PostInsights(
+            object_id=page_id, metrics=merged_metrics, raw=merged_raw
+        )
 
     # ─── Instagram ────────────────────────────────────────────────────
 
@@ -1175,6 +1231,44 @@ class MetaOAuthAdapter:
         )
         return [instagram_comment_from_body(r) for r in rows]
 
+    def create_instagram_comment(
+        self, media_id: str, message: str
+    ) -> InstagramComment:
+        """Post a NEW top-level comment on an IG media item —
+        `POST /{ig-media}/comments` (distinct edge from
+        `reply_instagram_comment`'s `/{ig-comment}/replies` — this
+        targets the MEDIA, not an existing comment). Same
+        `instagram_manage_comments` App-Review gate; same
+        create-then-read-back-best-effort posture as the reply path."""
+
+        token = self._user_token()
+        created = _meta_api.graph_post(
+            f"{media_id}/comments",
+            access_token=token,
+            data={"message": message},
+            version=self._version,
+        )
+        comment_id = str(created.get("id") or "")
+        if not comment_id:
+            raise MetaGraphError(
+                f"IG comment create on {media_id} returned no id",
+                code=200,
+            )
+        try:
+            detail = _meta_api.graph_get(
+                comment_id,
+                access_token=token,
+                params={"fields": IG_COMMENT_FIELDS},
+                version=self._version,
+            )
+            return instagram_comment_from_body(detail)
+        except MetaGraphError as exc:
+            logger.warning(
+                "IG comment %s created on %s; read-back failed: %s",
+                comment_id, media_id, exc,
+            )
+            return InstagramComment(id=comment_id, text=message)
+
     def reply_instagram_comment(
         self, comment_id: str, message: str
     ) -> InstagramComment:
@@ -1445,6 +1539,45 @@ class MetaOAuthAdapter:
             limit=limit,
         )
         return [facebook_comment_from_body(r) for r in rows]
+
+    def create_facebook_comment(
+        self, post_id: str, message: str
+    ) -> FacebookComment:
+        """Post a NEW top-level comment on a Facebook Page post —
+        `POST /{post}/comments`. Graph's comments-create edge is the
+        SAME shape whether the target is a post or an existing comment
+        (`reply_facebook_comment` posts to `/{comment}/comments`
+        instead) — this just targets the post id. Same
+        `pages_manage_engagement` App-Review gate + user-token-vs-
+        page-token calibration note as `list_facebook_comments`."""
+
+        token = self._user_token()
+        created = _meta_api.graph_post(
+            f"{post_id}/comments",
+            access_token=token,
+            data={"message": message},
+            version=self._version,
+        )
+        comment_id = str(created.get("id") or "")
+        if not comment_id:
+            raise MetaGraphError(
+                f"FB comment create on {post_id} returned no id",
+                code=200,
+            )
+        try:
+            detail = _meta_api.graph_get(
+                comment_id,
+                access_token=token,
+                params={"fields": FB_COMMENT_FIELDS},
+                version=self._version,
+            )
+            return facebook_comment_from_body(detail)
+        except MetaGraphError as exc:
+            logger.warning(
+                "FB comment %s created on %s; read-back failed: %s",
+                comment_id, post_id, exc,
+            )
+            return FacebookComment(id=comment_id, message=message)
 
     def reply_facebook_comment(
         self, comment_id: str, message: str

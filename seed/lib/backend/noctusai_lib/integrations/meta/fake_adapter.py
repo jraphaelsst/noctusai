@@ -52,6 +52,7 @@ class FakeMetaAdapter:
         self._ig_accounts: list[InstagramAccount] = []
         self._media_by_ig_user: dict[str, list[InstagramMedia]] = {}
         self._post_insights: dict[str, PostInsights] = {}
+        self._page_insights: dict[str, PostInsights] = {}
         self._media_insights: dict[str, PostInsights] = {}
         self._account_insights: dict[str, PostInsights] = {}
         self._me: dict[str, str] = {}
@@ -86,11 +87,13 @@ class FakeMetaAdapter:
         self._fb_comments_by_post: dict[str, list[FacebookComment]] = {}
         self._conversations_by_ig_user: dict[str, list[Conversation]] = {}
         self._messages_by_conversation: dict[str, list[DirectMessage]] = {}
+        self.created_instagram_comments: list[InstagramComment] = []
         self.replied_instagram_comments: list[InstagramComment] = []
         self.hidden_instagram_comments: list[tuple[str, bool]] = []
         self.deleted_instagram_comment_ids: list[str] = []
         self.sent_instagram_messages: list[DirectMessage] = []
         self.published_stories: list[PublishedMedia] = []
+        self.created_facebook_comments: list[FacebookComment] = []
         self.replied_facebook_comments: list[FacebookComment] = []
         self.hidden_facebook_comments: list[tuple[str, bool]] = []
         self.deleted_facebook_comment_ids: list[str] = []
@@ -106,6 +109,7 @@ class FakeMetaAdapter:
         ig_accounts: list[InstagramAccount] | None = None,
         media_by_ig_user: dict[str, list[InstagramMedia]] | None = None,
         post_insights: dict[str, PostInsights] | None = None,
+        page_insights: dict[str, PostInsights] | None = None,
         media_insights: dict[str, PostInsights] | None = None,
         account_insights: dict[str, PostInsights] | None = None,
         me: dict[str, str] | None = None,
@@ -128,6 +132,8 @@ class FakeMetaAdapter:
             }
         if post_insights is not None:
             self._post_insights = dict(post_insights)
+        if page_insights is not None:
+            self._page_insights = dict(page_insights)
         if media_insights is not None:
             self._media_insights = dict(media_insights)
         if account_insights is not None:
@@ -192,6 +198,24 @@ class FakeMetaAdapter:
     ) -> PostInsights:
         return self._post_insights.get(
             post_id, PostInsights(object_id=post_id)
+        )
+
+    def get_facebook_page_insights(
+        self,
+        page_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights:
+        # Deterministic: period/since/until/metrics are accepted for
+        # Protocol parity but ignored — serves whatever was seeded for
+        # this page (or an empty insight object). The per-metric-degrade
+        # behavior is a live-adapter-only concern (Graph's actual
+        # deprecated-metric 400s); the Fake has nothing to degrade from.
+        return self._page_insights.get(
+            page_id, PostInsights(object_id=page_id)
         )
 
     def list_instagram_accounts(self) -> list[InstagramAccount]:
@@ -444,6 +468,17 @@ class FakeMetaAdapter:
     ) -> list[InstagramComment]:
         return list(self._ig_comments_by_media.get(media_id, []))[:limit]
 
+    def create_instagram_comment(
+        self, media_id: str, message: str
+    ) -> InstagramComment:
+        self._ig_comment_seq += 1
+        comment = InstagramComment(
+            id=f"{media_id}_comment_{self._ig_comment_seq}",
+            text=message,
+        )
+        self.created_instagram_comments.append(comment)
+        return comment
+
     def reply_instagram_comment(
         self, comment_id: str, message: str
     ) -> InstagramComment:
@@ -522,6 +557,17 @@ class FakeMetaAdapter:
         self, post_id: str, limit: int = 25
     ) -> list[FacebookComment]:
         return list(self._fb_comments_by_post.get(post_id, []))[:limit]
+
+    def create_facebook_comment(
+        self, post_id: str, message: str
+    ) -> FacebookComment:
+        self._fb_comment_seq += 1
+        comment = FacebookComment(
+            id=f"{post_id}_comment_{self._fb_comment_seq}",
+            message=message,
+        )
+        self.created_facebook_comments.append(comment)
+        return comment
 
     def reply_facebook_comment(
         self, comment_id: str, message: str

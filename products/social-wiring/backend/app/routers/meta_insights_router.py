@@ -1,22 +1,26 @@
-"""Instagram insights — accounts / account-level insights / media (with
-per-item insights) / metric-snapshot history + capture.
+"""Instagram + Facebook insights — account-scoped (Wave 3).
 
-Shape mirrors ``meta_router``: query-param ``org_id`` (no auth in front
-of the Meta surface yet), adapter built via the product's
-``get_meta_adapter`` seam, non-raising posture on ``MetaGraphError`` for
-the read endpoints (mirrors ``meta_status`` — return a structured
-``error`` field, never a 500).
+Every endpoint resolves its Meta adapter via the account-scoped DI seam
+``Depends(get_account_adapter)`` (``account_id`` query, required — the
+per-client ``integration_accounts`` row, Wave 2's
+``get_meta_adapter_for_account``), never the org-level
+``get_meta_adapter`` Store-A adapter ``meta_router``/``meta_status``
+use. The Instagram user id is resolved FROM the account (via
+:func:`app.routers._meta_common.resolve_primary_ig_user_id`) instead of
+being taken as a path/query param — Wave 2's per-client Meta connection
+is expected to see exactly one linked IG account.
 
-Adapter construction / org resolution / adapter-label helpers are shared
-with ``meta_router`` via ``app.routers._meta_common`` (DRY — the same
-``_build_store()`` / ``_resolve_org_id()`` / ``_adapter_label()`` logic,
-extracted rather than duplicated).
+``MetaGraphError`` handling is the uniform Wave 3 contract (shared
+``handle_meta_graph_error`` in ``_meta_common``): ``requires_app_review``
+→ 200 structured, any other error → 502 structured. Per-item insight
+enrichment (one bad media item, one retired FB Page metric) still
+degrades to ``None`` / drops itself rather than failing the whole list
+— a narrower, additive degrade UNDER the top-level uniform gate, not a
+replacement for it.
 
-The adapter is resolved through the FastAPI dependency
-:func:`get_ig_adapter` — a DI seam (not a bare module-level call) so
-tests can override it with a pre-seeded ``FakeMetaAdapter`` via
-``app.dependency_overrides`` instead of monkey-patching production code
-(``KB § PATTERNS/backend/di-test-seam.md``, Class-B).
+Pre-Wave-3 shape (org_id query + ``{ig_user_id}`` path param, non-raising
+``error``-field responses) is superseded by this file — see
+``tests/services/test_ig_insights.py`` for the account-scoped rewrite.
 """
 from __future__ import annotations
 
@@ -30,11 +34,12 @@ from pydantic import BaseModel
 
 from app.dependencies import get_admin_client
 from app.routers._meta_common import (
-    adapter_label as _adapter_label,
-    build_store as _build_store,
+    get_account_adapter,
+    handle_meta_graph_error,
     resolve_org_id as _resolve_org_id,
+    resolve_primary_ig_user_id,
 )
-from app.services.meta import MetaAdapter, MetaGraphError, get_meta_adapter
+from app.services.meta import MetaAdapter, MetaGraphError
 from app.services.meta.snapshots import (
     IGAccountNotFoundError,
     capture_ig_snapshot,
@@ -42,7 +47,7 @@ from app.services.meta.snapshots import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/meta/instagram", tags=["meta-insights"])
+router = APIRouter(tags=["meta-insights"])
 
 _SCHEMA = "social_wiring"
 _SNAPSHOT_TABLE = "ig_metric_snapshots"
@@ -62,16 +67,10 @@ class IGAccountOut(BaseModel):
     page_id: str | None = None
 
 
-class IGAccountsResponse(BaseModel):
-    accounts: list[IGAccountOut]
-    adapter: str
-
-
 class IGInsightsResponse(BaseModel):
     object_id: str
     metrics: dict[str, int] = {}
     series: list[dict[str, Any]] = []
-    error: str | None = None
 
 
 class IGMediaItemOut(BaseModel):
@@ -103,26 +102,19 @@ class IGSnapshotsResponse(BaseModel):
     snapshots: list[IGSnapshotOut]
 
 
-# ─── Adapter DI seam ────────────────────────────────────────────────────
-def get_ig_adapter(org_id: str | None = Query(default=None)) -> MetaAdapter:
-    """Resolve the Meta adapter for this org — the exact construction
-    ``meta_router`` uses (``store = _build_store(); get_meta_adapter(...)``),
-    exposed as a FastAPI dependency so tests can override it with a
-    pre-seeded ``FakeMetaAdapter`` instead of reaching for the live
-    credential-store/env resolution path.
-    """
-    resolved_org = _resolve_org_id(org_id)
-    try:
-        store = _build_store()
-    except HTTPException:
-        store = None
-    return get_meta_adapter(
-        org_id=resolved_org if store else None,
-        credential_store=store,
-    )
+class FBPageInsightsResponse(BaseModel):
+    object_id: str
+    metrics: dict[str, int] = {}
+    series: list[dict[str, Any]] = []
 
 
-def _account_out(account: Any) -> IGAccountOut:
+def ig_account_to_out(account: Any) -> IGAccountOut:
+    """Map a seed ``InstagramAccount`` onto the router's response DTO.
+
+    Public (not underscore-prefixed) — ``meta_context_router`` reuses
+    this exact mapper so the ``instagram`` field of ``GET
+    /api/meta/context`` and every insights-router account shape stay in
+    lockstep (DRY, not a second copy)."""
     return IGAccountOut(
         id=account.id,
         username=account.username,
@@ -137,34 +129,18 @@ def _account_out(account: Any) -> IGAccountOut:
     )
 
 
-# ─── GET /accounts ──────────────────────────────────────────────────────
-@router.get("/accounts", response_model=IGAccountsResponse)
-def list_ig_accounts(
-    adapter: MetaAdapter = Depends(get_ig_adapter),
-) -> IGAccountsResponse:
-    """Instagram Business/Creator accounts linked to this org's Meta
-    connection."""
-    accounts = adapter.list_instagram_accounts()
-    return IGAccountsResponse(
-        accounts=[_account_out(a) for a in accounts],
-        adapter=_adapter_label(adapter),
-    )
-
-
-# ─── GET /{ig_user_id}/insights ─────────────────────────────────────────
-@router.get("/{ig_user_id}/insights", response_model=IGInsightsResponse)
+# ─── GET /instagram/insights ────────────────────────────────────────────
+@router.get("/api/meta/instagram/insights", response_model=IGInsightsResponse)
 def get_ig_account_insights(
-    ig_user_id: str,
     period: str = Query(default="day"),
     days: int = Query(default=30, ge=0, le=365),
-    adapter: MetaAdapter = Depends(get_ig_adapter),
-) -> IGInsightsResponse:
+    adapter: MetaAdapter = Depends(get_account_adapter),
+) -> Any:
     """Account-level insight metrics for the last ``days`` days.
 
     ``days=0`` omits the ``since``/``until`` window (the adapter's own
-    default window applies). Non-raising on ``MetaGraphError`` — mirrors
-    ``meta_status``'s posture: the caller gets a structured ``error``
-    field back, never a 500.
+    default window applies). ``ig_user_id`` is resolved from the
+    account (no path param) — see module docstring.
     """
     since: int | None = None
     until: int | None = None
@@ -173,15 +149,13 @@ def get_ig_account_insights(
         since = until - days * 86400
 
     try:
+        ig_user_id = resolve_primary_ig_user_id(adapter)
         insights = adapter.get_instagram_account_insights(
             ig_user_id, period=period, since=since, until=until
         )
     except MetaGraphError as exc:
-        logger.warning(
-            "ig insights: account-insights fetch failed for %s: %s",
-            ig_user_id, exc,
-        )
-        return IGInsightsResponse(object_id=ig_user_id, error=str(exc))
+        logger.warning("ig insights: account-insights fetch failed: %s", exc)
+        return handle_meta_graph_error(exc)
 
     return IGInsightsResponse(
         object_id=insights.object_id,
@@ -190,20 +164,25 @@ def get_ig_account_insights(
     )
 
 
-# ─── GET /{ig_user_id}/media ────────────────────────────────────────────
-@router.get("/{ig_user_id}/media", response_model=IGMediaResponse)
+# ─── GET /instagram/media ────────────────────────────────────────────────
+@router.get("/api/meta/instagram/media", response_model=IGMediaResponse)
 def list_ig_media(
-    ig_user_id: str,
     limit: int = Query(default=25, ge=1, le=100),
     with_insights: bool = Query(default=True),
-    adapter: MetaAdapter = Depends(get_ig_adapter),
-) -> IGMediaResponse:
+    adapter: MetaAdapter = Depends(get_account_adapter),
+) -> Any:
     """Recent Instagram media for this account. When ``with_insights``,
     each item's per-media insight metrics are fetched individually — a
     ``MetaGraphError`` on ONE item degrades that item's ``insights`` to
     ``null``, never the whole list (a bad/expired post never fails the
-    page)."""
-    items = adapter.list_instagram_media(ig_user_id, limit)
+    page). A failure resolving the account itself, or listing media at
+    all, still goes through the uniform gate."""
+    try:
+        ig_user_id = resolve_primary_ig_user_id(adapter)
+        items = adapter.list_instagram_media(ig_user_id, limit)
+    except MetaGraphError as exc:
+        logger.warning("ig insights: media list fetch failed: %s", exc)
+        return handle_meta_graph_error(exc)
 
     media_out: list[IGMediaItemOut] = []
     for item in items:
@@ -236,15 +215,27 @@ def list_ig_media(
     return IGMediaResponse(media=media_out)
 
 
-# ─── GET /{ig_user_id}/snapshots ────────────────────────────────────────
-@router.get("/{ig_user_id}/snapshots", response_model=IGSnapshotsResponse)
+# ─── GET /instagram/snapshots ────────────────────────────────────────────
+@router.get("/api/meta/instagram/snapshots", response_model=IGSnapshotsResponse)
 def list_ig_snapshots(
-    ig_user_id: str,
     org_id: str | None = Query(default=None),
     days: int = Query(default=90, ge=1, le=3650),
-) -> IGSnapshotsResponse:
+    adapter: MetaAdapter = Depends(get_account_adapter),
+) -> Any:
     """Metric-snapshot history for this account, ascending by
-    ``captured_at``, over the last ``days`` days."""
+    ``captured_at``, over the last ``days`` days.
+
+    ``ig_metric_snapshots`` is keyed ``(org_id, ig_user_id)`` (pre-Wave-3
+    schema, no ``account_id`` column) — ``ig_user_id`` is resolved from
+    the account-scoped adapter (module docstring); ``org_id`` resolves
+    independently via the same ``_resolve_org_id`` fallback every Meta
+    router uses (the Meta surface still runs without auth in front of
+    it)."""
+    try:
+        ig_user_id = resolve_primary_ig_user_id(adapter)
+    except MetaGraphError as exc:
+        return handle_meta_graph_error(exc)
+
     resolved_org = _resolve_org_id(org_id)
     admin = get_admin_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -269,19 +260,25 @@ def list_ig_snapshots(
     )
 
 
-# ─── POST /{ig_user_id}/snapshot ────────────────────────────────────────
-@router.post("/{ig_user_id}/snapshot", response_model=IGSnapshotOut)
+# ─── POST /instagram/snapshot ────────────────────────────────────────────
+@router.post("/api/meta/instagram/snapshot", response_model=IGSnapshotOut)
 def create_ig_snapshot(
-    ig_user_id: str,
     org_id: str | None = Query(default=None),
-    adapter: MetaAdapter = Depends(get_ig_adapter),
-) -> IGSnapshotOut:
+    adapter: MetaAdapter = Depends(get_account_adapter),
+) -> Any:
     """Capture this account's current numbers now and persist a row.
 
-    Also the unit the daily automation job calls (per-account, via
-    ``app.services.meta.snapshots.capture_all_ig_snapshots``). 404 when
-    ``ig_user_id`` isn't among this org's Meta-visible accounts.
-    """
+    ``ig_user_id`` is resolved from the account-scoped adapter (module
+    docstring) — always among ``adapter.list_instagram_accounts()``
+    since it came from that very call, so
+    :class:`IGAccountNotFoundError` is defensive rather than an expected
+    path here (unlike the pre-Wave-3 path-param shape, which took an
+    arbitrary caller-supplied id)."""
+    try:
+        ig_user_id = resolve_primary_ig_user_id(adapter)
+    except MetaGraphError as exc:
+        return handle_meta_graph_error(exc)
+
     resolved_org = _resolve_org_id(org_id)
     admin = get_admin_client()
 
@@ -296,4 +293,53 @@ def create_ig_snapshot(
     return IGSnapshotOut(**row)
 
 
-__all__ = ["router", "get_ig_adapter"]
+# ─── GET /facebook/insights ──────────────────────────────────────────────
+@router.get("/api/meta/facebook/insights", response_model=FBPageInsightsResponse)
+def get_facebook_page_insights(
+    page_id: str = Query(...),
+    period: str = Query(default="day"),
+    days: int = Query(default=30, ge=0, le=365),
+    adapter: MetaAdapter = Depends(get_account_adapter),
+) -> Any:
+    """Facebook Page-level insight metrics.
+
+    Meta has been retiring individual Page Insights metrics on a rolling
+    basis (many 2026-06-15) — the adapter (``get_facebook_page_insights``)
+    already degrades PER METRIC (a retired name drops itself, logged,
+    never raised); this endpoint's uniform gate only fires for a
+    connection-level failure (bad token / page not visible to this
+    identity), never a single stale metric name.
+    """
+    since: int | None = None
+    until: int | None = None
+    if days > 0:
+        until = int(time.time())
+        since = until - days * 86400
+
+    try:
+        insights = adapter.get_facebook_page_insights(
+            page_id, period=period, since=since, until=until
+        )
+    except MetaGraphError as exc:
+        logger.warning(
+            "facebook insights: page-insights fetch failed for %s: %s",
+            page_id, exc,
+        )
+        return handle_meta_graph_error(exc)
+
+    return FBPageInsightsResponse(
+        object_id=insights.object_id,
+        metrics=dict(insights.metrics),
+        series=list(insights.raw),
+    )
+
+
+__all__ = [
+    "router",
+    "IGAccountOut",
+    "ig_account_to_out",
+    "IGInsightsResponse",
+    "IGMediaResponse",
+    "IGSnapshotsResponse",
+    "FBPageInsightsResponse",
+]

@@ -1,19 +1,23 @@
-"""Tests for the Instagram insights (v1) backend slice — W-ig-insights.
+"""Tests for the Instagram + Facebook insights backend slice — Wave 3
+(account-scoped).
 
 Covers:
-  - GET /api/meta/instagram/accounts — shape + adapter label
-  - GET /api/meta/instagram/{id}/insights — metrics+series, and the
-    non-raising MetaGraphError→error-field posture (mirrors meta_status)
-  - GET /api/meta/instagram/{id}/media — per-item insights, and the
-    per-item error guard (one bad media item never fails the list)
+  - GET /api/meta/context — instagram/pages/user shape
+  - GET /api/meta/instagram/insights — metrics+series, resolved from the
+    account (no ig_user_id path param)
+  - GET /api/meta/instagram/media — per-item insights, and the per-item
+    error guard (one bad media item never fails the list)
+  - GET /api/meta/facebook/insights — per-metric degrade
   - POST .../snapshot persists + GET .../snapshots reads it back
-  - 404 on an unknown ig_user_id
+  - The uniform Wave 3 MetaGraphError gate: requires_app_review → 200
+    structured; other MetaGraphError → 502 structured
   - The service layer directly (capture_ig_snapshot /
-    capture_all_ig_snapshots / IGAccountNotFoundError)
+    capture_all_ig_snapshots / IGAccountNotFoundError) — unchanged,
+    still org-scoped (the daily scheduler's Store-A path)
 
-The adapter is injected via the ``get_ig_adapter`` FastAPI dependency
-(``app.dependency_overrides``) — no monkey-patching of production code,
-per ``KB § PATTERNS/backend/di-test-seam.md`` (Class-B).
+The adapter is injected via the ``get_account_adapter`` FastAPI
+dependency (``app.dependency_overrides``) — no monkey-patching of
+production code, per ``KB § PATTERNS/backend/di-test-seam.md`` (Class-B).
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from noctusai_lib.integrations.meta import (
+    FacebookPage,
     FakeMetaAdapter,
     InstagramAccount,
     InstagramMedia,
@@ -42,7 +47,9 @@ from app.services.meta.snapshots import (
 )
 
 _ORG = "00000000-0000-4000-8000-000000000099"
+_ACCOUNT = "00000000-0000-4000-8000-0000000000ac"
 _IG_USER = "17841400000000000"
+_PAGE = "112233445566"
 
 
 # ─── Test doubles ───────────────────────────────────────────────────────
@@ -73,21 +80,34 @@ class _SchemaCachingClient:
 
 class _RaisingFakeMetaAdapter(FakeMetaAdapter):
     """``FakeMetaAdapter`` that raises ``MetaGraphError`` for specific
-    ids. The seed Fake never raises on its own (it's the
+    ids/scopes. The seed Fake never raises on its own (it's the
     "scope already approved" happy path) — error-branch tests need this
-    thin subclass to exercise the router's non-raising posture."""
+    thin subclass to exercise the router's uniform gate."""
 
     def __init__(
         self,
         *,
         raise_account_insights_for: frozenset[str] = frozenset(),
         raise_media_insights_for: frozenset[str] = frozenset(),
+        raise_list_instagram_accounts: bool = False,
+        app_review_gate_on_account_insights: bool = False,
     ) -> None:
         super().__init__()
         self._raise_account_insights_for = raise_account_insights_for
         self._raise_media_insights_for = raise_media_insights_for
+        self._raise_list_instagram_accounts = raise_list_instagram_accounts
+        self._app_review_gate = app_review_gate_on_account_insights
+
+    def list_instagram_accounts(self):
+        if self._raise_list_instagram_accounts:
+            raise MetaGraphError("simulated graph failure", code=1, http_status=400)
+        return super().list_instagram_accounts()
 
     def get_instagram_account_insights(self, ig_user_id, **kwargs):
+        if self._app_review_gate:
+            raise MetaGraphError(
+                "permission denied", code=10, http_status=400
+            )
         if ig_user_id in self._raise_account_insights_for:
             raise MetaGraphError(
                 "simulated graph failure", code=1, http_status=400
@@ -106,12 +126,20 @@ def _seeded_adapter(
     *,
     raise_account_insights_for: frozenset[str] = frozenset(),
     raise_media_insights_for: frozenset[str] = frozenset(),
+    raise_list_instagram_accounts: bool = False,
+    app_review_gate_on_account_insights: bool = False,
 ) -> FakeMetaAdapter:
     adapter = _RaisingFakeMetaAdapter(
         raise_account_insights_for=raise_account_insights_for,
         raise_media_insights_for=raise_media_insights_for,
+        raise_list_instagram_accounts=raise_list_instagram_accounts,
+        app_review_gate_on_account_insights=app_review_gate_on_account_insights,
     )
     adapter.seed(
+        me={"id": "meta-user-1", "name": "One Consultoria"},
+        pages=[
+            FacebookPage(id=_PAGE, name="One Consultoria Page", fan_count=500),
+        ],
         ig_accounts=[
             InstagramAccount(
                 id=_IG_USER,
@@ -146,6 +174,13 @@ def _seeded_adapter(
                 raw=[{"name": "reach", "period": "day", "values": [{"value": 500}]}],
             )
         },
+        page_insights={
+            _PAGE: PostInsights(
+                object_id=_PAGE,
+                metrics={"page_impressions_unique": 900},
+                raw=[{"name": "page_impressions_unique", "period": "day", "values": [{"value": 900}]}],
+            )
+        },
     )
     return adapter
 
@@ -153,8 +188,8 @@ def _seeded_adapter(
 @pytest.fixture
 def ig_client():
     """TestClient with a schema-caching mock admin client. No auth
-    headers needed — the IG insights endpoints (like meta_router) run
-    with an ``org_id`` query param, mirroring ``meta_status``."""
+    headers needed — the Meta endpoints run with an ``account_id`` /
+    ``org_id`` query param, mirroring ``meta_status``."""
     mock_sb = MockSupabaseClient()
     caching = _SchemaCachingClient(mock_sb)
 
@@ -180,56 +215,72 @@ def _clear_dependency_overrides():
 
 def _override_adapter(adapter: FakeMetaAdapter) -> FakeMetaAdapter:
     from app.main import app
-    from app.routers.meta_insights_router import get_ig_adapter
+    from app.routers._meta_common import get_account_adapter
 
-    app.dependency_overrides[get_ig_adapter] = lambda: adapter
+    app.dependency_overrides[get_account_adapter] = lambda: adapter
     return adapter
 
 
-# ─── GET /accounts ───────────────────────────────────────────────────────
-class TestAccountsEndpoint:
-    def test_list_accounts_shape(self, ig_client):
+_QS = f"account_id={_ACCOUNT}&org_id={_ORG}"
+
+
+# ─── GET /context ────────────────────────────────────────────────────────
+class TestContextEndpoint:
+    def test_context_shape(self, ig_client):
         _override_adapter(_seeded_adapter())
-        resp = ig_client.get(f"/api/meta/instagram/accounts?org_id={_ORG}")
+        resp = ig_client.get(f"/api/meta/context?{_QS}")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["adapter"] == "fake"
-        assert len(body["accounts"]) == 1
-        account = body["accounts"][0]
-        assert account["id"] == _IG_USER
-        assert account["username"] == "one_consultoria"
-        assert account["followers_count"] == 1200
-        assert account["media_count"] == 42
+        assert body["instagram"]["id"] == _IG_USER
+        assert body["instagram"]["username"] == "one_consultoria"
+        assert len(body["pages"]) == 1
+        assert body["pages"][0]["id"] == _PAGE
+        assert body["user"]["id"] == "meta-user-1"
+
+    def test_context_no_instagram_is_null(self, ig_client):
+        adapter = FakeMetaAdapter()
+        adapter.seed(me={"id": "u1"}, pages=[FacebookPage(id=_PAGE, name="Page")])
+        _override_adapter(adapter)
+        resp = ig_client.get(f"/api/meta/context?{_QS}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instagram"] is None
+
+    def test_context_graph_error_502(self, ig_client):
+        _override_adapter(_seeded_adapter(raise_list_instagram_accounts=True))
+        resp = ig_client.get(f"/api/meta/context?{_QS}")
+        assert resp.status_code == 502, resp.text
+        assert resp.json()["error"]
 
 
-# ─── GET /{id}/insights ──────────────────────────────────────────────────
+# ─── GET /instagram/insights ─────────────────────────────────────────────
 class TestInsightsEndpoint:
     def test_insights_metrics_and_series(self, ig_client):
         _override_adapter(_seeded_adapter())
-        resp = ig_client.get(
-            f"/api/meta/instagram/{_IG_USER}/insights?org_id={_ORG}&days=7"
-        )
+        resp = ig_client.get(f"/api/meta/instagram/insights?{_QS}&days=7")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["object_id"] == _IG_USER
         assert body["metrics"]["reach"] == 500
         assert body["metrics"]["profile_views"] == 40
         assert len(body["series"]) == 1
-        assert body["error"] is None
 
-    def test_insights_graph_error_returns_200_with_error_field(self, ig_client):
+    def test_insights_graph_error_returns_502(self, ig_client):
         _override_adapter(
             _seeded_adapter(raise_account_insights_for=frozenset({_IG_USER}))
         )
-        resp = ig_client.get(
-            f"/api/meta/instagram/{_IG_USER}/insights?org_id={_ORG}"
+        resp = ig_client.get(f"/api/meta/instagram/insights?{_QS}")
+        assert resp.status_code == 502, resp.text
+        assert resp.json()["error"]
+
+    def test_insights_app_review_gate_returns_200(self, ig_client):
+        _override_adapter(
+            _seeded_adapter(app_review_gate_on_account_insights=True)
         )
-        # Non-raising posture — a Graph failure is a 200 with a
-        # structured error, never a 500.
+        resp = ig_client.get(f"/api/meta/instagram/insights?{_QS}")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["metrics"] == {}
-        assert body["series"] == []
+        assert body["requires_app_review"] is True
         assert body["error"]
 
     def test_days_zero_omits_since_until_window(self, ig_client):
@@ -244,19 +295,17 @@ class TestInsightsEndpoint:
         adapter.get_instagram_account_insights = _capturing
         _override_adapter(adapter)
 
-        resp = ig_client.get(
-            f"/api/meta/instagram/{_IG_USER}/insights?org_id={_ORG}&days=0"
-        )
+        resp = ig_client.get(f"/api/meta/instagram/insights?{_QS}&days=0")
         assert resp.status_code == 200, resp.text
         assert captured["since"] is None
         assert captured["until"] is None
 
 
-# ─── GET /{id}/media ─────────────────────────────────────────────────────
+# ─── GET /instagram/media ────────────────────────────────────────────────
 class TestMediaEndpoint:
     def test_media_with_per_item_insights(self, ig_client):
         _override_adapter(_seeded_adapter())
-        resp = ig_client.get(f"/api/meta/instagram/{_IG_USER}/media?org_id={_ORG}")
+        resp = ig_client.get(f"/api/meta/instagram/media?{_QS}")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert len(body["media"]) == 2
@@ -269,7 +318,7 @@ class TestMediaEndpoint:
         _override_adapter(
             _seeded_adapter(raise_media_insights_for=frozenset({"media-2"}))
         )
-        resp = ig_client.get(f"/api/meta/instagram/{_IG_USER}/media?org_id={_ORG}")
+        resp = ig_client.get(f"/api/meta/instagram/media?{_QS}")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert len(body["media"]) == 2
@@ -280,12 +329,21 @@ class TestMediaEndpoint:
 
     def test_with_insights_false_skips_the_per_item_fetch(self, ig_client):
         _override_adapter(_seeded_adapter())
-        resp = ig_client.get(
-            f"/api/meta/instagram/{_IG_USER}/media?org_id={_ORG}&with_insights=false"
-        )
+        resp = ig_client.get(f"/api/meta/instagram/media?{_QS}&with_insights=false")
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert all(m["insights"] is None for m in body["media"])
+
+
+# ─── GET /facebook/insights ──────────────────────────────────────────────
+class TestFacebookInsightsEndpoint:
+    def test_page_insights_metrics(self, ig_client):
+        _override_adapter(_seeded_adapter())
+        resp = ig_client.get(f"/api/meta/facebook/insights?{_QS}&page_id={_PAGE}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["object_id"] == _PAGE
+        assert body["metrics"]["page_impressions_unique"] == 900
 
 
 # ─── POST snapshot / GET snapshots ───────────────────────────────────────
@@ -293,9 +351,7 @@ class TestSnapshotEndpoints:
     def test_snapshot_persists_and_reads_back(self, ig_client):
         _override_adapter(_seeded_adapter())
 
-        post_resp = ig_client.post(
-            f"/api/meta/instagram/{_IG_USER}/snapshot?org_id={_ORG}"
-        )
+        post_resp = ig_client.post(f"/api/meta/instagram/snapshot?{_QS}")
         assert post_resp.status_code == 200, post_resp.text
         snap = post_resp.json()
         assert snap["followers_count"] == 1200
@@ -304,24 +360,15 @@ class TestSnapshotEndpoints:
         assert snap["reach"] == 500
         assert snap["profile_views"] == 40
 
-        get_resp = ig_client.get(
-            f"/api/meta/instagram/{_IG_USER}/snapshots?org_id={_ORG}"
-        )
+        get_resp = ig_client.get(f"/api/meta/instagram/snapshots?{_QS}")
         assert get_resp.status_code == 200, get_resp.text
         body = get_resp.json()
         assert len(body["snapshots"]) == 1
         assert body["snapshots"][0]["followers_count"] == 1200
         assert body["snapshots"][0]["reach"] == 500
 
-    def test_snapshot_404_on_unknown_account(self, ig_client):
-        _override_adapter(_seeded_adapter())
-        resp = ig_client.post(
-            f"/api/meta/instagram/unknown-ig-id/snapshot?org_id={_ORG}"
-        )
-        assert resp.status_code == 404
 
-
-# ─── Service layer ───────────────────────────────────────────────────────
+# ─── Service layer (unchanged — org-scoped Store-A daily scheduler path) ──
 class TestCaptureIgSnapshot:
     def test_writes_expected_shape(self):
         mock_sb = MockSupabaseClient()

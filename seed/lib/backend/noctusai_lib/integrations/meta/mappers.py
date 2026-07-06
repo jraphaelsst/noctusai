@@ -121,6 +121,25 @@ IG_ACCOUNT_INSIGHT_METRICS = [
     "follower_count",
 ]
 
+# Facebook Page-level insights — the `/{page-id}/insights` endpoint (distinct
+# from the per-post `POST_INSIGHT_METRICS` above). Meta has been actively
+# deprecating individual Page Insights metrics on a rolling basis (a wave
+# retired 2026-06-15) — this list is a conservative starting point, NOT a
+# guarantee every entry is still live on any given app/API version.
+# `MetaOAuthAdapter.get_facebook_page_insights` requests each metric
+# SEPARATELY (not batched like the lists above) and drops any metric that
+# 400s rather than failing the whole call, so a retired name only costs
+# itself. Calibrate this default against the live Graph Explorer for the
+# connected app before relying on it in production (same "verify against the
+# real token" discipline as `IG_ACCOUNT_INSIGHT_METRICS`); pass an explicit
+# `metrics=` to the method to override entirely.
+PAGE_INSIGHT_METRICS = [
+    "page_impressions_unique",
+    "page_post_engagements",
+    "page_fans",
+    "page_views_total",
+]
+
 
 # ─── Datetime ─────────────────────────────────────────────────────────────
 
@@ -394,6 +413,7 @@ __all__ = [
     "ME_FIELDS",
     "PAGE_FIELDS",
     "PAGE_IG_FIELD",
+    "PAGE_INSIGHT_METRICS",
     "POST_FIELDS",
     "POST_INSIGHT_METRICS",
     "conversation_from_body",

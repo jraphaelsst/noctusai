@@ -672,6 +672,22 @@ class TestFakeAdapter:
         assert got is not None and got.name == "Page1"
         assert fake.get_page("NOPE") is None
 
+    def test_get_facebook_page_insights_seeded_and_unseeded(self):
+        fake = FakeMetaAdapter().seed(
+            page_insights={
+                "P1": PostInsights(object_id="P1", metrics={"page_fans": 10})
+            }
+        )
+        assert fake.get_facebook_page_insights("P1").metrics["page_fans"] == 10
+        # Unseeded → empty, not an error; window/period/metrics args
+        # accepted for Protocol parity but ignored (same posture as
+        # get_instagram_account_insights).
+        empty = fake.get_facebook_page_insights(
+            "NOPE", metrics=["page_fans"], period="week", since=1, until=2
+        )
+        assert empty.object_id == "NOPE"
+        assert empty.metrics == {}
+
 
 # ─── TestRouter ───────────────────────────────────────────────────────────
 
@@ -830,6 +846,14 @@ class TestFakeCommentsMessagesStories:
         assert [c.id for c in fake.list_instagram_comments("m1")] == ["c1"]
         assert fake.list_instagram_comments("missing") == []
 
+    def test_create_instagram_comment_records(self):
+        fake = FakeMetaAdapter()
+        c1 = fake.create_instagram_comment("m1", "first!")
+        c2 = fake.create_instagram_comment("m1", "second!")
+        assert c1.id == "m1_comment_1" and c2.id == "m1_comment_2"
+        assert c1.text == "first!" and c1.parent_id is None
+        assert fake.created_instagram_comments == [c1, c2]
+
     def test_reply_instagram_comment_records(self):
         fake = FakeMetaAdapter()
         r1 = fake.reply_instagram_comment("c1", "thanks!")
@@ -888,6 +912,14 @@ class TestFakeCommentsMessagesStories:
         )
         assert [c.id for c in fake.list_facebook_comments("p1")] == ["fc1"]
         assert fake.list_facebook_comments("missing") == []
+
+    def test_create_facebook_comment_records(self):
+        fake = FakeMetaAdapter()
+        comment = fake.create_facebook_comment("p1", "great post!")
+        assert comment.id == "p1_comment_1"
+        assert comment.message == "great post!"
+        assert comment.parent_id is None
+        assert fake.created_facebook_comments == [comment]
 
     def test_reply_facebook_comment_records(self):
         fake = FakeMetaAdapter()
@@ -1117,6 +1149,26 @@ class TestRealCommentsMessagesStories:
         assert [c.id for c in comments] == ["c1", "c2"]
         assert comments[0].username == "fan1"
 
+    def test_create_instagram_comment_creates_and_reads_back(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        detail = {"id": "C1", "text": "first!"}
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "C1"})
+        ), patch.object(httpx, "get", return_value=_FakeResponse(detail)):
+            out = a.create_instagram_comment("m1", "first!")
+        assert out.id == "C1"
+        assert out.text == "first!"
+        assert out.parent_id is None
+
+    def test_create_instagram_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.create_instagram_comment("m1", "blocked")
+        assert exc.value.requires_app_review is True
+
     def test_reply_instagram_comment_creates_and_reads_back(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
         detail = {"id": "REPLY1", "text": "thanks!", "parent_id": "c1"}
@@ -1290,6 +1342,26 @@ class TestRealCommentsMessagesStories:
             comments = a.list_facebook_comments("p1")
         assert comments[0].id == "fc1"
         assert comments[0].from_name == "User One"
+
+    def test_create_facebook_comment_creates_and_reads_back(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        detail = {"id": "FC1", "message": "great post!"}
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "FC1"})
+        ), patch.object(httpx, "get", return_value=_FakeResponse(detail)):
+            out = a.create_facebook_comment("p1", "great post!")
+        assert out.id == "FC1"
+        assert out.message == "great post!"
+        assert out.parent_id is None
+
+    def test_create_facebook_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.create_facebook_comment("p1", "blocked")
+        assert exc.value.requires_app_review is True
 
     def test_reply_facebook_comment_creates_and_reads_back(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
@@ -1508,6 +1580,91 @@ class TestAccountInsights:
         assert captured["params"]["period"] == "days_28"
         assert captured["params"]["since"] == 1000
         assert captured["params"]["until"] == 2000
+
+
+# ─── TestFacebookPageInsights ─────────────────────────────────────────────
+
+
+class TestFacebookPageInsights:
+    """`get_facebook_page_insights` — Page-level insights, distinct from
+    every other insights call above: it requests each metric SEPARATELY
+    and drops (logs, never raises) any metric Graph rejects, because
+    Meta has been retiring individual Page Insights metrics on a
+    rolling basis and a single unsupported name 400s Graph's WHOLE
+    batched call when metrics are comma-joined."""
+
+    def _pages_body(self):
+        return {
+            "data": [{"id": "P1", "name": "Page1", "access_token": "PT1"}],
+            "paging": {},
+        }
+
+    def test_real_drops_a_retired_metric_keeps_the_others(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        calls: list[dict] = []
+
+        def _get(url, **kw):
+            params = kw.get("params") or {}
+            calls.append({"url": url, "params": params})
+            if url.endswith("me/accounts"):
+                return _FakeResponse(self._pages_body())
+            metric = params.get("metric")
+            if metric == "page_impressions_unique":
+                # Simulate a retired/unsupported metric — Graph error
+                # envelope on a 200 (the shape `_raise_for_graph_error`
+                # parses).
+                return _FakeResponse(
+                    {
+                        "error": {
+                            "message": "(#100) metric[0] must be one of...",
+                            "code": 100,
+                        }
+                    }
+                )
+            return _FakeResponse(
+                {
+                    "data": [
+                        {
+                            "name": metric,
+                            "period": "day",
+                            "values": [{"value": 42}],
+                        }
+                    ]
+                }
+            )
+
+        with patch.object(httpx, "get", side_effect=_get):
+            ins = a.get_facebook_page_insights(
+                "P1", metrics=["page_impressions_unique", "page_fans"]
+            )
+
+        assert ins.object_id == "P1"
+        # The retired metric dropped itself — never raised, never
+        # failed the other metric.
+        assert "page_impressions_unique" not in ins.metrics
+        assert ins.metrics["page_fans"] == 42
+
+    def test_real_default_metrics_requested_separately(self):
+        from noctusai_lib.integrations.meta.mappers import PAGE_INSIGHT_METRICS
+
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        requested_metrics: list[str] = []
+
+        def _get(url, **kw):
+            params = kw.get("params") or {}
+            if url.endswith("me/accounts"):
+                return _FakeResponse(self._pages_body())
+            requested_metrics.append(params["metric"])
+            return _FakeResponse(
+                {"data": [{"name": params["metric"], "period": "day",
+                           "values": [{"value": 1}]}]}
+            )
+
+        with patch.object(httpx, "get", side_effect=_get):
+            a.get_facebook_page_insights("P1")
+
+        # Every metric requested as its OWN call (never comma-joined).
+        assert requested_metrics == list(PAGE_INSIGHT_METRICS)
 
 
 # ─── TestPollMediaStatus ──────────────────────────────────────────────────

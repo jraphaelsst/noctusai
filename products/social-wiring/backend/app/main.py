@@ -82,6 +82,10 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.chat_router import router as chat_router
     from app.routers.google_router import router as google_router
     from app.routers.intake_monitor_router import router as intake_monitor_router
+    from app.routers.meta_comments_router import router as meta_comments_router
+    from app.routers.meta_content_router import router as meta_content_router
+    from app.routers.meta_context_router import router as meta_context_router
+    from app.routers.meta_dms_router import router as meta_dms_router
     from app.routers.meta_insights_router import router as meta_insights_router
     from app.routers.meta_router import router as meta_router
     from app.routers.settings_router import router as settings_router
@@ -117,6 +121,10 @@ def _register_media_wiring() -> ModuleRegistration:
             google_router,
             meta_router,
             meta_insights_router,
+            meta_context_router,
+            meta_content_router,
+            meta_comments_router,
+            meta_dms_router,
             integration_accounts_router,
             clients_router,
         ],

@@ -509,6 +509,16 @@ class MetaAdapter(Protocol):
         self, post_id: str, page_id: str | None = None
     ) -> PostInsights: ...
 
+    def get_facebook_page_insights(
+        self,
+        page_id: str,
+        *,
+        metrics: list[str] | None = None,
+        period: str = "day",
+        since: int | None = None,
+        until: int | None = None,
+    ) -> PostInsights: ...
+
     def list_instagram_accounts(self) -> list[InstagramAccount]: ...
 
     def list_instagram_media(
@@ -608,6 +618,10 @@ class MetaAdapter(Protocol):
         self, media_id: str, limit: int = 25
     ) -> list[InstagramComment]: ...
 
+    def create_instagram_comment(
+        self, media_id: str, message: str
+    ) -> InstagramComment: ...
+
     def reply_instagram_comment(
         self, comment_id: str, message: str
     ) -> InstagramComment: ...
@@ -650,6 +664,10 @@ class MetaAdapter(Protocol):
     def list_facebook_comments(
         self, post_id: str, limit: int = 25
     ) -> list[FacebookComment]: ...
+
+    def create_facebook_comment(
+        self, post_id: str, message: str
+    ) -> FacebookComment: ...
 
     def reply_facebook_comment(
         self, comment_id: str, message: str
