@@ -64,6 +64,14 @@ export interface ProviderCardConfig {
    * May include all channel_info + metadata — the modal has more space.
    */
   modalSections(account: IntegrationAccount): ModalSection[];
+  /**
+   * The provider's own dashboard route (e.g. "/youtube") — where a click on
+   * the card body deep-links the user, with the account pre-selected via
+   * `useActiveAccountStore`. Providers without a dedicated dashboard page
+   * (e.g. gmail, google_drive, n8n) omit this field; the card falls back to
+   * opening the detail modal on body click instead.
+   */
+  dashboardRoute?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -89,6 +97,7 @@ const youtubeConfig: ProviderCardConfig = {
   displayName: "YouTube",
   icon: Youtube,
   accent: "text-red-500",
+  dashboardRoute: "/youtube",
 
   primary(account) {
     const title = account.channel_info["title"];
@@ -168,6 +177,7 @@ const metaConfig: ProviderCardConfig = {
   displayName: "Meta",
   icon: Facebook,
   accent: "text-blue-600",
+  dashboardRoute: "/meta",
 
   primary(account) {
     const title = account.channel_info["title"];
@@ -234,6 +244,10 @@ const whatsappConfig: ProviderCardConfig = {
   displayName: "WhatsApp",
   icon: WhatsAppIcon,
   accent: "text-green-500",
+  // /whatsapp-chat is the unlisted-but-live chat page (App.tsx) — the Chat
+  // tab inside ClienteModal is the primary UX, but the standalone page
+  // remains the deep-link target for a card-body click outside the modal.
+  dashboardRoute: "/whatsapp-chat",
 
   primary(account) {
     const session = account.channel_info["session"];

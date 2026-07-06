@@ -13,6 +13,13 @@
  *
  * Interaction:
  *   - Card body click → `onOpenModal(account)` (unless click is on a control).
+ *     The consumer decides what this means — e.g. opening the detail modal,
+ *     or (per `ProviderCardConfig.dashboardRoute`) deep-linking into the
+ *     provider's own dashboard with the account pre-selected.
+ *   - Details icon (only rendered when `onOpenDetails` is passed) →
+ *     `onOpenDetails(account)` — a secondary affordance so the read-only
+ *     detail modal stays reachable even when `onOpenModal` is repurposed
+ *     for navigation.
  *   - Pencil icon → toggles inline-edit mode (renders editableFields as inputs).
  *   - Save → calls `onSave(patch)` then exits edit mode.
  *   - Cancel → exits edit mode, discards draft.
@@ -32,6 +39,7 @@ import {
   MoreHorizontal,
   AlertCircle,
   Loader2,
+  Settings2,
 } from "lucide-react";
 
 import { cn } from "../../utils";
@@ -325,8 +333,20 @@ export interface IntegrationCardProps {
    * overlay indicates a mutation is in-flight.
    */
   busy?: boolean;
-  /** Called when the user clicks the card body (detail modal trigger). */
+  /**
+   * Called when the user clicks the card body. Historically this opened the
+   * detail modal; consumers MAY repurpose it (e.g. deep-link navigation) —
+   * when they do, pass `onOpenDetails` too so the detail modal stays
+   * reachable via the secondary affordance below.
+   */
   onOpenModal?: (account: IntegrationAccount) => void;
+  /**
+   * Called when the user clicks the secondary "details" icon-button.
+   * Renders a small gear icon next to the edit pencil / actions menu.
+   * Use this to keep the read-only detail modal reachable when
+   * `onOpenModal` has been repurposed for something else (e.g. navigation).
+   */
+  onOpenDetails?: (account: IntegrationAccount) => void;
   /** Called with the patch payload when the user saves the inline-edit form. */
   onSave?: (patch: IntegrationAccountPatch) => void;
   /** Called when the user triggers the delete action. */
@@ -346,6 +366,7 @@ export function IntegrationCard({
   error = null,
   busy = false,
   onOpenModal,
+  onOpenDetails,
   onSave,
   onDelete,
   onSetDefault,
@@ -473,6 +494,21 @@ export function IntegrationCard({
           onClick={(e) => e.stopPropagation()}
         >
           <StatusBadge status={account.status} />
+
+          {/* Details toggle — secondary affordance for the read-only detail
+              modal, kept reachable even when onOpenModal is repurposed. */}
+          {onOpenDetails && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Ver detalhes"
+              disabled={busy}
+              onClick={() => onOpenDetails(account)}
+              className="text-muted-foreground"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
 
           {/* Edit toggle */}
           {onSave && config && config.editableFields.length > 0 && (

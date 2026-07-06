@@ -13,9 +13,11 @@
  *
  * Mock strategy:
  *   · All hooks are vi.fn()s configured in beforeEach
- *   · @noctusai/lib stubs (IntegrationCard, IntegrationCardModal)
+ *   · @noctusai/lib stubs (IntegrationCard, IntegrationCardModal, getProviderConfig)
  *   · ConnectionDetailDialog stubbed (complex WAHA component)
  *   · WhatsAppChatWindow stubbed (tested separately)
+ *   · react-router-dom's useNavigate is a spy (mockNavigate)
+ *   · @/state/useActiveAccount is a selector-shaped stub (mockSetActiveClient/Account)
  *   · shadcn Dialog, Tabs, Select are structurally passed-through to let
  *     the tab renders work; simpler primitives are identity mocks.
  */
@@ -24,6 +26,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
+
+// ─── Router + active-account store mocks ──────────────────────────────────
+
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => mockNavigate,
+}));
+
+const mockSetActiveClient = vi.fn();
+const mockSetActiveAccount = vi.fn();
+const activeAccountState = {
+  activeAccountId: null as string | null,
+  activeClientId: null as string | null,
+  setActiveAccount: mockSetActiveAccount,
+  setActiveClient: mockSetActiveClient,
+  clearSelection: vi.fn(),
+};
+vi.mock("@/state/useActiveAccount", () => ({
+  useActiveAccountStore: (selector: (s: typeof activeAccountState) => unknown) =>
+    selector(activeAccountState),
+}));
 
 // ─── Hook mocks ────────────────────────────────────────────────────────────
 
@@ -78,10 +101,32 @@ vi.mock("@/hooks/useMailchimp", () => ({
 
 // ─── Component mocks ─────────────────────────────────────────────────────────
 
+const PROVIDER_DASHBOARD_ROUTES: Record<string, string> = {
+  youtube: "/youtube",
+  meta: "/meta",
+  whatsapp: "/whatsapp-chat",
+};
+
 vi.mock("@noctusai/lib", () => ({
-  IntegrationCard: ({ account }: any) => (
+  IntegrationCard: ({ account, onOpenModal, onOpenDetails }: any) => (
     <div data-testid="integration-card" data-account-id={account?.id}>
       {account?.account_label}
+      {onOpenModal && (
+        <button
+          data-testid={`open-dashboard-${account?.id}`}
+          onClick={() => onOpenModal(account)}
+        >
+          Abrir
+        </button>
+      )}
+      {onOpenDetails && (
+        <button
+          data-testid={`open-details-${account?.id}`}
+          onClick={() => onOpenDetails(account)}
+        >
+          Detalhes
+        </button>
+      )}
     </div>
   ),
   IntegrationCardModal: ({ account, onClose }: any) =>
@@ -90,6 +135,13 @@ vi.mock("@noctusai/lib", () => ({
         <button onClick={onClose}>Fechar modal</button>
       </div>
     ) : null,
+  // Mirrors seed/lib/frontend/src/design-system/integrations/providerCardConfig.ts
+  // dashboardRoute map (youtube/meta/whatsapp) — kept in sync manually since
+  // this is a test-only stub, not a re-export of the real registry.
+  getProviderConfig: (provider: string) => {
+    const dashboardRoute = PROVIDER_DASHBOARD_ROUTES[provider?.toLowerCase()];
+    return dashboardRoute ? { provider, dashboardRoute } : undefined;
+  },
 }));
 
 vi.mock("@/components/ConnectionDetailDialog", () => ({
@@ -162,6 +214,9 @@ beforeEach(() => {
   mockUseDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
+  mockNavigate.mockClear();
+  mockSetActiveClient.mockClear();
+  mockSetActiveAccount.mockClear();
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -263,6 +318,104 @@ describe("ClienteModal — Contas tab", () => {
     mockUseClientWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
     const { getByText } = await renderClienteModal({ defaultTab: "contas" });
     expect(getByText(/Nenhuma conexão WhatsApp/i)).toBeTruthy();
+  });
+});
+
+describe("ClienteModal — connected-card deep-link (card body click)", () => {
+  it("youtube card body click sets active client+account and navigates to /youtube", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({
+      data: [makeAccount("acc-1", "Canal YouTube")],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-dashboard-acc-1"));
+
+    expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("acc-1");
+    expect(mockNavigate).toHaveBeenCalledWith("/youtube");
+    // The detail modal must NOT open — dashboardRoute takes the body click.
+    expect(document.querySelector('[data-testid="integration-card-modal"]')).toBeNull();
+  });
+
+  it("meta card body click navigates to /meta", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({
+      data: [{ ...makeAccount("acc-2", "Página Acme"), provider: "meta" }],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-dashboard-acc-2"));
+
+    expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("acc-2");
+    expect(mockNavigate).toHaveBeenCalledWith("/meta");
+  });
+
+  it("a provider without a dashboardRoute (gmail) still opens the detail modal on body click", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({
+      data: [{ ...makeAccount("acc-3", "Conta Gmail"), provider: "gmail" }],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-dashboard-acc-3"));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(getByTestId("integration-card-modal")).toBeTruthy();
+  });
+
+  it("the secondary 'detalhes' affordance always opens the detail modal (does not navigate)", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({
+      data: [makeAccount("acc-1", "Canal YouTube")],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-details-acc-1"));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(getByTestId("integration-card-modal")).toBeTruthy();
+  });
+
+  it("whatsapp card body click sets active client+connection and navigates to /whatsapp-chat", async () => {
+    mockUseClientWhatsAppConnections.mockReturnValue({
+      data: [makeWaLine("wa-1", "WhatsApp Vendas")],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseWhatsAppConnectionStatus.mockReturnValue({
+      data: { status: "WORKING", paired: true, me_id: "551199998888" },
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-dashboard-wa-1"));
+
+    expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("wa-1");
+    expect(mockNavigate).toHaveBeenCalledWith("/whatsapp-chat");
+    expect(document.querySelector('[data-testid="connection-detail-dialog"]')).toBeNull();
+  });
+
+  it("whatsapp card 'detalhes' affordance still opens the ConnectionDetailDialog (QR/config)", async () => {
+    mockUseClientWhatsAppConnections.mockReturnValue({
+      data: [makeWaLine("wa-1", "WhatsApp Vendas")],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseWhatsAppConnectionStatus.mockReturnValue({
+      data: { status: "WORKING", paired: true, me_id: "551199998888" },
+    });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("open-details-wa-1"));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(getByTestId("connection-detail-dialog")).toBeTruthy();
   });
 });
 

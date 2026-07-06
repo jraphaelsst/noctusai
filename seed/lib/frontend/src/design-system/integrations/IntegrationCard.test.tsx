@@ -318,6 +318,12 @@ describe("getProviderConfig", () => {
       expect.arrayContaining(["youtube", "whatsapp", "meta"]),
     );
   });
+
+  it("youtube/whatsapp/meta each declare a dashboardRoute", () => {
+    expect(getProviderConfig("youtube")?.dashboardRoute).toBe("/youtube");
+    expect(getProviderConfig("whatsapp")?.dashboardRoute).toBe("/whatsapp-chat");
+    expect(getProviderConfig("meta")?.dashboardRoute).toBe("/meta");
+  });
 });
 
 // ── 5. Render: loading state ─────────────────────────────────────────────────
@@ -439,5 +445,51 @@ describe("IntegrationCard onOpenModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /editar conta/i }));
     fireEvent.click(screen.getByRole("article"));
     expect(onOpenModal).not.toHaveBeenCalled();
+  });
+});
+
+// ── 11. onOpenDetails (secondary affordance) ─────────────────────────────────
+
+describe("IntegrationCard onOpenDetails", () => {
+  it("does not render the details button when onOpenDetails is omitted", () => {
+    render(<IntegrationCard account={youtubeAccount} />);
+    expect(screen.queryByRole("button", { name: /ver detalhes/i })).toBeNull();
+  });
+
+  it("renders the details button when onOpenDetails is passed", () => {
+    render(
+      <IntegrationCard account={youtubeAccount} onOpenDetails={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: /ver detalhes/i })).toBeTruthy();
+  });
+
+  it("fires onOpenDetails (not onOpenModal) when the details button is clicked", () => {
+    const onOpenModal = vi.fn();
+    const onOpenDetails = vi.fn();
+    render(
+      <IntegrationCard
+        account={youtubeAccount}
+        onOpenModal={onOpenModal}
+        onOpenDetails={onOpenDetails}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /ver detalhes/i }));
+    expect(onOpenDetails).toHaveBeenCalledWith(youtubeAccount);
+    expect(onOpenModal).not.toHaveBeenCalled();
+  });
+
+  it("body click still fires onOpenModal when onOpenDetails is also present", () => {
+    const onOpenModal = vi.fn();
+    const onOpenDetails = vi.fn();
+    render(
+      <IntegrationCard
+        account={youtubeAccount}
+        onOpenModal={onOpenModal}
+        onOpenDetails={onOpenDetails}
+      />,
+    );
+    fireEvent.click(screen.getByRole("article"));
+    expect(onOpenModal).toHaveBeenCalledWith(youtubeAccount);
+    expect(onOpenDetails).not.toHaveBeenCalled();
   });
 });

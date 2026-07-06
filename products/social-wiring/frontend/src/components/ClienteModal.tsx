@@ -34,11 +34,13 @@ import {
   Youtube,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 // Seed organs
 import {
   IntegrationCard,
   IntegrationCardModal,
+  getProviderConfig,
   type IntegrationAccount as LibIntegrationAccount,
 } from "@noctusai/lib";
 
@@ -101,6 +103,7 @@ import {
   type MailchimpConnection,
 } from "@/hooks/useMailchimp";
 import { WhatsAppChatWindow } from "@/components/WhatsAppChatWindow";
+import { useActiveAccountStore } from "@/state/useActiveAccount";
 
 // ─── Type helpers ─────────────────────────────────────────────────────────────
 
@@ -456,11 +459,16 @@ function MailchimpProviderRow({
 
 function WaConnectionCard({
   line,
-  onOpen,
+  onOpenDashboard,
+  onOpenDetails,
   onDelete,
 }: {
   line: WhatsAppConnectionLine;
-  onOpen: (l: WhatsAppConnectionLine) => void;
+  /** Card body click — deep-links into the WhatsApp chat page (or falls
+   * back to the detail dialog when no dashboardRoute is configured). */
+  onOpenDashboard: (l: WhatsAppConnectionLine) => void;
+  /** Secondary "detalhes" affordance — always opens the QR/config dialog. */
+  onOpenDetails: (l: WhatsAppConnectionLine) => void;
   onDelete: (l: WhatsAppConnectionLine) => void;
 }) {
   const { data: status } = useWhatsAppConnectionStatus(line.id);
@@ -487,7 +495,11 @@ function WaConnectionCard({
 
   return (
     <div className="relative group">
-      <IntegrationCard account={libAccount} onOpenModal={() => onOpen(line)} />
+      <IntegrationCard
+        account={libAccount}
+        onOpenModal={() => onOpenDashboard(line)}
+        onOpenDetails={() => onOpenDetails(line)}
+      />
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onDelete(line); }}
@@ -595,6 +607,13 @@ function ContasTab({ client }: { client: Client }) {
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
 
+  // Deep-link navigation — a connected card's body click pre-selects this
+  // client/account in the shared store, then routes into the provider's own
+  // dashboard (per ProviderCardConfig.dashboardRoute).
+  const navigate = useNavigate();
+  const setActiveClient = useActiveAccountStore((s) => s.setActiveClient);
+  const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
+
   useEffect(() => {
     setName(client.name);
     setKind(client.kind ?? "");
@@ -664,6 +683,23 @@ function ContasTab({ client }: { client: Client }) {
     finally { setBusyAccId(null); }
   }
 
+  /**
+   * Card-body click for a connected IntegrationCard. Deep-links into the
+   * provider's own dashboard with this client/account pre-selected — falls
+   * back to opening the (still-reachable via the details icon) detail modal
+   * for providers without a dashboardRoute (gmail, google_drive, n8n).
+   */
+  function handleAccOpen(acc: IntegrationAccount) {
+    const dashboardRoute = getProviderConfig(acc.provider)?.dashboardRoute;
+    if (dashboardRoute) {
+      setActiveClient(client.id);
+      setActiveAccount(acc.id);
+      navigate(dashboardRoute);
+    } else {
+      setOpenIntAccount(acc);
+    }
+  }
+
   // WhatsApp connections
   const {
     data: waConnections = [],
@@ -682,6 +718,22 @@ function ContasTab({ client }: { client: Client }) {
       onSuccess: () => toast.success("Conexão excluída."),
       onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha ao excluir."),
     });
+  }
+
+  /**
+   * WA card-body click — deep-links into the WhatsApp chat page with this
+   * client/connection pre-selected; falls back to the QR/config dialog if
+   * whatsapp has no dashboardRoute configured.
+   */
+  function handleWaOpen(line: WhatsAppConnectionLine) {
+    const dashboardRoute = getProviderConfig("whatsapp")?.dashboardRoute;
+    if (dashboardRoute) {
+      setActiveClient(client.id);
+      setActiveAccount(line.id);
+      navigate(dashboardRoute);
+    } else {
+      setOpenWaLine(line);
+    }
   }
 
   return (
@@ -793,7 +845,8 @@ function ContasTab({ client }: { client: Client }) {
                         onDelete={() => handleAccDelete(acc.id)}
                         onSetDefault={() => handleAccSetDefault(acc.id)}
                         onSync={() => handleAccSync(acc.id)}
-                        onOpenModal={() => setOpenIntAccount(acc)}
+                        onOpenModal={() => handleAccOpen(acc)}
+                        onOpenDetails={() => setOpenIntAccount(acc)}
                       />
                     ))}
                   </div>
@@ -930,7 +983,8 @@ function ContasTab({ client }: { client: Client }) {
               <WaConnectionCard
                 key={line.id}
                 line={line}
-                onOpen={setOpenWaLine}
+                onOpenDashboard={handleWaOpen}
+                onOpenDetails={setOpenWaLine}
                 onDelete={handleDeleteWa}
               />
             ))}
