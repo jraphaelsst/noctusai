@@ -60,6 +60,19 @@ export interface KeysStatus {
   supabase_service_role_key: KeyStatusEntry;
 }
 
+// ─── Meta App credentials (admin/dev only) ──────────────────────────────
+export interface MetaAppStatus {
+  app_id_configured: boolean;
+  app_secret_configured: boolean;
+  app_id_masked?: string | null;
+}
+
+export interface MetaAppSave {
+  app_id: string;
+  /** Omit to keep the currently stored secret unchanged. */
+  app_secret?: string;
+}
+
 // ─── Recipients tab ─────────────────────────────────────────────────────
 export function useRecipients() {
   const [data, setData] = useState<Recipient[]>([]);
@@ -135,4 +148,61 @@ export function useKeysStatus() {
   }, []);
 
   return { data, loading };
+}
+
+// ─── Meta App credentials tab ───────────────────────────────────────────
+/**
+ * useMetaAppStatus — GET /api/settings/meta-app/status.
+ *
+ * Never returns the secret itself — only booleans + an optional masked
+ * app_id for display. Exposes `refresh()` so the save form can re-fetch
+ * status after a successful write.
+ */
+export function useMetaAppStatus() {
+  const [data, setData] = useState<MetaAppStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const status = await api.get<MetaAppStatus>("/api/settings/meta-app/status");
+      setData(status);
+    } catch (err) {
+      console.error("meta-app status load failed", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { data, loading, refresh };
+}
+
+/**
+ * useSaveMetaApp — PUT /api/settings/meta-app.
+ *
+ * `app_secret` is write-only: omit it to keep the currently stored value
+ * (backend never echoes it back). Callers should clear their local secret
+ * field after a successful save — never re-display what was typed.
+ */
+export function useSaveMetaApp() {
+  const [saving, setSaving] = useState(false);
+
+  const save = useCallback(async (payload: MetaAppSave) => {
+    setSaving(true);
+    try {
+      await api.put("/api/settings/meta-app", payload);
+      toast.success("Credenciais do Meta App salvas.");
+    } catch (err: any) {
+      toast.error(err?.message ?? "Falha ao salvar credenciais do Meta App.");
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { save, saving };
 }

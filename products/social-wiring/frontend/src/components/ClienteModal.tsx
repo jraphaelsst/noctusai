@@ -139,7 +139,7 @@ const PROVIDER_CATALOG: ProviderDef[] = [
   { id: "gmail",        label: "Gmail",        icon: Mail,      connectKind: "oauth"  },
   { id: "google_drive", label: "Google Drive", icon: HardDrive, connectKind: "oauth"  },
   { id: "n8n",          label: "n8n",          icon: Network,   connectKind: "manual" },
-  { id: "meta",         label: "Meta",         icon: Share2,    connectKind: "soon"   },
+  { id: "meta",         label: "Meta",         icon: Share2,    connectKind: "oauth"  },
   { id: "mailchimp",    label: "Mailchimp",    icon: Mail,      connectKind: "manual" },
 ];
 
@@ -627,6 +627,7 @@ function ContasTab({ client }: { client: Client }) {
   const youtubeOAuth = useStartYouTubeOAuth();
   const gmailOAuth = useStartProviderOAuth("gmail");
   const driveOAuth = useStartProviderOAuth("google_drive");
+  const metaOAuth = useStartProviderOAuth("meta");
 
   const [busyAccId, setBusyAccId] = useState<string | null>(null);
   const [n8nFormOpen, setN8nFormOpen] = useState(false);
@@ -828,7 +829,8 @@ function ContasTab({ client }: { client: Client }) {
                         disabled={
                           (provider.id === "youtube" && youtubeOAuth.isPending) ||
                           (provider.id === "gmail" && gmailOAuth.isPending) ||
-                          (provider.id === "google_drive" && driveOAuth.isPending)
+                          (provider.id === "google_drive" && driveOAuth.isPending) ||
+                          (provider.id === "meta" && metaOAuth.isPending)
                         }
                         onClick={() => {
                           const opts = { clientId: client.id };
@@ -844,13 +846,18 @@ function ContasTab({ client }: { client: Client }) {
                             driveOAuth.mutate(opts, {
                               onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
                             });
+                          } else if (provider.id === "meta") {
+                            metaOAuth.mutate(opts, {
+                              onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
+                            });
                           }
                         }}
                         data-testid={`connect-btn-${provider.id}`}
                       >
                         {((provider.id === "youtube" && youtubeOAuth.isPending) ||
                           (provider.id === "gmail" && gmailOAuth.isPending) ||
-                          (provider.id === "google_drive" && driveOAuth.isPending)) ? (
+                          (provider.id === "google_drive" && driveOAuth.isPending) ||
+                          (provider.id === "meta" && metaOAuth.isPending)) ? (
                           <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                         ) : (
                           <Plus className="h-3.5 w-3.5 mr-1" />

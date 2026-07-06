@@ -84,6 +84,24 @@ const minimalAccount: IntegrationAccount = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+const metaAccount: IntegrationAccount = {
+  id: "acc-meta-1",
+  org_id: "org-1",
+  provider: "meta",
+  account_label: "Página Acme",
+  client_id: "client-xyz",
+  status: "validated",
+  channel_info: {
+    channel_id: "1234567890",
+    title: "Acme Store",
+  },
+  metadata: {},
+  is_default: true,
+  last_synced_at: "2026-06-01T12:00:00Z",
+  created_at: "2026-06-01T00:00:00Z",
+  updated_at: "2026-06-01T12:00:00Z",
+};
+
 // ── 1. YouTube config selectors ──────────────────────────────────────────────
 
 describe("providerCardConfig: youtube", () => {
@@ -194,6 +212,44 @@ describe("providerCardConfig: whatsapp", () => {
   });
 });
 
+// ── 2b. Meta config selectors ────────────────────────────────────────────────
+
+describe("providerCardConfig: meta", () => {
+  const cfg = getProviderConfig("meta")!;
+
+  it("primary returns channel_info title when present", () => {
+    expect(cfg.primary(metaAccount)).toBe("Acme Store");
+  });
+
+  it("primary falls back to account_label when channel_info.title is absent", () => {
+    const acc: IntegrationAccount = { ...metaAccount, channel_info: {} };
+    expect(cfg.primary(acc)).toBe("Página Acme");
+  });
+
+  it("secondary includes channel_id when present", () => {
+    const fields = cfg.secondary(metaAccount);
+    const id = fields.find((f) => f.label === "ID da conta");
+    expect(id?.value).toBe("1234567890");
+  });
+
+  it("secondary is empty when channel_id absent", () => {
+    const acc: IntegrationAccount = { ...metaAccount, channel_info: {} };
+    expect(cfg.secondary(acc)).toEqual([]);
+  });
+
+  it("editableFields includes account_label", () => {
+    const keys = cfg.editableFields.map((f) => f.key);
+    expect(keys).toContain("account_label");
+  });
+
+  it("modalSections returns Conta Meta and Conta sections", () => {
+    const sections = cfg.modalSections(metaAccount);
+    const titles = sections.map((s) => s.title);
+    expect(titles).toContain("Conta Meta");
+    expect(titles).toContain("Conta");
+  });
+});
+
 // ── 3. resolveStatusBadge ─────────────────────────────────────────────────────
 
 describe("resolveStatusBadge", () => {
@@ -242,18 +298,24 @@ describe("getProviderConfig", () => {
     expect(getProviderConfig("whatsapp")?.provider).toBe("whatsapp");
   });
 
+  it("returns config for meta", () => {
+    expect(getProviderConfig("meta")).toBeDefined();
+    expect(getProviderConfig("meta")?.provider).toBe("meta");
+  });
+
   it("normalizes to lowercase", () => {
     expect(getProviderConfig("YouTube")).toBeDefined();
     expect(getProviderConfig("WHATSAPP")).toBeDefined();
+    expect(getProviderConfig("META")).toBeDefined();
   });
 
   it("returns undefined for unknown provider", () => {
-    expect(getProviderConfig("meta")).toBeUndefined();
+    expect(getProviderConfig("some_unknown_provider")).toBeUndefined();
   });
 
-  it("PROVIDER_CARD_CONFIG has youtube and whatsapp keys", () => {
+  it("PROVIDER_CARD_CONFIG has youtube, whatsapp and meta keys", () => {
     expect(Object.keys(PROVIDER_CARD_CONFIG)).toEqual(
-      expect.arrayContaining(["youtube", "whatsapp"]),
+      expect.arrayContaining(["youtube", "whatsapp", "meta"]),
     );
   });
 });

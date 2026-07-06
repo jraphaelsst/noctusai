@@ -11,7 +11,7 @@
  * The card component reads the registry; zero card-code changes needed.
  */
 import * as React from "react";
-import { Youtube } from "lucide-react";
+import { Youtube, Facebook } from "lucide-react";
 import { WhatsAppIcon } from "./WhatsAppIcon";
 import type { IntegrationAccount, SecondaryField, ModalSection } from "./types";
 
@@ -158,6 +158,73 @@ const youtubeConfig: ProviderCardConfig = {
   },
 };
 
+// ── Meta (Facebook Pages / Instagram) ───────────────────────────────────────
+// Per-client OAuth account; channel_info carries whatever the connect flow
+// probed (page or IG business account) — kept conservative since the shape
+// is provider-probed, not a fixed schema like YouTube's channel stats.
+
+const metaConfig: ProviderCardConfig = {
+  provider: "meta",
+  displayName: "Meta",
+  icon: Facebook,
+  accent: "text-blue-600",
+
+  primary(account) {
+    const title = account.channel_info["title"];
+    return typeof title === "string" && title.trim()
+      ? title
+      : account.account_label;
+  },
+
+  secondary(account) {
+    const ci = account.channel_info;
+    const fields: SecondaryField[] = [];
+    if (typeof ci["channel_id"] === "string" && ci["channel_id"]) {
+      fields.push({ label: "ID da conta", value: str(ci["channel_id"]) });
+    }
+    return fields;
+  },
+
+  editableFields: [
+    {
+      key: "account_label",
+      label: "Rótulo da conta",
+      bag: "root",
+      placeholder: "Ex: Página principal",
+    },
+  ],
+
+  modalSections(account) {
+    const ci = account.channel_info;
+    return [
+      {
+        title: "Conta Meta",
+        fields: [
+          { label: "ID da conta", value: str(ci["channel_id"]) },
+          { label: "Nome", value: str(ci["title"]) },
+        ],
+      },
+      {
+        title: "Conta",
+        fields: [
+          { label: "Rótulo", value: account.account_label },
+          { label: "Client ID", value: str(account.client_id) },
+          {
+            label: "Padrão",
+            value: account.is_default ? "Sim" : "Não",
+          },
+          {
+            label: "Último sincronismo",
+            value: account.last_synced_at
+              ? new Date(account.last_synced_at).toLocaleString("pt-BR")
+              : "—",
+          },
+        ],
+      },
+    ];
+  },
+};
+
 // ── WhatsApp (WAHA) ────────────────────────────────────────────────────────
 // Structural config: compiles and renders WAHA fields.
 // Live session/QR data is wired by the social-wiring app slice on top.
@@ -242,6 +309,7 @@ const whatsappConfig: ProviderCardConfig = {
 export const PROVIDER_CARD_CONFIG: Record<string, ProviderCardConfig> = {
   youtube: youtubeConfig,
   whatsapp: whatsappConfig,
+  meta: metaConfig,
 };
 
 /**

@@ -36,6 +36,8 @@ import { api } from "@/lib/api";
 import {
   useRecipients,
   useKeysStatus,
+  useMetaAppStatus,
+  useSaveMetaApp,
   type KeyStatusEntry,
   type Recipient,
   type RecipientCreate,
@@ -255,7 +257,7 @@ function RecipientRow({
 }
 
 // ─── API Keys tab ───────────────────────────────────────────────────────
-function ApiKeysTab() {
+function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
   const { data, loading } = useKeysStatus();
 
   if (loading) {
@@ -278,34 +280,180 @@ function ApiKeysTab() {
   );
 
   return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <KeyRound className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <CardTitle>Chaves de API</CardTitle>
+              <CardDescription>
+                Status (somente leitura) das credenciais lidas do .env. Para
+                alterar, edite o arquivo e reinicie o backend.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="divide-y rounded-md border">
+            {entries.map(([key, entry]) => (
+              <div
+                key={key}
+                className="flex items-start justify-between gap-4 px-4 py-3"
+              >
+                <div className="flex flex-1 flex-col">
+                  <p className="font-medium">{entry.label}</p>
+                  <p className="text-xs text-muted-foreground">{entry.description}</p>
+                </div>
+                <HealthBadge entry={entry} />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {isAdminOrDev && <MetaAppSection />}
+    </div>
+  );
+}
+
+// ─── Meta App credentials section (owner/admin/dev only) ────────────────
+// App ID + App Secret used for the per-client Meta OAuth flow (ClienteModal).
+// The secret is write-only: the backend never echoes it back, so the input
+// always starts empty and is only sent when the admin actually types a new
+// value. App ID is required on every save (backend contract), so it is
+// requested fresh each time too — the masked value is shown only as a
+// "currently set" hint, never pre-filled into the editable field.
+function MetaAppSection() {
+  const { data: status, loading: statusLoading, refresh } = useMetaAppStatus();
+  const { save, saving } = useSaveMetaApp();
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appId.trim()) {
+      toast.error("Informe o App ID do Meta.");
+      return;
+    }
+    try {
+      await save({
+        app_id: appId.trim(),
+        app_secret: appSecret.trim() || undefined,
+      });
+      setAppId("");
+      setAppSecret("");
+      await refresh();
+    } catch {
+      // useSaveMetaApp already surfaced the error toast.
+    }
+  };
+
+  return (
     <Card>
       <CardHeader>
         <div className="flex items-center gap-3">
           <KeyRound className="h-5 w-5 text-muted-foreground" />
           <div>
-            <CardTitle>Chaves de API</CardTitle>
+            <CardTitle>Meta App</CardTitle>
             <CardDescription>
-              Status (somente leitura) das credenciais lidas do .env. Para
-              alterar, edite o arquivo e reinicie o backend.
+              Credenciais do app Meta (Facebook/Instagram) usadas no OAuth
+              por cliente. O App Secret nunca e reexibido depois de salvo.
             </CardDescription>
           </div>
         </div>
       </CardHeader>
       <CardContent>
-        <div className="divide-y rounded-md border">
-          {entries.map(([key, entry]) => (
-            <div
-              key={key}
-              className="flex items-start justify-between gap-4 px-4 py-3"
-            >
-              <div className="flex flex-1 flex-col">
-                <p className="font-medium">{entry.label}</p>
-                <p className="text-xs text-muted-foreground">{entry.description}</p>
+        {statusLoading ? (
+          <div className="flex items-center justify-center p-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-md border p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-sm font-medium">App ID</p>
+                  <Badge
+                    variant={status?.app_id_configured ? "default" : "destructive"}
+                    className="gap-1 font-mono text-[11px]"
+                    data-testid="meta-app-id-badge"
+                  >
+                    {status?.app_id_configured ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <CircleAlert className="h-3 w-3" />
+                    )}
+                    {status?.app_id_configured ? "configurado" : "ausente"}
+                  </Badge>
+                </div>
+                {status?.app_id_masked && (
+                  <p className="text-xs text-muted-foreground">
+                    Atual: {status.app_id_masked}
+                  </p>
+                )}
               </div>
-              <HealthBadge entry={entry} />
+              <div className="rounded-md border p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-sm font-medium">App Secret</p>
+                  <Badge
+                    variant={status?.app_secret_configured ? "default" : "destructive"}
+                    className="gap-1 font-mono text-[11px]"
+                    data-testid="meta-app-secret-badge"
+                  >
+                    {status?.app_secret_configured ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <CircleAlert className="h-3 w-3" />
+                    )}
+                    {status?.app_secret_configured ? "configurado" : "ausente"}
+                  </Badge>
+                </div>
+              </div>
             </div>
-          ))}
-        </div>
+
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-3"
+              data-testid="meta-app-form"
+            >
+              <div className="space-y-1">
+                <Label htmlFor="meta-app-id">App ID *</Label>
+                <Input
+                  id="meta-app-id"
+                  value={appId}
+                  onChange={(e) => setAppId(e.target.value)}
+                  placeholder="Ex: 1234567890123456"
+                  disabled={saving}
+                  data-testid="meta-app-id-input"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="meta-app-secret">App Secret</Label>
+                <Input
+                  id="meta-app-secret"
+                  type="password"
+                  value={appSecret}
+                  onChange={(e) => setAppSecret(e.target.value)}
+                  placeholder={
+                    status?.app_secret_configured
+                      ? "Deixe em branco para manter o atual"
+                      : "Informe o App Secret"
+                  }
+                  disabled={saving}
+                  data-testid="meta-app-secret-input"
+                />
+              </div>
+              <Button type="submit" disabled={saving} data-testid="meta-app-save-btn">
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Salvar"
+                )}
+              </Button>
+            </form>
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -354,7 +502,7 @@ export default function Settings() {
           <NotificationsTab />
         </TabsContent>
         <TabsContent value="keys" className="mt-6">
-          <ApiKeysTab />
+          <ApiKeysTab isAdminOrDev={isAdminOrDev} />
         </TabsContent>
         {isAdminOrDev && (
           <TabsContent value="visibilidade" className="mt-6">

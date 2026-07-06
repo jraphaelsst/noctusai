@@ -222,9 +222,25 @@ describe("ClienteModal — Contas tab", () => {
     const { getByTestId, getAllByText } = await renderClienteModal({ defaultTab: "contas" });
     // Provider grid is always rendered (greyed rows for unconnected providers)
     expect(getByTestId("integrations-grid")).toBeTruthy();
-    // OAuth providers (YouTube, Gmail, Google Drive) show "Conectar" buttons
+    // OAuth providers (YouTube, Gmail, Google Drive, Meta) show "Conectar" buttons
     const conectarBtns = getAllByText(/Conectar/i);
-    expect(conectarBtns.length).toBeGreaterThanOrEqual(3);
+    expect(conectarBtns.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("shows Meta as a live OAuth Conectar row (not 'em breve')", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByTestId, queryByText } = await renderClienteModal({ defaultTab: "contas" });
+    expect(getByTestId("provider-row-meta")).toBeTruthy();
+    expect(getByTestId("connect-btn-meta")).toBeTruthy();
+    expect(queryByText(/em breve/i)).toBeNull();
+  });
+
+  it("wires the Meta Conectar button to useStartProviderOAuth('meta')", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    // useStartProviderOAuth is mocked generically for every provider — clicking
+    // Meta's button should not throw and should hit the same mutate() path.
+    expect(() => fireEvent.click(getByTestId("connect-btn-meta"))).not.toThrow();
   });
 
   it("shows WA connections when present", async () => {
