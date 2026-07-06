@@ -209,3 +209,4 @@
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/meta-conn-be", "branch": "feat/meta-conn-be", "sha": "0cd336c6bb992a715cfec20ef69a2bd167cb5453", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/meta-conn-fe", "branch": "feat/meta-conn-fe", "sha": "d515e762548701fc3679b6f3febdacfe94f26524", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/meta-dash-be", "branch": "feat/meta-dash-be", "sha": "ff7e79611f4359904064e66e7279021c7d72558c", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/meta-dash-fe", "branch": "feat/meta-dash-fe", "sha": "63a2c57a288af262235a66cc1c347b7eb61243ad", "reason": "task_branch cleanup (learn-before-delete)"}
