@@ -269,6 +269,42 @@ def graph_post(
     return body
 
 
+def graph_delete(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    version: str = DEFAULT_GRAPH_VERSION,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """DELETE `{GRAPH_BASE}/{version}/{path}` with the token appended.
+
+    The delete twin of `graph_get`/`graph_post` — used by the comment-
+    moderation surface (`delete_instagram_comment`,
+    `delete_facebook_comment`). Graph's delete endpoints take the token
+    as a query param (like a GET, not a form body) and return
+    `{"success": true}` on success.
+
+    Raises `MetaGraphError` on a Graph error envelope (even at HTTP
+    200) or a non-JSON body. A permission / unapproved-scope failure
+    surfaces as `MetaGraphError` with `is_permission` /
+    `requires_app_review` true — the caller MUST NOT swallow it into a
+    faked success (no-silent-errors)."""
+
+    q: dict[str, Any] = dict(params or {})
+    q["access_token"] = access_token
+    url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
+    resp = httpx.delete(url, params=q, timeout=timeout)
+    body = _parse_json(resp)
+    _raise_for_graph_error(body, http_status=resp.status_code)
+    if not isinstance(body, dict):
+        raise MetaGraphError(
+            f"Expected JSON object from {path}, got {type(body).__name__}",
+            http_status=resp.status_code,
+        )
+    return body
+
+
 def poll_media_status(
     creation_id: str,
     *,
@@ -582,6 +618,7 @@ __all__ = [
     "exchange_code_for_token_bundle",
     "exchange_for_long_lived",
     "exchange_for_long_lived_bundle",
+    "graph_delete",
     "graph_get",
     "graph_paged",
     "graph_post",

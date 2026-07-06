@@ -13,9 +13,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from noctusai_lib.integrations.meta.types import (
+    Conversation,
+    DirectMessage,
+    FacebookComment,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
+    InstagramComment,
     InstagramMedia,
     PostInsights,
 )
@@ -48,6 +52,31 @@ IG_MEDIA_FIELDS = (
 ME_FIELDS = "id,name"
 
 PAGE_IG_FIELD = "instagram_business_account"
+
+# IG comments edge (`instagram_manage_comments` scope). `hidden` /
+# `parent_id` were added to the edge after launch — requested
+# explicitly since Graph omits fields not asked for (never assumed
+# present; the mapper below is None/False-safe regardless).
+IG_COMMENT_FIELDS = (
+    "id,text,username,timestamp,like_count,hidden,parent_id"
+)
+
+# FB Page-post comments edge (`pages_manage_engagement` scope).
+# `from`/`parent` are nested objects the mapper below flattens.
+FB_COMMENT_FIELDS = (
+    "id,message,from,created_time,like_count,is_hidden,parent"
+)
+
+# IG Direct conversations list edge (`instagram_manage_messages`
+# scope) — `id` is always returned; `participants`/`updated_time` are
+# requested explicitly (thin default field surface on this edge).
+IG_CONVERSATION_FIELDS = "participants,updated_time"
+
+# Per-message detail fetch (the conversations `/messages` list edge
+# returns bare `{"id": ...}` rows — every field must be re-fetched
+# per message id, mirroring `list_instagram_accounts`'s link-probe-
+# then-detail-fetch shape).
+IG_DM_FIELDS = "id,from,to,message,created_time"
 
 
 # ─── Default insight metric lists ─────────────────────────────────────────
@@ -261,9 +290,105 @@ def insights_from_body(
     return PostInsights(object_id=object_id, metrics=metrics, raw=list(rows))
 
 
+# ─── Comments / DMs body → dataclass mappers ──────────────────────────────
+
+
+def instagram_comment_from_body(body: dict[str, Any]) -> InstagramComment:
+    """Map one row of `GET /{ig-media}/comments` (or a comment
+    read-back after `reply`/`hide`) to `InstagramComment`."""
+
+    parent_id = body.get("parent_id")
+    return InstagramComment(
+        id=str(body["id"]),
+        text=body.get("text"),
+        username=body.get("username"),
+        timestamp=parse_graph_datetime(body.get("timestamp")),
+        like_count=int(body.get("like_count") or 0),
+        hidden=bool(body.get("hidden") or False),
+        parent_id=str(parent_id) if parent_id else None,
+        raw=dict(body),
+    )
+
+
+def facebook_comment_from_body(body: dict[str, Any]) -> FacebookComment:
+    """Map one row of `GET /{post}/comments` (or a comment read-back
+    after `reply`/`hide`) to `FacebookComment`. `from`/`parent` are
+    nested objects Graph returns as `{"id": ..., "name": ...}`."""
+
+    from_obj = body.get("from")
+    from_obj = from_obj if isinstance(from_obj, dict) else {}
+    parent_obj = body.get("parent")
+    parent_obj = parent_obj if isinstance(parent_obj, dict) else {}
+    return FacebookComment(
+        id=str(body["id"]),
+        message=body.get("message"),
+        from_id=from_obj.get("id"),
+        from_name=from_obj.get("name"),
+        created_time=parse_graph_datetime(body.get("created_time")),
+        like_count=int(body.get("like_count") or 0),
+        is_hidden=bool(body.get("is_hidden") or False),
+        parent_id=parent_obj.get("id"),
+        raw=dict(body),
+    )
+
+
+def conversation_from_body(body: dict[str, Any]) -> Conversation:
+    """Map one row of `GET /{ig-user}/conversations?platform=instagram`
+    to `Conversation`. `participants` is a `{"data": [{"id": ...}]}`
+    edge — flattened to a bare id list."""
+
+    participants = body.get("participants")
+    participant_ids: list[str] = []
+    if isinstance(participants, dict):
+        for row in participants.get("data") or []:
+            if isinstance(row, dict) and row.get("id"):
+                participant_ids.append(str(row["id"]))
+    return Conversation(
+        id=str(body["id"]),
+        participant_ids=participant_ids,
+        updated_time=parse_graph_datetime(body.get("updated_time")),
+        raw=dict(body),
+    )
+
+
+def direct_message_from_body(
+    body: dict[str, Any], *, conversation_id: str | None = None
+) -> DirectMessage:
+    """Map a per-message detail fetch (`GET /{message-id}`) to
+    `DirectMessage`. `conversation_id` is supplied by the caller — the
+    message body itself does not carry the parent conversation id
+    back. `from`/`to` are nested Graph objects (`to` is a `{"data":
+    [...]}` edge even though Direct is 1:1, mirroring the Messenger
+    Send API shape)."""
+
+    from_obj = body.get("from")
+    from_obj = from_obj if isinstance(from_obj, dict) else {}
+    to_obj = body.get("to")
+    recipient_id: str | None = None
+    if isinstance(to_obj, dict):
+        to_rows = to_obj.get("data")
+        if isinstance(to_rows, list) and to_rows:
+            first = to_rows[0]
+            if isinstance(first, dict) and first.get("id"):
+                recipient_id = str(first["id"])
+    return DirectMessage(
+        id=str(body["id"]),
+        conversation_id=conversation_id,
+        sender_id=from_obj.get("id"),
+        recipient_id=recipient_id,
+        text=body.get("message"),
+        created_time=parse_graph_datetime(body.get("created_time")),
+        raw=dict(body),
+    )
+
+
 __all__ = [
+    "FB_COMMENT_FIELDS",
     "IG_ACCOUNT_FIELDS",
     "IG_ACCOUNT_INSIGHT_METRICS",
+    "IG_COMMENT_FIELDS",
+    "IG_CONVERSATION_FIELDS",
+    "IG_DM_FIELDS",
     "IG_MEDIA_FIELDS",
     "IG_MEDIA_INSIGHT_METRICS",
     "ME_FIELDS",
@@ -271,8 +396,12 @@ __all__ = [
     "PAGE_IG_FIELD",
     "POST_FIELDS",
     "POST_INSIGHT_METRICS",
+    "conversation_from_body",
+    "direct_message_from_body",
+    "facebook_comment_from_body",
     "ig_account_from_body",
     "ig_media_from_body",
+    "instagram_comment_from_body",
     "insights_from_body",
     "page_from_body",
     "parse_graph_datetime",

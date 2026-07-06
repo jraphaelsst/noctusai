@@ -12,13 +12,17 @@ account). Sibling to `google_calendar/`, `google_maps/`,
 - Value objects: `FacebookPage`, `InstagramAccount`, `FacebookPost`,
   `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`,
   `PublishedPost`, `PublishedMedia`, `MediaProcessingStatus`,
-  `AdCampaign`, `AdInsights`.
+  `AdCampaign`, `AdInsights`, `InstagramComment`, `FacebookComment`,
+  `Conversation`, `DirectMessage`.
 - Contract: `MetaAdapter` (Protocol) — read surface + write/ads
   surface (publish FB post / IG media / IG carousel / IG Reel /
-  FB video+Reel / list ad campaigns / ad insights). Video / Reel
-  publish uses the asynchronous resumable-upload + processing-status
-  poll contract (`poll_media_status`), distinct from the synchronous
-  image flow but with the same typed error model.
+  FB video+Reel / list ad campaigns / ad insights) + comments/DMs/
+  Stories surface (IG comment list/reply/hide/delete, IG Direct
+  conversations/messages/send, IG Stories publish, FB comment
+  list/reply/hide/delete). Video / Reel publish uses the asynchronous
+  resumable-upload + processing-status poll contract
+  (`poll_media_status`), distinct from the synchronous image flow but
+  with the same typed error model.
 - `FakeMetaAdapter` — deterministic in-memory; dev/test default.
 - `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
   (production; required for Business-Portfolio-owned assets) →
@@ -77,8 +81,12 @@ from noctusai_lib.integrations.meta.credentials import (
 )
 from noctusai_lib.integrations.meta.fake_adapter import FakeMetaAdapter
 from noctusai_lib.integrations.meta.mappers import (
+    conversation_from_body,
+    direct_message_from_body,
+    facebook_comment_from_body,
     ig_account_from_body,
     ig_media_from_body,
+    instagram_comment_from_body,
     insights_from_body,
     page_from_body,
     parse_graph_datetime,
@@ -88,9 +96,13 @@ from noctusai_lib.integrations.meta.router import make_meta_router
 from noctusai_lib.integrations.meta.types import (
     AdCampaign,
     AdInsights,
+    Conversation,
+    DirectMessage,
+    FacebookComment,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
+    InstagramComment,
     InstagramMedia,
     MediaProcessingStatus, MetaAdapter,
     MetaConnectionStatus,
@@ -156,10 +168,14 @@ def get_meta_adapter(
 __all__ = [
     "AdCampaign",
     "AdInsights",
+    "Conversation",
+    "DirectMessage",
+    "FacebookComment",
     "FacebookPage",
     "FacebookPost",
     "FakeMetaAdapter",
     "InstagramAccount",
+    "InstagramComment",
     "InstagramMedia",
     "META_KITCHEN_SINK_SCOPES",
     "MediaProcessingStatus", "MetaAdapter",
@@ -171,14 +187,18 @@ __all__ = [
     "PublishedMedia",
     "PublishedPost",
     "TokenBundle",
+    "conversation_from_body",
+    "direct_message_from_body",
     "discover_app_permissions",
     "exchange_code_for_token",
     "exchange_code_for_token_bundle",
     "exchange_for_long_lived",
     "exchange_for_long_lived_bundle",
+    "facebook_comment_from_body",
     "get_meta_adapter",
     "ig_account_from_body",
     "ig_media_from_body",
+    "instagram_comment_from_body",
     "insights_from_body",
     "make_meta_router",
     "page_from_body",

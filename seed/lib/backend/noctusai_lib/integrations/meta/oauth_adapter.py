@@ -49,8 +49,12 @@ from noctusai_lib.integrations.meta import _meta_api
 from noctusai_lib.integrations.meta._meta_api import MetaGraphError
 from noctusai_lib.integrations.meta.credentials import MetaCredentialResolver
 from noctusai_lib.integrations.meta.mappers import (
+    FB_COMMENT_FIELDS,
     IG_ACCOUNT_FIELDS,
     IG_ACCOUNT_INSIGHT_METRICS,
+    IG_COMMENT_FIELDS,
+    IG_CONVERSATION_FIELDS,
+    IG_DM_FIELDS,
     IG_MEDIA_FIELDS,
     IG_MEDIA_INSIGHT_METRICS,
     ME_FIELDS,
@@ -58,8 +62,12 @@ from noctusai_lib.integrations.meta.mappers import (
     PAGE_IG_FIELD,
     POST_FIELDS,
     POST_INSIGHT_METRICS,
+    conversation_from_body,
+    direct_message_from_body,
+    facebook_comment_from_body,
     ig_account_from_body,
     ig_media_from_body,
+    instagram_comment_from_body,
     insights_from_body,
     page_from_body,
     post_from_body,
@@ -74,9 +82,13 @@ from noctusai_lib.integrations.meta.types import (
     AdSetSpec,
     AdSpec,
     CampaignSpec,
+    Conversation,
+    DirectMessage,
+    FacebookComment,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
+    InstagramComment,
     InstagramMedia,
     MetaConnectionStatus,
     PostInsights,
@@ -1142,6 +1154,359 @@ class MetaOAuthAdapter:
             billing_event=body.get("billing_event"),
             optimization_goal=body.get("optimization_goal"),
             targeting=body.get("targeting") or {},
+        )
+
+    # ─── IG comments (additive — `instagram_manage_comments` scope) ────
+
+    def list_instagram_comments(
+        self, media_id: str, limit: int = 25
+    ) -> list[InstagramComment]:
+        """List top-level comments on an IG media item —
+        `GET /{ig-media}/comments`. Reading this edge needs
+        `instagram_manage_comments` (the same scope that gates
+        reply/hide/delete — Meta does not split read/write here)."""
+
+        rows = _meta_api.graph_paged(
+            f"{media_id}/comments",
+            access_token=self._user_token(),
+            params={"fields": IG_COMMENT_FIELDS, "limit": limit},
+            version=self._version,
+            limit=limit,
+        )
+        return [instagram_comment_from_body(r) for r in rows]
+
+    def reply_instagram_comment(
+        self, comment_id: str, message: str
+    ) -> InstagramComment:
+        """Reply to an IG comment — `POST /{ig-comment}/replies`.
+
+        **Production gate:** `instagram_manage_comments` is App-Review-
+        gated. Absent it Graph returns a permission error and this
+        raises `MetaGraphError` with `requires_app_review` true — never
+        a faked success. Graph's replies-create endpoint returns only
+        `{"id": ...}`, so the created reply is read back (best-effort —
+        a read-back failure must not mask the successful write)."""
+
+        token = self._user_token()
+        created = _meta_api.graph_post(
+            f"{comment_id}/replies",
+            access_token=token,
+            data={"message": message},
+            version=self._version,
+        )
+        reply_id = str(created.get("id") or "")
+        if not reply_id:
+            raise MetaGraphError(
+                f"IG comment reply to {comment_id} returned no id",
+                code=200,
+            )
+        try:
+            detail = _meta_api.graph_get(
+                reply_id,
+                access_token=token,
+                params={"fields": IG_COMMENT_FIELDS},
+                version=self._version,
+            )
+            return instagram_comment_from_body(detail)
+        except MetaGraphError as exc:
+            logger.warning(
+                "IG comment reply %s created; read-back failed: %s",
+                reply_id,
+                exc,
+            )
+            return InstagramComment(
+                id=reply_id, text=message, parent_id=comment_id
+            )
+
+    def hide_instagram_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None:
+        """Hide/unhide an IG comment — `POST /{ig-comment}` with
+        `hide=<bool>`. Same `instagram_manage_comments` App-Review
+        gate. Graph returns `{"success": true}` only — nothing to read
+        back, hence `None`."""
+
+        _meta_api.graph_post(
+            comment_id,
+            access_token=self._user_token(),
+            data={"hide": "true" if hide else "false"},
+            version=self._version,
+        )
+
+    def delete_instagram_comment(self, comment_id: str) -> None:
+        """Delete an IG comment — `DELETE /{ig-comment}`. Same
+        `instagram_manage_comments` App-Review gate."""
+
+        _meta_api.graph_delete(
+            comment_id,
+            access_token=self._user_token(),
+            version=self._version,
+        )
+
+    # ─── IG Direct messages (additive — `instagram_manage_messages`
+    #    scope) ───────────────────────────────────────────────────────
+
+    def list_instagram_conversations(
+        self, ig_user_id: str, limit: int = 25
+    ) -> list[Conversation]:
+        """List Instagram Direct conversation threads for an IG user —
+        `GET /{ig-user}/conversations?platform=instagram`. Needs
+        `instagram_manage_messages` (App-Review-gated)."""
+
+        rows = _meta_api.graph_paged(
+            f"{ig_user_id}/conversations",
+            access_token=self._user_token(),
+            params={
+                "platform": "instagram",
+                "fields": IG_CONVERSATION_FIELDS,
+                "limit": limit,
+            },
+            version=self._version,
+            limit=limit,
+        )
+        return [conversation_from_body(r) for r in rows]
+
+    def list_instagram_messages(
+        self, conversation_id: str, limit: int = 25
+    ) -> list[DirectMessage]:
+        """List messages inside one Direct conversation.
+
+        `GET /{conversation}/messages` returns bare `{"id": ...}` rows
+        (Graph does not expand message fields on the list edge), so
+        each message is re-fetched by id (`GET /{message-id}`) for the
+        full body — the same link-probe-then-detail-fetch shape
+        `list_instagram_accounts` already uses for the Page→IG link."""
+
+        token = self._user_token()
+        rows = _meta_api.graph_paged(
+            f"{conversation_id}/messages",
+            access_token=token,
+            params={"limit": limit},
+            version=self._version,
+            limit=limit,
+        )
+        messages: list[DirectMessage] = []
+        for row in rows:
+            msg_id = str(row.get("id") or "")
+            if not msg_id:
+                continue
+            detail = _meta_api.graph_get(
+                msg_id,
+                access_token=token,
+                params={"fields": IG_DM_FIELDS},
+                version=self._version,
+            )
+            messages.append(
+                direct_message_from_body(
+                    detail, conversation_id=conversation_id
+                )
+            )
+        return messages
+
+    def send_instagram_message(
+        self, ig_user_id: str, recipient_id: str, text: str
+    ) -> DirectMessage:
+        """Send an Instagram Direct message —
+        `POST /{ig-user}/messages` with nested `recipient={"id": ...}`
+        + `message={"text": ...}` (Meta's Send API shape — nested
+        objects are JSON-encoded form fields, same convention as
+        `create_ad_set`'s `targeting`).
+
+        **Production gate:** `instagram_manage_messages` is App-Review-
+        gated (and additionally requires the IG account to be linked to
+        an app approved for the Instagram Messaging API). Absent it
+        Graph returns a permission error and this raises
+        `MetaGraphError` with `requires_app_review` true — never a
+        faked success."""
+
+        import json
+
+        token = self._user_token()
+        created = _meta_api.graph_post(
+            f"{ig_user_id}/messages",
+            access_token=token,
+            data={
+                "recipient": json.dumps({"id": recipient_id}),
+                "message": json.dumps({"text": text}),
+            },
+            version=self._version,
+        )
+        message_id = str(
+            created.get("message_id") or created.get("id") or ""
+        )
+        if not message_id:
+            raise MetaGraphError(
+                f"IG Direct send from {ig_user_id} to {recipient_id} "
+                "returned no message id",
+                code=200,
+            )
+        return DirectMessage(
+            id=message_id,
+            sender_id=ig_user_id,
+            recipient_id=recipient_id,
+            text=text,
+        )
+
+    # ─── IG Stories (additive — `instagram_content_publish` scope,
+    #    same gate as the image/carousel/Reel publish surface) ───────
+
+    def publish_instagram_story(
+        self,
+        ig_user_id: str,
+        media_url: str,
+        *,
+        is_video: bool = False,
+    ) -> PublishedMedia:
+        """Publish to Instagram Stories — the 2-step container flow.
+
+        Step 1 `POST /{ig-user}/media` with `media_type=STORIES` +
+        `image_url=<url>` (or `video_url=<url>` when `is_video=True`)
+        → a media container id. Step 2 `POST /{ig-user}/media_publish`
+        (creation_id) → the published (ephemeral, 24h) story media id.
+        Mirrors `publish_instagram_media`'s 2-step shape.
+
+        **Graph-shape uncertainty (flag for live calibration):** unlike
+        `publish_instagram_reel`, this does NOT poll
+        `poll_media_status` before `media_publish` — Meta's docs are
+        not fully consistent on whether a freshly-created video Story
+        container can ever come back `IN_PROGRESS` the way REELS
+        containers do. Ships the synchronous 2-step per spec; if a
+        live token surfaces an `IN_PROGRESS` container for a video
+        Story, add the same poll step `publish_instagram_reel` uses.
+
+        **Production gate:** `instagram_content_publish` (the same
+        scope gating image/carousel/Reel publish). Absent it the
+        container-create call raises `MetaGraphError` with
+        `requires_app_review` true — never a faked success."""
+
+        token = self._user_token()
+        create_data: dict[str, Any] = {"media_type": "STORIES"}
+        if is_video:
+            create_data["video_url"] = media_url
+        else:
+            create_data["image_url"] = media_url
+        created = _meta_api.graph_post(
+            f"{ig_user_id}/media",
+            access_token=token,
+            data=create_data,
+            version=self._version,
+        )
+        container_id = str(created.get("id") or "")
+        if not container_id:
+            raise MetaGraphError(
+                f"IG Story container creation for {ig_user_id} "
+                "returned no creation id",
+                code=200,
+            )
+        published = _meta_api.graph_post(
+            f"{ig_user_id}/media_publish",
+            access_token=token,
+            data={"creation_id": container_id},
+            version=self._version,
+        )
+        media_id = str(published.get("id") or "")
+        if not media_id:
+            raise MetaGraphError(
+                f"IG Story media_publish for container {container_id} "
+                "returned no media id",
+                code=200,
+            )
+        return PublishedMedia(
+            id=media_id,
+            ig_user_id=ig_user_id,
+            container_id=container_id,
+        )
+
+    # ─── FB comment moderation (additive — `pages_manage_engagement`
+    #    scope) ───────────────────────────────────────────────────────
+
+    def list_facebook_comments(
+        self, post_id: str, limit: int = 25
+    ) -> list[FacebookComment]:
+        """List comments on a Facebook Page post —
+        `GET /{post}/comments`. Needs `pages_manage_engagement`
+        (App-Review-gated).
+
+        **Graph-shape uncertainty (flag for live calibration):** the
+        signature (mirroring the brief) takes no `page_id`, so this
+        resolves `self._user_token()` rather than a Page token — fine
+        for reading a public Page's comments, but replying/hiding/
+        deleting AS the Page (rather than as the personal identity)
+        typically wants the Page token. Calibrate against a real
+        token; if Graph rejects the user-token write with a
+        Page-token-required error, thread a `page_id` through these
+        four methods to resolve `self._page_token(page_id)` instead."""
+
+        rows = _meta_api.graph_paged(
+            f"{post_id}/comments",
+            access_token=self._user_token(),
+            params={"fields": FB_COMMENT_FIELDS, "limit": limit},
+            version=self._version,
+            limit=limit,
+        )
+        return [facebook_comment_from_body(r) for r in rows]
+
+    def reply_facebook_comment(
+        self, comment_id: str, message: str
+    ) -> FacebookComment:
+        """Reply to a Facebook comment — `POST /{comment}/comments`
+        (Graph nests a reply as a child of the comment's own comments
+        edge). Same `pages_manage_engagement` App-Review gate + the
+        same user-token-vs-page-token calibration note as
+        `list_facebook_comments`."""
+
+        token = self._user_token()
+        created = _meta_api.graph_post(
+            f"{comment_id}/comments",
+            access_token=token,
+            data={"message": message},
+            version=self._version,
+        )
+        reply_id = str(created.get("id") or "")
+        if not reply_id:
+            raise MetaGraphError(
+                f"FB comment reply to {comment_id} returned no id",
+                code=200,
+            )
+        try:
+            detail = _meta_api.graph_get(
+                reply_id,
+                access_token=token,
+                params={"fields": FB_COMMENT_FIELDS},
+                version=self._version,
+            )
+            return facebook_comment_from_body(detail)
+        except MetaGraphError as exc:
+            logger.warning(
+                "FB comment reply %s created; read-back failed: %s",
+                reply_id,
+                exc,
+            )
+            return FacebookComment(
+                id=reply_id, message=message, parent_id=comment_id
+            )
+
+    def hide_facebook_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None:
+        """Hide/unhide a Facebook comment — `POST /{comment}` with
+        `is_hidden=<bool>`. Same `pages_manage_engagement` gate."""
+
+        _meta_api.graph_post(
+            comment_id,
+            access_token=self._user_token(),
+            data={"is_hidden": "true" if hide else "false"},
+            version=self._version,
+        )
+
+    def delete_facebook_comment(self, comment_id: str) -> None:
+        """Delete a Facebook comment — `DELETE /{comment}`. Same
+        `pages_manage_engagement` gate."""
+
+        _meta_api.graph_delete(
+            comment_id,
+            access_token=self._user_token(),
+            version=self._version,
         )
 
 

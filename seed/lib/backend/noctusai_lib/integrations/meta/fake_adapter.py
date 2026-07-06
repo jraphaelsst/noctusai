@@ -26,9 +26,13 @@ from noctusai_lib.integrations.meta.types import (
     AdSetSpec,
     AdSpec,
     CampaignSpec,
+    Conversation,
+    DirectMessage,
+    FacebookComment,
     FacebookPage,
     FacebookPost,
     InstagramAccount,
+    InstagramComment,
     InstagramMedia,
     MetaConnectionStatus,
     PostInsights,
@@ -74,6 +78,25 @@ class FakeMetaAdapter:
         self._adset_seq = 0
         self._creative_seq = 0
         self._ad_seq = 0
+        # Comments / DMs / Stories — seedable read state + write
+        # recorders, same deterministic-in-memory posture as the rest
+        # of the write surface. The Fake NEVER raises the App-Review
+        # gate here either.
+        self._ig_comments_by_media: dict[str, list[InstagramComment]] = {}
+        self._fb_comments_by_post: dict[str, list[FacebookComment]] = {}
+        self._conversations_by_ig_user: dict[str, list[Conversation]] = {}
+        self._messages_by_conversation: dict[str, list[DirectMessage]] = {}
+        self.replied_instagram_comments: list[InstagramComment] = []
+        self.hidden_instagram_comments: list[tuple[str, bool]] = []
+        self.deleted_instagram_comment_ids: list[str] = []
+        self.sent_instagram_messages: list[DirectMessage] = []
+        self.published_stories: list[PublishedMedia] = []
+        self.replied_facebook_comments: list[FacebookComment] = []
+        self.hidden_facebook_comments: list[tuple[str, bool]] = []
+        self.deleted_facebook_comment_ids: list[str] = []
+        self._ig_comment_seq = 0
+        self._fb_comment_seq = 0
+        self._dm_seq = 0
 
     def seed(
         self,
@@ -88,6 +111,10 @@ class FakeMetaAdapter:
         me: dict[str, str] | None = None,
         ad_campaigns_by_account: dict[str, list[AdCampaign]] | None = None,
         ad_insights: dict[str, AdInsights] | None = None,
+        ig_comments_by_media: dict[str, list[InstagramComment]] | None = None,
+        fb_comments_by_post: dict[str, list[FacebookComment]] | None = None,
+        conversations_by_ig_user: dict[str, list[Conversation]] | None = None,
+        messages_by_conversation: dict[str, list[DirectMessage]] | None = None,
     ) -> "FakeMetaAdapter":
         if pages is not None:
             self._pages = list(pages)
@@ -113,6 +140,22 @@ class FakeMetaAdapter:
             }
         if ad_insights is not None:
             self._ad_insights = dict(ad_insights)
+        if ig_comments_by_media is not None:
+            self._ig_comments_by_media = {
+                k: list(v) for k, v in ig_comments_by_media.items()
+            }
+        if fb_comments_by_post is not None:
+            self._fb_comments_by_post = {
+                k: list(v) for k, v in fb_comments_by_post.items()
+            }
+        if conversations_by_ig_user is not None:
+            self._conversations_by_ig_user = {
+                k: list(v) for k, v in conversations_by_ig_user.items()
+            }
+        if messages_by_conversation is not None:
+            self._messages_by_conversation = {
+                k: list(v) for k, v in messages_by_conversation.items()
+            }
         return self
 
     def status(self) -> MetaConnectionStatus:
@@ -393,6 +436,112 @@ class FakeMetaAdapter:
         )
         self._ad_sets_by_id[ad_set_id] = updated
         return updated
+
+    # ─── IG comments (deterministic in-memory simulation) ──────────────
+
+    def list_instagram_comments(
+        self, media_id: str, limit: int = 25
+    ) -> list[InstagramComment]:
+        return list(self._ig_comments_by_media.get(media_id, []))[:limit]
+
+    def reply_instagram_comment(
+        self, comment_id: str, message: str
+    ) -> InstagramComment:
+        self._ig_comment_seq += 1
+        reply = InstagramComment(
+            id=f"{comment_id}_reply_{self._ig_comment_seq}",
+            text=message,
+            parent_id=comment_id,
+        )
+        self.replied_instagram_comments.append(reply)
+        return reply
+
+    def hide_instagram_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None:
+        self.hidden_instagram_comments.append((comment_id, hide))
+
+    def delete_instagram_comment(self, comment_id: str) -> None:
+        self.deleted_instagram_comment_ids.append(comment_id)
+
+    # ─── IG Direct messages (deterministic in-memory simulation) ───────
+
+    def list_instagram_conversations(
+        self, ig_user_id: str, limit: int = 25
+    ) -> list[Conversation]:
+        return list(
+            self._conversations_by_ig_user.get(ig_user_id, [])
+        )[:limit]
+
+    def list_instagram_messages(
+        self, conversation_id: str, limit: int = 25
+    ) -> list[DirectMessage]:
+        return list(
+            self._messages_by_conversation.get(conversation_id, [])
+        )[:limit]
+
+    def send_instagram_message(
+        self, ig_user_id: str, recipient_id: str, text: str
+    ) -> DirectMessage:
+        self._dm_seq += 1
+        msg = DirectMessage(
+            id=f"{ig_user_id}_dm_{self._dm_seq}",
+            sender_id=ig_user_id,
+            recipient_id=recipient_id,
+            text=text,
+        )
+        self.sent_instagram_messages.append(msg)
+        return msg
+
+    # ─── IG Stories (deterministic in-memory simulation) ───────────────
+
+    def publish_instagram_story(
+        self,
+        ig_user_id: str,
+        media_url: str,
+        *,
+        is_video: bool = False,
+    ) -> PublishedMedia:
+        self._media_seq += 1
+        kind = "video" if is_video else "image"
+        media = PublishedMedia(
+            id=f"{ig_user_id}_story_{kind}_{self._media_seq}",
+            ig_user_id=ig_user_id,
+            container_id=f"{ig_user_id}_story_container_{self._media_seq}",
+            permalink=(
+                f"https://instagram.com/stories/{ig_user_id}/"
+                f"{self._media_seq}"
+            ),
+        )
+        self.published_stories.append(media)
+        return media
+
+    # ─── FB comment moderation (deterministic in-memory simulation) ────
+
+    def list_facebook_comments(
+        self, post_id: str, limit: int = 25
+    ) -> list[FacebookComment]:
+        return list(self._fb_comments_by_post.get(post_id, []))[:limit]
+
+    def reply_facebook_comment(
+        self, comment_id: str, message: str
+    ) -> FacebookComment:
+        self._fb_comment_seq += 1
+        reply = FacebookComment(
+            id=f"{comment_id}_reply_{self._fb_comment_seq}",
+            message=message,
+            parent_id=comment_id,
+        )
+        self.replied_facebook_comments.append(reply)
+        return reply
+
+    def hide_facebook_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None:
+        self.hidden_facebook_comments.append((comment_id, hide))
+
+    def delete_facebook_comment(self, comment_id: str) -> None:
+        self.deleted_facebook_comment_ids.append(comment_id)
 
 
 __all__ = ["FakeMetaAdapter"]

@@ -393,6 +393,80 @@ class AdSpec:
     status: str = "PAUSED"
 
 
+@dataclass(frozen=True)
+class InstagramComment:
+    """A comment (or reply) on an Instagram media item.
+
+    Meta's IG Comments edge shape drifts by Graph version (fields
+    like `hidden` / `parent_id` were added after the original
+    `instagram_manage_comments` launch) — `raw` preserves the full
+    response body so a consumer needing an unmodeled field reads it
+    from there rather than the adapter silently dropping it."""
+
+    id: str
+    text: str | None = None
+    username: str | None = None
+    timestamp: datetime | None = None
+    like_count: int = 0
+    hidden: bool = False
+    parent_id: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FacebookComment:
+    """A comment (or reply) on a Facebook Page post.
+
+    `from_id` / `from_name` are the commenter's identity (`from`
+    nested object); `parent_id` is populated only for a reply. `raw`
+    preserves the full response body — same defensive-mapping posture
+    as `InstagramComment` (Graph's comment shape drifts by version)."""
+
+    id: str
+    message: str | None = None
+    from_id: str | None = None
+    from_name: str | None = None
+    created_time: datetime | None = None
+    like_count: int = 0
+    is_hidden: bool = False
+    parent_id: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Conversation:
+    """An Instagram Direct conversation thread
+    (`/{ig-user-id}/conversations?platform=instagram`).
+
+    `participant_ids` flattens the `participants.data[].id` edge.
+    `raw` keeps the full row — the conversations list edge's field
+    surface is thin and version-sensitive, so a consumer needing more
+    than the participant set reads it from `raw`."""
+
+    id: str
+    participant_ids: list[str] = field(default_factory=list)
+    updated_time: datetime | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DirectMessage:
+    """One message inside an Instagram Direct conversation.
+
+    `conversation_id` is populated by the caller (the message body
+    itself does not carry it back) when read via
+    `list_instagram_messages`; `sender_id` / `recipient_id` come from
+    the `from` / `to` nested objects. `raw` keeps the full body."""
+
+    id: str
+    conversation_id: str | None = None
+    sender_id: str | None = None
+    recipient_id: str | None = None
+    text: str | None = None
+    created_time: datetime | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
 class MetaAdapter(Protocol):
     """Meta Graph read-only adapter contract. Concrete implementations:
     `FakeMetaAdapter` (deterministic in-memory; dev/test default),
@@ -528,6 +602,65 @@ class MetaAdapter(Protocol):
         self, ad_set_id: str, daily_budget: int
     ) -> AdSet: ...
 
+    # ─── IG comments (additive — `instagram_manage_comments` scope) ────
+
+    def list_instagram_comments(
+        self, media_id: str, limit: int = 25
+    ) -> list[InstagramComment]: ...
+
+    def reply_instagram_comment(
+        self, comment_id: str, message: str
+    ) -> InstagramComment: ...
+
+    def hide_instagram_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None: ...
+
+    def delete_instagram_comment(self, comment_id: str) -> None: ...
+
+    # ─── IG Direct messages (additive — `instagram_manage_messages`
+    #    scope) ───────────────────────────────────────────────────────
+
+    def list_instagram_conversations(
+        self, ig_user_id: str, limit: int = 25
+    ) -> list[Conversation]: ...
+
+    def list_instagram_messages(
+        self, conversation_id: str, limit: int = 25
+    ) -> list[DirectMessage]: ...
+
+    def send_instagram_message(
+        self, ig_user_id: str, recipient_id: str, text: str
+    ) -> DirectMessage: ...
+
+    # ─── IG Stories (additive — `instagram_content_publish` scope,
+    #    same gate as the image/carousel/Reel publish surface) ───────
+
+    def publish_instagram_story(
+        self,
+        ig_user_id: str,
+        media_url: str,
+        *,
+        is_video: bool = False,
+    ) -> PublishedMedia: ...
+
+    # ─── FB comment moderation (additive — `pages_manage_engagement`
+    #    scope) ───────────────────────────────────────────────────────
+
+    def list_facebook_comments(
+        self, post_id: str, limit: int = 25
+    ) -> list[FacebookComment]: ...
+
+    def reply_facebook_comment(
+        self, comment_id: str, message: str
+    ) -> FacebookComment: ...
+
+    def hide_facebook_comment(
+        self, comment_id: str, hide: bool = True
+    ) -> None: ...
+
+    def delete_facebook_comment(self, comment_id: str) -> None: ...
+
 
 __all__ = [
     "Ad",
@@ -539,9 +672,13 @@ __all__ = [
     "AdSetSpec",
     "AdSpec",
     "CampaignSpec",
+    "Conversation",
+    "DirectMessage",
+    "FacebookComment",
     "FacebookPage",
     "FacebookPost",
     "InstagramAccount",
+    "InstagramComment",
     "InstagramMedia",
     "MediaProcessingStatus",
     "MetaAdapter",

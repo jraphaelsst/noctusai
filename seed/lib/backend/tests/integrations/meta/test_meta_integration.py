@@ -20,9 +20,13 @@ import httpx
 import pytest
 
 from noctusai_lib.integrations.meta import (
+    Conversation,
+    DirectMessage,
+    FacebookComment,
     FacebookPage,
     FakeMetaAdapter,
     InstagramAccount,
+    InstagramComment,
     MetaGraphError,
     OAuthMetaCredentials,
     PostInsights,
@@ -38,8 +42,12 @@ from noctusai_lib.integrations.meta import (
     resolve_oauth_scopes,
 )
 from noctusai_lib.integrations.meta.mappers import (
+    conversation_from_body,
+    direct_message_from_body,
+    facebook_comment_from_body,
     ig_account_from_body,
     ig_media_from_body,
+    instagram_comment_from_body,
     insights_from_body,
     page_from_body,
     post_from_body,
@@ -192,6 +200,97 @@ class TestMappers:
             },
         )
         assert ins.metrics["post_reactions_by_type_total"] == 17
+
+    def test_instagram_comment_from_body(self):
+        c = instagram_comment_from_body(
+            {
+                "id": "c1",
+                "text": "nice post!",
+                "username": "fan1",
+                "timestamp": "2026-05-13T18:30:00+0000",
+                "like_count": 3,
+                "hidden": True,
+                "parent_id": "c0",
+            }
+        )
+        assert c.id == "c1"
+        assert c.text == "nice post!"
+        assert c.hidden is True
+        assert c.parent_id == "c0"
+        assert c.raw["username"] == "fan1"
+
+    def test_instagram_comment_from_body_defaults(self):
+        c = instagram_comment_from_body({"id": "c2"})
+        assert c.text is None
+        assert c.like_count == 0
+        assert c.hidden is False
+        assert c.parent_id is None
+
+    def test_facebook_comment_from_body(self):
+        c = facebook_comment_from_body(
+            {
+                "id": "fc1",
+                "message": "great!",
+                "from": {"id": "u1", "name": "User One"},
+                "created_time": "2026-05-13T18:30:00+0000",
+                "like_count": 7,
+                "is_hidden": False,
+                "parent": {"id": "fc0"},
+            }
+        )
+        assert c.id == "fc1"
+        assert c.from_id == "u1"
+        assert c.from_name == "User One"
+        assert c.parent_id == "fc0"
+        assert c.like_count == 7
+
+    def test_facebook_comment_from_body_missing_from_and_parent(self):
+        c = facebook_comment_from_body({"id": "fc2", "message": "hi"})
+        assert c.from_id is None
+        assert c.from_name is None
+        assert c.parent_id is None
+        assert c.is_hidden is False
+
+    def test_conversation_from_body_flattens_participants(self):
+        conv = conversation_from_body(
+            {
+                "id": "conv1",
+                "participants": {
+                    "data": [{"id": "IG1"}, {"id": "USER1"}]
+                },
+                "updated_time": "2026-05-13T18:30:00+0000",
+            }
+        )
+        assert conv.id == "conv1"
+        assert conv.participant_ids == ["IG1", "USER1"]
+        assert conv.updated_time is not None
+
+    def test_conversation_from_body_no_participants_edge(self):
+        conv = conversation_from_body({"id": "conv2"})
+        assert conv.participant_ids == []
+
+    def test_direct_message_from_body(self):
+        msg = direct_message_from_body(
+            {
+                "id": "m1",
+                "from": {"id": "USER1"},
+                "to": {"data": [{"id": "IG1"}]},
+                "message": "hey there",
+                "created_time": "2026-05-13T18:30:00+0000",
+            },
+            conversation_id="conv1",
+        )
+        assert msg.id == "m1"
+        assert msg.conversation_id == "conv1"
+        assert msg.sender_id == "USER1"
+        assert msg.recipient_id == "IG1"
+        assert msg.text == "hey there"
+
+    def test_direct_message_from_body_missing_from_to(self):
+        msg = direct_message_from_body({"id": "m2", "message": "x"})
+        assert msg.sender_id is None
+        assert msg.recipient_id is None
+        assert msg.conversation_id is None
 
 
 # ─── TestGraphErrorParsing ────────────────────────────────────────────────
@@ -715,6 +814,96 @@ class TestFakeWriteSurface:
         assert empty.object_id == "missing" and empty.metrics == {}
 
 
+# ─── TestFakeCommentsMessagesStories ──────────────────────────────────────
+
+
+class TestFakeCommentsMessagesStories:
+    """Deterministic in-memory simulation of the comments/DMs/Stories
+    surface — the Fake never raises the App-Review gate."""
+
+    def test_list_instagram_comments_seeded(self):
+        fake = FakeMetaAdapter().seed(
+            ig_comments_by_media={
+                "m1": [InstagramComment(id="c1", text="hi")]
+            }
+        )
+        assert [c.id for c in fake.list_instagram_comments("m1")] == ["c1"]
+        assert fake.list_instagram_comments("missing") == []
+
+    def test_reply_instagram_comment_records(self):
+        fake = FakeMetaAdapter()
+        r1 = fake.reply_instagram_comment("c1", "thanks!")
+        r2 = fake.reply_instagram_comment("c1", "again")
+        assert r1.id == "c1_reply_1" and r2.id == "c1_reply_2"
+        assert r1.parent_id == "c1" and r1.text == "thanks!"
+        assert fake.replied_instagram_comments == [r1, r2]
+
+    def test_hide_and_delete_instagram_comment_recorded(self):
+        fake = FakeMetaAdapter()
+        assert fake.hide_instagram_comment("c1") is None
+        assert fake.hide_instagram_comment("c2", hide=False) is None
+        assert fake.hidden_instagram_comments == [("c1", True), ("c2", False)]
+        assert fake.delete_instagram_comment("c1") is None
+        assert fake.deleted_instagram_comment_ids == ["c1"]
+
+    def test_list_instagram_conversations_and_messages_seeded(self):
+        fake = FakeMetaAdapter().seed(
+            conversations_by_ig_user={
+                "IG1": [Conversation(id="conv1", participant_ids=["IG1", "U1"])]
+            },
+            messages_by_conversation={
+                "conv1": [DirectMessage(id="m1", text="hey")]
+            },
+        )
+        convs = fake.list_instagram_conversations("IG1")
+        assert len(convs) == 1 and convs[0].id == "conv1"
+        msgs = fake.list_instagram_messages("conv1")
+        assert len(msgs) == 1 and msgs[0].text == "hey"
+        assert fake.list_instagram_conversations("nope") == []
+
+    def test_send_instagram_message_records(self):
+        fake = FakeMetaAdapter()
+        msg = fake.send_instagram_message("IG1", "U1", "hello there")
+        assert msg.id == "IG1_dm_1"
+        assert msg.sender_id == "IG1"
+        assert msg.recipient_id == "U1"
+        assert msg.text == "hello there"
+        assert fake.sent_instagram_messages == [msg]
+
+    def test_publish_instagram_story_image_and_video(self):
+        fake = FakeMetaAdapter()
+        img = fake.publish_instagram_story("IG1", "https://img/a.jpg")
+        vid = fake.publish_instagram_story(
+            "IG1", "https://vid/a.mp4", is_video=True
+        )
+        assert "image" in img.id and "video" in vid.id
+        assert img.ig_user_id == "IG1"
+        assert fake.published_stories == [img, vid]
+
+    def test_list_facebook_comments_seeded(self):
+        fake = FakeMetaAdapter().seed(
+            fb_comments_by_post={
+                "p1": [FacebookComment(id="fc1", message="nice")]
+            }
+        )
+        assert [c.id for c in fake.list_facebook_comments("p1")] == ["fc1"]
+        assert fake.list_facebook_comments("missing") == []
+
+    def test_reply_facebook_comment_records(self):
+        fake = FakeMetaAdapter()
+        reply = fake.reply_facebook_comment("fc1", "thanks!")
+        assert reply.id == "fc1_reply_1"
+        assert reply.parent_id == "fc1"
+        assert fake.replied_facebook_comments == [reply]
+
+    def test_hide_and_delete_facebook_comment_recorded(self):
+        fake = FakeMetaAdapter()
+        assert fake.hide_facebook_comment("fc1") is None
+        assert fake.hidden_facebook_comments == [("fc1", True)]
+        assert fake.delete_facebook_comment("fc1") is None
+        assert fake.deleted_facebook_comment_ids == ["fc1"]
+
+
 # ─── TestRealWriteSurface ─────────────────────────────────────────────────
 
 
@@ -895,6 +1084,265 @@ class TestRealWriteSurface:
         assert exc.value.requires_app_review is True
 
 
+# ─── TestRealCommentsMessagesStories ──────────────────────────────────────
+
+
+class TestRealCommentsMessagesStories:
+    """The live adapter's comments/DMs/Stories surface — external Graph
+    boundary mocked (httpx.get/post/delete patched; no noctusai_lib
+    code monkey-patched). One `*_scope_absent_raises_app_review` test
+    per gated write, mirroring `TestRealWriteSurface`."""
+
+    _PERM_ERR = {
+        "error": {
+            "message": "(#10) permission not granted",
+            "code": 10,
+            "type": "OAuthException",
+        }
+    }
+
+    # ── IG comments ─────────────────────────────────────────────────
+
+    def test_list_instagram_comments_reads(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {"id": "c1", "text": "nice!", "username": "fan1"},
+                {"id": "c2", "text": "cool", "username": "fan2"},
+            ],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            comments = a.list_instagram_comments("m1")
+        assert [c.id for c in comments] == ["c1", "c2"]
+        assert comments[0].username == "fan1"
+
+    def test_reply_instagram_comment_creates_and_reads_back(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        detail = {"id": "REPLY1", "text": "thanks!", "parent_id": "c1"}
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "REPLY1"})
+        ), patch.object(httpx, "get", return_value=_FakeResponse(detail)):
+            out = a.reply_instagram_comment("c1", "thanks!")
+        assert out.id == "REPLY1"
+        assert out.text == "thanks!"
+
+    def test_reply_instagram_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.reply_instagram_comment("c1", "blocked")
+        assert exc.value.requires_app_review is True
+
+    def test_hide_instagram_comment_posts_hide_field(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"success": True})
+        ):
+            assert a.hide_instagram_comment("c1") is None
+            assert a.hide_instagram_comment("c1", hide=False) is None
+
+    def test_hide_instagram_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.hide_instagram_comment("c1")
+        assert exc.value.requires_app_review is True
+
+    def test_delete_instagram_comment_calls_graph_delete(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "delete", return_value=_FakeResponse({"success": True})
+        ):
+            assert a.delete_instagram_comment("c1") is None
+
+    def test_delete_instagram_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "delete", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.delete_instagram_comment("c1")
+        assert exc.value.requires_app_review is True
+
+    # ── IG Direct messages ──────────────────────────────────────────
+
+    def test_list_instagram_conversations_reads(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {
+                    "id": "conv1",
+                    "participants": {"data": [{"id": "IG1"}, {"id": "U1"}]},
+                }
+            ],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            convs = a.list_instagram_conversations("IG1")
+        assert convs[0].id == "conv1"
+        assert convs[0].participant_ids == ["IG1", "U1"]
+
+    def test_list_instagram_messages_two_step_flow(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        list_body = {"data": [{"id": "m1"}, {"id": "m2"}], "paging": {}}
+        detail1 = {
+            "id": "m1",
+            "from": {"id": "U1"},
+            "to": {"data": [{"id": "IG1"}]},
+            "message": "hi",
+        }
+        detail2 = {
+            "id": "m2",
+            "from": {"id": "IG1"},
+            "to": {"data": [{"id": "U1"}]},
+            "message": "yo",
+        }
+        get_resps = [
+            _FakeResponse(list_body),
+            _FakeResponse(detail1),
+            _FakeResponse(detail2),
+        ]
+        with patch.object(httpx, "get", side_effect=get_resps):
+            msgs = a.list_instagram_messages("conv1")
+        assert [m.id for m in msgs] == ["m1", "m2"]
+        assert msgs[0].sender_id == "U1"
+        assert msgs[0].recipient_id == "IG1"
+        assert msgs[0].conversation_id == "conv1"
+
+    def test_send_instagram_message_creates(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"message_id": "MID1"})
+        ):
+            out = a.send_instagram_message("IG1", "U1", "hello there")
+        assert out.id == "MID1"
+        assert out.sender_id == "IG1"
+        assert out.recipient_id == "U1"
+        assert out.text == "hello there"
+
+    def test_send_instagram_message_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.send_instagram_message("IG1", "U1", "blocked")
+        assert exc.value.requires_app_review is True
+
+    # ── IG Stories ───────────────────────────────────────────────────
+
+    def test_publish_instagram_story_image_two_step_flow(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        post_resps = [
+            _FakeResponse({"id": "CONT1"}),
+            _FakeResponse({"id": "STORY1"}),
+        ]
+        with patch.object(httpx, "post", side_effect=post_resps):
+            out = a.publish_instagram_story("IG1", "https://img/a.jpg")
+        assert out.id == "STORY1"
+        assert out.container_id == "CONT1"
+        assert out.ig_user_id == "IG1"
+
+    def test_publish_instagram_story_video_flag(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        post_resps = [
+            _FakeResponse({"id": "CONT2"}),
+            _FakeResponse({"id": "STORY2"}),
+        ]
+        with patch.object(httpx, "post", side_effect=post_resps) as mock_post:
+            out = a.publish_instagram_story(
+                "IG1", "https://vid/a.mp4", is_video=True
+            )
+        assert out.id == "STORY2"
+        first_call_data = mock_post.call_args_list[0].kwargs["data"]
+        assert first_call_data["video_url"] == "https://vid/a.mp4"
+        assert first_call_data["media_type"] == "STORIES"
+
+    def test_publish_instagram_story_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.publish_instagram_story("IG1", "https://img/blocked.jpg")
+        assert exc.value.requires_app_review is True
+
+    # ── FB comment moderation ───────────────────────────────────────
+
+    def test_list_facebook_comments_reads(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {
+                    "id": "fc1",
+                    "message": "great",
+                    "from": {"id": "u1", "name": "User One"},
+                }
+            ],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            comments = a.list_facebook_comments("p1")
+        assert comments[0].id == "fc1"
+        assert comments[0].from_name == "User One"
+
+    def test_reply_facebook_comment_creates_and_reads_back(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        detail = {"id": "FCREPLY1", "message": "thanks!", "parent": {"id": "fc1"}}
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"id": "FCREPLY1"})
+        ), patch.object(httpx, "get", return_value=_FakeResponse(detail)):
+            out = a.reply_facebook_comment("fc1", "thanks!")
+        assert out.id == "FCREPLY1"
+        assert out.parent_id == "fc1"
+
+    def test_reply_facebook_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.reply_facebook_comment("fc1", "blocked")
+        assert exc.value.requires_app_review is True
+
+    def test_hide_facebook_comment_posts_is_hidden_field(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse({"success": True})
+        ):
+            assert a.hide_facebook_comment("fc1") is None
+
+    def test_hide_facebook_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.hide_facebook_comment("fc1")
+        assert exc.value.requires_app_review is True
+
+    def test_delete_facebook_comment_calls_graph_delete(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "delete", return_value=_FakeResponse({"success": True})
+        ):
+            assert a.delete_facebook_comment("fc1") is None
+
+    def test_delete_facebook_comment_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        with patch.object(
+            httpx, "delete", return_value=_FakeResponse(self._PERM_ERR)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.delete_facebook_comment("fc1")
+        assert exc.value.requires_app_review is True
+
+
 # ─── TestReadPathRegression ───────────────────────────────────────────────
 
 
@@ -955,6 +1403,18 @@ class TestReadPathRegression:
             "publish_facebook_video",
             "list_ad_campaigns",
             "ad_insights",
+            "list_instagram_comments",
+            "reply_instagram_comment",
+            "hide_instagram_comment",
+            "delete_instagram_comment",
+            "list_instagram_conversations",
+            "list_instagram_messages",
+            "send_instagram_message",
+            "publish_instagram_story",
+            "list_facebook_comments",
+            "reply_facebook_comment",
+            "hide_facebook_comment",
+            "delete_facebook_comment",
         )
         for impl in (FakeMetaAdapter(), MetaOAuthAdapter(system_user_token="X")):
             for name in surface:
