@@ -155,3 +155,16 @@ export type {
   SocialDashboardNetwork,
   SocialDashboardSubtab,
 } from "./dashboard/SocialDashboardShell";
+
+// Chat organ — provider-agnostic 2-pane chat window (thread list + thread
+// panel + composer), driven by an `adapter` hooks bag (WhatsApp + Instagram
+// DMs are the first two consumers; see `KB § PATTERNS/frontend/frontend.md`).
+export { ChatWindow } from "./chat";
+export type {
+  ChatWindowProps,
+  ChatWindowAdapter,
+  ChatThread,
+  ChatMessage,
+  ChatSendResult,
+  ChatAutoReplyResult,
+} from "./chat";

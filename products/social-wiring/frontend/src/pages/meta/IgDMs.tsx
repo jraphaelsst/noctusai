@@ -1,24 +1,28 @@
 /**
- * IgDMs — Instagram "DMs" subtab: a MINIMAL 2-pane chat surface
- * (conversations list / message thread + send).
+ * IgDMs — Instagram "DMs" subtab: a 2-pane chat surface (conversations list /
+ * message thread + send) built on the shared seed `<ChatWindow>` organ
+ * (`@noctusai/lib/design-system`) — the Wave 4 extraction referenced in the
+ * pre-extraction version of this file. `WhatsAppChatWindow.tsx` is the
+ * sibling consumer; a 3rd chat surface only needs an adapter, never a
+ * ChatWindow change.
  *
- * Deliberately thin — Wave 4 extracts a shared `ChatWindow` (see
- * `WhatsAppChat.tsx` for the full-featured sibling: avatars, relative-time
- * labels, auto-reply toggle, etc.) and swaps this pane in wholesale. The
- * `IGMessage` DTO (`direction: "inbound"|"outbound"`) already mirrors the
- * WhatsApp `Message` DTO shape for that swap (see hooks/useMeta.ts header).
+ * This file's only job is normalizing the Wave 3 Meta DM DTOs
+ * (`IGConversation`, `IGMessage` from `hooks/useMeta`) into ChatWindow's
+ * generic `ChatThread` / `ChatMessage` shape, and wiring send.
  *
  * Sending requires a `recipient_id` per the Wave 3 contract body shape
  * (`{recipient_id, text}`) — resolved from the selected conversation's
- * `participant_id`.
+ * `participant_id` inside the send adapter. No auto-reply toggle: the
+ * Wave 3 contract has no AI-reply control for Instagram DMs (adapter omits
+ * `useAutoReply` entirely — ChatWindow hides the control by construction).
+ *
+ * App Review gate: any write MAY come back as `{requires_app_review: true,
+ * error}` (a 200, never thrown). The send adapter turns that into a thrown
+ * `Error` so ChatWindow's composer surfaces the gate as an inline banner —
+ * never a fake success.
  */
-import { useState } from "react";
-import { CircleAlert, Loader2, MessageCircle, Send } from "lucide-react";
-
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system";
 
 import {
   isAppReviewGate,
@@ -27,170 +31,73 @@ import {
   useIgMessages,
   useSendIgMessage,
 } from "@/hooks/useMeta";
-import { AppReviewNotice } from "./AppReviewNotice";
 
-function ConversationList({
-  accountId,
-  selectedId,
-  onSelect,
-}: {
-  accountId: string;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
+// ─── Meta DM adapter ──────────────────────────────────────────────────────────
+
+function useMetaDMThreadsAdapter(accountId: string | null) {
   const { data, isLoading, isError } = useIgConversations(accountId);
-  const conversations = data?.conversations ?? [];
-
-  if (isLoading) {
-    return (
-      <div className="space-y-2 p-3" data-testid="ig-dm-list-loading">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-14 w-full rounded-md" />
-        ))}
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div
-        className="flex items-center gap-2 p-4 text-sm text-destructive"
-        data-testid="ig-dm-list-error"
-      >
-        <CircleAlert className="h-4 w-4 shrink-0" />
-        Erro ao carregar conversas.
-      </div>
-    );
-  }
-
-  if (conversations.length === 0) {
-    return (
-      <div
-        className="p-6 text-center text-sm text-muted-foreground"
-        data-testid="ig-dm-list-empty"
-      >
-        Nenhuma conversa por enquanto.
-      </div>
-    );
-  }
-
-  return (
-    <ul className="divide-y" data-testid="ig-dm-list">
-      {conversations.map((c) => (
-        <li key={c.id}>
-          <button
-            type="button"
-            data-testid={`ig-dm-conversation-${c.id}`}
-            onClick={() => onSelect(c.id)}
-            className={`flex w-full flex-col items-start gap-0.5 px-3 py-2.5 text-left text-sm hover:bg-muted/50 ${
-              selectedId === c.id ? "bg-muted" : ""
-            }`}
-          >
-            <span className="font-medium">{c.participant_name ?? "Contato"}</span>
-            <span className="line-clamp-1 text-xs text-muted-foreground">
-              {c.snippet ?? "—"}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
+  return {
+    data: (data?.conversations ?? []).map((c) => ({
+      id: c.id,
+      title: c.participant_name ?? "Contato",
+      lastMessagePreview: c.snippet,
+      lastMessageAt: c.updated_time,
+      unreadCount: c.unread_count,
+    })),
+    isLoading,
+    isError,
+  };
 }
 
-function MessageThread({ accountId, conversationId, recipientId }: {
-  accountId: string;
-  conversationId: string;
-  recipientId: string | null;
-}) {
+function useMetaDMMessagesAdapter(accountId: string | null, conversationId: string | null) {
   const { data, isLoading, isError } = useIgMessages(accountId, conversationId);
-  const send = useSendIgMessage(accountId, conversationId);
-  const [text, setText] = useState("");
-
-  const gate = send.data && isAppReviewGate(send.data) ? send.data : null;
-  const messages = data?.messages ?? [];
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex-1 space-y-2 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="space-y-2" data-testid="ig-dm-thread-loading">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-2/3 rounded-md" />
-            ))}
-          </div>
-        ) : isError ? (
-          <div
-            className="flex items-center gap-2 text-sm text-destructive"
-            data-testid="ig-dm-thread-error"
-          >
-            <CircleAlert className="h-4 w-4 shrink-0" /> Erro ao carregar mensagens.
-          </div>
-        ) : messages.length === 0 ? (
-          <div
-            className="text-center text-sm text-muted-foreground"
-            data-testid="ig-dm-thread-empty"
-          >
-            Nenhuma mensagem ainda.
-          </div>
-        ) : (
-          <div data-testid="ig-dm-thread">
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`mb-2 max-w-[75%] rounded-lg px-3 py-2 text-sm ${
-                  m.direction === "outbound"
-                    ? "ml-auto bg-primary text-primary-foreground"
-                    : "bg-muted"
-                }`}
-              >
-                {m.text}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {gate && <div className="px-4 pb-2"><AppReviewNotice error={gate.error} /></div>}
-
-      <form
-        className="flex gap-2 border-t p-3"
-        data-testid="ig-dm-send-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!text.trim() || !recipientId) return;
-          send.mutate(
-            { recipient_id: recipientId, text },
-            { onSuccess: (res) => !isAppReviewGate(res) && setText("") },
-          );
-        }}
-      >
-        <Input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Escreva uma mensagem..."
-          data-testid="ig-dm-send-input"
-          disabled={!recipientId}
-        />
-        <Button
-          type="submit"
-          disabled={send.isPending || !recipientId}
-          data-testid="ig-dm-send-submit"
-        >
-          {send.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-        </Button>
-      </form>
-    </div>
-  );
+  return {
+    data: (data?.messages ?? []).map((m) => ({
+      id: m.id,
+      direction: m.direction,
+      body: m.text,
+      created_at: m.created_at,
+    })),
+    isLoading,
+    isError,
+  };
 }
+
+function useMetaDMSendAdapter(accountId: string | null, conversationId: string | null) {
+  // Shares the TanStack Query cache entry with useMetaDMThreadsAdapter
+  // (same queryKey) — no extra network call, just a lookup for participant_id.
+  const { data } = useIgConversations(accountId);
+  const recipientId =
+    data?.conversations.find((c) => c.id === conversationId)?.participant_id ?? null;
+  const send = useSendIgMessage(accountId, conversationId);
+
+  return {
+    isPending: send.isPending,
+    mutateAsync: async ({ text }: { text: string }) => {
+      if (!recipientId) {
+        throw new Error("Não foi possível identificar o destinatário desta conversa.");
+      }
+      const result = await send.mutateAsync({ recipient_id: recipientId, text });
+      if (isAppReviewGate(result)) {
+        throw new Error(
+          result.error ?? "Requer Revisão do app Meta (App Review) para enviar mensagens diretas.",
+        );
+      }
+      return result;
+    },
+  };
+}
+
+const metaDMAdapter: ChatWindowAdapter = {
+  useThreads: useMetaDMThreadsAdapter,
+  useMessages: useMetaDMMessagesAdapter,
+  useSend: useMetaDMSendAdapter,
+};
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function IgDMs() {
   const accountId = useActiveMetaAccountId();
-  const { data } = useIgConversations(accountId);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   if (!accountId) {
     return (
@@ -205,35 +112,15 @@ export default function IgDMs() {
     );
   }
 
-  const selected = data?.conversations.find((c) => c.id === selectedId) ?? null;
-
   return (
     <Card className="overflow-hidden">
-      <div className="grid h-[520px] grid-cols-1 sm:grid-cols-[280px_1fr]">
-        <div className="border-b sm:border-b-0 sm:border-r">
-          <ConversationList
-            accountId={accountId}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
-        </div>
-        <div>
-          {selectedId ? (
-            <MessageThread
-              accountId={accountId}
-              conversationId={selectedId}
-              recipientId={selected?.participant_id ?? null}
-            />
-          ) : (
-            <div
-              className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground"
-              data-testid="ig-dm-no-selection"
-            >
-              <MessageCircle className="h-8 w-8 opacity-40" />
-              Selecione uma conversa para ver as mensagens.
-            </div>
-          )}
-        </div>
+      <div className="h-[520px]">
+        <ChatWindow
+          scopeId={accountId}
+          adapter={metaDMAdapter}
+          emptyThreadsLabel="Nenhuma conversa por enquanto."
+          emptySelectionLabel="Selecione uma conversa para ver as mensagens."
+        />
       </div>
     </Card>
   );

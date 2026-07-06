@@ -1,5 +1,26 @@
 /**
- * IgDMs.test.tsx — Instagram "DMs" minimal 2-pane subtab.
+ * IgDMs.test.tsx — Instagram "DMs" subtab, now a thin Meta-DM adapter over
+ * the shared seed `<ChatWindow>` organ.
+ *
+ * `@noctusai/lib/design-system` is stubbed at the test boundary (same
+ * pattern as `Integrations.test.tsx` / `WhatsAppChatWindow.test.tsx`) — the
+ * real barrel transitively imports `useAIOutputFor` → `@noctusai/seed/infra`,
+ * which throws at module-load time without `VITE_SUPABASE_URL`. The stub
+ * captures the `scopeId`/`adapter` props so this file asserts the Meta DM →
+ * ChatWindow DTO mapping in isolation — ChatWindow's own rendering states
+ * (loading/error/empty/success/composer/gate-banner) are covered by
+ * `seed/lib/frontend/src/design-system/chat/ChatWindow.test.tsx`.
+ *
+ * Coverage:
+ *   1. No account selected — the select-an-account prompt
+ *   2. scopeId + emptyThreadsLabel forwarded correctly
+ *   3. useThreads adapter — maps IGConversation → ChatThread
+ *   4. useMessages adapter — maps IGMessage → ChatMessage
+ *   5. useSend adapter — resolves recipient_id from the conversation list,
+ *      forwards {recipient_id, text} to useSendIgMessage
+ *   6. useSend adapter — throws when no recipient_id can be resolved
+ *   7. useSend adapter — App Review gate surfaces as a thrown Error (never a fake success)
+ *   8. adapter has NO useAutoReply — Wave 3 has no AI-reply toggle for IG DMs
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -21,47 +42,27 @@ vi.mock("@/hooks/useMeta", () => ({
   useSendIgMessage: mockUseSendIgMessage,
 }));
 
-vi.mock("@/components/ui/card", () => ({
-  Card: ({ children, ...p }: any) => <div {...p}>{children}</div>,
-  CardContent: ({ children, ...p }: any) => <div {...p}>{children}</div>,
-}));
-vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, ...p }: any) => <button {...p}>{children}</button>,
-}));
-vi.mock("@/components/ui/input", () => ({
-  Input: (p: any) => <input {...p} />,
-}));
-vi.mock("@/components/ui/skeleton", () => ({
-  Skeleton: ({ "data-testid": dt }: any) => <div data-testid={dt ?? "skeleton"} />,
-}));
-vi.mock("lucide-react", () => ({
-  CircleAlert: () => <span data-testid="icon-alert" />,
-  Loader2: () => null,
-  MessageCircle: () => null,
-  Send: () => null,
-  ShieldAlert: () => null,
+let lastProps: any = null;
+vi.mock("@noctusai/lib/design-system", () => ({
+  ChatWindow: (props: any) => {
+    lastProps = props;
+    return null;
+  },
 }));
 
-const noopMutation = () => ({ mutate: vi.fn(), isPending: false, data: undefined });
-
-function setDefaults() {
+beforeEach(() => {
+  lastProps = null;
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
-  mockUseIgConversations.mockReturnValue({
-    data: { conversations: [] },
-    isLoading: false,
-    isError: false,
-  });
+  mockUseIgConversations.mockReturnValue({ data: { conversations: [] }, isLoading: false, isError: false });
   mockUseIgMessages.mockReturnValue({ data: { messages: [] }, isLoading: false, isError: false });
-  mockUseSendIgMessage.mockReturnValue(noopMutation());
-}
-
-beforeEach(() => setDefaults());
+  mockUseSendIgMessage.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, data: undefined });
+});
 
 async function renderPage() {
   const React = (await import("react")).default;
   const { default: IgDMs } = await import("./IgDMs");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(IgDMs)), fireEvent: rtl.fireEvent };
+  return { ...rtl.render(React.createElement(IgDMs)) };
 }
 
 describe("IgDMs — no account selected", () => {
@@ -72,80 +73,98 @@ describe("IgDMs — no account selected", () => {
   });
 });
 
-describe("IgDMs — conversation list states", () => {
-  it("renders a loading state", async () => {
-    mockUseIgConversations.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-dm-list-loading")).toBeTruthy();
+describe("IgDMs — ChatWindow wiring", () => {
+  it("forwards scopeId + a Meta-DM-specific empty label", async () => {
+    await renderPage();
+    expect(lastProps.scopeId).toBe("acc-1");
+    expect(lastProps.emptyThreadsLabel).toBe("Nenhuma conversa por enquanto.");
   });
 
-  it("renders an error state", async () => {
-    mockUseIgConversations.mockReturnValue({ data: undefined, isLoading: false, isError: true });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-dm-list-error")).toBeTruthy();
-  });
-
-  it("renders an empty state", async () => {
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-dm-list-empty")).toBeTruthy();
-  });
-
-  it("renders a 'select a conversation' placeholder when none selected", async () => {
+  it("useThreads adapter maps IGConversation → ChatThread", async () => {
     mockUseIgConversations.mockReturnValue({
       data: {
         conversations: [
-          { id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: null, snippet: "oi", unread_count: 0 },
+          { id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: "2026-07-01T10:00:00Z", snippet: "oi", unread_count: 2 },
         ],
       },
       isLoading: false,
       isError: false,
     });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-dm-list")).toBeTruthy();
-    expect(getByTestId("ig-dm-no-selection")).toBeTruthy();
+    await renderPage();
+    const threads = lastProps.adapter.useThreads("acc-1").data;
+    expect(threads).toEqual([
+      { id: "c1", title: "Fulano", lastMessagePreview: "oi", lastMessageAt: "2026-07-01T10:00:00Z", unreadCount: 2 },
+    ]);
   });
-});
 
-describe("IgDMs — thread + send", () => {
-  it("selects a conversation, shows the empty thread, and sends a message", async () => {
+  it("useThreads adapter falls back to 'Contato' when participant_name is null", async () => {
     mockUseIgConversations.mockReturnValue({
       data: {
         conversations: [
-          { id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: null, snippet: "oi", unread_count: 0 },
+          { id: "c1", participant_name: null, participant_id: "u1", updated_time: null, snippet: null, unread_count: 0 },
         ],
       },
       isLoading: false,
       isError: false,
     });
-    const send = vi.fn();
-    mockUseSendIgMessage.mockReturnValue({ mutate: send, isPending: false, data: undefined });
-
-    const { getByTestId, fireEvent } = await renderPage();
-    fireEvent.click(getByTestId("ig-dm-conversation-c1"));
-    expect(getByTestId("ig-dm-thread-empty")).toBeTruthy();
-
-    fireEvent.change(getByTestId("ig-dm-send-input"), { target: { value: "olá" } });
-    fireEvent.submit(getByTestId("ig-dm-send-form"));
-    expect(send).toHaveBeenCalledWith({ recipient_id: "u1", text: "olá" }, expect.anything());
+    await renderPage();
+    expect(lastProps.adapter.useThreads("acc-1").data[0].title).toBe("Contato");
   });
 
-  it("shows the App Review gate when sending is gated", async () => {
-    mockUseIgConversations.mockReturnValue({
-      data: {
-        conversations: [
-          { id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: null, snippet: "oi", unread_count: 0 },
-        ],
-      },
+  it("useMessages adapter maps IGMessage → ChatMessage", async () => {
+    mockUseIgMessages.mockReturnValue({
+      data: { messages: [{ id: "m1", from_id: "u1", direction: "inbound", text: "Bom dia!", created_at: "2026-07-01T10:00:00Z" }] },
       isLoading: false,
       isError: false,
     });
-    mockUseSendIgMessage.mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-      data: { requires_app_review: true, error: "Escopo pendente" },
+    await renderPage();
+    const messages = lastProps.adapter.useMessages("acc-1", "c1").data;
+    expect(messages).toEqual([
+      { id: "m1", direction: "inbound", body: "Bom dia!", created_at: "2026-07-01T10:00:00Z" },
+    ]);
+  });
+
+  it("useSend adapter resolves recipient_id from the conversation list and forwards {recipient_id, text}", async () => {
+    mockUseIgConversations.mockReturnValue({
+      data: { conversations: [{ id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: null, snippet: null, unread_count: 0 }] },
+      isLoading: false,
+      isError: false,
     });
-    const { getByTestId, fireEvent } = await renderPage();
-    fireEvent.click(getByTestId("ig-dm-conversation-c1"));
-    expect(getByTestId("meta-app-review-gate")).toBeTruthy();
+    const mutateAsync = vi.fn().mockResolvedValue({ id: "msg-1" });
+    mockUseSendIgMessage.mockReturnValue({ mutate: vi.fn(), mutateAsync, isPending: false, data: undefined });
+    await renderPage();
+    await lastProps.adapter.useSend("acc-1", "c1").mutateAsync({ text: "olá" });
+    expect(mutateAsync).toHaveBeenCalledWith({ recipient_id: "u1", text: "olá" });
+  });
+
+  it("useSend adapter throws when the conversation has no resolvable recipient_id", async () => {
+    mockUseIgConversations.mockReturnValue({
+      data: { conversations: [{ id: "c1", participant_name: "Fulano", participant_id: null, updated_time: null, snippet: null, unread_count: 0 }] },
+      isLoading: false,
+      isError: false,
+    });
+    await renderPage();
+    await expect(lastProps.adapter.useSend("acc-1", "c1").mutateAsync({ text: "olá" })).rejects.toThrow(
+      "Não foi possível identificar o destinatário desta conversa.",
+    );
+  });
+
+  it("useSend adapter turns an App Review gate response into a thrown Error — never a fake success", async () => {
+    mockUseIgConversations.mockReturnValue({
+      data: { conversations: [{ id: "c1", participant_name: "Fulano", participant_id: "u1", updated_time: null, snippet: null, unread_count: 0 }] },
+      isLoading: false,
+      isError: false,
+    });
+    const mutateAsync = vi.fn().mockResolvedValue({ requires_app_review: true, error: "Escopo pendente" });
+    mockUseSendIgMessage.mockReturnValue({ mutate: vi.fn(), mutateAsync, isPending: false, data: undefined });
+    await renderPage();
+    await expect(lastProps.adapter.useSend("acc-1", "c1").mutateAsync({ text: "olá" })).rejects.toThrow(
+      "Escopo pendente",
+    );
+  });
+
+  it("adapter omits useAutoReply — Wave 3 has no AI-reply toggle for Instagram DMs", async () => {
+    await renderPage();
+    expect(lastProps.adapter.useAutoReply).toBeUndefined();
   });
 });
