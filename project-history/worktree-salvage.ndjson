@@ -212,3 +212,4 @@
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/meta-dash-fe", "branch": "feat/meta-dash-fe", "sha": "63a2c57a288af262235a66cc1c347b7eb61243ad", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/shell-extract", "branch": "feat/shell-extract", "sha": "44768385e41a81c81c6e3098414ec9543435404e", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/chat-extract", "branch": "feat/chat-extract", "sha": "272548198afbc1099d42193fc38a619eef69ea9c", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-06", "event": "worktree-sweep", "path": ".claude/worktrees/card-deeplink", "branch": "feat/card-deeplink", "sha": "c3d2bb5fa6294eaba629fedcb1e17215118a0096", "reason": "task_branch cleanup (learn-before-delete)"}
