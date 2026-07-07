@@ -55,6 +55,31 @@ def get_org_id(user, *, required: bool = False) -> Optional[str]:
     return org_id or None
 
 
+def resolve_org_id_db(user_id: str) -> Optional[str]:
+    """Single source of truth for a caller's org: the DB, not the JWT.
+
+    Reads ``public.noctus_users`` — the SAME row RLS resolves via
+    ``current_org_id()`` — so the app's notion of org can never drift from
+    what RLS enforces. Unlike :func:`get_org_id` (which reads the JWT
+    ``user_metadata`` and goes stale until the user re-authenticates), this
+    reflects a provisioning change immediately.
+
+    Uses the service-role client (bypasses RLS) to read the single PK row.
+    Returns None for an unprovisioned user (no noctus_users row / null org).
+    """
+    admin = get_admin_client()
+    res = (
+        admin.table("noctus_users")
+        .select("org_id")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if res.data and res.data[0].get("org_id"):
+        return res.data[0]["org_id"]
+    return None
+
+
 # Canonical auth deps — wire via the factory so FastAPI sees only
 # ``authorization: Header(None)`` in the dep signature.
 #

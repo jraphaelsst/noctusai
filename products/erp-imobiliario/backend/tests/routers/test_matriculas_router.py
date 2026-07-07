@@ -23,6 +23,16 @@ SAMPLE_EXTRACAO = {
 # ---------------------------------------------------------------------------
 
 class TestExtrairMatricula:
+    @pytest.fixture(autouse=True)
+    def _provision_org(self, client: AuthClient):
+        """Every uploader is org-provisioned in the DB (noctus_users) — the
+        source of truth for org. ``resolve_org_id_db`` reads it via the
+        (mock) admin client, exercising the real resolver rather than
+        patching our own guard."""
+        client._mock_supabase.set_table_data(
+            "noctus_users", [{"id": "test-user-123", "org_id": "test-org-123"}]
+        )
+
     def test_upload_pdf_sucesso(self, client: AuthClient):
         client._mock_supabase.set_table_data("matricula_extracoes", [SAMPLE_EXTRACAO])
         with patch("app.routers.matriculas.check_required_credentials", return_value=[]):
@@ -62,6 +72,19 @@ class TestExtrairMatricula:
             )
         assert resp.status_code == 422
         assert "OpenAI" in resp.json()["error"]["message"]
+
+    def test_sem_organizacao_retorna_400(self, client: AuthClient):
+        """An unprovisioned user (no org in noctus_users) fails clean with a
+        400 — not the historical 500 from a NOT NULL / RLS reject. Regression
+        guard for the matrícula-extractor incident (2026-07-07)."""
+        client._mock_supabase.set_table_data("noctus_users", [])
+        with patch("app.routers.matriculas.check_required_credentials", return_value=[]):
+            resp = client.post(
+                "/api/matriculas/extrair",
+                files={"file": ("matricula.pdf", b"%PDF-1.0 fake", "application/pdf")},
+            )
+        assert resp.status_code == 400
+        assert "organiza" in resp.json()["error"]["message"].lower()
 
     def test_insert_falha_retorna_500(self, client: AuthClient):
         client._mock_supabase.set_sequential_responses(
