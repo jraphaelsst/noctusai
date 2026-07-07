@@ -28,23 +28,35 @@ Secure, SameSite=strict cookie session** (`nai_session` + `/api/auth/{login,me,l
   `FakeSessionStore` (`dependencies.py:169`, `TODO: swap to RedisSessionStore`), so **cookie
   sessions died on every restart fleet-wide**.
 
-## Slices
+## Slices (reshaped by the 2026-07-07 security review)
 
 | # | Slice | Status |
 |---|---|---|
-| 1a | **Seed the durable session store** — `RedisSessionStore` (Real) + `make_session_store` factory + exports + 10 tests (fakeredis). Closes the seed-fake-real-adapter contract. | ✅ built + tested on `feat/seed-cookie-session-router` (28 auth tests green) |
-| 1b | **Promote the `/api/auth/{login,me,logout}` router into the seed** (parameterized) + wire `_get_session_store` via the factory; repoint social-wiring to CONSUME the seed router (no fork) — and it gets durable Redis sessions as a bonus. | ⏳ next |
-| 2 | **ERP backend** — mount the seed auth router; resolve the caller via the session. **DECISION NEEDED** (below). | ⏳ blocked on decision |
+| 1a | **Seed the durable session store** — `RedisSessionStore` (Real) + `make_session_store` factory + exports + 10 tests. | ✅ on `dev` (`f7cc6267`) — **needs SEC-3 hardening (encrypt-at-rest) + SEC-2 access-token cache fields before any consumer** |
+| 1a′ | **Harden the store** — encrypt refresh token (+ cached access token) at rest; add `access_token`/`access_expires_at` fields; Redis DB/ACL isolation; LGPD flag. | ⏳ blocking-before-consume |
+| 1x | **Seed `SupabaseTokenExchanger`** (Protocol+Fake+Real+factory) — refresh→access on a THROWAWAY anon client (SEC-1); cache access token + near-expiry refresh under a per-session Redis lock (SEC-2); write back the rotated refresh token. Unit-test with a Fake exchanger. | ⏳ **blocking — build before Slice 2** |
+| 1b | **Promote `/api/auth/{login,me,logout}` router into the seed**; logout also **revokes upstream** via GoTrue sign-out (SEC-4); wire `_get_session_store` via the factory; repoint social-wiring to CONSUME it (no fork). | ⏳ |
+| 2 | **ERP backend** — mount the seed router; RLS client per request via the exchanger; ensure the **minted access token** (not the session id) reaches `set_session` (SEC-6); pass `check_auth_session_mutation_on_shared_client`. | ⏳ |
 | 3 | **ERP frontend** — swap to `useSessionAuthInit` / `loginWithSession` / `logoutSession`; migrate the 14 direct-`supabase` call sites → backend API. | ⏳ |
-| 4 | Deploy (Redis-backed sessions in prod) + verify in prod shape. | ⏳ |
+| 4 | Deploy (Redis-backed sessions in prod, persistence ON) + verify in **prod shape** (Fake store hides the exchange — dev-green is a false-green). | ⏳ |
 
 ## Decisions
 
-- **2026-07-07** — Direction: full ERP migration to seed cookie session. Session store durability: **Redis** (fleet already runs it; survives deploys). ✅ built in 1a.
-- **OPEN (gates Slice 2) — how the ERP backend makes org-scoped DB calls once the FE no longer sends the user JWT.** `AuthContext` carries identity (`org_id`, `user_id`) but NOT a Supabase access token. Two options:
-  - **(a) Preserve RLS (RECOMMENDED):** backend exchanges the server-held refresh token → a short-lived user access token → RLS-scoped Supabase client. Keeps the RLS safety net (an app bug can't leak cross-org). More work.
-  - **(b) Service-role + `AuthContext.org_id` filtering:** app-enforced org isolation. Simpler, but **drops RLS** as the backstop — an app bug becomes a cross-org data leak. Runs counter to the platform's RLS discipline.
-  Recommend (a); likely wants a `security` advisor review before build.
+- **2026-07-07** — Direction: full ERP migration to seed cookie session. Durability: **Redis** (fleet runs it). ✅ 1a built.
+- **2026-07-07 — RESOLVED (was OPEN):** ERP backend keeps **RLS via token exchange** (option a), NOT service-role + app-filtering. Confirmed by the user + the security review (dropping RLS = any app bug becomes a cross-org leak with no backstop).
+
+## Security requirements — from the 2026-07-07 `security` advisor threat model (BUILD GATES)
+
+Sound direction, but **items 1–3 are blocking**; build the seed exchanger + harden the store BEFORE Slice 2 touches the 61 ERP routers.
+
+- 🔴 **SEC-1** — refresh→access exchange MUST run on a **throwaway `create_client(url, anon_key)`**, never the shared admin singleton (`set_session` on it downgrades every later admin call to `authenticated` process-wide — the 2026-05-23 core prod outage). Keeper exists: `check_auth_session_mutation_on_shared_client`. Ship as seed `SupabaseTokenExchanger`.
+- 🔴 **SEC-2** — **NO per-request `refresh_session`.** Supabase rotates + runs reuse-detection → replay outside ~10s revokes the whole token family. Cache access token + expiry in the session record; refresh only near-expiry under a per-session Redis lock (`SET nai_lock:<sid> NX EX 5`); **write the rotated refresh token back**.
+- 🔴 **SEC-3** — refresh token is currently **plaintext** in shared fleet Redis (LLM cache + rate-limiter share it) → a Redis read harvests every user's impersonation credential. **Encrypt at rest** (Fernet/AES-GCM, app-held key; reuse the `bytea`-credential muscle). Dedicated Redis DB/ACL; LGPD-flag the store.
+- 🟠 **SEC-4** — logout (+ password-change) must **revoke upstream** (GoTrue sign-out), not just delete the Redis row; best-effort-but-logged (no silent swallow).
+- 🟠 **SEC-5** — `SameSite=strict` is NOT enough across `*.noctusai.com` subdomains. Prefer **same-origin host-only cookie** (the ERP already serves FE+API from one container → viable); else add an anti-CSRF token on mutating verbs. Pair `allow_credentials=True` with an exact origin allowlist.
+- 🟠 **SEC-6** — ensure the **minted access token** (not the opaque session id) reaches `set_session`; add a keeper/assert that a cookie-derived `AuthContext` never hits `set_session` as-is. Verify in prod shape.
+- 🟡 **SEC-7** — cap absolute session lifetime (sliding TTL has no max today); confirm Redis persistence (AOF/RDB) ON, else a Redis restart logs everyone out. Sessions **cannot** degrade-to-miss like the LLM cache.
+- 🟡 **SEC-8** — session-id entropy (256-bit) + cookie-over-bearer priority + `caller_kind` split are all correct; keep those invariants.
 
 ## Retrospective (fill on close)
 
