@@ -37,6 +37,12 @@ from noctusai_lib.api.auth.session.dep import (
     LegacyJwtResolver,
     make_get_auth_context,
 )
+from noctusai_lib.api.auth.session.factory import (
+    make_session_store,
+)
+from noctusai_lib.api.auth.session.redis_store import (
+    RedisSessionStore,
+)
 from noctusai_lib.api.auth.session.store import (
     FakeSessionStore,
     SessionStore,
@@ -58,8 +64,10 @@ __all__ = [
     "FakeSessionStore",
     "InvalidCredentialsError",
     "LegacyJwtResolver",
+    "RedisSessionStore",
     "RevokedApiTokenError",
     "SessionStore",
     "hash_token",
     "make_get_auth_context",
+    "make_session_store",
 ]
