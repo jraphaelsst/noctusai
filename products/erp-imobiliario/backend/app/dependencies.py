@@ -64,12 +64,17 @@ def resolve_org_id_db(user_id: str) -> Optional[str]:
     ``user_metadata`` and goes stale until the user re-authenticates), this
     reflects a provisioning change immediately.
 
-    Uses the service-role client (bypasses RLS) to read the single PK row.
+    Uses the CORE client — ``noctus_users`` lives in the ``public`` schema, NOT
+    the product's ``erp`` schema. The erp-scoped admin client would resolve
+    ``.table("noctus_users")`` to ``erp.noctus_users`` and PGRST205 → 500
+    (regression shipped + caught in prod 2026-07-07; the schema-agnostic mock
+    hid it). ``get_core_client`` targets ``public`` with the service role
+    (bypasses RLS), reading the single PK row.
     Returns None for an unprovisioned user (no noctus_users row / null org).
     """
-    admin = get_admin_client()
+    core = _db.get_core_client()
     res = (
-        admin.table("noctus_users")
+        core.table("noctus_users")
         .select("org_id")
         .eq("id", user_id)
         .limit(1)
