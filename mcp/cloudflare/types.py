@@ -404,6 +404,38 @@ class CachePurgeOutput(BaseModel):
     error: Optional[dict] = None
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# RULESETS (read-only)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class RulesetsListInput(BaseModel):
+    """List a zone's rulesets (READ-ONLY); optionally a phase's rules."""
+
+    zone: str = Field(
+        default="noctusai.com",
+        description="Zone (domain) name; resolved to a zone id. Pass `zone_id` "
+        "to skip the lookup.",
+    )
+    zone_id: Optional[str] = Field(
+        default=None, description="Zone id (32-hex); wins over `zone`."
+    )
+    phase: Optional[str] = Field(
+        default=None,
+        description="When set, also return this phase's entrypoint rules — e.g. "
+        "'http_request_cache_settings' (Cache Rules), "
+        "'http_request_dynamic_redirect', 'http_config_settings'.",
+    )
+
+
+class RulesetsListOutput(BaseModel):
+    zone_id: Optional[str] = None
+    rulesets: List[dict] = Field(default_factory=list)
+    phase: Optional[str] = None
+    phase_rules: Optional[List[dict]] = None
+    error: Optional[dict] = None
+
+
 __all__ = [
     # zones
     "ZonesListInput",
@@ -438,4 +470,7 @@ __all__ = [
     # cache
     "CachePurgeInput",
     "CachePurgeOutput",
+    # rulesets
+    "RulesetsListInput",
+    "RulesetsListOutput",
 ]

@@ -348,3 +348,36 @@ def test_create_product_app_failing_readiness_returns_503(minimal_settings):
     assert r.status_code == 503
     assert r.json()["ok"] is False
     assert r.json()["checks"][0]["error"] == "table 'foo' missing"
+
+
+class TestVersionEndpoint:
+    """/_version — deploy provenance (seed sha + product + build sha)."""
+
+    def test_version_returns_provenance_fields(self):
+        c = _bare_app(HealthEndpointConfig())
+        r = c.get("/_version")
+        assert r.status_code == 200
+        body = r.json()
+        # Always-present keys — the provenance contract.
+        for k in ("product", "product_version", "seed_sha", "build_sha", "timestamp"):
+            assert k in body, k
+        # seed_sha resolves (a sha or the documented fallbacks), never missing.
+        assert body["seed_sha"]
+
+    def test_version_reflects_app_title_and_version(self):
+        app = FastAPI(title="ERP", version="1.2.3")
+        mount_health_endpoints(app, HealthEndpointConfig())
+        body = TestClient(app).get("/_version").json()
+        assert body["product"] == "ERP"
+        assert body["product_version"] == "1.2.3"
+
+    def test_version_build_sha_reads_env(self, monkeypatch):
+        monkeypatch.setenv("GIT_SHA", "abc123def")
+        c = _bare_app(HealthEndpointConfig())
+        assert c.get("/_version").json()["build_sha"] == "abc123def"
+
+    def test_version_build_sha_none_when_unbaked(self, monkeypatch):
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        monkeypatch.delenv("NOCTUS_BUILD_SHA", raising=False)
+        c = _bare_app(HealthEndpointConfig())
+        assert c.get("/_version").json()["build_sha"] is None

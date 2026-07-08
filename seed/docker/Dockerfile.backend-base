@@ -52,7 +52,11 @@ LABEL org.opencontainers.image.source="https://github.com/jraphaelsst/noctusai" 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
-    VIRTUAL_ENV="/opt/venv"
+    VIRTUAL_ENV="/opt/venv" \
+    GIT_SHA="${GIT_SHA}"
+# ↑ GIT_SHA promoted ARG→ENV so it's readable at RUNTIME (the /_version
+#   deploy-provenance endpoint reads os.environ["GIT_SHA"]). Without this it's
+#   build-only (label) and build_sha reports None.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libffi8 libpq5 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
