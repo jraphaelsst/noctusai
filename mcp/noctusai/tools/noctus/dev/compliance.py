@@ -1047,6 +1047,74 @@ def check_frontend_config_paths(product_path: Path) -> list[dict]:
     return issues
 
 
+def check_product_service_worker(product_path: Path) -> list[dict]:
+    """Flag a product shipping a PRECACHING service worker (PWA) that is not
+    self-destroying or explicitly declared.
+
+    A service worker precaches the app shell + JS into Cache Storage and serves
+    them from there, **bypassing all HTTP cache headers**. On an always-online
+    product this buys ~nothing but creates a severe failure class: after a
+    deploy, a client with an old SW keeps serving the OLD precached bundle —
+    stale labels, and already-fixed bugs reappearing — and the seed's
+    ``no-cache`` on ``index.html`` cannot reach it. If a proxy/CDN also pins a
+    stale ``sw.js``, the SW update check never sees the new worker and the
+    client is stuck FOREVER. This is the 2026-07-08 erp-imobiliario incident
+    (a user pinned to the pre-rename "Certificados" bundle + an already-fixed
+    form-freeze). See ``KB § PATTERNS/frontend/spa-cache-and-service-worker.md``.
+
+    Detection (reads ``frontend/vite.config.{ts,js}``):
+      - References ``VitePWA(`` / ``vite-plugin-pwa`` → a service worker ships.
+      - ALLOWED when the config also has ``selfDestroying: true`` (a retirement
+        worker that unregisters itself) OR a ``noc-allow: service-worker``
+        declaration comment (a conscious, rationale-carrying choice — the
+        named-seam escape hatch).
+      - Otherwise → ``high``: an undeclared precaching SW.
+
+    Prevention, not a build-breaker (severity ``high``). Baseline 0 since
+    2026-07-08 (erp-imobiliario retired its SW via ``selfDestroying: true`` the
+    same commit this keeper landed — gate ships with its compliance-by-
+    construction mechanism).
+    """
+    issues: list[dict] = []
+    name = product_path.name
+    for cfg_name in ("vite.config.ts", "vite.config.js"):
+        cfg = product_path / "frontend" / cfg_name
+        if not cfg.exists():
+            continue
+        try:
+            content = cfg.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", cfg, exc)
+            continue
+        ships_sw = "VitePWA(" in content or "vite-plugin-pwa" in content
+        if not ships_sw:
+            continue
+        # Allowed forms: a self-destroying retirement worker, or a declared
+        # conscious choice.
+        if "selfDestroying" in content and re.search(
+            r"selfDestroying\s*:\s*true", content
+        ):
+            continue
+        if "noc-allow: service-worker" in content:
+            continue
+        issues.append({
+            "product": name,
+            "file": str(cfg.relative_to(product_path)),
+            "issue": (
+                f"{cfg_name} ships a precaching service worker (VitePWA / "
+                f"vite-plugin-pwa) that bypasses HTTP caching — clients get "
+                f"pinned to STALE precached bundles after a deploy (stale "
+                f"labels + already-fixed bugs; the 2026-07-08 erp-imobiliario "
+                f"incident). Retire it with `selfDestroying: true`, or declare "
+                f"a conscious offline need with a `// noc-allow: service-worker "
+                f"— <rationale>` comment. See "
+                f"`KB § PATTERNS/frontend/spa-cache-and-service-worker.md`."
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
 def check_mock_schema_validation(product_path: Path) -> list[dict]:
     """Verify the product's test conftest does not opt OUT of MockSupabaseClient
     schema validation without an explicit rationale comment.
@@ -8294,6 +8362,7 @@ def check_all_products() -> tuple[int, list]:
             + check_promise_all_shared_catch(d)
             + check_config_extends_product_settings(d)
             + check_frontend_config_paths(d)
+            + check_product_service_worker(d)
             + check_mock_schema_validation(d)
             + check_ai_feature_completeness(d)
             + check_test_status_assertion(d)

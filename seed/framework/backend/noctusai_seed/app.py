@@ -407,6 +407,24 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
+    def _is_service_worker(path: str) -> bool:
+        # A service-worker script (and its registration/workbox helpers) must
+        # be revalidated on every request — it is the ONLY update path for a
+        # PWA, and unlike a hashed asset its FILENAME is stable across builds.
+        # If a proxy/CDN (CloudFlare) or browser serves a STALE sw.js, the SW
+        # update check never sees the new worker and the client is pinned to
+        # the old precached bundle FOREVER (stale labels + already-fixed bugs;
+        # the erp-imobiliario / Marina incident, 2026-07-08). This also lets a
+        # `selfDestroying` retirement worker actually reach stuck clients. The
+        # browser already bypasses its own HTTP cache for the SW script; this
+        # header stops the intermediaries from holding it. See
+        # `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`.
+        leaf = path.rsplit("/", 1)[-1]
+        return (
+            leaf in ("sw.js", "service-worker.js", "registerSW.js")
+            or (leaf.startswith("workbox-") and leaf.endswith(".js"))
+        )
+
     class _SPAStaticFiles(StaticFiles):
         async def get_response(self, path: str, scope):
             try:
@@ -414,6 +432,10 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
                 # html=True serves index.html for "/" (path == "") and for a
                 # direct /index.html — that's the shell; never cache it.
                 if path in ("", ".", "index.html") or path.endswith("/index.html"):
+                    return _no_cache(response)
+                # The service-worker script is the PWA update path — never let
+                # an intermediary cache pin it (see `_is_service_worker`).
+                if _is_service_worker(path):
                     return _no_cache(response)
                 return response
             except StarletteHTTPException as exc:

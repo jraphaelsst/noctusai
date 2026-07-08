@@ -2,60 +2,31 @@ import { createViteConfig } from "../../../seed/framework/frontend/vite.config.f
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 
+// ── Service worker: RETIREMENT (self-destroying) ────────────────────────────
+// erp-imobiliario was the ONLY product that shipped a PWA service worker
+// (inherited from its original "Corretor Goal Hub" / Lovable scaffold). For an
+// always-online ERP the offline precache buys ~nothing, but it caused a real
+// production incident: a service worker serves the app shell + JS from Cache
+// Storage, BYPASSING all HTTP cache headers — so the seed's `no-cache` on
+// index.html could not reach clients, and users (e.g. Marina, 2026-07-08) were
+// pinned to an OLD precached bundle: stale labels ("Certificados" vs the
+// current "Certidões") + an already-fixed form-freeze bug. See
+// `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`.
+//
+// `selfDestroying: true` builds a sw.js that, on a client's next visit,
+// unregisters the existing service worker and deletes its caches — so every
+// stuck client heals automatically with no manual steps. Keep this flag for at
+// least one full release cycle so all clients pick up the self-destroying
+// worker; once field telemetry shows no active `nai`/workbox SW remains, the
+// VitePWA import can be removed entirely.
 export default createViteConfig({
   port: 8080,
   extend: (config) => {
-    // Keep ERP-specific plugins
     config.plugins = [
       ...(config.plugins || []),
       componentTagger(),
       VitePWA({
-        registerType: "autoUpdate",
-        includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg"],
-        manifest: {
-          name: "Corretor Goal Hub",
-          short_name: "GoalHub",
-          description: "ERP para corretores de imóveis com sistema de matching",
-          theme_color: "#1a1a2e",
-          background_color: "#ffffff",
-          display: "standalone",
-          scope: "/",
-          start_url: "/",
-          icons: [
-            {
-              src: "pwa-192x192.png",
-              sizes: "192x192",
-              type: "image/png",
-            },
-            {
-              src: "pwa-512x512.png",
-              sizes: "512x512",
-              type: "image/png",
-            },
-            {
-              src: "pwa-512x512.png",
-              sizes: "512x512",
-              type: "image/png",
-              purpose: "any maskable",
-            },
-          ],
-        },
-        workbox: {
-          globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-          runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "supabase-api-cache",
-                expiration: {
-                  maxEntries: 50,
-                  maxAgeSeconds: 60 * 5, // 5 minutes
-                },
-              },
-            },
-          ],
-        },
+        selfDestroying: true,
       }),
     ].filter(Boolean);
 
