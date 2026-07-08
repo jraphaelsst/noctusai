@@ -47,12 +47,22 @@ from noctusai_lib.api.auth.session.store import (
     FakeSessionStore,
     SessionStore,
 )
+from noctusai_lib.api.auth.session.token_exchange import (
+    FakeTokenExchanger,
+    RefreshResult,
+    SupabaseTokenExchanger,
+    TokenExchangeError,
+    TokenExchanger,
+    make_default_refresh_fn,
+    make_token_exchanger,
+)
 from noctusai_lib.api.auth.session.types import (
     AuthContext,
     CallerKind,
     ExpiredSessionError,
     InvalidCredentialsError,
     RevokedApiTokenError,
+    SessionTokens,
 )
 
 __all__ = [
@@ -62,12 +72,20 @@ __all__ = [
     "ExpiredSessionError",
     "FakeApiTokenResolver",
     "FakeSessionStore",
+    "FakeTokenExchanger",
     "InvalidCredentialsError",
     "LegacyJwtResolver",
     "RedisSessionStore",
+    "RefreshResult",
     "RevokedApiTokenError",
     "SessionStore",
+    "SessionTokens",
+    "SupabaseTokenExchanger",
+    "TokenExchangeError",
+    "TokenExchanger",
     "hash_token",
+    "make_default_refresh_fn",
     "make_get_auth_context",
     "make_session_store",
+    "make_token_exchanger",
 ]

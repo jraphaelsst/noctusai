@@ -15,10 +15,26 @@ from __future__ import annotations
 
 import secrets
 import time
-from typing import Protocol
+from typing import NamedTuple, Protocol
 from uuid import UUID
 
-from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.api.auth.session.types import AuthContext, SessionTokens
+
+
+class _Entry(NamedTuple):
+    """In-memory session record for :class:`FakeSessionStore`.
+
+    Mirrors the ``RedisSessionStore`` JSON record so the two stores are
+    behaviourally interchangeable under the exchanger's read/write-tokens
+    path. ``expires_at`` is a ``time.monotonic()`` deadline (process-local,
+    dev/test only).
+    """
+
+    ctx: AuthContext
+    expires_at: float
+    refresh_token: str
+    access_token: str | None
+    access_expires_at: int | None
 
 
 class SessionStore(Protocol):
@@ -81,6 +97,47 @@ class SessionStore(Protocol):
         """Hard-delete a session (logout). No-op when absent."""
         ...
 
+    async def read_tokens(self, session_id: str) -> SessionTokens | None:
+        """Return the SERVER-SIDE token bundle for a session, or ``None``.
+
+        Unlike ``lookup`` (which returns the caller-facing ``AuthContext``
+        and deliberately withholds the Supabase tokens), this hands the
+        :class:`~noctusai_lib.api.auth.session.token_exchange.TokenExchanger`
+        the decrypted refresh token + cached access token so it can mint an
+        RLS-scoped Supabase client. NEVER call this from a route handler or
+        surface its result to the browser — it exists only for the
+        server-side token-exchange path.
+
+        Returns ``None`` when the session is absent or expired (same
+        semantics as ``lookup``). Real implementations decrypt at-rest
+        ciphertext (SEC-3) before returning.
+        """
+        ...
+
+    async def write_tokens(
+        self,
+        session_id: str,
+        *,
+        refresh_token: str,
+        access_token: str | None,
+        access_expires_at: int | None,
+    ) -> None:
+        """Persist a freshly-minted access token + rotated refresh token.
+
+        Called by the exchanger after a successful upstream refresh (SEC-2):
+        Supabase rotates the refresh token on every refresh and runs
+        reuse-detection, so the rotated value MUST be written back or the
+        next refresh replays a revoked token and kills the whole session
+        family. The access token is cached alongside so subsequent requests
+        skip the upstream call until near expiry.
+
+        Preserves the session's existing TTL (does not extend or reset it —
+        sliding-TTL is ``refresh_ttl``'s job). No-op when the session is
+        absent (a race with logout/expiry — the caller re-resolves and 401s).
+        Real implementations encrypt the tokens at rest (SEC-3).
+        """
+        ...
+
 
 class FakeSessionStore:
     """Deterministic in-memory ``SessionStore``.
@@ -100,8 +157,10 @@ class FakeSessionStore:
     """
 
     def __init__(self) -> None:
-        # session_id -> (AuthContext, expires_at_monotonic, refresh_token)
-        self._entries: dict[str, tuple[AuthContext, float, str]] = {}
+        # session_id -> _Entry (see below). The access-token cache fields
+        # mirror the RedisSessionStore record so the exchanger behaves
+        # identically against the Fake (dev/tests) and the Real (prod).
+        self._entries: dict[str, _Entry] = {}
 
     async def create(
         self,
@@ -121,34 +180,68 @@ class FakeSessionStore:
             api_token_id=None,
         )
         expires_at = time.monotonic() + ttl_seconds
-        self._entries[session_id] = (ctx, expires_at, supabase_refresh_token)
+        self._entries[session_id] = _Entry(
+            ctx=ctx,
+            expires_at=expires_at,
+            refresh_token=supabase_refresh_token,
+            access_token=None,
+            access_expires_at=None,
+        )
         return session_id
 
     async def lookup(self, session_id: str) -> AuthContext | None:
-        entry = self._entries.get(session_id)
-        if entry is None:
-            return None
-        ctx, expires_at, _refresh = entry
-        if time.monotonic() > expires_at:
-            # Lazy eviction so the dict doesn't grow unbounded under
-            # long-running test sessions.
-            self._entries.pop(session_id, None)
-            return None
-        return ctx
+        entry = self._get_live(session_id)
+        return entry.ctx if entry is not None else None
 
     async def refresh_ttl(self, session_id: str, ttl_seconds: int = 86400) -> None:
         entry = self._entries.get(session_id)
         if entry is None:
             return
-        ctx, _old_expiry, refresh = entry
-        self._entries[session_id] = (
-            ctx,
-            time.monotonic() + ttl_seconds,
-            refresh,
+        self._entries[session_id] = entry._replace(
+            expires_at=time.monotonic() + ttl_seconds
         )
 
     async def delete(self, session_id: str) -> None:
         self._entries.pop(session_id, None)
+
+    async def read_tokens(self, session_id: str) -> SessionTokens | None:
+        entry = self._get_live(session_id)
+        if entry is None:
+            return None
+        return SessionTokens(
+            refresh_token=entry.refresh_token,
+            access_token=entry.access_token,
+            access_expires_at=entry.access_expires_at,
+        )
+
+    async def write_tokens(
+        self,
+        session_id: str,
+        *,
+        refresh_token: str,
+        access_token: str | None,
+        access_expires_at: int | None,
+    ) -> None:
+        entry = self._entries.get(session_id)
+        if entry is None:
+            return  # raced with logout/expiry — no-op, matches Protocol.
+        self._entries[session_id] = entry._replace(
+            refresh_token=refresh_token,
+            access_token=access_token,
+            access_expires_at=access_expires_at,
+        )
+
+    def _get_live(self, session_id: str) -> "_Entry | None":
+        """Return the entry if present and un-expired; lazily evict if aged."""
+        entry = self._entries.get(session_id)
+        if entry is None:
+            return None
+        if time.monotonic() > entry.expires_at:
+            # Lazy eviction so the dict doesn't grow unbounded under
+            # long-running test sessions.
+            self._entries.pop(session_id, None)
+            return None
+        return entry
 
 
 __all__ = [
