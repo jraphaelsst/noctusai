@@ -47,6 +47,13 @@ from noctusai_lib.api.auth.session.store import (
     FakeSessionStore,
     SessionStore,
 )
+from noctusai_lib.api.auth.session.session_revoke import (
+    FakeSessionRevoker,
+    SessionRevoker,
+    SupabaseSessionRevoker,
+    make_default_revoke_fn,
+    make_session_revoker,
+)
 from noctusai_lib.api.auth.session.token_exchange import (
     FakeTokenExchanger,
     RefreshResult,
@@ -71,6 +78,7 @@ __all__ = [
     "CallerKind",
     "ExpiredSessionError",
     "FakeApiTokenResolver",
+    "FakeSessionRevoker",
     "FakeSessionStore",
     "FakeTokenExchanger",
     "InvalidCredentialsError",
@@ -78,14 +86,18 @@ __all__ = [
     "RedisSessionStore",
     "RefreshResult",
     "RevokedApiTokenError",
+    "SessionRevoker",
     "SessionStore",
     "SessionTokens",
+    "SupabaseSessionRevoker",
     "SupabaseTokenExchanger",
     "TokenExchangeError",
     "TokenExchanger",
     "hash_token",
     "make_default_refresh_fn",
+    "make_default_revoke_fn",
     "make_get_auth_context",
+    "make_session_revoker",
     "make_session_store",
     "make_token_exchanger",
 ]
