@@ -25,6 +25,7 @@ from tools.noctus.dev.compliance import (
     check_playwright_supabase_env,
     check_rls_policy_self_reference,
     check_auth_session_mutation_on_shared_client,
+    check_product_service_worker,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -2399,6 +2400,55 @@ class TestCheckAuthSessionMutationOnSharedClient:
         repo = self._mk("p", py, rel="backend/tests/test_auth.py")
         assert check_auth_session_mutation_on_shared_client(repo) == []
 
+
+class TestCheckProductServiceWorker:
+    """Undeclared precaching service worker (PWA) → stale-bundle class."""
+
+    def _mk(self, vite_config: str, *, name: str = "vite.config.ts") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="sw_test_"))
+        f = tmp / "products" / "p" / "frontend" / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(vite_config)
+        return tmp / "products" / "p"
+
+    # ── Flag: VitePWA without selfDestroying / declaration ─────────────
+    def test_precaching_pwa_flags(self):
+        cfg = (
+            "import { VitePWA } from 'vite-plugin-pwa';\n"
+            "export default { plugins: [VitePWA({ registerType: 'autoUpdate' })] };\n"
+        )
+        issues = check_product_service_worker(self._mk(cfg))
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "high"
+        assert "service worker" in issues[0]["issue"].lower()
+
+    # ── No-flag: self-destroying retirement worker ─────────────────────
+    def test_self_destroying_passes(self):
+        cfg = (
+            "import { VitePWA } from 'vite-plugin-pwa';\n"
+            "export default { plugins: [VitePWA({ selfDestroying: true })] };\n"
+        )
+        assert check_product_service_worker(self._mk(cfg)) == []
+
+    # ── No-flag: explicit conscious declaration ────────────────────────
+    def test_declared_service_worker_passes(self):
+        cfg = (
+            "import { VitePWA } from 'vite-plugin-pwa';\n"
+            "// noc-allow: service-worker — offline field-app requirement\n"
+            "export default { plugins: [VitePWA({ registerType: 'autoUpdate' })] };\n"
+        )
+        assert check_product_service_worker(self._mk(cfg)) == []
+
+    # ── No-flag: no service worker at all ──────────────────────────────
+    def test_no_pwa_passes(self):
+        cfg = "export default { plugins: [] };\n"
+        assert check_product_service_worker(self._mk(cfg)) == []
+
+    # ── No-flag: no vite config ────────────────────────────────────────
+    def test_no_config_passes(self):
+        tmp = Path(tempfile.mkdtemp(prefix="sw_none_"))
+        (tmp / "products" / "p" / "frontend").mkdir(parents=True)
+        assert check_product_service_worker(tmp / "products" / "p") == []
 
 
 # ---------------------------------------------------------------------------

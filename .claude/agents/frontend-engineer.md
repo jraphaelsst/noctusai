@@ -10,6 +10,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/product-internal-wiring.md
   - CONTEXT/PATTERNS/frontend/product-icon-registry.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
+  - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/frontend/01-CORE.md
   - CONTEXT/frontend/02-ERP.md
   - CONTEXT/frontend/03-PF.md
@@ -34,6 +35,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **Product icon must render.** A product's `icone` must register as a REAL icon — empty/missing fails `check_product_icon_registered`. → `KB § PATTERNS/frontend/product-icon-registry.md`
 - **SVG via seed primitive.** Use `svg_render` (the media-creator residual) — not hand-rolled `<svg>` strings in components. → `KB § PATTERNS/frontend/svg-render-mode.md`
 - **Consent routes are seed-mounted — never re-declare per-product.** Do NOT declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally; `createProductApp` mounts `/consent*` by construction. `check_consent_routes_mounted` enforces. → `KB § PATTERNS/frontend/consent-routes-mandate.md`
+- **No precaching service worker.** Products don't ship a PWA/`VitePWA` service worker (it precaches the shell+JS BYPASSING HTTP caching → clients pinned to STALE bundles after deploy). Retire with `selfDestroying: true` or declare `// noc-allow: service-worker`. `check_product_service_worker` enforces. → `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`
 - **AST-first for `.ts` / `.tsx`.** `ts-morph` for structural edits. When a `.tsx` top-level-symbol count changes, ALSO run `mcp/noctusai/tests/test_outline_typescript_corpus.py` (the outline-corpus baseline drift coupling). → `KB § PATTERNS/common/ast.md`
 - **Verify in production shape.** vitest-green + dev-build-green ≠ live-works. The seed/lib `vitest` render-test harness has a dual-React gap (`null useState`); check it doesn't bite. → `KB § PATTERNS/devops/dev-prod-parity.md` (devops-owned)
 
@@ -41,7 +43,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
 
 ## Owned KB depth (canonical territory)
-**Frontend patterns** → `KB § PATTERNS/frontend/frontend.md` · `KB § PATTERNS/frontend/consent-routes-mandate.md` · `KB § PATTERNS/frontend/core-url-routing.md` · `KB § PATTERNS/frontend/product-internal-wiring.md` · `KB § PATTERNS/frontend/product-icon-registry.md` · `KB § PATTERNS/frontend/svg-render-mode.md`.
+**Frontend patterns** → `KB § PATTERNS/frontend/frontend.md` · `KB § PATTERNS/frontend/consent-routes-mandate.md` · `KB § PATTERNS/frontend/core-url-routing.md` · `KB § PATTERNS/frontend/product-internal-wiring.md` · `KB § PATTERNS/frontend/product-icon-registry.md` · `KB § PATTERNS/frontend/svg-render-mode.md` · `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`.
 **Domain (per-product frontend)** → `KB § frontend/01-CORE.md` · `KB § frontend/02-ERP.md` · `KB § frontend/03-PF.md` · `KB § frontend/04-THERAPY.md`.
 
 ## Composes-with (commons + cross-domain)

@@ -49,11 +49,16 @@ def settings():
 
 @pytest.fixture
 def spa_dir(tmp_path):
-    """A minimal built-SPA bundle: index.html + one hashed asset."""
+    """A minimal built-SPA bundle: index.html + one hashed asset + a PWA
+    service-worker trio (sw.js / registerSW.js / workbox-*.js)."""
     (tmp_path / "index.html").write_text("<!doctype html><title>SPA-ROOT</title>")
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "app-abc123.js").write_text("console.log('real-asset');")
+    # Service-worker files live at the ROOT (scope "/") — mirror a vite-plugin-pwa build.
+    (tmp_path / "sw.js").write_text("/* service worker */")
+    (tmp_path / "registerSW.js").write_text("/* register */")
+    (tmp_path / "workbox-abc123.js").write_text("/* workbox runtime */")
     return tmp_path
 
 
@@ -173,6 +178,29 @@ def test_spa_shell_is_no_cache_but_assets_stay_cacheable(settings, spa_dir):
     assert "no-cache" not in asset.headers.get("cache-control", "").lower()
 
 
+def test_service_worker_scripts_are_no_cache(settings, spa_dir):
+    """The service-worker script (and its registration/workbox helpers) must be
+    served ``Cache-Control: no-cache`` — it is a PWA's ONLY update path and its
+    FILENAME is stable across builds (unlike a hashed asset). If an intermediary
+    (CloudFlare) pins a stale ``sw.js``, the SW update check never sees the new
+    worker and the client is stuck on the old precached bundle forever — the
+    erp-imobiliario / Marina incident (2026-07-08), and what defeats a
+    ``selfDestroying`` retirement worker. Regression guard for the
+    ``_is_service_worker`` no-cache carve-out in ``_mount_spa``."""
+    client = TestClient(_app(settings, serve_spa=str(spa_dir)))
+
+    for sw_path in ("/sw.js", "/registerSW.js", "/workbox-abc123.js"):
+        r = client.get(sw_path)
+        assert r.status_code == 200, sw_path
+        assert "no-cache" in r.headers.get("cache-control", "").lower(), (
+            f"{sw_path} must be no-cache (PWA update path)"
+        )
+
+    # A normal hashed asset stays cacheable (guards against over-broad matching).
+    asset = client.get("/assets/app-abc123.js")
+    assert "no-cache" not in asset.headers.get("cache-control", "").lower()
+
+
 def test_api_route_wins_over_spa_mount(settings, spa_dir):
     """`/_health` is registered before the `/` mount → API still answers."""
     client = TestClient(_app(settings, serve_spa=str(spa_dir)))
@@ -210,15 +238,24 @@ def test_param_beats_env(settings, spa_dir, tmp_path, monkeypatch):
 
 def test_missing_index_is_fail_soft(settings, tmp_path):
     """serve_spa pointed at a dir with no index.html → no crash, API alive,
-    `/` stays a plain 404 (nothing mounted).
+    `/` returns an honest 503 ("SPA bundle not yet built").
 
-    The seam also logs a WARNING (verified by eye in captured stdout). We
-    do NOT assert on the log record here: the seed's `configure_logging()`
-    reconfigures handler/propagation, so pytest's `caplog` can't see the
-    `noctusai_seed.app` logger without monkeypatching our logging config —
+    The seam mounts the dir even when index.html is absent at startup
+    (``check_dir=False``) so a vite ``--watch`` build that hasn't emitted the
+    dist yet self-heals on the next request. When index.html is absent at
+    REQUEST time the shell path returns **503** ("build in progress"), which is
+    honest and retryable, rather than a bare 404 that reads like a routing bug.
+    (Updated 2026-07-08: this test previously asserted 404 / "nothing mounted",
+    the pre-``--watch`` contract — stale drift vs the shipped 503 branch in
+    ``_mount_spa``.)
+
+    The seam also logs a WARNING (verified by eye in captured stdout). We do
+    NOT assert on the log record here: the seed's ``configure_logging()``
+    reconfigures handler/propagation, so pytest's ``caplog`` can't see the
+    ``noctusai_seed.app`` logger without monkeypatching our logging config —
     which the methodology forbids. The *observable* fail-soft contract (no
-    crash + API still served + no SPA mount) is the real guarantee and is
-    fully asserted below."""
+    crash + API still served + honest shell status) is the real guarantee and
+    is fully asserted below."""
     empty = tmp_path / "empty"
     empty.mkdir()
     client = TestClient(_app(settings, serve_spa=str(empty)))  # must not raise
@@ -227,5 +264,7 @@ def test_missing_index_is_fail_soft(settings, tmp_path):
     assert r.status_code == 200
     assert r.json()["ok"] is True
 
+    # Shell requested but no index.html built yet → honest 503, not a crash.
     r = client.get("/")
-    assert r.status_code == 404  # nothing mounted
+    assert r.status_code == 503
+    assert "not yet built" in r.text.lower()

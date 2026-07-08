@@ -83,6 +83,7 @@ def _detect(
         check_promise_all_shared_catch,
         check_config_extends_product_settings,
         check_frontend_config_paths,
+        check_product_service_worker,                  # SW stale-bundle guard 2026-07-08
         check_mock_schema_validation,                  # registration-drift fix 2026-05-25
         check_ai_feature_completeness,                 # registration-drift fix 2026-05-25
         check_out_of_contract_trees,
@@ -117,6 +118,7 @@ def _detect(
         issues.extend(check_promise_all_shared_catch(product_path))
         issues.extend(check_config_extends_product_settings(product_path))
         issues.extend(check_frontend_config_paths(product_path))
+        issues.extend(check_product_service_worker(product_path))            # SW stale-bundle guard 2026-07-08
         issues.extend(check_mock_schema_validation(product_path))            # registration-drift fix 2026-05-25
         issues.extend(check_ai_feature_completeness(product_path))           # registration-drift fix 2026-05-25
         issues.extend(check_test_status_assertion(product_path))
