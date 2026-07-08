@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, UploadFile
 
-from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action
+from app.dependencies import get_current_user, get_user_client, get_admin_client, resolve_org_id_db, log_action
 from app.responses import paginated_response, success_response, ok_response, calculate_pagination
 from app.config import settings
 from app.services.matricula_service import (
@@ -46,7 +46,15 @@ async def extrair_matricula(
     """Upload a matrícula PDF and start text extraction in background."""
     user, token = auth
     db = get_user_client(token)
-    org_id = get_org_id(user)
+    # Org comes from the DB (noctus_users), the SAME source RLS uses — never
+    # the JWT, which goes stale until re-login. A user with no org is not yet
+    # provisioned: fail clean (400), not a 500 from a NOT NULL / RLS reject.
+    org_id = resolve_org_id_db(user.id)
+    if not org_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Usuário sem organização. Conclua o cadastro da organização antes de extrair matrículas.",
+        )
 
     # Validate credentials upfront
     missing = check_required_credentials(org_id)

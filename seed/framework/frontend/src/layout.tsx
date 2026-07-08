@@ -279,7 +279,13 @@ export function createProductLayout(config: ProductLayoutConfig) {
               ...(enrichment.headerUserProps || {}),
             }}
             onMenuToggle={onMenuToggle}
-            logoutBehavior="redirect"
+            // The header user-card button is a REAL logout (calls handleLogout →
+            // supabase.auth.signOut() + redirect). "Voltar ao NoctusAI" (the
+            // redirect-to-hub link) is a SEPARATE control — the Sidebar footer
+            // `BackToCore` above — so the two coexist with distinct behaviour.
+            // Was "redirect", which made this button silently skip signOut and
+            // leave the session live (fixed 2026-07-07).
+            logoutBehavior="signout"
             platformUrl={CORE_URL}
             onLogout={handleLogout}
             theme={theme}

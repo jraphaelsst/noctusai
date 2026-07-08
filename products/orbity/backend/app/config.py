@@ -10,7 +10,7 @@ from noctusai_seed import ProductSettings
 class SeedSettings(ProductSettings):
     """Orbity specific settings."""
 
-    cors_origins: str = "@registry:own:seed"
+    cors_origins: str = "@registry:own:orbity"
 
     # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
     # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``

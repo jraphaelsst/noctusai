@@ -35,10 +35,8 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -493,17 +491,34 @@ function BoundChatsEditor({
   );
 }
 
-// ─── ConnectionDetailDialog (exported — shared by ClienteModal + Conexoes) ────
-
-export function ConnectionDetailDialog({
+// ─── ConnectionSettingsPanel (exported — shared body: dialog + inline subtab) ─
+/**
+ * ConnectionSettingsPanel — the actual WhatsApp connection management UI
+ * (status, QR pairing, session actions, auto-reply, editable fields,
+ * authorized numbers, bound chats). Extracted from the pre-Wave-5
+ * `ConnectionDetailDialog` body so the SAME markup + hooks render in two
+ * contexts without duplicating any WAHA logic:
+ *   - inside a modal — `ConnectionDetailDialog` below (ClienteModal / Conexoes)
+ *   - inline as a page subtab — `pages/WhatsAppChat.tsx` "Configurações"
+ *
+ * Uses plain heading markup (`<h2>`/`<p>`), not `DialogTitle`/`DialogDescription`
+ * — those Radix primitives read from Dialog's React context and throw when
+ * rendered outside a `<Dialog>` root, which the inline subtab case requires.
+ * `DialogHeader`/`DialogFooter` (plain styled `<div>`s, no Radix context) stay
+ * safe to reuse in both places.
+ */
+export function ConnectionSettingsPanel({
   line,
-  onClose,
   onRequestDelete,
+  onSaved,
   autoStart,
 }: {
   line: WhatsAppConnectionLine;
-  onClose: () => void;
   onRequestDelete: (line: WhatsAppConnectionLine) => void;
+  /** Called after a successful Save — the Dialog wrapper passes its `onClose`
+   *  here to preserve the modal-closes-on-save behaviour; the inline subtab
+   *  passes nothing (just the success toast, panel stays open). */
+  onSaved?: () => void;
   /** When true (just-created flow) trigger start immediately on mount. */
   autoStart?: boolean;
 }) {
@@ -590,7 +605,7 @@ export function ConnectionDetailDialog({
       {
         onSuccess: () => {
           toast.success("Conexão atualizada");
-          onClose();
+          onSaved?.();
         },
         onError: (e: any) => toast.error(e?.message ?? "Falha ao salvar"),
       },
@@ -598,95 +613,94 @@ export function ConnectionDetailDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Smartphone className="h-5 w-5" />
-            {line.label}
-          </DialogTitle>
-          <DialogDescription className="flex items-center gap-2">
-            <StatusBadge status={status?.status ?? null} paired={paired} />
-            <span className="text-xs">
-              {paired
-                ? `Conectado: ${status?.me_name ?? status?.me_id ?? "—"}`
-                : "Não pareado — escaneie o QR abaixo"}
-            </span>
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <h2 className="flex items-center gap-2 text-lg font-semibold leading-none tracking-tight">
+          <Smartphone className="h-5 w-5" />
+          {line.label}
+        </h2>
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <StatusBadge status={status?.status ?? null} paired={paired} />
+          <span className="text-xs">
+            {paired
+              ? `Conectado: ${status?.me_name ?? status?.me_id ?? "—"}`
+              : "Não pareado — escaneie o QR abaixo"}
+          </span>
+        </p>
+      </DialogHeader>
 
-        {status?.error && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
-            {status.error}
-          </div>
-        )}
+      {status?.error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+          {status.error}
+        </div>
+      )}
 
-        {/* QR pairing — while unpaired */}
-        {!paired && (
-          <div className="space-y-2 px-6 pt-5">
-            {autoStart && restart.isPending ? (
-              <div
-                className="flex h-52 items-center justify-center gap-2 rounded-md border bg-muted/10 p-4 text-sm text-muted-foreground"
-                data-testid="qr-starting"
-              >
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Iniciando sessão…
-              </div>
-            ) : (
-              <QrPanel connectionId={line.id} />
-            )}
-            <div className="flex justify-center">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => run(restart, "Nova sessão gerada — escaneie o QR")}
-                disabled={restart.isPending}
-                data-testid="btn-start"
-              >
-                {restart.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                )}
-                Gerar nova sessão / QR
-              </Button>
+      {/* QR pairing — while unpaired */}
+      {!paired && (
+        <div className="space-y-2 px-6 pt-5">
+          {autoStart && restart.isPending ? (
+            <div
+              className="flex h-52 items-center justify-center gap-2 rounded-md border bg-muted/10 p-4 text-sm text-muted-foreground"
+              data-testid="qr-starting"
+            >
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Iniciando sessão…
             </div>
+          ) : (
+            <QrPanel connectionId={line.id} />
+          )}
+          <div className="flex justify-center">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => run(restart, "Nova sessão gerada — escaneie o QR")}
+              disabled={restart.isPending}
+              data-testid="btn-start"
+            >
+              {restart.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Gerar nova sessão / QR
+            </Button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Paired success */}
-        {paired && (
-          <div
-            className="mx-6 mt-5 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
-            data-testid="paired-success"
-          >
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>
-              WhatsApp pareado
-              {status?.me_name || status?.me_id
-                ? ` — ${status?.me_name ?? status?.me_id}`
-                : ""}
-            </span>
-          </div>
-        )}
+      {/* Paired success */}
+      {paired && (
+        <div
+          className="mx-6 mt-5 flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+          data-testid="paired-success"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>
+            WhatsApp pareado
+            {status?.me_name || status?.me_id
+              ? ` — ${status?.me_name ?? status?.me_id}`
+              : ""}
+          </span>
+        </div>
+      )}
 
-        <div className="space-y-6 px-6 py-5">
-          {/* Read-only derived info */}
-          <div className="grid gap-2">
-            <ReadOnlyField
-              label="Sessão (derivado)"
-              value={line.session_name}
-              testId="detail-session-name"
-            />
-            <ReadOnlyField
-              label="Webhook de entrada"
-              value={line.webhook_url}
-              copyable
-              testId="detail-webhook-url"
-            />
-          </div>
+      <div className="space-y-6 px-6 py-5">
+        {/* Read-only derived info */}
+        <div className="grid gap-2">
+          <ReadOnlyField
+            label="Sessão (derivado)"
+            value={line.session_name}
+            testId="detail-session-name"
+          />
+          <ReadOnlyField
+            label="Webhook de entrada"
+            value={line.webhook_url}
+            copyable
+            testId="detail-webhook-url"
+          />
+        </div>
 
-          <Separator />
+        <Separator />
 
           {/* Auto-reply toggle */}
           <div
@@ -886,6 +900,37 @@ export function ConnectionDetailDialog({
             Salvar
           </Button>
         </DialogFooter>
+    </>
+  );
+}
+
+// ─── ConnectionDetailDialog (exported — thin modal wrapper) ──────────────────
+/**
+ * ConnectionDetailDialog — the Dialog-chrome consumer of `ConnectionSettingsPanel`.
+ * Shared by ClienteModal + Conexoes: full QR/config management for one WAHA
+ * connection line, presented as a modal.
+ */
+export function ConnectionDetailDialog({
+  line,
+  onClose,
+  onRequestDelete,
+  autoStart,
+}: {
+  line: WhatsAppConnectionLine;
+  onClose: () => void;
+  onRequestDelete: (line: WhatsAppConnectionLine) => void;
+  /** When true (just-created flow) trigger start immediately on mount. */
+  autoStart?: boolean;
+}) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <ConnectionSettingsPanel
+          line={line}
+          onRequestDelete={onRequestDelete}
+          onSaved={onClose}
+          autoStart={autoStart}
+        />
       </DialogContent>
     </Dialog>
   );

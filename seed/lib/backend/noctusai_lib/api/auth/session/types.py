@@ -73,6 +73,42 @@ class AuthContext(NamedTuple):
     api_token_id: UUID | None
 
 
+class SessionTokens(NamedTuple):
+    """Server-side-only token bundle for a user session.
+
+    This is the counterpart to :class:`AuthContext`: where ``AuthContext``
+    is the *caller-facing* identity that route handlers receive (and which
+    deliberately NEVER carries the Supabase tokens — see ``raw_token``), a
+    ``SessionTokens`` is what the :class:`SessionStore` hands to the
+    :class:`~noctusai_lib.api.auth.session.token_exchange.TokenExchanger`
+    so it can mint an RLS-scoped Supabase client for the request.
+
+    It is read/written by ``SessionStore.read_tokens`` / ``write_tokens``
+    ONLY — never returned from ``lookup`` and never serialized to the
+    browser. The refresh token (and the cached access token) live in the
+    store **encrypted at rest** (SEC-3); a ``SessionTokens`` holds the
+    *decrypted* values, alive only in process memory for the duration of a
+    token-exchange.
+
+    Fields:
+        refresh_token: The Supabase refresh token for this session. Used by
+            the exchanger to obtain a fresh access token near expiry. Supabase
+            rotates this on every refresh (reuse-detection), so the exchanger
+            MUST write the rotated value back (SEC-2).
+        access_token: The most-recently-minted Supabase access token, cached
+            so the vast majority of requests need NO upstream refresh call
+            (SEC-2). ``None`` before the first exchange.
+        access_expires_at: Unix epoch seconds at which ``access_token``
+            expires (Supabase ``Session.expires_at``). ``None`` when no access
+            token is cached. The exchanger refreshes only when within a small
+            skew of this time.
+    """
+
+    refresh_token: str
+    access_token: str | None
+    access_expires_at: int | None
+
+
 # ── Errors ───────────────────────────────────────────────────────────
 
 
@@ -98,6 +134,7 @@ class RevokedApiTokenError(Exception):
 
 __all__ = [
     "AuthContext",
+    "SessionTokens",
     "CallerKind",
     "ExpiredSessionError",
     "InvalidCredentialsError",

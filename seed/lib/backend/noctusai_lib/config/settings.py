@@ -45,6 +45,20 @@ class BaseAppSettings(BaseSettings):
     sentry_dsn: Optional[str] = None
     redis_url: Optional[str] = None
 
+    # App-held Fernet key (44 url-safe-base64 chars, from `generate_key()`)
+    # used to encrypt auth-session tokens AT REST in the shared fleet Redis
+    # (SEC-3 of the httpOnly-cookie-session roadmap). The Supabase refresh
+    # token is a long-lived full-impersonation credential; storing it
+    # plaintext in a Redis shared with the LLM cache + rate-limiter means a
+    # single Redis read harvests every user's credential. When set, the
+    # RedisSessionStore encrypts `refresh_token` + cached `access_token`
+    # before write and decrypts on read; when empty, tokens are stored
+    # plaintext (acceptable ONLY for the in-memory FakeSessionStore / local
+    # dev with no real refresh tokens — the factory refuses a Redis store
+    # without a key when `require_encryption` is set). Store OUT-OF-BAND
+    # from Redis (env var / secret manager); rotate via `MultiKeyDecryptor`.
+    session_encryption_key: str = ""
+
     # LLM usage tracking (Phase 15) — opt-in per product via env var.
     # When true, create_product_app() constructs a SupabaseUsageSink that
     # writes every `UsageEvent` to `<schema>.llm_usage`.
