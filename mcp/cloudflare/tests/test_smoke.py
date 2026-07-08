@@ -78,6 +78,7 @@ _EXPECTED_TOOLS = {
     "cloudflare.tunnel.delete",
     "cloudflare.tunnel.update_config",
     "cloudflare.cache.purge",
+    "cloudflare.rulesets.list",
     "cloudflare.diagnostics.connection_status",
 }
 
@@ -106,7 +107,7 @@ def _configured_settings(**over):
 
 def test_package_imports():
     from cloudflare import api, settings, types  # noqa: F401
-    from cloudflare.tools import cache, diagnostics, dns, tunnel, zones  # noqa: F401
+    from cloudflare.tools import cache, diagnostics, dns, rulesets, tunnel, zones  # noqa: F401
     from _kit import build_registry, typed_error  # noqa: F401
 
     assert hasattr(api, "request_json")
@@ -515,6 +516,54 @@ def test_cache_purge_nothing_to_purge_is_422():
         out = asyncio.run(cache_purge({"confirm": True}))
     req.assert_not_called()
     assert out["error"]["status"] == 422
+
+
+# ─── rulesets.list — read cache-rule overrides ───────────────────────────
+
+
+def test_rulesets_list_resolves_zone_and_fetches_phase_rules():
+    from cloudflare.tools.rulesets import rulesets_list
+
+    calls = []
+
+    def _env(method, path, **kw):
+        calls.append(path)
+        if path.endswith("/rulesets"):
+            return {"success": True, "result": [
+                {"id": "rs1", "name": "default", "phase": "http_request_cache_settings"}]}
+        if "entrypoint" in path:
+            return {"success": True, "result": {"rules": [
+                {"expression": "ends_with(http.request.uri.path, \".js\")",
+                 "action": "set_cache_settings"}]}}
+        if path == "/zones":  # zone name resolution
+            return {"success": True, "result": [{"id": "zABC"}]}
+        return {"success": True, "result": []}
+
+    with patch("cloudflare.tools.rulesets.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_envelope", side_effect=_env):
+        out = asyncio.run(rulesets_list({
+            "zone": "noctusai.com", "phase": "http_request_cache_settings",
+        }))
+    assert out["zone_id"] == "zABC"
+    assert out["rulesets"][0]["phase"] == "http_request_cache_settings"
+    assert out["phase_rules"][0]["action"] == "set_cache_settings"
+    assert any("entrypoint" in c for c in calls)
+
+
+def test_rulesets_list_zone_id_skips_lookup():
+    from cloudflare.tools.rulesets import rulesets_list
+
+    def _env(method, path, **kw):
+        assert path != "/zones"  # no name resolution when zone_id given
+        return {"success": True, "result": []}
+
+    with patch("cloudflare.tools.rulesets.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_envelope", side_effect=_env):
+        out = asyncio.run(rulesets_list({"zone_id": "zGiven"}))
+    assert out["zone_id"] == "zGiven"
+    assert out["phase_rules"] is None  # no phase requested
 
 
 # ─── Reads — shapes pinned to the documented CF v4 responses ─────────────

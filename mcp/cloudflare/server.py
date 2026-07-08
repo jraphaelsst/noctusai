@@ -18,6 +18,7 @@ Tool surface (dotted naming, all via the Cloudflare API v4):
 - cloudflare.tunnel.create / update_config         — WRITE, confirm-gated (412, account-scoped)
 - cloudflare.tunnel.delete                         — WRITE, confirm-gated, STRONGEST (irreversible, account-scoped)
 - cloudflare.cache.purge                           — WRITE, confirm-gated (412); needs token 'Zone > Cache Purge > Purge'
+- cloudflare.rulesets.list                         — READ-ONLY; list rulesets + a phase's rules (e.g. Cache Rules)
 - cloudflare.diagnostics.connection_status         — READ-ONLY, never-faked
 
 The stdio bootstrap (sys.path trick, in-tree seed pin, stderr logging,

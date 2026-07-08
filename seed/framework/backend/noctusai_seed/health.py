@@ -45,6 +45,7 @@ just removes the pod from the load-balancer rotation.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Protocol, runtime_checkable
@@ -170,6 +171,25 @@ def mount_health_endpoints(app: FastAPI, config: HealthEndpointConfig) -> None:
         ok = all(c["ok"] for c in checks)
         body = {"ok": ok, "checks": checks, "timestamp": _now_iso()}
         return JSONResponse(body, status_code=200 if ok else 503)
+
+    @app.get("/_version", tags=["Ops"], include_in_schema=False)
+    async def _version():  # pragma: no cover — covered by TestClient calls
+        # Deploy-provenance: WHAT seed / product / build is ACTUALLY running.
+        # Lets anyone verify a deploy landed (compare deployed seed_sha to the
+        # source) over plain HTTP — no shell/image access needed. The 2026-07-08
+        # base-image-staleness debug needed exactly this signal.
+        try:
+            from noctusai_seed._version import __version__ as seed_sha
+        except Exception:  # noqa: BLE001 — provenance must never 500
+            seed_sha = "unknown"
+        return JSONResponse({
+            "product": getattr(app, "title", None),
+            "product_version": getattr(app, "version", None),
+            "seed_sha": seed_sha,
+            # Baked at image build (Dockerfile `ENV GIT_SHA`); None if unbaked.
+            "build_sha": os.environ.get("GIT_SHA") or os.environ.get("NOCTUS_BUILD_SHA"),
+            "timestamp": _now_iso(),
+        })
 
     setattr(app, _MOUNTED_FLAG, True)
 

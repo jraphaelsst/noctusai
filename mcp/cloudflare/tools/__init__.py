@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import cache, diagnostics, dns, tunnel, zones
+from . import cache, diagnostics, dns, rulesets, tunnel, zones
 
-LEAF_MODULES = (cache, diagnostics, dns, tunnel, zones)
+LEAF_MODULES = (cache, diagnostics, dns, rulesets, tunnel, zones)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 
