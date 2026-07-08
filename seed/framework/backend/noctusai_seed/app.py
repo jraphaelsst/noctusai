@@ -407,18 +407,31 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
+    def _no_store(response):
+        # STRONGER than `no-cache` — for a service-worker script that must be
+        # fetched fresh from origin every time and NEVER stored by any cache.
+        # WHY not `no-cache`: a CDN (CloudFlare) treats `no-cache` LOOSELY for
+        # static file EXTENSIONS (.js) — it still edge-caches the response and
+        # stamps its own Browser-Cache-TTL (observed 2026-07-08: erp `sw.js`
+        # came back `cf-cache-status: HIT, max-age=14400` despite the origin
+        # sending `no-cache`, while the `.html` shell — not a default-cached
+        # extension — kept its `no-cache`). `no-store` is the unambiguous HTTP
+        # directive that forbids ANY cache (browser or shared/CDN) from storing
+        # the response, which CloudFlare's default behavior honors — so the
+        # origin stays the SINGLE SOURCE OF TRUTH for the SW update path,
+        # fleet-wide, with NO per-file CDN rule. See
+        # `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`.
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+
     def _is_service_worker(path: str) -> bool:
         # A service-worker script (and its registration/workbox helpers) must
-        # be revalidated on every request — it is the ONLY update path for a
-        # PWA, and unlike a hashed asset its FILENAME is stable across builds.
-        # If a proxy/CDN (CloudFlare) or browser serves a STALE sw.js, the SW
-        # update check never sees the new worker and the client is pinned to
-        # the old precached bundle FOREVER (stale labels + already-fixed bugs;
-        # the erp-imobiliario / Marina incident, 2026-07-08). This also lets a
-        # `selfDestroying` retirement worker actually reach stuck clients. The
-        # browser already bypasses its own HTTP cache for the SW script; this
-        # header stops the intermediaries from holding it. See
-        # `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`.
+        # be fetched fresh every time — it is the ONLY update path for a PWA,
+        # and unlike a hashed asset its FILENAME is stable across builds. Served
+        # `no-store` (see `_no_store`) so no browser OR CDN can pin a STALE
+        # sw.js and strand a client on an old bundle FOREVER (the
+        # erp-imobiliario / Marina incident, 2026-07-08); also lets a
+        # `selfDestroying` retirement worker reach stuck clients.
         leaf = path.rsplit("/", 1)[-1]
         return (
             leaf in ("sw.js", "service-worker.js", "registerSW.js")
@@ -433,10 +446,10 @@ def _mount_spa(app: FastAPI, spa_dir: Path) -> None:
                 # direct /index.html — that's the shell; never cache it.
                 if path in ("", ".", "index.html") or path.endswith("/index.html"):
                     return _no_cache(response)
-                # The service-worker script is the PWA update path — never let
-                # an intermediary cache pin it (see `_is_service_worker`).
+                # The service-worker script is the PWA update path — no cache
+                # (browser OR CDN) may store it (see `_no_store`).
                 if _is_service_worker(path):
-                    return _no_cache(response)
+                    return _no_store(response)
                 return response
             except StarletteHTTPException as exc:
                 # Compose both protections:

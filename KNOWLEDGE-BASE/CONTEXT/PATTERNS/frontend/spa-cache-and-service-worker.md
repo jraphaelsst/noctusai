@@ -1,13 +1,31 @@
 # SPA cache & service workers — never pin a client to a stale bundle
 
-> **Rule.** The SPA **shell** (`index.html`) and any **service-worker script**
-> (`sw.js` / `registerSW.js` / `workbox-*.js`) are served **`Cache-Control:
-> no-cache`** — they have stable filenames and are the only update paths;
-> content-hashed `/assets/*` stay immutably cacheable. **Products do NOT ship a
+> **Rule.** The SPA **shell** (`index.html`) is served `Cache-Control: no-cache`;
+> any **service-worker script** (`sw.js` / `registerSW.js` / `workbox-*.js`) is
+> served the STRONGER **`no-store`** (see "Why no-store" below) — both have
+> stable filenames and are the only update paths; content-hashed `/assets/*`
+> stay immutably cacheable. The **origin is the single source of truth** for
+> cache semantics — never a per-file CDN rule. **Products do NOT ship a
 > precaching service worker** — an always-online app gains ~nothing and a SW
 > bypasses HTTP caching, so a stale worker pins clients to an OLD bundle. If a
 > product genuinely needs offline, it declares it (`// noc-allow:
 > service-worker — <rationale>`); to retire one, ship `selfDestroying: true`.
+
+> **Why `no-store` (not `no-cache`) for the SW script — the origin-authoritative,
+> scalable fix.** A CDN (CloudFlare) treats `no-cache` LOOSELY for static file
+> *extensions* (`.js`): it still edge-caches the response and stamps its own
+> Browser-Cache-TTL. Measured 2026-07-08: erp `sw.js` came back
+> `cf-cache-status: HIT, cache-control: max-age=14400` even though the origin
+> sent `no-cache` — while the `.html` shell (not a default-cached extension)
+> kept its `no-cache`. The **wrong** fix is a per-file CDN Cache Rule
+> (per-file, per-product, infra-config drift — doesn't scale). The **right**
+> fix is at the origin, in the seed: send **`no-store`** — the unambiguous HTTP
+> directive that forbids *any* cache (browser or shared/CDN) from storing the
+> response, which CloudFlare's default behavior honors. One place
+> (`serve_spa`), version-controlled, every product inherits it by construction.
+> (If a CDN is ever configured to force-cache a static extension regardless of
+> origin headers, THAT is the misconfiguration to fix — set the zone to respect
+> origin `Cache-Control`; still never a per-file rule.)
 
 Born 2026-07-08 (erp-imobiliario / "Marina" incident): one user saw the
 pre-rename **"Certificados"** label (current: "Certidões") **and** an
@@ -46,12 +64,15 @@ refreshing helps (a plain reload does not dislodge an active SW).
 
 ## The rule, three enforced legs
 
-1. **Shell + SW scripts are `no-cache`** — `serve_spa`'s `_SPAStaticFiles`
+1. **Shell `no-cache`, SW scripts `no-store`** — `serve_spa`'s `_SPAStaticFiles`
    (`seed/framework/backend/noctusai_seed/app.py`) applies `no-cache,
-   must-revalidate` to `index.html` (all shell paths + the SPA fallback) **and**
-   to `_is_service_worker(path)` (`sw.js` / `service-worker.js` /
-   `registerSW.js` / `workbox-*.js`). Hashed `/assets/*` are untouched. Guarded
-   by `test_service_worker_scripts_are_no_cache`.
+   must-revalidate` (`_no_cache`) to `index.html` (all shell paths + the SPA
+   fallback) **and** the stronger `no-store, no-cache, must-revalidate`
+   (`_no_store`) to `_is_service_worker(path)` (`sw.js` / `service-worker.js` /
+   `registerSW.js` / `workbox-*.js`) — because a CDN edge-caches `.js` under
+   `no-cache` but honors `no-store` (see "Why no-store" above). Hashed
+   `/assets/*` are untouched. Guarded by
+   `test_service_worker_scripts_are_no_cache`.
 2. **No undeclared precaching SW** — the `check_product_service_worker` keeper
    (severity `high`, `mcp/.../compliance.py`) flags a product whose
    `frontend/vite.config.{ts,js}` references `VitePWA(` / `vite-plugin-pwa`
