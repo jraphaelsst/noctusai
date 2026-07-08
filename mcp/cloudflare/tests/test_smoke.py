@@ -77,6 +77,7 @@ _EXPECTED_TOOLS = {
     "cloudflare.tunnel.create",
     "cloudflare.tunnel.delete",
     "cloudflare.tunnel.update_config",
+    "cloudflare.cache.purge",
     "cloudflare.diagnostics.connection_status",
 }
 
@@ -88,6 +89,7 @@ _WRITE_GATES = {
     "cloudflare.tunnel.create",
     "cloudflare.tunnel.delete",
     "cloudflare.tunnel.update_config",
+    "cloudflare.cache.purge",
 }
 
 
@@ -104,7 +106,7 @@ def _configured_settings(**over):
 
 def test_package_imports():
     from cloudflare import api, settings, types  # noqa: F401
-    from cloudflare.tools import diagnostics, dns, tunnel, zones  # noqa: F401
+    from cloudflare.tools import cache, diagnostics, dns, tunnel, zones  # noqa: F401
     from _kit import build_registry, typed_error  # noqa: F401
 
     assert hasattr(api, "request_json")
@@ -273,10 +275,13 @@ def test_all_writes_confirm_gated_no_side_effect():
         tunnel_delete,
         tunnel_update_config,
     )
+    from cloudflare.tools.cache import cache_purge
 
     s = _configured_settings()
     cases = [
         (zones_create, {"name": "x.com"}, "cloudflare.tools.zones.get_settings"),
+        (cache_purge, {"files": ["https://x.com/sw.js"]},
+         "cloudflare.tools.cache.get_settings"),
         (dns_create_record,
          {"zone_id": "z", "type": "A", "name": "a.x.com", "content": "1.2.3.4"},
          "cloudflare.tools.dns.get_settings"),
@@ -418,6 +423,98 @@ def test_tunnel_update_config_confirmed_wraps_ingress_and_puts():
     assert captured["path"] == "/accounts/acct123/cfd_tunnel/tid/configurations"
     assert captured["body"] == {"config": {"ingress": ingress}}
     assert out["ok"] is True
+
+
+# ─── cache.purge — resolve zone, POST purge_cache, guards ────────────────
+
+
+def test_cache_purge_files_confirmed_resolves_zone_and_posts():
+    from cloudflare.tools.cache import cache_purge
+
+    posted = {}
+
+    def _env(method, path, **kw):  # zone lookup
+        return {"success": True, "result": [{"id": "zABC", "name": "noctusai.com"}]}
+
+    def _post(method, path, **kw):
+        posted.update(method=method, path=path, body=kw.get("body"))
+        return {"id": "purge1"}
+
+    with patch("cloudflare.tools.cache.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_envelope", side_effect=_env), patch(
+        "cloudflare.api.request_json", side_effect=_post):
+        out = asyncio.run(cache_purge({
+            "zone": "noctusai.com",
+            "files": ["https://erp.noctusai.com/sw.js"],
+            "confirm": True,
+        }))
+    assert posted["method"] == "POST"
+    assert posted["path"] == "/zones/zABC/purge_cache"
+    assert posted["body"] == {"files": ["https://erp.noctusai.com/sw.js"]}
+    assert out["ok"] is True
+    assert out["zone_id"] == "zABC"
+    assert out["purged_everything"] is False
+
+
+def test_cache_purge_everything_confirmed_posts_flag():
+    from cloudflare.tools.cache import cache_purge
+
+    posted = {}
+
+    def _post(method, path, **kw):
+        posted.update(path=path, body=kw.get("body"))
+        return {"id": "purge2"}
+
+    with patch("cloudflare.tools.cache.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_json", side_effect=_post):
+        out = asyncio.run(cache_purge({
+            "zone_id": "zXYZ", "purge_everything": True, "confirm": True,
+        }))
+    assert posted["path"] == "/zones/zXYZ/purge_cache"
+    assert posted["body"] == {"purge_everything": True}
+    assert out["ok"] is True and out["purged_everything"] is True
+
+
+def test_cache_purge_zone_id_skips_lookup():
+    """When zone_id is passed, no zone lookup (request_envelope) happens."""
+    from cloudflare.tools.cache import cache_purge
+
+    with patch("cloudflare.tools.cache.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_envelope") as env, patch(
+        "cloudflare.api.request_json", return_value={"id": "p"}):
+        out = asyncio.run(cache_purge({
+            "zone_id": "zGiven", "files": ["https://x.com/a.js"], "confirm": True,
+        }))
+    env.assert_not_called()
+    assert out["zone_id"] == "zGiven"
+
+
+def test_cache_purge_files_and_everything_is_422():
+    from cloudflare.tools.cache import cache_purge
+
+    with patch("cloudflare.tools.cache.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_json") as req:
+        out = asyncio.run(cache_purge({
+            "files": ["https://x.com/a"], "purge_everything": True,
+            "confirm": True,
+        }))
+    req.assert_not_called()
+    assert out["error"]["status"] == 422
+
+
+def test_cache_purge_nothing_to_purge_is_422():
+    from cloudflare.tools.cache import cache_purge
+
+    with patch("cloudflare.tools.cache.get_settings",
+               return_value=_configured_settings()), patch(
+        "cloudflare.api.request_json") as req:
+        out = asyncio.run(cache_purge({"confirm": True}))
+    req.assert_not_called()
+    assert out["error"]["status"] == 422
 
 
 # ─── Reads — shapes pinned to the documented CF v4 responses ─────────────

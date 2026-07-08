@@ -358,6 +358,52 @@ class ConnectionStatusOutput(BaseModel):
     error: Optional[dict] = None
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# CACHE
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class CachePurgeInput(BaseModel):
+    """Purge the Cloudflare edge cache for a zone.
+
+    Confirm-gated: purging is a production edge action (a brief cache-cold
+    period as assets re-fetch from origin). Purge by explicit URL list
+    (``files``) — the safe default — or the whole zone (``purge_everything``,
+    the STRONGEST form). Requires the API token to carry the
+    ``Zone > Cache Purge > Purge`` permission.
+    """
+
+    zone: str = Field(
+        default="noctusai.com",
+        description="Zone (domain) name to purge; resolved to a zone id. "
+        "Pass `zone_id` directly to skip the lookup.",
+    )
+    zone_id: Optional[str] = Field(
+        default=None,
+        description="Zone id (32-hex). When set, wins over `zone` (no lookup).",
+    )
+    files: Optional[List[str]] = Field(
+        default=None,
+        description="Absolute URLs to purge (e.g. "
+        "'https://erp.noctusai.com/sw.js'). Up to 30 per call. Ignored when "
+        "`purge_everything` is true.",
+    )
+    purge_everything: bool = Field(
+        default=False,
+        description="Purge the ENTIRE zone cache (STRONGEST). Mutually "
+        "exclusive with `files`.",
+    )
+    confirm: bool = _CONFIRM
+
+
+class CachePurgeOutput(BaseModel):
+    ok: bool = False
+    zone_id: Optional[str] = None
+    purged_files: Optional[List[str]] = None
+    purged_everything: bool = False
+    error: Optional[dict] = None
+
+
 __all__ = [
     # zones
     "ZonesListInput",
@@ -389,4 +435,7 @@ __all__ = [
     # diagnostics
     "ConnectionStatusInput",
     "ConnectionStatusOutput",
+    # cache
+    "CachePurgeInput",
+    "CachePurgeOutput",
 ]
