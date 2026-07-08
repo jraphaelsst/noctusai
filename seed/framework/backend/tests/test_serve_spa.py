@@ -192,8 +192,12 @@ def test_service_worker_scripts_are_no_cache(settings, spa_dir):
     for sw_path in ("/sw.js", "/registerSW.js", "/workbox-abc123.js"):
         r = client.get(sw_path)
         assert r.status_code == 200, sw_path
-        assert "no-cache" in r.headers.get("cache-control", "").lower(), (
-            f"{sw_path} must be no-cache (PWA update path)"
+        # `no-store` (stronger than no-cache) — a CDN treats `no-cache` loosely
+        # for .js and edge-caches it anyway (the 2026-07-08 CF override); only
+        # `no-store` reliably keeps browser AND CDN from storing the SW script.
+        assert "no-store" in r.headers.get("cache-control", "").lower(), (
+            f"{sw_path} must be no-store (PWA update path; CDN honors no-store "
+            "where it overrides no-cache for .js)"
         )
 
     # A normal hashed asset stays cacheable (guards against over-broad matching).
