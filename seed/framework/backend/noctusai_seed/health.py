@@ -179,7 +179,7 @@ def mount_health_endpoints(app: FastAPI, config: HealthEndpointConfig) -> None:
         # source) over plain HTTP — no shell/image access needed. The 2026-07-08
         # base-image-staleness debug needed exactly this signal.
         try:
-            from noctusai_seed._version import __version__ as seed_sha
+            from noctusai_seed._version import __seed_version__ as seed_sha
         except Exception:  # noqa: BLE001 — provenance must never 500
             seed_sha = "unknown"
         return JSONResponse({
