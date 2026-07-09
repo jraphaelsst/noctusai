@@ -13,8 +13,13 @@ Resolution order at import-time:
    so the keeper can tell "this came from live git, not from an install
    stamp." Still useful for sanity; loses the stale-install signal.
 
-3. **Unknown** — no `_version_static`, no git on PATH. Return "unknown".
-   Keeper treats this as a hard compliance failure (can't verify
+3. **Build-env fallback** — a built product image has no git on PATH and no
+   committed static stamp, but the image bakes its build sha as `ENV GIT_SHA`
+   (`Dockerfile.backend-base`). Read it and tag the result `build:<sha>`. This
+   is the slim-runtime provenance tier (what `/_version` reports in prod).
+
+4. **Unknown** — no `_version_static`, no git, no build-env sha. Return
+   "unknown". Keeper treats this as a hard compliance failure (can't verify
    propagation at all).
 
 This resolution runs ONCE per Python process (module import time).
@@ -22,6 +27,7 @@ This resolution runs ONCE per Python process (module import time).
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -64,6 +70,20 @@ def _read_git() -> str | None:
     return None
 
 
+def _read_build_env() -> str | None:
+    """The image's build sha, baked as ``ENV GIT_SHA`` in Dockerfile.backend-base.
+
+    This is the SLIM-RUNTIME tier: a built product image has no git on PATH and
+    no committed static stamp, so tiers 1-2 both miss and resolution used to hit
+    "unknown". The build arg IS the image's provenance — use it. Ignores the
+    Dockerfile ARG default ``"dev"`` (an unstamped/local build).
+    """
+    sha = os.environ.get("GIT_SHA") or os.environ.get("NOCTUS_BUILD_SHA")
+    if sha and sha.strip() and sha.strip() != "dev":
+        return sha.strip()
+    return None
+
+
 def _resolve() -> str:
     static = _read_static()
     if static is not None:
@@ -71,6 +91,9 @@ def _resolve() -> str:
     live = _read_git()
     if live is not None:
         return f"runtime:{live}"
+    build = _read_build_env()
+    if build is not None:
+        return f"build:{build}"
     return "unknown"
 
 

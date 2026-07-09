@@ -361,8 +361,42 @@ class TestVersionEndpoint:
         # Always-present keys — the provenance contract.
         for k in ("product", "product_version", "seed_sha", "build_sha", "timestamp"):
             assert k in body, k
-        # seed_sha resolves (a sha or the documented fallbacks), never missing.
-        assert body["seed_sha"]
+        # seed_sha must actually RESOLVE — not the "unknown" sentinel. (Regression
+        # guard for the 2026-07-08 bug: the endpoint imported `__version__`, but
+        # the module exports `__seed_version__` — the ImportError silently
+        # produced "unknown". The test env has git, so it resolves to
+        # `runtime:<sha>`.)
+        assert body["seed_sha"] and body["seed_sha"] != "unknown", body["seed_sha"]
+
+    def test_seed_version_export_name_is_importable(self):
+        """The endpoint imports `__seed_version__` — assert that's the real
+        export (a wrong name silently degrades to 'unknown')."""
+        from noctusai_seed._version import __seed_version__
+        assert isinstance(__seed_version__, str) and __seed_version__
+
+    def test_resolve_build_env_tier(self, monkeypatch):
+        """Slim-image tier: no static, no git → GIT_SHA env → `build:<sha>`."""
+        import noctusai_seed._version as v
+        monkeypatch.setattr(v, "_read_static", lambda: None)
+        monkeypatch.setattr(v, "_read_git", lambda: None)
+        monkeypatch.setenv("GIT_SHA", "deadbeef123")
+        assert v._resolve() == "build:deadbeef123"
+
+    def test_resolve_unknown_only_when_all_tiers_miss(self, monkeypatch):
+        import noctusai_seed._version as v
+        monkeypatch.setattr(v, "_read_static", lambda: None)
+        monkeypatch.setattr(v, "_read_git", lambda: None)
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        monkeypatch.delenv("NOCTUS_BUILD_SHA", raising=False)
+        assert v._resolve() == "unknown"
+
+    def test_resolve_ignores_dockerfile_arg_default(self, monkeypatch):
+        """`GIT_SHA=dev` (the Dockerfile ARG default) is NOT real provenance."""
+        import noctusai_seed._version as v
+        monkeypatch.setattr(v, "_read_static", lambda: None)
+        monkeypatch.setattr(v, "_read_git", lambda: None)
+        monkeypatch.setenv("GIT_SHA", "dev")
+        assert v._resolve() == "unknown"
 
     def test_version_reflects_app_title_and_version(self):
         app = FastAPI(title="ERP", version="1.2.3")
