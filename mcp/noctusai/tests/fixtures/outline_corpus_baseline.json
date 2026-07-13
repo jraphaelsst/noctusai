@@ -27,7 +27,7 @@
   "products/core/frontend/src/components/NotificationBell.tsx": 3,
   "products/core/frontend/src/components/layout/CoreLayout.tsx": 1,
   "products/core/frontend/src/components/layout/Layout.tsx": 2,
-  "products/core/frontend/src/lib/api.ts": 9,
+  "products/core/frontend/src/lib/api.ts": 12,
   "products/core/frontend/src/lib/auth-context.tsx": 7,
   "products/core/frontend/src/lib/product-icon.tsx": 4,
   "products/core/frontend/src/lib/seed-auth-adapter.tsx": 2,
