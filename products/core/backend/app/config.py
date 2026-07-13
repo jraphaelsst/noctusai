@@ -13,8 +13,10 @@ from noctusai_seed import ProductSettings
 class Settings(ProductSettings):
     """Core platform specific settings."""
 
-    # JWT / SSO expirations (core-specific)
-    jwt_expiration_minutes: int = 60 * 24  # 24h
+    # SSO token TTL — LOAD-BEARING: read by the seed's
+    # `noctusai_lib.api.auth.create_sso_token` (`settings.sso_token_expiration_minutes`)
+    # when core mints a cross-product SSO token. `jwt_expiration_minutes`
+    # (sibling field, dropped here) had no such consumer.
     sso_token_expiration_minutes: int = 5  # short-lived
 
     # CORS — registry-driven union of every product frontend (core hosts the SSO bridge).

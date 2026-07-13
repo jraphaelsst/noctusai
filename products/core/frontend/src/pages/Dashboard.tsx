@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { NotificationBell } from '../components/NotificationBell';
@@ -78,7 +79,14 @@ export function Dashboard() {
       const res = await api.post('/api/sso/token', { product_slug: product.slug });
       window.open(`${product.url_base}/sso?token=${res.sso_token}`, '_blank');
     } catch (err: any) {
-      alert(err.message);
+      // A dead session (401) is already handled by the seed api-client's
+      // `onUnauthenticated` seam (lib/api.ts) — it redirects to `/login`
+      // before this catch matters. Any OTHER failure (5xx, network, etc.)
+      // still needs visible, non-blocking feedback — the seed's mounted
+      // <Toaster/> (sonner), not a blocking native alert().
+      if (!/^\[401\]/.test(err?.message ?? '')) {
+        toast.error('Não foi possível abrir o produto', { description: err.message });
+      }
     } finally {
       setLaunching(null);
     }

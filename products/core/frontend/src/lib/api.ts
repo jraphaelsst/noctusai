@@ -16,9 +16,59 @@ function getToken(): string | null {
   return localStorage.getItem('noctus_token');
 }
 
+// Re-entrancy guard: a burst of concurrent 401s on one dead session must
+// collapse to ONE redirect, not one per in-flight request (mirrors the
+// seed's own `handleDeadSession` in `seed/framework/frontend/src/infra.tsx`).
+let _handlingDeadSession = false;
+
+/**
+ * Refresh the access token via core's stored refresh token. Raw `fetch`
+ * (not the `api`/`client` object being constructed below) — routing this
+ * through the client would re-enter `onTokenExpired` if the refresh call
+ * itself 401s.
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  try {
+    const response = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!data.access_token) return null;
+    setToken(data.access_token);
+    if (data.refresh_token) setRefreshToken(data.refresh_token);
+    return data.access_token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Dead session: the server rejected auth and refresh couldn't recover it.
+ * Clear stored tokens + bounce to `/login` instead of stranding the user on
+ * a shell where every subsequent call 401s. Never redirects while already
+ * on `/login` (no loop); re-entrancy-guarded so concurrent 401s collapse to
+ * one redirect. Guard resets after a few seconds so a LATER genuine dead
+ * session (re-login → expiry again) can still redirect.
+ */
+function handleDeadSession(): void {
+  if (_handlingDeadSession) return;
+  if (typeof window === 'undefined' || window.location.pathname.startsWith('/login')) return;
+  _handlingDeadSession = true;
+  clearToken();
+  window.location.assign('/login');
+  window.setTimeout(() => { _handlingDeadSession = false; }, 3000);
+}
+
 const client = createApiClient({
   getBaseUrl: () => API_URL,
   getAuthToken: async () => getToken(),
+  onTokenExpired: refreshAccessToken,
+  onUnauthenticated: handleDeadSession,
 });
 
 export const api = client;
