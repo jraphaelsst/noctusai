@@ -928,6 +928,35 @@ META_IA_OAUTH_SCOPES: tuple[str, ...] = (
 )
 
 
+# ─── Meta OAuth DI seams ──────────────────────────────────────────────────────
+# Meta has no single provider OBJECT to inject (unlike GoogleProvider for
+# YouTube/Gmail/Drive) — its collaborators are the seed's free-function
+# exchange helpers + the MetaOAuthAdapter class. Mirror the same DI-seam shape
+# anyway (get_yt_client_factory returns a callable; these do too) so tests
+# override via app.dependency_overrides instead of monkeypatching this
+# module's own imported symbols (KB § PATTERNS/compliance/testing.md — "no
+# monkey-patching, incl. tests"; patching our own collaborators here was a
+# false-green: the real exchange/adapter path never ran).
+def get_meta_code_exchange():
+    """DI seam: the Meta code→token exchange callable
+    (``exchange_code_for_token``). Tests override to inject a fake exchange
+    function instead of patching this module's import."""
+    return exchange_code_for_token
+
+
+def get_meta_long_lived_exchange():
+    """DI seam: the Meta short→long-lived token exchange callable
+    (``exchange_for_long_lived_bundle``)."""
+    return exchange_for_long_lived_bundle
+
+
+def get_meta_oauth_adapter_factory():
+    """DI seam: the ``MetaOAuthAdapter`` constructor used to probe /me +
+    Pages + IG accounts during the callback. Tests override to return a
+    fake adapter factory."""
+    return MetaOAuthAdapter
+
+
 def _build_ia_meta_redirect_uri(cfg: SocialWiringSettings) -> str:
     """Redirect URI for the per-client Meta IA OAuth flow.
 
@@ -1033,6 +1062,9 @@ def meta_oauth_callback(
     error_description: Optional[str] = Query(default=None),
     cfg: SocialWiringSettings = Depends(get_settings),
     svc: IntegrationAccountService = Depends(get_account_service),
+    code_exchange=Depends(get_meta_code_exchange),
+    long_lived_exchange=Depends(get_meta_long_lived_exchange),
+    adapter_factory=Depends(get_meta_oauth_adapter_factory),
 ):
     """Facebook's redirect target for the multi-account per-client Meta flow.
 
@@ -1045,7 +1077,11 @@ def meta_oauth_callback(
     ``/clientes?account_created=<id>``.
 
     Uses the admin client throughout (no JWT in Facebook's redirect —
-    mirrors ``youtube_oauth_callback``).
+    mirrors ``youtube_oauth_callback``). ``code_exchange`` /
+    ``long_lived_exchange`` / ``adapter_factory`` are DI seams (mirroring
+    ``get_yt_client_factory``) — tests override them via
+    ``app.dependency_overrides`` instead of monkeypatching this module's
+    own imported symbols.
     """
     if error:
         detail = f"OAuth flow returned an error: {error}"
@@ -1098,7 +1134,7 @@ def meta_oauth_callback(
     # org-level flow uses; raises MetaGraphError on a Graph error envelope,
     # never a silent falsey result).
     try:
-        short_token = exchange_code_for_token(
+        short_token = code_exchange(
             code=code,
             app_id=app_id,
             app_secret=app_secret,
@@ -1119,7 +1155,7 @@ def meta_oauth_callback(
 
     # 2) short → long-lived user token.
     try:
-        long_bundle = exchange_for_long_lived_bundle(
+        long_bundle = long_lived_exchange(
             short_token=short_token,
             app_id=app_id,
             app_secret=app_secret,
@@ -1146,7 +1182,7 @@ def meta_oauth_callback(
     # "the bearer token this adapter authenticates every call with" — the
     # token itself is the per-client long-lived USER token, not an actual
     # Meta System User Token; the adapter draws no distinction for reads.
-    probe_adapter = MetaOAuthAdapter(
+    probe_adapter = adapter_factory(
         system_user_token=long_token, graph_version=cfg.meta_graph_api_version
     )
     user_id: Optional[str] = None

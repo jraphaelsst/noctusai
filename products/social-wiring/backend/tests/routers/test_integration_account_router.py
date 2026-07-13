@@ -21,7 +21,6 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -1171,11 +1170,12 @@ class TestMetaOAuthStart:
 
 
 class TestMetaOAuthCallback:
-    """GET /accounts/meta/oauth/callback — exchanges code→token via the seed
-    helpers (patched at the httpx/Graph-API boundary — a genuinely external
-    service call, not our own code, per KB § PATTERNS/compliance/testing.md)
-    and probes /me + pages + IG via a stubbed ``MetaOAuthAdapter`` (same
-    external-call boundary; the seed adapter's Graph calls, not our logic)."""
+    """GET /accounts/meta/oauth/callback — injects fake code/long-lived
+    exchange callables + a fake MetaOAuthAdapter factory via the router's
+    DI seams (get_meta_code_exchange / get_meta_long_lived_exchange /
+    get_meta_oauth_adapter_factory), mirroring the YouTube/Gmail callback
+    tests. No monkey-patching of this module's own imported symbols per
+    KB § PATTERNS/compliance/testing.md."""
 
     @staticmethod
     def _fake_cfg():
@@ -1208,48 +1208,55 @@ class TestMetaOAuthCallback:
 
             return [InstagramAccount(id="IG1", username="test_ig")]
 
-    def _patched_exchange(self):
+    def _meta_overrides(self, app, settings_mod):
+        """Build the common DI override dict for Meta OAuth callback tests
+        (mirrors ``TestGmailOAuthCallback._gmail_overrides``): fake
+        code/long-lived exchange callables + a fake adapter factory,
+        injected via the router's DI seams — no monkeypatching of this
+        module's own imported symbols."""
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_meta_code_exchange,
+            get_meta_long_lived_exchange,
+            get_meta_oauth_adapter_factory,
+        )
         from noctusai_lib.integrations.meta.types import TokenBundle
 
-        return (
-            patch(
-                "app.routers.integration_accounts_router.exchange_code_for_token",
-                return_value="SHORT-TOKEN",
-            ),
-            patch(
-                "app.routers.integration_accounts_router.exchange_for_long_lived_bundle",
-                return_value=TokenBundle(
+        fake_cfg = self._fake_cfg()
+        return {
+            get_settings: lambda: fake_cfg,
+            get_meta_code_exchange: lambda: (lambda **kw: "SHORT-TOKEN"),
+            get_meta_long_lived_exchange: lambda: (
+                lambda **kw: TokenBundle(
                     access_token="LONG-TOKEN",
                     token_type="bearer",
                     expires_in=5184000,
-                ),
+                )
             ),
-            patch(
-                "app.routers.integration_accounts_router.MetaOAuthAdapter",
-                side_effect=lambda **kw: self._FakeProbeAdapter(**kw),
+            get_meta_oauth_adapter_factory: lambda: (
+                lambda **kw: self._FakeProbeAdapter(**kw)
             ),
-        )
+        }
 
     def test_callback_creates_account_with_ig_label(self, client, ia_service):
-        from app.dependencies import get_settings
+        from app.config import settings as _settings
         from app.main import app
 
-        fake_cfg = self._fake_cfg()
-        prev = app.dependency_overrides.get(get_settings)
-        app.dependency_overrides[get_settings] = lambda: fake_cfg
-        p1, p2, p3 = self._patched_exchange()
+        overrides = self._meta_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
         try:
-            with p1, p2, p3:
-                state = f"{_ORG_A}:nonce123"
-                resp = client.get(
-                    "/api/integrations/accounts/meta/oauth/callback"
-                    f"?code=auth-code&state={state}",
-                    follow_redirects=False,
-                )
+            state = f"{_ORG_A}:nonce123"
+            resp = client.get(
+                "/api/integrations/accounts/meta/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
         finally:
-            app.dependency_overrides.pop(get_settings, None)
-            if prev is not None:
-                app.dependency_overrides[get_settings] = prev
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
 
         assert resp.status_code in (302, 303), resp.text
         location = resp.headers.get("location", "")
@@ -1265,27 +1272,26 @@ class TestMetaOAuthCallback:
         assert acct.metadata.get("user_id") == "USER1"
 
     def test_callback_reconnect_same_channel_is_idempotent(self, client, ia_service):
-        from app.dependencies import get_settings
+        from app.config import settings as _settings
         from app.main import app
 
-        fake_cfg = self._fake_cfg()
-        prev = app.dependency_overrides.get(get_settings)
-        app.dependency_overrides[get_settings] = lambda: fake_cfg
-        p1, p2, p3 = self._patched_exchange()
+        overrides = self._meta_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
         try:
-            with p1, p2, p3:
-                state = f"{_ORG_A}:nonce-reconnect"
-                for _ in range(2):
-                    resp = client.get(
-                        "/api/integrations/accounts/meta/oauth/callback"
-                        f"?code=auth-code&state={state}",
-                        follow_redirects=False,
-                    )
-                    assert resp.status_code in (302, 303), resp.text
+            state = f"{_ORG_A}:nonce-reconnect"
+            for _ in range(2):
+                resp = client.get(
+                    "/api/integrations/accounts/meta/oauth/callback"
+                    f"?code=auth-code&state={state}",
+                    follow_redirects=False,
+                )
+                assert resp.status_code in (302, 303), resp.text
         finally:
-            app.dependency_overrides.pop(get_settings, None)
-            if prev is not None:
-                app.dependency_overrides[get_settings] = prev
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
 
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
         same = [a for a in accounts if a.metadata.get("channel_id") == "IG1"]
@@ -1294,25 +1300,24 @@ class TestMetaOAuthCallback:
     def test_callback_with_client_id_links_account(self, client, ia_service):
         """State's third segment (client_id) round-trips onto the created
         account — mirrors the YouTube client_id round-trip."""
-        from app.dependencies import get_settings
+        from app.config import settings as _settings
         from app.main import app
 
-        fake_cfg = self._fake_cfg()
-        prev = app.dependency_overrides.get(get_settings)
-        app.dependency_overrides[get_settings] = lambda: fake_cfg
-        p1, p2, p3 = self._patched_exchange()
+        overrides = self._meta_overrides(app, _settings)
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
         try:
-            with p1, p2, p3:
-                state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
-                resp = client.get(
-                    "/api/integrations/accounts/meta/oauth/callback"
-                    f"?code=auth-code&state={state}",
-                    follow_redirects=False,
-                )
+            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            resp = client.get(
+                "/api/integrations/accounts/meta/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
         finally:
-            app.dependency_overrides.pop(get_settings, None)
-            if prev is not None:
-                app.dependency_overrides[get_settings] = prev
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
 
         assert resp.status_code in (302, 303), resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
