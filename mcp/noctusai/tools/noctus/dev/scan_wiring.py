@@ -70,6 +70,24 @@ _FE_EXTS: tuple[str, ...] = (".ts", ".tsx")
 # Backend router file extension.
 _BE_EXT: str = ".py"
 
+# Test / mock files are NOT shipped production surfaces — they use fake or
+# placeholder API paths (`api.get('/api/x')`), fixture table selects, etc. by
+# design. The product-internal-wiring checks (route-exists, name-on-nome,
+# promise-all) target PRODUCTION code, so every wiring walk must skip these or
+# a test fixture reads as a real route-missing / name-on-nome regression
+# (surfaced 2026-07-13: core's new `src/lib/api.test.ts` tripped
+# check_fe_route_missing with its deliberate `/api/x` stub paths).
+_TEST_FILE_NAME_RE = re.compile(r"\.(test|spec)\.[jt]sx?$|^test_.*\.py$|_test\.py$")
+_TEST_DIR_PARTS: frozenset[str] = frozenset({"__tests__", "__mocks__", "tests"})
+
+
+def _is_test_file(path: Path) -> bool:
+    """True for FE (`*.test.ts(x)`/`*.spec.*`) or Python (`test_*.py`/`*_test.py`)
+    test files, or any file under a `__tests__`/`__mocks__`/`tests` directory."""
+    if _TEST_FILE_NAME_RE.search(path.name):
+        return True
+    return any(part in _TEST_DIR_PARTS for part in path.parts)
+
 # HTTP methods we recognise on both sides.
 _HTTP_METHODS: tuple[str, ...] = ("get", "post", "patch", "put", "delete")
 
@@ -212,6 +230,8 @@ def _extract_fe_calls(fe_root: Path, repo_root: Path) -> list[_FeCall]:
     for path in scan_root.rglob("*"):
         if not path.is_file() or path.suffix not in _FE_EXTS:
             continue
+        if _is_test_file(path):
+            continue  # test fixtures use stub /api paths by design
         try:
             content = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as exc:
@@ -435,6 +455,8 @@ def _scan_name_on_nome(roots: list[tuple[Path, tuple[str, ...]]], repo_root: Pat
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix not in exts:
                 continue
+            if _is_test_file(path):
+                continue  # test fixtures may select `name` in stub data by design
             try:
                 content = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError) as exc:
@@ -494,6 +516,8 @@ def _scan_promise_all_shared_catch(fe_root: Path, repo_root: Path) -> list[Wirin
     for path in scan_root.rglob("*"):
         if not path.is_file() or path.suffix not in _FE_EXTS:
             continue
+        if _is_test_file(path):
+            continue  # test fixtures aren't shipped surfaces
         try:
             content = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as exc:

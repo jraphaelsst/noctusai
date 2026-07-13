@@ -104,6 +104,23 @@ class TestLegARouteExistence:
         assert len(result["missing_routes"]) == 1
         assert "DELETE" in result["missing_routes"][0]["detail"]
 
+    def test_test_file_stub_paths_not_flagged(self, tmp_path: Path):
+        # Regression (2026-07-13): a `*.test.ts` api-client test uses stub
+        # `/api/x` paths by design — it is NOT a shipped surface, so the
+        # route-existence check must skip it (was flagged high, broke CI).
+        repo = _mk_product(tmp_path, "core", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/plans.py": self._ROUTER_PY,
+            # Real page — matched route, not flagged.
+            "frontend/src/pages/Plans.tsx": "await api.get('/api/plans');\n",
+            # Test file with a deliberately-fake path — must NOT be flagged.
+            "frontend/src/lib/api.test.ts": "await api.get('/api/x');\n",
+            # __tests__ dir variant — also skipped.
+            "frontend/src/__tests__/client.spec.ts": "await api.post('/api/nope');\n",
+        })
+        result = scan_wiring("core", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+
 
 class TestNormalizePath:
     def test_dynamic_segments_normalize_equal(self):
