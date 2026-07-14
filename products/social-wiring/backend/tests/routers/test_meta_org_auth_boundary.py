@@ -120,7 +120,7 @@ class TestAccountAdapterChokePointAuthBoundary:
         more real code execute instead of short-circuiting on a config
         gap unrelated to this test's auth boundary.
         """
-        monkeypatch.setattr(settings, "encryption_key", fernet_key)
+        monkeypatch.setattr(settings, "encryption_key", fernet_key)  # self-patch-ok: realistic Fernet key so the credential-decryption path runs; not a guard bypass (see docstring above)
 
         mock_sb = MockSupabaseClient()
         mock_sb.auth.get_user = MagicMock(
@@ -267,13 +267,17 @@ class TestClassAStatusEndpointsAuthBoundary:
 class TestOAuthStartAuthBoundary:
     @pytest.fixture
     def client(self, monkeypatch):
-        monkeypatch.setattr(settings, "meta_app_id", "test-app-id")
-        monkeypatch.setattr(settings, "meta_app_secret", "test-app-secret")
+        # self-patch-ok (x5): OAuth app config so oauth_start doesn't 503 on
+        # missing config — these values are unrelated to the auth boundary
+        # under test (the 401/session gate), they just let the endpoint run
+        # far enough to assert it. Not a guard bypass.
+        monkeypatch.setattr(settings, "meta_app_id", "test-app-id")  # self-patch-ok: test OAuth config, not a guard
+        monkeypatch.setattr(settings, "meta_app_secret", "test-app-secret")  # self-patch-ok: test OAuth config, not a guard
         # Pin an explicit scope list so oauth_start never falls into
         # "auto" → discover_app_permissions' real Graph-API network call.
-        monkeypatch.setattr(settings, "meta_oauth_scopes", "instagram_basic")
-        monkeypatch.setattr(settings, "google_oauth_client_id", "test-client-id")
-        monkeypatch.setattr(settings, "google_oauth_client_secret", "test-client-secret")
+        monkeypatch.setattr(settings, "meta_oauth_scopes", "instagram_basic")  # self-patch-ok: test OAuth config, not a guard
+        monkeypatch.setattr(settings, "google_oauth_client_id", "test-client-id")  # self-patch-ok: test OAuth config, not a guard
+        monkeypatch.setattr(settings, "google_oauth_client_secret", "test-client-secret")  # self-patch-ok: test OAuth config, not a guard
         mock_sb = MockSupabaseClient()
         mock_sb.auth.get_user = MagicMock(
             return_value=MockUserResponse(MockUser(org_id=_ORG_A))
