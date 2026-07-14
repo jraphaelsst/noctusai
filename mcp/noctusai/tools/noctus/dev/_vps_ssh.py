@@ -19,6 +19,10 @@ Behaviour (all knobs env-overridable):
     ``_multiplex_opts``). This is what actually keeps us under fail2ban's
     connection-RATE rule; the interval + circuit-breaker below are secondary.
   • min inter-attempt interval (``NOCTUS_SSH_MIN_INTERVAL``, default 3s) — never burst.
+  • sliding-window rate cap (``NOCTUS_SSH_MAX_PER_WINDOW`` per ``NOCTUS_SSH_RATE_WINDOW``,
+    default 10/60s) — PROACTIVELY sleeps to keep attempts under the cap, so a
+    sustained burst (a fleet deploy) can't form and trip an upstream connection-rate
+    limit (ISP outbound-22 throttle or fail2ban). Prevents, rather than reacts.
   • circuit-breaker: after N consecutive CONNECTION failures
     (``NOCTUS_SSH_CIRCUIT_FAILS``, default 2 → ≤4 real attempts escape, under the
     prod VPS sshd maxretry of 5) OPEN the circuit for a cooldown
@@ -71,6 +75,15 @@ _DEFAULT_CIRCUIT_FAILS = 2        # consecutive conn failures before OPEN.
 # > 5 = could self-trip the ban on a single storm; N=2 → 4 attempts ≤ 5 (margin 1).
 _DEFAULT_CIRCUIT_COOLDOWN = 600.0  # seconds OPEN (≥ typical fail2ban bantime)
 _DEFAULT_CONNECT_TIMEOUT = 10     # ssh -o ConnectTimeout=<n>
+# Sliding-window rate cap — PROACTIVELY pace so a burst can never form (prevent,
+# don't react). WHY (2026-07-14): a fleet deploy's sustained ~50 connections
+# tripped an upstream connection-rate limit (ISP outbound-22 throttle — confirmed
+# github:22 also blocked, so NOT the VPS/fail2ban) that the 3s interval +
+# failure-only circuit couldn't stop. This caps real attempts per window and
+# SLEEPS to stay under it. Multiplexing (above) makes this rarely bite; it's the
+# hard guarantee for the non-multiplexed / worst case. safety > speed.
+_DEFAULT_MAX_PER_WINDOW = 10      # max ssh attempts per window (0 = disabled)
+_DEFAULT_RATE_WINDOW = 60.0       # seconds — the sliding window
 
 _STATE_FILENAME = "vps-ssh-throttle.json"
 
@@ -262,10 +275,13 @@ def _host_entry(state: dict, ssh_host: str) -> dict:
     entry = state.get(ssh_host)
     if not isinstance(entry, dict):
         entry = {}
+    raw_recents = entry.get("recent_attempt_ts") or []
+    recents = [float(t) for t in raw_recents if isinstance(t, (int, float))]
     return {
         "last_attempt_ts": float(entry.get("last_attempt_ts") or 0.0),
         "consecutive_failure_count": int(entry.get("consecutive_failure_count") or 0),
         "circuit_open_until": float(entry.get("circuit_open_until") or 0.0),
+        "recent_attempt_ts": recents,  # sliding-window rate-cap history
     }
 
 
@@ -355,6 +371,8 @@ def run_remote(
     min_interval = _env_float("NOCTUS_SSH_MIN_INTERVAL", _DEFAULT_MIN_INTERVAL)
     circuit_fails = _env_int("NOCTUS_SSH_CIRCUIT_FAILS", _DEFAULT_CIRCUIT_FAILS)
     cooldown = _env_float("NOCTUS_SSH_CIRCUIT_COOLDOWN", _DEFAULT_CIRCUIT_COOLDOWN)
+    max_per_window = _env_int("NOCTUS_SSH_MAX_PER_WINDOW", _DEFAULT_MAX_PER_WINDOW)
+    rate_window = _env_float("NOCTUS_SSH_RATE_WINDOW", _DEFAULT_RATE_WINDOW)
 
     remote_cmd = _normalize(argv)
 
@@ -386,6 +404,20 @@ def run_remote(
             if remaining > 0:
                 sleep(remaining)
 
+        # ── sliding-window rate cap — PROACTIVELY pace, so a burst can't form ──
+        # If ``max_per_window`` attempts already fall inside the trailing
+        # ``rate_window``, sleep until the oldest that must expire drops out —
+        # a single deterministic sleep that guarantees adding this attempt keeps
+        # the window at ≤ max_per_window. This PREVENTS the burst up front rather
+        # than reacting to a ban after it lands (2026-07-14 ISP-throttle lesson).
+        if max_per_window > 0:
+            recents = sorted(t for t in entry["recent_attempt_ts"] if now() - t < rate_window)
+            if len(recents) >= max_per_window:
+                must_expire = recents[len(recents) - max_per_window]
+                wait = (must_expire + rate_window) - now()
+                if wait > 0:
+                    sleep(wait)
+
         # ── attempt (with ONE backed-off retry on a connection failure) ──
         rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
         if _is_connection_failure(rc, err):
@@ -393,7 +425,12 @@ def run_remote(
             rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
 
         # ── update shared state ──
-        entry["last_attempt_ts"] = now()
+        attempt_ts = now()
+        entry["last_attempt_ts"] = attempt_ts
+        # record this attempt + keep only the trailing window (bounds growth)
+        entry["recent_attempt_ts"] = [
+            t for t in entry["recent_attempt_ts"] if attempt_ts - t < rate_window
+        ] + [attempt_ts]
         if _is_connection_failure(rc, err):
             entry["consecutive_failure_count"] += 1
             if entry["consecutive_failure_count"] >= circuit_fails:

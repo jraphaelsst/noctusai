@@ -335,3 +335,50 @@ class TestMultiplexing:
         args = captured["args"]
         assert "ControlMaster=auto" in args
         assert any(isinstance(a, str) and a.startswith("ControlPersist=") for a in args)
+
+
+# ── sliding-window rate cap (2026-07-14: prevent the burst, don't react) ─────
+def test_rate_cap_sleeps_when_window_full(monkeypatch, sleeps, state_path):
+    monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")   # isolate the rate cap
+    monkeypatch.setenv("NOCTUS_SSH_MAX_PER_WINDOW", "2")
+    monkeypatch.setenv("NOCTUS_SSH_RATE_WINDOW", "60")
+    captured, sleep = sleeps
+    clock = Clock()
+    runner = FakeRunner([OK, OK, OK])
+
+    _run(runner, clock, sleep, state_path)   # t=1000, attempt 1
+    clock.advance(1.0)
+    _run(runner, clock, sleep, state_path)   # t=1001, attempt 2 → window now holds 2
+    assert captured == []                    # still under cap: no rate sleep
+    clock.advance(1.0)
+    _run(runner, clock, sleep, state_path)   # t=1002, attempt 3 → wait for oldest(1000) to age out
+    assert len(captured) == 1
+    assert captured[0] == pytest.approx(58.0)  # 1000 + 60 - 1002
+    assert len(runner.calls) == 3            # all three still connect (paced, not dropped)
+
+
+def test_rate_cap_no_sleep_once_window_drains(monkeypatch, sleeps, state_path):
+    monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+    monkeypatch.setenv("NOCTUS_SSH_MAX_PER_WINDOW", "2")
+    monkeypatch.setenv("NOCTUS_SSH_RATE_WINDOW", "60")
+    captured, sleep = sleeps
+    clock = Clock()
+    runner = FakeRunner([OK, OK, OK])
+
+    _run(runner, clock, sleep, state_path)
+    _run(runner, clock, sleep, state_path)
+    clock.advance(61.0)                       # both prior attempts aged out of the window
+    _run(runner, clock, sleep, state_path)
+    assert captured == []                     # window empty → no rate sleep
+
+
+def test_rate_cap_disabled_when_zero(monkeypatch, sleeps, state_path):
+    monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+    monkeypatch.setenv("NOCTUS_SSH_MAX_PER_WINDOW", "0")   # 0 = disabled
+    captured, sleep = sleeps
+    clock = Clock()
+    runner = FakeRunner([OK] * 5)
+
+    for _ in range(5):
+        _run(runner, clock, sleep, state_path)  # 5 rapid calls, same instant
+    assert captured == []                        # cap disabled → never paces
