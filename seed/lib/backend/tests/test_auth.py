@@ -6,6 +6,7 @@ were promoted from core's local implementation into the shared library.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -520,6 +521,48 @@ class _FakeUserWithMetadata:
     user_metadata: dict
 
 
+class _FakeCoreClientResp:
+    """Minimal stand-in for a Supabase/PostgREST response — just `.data`."""
+
+    def __init__(self, data):
+        self.data = data
+
+
+class _FakeCoreClient:
+    """Minimal fake ``.table(...).select(...).eq(...).limit(...).execute()``
+    chain — stands in for ``DatabaseModule.get_core_client()`` in
+    :func:`_resolve_trusted_org_id` without pulling in the full
+    ``MockSupabaseClient`` machinery (this is a pure factory unit test, not
+    a product-level router test).
+
+    ``rows``: the row list ``.execute()`` returns (``[]``/``None`` ⇒ no
+    ``noctus_users`` row — the fallback-to-``get_org_id_fn`` path).
+    ``raises``: when set, ``.execute()`` raises this instead — simulates a
+    genuine DB/transport failure (the fail-closed path).
+    """
+
+    def __init__(self, rows=None, *, raises: Exception | None = None):
+        self._rows = rows or []
+        self._raises = raises
+
+    def table(self, name):
+        return self
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        if self._raises is not None:
+            raise self._raises
+        return _FakeCoreClientResp(self._rows)
+
+
 class TestMakeGetCurrentUserOrg:
     """Cover the make_get_current_user_org factory + the bound dep.
 
@@ -531,12 +574,26 @@ class TestMakeGetCurrentUserOrg:
     - custom missing_status (e.g. 400 to match ERP's local shape)
     - custom missing_detail
     - 401 propagation: get_current_user_fn raises → resolver never runs
+    - trusted noctus_users DB row overrides a spoofed user_metadata org_id
+    - fallback to user_metadata fires + warns when no noctus_users row
+    - required=True raises when NEITHER the trusted lookup NOR the
+      fallback yields an org
+    - a DB/transport ERROR fails closed — never falls back to metadata,
+      whether required=True (raises 503) or required=False (returns None)
+
+    Every ``_build(...)`` call defaults ``admin_client`` to a
+    ``_FakeCoreClient`` with NO ``noctus_users`` rows — i.e. every
+    pre-existing test below exercises the (now-fallback) ``user_metadata``
+    resolution path exactly as it did before the trusted-DB-first change,
+    so their assertions are unchanged.
     """
 
-    def _build(self, *, org_id="org-123", **factory_kwargs):
+    def _build(self, *, org_id="org-123", admin_client=None, **factory_kwargs):
         """Helper: returns (dep, fake_user) bound to the given org_id and
         factory kwargs. Fake get_current_user_fn always succeeds with the
-        same user; tests vary org_id (set None to simulate missing org)."""
+        same user; tests vary org_id (set None to simulate missing org).
+        ``admin_client`` defaults to a no-rows fake — trusted lookup misses,
+        falls back to ``fake_get_org_id`` reading ``user_metadata``."""
         fake_user = _FakeUserWithMetadata(
             id="u1",
             user_metadata={"org_id": org_id} if org_id else {},
@@ -550,9 +607,12 @@ class TestMakeGetCurrentUserOrg:
         def fake_get_org_id(user):
             return (user.user_metadata or {}).get("org_id")
 
+        core = admin_client if admin_client is not None else _FakeCoreClient()
+
         dep = make_get_current_user_org(
             fake_get_current_user,
             fake_get_org_id,
+            get_admin_client_fn=lambda: core,
             **factory_kwargs,
         )
         return dep, fake_user
@@ -638,9 +698,136 @@ class TestMakeGetCurrentUserOrg:
             captured["user"] = user
             return (user.user_metadata or {}).get("org_id")
 
-        dep = make_get_current_user_org(fake_get_current_user, capturing_resolver)
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            capturing_resolver,
+            get_admin_client_fn=lambda: _FakeCoreClient(),  # no noctus_users row
+        )
         await dep(authorization="Bearer xxx")
         assert captured["user"] is fake_user
+
+    # -----------------------------------------------------------------
+    # Trusted-DB-first resolution — `seed-trusted-org-resolution` (2026-07-14)
+    # -----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_trusted_db_org_overrides_spoofed_user_metadata(self):
+        """A `noctus_users` DB row WINS over `user_metadata.org_id` — proves
+        the org-spoofing hole is closed: a user rewriting their own
+        `user_metadata.org_id` (e.g. via `auth.updateUser({data})`) cannot
+        reach another tenant's data, because the trusted DB row is
+        authoritative and the fallback resolver is never even consulted."""
+        fallback_calls = []
+
+        fake_user = _FakeUserWithMetadata(
+            id="attacker-1", user_metadata={"org_id": "spoofed-org"},
+        )
+
+        async def fake_get_current_user(authorization=None):
+            return fake_user, "token-abc"
+
+        def spy_fallback_resolver(user):
+            fallback_calls.append(user)
+            return (user.user_metadata or {}).get("org_id")
+
+        core = _FakeCoreClient(rows=[{"org_id": "trusted-org-db"}])
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            spy_fallback_resolver,
+            get_admin_client_fn=lambda: core,
+        )
+        user, token, org_id = await dep(authorization="Bearer xxx")
+        assert org_id == "trusted-org-db"
+        assert org_id != "spoofed-org"
+        assert fallback_calls == [], "fallback resolver must NOT run when the trusted DB row exists"
+
+    @pytest.mark.asyncio
+    async def test_fallback_fires_and_warns_when_no_noctus_users_row(self, caplog):
+        """No `noctus_users` row (transition state) → falls back to
+        `get_org_id_fn` (user_metadata) AND logs a warning naming the user —
+        never silent."""
+        dep, fake_user = self._build(
+            org_id="org-from-metadata",
+            admin_client=_FakeCoreClient(rows=[]),  # no row
+        )
+        with caplog.at_level(logging.WARNING, logger="noctusai_lib.api.auth"):
+            user, token, org_id = await dep(authorization="Bearer xxx")
+        assert org_id == "org-from-metadata"
+        assert any(
+            "trusted_org_lookup_empty" in r.message and fake_user.id in r.message
+            for r in caplog.records
+        ), "expected a loud warning naming the user id when falling back"
+
+    @pytest.mark.asyncio
+    async def test_required_true_raises_when_neither_trusted_nor_fallback_yields_org(self):
+        """No noctus_users row AND no user_metadata org → still raises
+        HTTPException(missing_status, missing_detail), same as the
+        pre-existing missing-org contract."""
+        dep, _ = self._build(
+            org_id=None,
+            admin_client=_FakeCoreClient(rows=[]),
+            required=True,
+        )
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "Usuario sem organizacao associada"
+
+    @pytest.mark.asyncio
+    async def test_db_error_fails_closed_required_true(self, caplog):
+        """A genuine DB/transport error (not just an empty result) must NOT
+        fall back to the spoofable user_metadata resolver — even though the
+        metadata DOES carry an org_id that would otherwise satisfy the
+        fallback. required=True → HTTPException(503), fallback never runs."""
+        fallback_calls = []
+
+        fake_user = _FakeUserWithMetadata(
+            id="u-db-down", user_metadata={"org_id": "metadata-org-would-leak"},
+        )
+
+        async def fake_get_current_user(authorization=None):
+            return fake_user, "token-abc"
+
+        def spy_fallback_resolver(user):
+            fallback_calls.append(user)
+            return (user.user_metadata or {}).get("org_id")
+
+        core = _FakeCoreClient(raises=RuntimeError("connection refused"))
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            spy_fallback_resolver,
+            get_admin_client_fn=lambda: core,
+            required=True,
+        )
+        with caplog.at_level(logging.ERROR, logger="noctusai_lib.api.auth"):
+            with pytest.raises(HTTPException) as exc:
+                await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 503
+        assert fallback_calls == [], "fail-closed must never consult the spoofable fallback on a DB error"
+        assert any("trusted_org_lookup_error" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_db_error_fails_closed_required_false(self):
+        """Same DB-error case with required=False → returns (user, token,
+        None), NOT the spoofable metadata org_id — fail-closed applies
+        regardless of `required`."""
+        fake_user = _FakeUserWithMetadata(
+            id="u-db-down", user_metadata={"org_id": "metadata-org-would-leak"},
+        )
+
+        async def fake_get_current_user(authorization=None):
+            return fake_user, "token-abc"
+
+        core = _FakeCoreClient(raises=RuntimeError("connection refused"))
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            lambda u: (u.user_metadata or {}).get("org_id"),
+            get_admin_client_fn=lambda: core,
+            required=False,
+        )
+        user, token, org_id = await dep(authorization="Bearer xxx")
+        assert org_id is None
+        assert org_id != "metadata-org-would-leak"
 
 
 # ---------------------------------------------------------------------------

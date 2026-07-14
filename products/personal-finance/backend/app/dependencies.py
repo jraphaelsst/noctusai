@@ -39,9 +39,15 @@ deps = create_dependencies(_db)
 # pre-patch reference. The lambda re-resolves on every request so
 # both production and test paths see the right client.
 get_current_user = make_get_current_user(lambda: _db.get_client())
+# `get_admin_client_fn=lambda: _db.get_core_client()` — NOT get_admin_client().
+# `noctus_users` lives in the `public` schema; `get_admin_client()` is scoped
+# to THIS product's schema and would 500 with PGRST205 (see
+# `seed-trusted-org-resolution`, 2026-07-14 — the make_get_current_user_org
+# docstring in noctusai_lib.api.auth has the full rationale).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),
+    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
 

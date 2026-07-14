@@ -7,9 +7,19 @@ the framework's database module rather than product-level modules.
 import sys as _sys
 from pathlib import Path as _Path
 
-_LIB = _Path(__file__).resolve().parents[4] / "seed" / "lib" / "backend"
-if str(_LIB) not in _sys.path:
-    _sys.path.insert(0, str(_LIB))
+_REPO = _Path(__file__).resolve().parents[4]
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+# Inject BOTH seed package roots — this file previously added only `_LIB`,
+# which left `noctusai_seed` unresolvable in a worktree once
+# `purge_shadowing_editable_finders` drops the venv's editable finder
+# pointing at a sibling checkout (every OTHER product's conftest.py
+# already does this; found + fixed while verifying
+# `seed-trusted-org-resolution`, 2026-07-14 — mirrors ERP-P7's reference
+# fix, see `products/daily-life/backend/tests/conftest.py`).
+for _p in (_LIB, _FRAMEWORK):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_bootstrap_conftest_helpers",

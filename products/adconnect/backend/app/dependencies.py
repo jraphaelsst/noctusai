@@ -99,9 +99,17 @@ def resolve_role(user: Any) -> str:
 # reference. The lambda re-resolves on every request so both production
 # and test paths see the right client.
 get_current_user = make_get_current_user(lambda: _db.get_client())
+# `get_admin_client_fn=lambda: _db.get_core_client()` — NOT
+# `get_admin_client` (re-exported above, adconnect-schema-scoped).
+# `noctus_users` lives in the `public` schema; the adconnect-scoped admin
+# client would 500 with PGRST205 (see `seed-trusted-org-resolution`,
+# 2026-07-14 — the make_get_current_user_org docstring in
+# noctusai_lib.api.auth has the full rationale + the prod incident this
+# mirrors on the ERP side).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    get_org_id,
+    get_org_id,  # fallback only — trusted DB wins
+    get_admin_client_fn=lambda: _db.get_core_client(),
     required=False,  # AdConnect has a single-instance brand default;
     # routers fall back to ``DEFAULT_ORG_ID`` when the
     # metadata is absent (matches MVP-era behavior).

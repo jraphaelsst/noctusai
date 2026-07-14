@@ -92,9 +92,21 @@ if _use_sqlite:
         return user, "local-dev-token", settings.local_dev_org_id
 else:
     get_current_user = make_get_current_user(lambda: _db.get_client())
+    # `get_admin_client_fn=lambda: _db.get_core_client()` — NOT
+    # `_db.get_admin_client()`. `noctus_users` lives in the `public`
+    # schema; the social_wiring-scoped admin client would 500 with
+    # PGRST205 (see `seed-trusted-org-resolution`, 2026-07-14 — the
+    # make_get_current_user_org docstring in noctusai_lib.api.auth has
+    # the full rationale + the prod incident this mirrors on the ERP
+    # side). NOTE: `_legacy_jwt_resolver` below (the AuthContext / cookie
+    # / pk_* bridge) still resolves org_id straight from
+    # `user.user_metadata` — a SEPARATE, still-spoofable path this slice
+    # deliberately did not touch (org_id-only scope; the bridge is a
+    # platform-auth-modernization concern). Flagged as `drift-found:`.
     get_current_user_org = make_get_current_user_org(
         get_current_user,
-        lambda u: (u.user_metadata or {}).get("org_id"),
+        lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+        get_admin_client_fn=lambda: _db.get_core_client(),
         required=True,
     )
 

@@ -48,9 +48,16 @@ _deps = create_dependencies(_db)
 # through scaffold_product / propagation.
 _prod_get_current_user = make_get_current_user(lambda: _db.get_client())
 get_current_user = select_get_current_user(settings, _prod_get_current_user)
+# `get_admin_client_fn=lambda: _db.get_core_client()` — NOT get_admin_client().
+# `noctus_users` lives in the `public` schema; `get_admin_client()` is scoped
+# to THIS product's schema and would 500 with PGRST205 (see
+# `seed-trusted-org-resolution`, 2026-07-14 — the make_get_current_user_org
+# docstring in noctusai_lib.api.auth has the full rationale + the prod
+# incident this mirrors on the ERP side).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),
+    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
 

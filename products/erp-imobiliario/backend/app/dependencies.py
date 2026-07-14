@@ -94,9 +94,17 @@ def resolve_org_id_db(user_id: str) -> Optional[str]:
 # reference. The lambda re-resolves on every request so both production
 # and test paths see the right client.
 get_current_user = make_get_current_user(lambda: _db.get_client())
+# `get_admin_client_fn=lambda: _db.get_core_client()` — same client
+# `resolve_org_id_db` above already uses. `noctus_users` lives in the
+# `public` schema; the erp-scoped admin client would 500 with PGRST205
+# (the exact regression `resolve_org_id_db`'s docstring documents,
+# 2026-07-07). See `seed-trusted-org-resolution` (2026-07-14) — the
+# make_get_current_user_org docstring in noctusai_lib.api.auth has the
+# full trust-model rationale.
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: get_org_id(u),
+    lambda u: get_org_id(u),  # fallback only — trusted DB wins
+    get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
     missing_status=400,
     missing_detail="Organizacao nao encontrada no perfil do usuario",

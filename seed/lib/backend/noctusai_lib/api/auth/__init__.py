@@ -26,6 +26,18 @@ reimplementing.
   Validates `iss` / `aud` / required claims; 10 s clock-skew leeway.
 - **NEW** `SSOSessionCache(ttl_seconds=300)` — thread-safe in-memory cache with
   per-key locks and explicit invalidation API.
+- **NEW** (`seed-trusted-org-resolution`, 2026-07-14) `make_get_current_user_org`
+  now resolves ``org_id`` from ``public.noctus_users`` (the trusted source
+  every product's RLS ``current_org_id()`` reads) FIRST, falling back to the
+  caller-supplied resolver (typically ``user_metadata``) only when no
+  ``noctus_users`` row exists — closing the residual org-spoofing hole where
+  a user could overwrite their own ``user_metadata.org_id`` via
+  ``auth.updateUser({data})``. See :func:`make_get_current_user_org`.
+
+  SECURITY follow-up (out of scope for this slice): ``noctus_users.role`` is
+  ALSO derived from spoofable ``user_metadata`` today — see
+  :func:`resolve_sso_role` and the product-level ``get_user_role``
+  resolvers. Role-authz trust hardening is a separate, dedicated slice.
 
 **Not here:**
 
@@ -36,14 +48,17 @@ reimplementing.
 from __future__ import annotations
 
 import datetime
+import logging
 import threading
 import time
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jwt
 from fastapi import Header, HTTPException
 
 from noctusai_lib.primitives.timeutil import now_utc
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # SSO-token identity constants — fixed so mint and verify can NEVER drift
@@ -140,6 +155,20 @@ def make_get_current_user(get_supabase_client_fn):
 
 def resolve_sso_role(user) -> Optional[str]:
     """Check SSO metadata for product-level admin access.
+
+    # SECURITY follow-up (`seed-trusted-org-resolution`, 2026-07-14):
+    # this reads `user_metadata` — the SAME spoofable source
+    # `make_get_current_user_org` used to trust for `org_id` (now fixed,
+    # resolved from `public.noctus_users` instead). `role` is a parallel
+    # instance of the identical class of bug: an authenticated user can
+    # rewrite `user_metadata.org_role` / `noctus_role` via
+    # `auth.updateUser({data})` and self-grant `platform_admin`.
+    # `public.noctus_users.role` is the trusted DB analog (see
+    # `products/core/backend/app/dependencies.py:get_current_admin`, which
+    # already reads it from the DB rather than metadata). Deliberately NOT
+    # fixed here — scoped to `org_id` only per this slice's brief; role
+    # authz trust hardening needs its own dedicated slice (broader blast
+    # radius: `resolve_sso_role` + every product's local `get_user_role`).
 
     When a user enters a product via SSO from the NoctusAI Core platform,
     the Core's ``/api/sso/session`` endpoint syncs ``org_role`` and
@@ -251,10 +280,55 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
     return require_role
 
 
+def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> Optional[str]:
+    """Look up ``org_id`` from ``public.noctus_users`` for ``user_id``.
+
+    This is the SAME row every product's RLS ``current_org_id()`` SECURITY
+    DEFINER function reads (``SELECT org_id FROM public.noctus_users WHERE
+    id = auth.uid()``) — the trusted source, populated server-side during
+    provisioning / SSO sync, never writable by the authenticated user
+    themselves. Contrast with ``user.user_metadata["org_id"]``, which the
+    SAME user can overwrite via ``auth.updateUser({data})`` (Supabase lets
+    any authenticated user rewrite their own metadata) — an app layer that
+    trusts metadata for org resolution is spoofable to another tenant's
+    data even after per-endpoint auth is otherwise correctly wired.
+
+    ``get_admin_client_fn`` MUST return a service-role client scoped to the
+    ``public`` schema — i.e. ``DatabaseModule.get_core_client()``, NEVER
+    ``get_admin_client()``. A product-schema-scoped admin client resolves
+    ``.table("noctus_users")`` against the WRONG schema and 500s with
+    PGRST205 — this exact regression already shipped + was caught in prod
+    once for a single ERP route (see ``products/erp-imobiliario/backend/
+    app/dependencies.py:resolve_org_id_db``'s docstring, 2026-07-07).
+
+    Uses ``.limit(1)`` (a plain list query) rather than ``.single()`` /
+    ``.maybe_single()`` — deliberately, to avoid conflating "no
+    ``noctus_users`` row yet" (an expected, non-error transition state)
+    with PostgREST's 0-rows-raises-``APIError`` semantics on ``.single()``.
+
+    Returns ``None`` when no ``noctus_users`` row exists for ``user_id``
+    (e.g. a user mid-provisioning) — the caller decides the no-row policy.
+    Any OTHER exception (network / auth / schema error) is NOT swallowed
+    here — it propagates so the caller can fail closed.
+    """
+    core = get_admin_client_fn()
+    result = (
+        core.table("noctus_users")
+        .select("org_id")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if result.data and result.data[0].get("org_id"):
+        return result.data[0]["org_id"]
+    return None
+
+
 def make_get_current_user_org(
     get_current_user_fn,
     get_org_id_fn,
     *,
+    get_admin_client_fn: Callable[[], Any],
     required: bool = True,
     missing_status: int = 403,
     missing_detail: str = "Usuario sem organizacao associada",
@@ -272,6 +346,20 @@ def make_get_current_user_org(
     "org_id")`` resolution body in different request-time wrappings — N=2
     recurrence, formalized as this factory.
 
+    **Trust model** (``seed-trusted-org-resolution``, 2026-07-14): org_id is
+    resolved from ``public.noctus_users`` (see :func:`_resolve_trusted_org_id`)
+    FIRST — the SAME source RLS trusts. ``get_org_id_fn`` (historically
+    ``user_metadata``-based) is now ONLY a transition fallback, used solely
+    when no ``noctus_users`` row exists yet, and it fires with a
+    ``logger.warning`` naming the user id — never silently. Any REAL user
+    has a ``noctus_users`` row, so the DB lookup wins and a spoofed
+    ``user_metadata.org_id`` is simply ignored — this closes the residual
+    org-spoofing hole (a user rewriting their own ``user_metadata.org_id``
+    via ``auth.updateUser({data})`` to reach another tenant's data) by
+    construction. On a genuine DB/transport ERROR (as opposed to "no row"),
+    resolution fails CLOSED — it does NOT fall back to the spoofable
+    resolver; see the inner dependency body for the full rationale.
+
     Parameters:
         get_current_user_fn: The product's already-wrapped
             ``get_current_user`` dependency (typically the return value
@@ -279,9 +367,15 @@ def make_get_current_user_org(
             that takes ``authorization: Optional[str]`` and returns
             ``(user, token)``.
         get_org_id_fn: A sync callable ``(user) -> Optional[str]`` that
-            resolves the org_id for a user. Each product provides its own
-            (typically ``lambda u: (u.user_metadata or {}).get("org_id")``
-            or ERP's pre-existing ``get_org_id(user)`` resolver).
+            resolves the org_id for a user — now a FALLBACK, used only when
+            ``public.noctus_users`` has no row for the user. Each product
+            provides its own (typically ``lambda u: (u.user_metadata or
+            {}).get("org_id")`` or ERP's pre-existing ``get_org_id(user)``
+            resolver).
+        get_admin_client_fn: A sync callable ``() -> Client`` returning a
+            service-role Supabase client scoped to the ``public`` schema
+            (``DatabaseModule.get_core_client()``). Required — every caller
+            of this factory must supply the trusted-lookup client.
         required: When True (default), raises ``HTTPException(missing_status,
             missing_detail)`` if the resolved org_id is falsy. PF's shape.
             When False, the dep returns ``(user, token, None)`` on missing
@@ -301,12 +395,13 @@ def make_get_current_user_org(
     Usage in a product's ``app/dependencies.py``::
 
         from noctusai_lib.api.auth import make_get_current_user, make_get_current_user_org
-        from app.database import get_supabase_client
 
-        get_current_user = make_get_current_user(get_supabase_client)
+        _db = create_database_module(settings, schema="my_product")
+        get_current_user = make_get_current_user(lambda: _db.get_client())
         get_current_user_org = make_get_current_user_org(
             get_current_user,
-            lambda u: (u.user_metadata or {}).get("org_id"),
+            lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only
+            get_admin_client_fn=lambda: _db.get_core_client(),  # public schema, service role
             required=True,  # 403 on missing
         )
 
@@ -321,7 +416,51 @@ def make_get_current_user_org(
     """
     async def get_current_user_org(authorization: Optional[str] = Header(None)):
         user, token = await get_current_user_fn(authorization)
-        org_id = get_org_id_fn(user)
+
+        # Trusted-first resolution — `public.noctus_users` is the SAME
+        # source every product's RLS `current_org_id()` reads. It wins over
+        # the spoofable `get_org_id_fn` (typically `user_metadata`)
+        # whenever a row exists.
+        try:
+            org_id = _resolve_trusted_org_id(get_admin_client_fn, user.id)
+        except Exception:
+            # Fail CLOSED on a genuine DB/transport error. Falling back to
+            # the spoofable resolver here would reopen the exact hole this
+            # factory exists to close — and precisely in the failure
+            # branch, the worst place for a security regression to hide
+            # silently. A DB outage already fails every downstream
+            # data-access query for this same request anyway (same
+            # database) — failing at auth instead of one hop later is not
+            # a materially larger availability blast radius, and it keeps
+            # the security invariant intact under partial-failure
+            # conditions instead of trading it away for uptime.
+            logger.error(
+                "trusted_org_lookup_error user_id=%s — failing closed "
+                "(NOT falling back to user_metadata)",
+                getattr(user, "id", "<unknown>"),
+                exc_info=True,
+            )
+            if required:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Falha ao resolver organizacao do usuario",
+                )
+            return user, token, None
+
+        if org_id is None:
+            # No noctus_users row (as opposed to a DB ERROR) — a
+            # legitimate transition state (e.g. a provisioning race).
+            # Fall back to the caller-supplied resolver so existing flows
+            # keep working, but LOUDLY — never silent.
+            fallback_org_id = get_org_id_fn(user)
+            if fallback_org_id:
+                logger.warning(
+                    "trusted_org_lookup_empty user_id=%s — no noctus_users "
+                    "row, falling back to org_from_user resolver (org_id=%r)",
+                    getattr(user, "id", "<unknown>"), fallback_org_id,
+                )
+            org_id = fallback_org_id
+
         if not org_id:
             if required:
                 raise HTTPException(
