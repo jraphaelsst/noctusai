@@ -6,6 +6,23 @@ without duplicating it (DRY — the N=2 recurrence rule).
 Nothing here is product-specific business logic: it's the credential
 store / org-id / adapter-label seam every Meta-consuming router needs.
 
+SECURITY (``sw-meta-org-auth-wiring``): every org resolved on this
+surface now comes from the AUTHENTICATED session
+(``Depends(get_current_user_org)``), never a caller-supplied
+``?org_id=`` query param — the query param was an unauthenticated
+cross-tenant IDOR (any caller could read/write any org's Meta data by
+supplying an arbitrary org/account id; the admin/service-role client
+this surface uses bypasses RLS, so RLS was never a backstop). The former
+``resolve_org_id(raw: str | None)`` helper — which trusted a
+request-supplied override and fell back to ``local_dev_org_id`` on ANY
+backend — is REMOVED rather than merely guarded: keeping a
+query-param-accepting org resolver around, even "fixed", is an
+attractive nuisance for a future call site to wire back to
+``Query(...)``. Org resolution now has exactly one path:
+``auth[2]`` (from ``get_current_user_org``) → ``coerce_org_uuid``, which
+already branches sqlite-dev (``local_dev_org_id``) vs. prod correctly
+(``app/dependencies.py``) — no parallel resolver to drift out of sync.
+
 Wave 3 (account-scoped Meta surface) adds a second seam alongside the
 org-level one above: :func:`get_account_adapter` — the FastAPI DI
 dependency every account-scoped ``/api/meta/*`` router (context /
@@ -31,11 +48,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
-from app.config import settings
-from app.dependencies import get_admin_client
+from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.credential_vault import CredentialStore, EncryptionNotConfigured, build_credential_store
 from app.services.integration_account_service import IntegrationAccountNotFound
 from app.services.meta import (
@@ -48,7 +64,6 @@ from app.services.meta import (
 
 __all__ = [
     "build_store",
-    "resolve_org_id",
     "adapter_label",
     "get_account_adapter",
     "resolve_primary_ig_user_id",
@@ -66,21 +81,6 @@ def build_store() -> CredentialStore:
         ) from exc
 
 
-def resolve_org_id(raw: str | None) -> UUID:
-    """Mirror calendar_router's resolution: query string overrides
-    fall back to the local-dev org id while the Meta surface runs
-    without auth in front of it."""
-    if raw:
-        try:
-            return UUID(raw)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid org_id",
-            ) from exc
-    return UUID(settings.local_dev_org_id)
-
-
 def adapter_label(adapter) -> str:
     if isinstance(adapter, MetaOAuthAdapter):
         return "oauth"
@@ -92,25 +92,30 @@ def adapter_label(adapter) -> str:
 # ─── Wave 3 — account-scoped seam ───────────────────────────────────────
 def get_account_adapter(
     account_id: str = Query(..., description="integration_accounts row id (Meta)"),
-    org_id: str | None = Query(default=None),
+    auth: tuple = Depends(get_current_user_org),
 ) -> MetaAdapter:
     """FastAPI dependency: resolve the Meta adapter bound to ONE per-client
     ``integration_accounts`` row (Wave 2's ``get_meta_adapter_for_account``
     seam) for every account-scoped ``/api/meta/*`` router.
 
-    ``org_id`` follows the same fallback-to-local-dev-org convention as
-    :func:`resolve_org_id` (the Meta surface still runs without auth in
-    front of it). Maps the service-layer failure signals onto HTTP:
-    malformed ``account_id`` → 400; account absent for this org, or
-    present but not a ``provider="meta"`` row → 404 (never a silent
-    Fake — a Wave 3 caller already knows it's asking for a specific,
-    previously-connected Meta account).
+    ``org_id`` is resolved from the AUTHENTICATED session
+    (``Depends(get_current_user_org)``) — NEVER from a caller-supplied
+    query param (that was the cross-tenant IDOR this router closed:
+    any caller could read/write ANY org's Meta data by supplying an
+    arbitrary ``account_id`` + ``?org_id=``). Maps the service-layer
+    failure signals onto HTTP: malformed ``account_id`` → 400; account
+    absent for THIS session's org, or present but not a
+    ``provider="meta"`` row → 404 (never a silent Fake — a Wave 3 caller
+    already knows it's asking for a specific, previously-connected Meta
+    account; 404 also correctly reads as "not your account" for a
+    cross-tenant probe, since the lookup is org-scoped).
 
     Overridden in tests via ``app.dependency_overrides[get_account_adapter]``
     with a pre-seeded ``FakeMetaAdapter`` (DI seam, Class-B —
     ``KB § PATTERNS/backend/di-test-seam.md``).
     """
-    resolved_org = resolve_org_id(org_id)
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
     try:
         account_uuid = UUID(account_id)
     except ValueError as exc:

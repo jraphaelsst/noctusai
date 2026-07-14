@@ -16,17 +16,23 @@ Current surface:
 Future additions could include token introspection (expiry, refresh
 health), GCP project metadata, etc. — all under the ``/api/google``
 prefix to signal "applies to every Google integration on this product".
+
+SECURITY (``sw-meta-org-auth-wiring``): ``/scopes`` used to resolve its
+org from an unauthenticated ``?org_id=`` query param (with a
+``local_dev_org_id`` fallback on ANY backend) — a cross-tenant IDOR
+(any caller could read another org's granted-scope introspection). It
+now takes ``Depends(get_current_user_org)`` and derives the org from the
+session.
 """
 from __future__ import annotations
 
 import logging
-from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.config import settings
-from app.dependencies import get_admin_client
+from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured, build_credential_store)
 from app.services.google_scopes import (
@@ -61,21 +67,9 @@ def _build_store() -> CredentialStore | None:
         return None
 
 
-def _resolve_org_id(raw: str | None) -> UUID:
-    if raw:
-        try:
-            return UUID(raw)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid org_id",
-            ) from exc
-    return UUID(settings.local_dev_org_id)
-
-
 # ─── Scope introspection ───────────────────────────────────────────────
 @router.get("/scopes", response_model=GoogleScopesResponse)
-def google_scopes(org_id: str | None = Query(default=None)) -> GoogleScopesResponse:
+def google_scopes(auth: tuple = Depends(get_current_user_org)) -> GoogleScopesResponse:
     """Show what scopes Google was asked for, the kitchen-sink default,
     and (after consent) what the user actually granted.
 
@@ -97,10 +91,8 @@ def google_scopes(org_id: str | None = Query(default=None)) -> GoogleScopesRespo
             "so granted/declined fields will stay null."
         )
     else:
-        try:
-            resolved_org = _resolve_org_id(org_id)
-        except HTTPException:
-            resolved_org = None
+        _, _token, raw_org = auth
+        resolved_org = coerce_org_uuid(raw_org)
 
         # Import lazily so this module doesn't pull calendar deps at
         # import time (keeps the router lightweight).

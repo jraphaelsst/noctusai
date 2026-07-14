@@ -21,6 +21,14 @@ replacement for it.
 Pre-Wave-3 shape (org_id query + ``{ig_user_id}`` path param, non-raising
 ``error``-field responses) is superseded by this file — see
 ``tests/services/test_ig_insights.py`` for the account-scoped rewrite.
+
+SECURITY (``sw-meta-org-auth-wiring``): the snapshot endpoints below used
+to take their OWN ``org_id`` query param (independent of
+``get_account_adapter``'s, and separately vulnerable to the same
+cross-tenant IDOR) to scope the ``ig_metric_snapshots`` read/write. Both
+now derive ``org_id`` from the SAME authenticated session
+``get_account_adapter`` already resolves via ``Depends(get_current_user_org)``
+— no second, query-param-driven org resolution left on this surface.
 """
 from __future__ import annotations
 
@@ -32,11 +40,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from app.dependencies import get_admin_client
+from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.routers._meta_common import (
     get_account_adapter,
     handle_meta_graph_error,
-    resolve_org_id as _resolve_org_id,
     resolve_primary_ig_user_id,
 )
 from app.services.meta import MetaAdapter, MetaGraphError
@@ -218,9 +225,9 @@ def list_ig_media(
 # ─── GET /instagram/snapshots ────────────────────────────────────────────
 @router.get("/api/meta/instagram/snapshots", response_model=IGSnapshotsResponse)
 def list_ig_snapshots(
-    org_id: str | None = Query(default=None),
     days: int = Query(default=90, ge=1, le=3650),
     adapter: MetaAdapter = Depends(get_account_adapter),
+    auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Metric-snapshot history for this account, ascending by
     ``captured_at``, over the last ``days`` days.
@@ -228,15 +235,15 @@ def list_ig_snapshots(
     ``ig_metric_snapshots`` is keyed ``(org_id, ig_user_id)`` (pre-Wave-3
     schema, no ``account_id`` column) — ``ig_user_id`` is resolved from
     the account-scoped adapter (module docstring); ``org_id`` resolves
-    independently via the same ``_resolve_org_id`` fallback every Meta
-    router uses (the Meta surface still runs without auth in front of
-    it)."""
+    from the SAME authenticated session ``get_account_adapter`` uses
+    (no caller-supplied ``org_id`` — see module docstring)."""
     try:
         ig_user_id = resolve_primary_ig_user_id(adapter)
     except MetaGraphError as exc:
         return handle_meta_graph_error(exc)
 
-    resolved_org = _resolve_org_id(org_id)
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
     admin = get_admin_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
@@ -263,8 +270,8 @@ def list_ig_snapshots(
 # ─── POST /instagram/snapshot ────────────────────────────────────────────
 @router.post("/api/meta/instagram/snapshot", response_model=IGSnapshotOut)
 def create_ig_snapshot(
-    org_id: str | None = Query(default=None),
     adapter: MetaAdapter = Depends(get_account_adapter),
+    auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Capture this account's current numbers now and persist a row.
 
@@ -273,13 +280,16 @@ def create_ig_snapshot(
     since it came from that very call, so
     :class:`IGAccountNotFoundError` is defensive rather than an expected
     path here (unlike the pre-Wave-3 path-param shape, which took an
-    arbitrary caller-supplied id)."""
+    arbitrary caller-supplied id). ``org_id`` resolves from the SAME
+    authenticated session ``get_account_adapter`` uses (no caller-
+    supplied ``org_id`` — see module docstring)."""
     try:
         ig_user_id = resolve_primary_ig_user_id(adapter)
     except MetaGraphError as exc:
         return handle_meta_graph_error(exc)
 
-    resolved_org = _resolve_org_id(org_id)
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
     admin = get_admin_client()
 
     try:

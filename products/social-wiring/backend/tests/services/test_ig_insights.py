@@ -187,9 +187,17 @@ def _seeded_adapter(
 
 @pytest.fixture
 def ig_client():
-    """TestClient with a schema-caching mock admin client. No auth
-    headers needed — the Meta endpoints run with an ``account_id`` /
-    ``org_id`` query param, mirroring ``meta_status``."""
+    """TestClient with a schema-caching mock admin client. Most Meta
+    endpoints here take ``account_id`` and resolve their adapter (and,
+    since ``sw-meta-org-auth-wiring``, their org) entirely through the
+    ``get_account_adapter`` DI-seam override below — overriding that ONE
+    dependency also bypasses its own nested
+    ``Depends(get_current_user_org)``, so those endpoints need no
+    Authorization header in tests. The ``/instagram/snapshot(s)``
+    endpoints additionally take a SIBLING ``Depends(get_current_user_org)``
+    of their own (not nested inside ``get_account_adapter`` — the
+    ``ig_metric_snapshots`` table read/write is a second org-scoped
+    query) — those tests override it via ``_override_session_org``."""
     mock_sb = MockSupabaseClient()
     caching = _SchemaCachingClient(mock_sb)
 
@@ -219,6 +227,17 @@ def _override_adapter(adapter: FakeMetaAdapter) -> FakeMetaAdapter:
 
     app.dependency_overrides[get_account_adapter] = lambda: adapter
     return adapter
+
+
+def _override_session_org(org_id: str = _ORG) -> None:
+    """Override ``get_current_user_org`` so the session resolves to
+    ``org_id`` — the DI seam the ``/instagram/snapshot(s)`` endpoints
+    depend on directly (``KB § PATTERNS/backend/di-test-seam.md``,
+    Class-A)."""
+    from app.dependencies import get_current_user_org
+    from app.main import app
+
+    app.dependency_overrides[get_current_user_org] = lambda: (object(), "test-token", org_id)
 
 
 _QS = f"account_id={_ACCOUNT}&org_id={_ORG}"
@@ -350,6 +369,7 @@ class TestFacebookInsightsEndpoint:
 class TestSnapshotEndpoints:
     def test_snapshot_persists_and_reads_back(self, ig_client):
         _override_adapter(_seeded_adapter())
+        _override_session_org()
 
         post_resp = ig_client.post(f"/api/meta/instagram/snapshot?{_QS}")
         assert post_resp.status_code == 200, post_resp.text

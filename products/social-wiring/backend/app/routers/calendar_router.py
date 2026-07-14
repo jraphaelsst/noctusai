@@ -23,21 +23,32 @@ Two surfaces:
 OAuth path identical in shape to ``whatsapp-google-scheduling``'s
 ``app/api/oauth.py`` so the operator's Google Cloud Console OAuth
 client + redirect-URI registration can be reused with one URL change.
+
+SECURITY (``sw-meta-org-auth-wiring``): every endpoint here that used to
+resolve its org from an unauthenticated ``?org_id=`` query param (with a
+``local_dev_org_id`` fallback on ANY backend) now takes
+``Depends(get_current_user_org)`` and derives the org from the session —
+closing a cross-tenant IDOR. ``oauth/start`` signs the ``state`` token
+(:func:`app.routers._oauth_state.sign_oauth_state`) so the org bound to
+the resulting credential can't be forged via a crafted ``state`` on the
+callback redirect; the callback stays unauthenticated (Google's redirect
+carries no session cookie) but VERIFIES the signature
+(:func:`app.routers._oauth_state.verify_oauth_state`) before trusting
+the decoded org_id.
 """
 from __future__ import annotations
 
 import logging
-import secrets
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.config import settings
-from app.dependencies import get_admin_client
+from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state
 from app.services.calendar import (
     CALENDAR_PROVIDER,
     FakeCalendarAdapter,
@@ -81,21 +92,6 @@ def _build_store() -> CredentialStore:
         ) from exc
 
 
-def _resolve_org_id(raw: str | None) -> UUID:
-    """The Calendar surface runs unauthenticated for now (no JWT) so we
-    take org_id either via the query string or fall back to the
-    local-dev org. Mirrors what whatsapp_router does for chat."""
-    if raw:
-        try:
-            return UUID(raw)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid org_id",
-            ) from exc
-    return UUID(settings.local_dev_org_id)
-
-
 def _adapter_label(adapter) -> str:
     if isinstance(adapter, GoogleCalendarOAuthAdapter):
         return "oauth"
@@ -108,13 +104,14 @@ def _adapter_label(adapter) -> str:
 
 # ─── Status ────────────────────────────────────────────────────────────
 @router.get("/status", response_model=CalendarStatus)
-def calendar_status(org_id: str | None = Query(default=None)) -> CalendarStatus:
+def calendar_status(auth: tuple = Depends(get_current_user_org)) -> CalendarStatus:
     """Which calendar adapter would the factory return today?
 
     Useful for the platform UI to show "connect Google Calendar" or
     "consented as <email>". No side effects.
     """
-    resolved_org = _resolve_org_id(org_id)
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
     try:
         store = _build_store()
     except HTTPException:
@@ -139,8 +136,8 @@ def calendar_status(org_id: str | None = Query(default=None)) -> CalendarStatus:
 # ─── OAuth start ───────────────────────────────────────────────────────
 @router.get("/oauth/start", response_model=CalendarOAuthStartResponse)
 def calendar_oauth_start(
-    org_id: str | None = Query(default=None),
     redirect_to_consent: bool = Query(default=True),
+    auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Begin the Google OAuth consent flow.
 
@@ -150,9 +147,12 @@ def calendar_oauth_start(
     - A JSON payload with ``auth_url`` (when ``redirect_to_consent=false``)
       so the frontend can render its own "Connect Calendar" button.
 
-    ``state`` is ``<org_id>:<nonce>`` — same pattern as the YouTube
-    OAuth flow. The callback parses it back to bind the new credential
-    to the right tenant.
+    ``state`` is an HMAC-signed ``<org_id>:<nonce>:<hmac>`` token
+    (:func:`app.routers._oauth_state.sign_oauth_state`), bound to the
+    CALLER's authenticated org (``Depends(get_current_user_org)``) —
+    never an attacker-suppliable value. The callback verifies the
+    signature (:func:`app.routers._oauth_state.verify_oauth_state`)
+    before binding the new credential to the decoded tenant.
     """
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
         raise HTTPException(
@@ -160,9 +160,9 @@ def calendar_oauth_start(
             detail="GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured.",
         )
 
-    resolved_org = _resolve_org_id(org_id)
-    nonce = secrets.token_urlsafe(16)
-    state = f"{resolved_org}:{nonce}"
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
+    state = sign_oauth_state(resolved_org)
 
     # Resolve scopes via the shared resolver — supports
     # GOOGLE_OAUTH_SCOPES="auto" (kitchen-sink), empty (same), or an
@@ -234,14 +234,12 @@ def calendar_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    org_part, _, _nonce = state.partition(":")
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Google's redirect carries no session cookie — this endpoint can't
+    # take Depends(get_current_user_org). The signed state IS the trust
+    # anchor: verify_oauth_state raises 400 on a malformed OR tampered
+    # token, so a forged/hand-crafted state can never bind a credential
+    # to an org the flow wasn't started for.
+    org_id = verify_oauth_state(state)
 
     store = _build_store()
 

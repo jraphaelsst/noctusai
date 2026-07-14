@@ -7,38 +7,51 @@ Shape mirrors ``calendar_router``:
    (encrypted via :class:`CredentialStore`, provider=``meta``).
 
    Flow:
-   - ``GET /api/meta/oauth/start`` — operator visits this URL; server
-     responds with a 302 to ``https://www.facebook.com/v21.0/dialog/oauth?...``.
+   - ``GET /api/meta/oauth/start`` — the authenticated caller hits this
+     URL; server responds with a 302 to
+     ``https://www.facebook.com/v21.0/dialog/oauth?...``.
    - User completes consent → Facebook redirects to
-     ``GET /api/meta/oauth/callback?code=...&state=<org_id>:<nonce>``.
-   - Server exchanges the code (short-lived) → swaps for long-lived,
-     probes /me, persists the bundle, then 302's the operator back to
-     the platform Settings page.
+     ``GET /api/meta/oauth/callback?code=...&state=<org_id>:<nonce>:<hmac>``.
+   - Server verifies the state's HMAC (:func:`app.routers._oauth_state.verify_oauth_state`),
+     exchanges the code (short-lived) → swaps for long-lived, probes /me,
+     persists the bundle, then 302's the caller back to the platform
+     Settings page.
 
 2. **Status check** — ``GET /api/meta/status`` returns which adapter
    the factory would build today plus a summary of connected pages /
    IG accounts. No side effects.
 
-The ``state`` token encodes ``<org_id>:<nonce>`` — same shape as
-calendar_router so the inbox plumbing is identical.
+SECURITY (``sw-meta-org-auth-wiring``): every endpoint here that used to
+resolve its org from an unauthenticated ``?org_id=`` query param now
+takes ``Depends(get_current_user_org)`` and derives the org from the
+session — closing a cross-tenant IDOR (any caller could read/write any
+org's Meta data by supplying an arbitrary org id; the admin/service-role
+client this surface uses bypasses RLS, so RLS was never a backstop).
+``oauth/start`` signs the ``state`` token with an HMAC keyed on
+``settings.jwt_secret`` (:func:`app.routers._oauth_state.sign_oauth_state`)
+so the org bound to the resulting credential can't be forged via a
+crafted ``state`` on the callback redirect (a confused-deputy /
+login-CSRF the unsigned ``<org_id>:<nonce>`` shape allowed) — the
+callback itself stays unauthenticated (Facebook's redirect carries no
+session cookie) but VERIFIES the signature before trusting the decoded
+org_id.
 """
 from __future__ import annotations
 
 import logging
-import secrets
 from typing import Any
-from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.routers._meta_common import (
     adapter_label as _adapter_label,
     build_store as _build_store,
-    resolve_org_id as _resolve_org_id,
 )
+from app.routers._oauth_state import sign_oauth_state, verify_oauth_state
 from app.services.app_config_store import resolve_meta_app_creds
 from app.services.meta import (
     META_PROVIDER,
@@ -90,14 +103,14 @@ class MetaScopesResponse(BaseModel):
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────
-# _build_store / _resolve_org_id / _adapter_label live in
-# ``app.routers._meta_common`` (extracted so ``meta_insights_router``
-# reuses them without duplication) and are imported above.
+# _build_store / _adapter_label live in ``app.routers._meta_common``
+# (extracted so ``meta_insights_router`` reuses them without duplication)
+# and are imported above.
 
 
 # ─── Status ────────────────────────────────────────────────────────────
 @router.get("/status", response_model=MetaStatusResponse)
-def meta_status(org_id: str | None = Query(default=None)) -> MetaStatusResponse:
+def meta_status(auth: tuple = Depends(get_current_user_org)) -> MetaStatusResponse:
     """Which Meta adapter would the factory return today, and what does
     it see?
 
@@ -105,7 +118,8 @@ def meta_status(org_id: str | None = Query(default=None)) -> MetaStatusResponse:
     is OAuth-backed. Returns a structured ``error`` field instead of
     raising so the platform UI can render "needs reconnection".
     """
-    resolved_org = _resolve_org_id(org_id)
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
     has_system_user = bool(settings.meta_system_user_token)
     app_id, app_secret = resolve_meta_app_creds()
     has_oauth_pair = bool(app_id and app_secret)
@@ -169,8 +183,8 @@ def meta_status(org_id: str | None = Query(default=None)) -> MetaStatusResponse:
 # ─── OAuth start ───────────────────────────────────────────────────────
 @router.get("/oauth/start", response_model=MetaOAuthStartResponse)
 def meta_oauth_start(
-    org_id: str | None = Query(default=None),
     redirect_to_consent: bool = Query(default=True),
+    auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Begin the Facebook OAuth consent flow.
 
@@ -182,6 +196,12 @@ def meta_oauth_start(
     read-only set we need. Posting scopes (``pages_manage_posts``,
     ``instagram_content_publish``) are NOT in the v1 default because
     they require app review and we're not posting yet.
+
+    Gated on ``Depends(get_current_user_org)`` — the org bound into the
+    signed ``state`` token is the CALLER's authenticated org, never an
+    attacker-suppliable value (closes the confused-deputy write where an
+    unsigned ``?org_id=``-derived state let anyone mint a state that
+    lands their own OAuth credential under a victim's org).
     """
     app_id, app_secret = resolve_meta_app_creds()
     if not app_id or not app_secret:
@@ -190,9 +210,9 @@ def meta_oauth_start(
             detail="META_APP_ID / META_APP_SECRET not configured.",
         )
 
-    resolved_org = _resolve_org_id(org_id)
-    nonce = secrets.token_urlsafe(16)
-    state = f"{resolved_org}:{nonce}"
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
+    state = sign_oauth_state(resolved_org)
 
     # Resolve scopes:
     # - If META_OAUTH_SCOPES is set to a real list → use it verbatim
@@ -240,7 +260,7 @@ def meta_oauth_start(
 
 # ─── Scope introspection ───────────────────────────────────────────────
 @router.get("/scopes", response_model=MetaScopesResponse)
-def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
+def meta_scopes(auth: tuple = Depends(get_current_user_org)) -> MetaScopesResponse:
     """Show what scopes the app COULD ask for + what the user HAS granted.
 
     Useful when figuring out "did Meta accept all my Use Cases?" without
@@ -295,7 +315,8 @@ def meta_scopes(org_id: str | None = Query(default=None)) -> MetaScopesResponse:
     granted: list[str] | None = None
     declined: list[str] | None = None
     try:
-        resolved_org = _resolve_org_id(org_id)
+        _, _token, raw_org = auth
+        resolved_org = coerce_org_uuid(raw_org)
         store = _build_store()
         from app.services.meta import META_PROVIDER
 
@@ -361,14 +382,12 @@ def meta_oauth_callback(
             detail="OAuth callback missing code or state.",
         )
 
-    org_part, _, _nonce = state.partition(":")
-    try:
-        org_id = UUID(org_part)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth state token does not encode a valid org_id.",
-        ) from exc
+    # Facebook's redirect carries no session cookie — this endpoint can't
+    # take Depends(get_current_user_org). The signed state IS the trust
+    # anchor: verify_oauth_state raises 400 on a malformed OR tampered
+    # token, so a forged/hand-crafted state can never bind a credential
+    # to an org the flow wasn't started for.
+    org_id = verify_oauth_state(state)
 
     store = _build_store()
     app_id, app_secret = resolve_meta_app_creds()
