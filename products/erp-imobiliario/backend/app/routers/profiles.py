@@ -7,7 +7,7 @@ import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import Field
-from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none
+from app.dependencies import get_current_user, get_user_client, get_admin_client, get_org_id, log_action, first_or_none, require_role
 from app.responses import success_response, ok_response
 from noctusai_lib.api import StrictHttpModel
 
@@ -64,6 +64,57 @@ async def listar_minhas_roles(auth = Depends(get_current_user)):
     result = db.table("user_roles").select("role").eq("user_id", user.id).execute()
     roles = [row.get("role") for row in (result.data or []) if row.get("role")]
     return success_response(roles, total=len(roles))
+
+
+class RoleAssign(StrictHttpModel):
+    role: Literal["admin", "corretor", "coordenador", "dev"]
+
+
+@router.post("/{user_id}/roles")
+async def atribuir_role(
+    user_id: str,
+    body: RoleAssign,
+    auth = Depends(get_current_user),
+    _role = Depends(require_role("platform_admin", "admin", "owner")),
+):
+    """Grant an ERP-scoped `erp.app_role` to a user — elevate-only, product-scoped.
+
+    `role-cascade-trusted` (2026-07-14): closes the missing grant surface —
+    until now `erp.user_roles` had a trusted read (`/me/roles` above,
+    `public.has_role` in RLS + `get_erp_user_role`'s product-scoped
+    elevation check) but no APPLICATION-layer way for an ERP admin to
+    actually grant a role. Upserts into `erp.user_roles` (unique on
+    `(user_id, role)`, see migration 001); RLS on the table already
+    restricts writes to admins (`public.has_role(auth.uid(), 'admin')`) —
+    this endpoint is gated the same way at the app layer
+    (`require_role("platform_admin", "admin", "owner")`, matching
+    `vista_showcase.ALLOWED_ADMIN_ROLES`) so a non-admin request never
+    reaches the admin-client write below.
+
+    Never touches `public.noctus_users` — this grant is scoped to ERP
+    only; it can NEVER cascade to another product (a different product's
+    role resolver never reads `erp.user_roles`) and can NEVER demote a
+    platform admin (`get_erp_user_role` checks the trusted platform-admin
+    cascade FIRST, before this table is even consulted).
+    """
+    user, token = auth
+    admin = get_admin_client()
+
+    target = admin.table("profiles").select("id").eq("id", user_id).limit(1).execute()
+    if not target.data:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    admin.table("user_roles").upsert(
+        {"user_id": user_id, "role": body.role},
+        on_conflict="user_id,role",
+    ).execute()
+
+    log_action(
+        user.id, "editar", "usuario", user_id,
+        f"Concedeu role '{body.role}' (ERP)", {"role": body.role},
+    )
+
+    return success_response({"user_id": user_id, "role": body.role})
 
 
 @router.post("")

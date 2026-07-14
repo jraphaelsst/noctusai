@@ -37,7 +37,7 @@ import logging
 import warnings
 from typing import Optional
 from fastapi import Header, HTTPException
-from noctusai_lib.api.auth import resolve_sso_role
+from noctusai_lib.api.auth import make_resolve_platform_role
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,25 @@ class ProductDependencies:
 
     def __init__(self, db):
         self._db = db
+        # Trusted-first platform-admin cascade (`role-cascade-trusted`,
+        # 2026-07-14) — `public.noctus_users`, NOT the spoofable
+        # `user_metadata` `resolve_sso_role` used to be the sole source of.
+        # `get_core_client` targets the `public` schema (service role) —
+        # the SAME client `get_current_user_org`'s trusted org_id lookup
+        # uses; a product-schema-scoped client 500s with PGRST205.
+        #
+        # Late-binding lambda (NOT `db.get_core_client` captured eagerly):
+        # some tests construct `ProductDependencies(db=object())` to
+        # exercise db-independent methods (`get_org_id`, `get_user_client`
+        # signature shape, etc.) — eagerly resolving `db.get_core_client`
+        # here would raise `AttributeError` at construction time for every
+        # such caller, even when `get_user_role` is never invoked. The
+        # lambda defers the attribute access to first-call time, mirroring
+        # the "late-binding lambda" convention already used at every
+        # product's `get_current_user_org` wiring.
+        self._resolve_platform_role = make_resolve_platform_role(
+            lambda: self._db.get_core_client()
+        )
 
     async def get_current_user(self, authorization: Optional[str] = Header(None)):
         """Extract and validate JWT from Authorization header. Returns (user, token)."""
@@ -123,20 +142,28 @@ class ProductDependencies:
         except Exception:
             raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    @staticmethod
-    def get_user_role(user) -> str:
-        """Resolve user role. SSO admins get 'platform_admin', others get metadata role.
+    def get_user_role(self, user) -> str:
+        """Resolve user role. Trusted DB cascades platform_admin; others get metadata role.
 
         .. deprecated::
             Do NOT wire via ``Depends(get_user_role)``: the positional
             ``user`` arg becomes a required query parameter. The
             imperative call ``deps.get_user_role(user)`` is fine. See
             ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
+
+        Trusted-first (``role-cascade-trusted``, 2026-07-14): the
+        platform-admin cascade is resolved from ``public.noctus_users``
+        (see :func:`noctusai_lib.api.auth.make_resolve_platform_role`), NOT
+        the spoofable ``user_metadata`` a user can rewrite via
+        ``auth.updateUser({data})``. ``user_metadata.role`` remains the base
+        (non-elevated) role source — this class doesn't yet have a generic,
+        product-agnostic notion of DB-backed base roles; only the
+        cascading-admin check is hardened here.
         """
         _warn_if_fastapi_caller("ProductDependencies.get_user_role")
-        sso = resolve_sso_role(user)
-        if sso:
-            return sso
+        trusted = self._resolve_platform_role(user)
+        if trusted:
+            return trusted
         return (user.user_metadata or {}).get("role", "user")
 
     @staticmethod

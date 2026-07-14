@@ -155,3 +155,76 @@ class TestListarMinhasRoles:
         resp = client.get("/api/profiles/me/roles")
         assert resp.status_code == 200
         assert resp.json()["data"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /{user_id}/roles — `role-cascade-trusted` (2026-07-14). Closes the
+# missing grant surface: `/me/roles` above only READS `erp.user_roles`; this
+# is the first APPLICATION-layer way to WRITE a role into it (an ERP admin
+# promoting a plain member to a product-scoped `erp.app_role`).
+# ---------------------------------------------------------------------------
+
+
+class TestAtribuirRole:
+    def _promote(self, client, role: str) -> None:
+        """Mirrors TestToggleCompartilhamento's `_promote` — sets the
+        caller's `erp_role` metadata so `get_erp_user_role`'s fallback tier
+        resolves it (no noctus_users / erp.user_roles rows seeded for the
+        CALLER in these tests, so resolution falls through to metadata,
+        exactly like the pre-existing documentos-router role tests)."""
+        user = client._mock_supabase.auth.get_user.return_value.user
+        user.user_metadata = {**(user.user_metadata or {}), "erp_role": role}
+
+    def test_admin_can_grant_role(self, client):
+        self._promote(client, "admin")
+        client._mock_supabase.set_table_data("profiles", [
+            {"id": "target-user-1", "nome": "Alvo"},
+        ])
+        resp = client.post(
+            "/api/profiles/target-user-1/roles", json={"role": "corretor"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body == {"user_id": "target-user-1", "role": "corretor"}
+
+    def test_owner_can_grant_role(self, client):
+        self._promote(client, "owner")
+        client._mock_supabase.set_table_data("profiles", [
+            {"id": "target-user-1", "nome": "Alvo"},
+        ])
+        resp = client.post(
+            "/api/profiles/target-user-1/roles", json={"role": "admin"},
+        )
+        assert resp.status_code == 200
+
+    def test_corretor_forbidden(self, client):
+        """Non-admin role is denied — 403, never reaches the admin write."""
+        self._promote(client, "corretor")
+        resp = client.post(
+            "/api/profiles/target-user-1/roles", json={"role": "admin"},
+        )
+        assert resp.status_code == 403
+
+    def test_default_user_forbidden(self, client):
+        """Default fixture user (no erp_role) is denied — 403."""
+        resp = client.post(
+            "/api/profiles/target-user-1/roles", json={"role": "admin"},
+        )
+        assert resp.status_code == 403
+
+    def test_target_user_not_found(self, client):
+        self._promote(client, "admin")
+        client._mock_supabase.set_table_data("profiles", [])
+        resp = client.post(
+            "/api/profiles/ghost-user/roles", json={"role": "corretor"},
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_role_rejected(self, client):
+        """Only the `erp.app_role` enum vocabulary is accepted — StrictHttpModel
+        + Literal reject anything else with 422 before touching the DB."""
+        self._promote(client, "admin")
+        resp = client.post(
+            "/api/profiles/target-user-1/roles", json={"role": "not-a-real-role"},
+        )
+        assert resp.status_code == 422

@@ -31,17 +31,57 @@ class _FakeUser:
         self.user_metadata = metadata or {}
 
 
+class _FakeCoreClient:
+    """No-`noctus_users`-row fake core client — `get_user_role` falls
+    through to the `user_metadata` fallback, matching this test's
+    pre-trusted-DB expectations (`role-cascade-trusted`, 2026-07-14)."""
+
+    def table(self, name):
+        return self
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        return types.SimpleNamespace(data=[])
+
+
+class _FakeDb:
+    """Minimal db stand-in exposing only `get_core_client` — enough for
+    `ProductDependencies.get_user_role`'s trusted-lookup leg without
+    pulling in the full Supabase client machinery."""
+
+    def get_core_client(self):
+        return _FakeCoreClient()
+
+
 def test_imperative_call_emits_no_warning():
-    """``deps.get_org_id(user)`` from a script-level call site must be
-    silent. This is the dominant call shape in seed routers + product
-    services and triggering on it would generate constant noise."""
-    deps = ProductDependencies(db=object())
+    """``deps.get_org_id(user)`` / ``deps.get_user_role(user)`` from a
+    script-level call site must be silent. This is the dominant call
+    shape in seed routers + product services and triggering on it would
+    generate constant noise.
+
+    ``get_org_id`` stays a class-level (unbound) call — it is a pure
+    ``@staticmethod`` with no db dependency. ``get_user_role`` is called
+    on the bound instance (``deps.get_user_role(user)``) since
+    `role-cascade-trusted` (2026-07-14) gave it a trusted-DB lookup leg
+    (`self._resolve_platform_role`, bound to `self._db.get_core_client`)
+    — the exact canonical call shape every product uses
+    (`get_user_role = deps.get_user_role`), never the unbound
+    ``ProductDependencies.get_user_role(user)`` form."""
+    deps = ProductDependencies(db=_FakeDb())
     user = _FakeUser({"org_id": "org-123"})
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         org_id = ProductDependencies.get_org_id(user)
-        role = ProductDependencies.get_user_role(user)
+        role = deps.get_user_role(user)
 
     assert org_id == "org-123"
     assert role == "user"

@@ -16,7 +16,7 @@ from noctusai_lib.domain.action_log import log_action as _shared_log_action
 from noctusai_lib.api.auth import (  # noqa: F401
     first_or_none,
     make_require_role,
-    resolve_sso_role,
+    make_resolve_platform_role,
 )
 from app.config import settings
 
@@ -29,19 +29,29 @@ get_current_user = deps.get_current_user
 get_user_client = deps.get_user_client
 get_admin_client = deps.get_admin_client
 
+# Trusted-first platform-admin cascade (``role-cascade-trusted``, 2026-07-14)
+# — `public.noctus_users`, NOT the spoofable `user_metadata` `get_user_role`
+# below used to trust via `resolve_sso_role`. `get_core_client` targets
+# `public` (service role); the therapy-scoped admin client would 500 with
+# PGRST205 resolving `.table("noctus_users")` against the wrong schema —
+# see `noctusai_lib.api.auth.make_resolve_platform_role`'s docstring.
+resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
+
 # ── THERAPY-SPECIFIC extensions ─────────────────────────────────────
 
 
 def get_user_role(user) -> str:
     """Determine the user's role from their metadata.
 
-    Uses shared ``resolve_sso_role()`` first (handles org_role + noctus_role),
-    then falls through to therapy-native roles from direct registration.
+    Uses the trusted-DB platform-admin cascade first (``resolve_platform_role``
+    — was the spoofable ``resolve_sso_role()``), then falls through to
+    therapy-native roles from direct registration.
 
     Returns one of: 'platform_admin', 'clinic_admin', 'therapist', 'patient'.
     """
-    # SSO-derived admin access (org owner/admin or NoctusAI admin)
-    sso = resolve_sso_role(user)
+    # Trusted platform-admin cascade (org owner/admin or NoctusAI admin,
+    # resolved from public.noctus_users — never spoofable user_metadata)
+    sso = resolve_platform_role(user)
     if sso:
         return sso
 

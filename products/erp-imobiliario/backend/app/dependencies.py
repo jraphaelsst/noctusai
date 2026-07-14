@@ -25,7 +25,7 @@ from noctusai_lib.api.auth import (
     make_get_current_user,
     make_get_current_user_org,
     make_require_role,
-    resolve_sso_role,
+    make_resolve_platform_role,
 )
 from app.config import settings
 
@@ -110,6 +110,13 @@ get_current_user_org = make_get_current_user_org(
     missing_detail="Organizacao nao encontrada no perfil do usuario",
 )
 
+# Trusted-first platform-admin cascade (``role-cascade-trusted``, 2026-07-14)
+# — same ``get_core_client`` client `get_current_user_org` already uses;
+# `noctus_users` lives in `public`, not `erp`. See
+# `noctusai_lib.api.auth.make_resolve_platform_role`'s docstring for the
+# full trust-model rationale (mirrors `make_get_current_user_org`'s).
+resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
+
 
 def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
                entidade_id: Optional[str] = None, descricao: str = "", detalhes: Optional[dict] = None):
@@ -129,28 +136,95 @@ def log_action(user_id: str, tipo_acao: str, tipo_entidade: str,
 #
 # ERP's role resolution differs from the seed default because it preserves
 # *both* historical metadata keys (`erp_role` first, `noctus_role` second)
-# while still letting `resolve_sso_role` short-circuit to "platform_admin"
-# for cross-product SSO admins. The seed primitive only consumes the
-# resolver — composition stays in product code.
+# while still letting the platform-admin cascade short-circuit to
+# "platform_admin" for cross-product SSO admins. The seed primitive only
+# consumes the resolver — composition stays in product code.
+#
+# `role-cascade-trusted` (2026-07-14): closed the role-spoof hole AND added
+# the missing ERP-scoped elevation tier. Resolution order is now:
+#   1. Trusted platform-admin cascade (`public.noctus_users`, via
+#      `resolve_platform_role`) — a Noctus platform admin is admin in
+#      EVERY product, including ERP. Trusted DB, never spoofable
+#      `user_metadata`.
+#   2. Trusted ERP-scoped elevation (`public.has_role(user.id,
+#      'admin'::erp.app_role)`, backed by `erp.user_roles`) — an ERP admin
+#      explicitly granted THIS user 'admin' WITHIN ERP (see
+#      `POST /api/profiles/{user_id}/roles`). Elevate-only + product-scoped
+#      by construction: it is consulted ONLY after step 1 has already
+#      returned (so it can never demote a platform admin), and it reads
+#      `erp.user_roles` — a table no other product's role resolver touches
+#      (so it can never cascade elsewhere).
+#   3. `erp.user_roles` base row (`corretor` / `coordenador` / `dev`) when
+#      one exists — the ERP-native role vocabulary, trusted DB.
+#   4. `user_metadata.erp_role` / `.noctus_role` — legacy, spoofable,
+#      transition-only fallback (warned). `"user"` sentinel default
+#      otherwise; downstream `require_role(*allowed)` will 403.
+#
+# Both DB legs (2 + 3) fail CLOSED on a genuine error — the exception
+# propagates rather than silently falling through to the spoofable
+# metadata fallback, mirroring `make_resolve_platform_role`'s documented
+# trust model for the exact same reason: falling back in the error branch
+# would reopen the hole this change closes, in the one place a regression
+# would hide silently.
 
 
 def get_erp_user_role(user) -> str:
-    """Resolve ERP-tier role for a user.
+    """Resolve ERP-tier role for a user — trusted-first, product-scoped override.
 
-    Resolution order matches the historical `vista_showcase.require_admin`
-    body:
-      1. Cross-product SSO role (`resolve_sso_role`) — short-circuits to
-         "platform_admin" for SSO-authenticated platform admins.
-      2. `user_metadata.erp_role` — ERP-native role (preferred).
-      3. `user_metadata.noctus_role` — legacy fallback key.
-      4. ``"user"`` — sentinel default for unauthenticated / anonymous
-         metadata; downstream `require_role(*allowed)` will 403.
+    See the module-level comment above for the full resolution order + the
+    fail-closed rationale on the two DB legs.
     """
-    sso = resolve_sso_role(user)
-    if sso == "platform_admin":
-        return sso
+    platform_role = resolve_platform_role(user)
+    if platform_role == "platform_admin":
+        return platform_role
+
+    # `public.has_role` lives in the `public` schema (NOT `erp`) — the
+    # erp-scoped admin client would resolve it against the wrong schema
+    # and 500 with PGRST205 (the same class of regression documented on
+    # `resolve_org_id_db` above). Use the core client, same as
+    # `resolve_platform_role`.
+    core = _db.get_core_client()
+    try:
+        elevated = core.rpc(
+            "has_role", {"_user_id": user.id, "_role": "admin"}
+        ).execute()
+    except Exception:
+        logger.error(
+            "erp_has_role_lookup_error user_id=%s — failing closed "
+            "(NOT treating as elevated)",
+            user.id, exc_info=True,
+        )
+        raise
+    if elevated.data:
+        return "admin"
+
+    admin = get_admin_client()  # erp-scoped — erp.user_roles lives here
+    try:
+        base_row = (
+            admin.table("user_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        logger.error(
+            "erp_user_roles_lookup_error user_id=%s — failing closed",
+            user.id, exc_info=True,
+        )
+        raise
+    if base_row.data:
+        return base_row.data[0]["role"]
+
     metadata = user.user_metadata or {}
-    return metadata.get("erp_role") or metadata.get("noctus_role") or "user"
+    fallback = metadata.get("erp_role") or metadata.get("noctus_role")
+    if fallback:
+        logger.warning(
+            "erp_role_lookup_empty user_id=%s — no erp.user_roles row, "
+            "falling back to user_metadata resolver (role=%r)",
+            user.id, fallback,
+        )
+    return fallback or "user"
 
 
 # Canonical `require_role(*allowed)` factory — bound once at module load to

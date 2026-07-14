@@ -27,7 +27,9 @@ from noctusai_lib.api.auth import (
     create_sso_token_factory,
     make_get_current_user_org,
     make_require_role,
+    make_resolve_platform_role,
     require_credential_or_422,
+    resolve_sso_role,
     verify_sso_token_factory,
 )
 
@@ -828,6 +830,142 @@ class TestMakeGetCurrentUserOrg:
         user, token, org_id = await dep(authorization="Bearer xxx")
         assert org_id is None
         assert org_id != "metadata-org-would-leak"
+
+
+# ---------------------------------------------------------------------------
+# make_resolve_platform_role — `role-cascade-trusted` (2026-07-14)
+# ---------------------------------------------------------------------------
+#
+# Role-authz analog of TestMakeGetCurrentUserOrg's trust-model coverage:
+# a Noctus platform admin (`public.noctus_users.role == 'admin'` OR
+# `org_role in ('owner', 'admin')`) must cascade to `platform_admin` in
+# EVERY product, resolved from the trusted DB — never the spoofable
+# `user_metadata` `resolve_sso_role` used to be the sole source of. Reuses
+# `_FakeCoreClient` / `_FakeUserWithMetadata` from the org-resolution suite
+# above (same fake shape, different table columns).
+
+
+class TestMakeResolvePlatformRole:
+    """Cover the make_resolve_platform_role factory + the bound resolver."""
+
+    def _build(self, *, admin_client=None):
+        """Helper: returns resolve_platform_role bound to the given fake
+        core client. Defaults to a no-rows fake (falls back to
+        resolve_sso_role's user_metadata read)."""
+        core = admin_client if admin_client is not None else _FakeCoreClient()
+        return make_resolve_platform_role(lambda: core)
+
+    def test_trusted_db_platform_admin_overrides_spoofed_user_metadata(self):
+        """A `noctus_users` row with `role == 'admin'` WINS — proves the
+        role-spoofing hole is closed: a user rewriting their own
+        `user_metadata.noctus_role` to `'admin'` cannot self-grant
+        `platform_admin` when the trusted DB row says otherwise."""
+        fake_user = _FakeUserWithMetadata(
+            id="attacker-1", user_metadata={"noctus_role": "admin"},
+        )
+        core = _FakeCoreClient(rows=[{"role": "user", "org_role": "member"}])
+        resolve_platform_role = self._build(admin_client=core)
+
+        result = resolve_platform_role(fake_user)
+        assert result is None, "a trusted non-admin row must NOT fall back to spoofed metadata"
+
+    def test_trusted_db_role_admin_cascades(self):
+        """`noctus_users.role == 'admin'` → 'platform_admin', regardless of
+        `org_role`."""
+        fake_user = _FakeUserWithMetadata(id="u1", user_metadata={})
+        core = _FakeCoreClient(rows=[{"role": "admin", "org_role": "member"}])
+        resolve_platform_role = self._build(admin_client=core)
+
+        assert resolve_platform_role(fake_user) == "platform_admin"
+
+    def test_trusted_db_org_role_owner_cascades(self):
+        """`org_role in ('owner', 'admin')` → 'platform_admin', even when
+        `role` itself is the base 'user'."""
+        fake_user = _FakeUserWithMetadata(id="u1", user_metadata={})
+        core = _FakeCoreClient(rows=[{"role": "user", "org_role": "owner"}])
+        resolve_platform_role = self._build(admin_client=core)
+
+        assert resolve_platform_role(fake_user) == "platform_admin"
+
+    def test_trusted_db_non_admin_row_returns_none_never_falls_back(self):
+        """A trusted row exists but doesn't qualify (plain member) →
+        returns None WITHOUT consulting the spoofable fallback, even
+        though metadata claims admin — the "row exists" case is NOT a
+        "no row" transition state."""
+        fallback_calls = []
+        fake_user = _FakeUserWithMetadata(
+            id="u1", user_metadata={"noctus_role": "admin"},
+        )
+        core = _FakeCoreClient(rows=[{"role": "user", "org_role": "viewer"}])
+        resolve_platform_role = self._build(admin_client=core)
+
+        with patch(
+            "noctusai_lib.api.auth.resolve_sso_role",
+            side_effect=lambda u: fallback_calls.append(u) or "platform_admin",
+        ):
+            result = resolve_platform_role(fake_user)
+        assert result is None
+        assert fallback_calls == [], "fallback must NOT run when a trusted (non-qualifying) row exists"
+
+    def test_fallback_fires_and_warns_when_no_noctus_users_row(self, caplog):
+        """No `noctus_users` row (transition state) → falls back to
+        `resolve_sso_role` (user_metadata) AND logs a warning naming the
+        user — never silent."""
+        fake_user = _FakeUserWithMetadata(
+            id="u-provisioning", user_metadata={"noctus_role": "admin"},
+        )
+        resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
+
+        with caplog.at_level(logging.WARNING, logger="noctusai_lib.api.auth"):
+            result = resolve_platform_role(fake_user)
+        assert result == "platform_admin"
+        assert any(
+            "trusted_role_lookup_empty" in r.message and fake_user.id in r.message
+            for r in caplog.records
+        ), "expected a loud warning naming the user id when falling back"
+
+    def test_fallback_returns_none_when_metadata_also_has_no_admin_signal(self):
+        """No row AND no admin signal in metadata → None (caller falls
+        through to product-specific role logic)."""
+        fake_user = _FakeUserWithMetadata(id="u1", user_metadata={})
+        resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
+
+        assert resolve_platform_role(fake_user) is None
+
+    def test_db_error_fails_closed(self, caplog):
+        """A genuine DB/transport error must NOT fall back to the
+        spoofable `resolve_sso_role` resolver — even though the metadata
+        DOES carry an admin signal that would otherwise satisfy the
+        fallback. The exception propagates (fail-closed); the fallback is
+        never consulted."""
+        fallback_calls = []
+        fake_user = _FakeUserWithMetadata(
+            id="u-db-down", user_metadata={"noctus_role": "admin"},
+        )
+        core = _FakeCoreClient(raises=RuntimeError("connection refused"))
+        resolve_platform_role = self._build(admin_client=core)
+
+        with patch(
+            "noctusai_lib.api.auth.resolve_sso_role",
+            side_effect=lambda u: fallback_calls.append(u) or "platform_admin",
+        ):
+            with caplog.at_level(logging.ERROR, logger="noctusai_lib.api.auth"):
+                with pytest.raises(RuntimeError):
+                    resolve_platform_role(fake_user)
+        assert fallback_calls == [], "fail-closed must never consult the spoofable fallback on a DB error"
+        assert any("trusted_role_lookup_error" in r.message for r in caplog.records)
+
+    def test_real_resolve_sso_role_fallback_end_to_end(self):
+        """No mocking of resolve_sso_role — exercises the real function to
+        prove the wiring (not just a patched stand-in) falls through
+        correctly when no noctus_users row exists."""
+        fake_user = _FakeUserWithMetadata(
+            id="u1", user_metadata={"org_role": "admin"},
+        )
+        resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
+
+        assert resolve_sso_role(fake_user) == "platform_admin"  # sanity on the real fn
+        assert resolve_platform_role(fake_user) == "platform_admin"
 
 
 # ---------------------------------------------------------------------------

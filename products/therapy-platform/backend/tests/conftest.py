@@ -129,8 +129,30 @@ def _make_client_context(role="therapist", clinic_id=None):
     mock_user = MockUser(role=role, clinic_id=clinic_id)
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(mock_user))
 
+    # `role-cascade-trusted` (2026-07-14): `get_user_role` now resolves the
+    # platform-admin cascade from `public.noctus_users` FIRST (see
+    # `noctusai_lib.api.auth.make_resolve_platform_role`), via a REAL
+    # `get_core_client()` — i.e. a client scoped to the `public` schema, NOT
+    # `therapy`. Reusing `mock_sb` (bound to `schema="therapy"`) for
+    # `get_core_client` was already semantically wrong (the seed's
+    # `DatabaseModule.get_core_client()` always targets `public` in
+    # production) but nothing exercised it until now: with
+    # `strict_unknown_tables=True`, `.table("noctus_users")` against a
+    # `schema="therapy"` mock raises `MockUnknownTableError` (`public.
+    # noctus_users` is a known table; `therapy.noctus_users` isn't — it
+    # doesn't exist). A DEDICATED `schema="public"` mock — with no seeded
+    # rows, so every lookup returns "no row" — fixes the schema mismatch;
+    # `get_user_role` falls through to the `user_metadata` path every
+    # fixture here already sets via `MockUser(role=...)`, so no test's
+    # asserted role changes.
+    mock_core = MockSupabaseClient(
+        validate_schema=False,
+        schema="public",
+        strict_unknown_tables=True,
+    )
+
     patcher1 = patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb)
-    patcher2 = patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb)
+    patcher2 = patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_core)
     patcher3 = patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb)
     # MOCK-SELECT-PREDICATE-FIX follow-up: `app.database` captures
     # `db.get_client / get_core_client / get_admin_client` as BOUND METHODS
@@ -142,7 +164,7 @@ def _make_client_context(role="therapist", clinic_id=None):
     # `get_admin_client()` from `app.database` / `app.dependencies`) lands on
     # the test's mock instead of attempting to instantiate a real Supabase
     # client and crashing on missing `SUPABASE_URL`.
-    patcher4 = patch("app.database.get_core_client", return_value=mock_sb)
+    patcher4 = patch("app.database.get_core_client", return_value=mock_core)
     patcher5 = patch("app.database.get_admin_client", return_value=mock_sb)
     patcher6 = patch("app.database.get_supabase_client", return_value=mock_sb)
     patcher1.start()

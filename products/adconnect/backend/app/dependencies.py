@@ -3,7 +3,8 @@ Shared dependencies for FastAPI routers — seed framework + AdConnect extension
 
 Standard deps (``get_current_user``, ``get_user_role``, ``get_admin_client``)
 come from the seed framework. AdConnect-specific role resolution lifts the
-SSO-aware ``resolve_sso_role`` first, then falls through to the product-native
+trusted-DB platform-admin cascade (``resolve_platform_role`` — was
+``resolve_sso_role``) first, then falls through to the product-native
 ``user_metadata.role`` (the historical "customer" / "admin" / "owner"
 vocabulary used by distributor / brand-admin routers).
 
@@ -35,7 +36,7 @@ from noctusai_lib.api.auth import (
     make_get_current_user,
     make_get_current_user_org,
     make_require_role,
-    resolve_sso_role,
+    make_resolve_platform_role,
 )
 
 # Reuse the singleton ``DatabaseModule`` from ``app.database`` rather than
@@ -54,6 +55,13 @@ deps = create_dependencies(_db)
 
 get_user_role = deps.get_user_role
 get_admin_client = deps.get_admin_client
+
+# Trusted-first platform-admin cascade (``role-cascade-trusted``, 2026-07-14)
+# — `public.noctus_users`, NOT the spoofable `user_metadata` `resolve_role`
+# used to trust via `resolve_sso_role`. `get_core_client` targets `public`
+# (service role) — the SAME client `get_current_user_org`'s trusted org_id
+# lookup below uses.
+resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
 
 
 def get_org_id(user: Any) -> Optional[str]:
@@ -76,14 +84,17 @@ def resolve_role(user: Any) -> str:
     """Resolve the caller's role for AdConnect.
 
     Resolution order:
-      1. :func:`resolve_sso_role(user)` — owner / admin ``org_role`` or
-         ``noctus_role=admin`` returns ``"platform_admin"``.
+      1. ``resolve_platform_role(user)`` — trusted-DB (``public.noctus_users``)
+         platform-admin cascade (``role-cascade-trusted``, 2026-07-14; was
+         the spoofable ``resolve_sso_role(user)``). Returns
+         ``"platform_admin"`` for a Noctus platform admin — trusted, never
+         spoofable ``user_metadata``.
       2. ``user.user_metadata.role`` — product-native vocabulary
          (``customer`` / ``admin`` / ``owner``).
       3. Fallback → ``"customer"`` — the historical default for
          distributor users.
     """
-    sso = resolve_sso_role(user)
+    sso = resolve_platform_role(user)
     if sso:
         return sso
     metadata = getattr(user, "user_metadata", None) or {}
@@ -132,5 +143,5 @@ __all__ = [
     "get_user_role",
     "require_role",
     "resolve_role",
-    "resolve_sso_role",
+    "resolve_platform_role",
 ]

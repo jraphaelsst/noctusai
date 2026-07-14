@@ -33,11 +33,18 @@ reimplementing.
   ``noctus_users`` row exists — closing the residual org-spoofing hole where
   a user could overwrite their own ``user_metadata.org_id`` via
   ``auth.updateUser({data})``. See :func:`make_get_current_user_org`.
-
-  SECURITY follow-up (out of scope for this slice): ``noctus_users.role`` is
-  ALSO derived from spoofable ``user_metadata`` today — see
-  :func:`resolve_sso_role` and the product-level ``get_user_role``
-  resolvers. Role-authz trust hardening is a separate, dedicated slice.
+- **NEW** (`role-cascade-trusted`, 2026-07-14) `make_resolve_platform_role`
+  is the role-authz analog of the above: it resolves the platform-admin
+  cascade from ``public.noctus_users.role`` / ``org_role`` (trusted DB)
+  FIRST, falling back to :func:`resolve_sso_role`'s spoofable
+  ``user_metadata`` read only as a transition fallback. Closes the
+  role-spoofing hole flagged as a follow-up above: a user could previously
+  self-grant ``platform_admin`` fleet-wide by rewriting
+  ``user_metadata.org_role`` / ``noctus_role`` via ``auth.updateUser({data})``.
+  Wired into ``noctusai_seed.ProductDependencies.get_user_role`` (every
+  product that uses the seed default) and into each product's local
+  role resolver that previously called ``resolve_sso_role`` directly
+  (ERP, AdConnect, therapy-platform). See :func:`make_resolve_platform_role`.
 
 **Not here:**
 
@@ -156,19 +163,17 @@ def make_get_current_user(get_supabase_client_fn):
 def resolve_sso_role(user) -> Optional[str]:
     """Check SSO metadata for product-level admin access.
 
-    # SECURITY follow-up (`seed-trusted-org-resolution`, 2026-07-14):
-    # this reads `user_metadata` — the SAME spoofable source
-    # `make_get_current_user_org` used to trust for `org_id` (now fixed,
-    # resolved from `public.noctus_users` instead). `role` is a parallel
-    # instance of the identical class of bug: an authenticated user can
-    # rewrite `user_metadata.org_role` / `noctus_role` via
-    # `auth.updateUser({data})` and self-grant `platform_admin`.
-    # `public.noctus_users.role` is the trusted DB analog (see
-    # `products/core/backend/app/dependencies.py:get_current_admin`, which
-    # already reads it from the DB rather than metadata). Deliberately NOT
-    # fixed here — scoped to `org_id` only per this slice's brief; role
-    # authz trust hardening needs its own dedicated slice (broader blast
-    # radius: `resolve_sso_role` + every product's local `get_user_role`).
+    # SECURITY (`role-cascade-trusted`, 2026-07-14): this reads
+    # `user_metadata` — spoofable, since Supabase lets any authenticated
+    # user rewrite their own metadata via `auth.updateUser({data})`. It is
+    # now ONLY consumed as a transition fallback by
+    # :func:`make_resolve_platform_role` (used when no trusted
+    # `public.noctus_users` row exists yet) — new callers should reach for
+    # `make_resolve_platform_role` instead of calling this directly. Kept
+    # standalone (not inlined) because it is still the correct primitive
+    # for reading the SSO-synced `user_metadata` shape on its own terms,
+    # and existing per-product callers are migrated in the same commit
+    # that introduced this note.
 
     When a user enters a product via SSO from the NoctusAI Core platform,
     the Core's ``/api/sso/session`` endpoint syncs ``org_role`` and
@@ -322,6 +327,150 @@ def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> 
     if result.data and result.data[0].get("org_id"):
         return result.data[0]["org_id"]
     return None
+
+
+def _resolve_trusted_platform_role(
+    get_admin_client_fn: Callable[[], Any], user_id
+) -> Optional[str]:
+    """Look up the platform-level role for ``user_id`` from ``public.noctus_users``.
+
+    Mirrors :func:`_resolve_trusted_org_id` — same client-threading contract
+    (``get_admin_client_fn`` MUST be ``DatabaseModule.get_core_client``, the
+    ``public``-schema service-role client; a product-schema-scoped admin
+    client 500s with PGRST205, the exact regression documented on
+    :func:`_resolve_trusted_org_id`), same ``.limit(1)`` shape (distinguishes
+    "no row" from PostgREST's 0-rows-raises-``APIError`` on ``.single()``),
+    same fail-open-on-exception contract (a genuine DB/transport error is NOT
+    swallowed here — it propagates so the caller can fail closed).
+
+    ``public.noctus_users`` is the trusted, non-spoofable analog of
+    ``user.user_metadata["org_role"]`` / ``["noctus_role"]`` (the fields
+    :func:`resolve_sso_role` reads) — populated server-side during
+    provisioning / SSO sync, never writable by the authenticated user
+    themselves via ``auth.updateUser({data})``.
+
+    Returns:
+        ``"platform_admin"`` when ``role == "admin"`` OR ``org_role`` is
+        ``"owner"``/``"admin"`` — the platform-admin-cascades-to-every-
+        product rule the ``role-cascade-trusted`` slice (2026-07-14) exists
+        to enforce.
+        The raw ``org_role`` string (e.g. ``"member"``, ``"viewer"``) when a
+        row exists but does not qualify for ``platform_admin`` — callers
+        decide what (if anything) that base value means for their own
+        product-local role vocabulary; the seed default and every audited
+        product-local resolver in this fleet treat it as "not elevated"
+        and fall through to their own base-role default.
+        ``None`` when no ``noctus_users`` row exists for ``user_id`` (e.g. a
+        user mid-provisioning) — the caller decides the no-row policy.
+    """
+    core = get_admin_client_fn()
+    result = (
+        core.table("noctus_users")
+        .select("role, org_role")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    if row.get("role") == "admin" or row.get("org_role") in ("owner", "admin"):
+        return "platform_admin"
+    return row.get("org_role")
+
+
+def make_resolve_platform_role(
+    get_admin_client_fn: Callable[[], Any],
+) -> Callable[[Any], Optional[str]]:
+    """Factory: returns a sync ``resolve_platform_role(user) -> Optional[str]``.
+
+    Trusted-first replacement for calling :func:`resolve_sso_role` directly.
+    Preserves :func:`resolve_sso_role`'s exact contract — returns
+    ``"platform_admin"`` or ``None`` (``None`` meaning "not a cascading
+    platform admin; caller falls through to product-specific role logic") —
+    so every existing ``if sso: return sso`` call site swaps in unchanged.
+
+    **Trust model** (``role-cascade-trusted``, 2026-07-14): mirrors
+    :func:`make_get_current_user_org`'s trust model for ``org_id``, applied
+    to the platform-admin cascade. ``public.noctus_users`` (via
+    :func:`_resolve_trusted_platform_role`) wins whenever a row exists — a
+    row that isn't ``platform_admin``-qualifying (e.g. a plain org member)
+    resolves to ``None`` here, exactly like a genuinely non-admin
+    ``user_metadata`` read would, so it is NOT treated as "no row" and does
+    NOT fall back to the spoofable resolver. The :func:`resolve_sso_role`
+    fallback fires ONLY when no ``noctus_users`` row exists yet (a
+    legitimate transition state, e.g. a provisioning race) — and even then,
+    LOUDLY: a ``logger.warning`` names the user id whenever the fallback
+    actually resolves a role. On a genuine DB/transport ERROR (as opposed to
+    "no row"), resolution fails CLOSED — the exception propagates rather
+    than falling back to the spoofable resolver, for the same reason
+    documented on :func:`make_get_current_user_org`: falling back in the
+    error branch would reopen the exact spoofing hole this function exists
+    to close, in the one place a security regression would hide silently.
+
+    Parameters:
+        get_admin_client_fn: A sync callable ``() -> Client`` returning a
+            service-role Supabase client scoped to the ``public`` schema
+            (``DatabaseModule.get_core_client()``).
+
+    Returns:
+        A sync ``resolve_platform_role(user) -> Optional[str]`` callable.
+
+    Usage in a product's ``app/dependencies.py``::
+
+        from noctusai_lib.api.auth import make_resolve_platform_role
+
+        _db = create_database_module(settings, schema="my_product")
+        resolve_platform_role = make_resolve_platform_role(
+            lambda: _db.get_core_client()
+        )
+
+        def get_my_product_role(user) -> str:
+            sso = resolve_platform_role(user)  # trusted-first, was resolve_sso_role(user)
+            if sso:
+                return sso
+            # … product-specific logic, unchanged …
+    """
+    def resolve_platform_role(user) -> Optional[str]:
+        user_id = getattr(user, "id", None)
+        try:
+            trusted = _resolve_trusted_platform_role(get_admin_client_fn, user_id)
+        except Exception:
+            # Fail CLOSED — see make_get_current_user_org's documented
+            # rationale for the identical org_id trust model. A DB outage
+            # already fails every downstream data-access query for this
+            # same request anyway (same database); failing here instead of
+            # one hop later is not a materially larger availability blast
+            # radius, and it keeps the security invariant intact instead of
+            # trading it away for uptime.
+            logger.error(
+                "trusted_role_lookup_error user_id=%s — failing closed "
+                "(NOT falling back to user_metadata)",
+                user_id,
+                exc_info=True,
+            )
+            raise
+
+        if trusted is not None:
+            # A row exists. Either it qualifies for platform_admin (return
+            # it), or it doesn't (a genuine, trusted "not elevated" answer —
+            # NOT a "no row" transition state, so the spoofable fallback is
+            # never consulted here).
+            return trusted if trusted == "platform_admin" else None
+
+        # No noctus_users row — a legitimate transition state (e.g. a
+        # provisioning race). Fall back to the caller-supplied resolver so
+        # existing flows keep working, but LOUDLY — never silent.
+        fallback = resolve_sso_role(user)
+        if fallback:
+            logger.warning(
+                "trusted_role_lookup_empty user_id=%s — no noctus_users row, "
+                "falling back to resolve_sso_role (user_metadata; role=%r)",
+                user_id, fallback,
+            )
+        return fallback
+
+    return resolve_platform_role
 
 
 def make_get_current_user_org(

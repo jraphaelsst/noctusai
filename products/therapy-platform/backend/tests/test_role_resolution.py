@@ -6,15 +6,61 @@ Verifies the priority chain:
 2. noctus_role (admin) → platform_admin
 3. Therapy-native role → as-is
 4. Default → patient
+
+`role-cascade-trusted` (2026-07-14): `get_user_role` now checks a trusted
+`public.noctus_users` DB row FIRST (via `resolve_platform_role` — see
+`noctusai_lib.api.auth.make_resolve_platform_role`), falling back to the
+`user_metadata`-based `resolve_sso_role` read every test in this file
+exercises ONLY when no row exists. The autouse fixture below patches
+`DatabaseModule.get_core_client` to a no-rows fake so every test here
+deterministically hits that fallback tier — the exact behavior these
+tests were already covering — without a real Supabase round-trip.
 """
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 
 from app.dependencies import get_user_role
 
 
+class _FakeEmptyCoreClient:
+    """Chainable fake for `DatabaseModule.get_core_client()` — no
+    `noctus_users` row for any user, so `resolve_platform_role` always
+    falls through to the `user_metadata`-based `resolve_sso_role` fallback
+    these tests exercise."""
+
+    def table(self, *a, **k):
+        return self
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=[])
+
+
+@pytest.fixture(autouse=True)
+def _no_trusted_role_row():
+    """Every test in this module calls `get_user_role` directly (no DB
+    fixture) — patch the trusted-lookup client so resolution deterministically
+    falls to the `user_metadata` tier these tests were written to cover."""
+    with patch(
+        "noctusai_seed.database.DatabaseModule.get_core_client",
+        return_value=_FakeEmptyCoreClient(),
+    ):
+        yield
+
+
 def _user(metadata=None):
     """Create a mock user with given user_metadata."""
-    return SimpleNamespace(user_metadata=metadata or {})
+    return SimpleNamespace(id="u1", user_metadata=metadata or {})
 
 
 # ── SSO-derived roles ─────────────────────────────────────────
