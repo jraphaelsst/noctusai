@@ -3,7 +3,7 @@
  * shared seed `<ChatWindow>` organ.
  *
  * `@noctusai/lib/design-system` is stubbed at the test boundary (same
- * pattern as `Integrations.test.tsx`) — the real barrel transitively imports
+ * pattern used across this product's test suite) — the real barrel transitively imports
  * `useAIOutputFor` → `@noctusai/seed/infra`, which throws at module-load
  * time without `VITE_SUPABASE_URL` in the test env. The stub captures the
  * `adapter`/`scopeId` props passed to `<ChatWindow>` so this file asserts

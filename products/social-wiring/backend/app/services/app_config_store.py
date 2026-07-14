@@ -11,11 +11,11 @@ loud-config-gap check, not a second inline copy. Backed by
 Unlike ``credential_vault`` / ``IntegrationAccountService`` (which map a
 missing/malformed key to a 503 at the router boundary), reading the Meta
 app credential pair must NEVER hard-fail the read-only call sites in
-``meta_router`` / ``services/meta`` / ``_meta_common`` — those already
-have an env fallback (``META_APP_ID`` / ``META_APP_SECRET``) that must
-keep working even before ``ENCRYPTION_KEY`` is configured (e.g. local
-dev). :func:`resolve_meta_app_creds` therefore degrades to env-only
-when the store cannot be built, rather than raising.
+``services/meta`` / ``_meta_common`` / ``integration_accounts_router`` —
+those already have an env fallback (``META_APP_ID`` / ``META_APP_SECRET``)
+that must keep working even before ``ENCRYPTION_KEY`` is configured
+(e.g. local dev). :func:`resolve_meta_app_creds` therefore degrades to
+env-only when the store cannot be built, rather than raising.
 """
 from __future__ import annotations
 

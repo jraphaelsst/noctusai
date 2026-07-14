@@ -3,7 +3,7 @@
  * the shared seed `<ChatWindow>` organ.
  *
  * `@noctusai/lib/design-system` is stubbed at the test boundary (same
- * pattern as `Integrations.test.tsx` / `WhatsAppChatWindow.test.tsx`) — the
+ * pattern as `WhatsAppChatWindow.test.tsx`) — the
  * real barrel transitively imports `useAIOutputFor` → `@noctusai/seed/infra`,
  * which throws at module-load time without `VITE_SUPABASE_URL`. The stub
  * captures the `scopeId`/`adapter` props so this file asserts the Meta DM →

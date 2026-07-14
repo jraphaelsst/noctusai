@@ -23,15 +23,17 @@ One representative endpoint per class the brief defined:
     Session org A + a crafted ``?org_id=<org B>`` query override → the
     query is a no-op; the persisted/read snapshot is scoped to the
     SESSION's org, never the query-supplied one.
-  * Class A  — ``meta_status`` / ``calendar_status`` / ``google_scopes``.
-    No-session → 401. A garbage (non-UUID) ``?org_id=`` value that used
-    to 400 is now a complete no-op (200) — proof the param is no longer
-    read at all.
-  * Class D  — ``meta_oauth_start`` / ``calendar_oauth_start``.
-    No-session → 401. The ``state`` token's org segment always encodes
-    the SESSION's org — a ``?org_id=<org B>`` query override never
-    reaches it. A tampered ``state`` fails signature verification at the
-    callback (400), never silently trusted.
+  * Class A  — ``calendar_status`` / ``google_scopes`` (the analogous
+    org-level ``meta_status`` endpoint was retired along with the
+    org-level Meta OAuth surface — superseded by the per-client
+    ``integration_accounts_router`` flow). No-session → 401. A garbage
+    (non-UUID) ``?org_id=`` value that used to 400 is now a complete
+    no-op (200) — proof the param is no longer read at all.
+  * Class D  — ``calendar_oauth_start`` (the analogous org-level
+    ``meta_oauth_start``/``meta_oauth_callback`` pair was retired for
+    the same reason). No-session → 401. The ``state`` token's org
+    segment always encodes the SESSION's org — a ``?org_id=<org B>``
+    query override never reaches it.
 """
 from __future__ import annotations
 
@@ -243,7 +245,7 @@ class TestClassAStatusEndpointsAuthBoundary:
 
     @pytest.mark.parametrize(
         "path",
-        ["/api/meta/status", "/api/calendar/status", "/api/google/scopes"],
+        ["/api/calendar/status", "/api/google/scopes"],
     )
     def test_no_session_returns_strict_401(self, client, path):
         resp = client.get(path)
@@ -251,7 +253,7 @@ class TestClassAStatusEndpointsAuthBoundary:
 
     @pytest.mark.parametrize(
         "path",
-        ["/api/meta/status", "/api/calendar/status", "/api/google/scopes"],
+        ["/api/calendar/status", "/api/google/scopes"],
     )
     def test_garbage_org_id_query_is_a_no_op(self, client, path):
         """Pre-fix, a non-UUID ``?org_id=`` raised 400 ("invalid
@@ -295,14 +297,14 @@ class TestOAuthStartAuthBoundary:
             app.dependency_overrides.clear()
 
     @pytest.mark.parametrize(
-        "path", ["/api/meta/oauth/start", "/api/calendar/oauth/start"]
+        "path", ["/api/calendar/oauth/start"]
     )
     def test_no_session_returns_strict_401(self, client, path):
         resp = client.get(f"{path}?redirect_to_consent=false")
         assert resp.status_code == 401, resp.text
 
     @pytest.mark.parametrize(
-        "path", ["/api/meta/oauth/start", "/api/calendar/oauth/start"]
+        "path", ["/api/calendar/oauth/start"]
     )
     def test_state_org_segment_is_always_the_session_org(self, client, path):
         """An ``?org_id=<org B>`` query attempt to steer the minted
@@ -320,12 +322,11 @@ class TestOAuthStartAuthBoundary:
         assert org_part == _ORG_A
         assert org_part != _ORG_B
 
-    def test_tampered_state_fails_callback_verification(self, client):
-        """A hand-crafted state (right shape, wrong/garbage signature)
-        must be REJECTED by the callback, never silently trusted — the
-        core guarantee the HMAC signing closes."""
-        forged_state = f"{_ORG_B}:forged-nonce:0"
-        resp = client.get(
-            f"/api/meta/oauth/callback?code=irrelevant&state={forged_state}"
-        )
-        assert resp.status_code == 400, resp.text
+    # The `test_tampered_state_fails_callback_verification` case that used
+    # to live here tested the org-level `/api/meta/oauth/callback`, which
+    # was retired along with the rest of the org-level Meta OAuth surface
+    # (superseded by the per-client `integration_accounts_router` flow).
+    # No calendar-oauth-callback equivalent exists in this file, so the
+    # HMAC-tamper-rejection guarantee is no longer exercised by this class
+    # — Class D's callback-signature coverage on the surviving Google/
+    # calendar path is out of scope for this retirement.

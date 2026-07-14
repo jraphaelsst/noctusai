@@ -4,8 +4,9 @@ Every endpoint resolves its Meta adapter via the account-scoped DI seam
 ``Depends(get_account_adapter)`` (``account_id`` query, required — the
 per-client ``integration_accounts`` row, Wave 2's
 ``get_meta_adapter_for_account``), never the org-level
-``get_meta_adapter`` Store-A adapter ``meta_router``/``meta_status``
-use. The Instagram user id is resolved FROM the account (via
+``get_meta_adapter`` Store-A adapter the (since retired) org-level
+Meta status/OAuth surface used. The Instagram user id is resolved
+FROM the account (via
 :func:`app.routers._meta_common.resolve_primary_ig_user_id`) instead of
 being taken as a path/query param — Wave 2's per-client Meta connection
 is expected to see exactly one linked IG account.

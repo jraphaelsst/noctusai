@@ -1,7 +1,8 @@
-"""Shared Meta-router helpers — extracted from ``meta_router`` so
-``meta_insights_router`` (Instagram insights, W-ig-insights) can reuse the
-exact same adapter-construction + org-resolution + adapter-label logic
-without duplicating it (DRY — the N=2 recurrence rule).
+"""Shared Meta-router helpers — extracted from the org-level Meta OAuth
+router (since retired) so ``meta_insights_router`` (Instagram insights,
+W-ig-insights) can reuse the exact same adapter-construction +
+org-resolution + adapter-label logic without duplicating it (DRY — the
+N=2 recurrence rule).
 
 Nothing here is product-specific business logic: it's the credential
 store / org-id / adapter-label seam every Meta-consuming router needs.

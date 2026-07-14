@@ -904,15 +904,14 @@ def _build_ia_youtube_redirect_uri(cfg: SocialWiringSettings) -> str:
 # YouTube multi-account pair above. Not a Google flow (Facebook's OAuth dialog,
 # no PKCE) so it does NOT go through `_build_ia_google_redirect_uri` /
 # `get_yt_oauth_provider` — it builds its own consent URL + does its own code
-# exchange via the seed's `noctusai_lib.integrations.meta` helpers, exactly as
-# the existing org-scoped `meta_router.meta_oauth_start` / `_callback` do (this
-# is the SAME exchange logic, just persisting into store B —
-# `integration_accounts`, per-client — instead of store A —
-# `credential_vault`, per-org-only).
+# exchange via the seed's `noctusai_lib.integrations.meta` helpers, the SAME
+# exchange logic the retired org-level Meta OAuth surface used, just
+# persisting into store B — `integration_accounts`, per-client — instead of
+# store A — `credential_vault`, per-org-only.
 
 # Pinned scope set (Wave 2 contract) — the full IG+Page surface the product's
 # Meta features consume (comments/DMs/insights + posting). Distinct from the
-# org-level `meta_router`'s auto-discovered/kitchen-sink scope resolution:
+# retired org-level surface's auto-discovered/kitchen-sink scope resolution:
 # this per-client flow always requests this exact set so every client
 # connection has a consistent, predictable permission surface.
 META_IA_OAUTH_SCOPES: tuple[str, ...] = (
@@ -1003,7 +1002,7 @@ def meta_oauth_start(
     round-trip (never trust an unvalidated FK). App ID/secret resolve
     DB-first (Settings-writable) with env fallback via
     ``resolve_meta_app_creds`` — a 503 config-gap when neither is set,
-    same shape as the org-level ``meta_router.meta_oauth_start``.
+    same shape the retired org-level Meta OAuth-start endpoint used.
     """
     app_id, app_secret = resolve_meta_app_creds(settings=cfg)
     if not app_id or not app_secret:
@@ -1044,7 +1043,7 @@ def meta_oauth_start(
         "response_type": "code",
         "state": state,
         # Re-ask for previously denied permissions on every flow — same
-        # rationale as the org-level meta_router flow.
+        # rationale as the retired org-level Meta OAuth flow.
         "auth_type": "rerequest",
     }
     auth_url = (
@@ -1069,8 +1068,8 @@ def meta_oauth_callback(
     """Facebook's redirect target for the multi-account per-client Meta flow.
 
     Exchanges code → short-lived → long-lived user token (seed helpers,
-    identical to the org-level ``meta_router.meta_oauth_callback``),
-    probes ``/me`` + Pages + IG accounts for a channel label (best-effort
+    identical to the retired org-level Meta OAuth callback), probes
+    ``/me`` + Pages + IG accounts for a channel label (best-effort
     — a probe failure never blocks account creation), creates (or
     re-authenticates, keyed on ``channel_id``) a store-B
     ``integration_accounts`` row, then redirects to
@@ -1176,7 +1175,7 @@ def meta_oauth_callback(
     # transient MetaOAuthAdapter over the fresh token (never persisted
     # mid-probe). Reuses the seed adapter's typed Graph calls instead of
     # hand-rolling a second copy of the /me + /me/accounts request shape
-    # (the org-level meta_router.meta_oauth_callback already owns that
+    # (the retired org-level Meta OAuth callback already owned that
     # copy for the org-scoped flow — this is N=2 via the seed's own
     # abstraction, not a 3rd fork). `system_user_token=` here just means
     # "the bearer token this adapter authenticates every call with" — the

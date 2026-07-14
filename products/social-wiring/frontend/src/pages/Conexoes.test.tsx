@@ -8,7 +8,7 @@
  *   4. AccountSwitcher renders client + account dropdowns and reflects
  *      the active selection via the store
  *
- * Mock strategy (mirrors Integrations.test.tsx):
+ * Mock strategy:
  *   · ONE vi.mock per module (hoisted). Multiple mocks of the same module
  *     collide; the last wins silently.
  *   · All hooks are vi.fn()s configured per-test in beforeEach.

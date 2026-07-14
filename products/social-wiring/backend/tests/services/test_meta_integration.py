@@ -155,7 +155,8 @@ class TestShimSurface:
 
     def test_value_objects_and_adapters_reexported(self):
         # These must remain importable from `app.services.meta` so the
-        # existing consumers (meta_router, whatsapp_intake) keep working.
+        # existing consumers (integration_accounts_router, whatsapp_intake)
+        # keep working.
         assert FacebookPage is not None
         assert FacebookPost is not None
         assert InstagramAccount is not None
