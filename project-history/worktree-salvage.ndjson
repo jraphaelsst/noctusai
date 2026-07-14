@@ -230,3 +230,4 @@
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/sw-retire-org-meta-surfaces", "branch": "feat/sw-retire-org-meta-surfaces", "sha": "1779a9a59d301398a2d0cf731b234672b7378ebe", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/ssh-multiplex-gate", "branch": "feat/ssh-multiplex-gate", "sha": "4a59f4f7304a88e5e93fc76a779eedd8badd5f88", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/ssh-rate-cap", "branch": "feat/ssh-rate-cap", "sha": "5f9d87cc27d3183fc9e311678922e3d025700714", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/role-cascade-trusted", "branch": "feat/role-cascade-trusted", "sha": "1e167893cb5815131c116097ab2c47fcd8c0ea2d", "reason": "task_branch cleanup (learn-before-delete)"}
