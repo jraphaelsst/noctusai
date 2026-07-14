@@ -46,14 +46,19 @@ wins over any `META_APP_ID` / `META_APP_SECRET` env fallback.
 ## Step 2 — Register the redirect URI (in the Meta App dashboard)
 
 In your Facebook App → **Facebook Login → Settings → Valid OAuth Redirect URIs**, add
-the **per-client** callback:
+the **per-client** callback. The currently-live domain is **`social.noctusai.com`**:
+
+```
+https://social.noctusai.com/api/integrations/accounts/meta/oauth/callback
+```
+
+The registered URI must match the redirect the backend actually sends (built from
+social-wiring's configured product URL). Meta allows multiple redirect URIs, so if
+`social-wiring.noctusai.com` is also wired as a hostname, register both to be safe:
 
 ```
 https://social-wiring.noctusai.com/api/integrations/accounts/meta/oauth/callback
 ```
-
-(Also add the `https://social.noctusai.com/...` variant if that domain is used — Meta
-allows multiple redirect URIs.)
 
 > ⚠️ This is the **per-client** callback path (`/api/integrations/accounts/meta/...`).
 > It is distinct from the older org-level `/api/meta/oauth/callback` surface.

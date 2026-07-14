@@ -13,6 +13,11 @@ worktrees (fail2ban counts against the whole connection history, so the back-off
 state must be shared too — it lives in the git-common cache dir).
 
 Behaviour (all knobs env-overridable):
+  • connection MULTIPLEXING (``ControlMaster``, on by default) — the PRIMARY
+    defense: one persistent master connection is reused for every op, so a whole
+    fleet deploy is ~1 real connection, not ~50 (see the 2026-07-14 incident at
+    ``_multiplex_opts``). This is what actually keeps us under fail2ban's
+    connection-RATE rule; the interval + circuit-breaker below are secondary.
   • min inter-attempt interval (``NOCTUS_SSH_MIN_INTERVAL``, default 3s) — never burst.
   • circuit-breaker: after N consecutive CONNECTION failures
     (``NOCTUS_SSH_CIRCUIT_FAILS``, default 2 → ≤4 real attempts escape, under the
@@ -88,6 +93,47 @@ _CONN_ERROR_MARKERS = (
     "ssh: connect to host",
     "kex_exchange_identification",
 )
+
+
+# ── SSH connection multiplexing (ControlMaster) ─────────────────────────────
+# WHY (2026-07-14 incident, distinct from the 2026-06-30 one above). A FLEET
+# deploy opens ~50 SSH connections in a few minutes — 9 products × ~5-6 ops each
+# (docker inspect/tag/compose pull/up + a health-probe loop + a tunnel restart),
+# plus diagnostics. Every connection was a NEW TCP+auth handshake, and fail2ban
+# bans an IP for connection RATE even when every connection SUCCEEDS. The
+# circuit-breaker below only reacts to FAILURES, so it never fired — the ban
+# landed mid-deploy, self-inflicting an SSH outage. The 3s min-interval bounds
+# BURSTS but not sustained volume. Multiplexing is the STRUCTURAL fix: one
+# persistent master connection is reused for every op within ControlPersist,
+# collapsing ~50 connections → ~1, so the connection-rate rule cannot trip.
+_CONTROL_DIR = Path("/tmp/noctus-ssh-cm")  # short, POSIX — socket paths are length-capped
+_DEFAULT_CONTROL_PERSIST = "120"  # seconds the master lingers idle after the last op
+
+
+def _multiplex_opts() -> list[str]:
+    """``-o`` flags enabling SSH ControlMaster multiplexing, or ``[]`` when it's
+    disabled/unsupported. Reuses ONE master connection across every
+    ``run_remote`` call so a whole fleet deploy is ~1 real connection instead of
+    ~50 — the structural guarantee against a fail2ban connection-rate ban.
+    Toggle off with ``NOCTUS_SSH_MULTIPLEX=0``; tune persistence with
+    ``NOCTUS_SSH_CONTROL_PERSIST`` (seconds)."""
+    if os.name != "posix":
+        return []  # ControlMaster is unsupported on Windows OpenSSH
+    if os.environ.get("NOCTUS_SSH_MULTIPLEX", "1") != "1":
+        return []
+    try:
+        _CONTROL_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:  # degrade to no-multiplex rather than break SSH
+        logger.warning(
+            "_vps_ssh: cannot create control dir %s (%s); multiplexing off", _CONTROL_DIR, exc
+        )
+        return []
+    persist = os.environ.get("NOCTUS_SSH_CONTROL_PERSIST", _DEFAULT_CONTROL_PERSIST)
+    return [
+        "-o", "ControlMaster=auto",
+        "-o", f"ControlPath={_CONTROL_DIR}/%C",
+        "-o", f"ControlPersist={persist}",
+    ]
 
 
 # ── env helpers ─────────────────────────────────────────────────────────────
@@ -246,6 +292,9 @@ def _real_ssh(
         "ssh",
         "-o", f"ConnectTimeout={connect_timeout}",
         "-o", "BatchMode=yes",
+        # Multiplex: reuse ONE master connection across all ops so a fleet
+        # deploy is ~1 real connection, not ~50 (fail2ban rate-ban avoidance).
+        *_multiplex_opts(),
         ssh_host,
         remote_cmd,
     ]

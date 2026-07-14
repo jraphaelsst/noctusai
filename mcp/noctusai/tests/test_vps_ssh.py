@@ -289,3 +289,49 @@ def test_routed_tool_vps_ps_uses_helper(monkeypatch, tmp_path):
     r = V.ps()
     assert r["ok"] is True
     assert any(c["name"] == "noctus-core" for c in r["containers"])
+
+
+# ── connection multiplexing (2026-07-14 fleet-deploy volume ban) ─────────────
+class TestMultiplexing:
+    """ControlMaster multiplexing is the PRIMARY defense: it collapses a fleet
+    deploy's ~50 SSH connections into ~1, so fail2ban's connection-RATE rule
+    (which the failure-only circuit-breaker can't catch) never trips."""
+
+    def test_multiplex_opts_enabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("NOCTUS_SSH_MULTIPLEX", raising=False)
+        opts = VSS._multiplex_opts()
+        if VSS.os.name != "posix":
+            assert opts == []
+            return
+        assert "ControlMaster=auto" in opts
+        assert any(o.startswith("ControlPath=") for o in opts)
+        assert any(o.startswith("ControlPersist=") for o in opts)
+        # the control socket dir is created (mode 0700) so the master can bind
+        assert VSS._CONTROL_DIR.is_dir()
+
+    def test_multiplex_opts_disabled_via_env(self, monkeypatch):
+        monkeypatch.setenv("NOCTUS_SSH_MULTIPLEX", "0")
+        assert VSS._multiplex_opts() == []
+
+    def test_real_ssh_passes_controlmaster_to_ssh(self, monkeypatch):
+        """_real_ssh emits the ControlMaster flags so every op reuses one master."""
+        if VSS.os.name != "posix":
+            pytest.skip("multiplexing is POSIX-only")
+        monkeypatch.delenv("NOCTUS_SSH_MULTIPLEX", raising=False)
+        captured = {}
+
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        def fake_run(args, **kwargs):
+            captured["args"] = args
+            return _R()
+
+        monkeypatch.setattr(VSS.subprocess, "run", fake_run)
+        rc, out, err = VSS._real_ssh("noctus-vps", "echo hi", 8, 30.0)
+        assert rc == 0
+        args = captured["args"]
+        assert "ControlMaster=auto" in args
+        assert any(isinstance(a, str) and a.startswith("ControlPersist=") for a in args)
