@@ -28,14 +28,17 @@ product's own ``settings`` (``ProductSettings`` — ``supabase_url`` /
 there already).
 
 **Scope — what this router's OWN ``get_auth_context`` resolves.** The 5
-routes above authenticate via the cookie session ONLY (+ the seed's
-``FakeApiTokenResolver`` for ``pk_*`` bearers — see the docstring on
-``create_auth_router`` for why a Real DB-backed resolver isn't wired here).
-A product's OTHER routers keep using their OWN ``app.dependencies.
-get_auth_context`` (legacy-JWT bridge + their Real ``ApiTokenResolver``)
-completely unaffected by this router — the two are independent
-compositions that happen to share the SAME ``SessionStore`` instance (see
-``get_session_store`` below), so a cookie minted by THIS router's
+routes above authenticate via the cookie session by default (+ the
+seed's ``FakeApiTokenResolver`` for ``pk_*`` bearers when the caller
+doesn't supply one). A product with a REAL ``ApiTokenResolver`` and/or
+its own legacy-JWT bridge (e.g. a pre-existing ``app.dependencies.
+get_auth_context`` composition) passes them through the
+``api_token_resolver`` / ``legacy_jwt_resolver`` kwargs below — this is
+the seam a consumer wires its real adapters through instead of
+inheriting the Fake silently. Products that don't pass anything get the
+"pure new-scheme, cookie-only" default this docstring described
+originally. Both compositions share the SAME ``SessionStore`` instance
+(see ``get_session_store`` below), so a cookie minted by THIS router's
 ``/login`` is visible to a lookup running through EITHER composition.
 
 SEC-4 (upstream revoke): ``session_revoke.SessionRevoker`` — see
@@ -55,8 +58,10 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 from noctusai_lib.api.auth.session import (
+    ApiTokenResolver,
     AuthContext,
     FakeApiTokenResolver,
+    LegacyJwtResolver,
     SessionRevoker,
     SessionStore,
     hash_token,
@@ -258,7 +263,13 @@ def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
         )
 
 
-def create_auth_router(deps, settings) -> APIRouter:
+def create_auth_router(
+    deps,
+    settings,
+    *,
+    api_token_resolver: Optional[ApiTokenResolver] = None,
+    legacy_jwt_resolver: Optional[LegacyJwtResolver] = None,
+) -> APIRouter:
     """Build the combined ``/api/auth`` + ``/api/settings/api-tokens`` router.
 
     Args:
@@ -273,27 +284,52 @@ def create_auth_router(deps, settings) -> APIRouter:
             ``supabase_url`` / ``supabase_anon_key`` (login + SEC-4
             revoke) and ``redis_url`` / ``session_encryption_key`` (the
             session store, SEC-3) are read off it.
+        api_token_resolver: Optional REAL ``ApiTokenResolver`` (e.g. a
+            product's DB-backed ``SupabaseApiTokenResolver``). Defaults
+            to the seed's ``FakeApiTokenResolver()`` (always-empty — no
+            ``pk_*`` bearer resolves) when omitted. A product whose
+            ``pk_*`` tokens must resolve through THIS router's ``/me``
+            or api-token endpoints MUST pass its real resolver here —
+            inheriting the Fake default silently is the regression this
+            kwarg exists to prevent (no Real ``DBApiTokenResolver``
+            ships in the seed itself yet; each product's table lives in
+            its own schema, so the seed has no generic one to default
+            to — see the ``api_tokens`` module docstring, "Wave 2").
+        legacy_jwt_resolver: Optional async ``Callable[[str],
+            Awaitable[AuthContext | None]]`` bridging a raw Supabase-JWT
+            bearer (the pre-cookie-session auth style) to an
+            ``AuthContext``. Defaults to ``None`` (pure new-scheme,
+            cookie + ``pk_*``-only) — pass a product's existing bridge
+            (e.g. its ``app.dependencies._legacy_jwt_resolver``) to keep
+            legacy-JWT callers of ``/me``/``/logout``/the api-token
+            endpoints working across the migration window.
 
     Returns:
         One ``APIRouter`` combining both prefixes — register it under the
         seed's ``"auth"`` standard-router name (a single registry entry;
-        see ``noctusai_seed.routers._STANDARD_ROUTERS``).
+        see ``noctusai_seed.routers._STANDARD_ROUTERS``) OR call this
+        factory directly (bypassing the registry) when a product needs
+        the ``api_token_resolver`` / ``legacy_jwt_resolver`` kwargs — the
+        registry's ``_build_auth_router(deps, settings, product_name,
+        version)`` builder has a fixed 4-arg signature shared by every
+        standard router and has no seam to thread per-product overrides
+        through, so a product with real adapters to wire calls
+        ``create_auth_router(...)`` directly from its own module-
+        registration seam instead of opting into ``standard_routers=
+        ["auth"]``.
     """
     session_store = get_session_store(settings)
     session_revoker = get_session_revoker(settings)
 
     # This router's OWN identity resolver — cookie sessions + `pk_*` bearer
-    # via the seed's Fake resolver (no Real `DBApiTokenResolver` ships yet;
-    # see the api_tokens module docstring — "Wave 2" and product-schema-
-    # specific, so building one HERE would need a product-specific table
-    # name this factory has no seam for). No legacy-JWT bridge: `/me` /
-    # `/logout` / the api-token endpoints are the NEW cookie-session
-    # surface — a legacy-JWT caller has no session to introspect/revoke via
-    # these routes and keeps using the product's own pre-existing routes.
+    # (Fake by default; Real when the caller passes one) + an optional
+    # legacy-JWT bridge. See the kwarg docstrings above for the by-
+    # construction reasoning; the bare default (no overrides) stays the
+    # "pure new-scheme, cookie-only" shape this router shipped with.
     get_auth_context = make_get_auth_context(
         session_store=session_store,
-        api_token_resolver=FakeApiTokenResolver(),
-        legacy_jwt_resolver=None,
+        api_token_resolver=api_token_resolver or FakeApiTokenResolver(),
+        legacy_jwt_resolver=legacy_jwt_resolver,
         session_cookie_name=_SESSION_COOKIE,
     )
 

@@ -18,7 +18,7 @@ from noctusai_seed.routers import (
 )
 
 
-_ALL_NAMES = ["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "scheduler", "whatsapp_admin", "status_paginas"]
+_ALL_NAMES = ["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "scheduler", "whatsapp_admin", "status_paginas", "auth"]
 
 
 def _paths(routers) -> set[str]:
@@ -97,6 +97,23 @@ class TestBuildStandardRoutersSelection:
         assert len(result) == 1
         assert isinstance(result[0], APIRouter)
         assert "/api/status-paginas" in _paths(result)
+
+    def test_single_name_auth(self, fake_deps, fake_settings, product_name, version):
+        """"auth" resolves to ONE APIRouter combining both prefixes
+        (/api/auth + /api/settings/api-tokens) — see
+        `noctusai_seed.auth_router.create_auth_router`."""
+        result = build_standard_routers(
+            fake_deps, fake_settings, product_name=product_name, version=version,
+            names=["auth"],
+        )
+        assert len(result) == 1
+        assert isinstance(result[0], APIRouter)
+        auth_paths = _paths(result)
+        assert "/api/auth/login" in auth_paths
+        assert "/api/auth/me" in auth_paths
+        assert "/api/auth/logout" in auth_paths
+        assert "/api/settings/api-tokens" in auth_paths
+        assert "/api/settings/api-tokens/{token_id}" in auth_paths
 
 
 class TestBuildStandardRoutersOrder:

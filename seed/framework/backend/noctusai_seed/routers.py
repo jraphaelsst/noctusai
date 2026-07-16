@@ -240,6 +240,16 @@ def _build_status_paginas_router(deps, settings, product_name: str, version: str
     return _create_status_pagina_router(deps, settings, product_name)
 
 
+def _build_auth_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import — keeps the noctusai_lib.api.auth.session chain
+    # (Redis/GoTrue adapters) out of the hot path for products that opt
+    # out. Wraps /api/auth/{login,me,logout} + api-token management —
+    # promoted from the social-wiring fork, erp-httponly-cookie-session
+    # roadmap Slice 1b.
+    from noctusai_seed.auth_router import create_auth_router
+    return create_auth_router(deps, settings)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -258,6 +268,7 @@ _STANDARD_ROUTERS = {
     "scheduler":    _build_scheduler_router,
     "whatsapp_admin": _build_whatsapp_admin_router,
     "status_paginas": _build_status_paginas_router,
+    "auth":           _build_auth_router,
 }
 
 
