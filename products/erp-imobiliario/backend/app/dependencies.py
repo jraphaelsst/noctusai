@@ -39,30 +39,14 @@ get_admin_client = deps.get_admin_client
 logger = logging.getLogger(__name__)
 
 
-def get_org_id(user, *, required: bool = False) -> Optional[str]:
-    """Extract org_id from user metadata.
-
-    org_id is set in auth.users.raw_user_meta_data during signup (core)
-    and user creation (ERP profiles router). Available on every request
-    without extra DB queries.
-
-    By default returns None if missing (backwards-compatible).
-    Pass required=True in endpoints where org_id is strictly needed.
-    """
-    org_id = (user.user_metadata or {}).get("org_id")
-    if not org_id and required:
-        raise HTTPException(status_code=400, detail="Organizacao nao encontrada no perfil do usuario")
-    return org_id or None
-
-
 def resolve_org_id_db(user_id: str) -> Optional[str]:
     """Single source of truth for a caller's org: the DB, not the JWT.
 
     Reads ``public.noctus_users`` — the SAME row RLS resolves via
     ``current_org_id()`` — so the app's notion of org can never drift from
-    what RLS enforces. Unlike :func:`get_org_id` (which reads the JWT
-    ``user_metadata`` and goes stale until the user re-authenticates), this
-    reflects a provisioning change immediately.
+    what RLS enforces. Unlike a JWT ``user_metadata`` read (which goes stale
+    until the user re-authenticates), this reflects a provisioning change
+    immediately.
 
     Uses the CORE client — ``noctus_users`` lives in the ``public`` schema, NOT
     the product's ``erp`` schema. The erp-scoped admin client would resolve
@@ -83,6 +67,44 @@ def resolve_org_id_db(user_id: str) -> Optional[str]:
     if res.data and res.data[0].get("org_id"):
         return res.data[0]["org_id"]
     return None
+
+
+def get_org_id(user, *, required: bool = False) -> Optional[str]:
+    """Resolve a caller's org — trusted DB first, JWT metadata transition fallback.
+
+    ``org-source-of-truth Phase 2`` (2026-07-16): this is THE call-site every
+    one of ERP's 21 org-scoped routers funnels through (rather than each
+    router reaching into ``user.user_metadata`` directly), so fixing org
+    resolution HERE — once — fans the fix to every router without touching
+    20 files individually (the ``No quick fixes`` root-cause principle: a fix
+    needed in N call-sites for one reason belongs at the ONE function they
+    all call, not copy-pasted N times).
+
+    Mirrors :func:`resolve_org_id_db` / the seed's
+    :func:`noctusai_lib.api.auth.make_get_current_user_org` trust model
+    exactly: ``public.noctus_users`` (the SAME row RLS's ``current_org_id()``
+    reads) wins whenever a row exists. ``user.user_metadata.get("org_id")``
+    — spoofable via ``auth.updateUser({data})`` — is now ONLY a transition
+    fallback for a user mid-provisioning (no ``noctus_users`` row yet), and
+    fires with a ``logger.warning`` naming the user id, never silently.
+
+    By default returns None if missing (backwards-compatible with every
+    existing non-required call site). Pass required=True where org_id is
+    strictly needed — raises the same 400 as before.
+    """
+    org_id = resolve_org_id_db(user.id)
+    if not org_id:
+        fallback = (user.user_metadata or {}).get("org_id")
+        if fallback:
+            logger.warning(
+                "erp_org_lookup_empty user_id=%s — no noctus_users row, "
+                "falling back to user_metadata resolver (org_id=%r)",
+                user.id, fallback,
+            )
+        org_id = fallback
+    if not org_id and required:
+        raise HTTPException(status_code=400, detail="Organizacao nao encontrada no perfil do usuario")
+    return org_id or None
 
 
 # Canonical auth deps — wire via the factory so FastAPI sees only
