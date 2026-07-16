@@ -1,15 +1,29 @@
-"""n8n.workflow.* tools — list / inspect / activate / deactivate.
+"""n8n.workflow.* tools — list / inspect / activate / deactivate / …
+
+Thin MCP In/Out shaping over `noctusai_lib.integrations.n8n`'s
+`N8nClient` — the `mcp/google/tools/youtube.py:1` / `mcp/meta/tools
+/ads.py:31` pattern. NO connector-side HTTP, no connector-side error
+taxonomy, no connector-side raw→VO mapping: `client.get_client()`
+(`mcp/n8n/client.py`) returns an `N8nClient` (real or the seed's
+`FakeN8nClient` in tests), and every handler just calls a Protocol
+method and shapes the result into its Pydantic Out model.
 
 Reads (no confirm gate): list / get.
-Writes (confirm-gated): activate / deactivate.
+Writes (confirm-gated): activate / deactivate / update / create /
+delete / set_tags.
 
-Every tool routes through the single `api.request_json` HTTP seam
-(tests patch `n8n.api.request_json`). API failure ⇒ a typed-error
-envelope (`_kit.errors.typed_error`), never a fabricated success.
+Every handler catches `(api.N8nApiError, N8nError)` — the confirm-gate/
+not-configured signal and the seed's own error hierarchy — and maps
+both through `api.map_seed_error` before `typed_error`, so the Output
+`error` envelope is always the same `N8nApiError` shape regardless of
+which layer raised.
 
-`api` is invoked via the module (`api.request_json`), NOT `from ..api
-import request_json`, so a test `patch("n8n.api.request_json")` is
-actually observed by these handlers.
+`sanitize_workflow_put_body` (the seed's canonical PUT/POST allowlist)
+is still called HERE too, ONLY to report `sent_keys` on the Output —
+the actual sanitize-before-PUT happens again, idempotently, inside
+`client.update_workflow`/`create_workflow`. `set_workflow_tags` no
+longer needs `tag_refs_body` at all: the id→body-shape translation is
+now fully internal to the seed adapter.
 """
 from __future__ import annotations
 
@@ -19,9 +33,10 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from _kit.errors import typed_error
+from noctusai_lib.integrations.n8n import N8nError, Tag, Workflow, sanitize_workflow_put_body
 
 from .. import api
-from ..settings import get_settings
+from ..client import get_client
 from ..types import (
     WorkflowActivateInput,
     WorkflowActiveStateOutput,
@@ -42,39 +57,22 @@ from ..types import (
     TagSummary,
 )
 
-# n8n public-API PUT /workflows/{id} rejects additional properties — only
-# these four keys are accepted. Activation/tags are managed via their own
-# endpoints, not the workflow body.
-_PUT_KEYS = ("name", "nodes", "connections", "settings")
-
 logger = logging.getLogger(__name__)
 
 
-def _ctx() -> dict:
-    """Shared request context from settings."""
-    s = get_settings()
-    return {
-        "base_url": s.base_url or "",
-        "api_key": s.api_key or "",
-        "timeout": s.timeout_seconds,
-    }
-
-
-def _summary(d: dict) -> WorkflowSummary:
-    raw_tags = d.get("tags") or []
-    tags = [
-        t.get("name") if isinstance(t, dict) else str(t)
-        for t in raw_tags
-        if t is not None
-    ]
+def _summary(w: Workflow) -> WorkflowSummary:
     return WorkflowSummary(
-        id=str(d.get("id", "")),
-        name=d.get("name", ""),
-        active=bool(d.get("active", False)),
-        tags=[t for t in tags if t],
-        createdAt=d.get("createdAt"),
-        updatedAt=d.get("updatedAt"),
+        id=w.id,
+        name=w.name,
+        active=w.active,
+        tags=[t.name for t in w.tags],
+        createdAt=w.created_at.isoformat() if w.created_at else None,
+        updatedAt=w.updated_at.isoformat() if w.updated_at else None,
     )
+
+
+def _tag_summaries(tags: list[Tag]) -> list[TagSummary]:
+    return [TagSummary(id=t.id, name=t.name) for t in tags]
 
 
 # ─── Reads ───────────────────────────────────────────────────────────────
@@ -83,39 +81,39 @@ def _summary(d: dict) -> WorkflowSummary:
 async def workflow_list(args: dict) -> dict:
     inp = WorkflowListInput(**args)
     try:
-        data = api.request_json(
-            "GET",
-            "/workflows",
-            params={
-                "active": (
-                    None if inp.active is None
-                    else ("true" if inp.active else "false")
-                ),
-                "name": inp.name,
-                "limit": inp.limit,
-            },
-            **_ctx(),
-        )
-    except api.N8nApiError as e:
-        return WorkflowListOutput(error=typed_error(e)).model_dump()
-    items = (data or {}).get("data", []) if isinstance(data, dict) else []
+        client = get_client()
+        # The seed client already exhausts n8n's own pagination
+        # (cursor-follow) and returns the true full set — `active`/
+        # `name`/`limit` filter client-side against that complete,
+        # correct list rather than trusting unverified upstream query
+        # params (the same "no upstream-shape guess" call the seed's
+        # own `list_workflows(tag=...)` makes).
+        workflows = await client.list_workflows(include_archived=True)
+    except (api.N8nApiError, N8nError) as e:
+        return WorkflowListOutput(error=typed_error(api.map_seed_error(e))).model_dump()
+    if inp.active is not None:
+        workflows = [w for w in workflows if w.active == inp.active]
+    if inp.name is not None:
+        workflows = [w for w in workflows if w.name == inp.name]
+    workflows = workflows[: inp.limit]
     return WorkflowListOutput(
-        workflows=[_summary(d) for d in items],
-        next_cursor=(data or {}).get("nextCursor")
-        if isinstance(data, dict) else None,
+        workflows=[_summary(w) for w in workflows],
+        # The seed client already exhausted pagination — there is no
+        # further page to fetch; `next_cursor` was already dead output
+        # (no `cursor` input field exists on `WorkflowListInput`).
+        next_cursor=None,
     ).model_dump()
 
 
 async def workflow_get(args: dict) -> dict:
     inp = WorkflowGetInput(**args)
     try:
-        data = api.request_json(
-            "GET", f"/workflows/{inp.id}", **_ctx()
-        )
-    except api.N8nApiError as e:
-        return WorkflowGetOutput(error=typed_error(e)).model_dump()
+        client = get_client()
+        workflow = await client.get_workflow(inp.id)
+    except (api.N8nApiError, N8nError) as e:
+        return WorkflowGetOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return WorkflowGetOutput(
-        workflow=data if isinstance(data, dict) else None
+        workflow=workflow if isinstance(workflow, dict) else None
     ).model_dump()
 
 
@@ -123,19 +121,17 @@ async def workflow_get(args: dict) -> dict:
 
 
 async def _set_active(workflow_id: str, activate: bool) -> dict:
-    verb = "activate" if activate else "deactivate"
     try:
-        data = api.request_json(
-            "POST", f"/workflows/{workflow_id}/{verb}", **_ctx()
+        client = get_client()
+        workflow = (
+            await client.activate(workflow_id)
+            if activate
+            else await client.deactivate(workflow_id)
         )
-    except api.N8nApiError as e:
-        return WorkflowActiveStateOutput(error=typed_error(e)).model_dump()
-    active = (
-        bool(data.get("active")) if isinstance(data, dict)
-        and "active" in data else activate
-    )
+    except (api.N8nApiError, N8nError) as e:
+        return WorkflowActiveStateOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return WorkflowActiveStateOutput(
-        id=workflow_id, active=active, changed=True
+        id=workflow_id, active=workflow.active, changed=True
     ).model_dump()
 
 
@@ -169,22 +165,18 @@ async def workflow_update(args: dict) -> dict:
                 api.ConfirmationRequiredError("n8n.workflow.update")
             )
         ).model_dump()
-    # Sanitize to the PUT-accepted keys (drop id/active/tags/timestamps/…
-    # so n8n does not 400 on additional properties). `settings` must be
-    # present; default to {} when the source omitted it.
-    body = {k: inp.workflow[k] for k in _PUT_KEYS if k in inp.workflow}
-    body.setdefault("settings", inp.workflow.get("settings") or {})
+    # Computed here ONLY for the `sent_keys` Output field — the actual
+    # PUT-sanitize happens again (idempotently) inside
+    # `client.update_workflow`.
+    body = sanitize_workflow_put_body(inp.workflow)
     try:
-        data = api.request_json(
-            "PUT", f"/workflows/{inp.id}", body=body, **_ctx()
-        )
-    except api.N8nApiError as e:
-        return WorkflowUpdateOutput(error=typed_error(e)).model_dump()
+        client = get_client()
+        workflow = await client.update_workflow(inp.id, inp.workflow)
+    except (api.N8nApiError, N8nError) as e:
+        return WorkflowUpdateOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return WorkflowUpdateOutput(
-        id=str((data or {}).get("id", inp.id))
-        if isinstance(data, dict) else inp.id,
-        name=(data or {}).get("name")
-        if isinstance(data, dict) else body.get("name"),
+        id=workflow.id,
+        name=workflow.name,
         updated=True,
         sent_keys=sorted(body.keys()),
     ).model_dump()
@@ -198,16 +190,13 @@ async def workflow_create(args: dict) -> dict:
                 api.ConfirmationRequiredError("n8n.workflow.create")
             )
         ).model_dump()
-    body = {k: inp.workflow[k] for k in _PUT_KEYS if k in inp.workflow}
-    body.setdefault("settings", inp.workflow.get("settings") or {})
     try:
-        data = api.request_json("POST", "/workflows", body=body, **_ctx())
-    except api.N8nApiError as e:
-        return WorkflowCreateOutput(error=typed_error(e)).model_dump()
+        client = get_client()
+        workflow = await client.create_workflow(inp.workflow)
+    except (api.N8nApiError, N8nError) as e:
+        return WorkflowCreateOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return WorkflowCreateOutput(
-        id=str((data or {}).get("id")) if isinstance(data, dict) else None,
-        name=(data or {}).get("name") if isinstance(data, dict) else None,
-        created=True,
+        id=workflow.id, name=workflow.name, created=True
     ).model_dump()
 
 
@@ -220,20 +209,13 @@ async def workflow_delete(args: dict) -> dict:
             )
         ).model_dump()
     try:
-        api.request_json("DELETE", f"/workflows/{inp.id}", **_ctx())
-    except api.N8nApiError as e:
+        client = get_client()
+        await client.delete_workflow(inp.id)
+    except (api.N8nApiError, N8nError) as e:
         return WorkflowDeleteOutput(
-            id=inp.id, error=typed_error(e)
+            id=inp.id, error=typed_error(api.map_seed_error(e))
         ).model_dump()
     return WorkflowDeleteOutput(id=inp.id, deleted=True).model_dump()
-
-
-def _tags(raw: object) -> list[TagSummary]:
-    out: list[TagSummary] = []
-    for t in raw or []:
-        if isinstance(t, dict) and t.get("id"):
-            out.append(TagSummary(id=str(t["id"]), name=t.get("name", "")))
-    return out
 
 
 async def workflow_set_tags(args: dict) -> dict:
@@ -244,20 +226,15 @@ async def workflow_set_tags(args: dict) -> dict:
                 api.ConfirmationRequiredError("n8n.workflow.set_tags")
             )
         ).model_dump()
-    # n8n PUT /workflows/{id}/tags body = [{"id": "<tagId>"}, ...]
-    body_list = [{"id": tid} for tid in inp.tag_ids]
     try:
-        data = api.request_json(
-            "PUT", f"/workflows/{inp.id}/tags", body=body_list, **_ctx()
-        )
-    except api.N8nApiError as e:
+        client = get_client()
+        tags = await client.set_workflow_tags(inp.id, inp.tag_ids)
+    except (api.N8nApiError, N8nError) as e:
         return WorkflowSetTagsOutput(
-            id=inp.id, error=typed_error(e)
+            id=inp.id, error=typed_error(api.map_seed_error(e))
         ).model_dump()
     return WorkflowSetTagsOutput(
-        id=inp.id,
-        tags=_tags(data if isinstance(data, list) else (data or {}).get("tags")),
-        updated=True,
+        id=inp.id, tags=_tag_summaries(tags), updated=True
     ).model_dump()
 
 

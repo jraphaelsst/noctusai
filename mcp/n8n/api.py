@@ -1,28 +1,54 @@
-"""n8n REST API runner — the external-service seam for this connector.
+"""n8n connector-MCP error contract + the not-configured gate.
 
-Every `n8n.*` tool talks to the self-hosted instance *through the
-operator's public-API key*. `request_json` is the single HTTP boundary
-(stdlib `urllib` — zero extra deps, the same "wrap the stdlib"
-discipline `mcp/github` applies to `subprocess`).
+`request_json` (the sync urllib HTTP seam) is GONE — every `n8n.*`
+tool now builds an `N8nClient` through `client.get_client()` (the DI
+seam, `mcp/n8n/client.py`) and awaits the seed's Protocol methods
+directly (`HttpxN8nClient` / `FakeN8nClient`,
+`seed/lib/backend/noctusai_lib/integrations/n8n/`). Those adapters own
+the wire mechanics (endpoint paths, the `{data,nextCursor}` envelope,
+the `X-N8N-API-KEY` header, the WAF User-Agent) AND the error taxonomy
+(`N8nError` → `N8nAuthError`/`N8nNotFoundError`/`N8nRateLimitedError`/
+`N8nRejectedError`/`N8nUnreachableError`) — a second connector-side copy
+of either is the exact fork this module used to risk.
 
-**Test seam.** n8n is an external service, so tests
-`unittest.mock.patch("n8n.api.request_json", ...)` to feed canned
-payloads without a network call — sanctioned by CLAUDE.md §1
-("monkeypatching ... for external services ... is fine"; this is the
-same class). Our own code is never patched.
+`normalize_base_url` is re-exported from `noctusai_lib.integrations.n8n`
+(settings.py's `api_root` property depends on this exact name staying
+importable from `n8n.api`).
 
-**Gated-capability honesty** (CLAUDE.md §1). No base-URL / API-key,
-an unreachable host, or an upstream non-2xx is a typed, never-faked
-signal: tools return an `N8nApiError` envelope (status carried), and
-`n8n.diagnostics.connection_status` reports `configured=false` /
-`reachable=false`. We never fabricate a success.
+What genuinely stays connector-side (the real, narrow boundary):
+- `ConfirmationRequiredError`/412 — the MCP write-gate contract; a
+  product API has its own authz, this is specific to the LLM-tool
+  confirm-then-execute pattern.
+- `require_configured` / the 424 not-configured gate — every tool
+  (not just diagnostics) returns a typed 424 when `N8N_BASE_URL`/
+  `N8N_API_KEY` are unset, rather than silently degrading to the
+  seed's `FakeN8nClient`. This is a DELIBERATE connector-level choice,
+  stricter than `get_n8n_client()`'s own "no api_key → Fake" default
+  (the right shape for OTHER seed consumers, e.g. a product backend
+  that wants graceful local-dev behavior) — an operator running MCP
+  tools against an unconfigured n8n instance should see a loud 424,
+  never fabricated Fake data. See `mcp/n8n/client.py`.
+- `map_seed_error` — translates ANY adapter-layer failure (a seed
+  `N8nError`, or an already-typed `N8nApiError` from `require_configured`/
+  the confirm gate) into the uniform `N8nApiError` every tool Output
+  wraps via `typed_error`.
+
+**Test seam (dependency injection, NOT monkeypatching).**
+`mcp/n8n/client.configure_client(FakeN8nClient())` or
+`configure_client(HttpxN8nClient(..., transport=httpx.MockTransport(...)))`
+lets a test exercise the REAL handler path — confirm-gate + client call
++ error mapping + MCP Out shaping — without a network round-trip.
+Mirrors `mcp/google/tools/youtube.py`'s `configure_upload_client`
+(`:76-94`). `mcp/n8n/api.py`'s OWN symbols (`N8nApiError`,
+`require_configured`, `map_seed_error`) are never patched — they are
+plain functions/classes exercised for real by every test.
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from _kit.errors import confirmation_required_message
-from _kit.transport import request_json as _http_request_json
+from noctusai_lib.integrations.n8n import N8nError, normalize_base_url
 
 
 class N8nApiError(Exception):
@@ -33,8 +59,11 @@ class N8nApiError(Exception):
 
     - 412 — confirmation required (write gate; raised by the tool layer)
     - 424 — connector not configured (no base_url / api_key)
-    - 401/403/404/4xx/5xx — the upstream n8n HTTP status, passed through
-    - 502 — host unreachable / timeout / unparseable (non-JSON) response
+    - 401/403/404/409/429/4xx/5xx — the upstream/seed status, passed
+      through via `map_seed_error`
+    - 502 — host unreachable / timeout / unparseable (non-JSON)
+      response — the seed's transport-failure signal (`status=0`)
+      maps here
     """
 
     def __init__(self, message: str, *, status: Optional[int] = None):
@@ -53,65 +82,48 @@ class ConfirmationRequiredError(N8nApiError):
         super().__init__(confirmation_required_message(action), status=412)
 
 
-def normalize_base_url(raw: str) -> str:
-    """Return the API root ending in `/api/v1`, no trailing slash.
+def require_configured(settings) -> None:
+    """Raise the connector-not-configured signal (424) when
+    `settings.configured` is False.
 
-    Accepts either the instance root (`https://n8n.example.com`) or an
-    already-suffixed URL (`https://n8n.example.com/api/v1`) — both
-    normalize to the same value so the operator can't get it subtly
-    wrong in `.env`.
+    Every `n8n.*` tool calls this (via `client.get_client()`) before
+    building the seed client — the exact check `request_json` used to
+    perform inline, now centralized so every tool keeps identical
+    gated-capability-honesty behavior, not just
+    `n8n.diagnostics.connection_status`.
     """
-    base = (raw or "").rstrip("/")
-    if not base:
-        return ""
-    if base.endswith("/api/v1"):
-        return base
-    return f"{base}/api/v1"
-
-
-def request_json(
-    method: str,
-    path: str,
-    *,
-    base_url: str,
-    api_key: str,
-    params: Optional[dict] = None,
-    body: Optional[object] = None,
-    timeout: float = 20.0,
-) -> object:
-    """Call `<base>/api/v1<path>` and return parsed JSON.
-
-    `base_url` / `api_key` come from the connector settings (resolved by
-    the tool layer). Missing either is the connector-not-configured
-    signal (424). Raises `N8nApiError` (typed `status`) on ANY failure —
-    never returns a partial or fabricated success.
-    """
-    if not base_url or not api_key:
+    if not settings.configured:
         raise N8nApiError(
             "n8n connector not configured — set N8N_BASE_URL and "
             "N8N_API_KEY in mcp/n8n/.env (or the environment).",
             status=424,
         )
-    # Delegate the urllib mechanics to the shared seam; n8n keeps its own
-    # /api/v1 base-URL normalization + N8nApiError type + the 424 not-configured
-    # gate above. (kit-connector-boilerplate-consolidation Wave 2 pilot.)
-    url = f"{normalize_base_url(base_url)}{path}"
-    return _http_request_json(
-        method,
-        url,
-        auth_header=("X-N8N-API-KEY", api_key),
-        params=params,
-        body=body,
-        timeout=timeout,
-        error_cls=N8nApiError,
-        empty_result={},
-        label=f"n8n API {method.upper()} {path}",
-    )
+
+
+def map_seed_error(exc: N8nApiError | N8nError) -> N8nApiError:
+    """Translate any adapter-layer failure into `N8nApiError`.
+
+    An already-typed `N8nApiError` (412 from the confirm gate, 424
+    from `require_configured`) passes through unchanged. A seed
+    `N8nError` (`N8nAuthError`/`N8nNotFoundError`/
+    `N8nRateLimitedError`/`N8nRejectedError`/`N8nUnreachableError`/
+    `N8nWorkflowNotRunnableError`) maps via its own `.status` — the
+    REAL upstream HTTP code the seed adapter already carries.
+    `status=0` (the seed's transport-failure signal — network/TLS/
+    timeout/unparseable) maps to 502, the exact prior `request_json`
+    contract ("502 — host unreachable / timeout / unparseable
+    response").
+    """
+    if isinstance(exc, N8nApiError):
+        return exc
+    status = getattr(exc, "status", 0) or 502
+    return N8nApiError(str(exc), status=status)
 
 
 __all__ = [
-    "request_json",
     "normalize_base_url",
     "N8nApiError",
     "ConfirmationRequiredError",
+    "require_configured",
+    "map_seed_error",
 ]

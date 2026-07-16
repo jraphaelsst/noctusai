@@ -5,6 +5,17 @@ signal (CLAUDE.md §1). Surfaces whether the connector is configured
 (base_url + api_key) AND the instance is reachable/authenticated, so a
 "succeeds-empty" read isn't silently misread as "no data" when the key
 is wrong or the host is down. PURE read, never faked.
+
+**Reachability+count decision.** The combined probe is
+`client.list_workflows(include_archived=True)` — ONE call, not a
+separate `client.ping()` plus a second count round-trip. The seed's
+`list_workflows` already follows `nextCursor` internally
+(`HttpxN8nClient._list_all_workflows_raw`), so `len(workflows)` is the
+TRUE total for free — the exact regression this tool used to guard by
+hand-rolling its own cursor loop (`workflow_count` was NOT `min(total,
+1)`, the old `limit=1` bug). Reusing the seed's pagination collapses
+~35 lines of connector-side cursor-follow that would otherwise be a
+second, drifting copy of `HttpxN8nClient._list_all_workflows_raw`.
 """
 from __future__ import annotations
 
@@ -14,8 +25,10 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from _kit.errors import typed_error
+from noctusai_lib.integrations.n8n import N8nError
 
 from .. import api
+from ..client import get_client
 from ..settings import get_settings
 from ..types import ConnectionStatusInput, ConnectionStatusOutput
 
@@ -39,54 +52,22 @@ async def connection_status(args: dict) -> dict:
             ),
         ).model_dump()
 
-    # Authenticated probe. The FIRST page doubles as the never-faked
-    # "configured but key rejected" signal (a 401/403 here). We then
-    # follow `nextCursor` to a bounded depth so `workflow_count` is the
-    # TRUE total — not `min(total, 1)`, the old `limit=1` bug that made
-    # a 10-workflow instance report `workflow_count=1`.
-    count = 0
-    cursor: str | None = None
-    pages = 0
-    MAX_PAGES = 50  # 50 * 250 = 12500 workflows — unbounded in practice
-    while True:
-        params: dict = {"limit": 250}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            data = api.request_json(
-                "GET",
-                "/workflows",
-                params=params,
-                base_url=s.base_url or "",
-                api_key=s.api_key or "",
-                timeout=s.timeout_seconds,
-            )
-        except api.N8nApiError as e:
-            return ConnectionStatusOutput(
-                configured=True,
-                api_root=s.api_root,
-                reachable=False,
-                error=typed_error(e),
-            ).model_dump()
-        if not (isinstance(data, dict) and isinstance(data.get("data"), list)):
-            # Reachable + authenticated, but an unexpected body shape —
-            # honest: don't fabricate a count we couldn't measure.
-            return ConnectionStatusOutput(
-                configured=True,
-                api_root=s.api_root,
-                reachable=True,
-                workflow_count=None,
-            ).model_dump()
-        count += len(data["data"])
-        cursor = data.get("nextCursor")
-        pages += 1
-        if not cursor or pages >= MAX_PAGES:
-            break
+    # Authenticated probe + true total in one call — see module docstring.
+    try:
+        client = get_client()
+        workflows = await client.list_workflows(include_archived=True)
+    except (api.N8nApiError, N8nError) as e:
+        return ConnectionStatusOutput(
+            configured=True,
+            api_root=s.api_root,
+            reachable=False,
+            error=typed_error(api.map_seed_error(e)),
+        ).model_dump()
     return ConnectionStatusOutput(
         configured=True,
         api_root=s.api_root,
         reachable=True,
-        workflow_count=count,
+        workflow_count=len(workflows),
     ).model_dump()
 
 

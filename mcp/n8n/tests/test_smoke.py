@@ -1,18 +1,33 @@
 """Smoke tests for the n8n connector MCP.
 
-No network: every test either exercises pure validation (confirm gate,
-settings) or `unittest.mock.patch`-es the external HTTP seam
-(`n8n.api.request_json`). Patching an external service is sanctioned by
-CLAUDE.md §1; our own code is never patched. Mirrors
-`mcp/github/tests/test_smoke.py`.
+No network: every handler is exercised via dependency injection —
+`n8n.client.configure_client(...)` swaps in the seed's
+`FakeN8nClient` (deterministic in-memory) or a small local test double,
+never a network call. This is NOT monkeypatching: `n8n.client.py`'s
+override slot is a first-class DI seam (mirrors
+`mcp/google/tools/youtube.py`'s `configure_upload_client`), and every
+connector symbol involved (`api.N8nApiError`, `api.require_configured`,
+`api.map_seed_error`, the tool handlers themselves) runs for real —
+nothing about OUR code is neutered. `n8n.settings.get_settings` /
+`n8n.client.get_settings` ARE still occasionally patched below — that
+is a config-boundary substitution (same class as the codebase's
+allowlisted `get_*_config`/`get_*_client` env-readers), not a patch of
+business logic.
 
 Pins, per the connector contract:
 - the exact registered tool-name set (guards silent additions),
 - 3-segment dotted naming under the `n8n.*` umbrella,
-- the confirm gate (write tools refuse + perform NO side-effect),
+- the confirm gate (write tools refuse + perform NO side-effect —
+  proven by injecting a client that raises on ANY method call),
 - gated-capability honesty (not-configured ⇒ typed 424, never faked),
 - best-effort error extraction from real-shaped run-data,
 - descriptors/handlers aggregation coherence.
+
+Wire-shape assertions (exact PUT body, exact tag-body shape, exact
+DELETE path, …) live in the SEED's own test corpus
+(`seed/lib/backend/tests/integrations/n8n/{test_mappers,test_client}.py`)
+— this file only proves the MCP handler layer (confirm-gate → client
+call → error mapping → Out shaping) is wired correctly.
 """
 from __future__ import annotations
 
@@ -79,16 +94,41 @@ _EXPECTED_TOOLS = {
 }
 
 
+class _PoisonClient:
+    """An `N8nClient` stand-in that raises on ANY method call.
+
+    Injected before a confirm-gated write to prove the gate fires
+    BEFORE the client is ever touched — the DI-seam equivalent of the
+    old `req.assert_not_called()` mock assertion, but louder: a gate
+    that regresses to "check confirm after building the client" fails
+    this test immediately instead of merely leaving an unasserted mock.
+    """
+
+    def __getattr__(self, name):
+        async def _boom(*args, **kwargs):
+            raise AssertionError(
+                f"client.{name}() must not be called before confirm=true"
+            )
+        return _boom
+
+
 # ─── Composition / registry coherence ────────────────────────────────────
 
 
 def test_package_imports():
-    from n8n import api, settings, types  # noqa: F401
+    from n8n import api, client, settings, types  # noqa: F401
     from n8n.tools import diagnostics, execution, workflow  # noqa: F401
     from _kit import build_registry, typed_error  # noqa: F401
 
-    assert hasattr(api, "request_json")
     assert hasattr(api, "normalize_base_url")
+    assert hasattr(api, "require_configured")
+    assert hasattr(api, "map_seed_error")
+    assert hasattr(client, "get_client")
+    assert hasattr(client, "configure_client")
+    # Locks in the refactor: the sync urllib HTTP seam is GONE — every
+    # tool now goes through `client.get_client()` + the seed's
+    # `N8nClient` Protocol.
+    assert not hasattr(api, "request_json")
 
 
 def test_registered_tool_name_set_is_pinned():
@@ -148,54 +188,62 @@ def test_base_url_normalization_idempotent():
 
 
 def test_workflow_activate_without_confirm_blocks_no_side_effect():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_activate
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client.configure_client(_PoisonClient())
+    try:
         out = asyncio.run(workflow_activate({"id": "abc"}))
-    req.assert_not_called()  # NO HTTP — the gate fired first
+    finally:
+        n8n_client.configure_client(None)
     assert out["changed"] is False
     assert out["error"]["error_class"] == "ConfirmationRequiredError"
     assert out["error"]["status"] == 412
 
 
 def test_workflow_deactivate_confirm_false_explicit_also_blocks():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_deactivate
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client.configure_client(_PoisonClient())
+    try:
         out = asyncio.run(
             workflow_deactivate({"id": "abc", "confirm": False})
         )
-    req.assert_not_called()
+    finally:
+        n8n_client.configure_client(None)
     assert out["error"]["status"] == 412
 
 
 def test_workflow_update_without_confirm_blocks_no_side_effect():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_update
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client.configure_client(_PoisonClient())
+    try:
         out = asyncio.run(
             workflow_update({"id": "abc", "workflow": {"name": "x"}})
         )
-    req.assert_not_called()
+    finally:
+        n8n_client.configure_client(None)
     assert out["updated"] is False
     assert out["error"]["status"] == 412
 
 
-def test_workflow_update_sanitizes_to_put_keys():
-    """Read-only keys (id/active/tags/timestamps) are stripped so n8n
-    does not 400 on additional properties; settings always present."""
+def test_workflow_update_reports_sanitized_sent_keys():
+    """Read-only keys (id/active/tags/timestamps) are stripped before
+    the PUT so n8n does not 400 on additional properties (the exact
+    allowlist — `seed/lib/backend/tests/integrations/n8n/test_mappers
+    .py::test_sanitize_strips_readonly_keys` pins the pure function;
+    this test pins that the HANDLER reports the same key-set it sent)."""
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_update
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    captured = {}
-
-    def _cap(method, path, **kw):
-        captured["method"] = method
-        captured["path"] = path
-        captured["body"] = kw.get("body")
-        return {"id": "abc", "name": "Flow"}
-
+    fake = FakeN8nClient()
+    n8n_client.configure_client(fake)
     dirty = {
-        "id": "abc",
+        "id": "fake-wf-1",
         "name": "Flow",
         "active": True,
         "tags": [{"id": "1", "name": "prod"}],
@@ -203,26 +251,24 @@ def test_workflow_update_sanitizes_to_put_keys():
         "updatedAt": "2026-05-19",
         "versionId": "v9",
         "triggerCount": 3,
-        "nodes": [{"name": "Webhook"}],
+        "nodes": [{"type": "n8n-nodes-base.manualTrigger"}],
         "connections": {"Webhook": {}},
     }
-    with patch("n8n.api.request_json", side_effect=_cap):
+    try:
         out = asyncio.run(
-            workflow_update({"id": "abc", "workflow": dirty, "confirm": True})
+            workflow_update({"id": "fake-wf-1", "workflow": dirty, "confirm": True})
         )
-    assert captured["method"] == "PUT"
-    assert captured["path"] == "/workflows/abc"
-    assert set(captured["body"].keys()) == {
-        "name", "nodes", "connections", "settings"
-    }
-    assert captured["body"]["settings"] == {}  # defaulted, source omitted it
+    finally:
+        n8n_client.configure_client(None)
     assert out["updated"] is True
     assert out["sent_keys"] == ["connections", "name", "nodes", "settings"]
+    assert out["name"] == "Flow"
 
 
 def test_hardening_writes_all_confirm_gated_no_side_effect():
     """create/delete/set_tags/execution.delete all refuse without
-    confirm and perform NO HTTP call."""
+    confirm and never touch the injected (poison) client."""
+    from n8n import client as n8n_client
     from n8n.tools.workflow import (
         workflow_create, workflow_delete, workflow_set_tags,
     )
@@ -234,93 +280,117 @@ def test_hardening_writes_all_confirm_gated_no_side_effect():
         (workflow_set_tags, {"id": "abc", "tag_ids": ["t1"]}, "updated"),
         (execution_delete, {"id": 5}, "deleted"),
     ]
-    for fn, args, flag in cases:
-        with patch("n8n.api.request_json") as req:
+    n8n_client.configure_client(_PoisonClient())
+    try:
+        for fn, args, flag in cases:
             out = asyncio.run(fn(args))
-        req.assert_not_called()
-        assert out[flag] is False
-        assert out["error"]["status"] == 412
+            assert out[flag] is False
+            assert out["error"]["status"] == 412
+    finally:
+        n8n_client.configure_client(None)
 
 
-def test_workflow_delete_confirmed_calls_delete_verb():
+def test_workflow_delete_confirmed_removes_and_reports_deleted():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_delete
+    from noctusai_lib.integrations.n8n import FakeN8nClient, N8nNotFoundError
 
-    captured = {}
-
-    def _cap(method, path, **kw):
-        captured.update(method=method, path=path)
-        return {}
-
-    with patch("n8n.api.request_json", side_effect=_cap):
-        out = asyncio.run(
-            workflow_delete({"id": "wf9", "confirm": True})
-        )
-    assert captured == {"method": "DELETE", "path": "/workflows/wf9"}
-    assert out["deleted"] is True
+    fake = FakeN8nClient()
+    n8n_client.configure_client(fake)
+    try:
+        out = asyncio.run(workflow_delete({"id": "fake-wf-2", "confirm": True}))
+    finally:
+        n8n_client.configure_client(None)
+    assert out == {"id": "fake-wf-2", "deleted": True, "error": None}
+    with pytest.raises(N8nNotFoundError):
+        asyncio.run(fake.get_workflow("fake-wf-2"))
 
 
-def test_workflow_set_tags_sends_id_object_array():
+def test_workflow_set_tags_updates_and_shapes_tag_summaries():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_set_tags
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    captured = {}
-
-    def _cap(method, path, **kw):
-        captured.update(method=method, path=path, body=kw.get("body"))
-        return [{"id": "t1", "name": "prod"}]
-
-    with patch("n8n.api.request_json", side_effect=_cap):
+    fake = FakeN8nClient()
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(
             workflow_set_tags(
-                {"id": "wf9", "tag_ids": ["t1", "t2"], "confirm": True}
+                {"id": "fake-wf-2", "tag_ids": ["fake-tag-1"], "confirm": True}
             )
         )
-    assert captured["method"] == "PUT"
-    assert captured["path"] == "/workflows/wf9/tags"
-    assert captured["body"] == [{"id": "t1"}, {"id": "t2"}]
+    finally:
+        n8n_client.configure_client(None)
     assert out["updated"] is True
-    assert out["tags"][0]["name"] == "prod"
+    assert out["tags"] == [{"id": "fake-tag-1", "name": "prod"}]
 
 
-def test_tag_list_maps_api_json():
+def test_tag_list_maps_seed_client_output():
+    from n8n import client as n8n_client
     from n8n.tools.tag import tag_list
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    fake = {"data": [{"id": "t1", "name": "prod"},
-                     {"id": "t2", "name": "dev"}], "nextCursor": None}
-    with patch("n8n.api.request_json", return_value=fake):
+    fake = FakeN8nClient()
+    asyncio.run(fake.create_tag("dev"))
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(tag_list({}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["error"] is None
     assert [t["name"] for t in out["tags"]] == ["prod", "dev"]
 
 
-# ─── Read path — patched HTTP seam (no network) ──────────────────────────
+# ─── Read path — DI-injected FakeN8nClient (no network) ──────────────────
 
 
-def test_workflow_list_maps_api_json():
+def test_workflow_list_maps_seed_client_output():
+    from n8n import client as n8n_client
     from n8n.tools.workflow import workflow_list
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    fake = {
-        "data": [
-            {
-                "id": "dKXJgslv7_N4w9v1fDqUe",
-                "name": "My Flow",
-                "active": True,
-                "tags": [{"id": "1", "name": "prod"}],
-                "updatedAt": "2026-05-19T00:00:00.000Z",
-            }
-        ],
-        "nextCursor": None,
-    }
-    with patch("n8n.api.request_json", return_value=fake):
+    fake = FakeN8nClient()
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(workflow_list({"active": True}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["error"] is None
-    assert out["workflows"][0]["id"] == "dKXJgslv7_N4w9v1fDqUe"
-    assert out["workflows"][0]["tags"] == ["prod"]  # tag-object flattened
+    # `n8n.workflow.list` deliberately fetches `include_archived=True`
+    # (the pre-refactor tool never had an archived concept at all — this
+    # preserves that exact "show everything" behavior) then filters
+    # client-side by `active`. All three seeded workflows are active,
+    # so all three appear here (archived-filtering is a seed capability
+    # this tool doesn't expose as a parameter).
+    ids = {w["id"] for w in out["workflows"]}
+    assert ids == {"fake-wf-1", "fake-wf-2", "fake-wf-3"}
+    tagged = next(w for w in out["workflows"] if w["id"] == "fake-wf-1")
+    assert tagged["tags"] == ["prod"]  # tag names, not id objects
+
+
+def test_workflow_list_filters_by_name_and_limit():
+    from n8n import client as n8n_client
+    from n8n.tools.workflow import workflow_list
+    from noctusai_lib.integrations.n8n import FakeN8nClient
+
+    fake = FakeN8nClient()
+    n8n_client.configure_client(fake)
+    try:
+        out = asyncio.run(
+            workflow_list({"name": "Fake Runnable Webhook Flow", "limit": 50})
+        )
+    finally:
+        n8n_client.configure_client(None)
+    assert [w["id"] for w in out["workflows"]] == ["fake-wf-1"]
 
 
 def test_execution_get_extracts_top_level_error():
+    from n8n import client as n8n_client
     from n8n.tools.execution import execution_get
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    fake = {
+    fake = FakeN8nClient()
+    fake.executions[99] = {
         "id": 99,
         "status": "error",
         "data": {
@@ -334,8 +404,11 @@ def test_execution_get_extracts_top_level_error():
             }
         },
     }
-    with patch("n8n.api.request_json", return_value=fake):
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(execution_get({"id": 99}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["error"] is None
     assert out["error_summary"]["node"] == "HTTP Request"
     assert out["error_summary"]["message"] == "Forbidden - 403"
@@ -343,9 +416,12 @@ def test_execution_get_extracts_top_level_error():
 
 
 def test_execution_get_extracts_per_node_run_data_error():
+    from n8n import client as n8n_client
     from n8n.tools.execution import execution_get
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    fake = {
+    fake = FakeN8nClient()
+    fake.executions[7] = {
         "id": 7,
         "data": {
             "resultData": {
@@ -358,18 +434,27 @@ def test_execution_get_extracts_per_node_run_data_error():
             }
         },
     }
-    with patch("n8n.api.request_json", return_value=fake):
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(execution_get({"id": 7}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["error_summary"]["node"] == "Code"
     assert out["error_summary"]["message"] == "boom"
 
 
 def test_execution_get_no_error_yields_none_summary_not_fabricated():
+    from n8n import client as n8n_client
     from n8n.tools.execution import execution_get
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    fake = {"id": 1, "status": "success", "data": {"resultData": {}}}
-    with patch("n8n.api.request_json", return_value=fake):
+    fake = FakeN8nClient()
+    fake.executions[1] = {"id": 1, "status": "success", "data": {"resultData": {}}}
+    n8n_client.configure_client(fake)
+    try:
         out = asyncio.run(execution_get({"id": 1}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["error_summary"] is None  # never fabricated
 
 
@@ -380,7 +465,7 @@ def test_workflow_list_not_configured_returns_typed_424_not_fake():
     from n8n.tools.workflow import workflow_list
     from n8n.settings import N8nConnectorSettings
 
-    with patch("n8n.tools.workflow.get_settings",
+    with patch("n8n.client.get_settings",
                return_value=N8nConnectorSettings()):
         out = asyncio.run(workflow_list({}))
     assert out["workflows"] == []
@@ -400,51 +485,59 @@ def test_connection_status_not_configured():
 
 
 def test_connection_status_configured_but_key_rejected():
-    """Configured, but the API returns 401 ⇒ reachable=false, honest."""
+    """Configured, but the client raises 401 ⇒ reachable=false, honest."""
     from n8n.tools.diagnostics import connection_status
     from n8n.settings import N8nConnectorSettings
-    from n8n import api
+    from n8n import client as n8n_client
+    from noctusai_lib.integrations.n8n import N8nAuthError
 
     s = N8nConnectorSettings(base_url="https://n8n.x.com", api_key="bad")
-    with patch("n8n.tools.diagnostics.get_settings", return_value=s), patch(
-        "n8n.api.request_json",
-        side_effect=api.N8nApiError("HTTP 401", status=401),
-    ):
-        out = asyncio.run(connection_status({}))
+
+    class _AuthRejectingClient:
+        async def list_workflows(self, **kw):
+            raise N8nAuthError("HTTP 401", status=401)
+
+    n8n_client.configure_client(_AuthRejectingClient())
+    try:
+        with patch("n8n.tools.diagnostics.get_settings", return_value=s):
+            out = asyncio.run(connection_status({}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["configured"] is True
     assert out["reachable"] is False
     assert out["error"]["status"] == 401
 
 
 def test_connection_status_workflow_count_is_true_total():
-    """Regression: workflow_count must be the TRUE total across pages.
-
-    The old `limit=1` probe made a multi-workflow instance report
-    `workflow_count=1`. The diagnostic now follows `nextCursor`.
-    """
+    """Regression: workflow_count must be the TRUE total, not `min(total,
+    1)` (the old `limit=1` bug). The seed client already exhausts
+    pagination internally (proven at the seed level —
+    `test_client.py::test_list_workflows_follows_cursor`); this test
+    pins that `connection_status` trusts `len(workflows)` verbatim."""
     from n8n.tools.diagnostics import connection_status
     from n8n.settings import N8nConnectorSettings
+    from n8n import client as n8n_client
+    from noctusai_lib.integrations.n8n import Workflow
 
-    pages = [
-        {"data": [{"id": str(i)} for i in range(250)], "nextCursor": "c1"},
-        {"data": [{"id": str(i)} for i in range(7)], "nextCursor": None},
+    synthetic = [
+        Workflow(id=str(i), name=f"w{i}", active=True, archived=False)
+        for i in range(257)
     ]
-    calls = {"n": 0}
 
-    def fake_request_json(method, path, **kw):
-        i = calls["n"]
-        calls["n"] += 1
-        return pages[i]
+    class _StubClient:
+        async def list_workflows(self, **kw):
+            return synthetic
 
     s = N8nConnectorSettings(base_url="https://n8n.x.com", api_key="ok")
-    with patch("n8n.tools.diagnostics.get_settings", return_value=s), patch(
-        "n8n.api.request_json", side_effect=fake_request_json
-    ):
-        out = asyncio.run(connection_status({}))
+    n8n_client.configure_client(_StubClient())
+    try:
+        with patch("n8n.tools.diagnostics.get_settings", return_value=s):
+            out = asyncio.run(connection_status({}))
+    finally:
+        n8n_client.configure_client(None)
     assert out["configured"] is True
     assert out["reachable"] is True
-    assert out["workflow_count"] == 257  # 250 + 7, NOT 1
-    assert calls["n"] == 2  # followed the cursor
+    assert out["workflow_count"] == 257  # 250 + 7 shape, NOT 1
 
 
 if __name__ == "__main__":
