@@ -18,3 +18,14 @@ export type {
   StatusPaginaRow,
   StatusPaginaStatus,
 } from './StatusPaginaPanel';
+
+export { KanbanBoard, KanbanColumn, KanbanCard } from './kanban';
+export type {
+  KanbanBoardProps,
+  KanbanColumnProps,
+  KanbanCardProps,
+  KanbanStage,
+  KanbanColumnData,
+  KanbanCardRenderState,
+  KanbanOnMove,
+} from './kanban';

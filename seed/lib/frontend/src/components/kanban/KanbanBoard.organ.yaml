@@ -1,0 +1,74 @@
+name: KanbanBoard
+path: seed/lib/frontend/src/components/kanban/KanbanBoard.tsx
+phase: pilot-seed
+registered_at: '2026-07-16'
+validation_status: emerging
+known_facts:
+- 'Formalizes the N=3 kanban recurrence (KB § PATTERNS/architect/project-execution.md
+  — N=3+ MUST formalize): two independent hand-rolled `@dnd-kit` boards existed
+  before this organ (ERP `Funil` — cards=clientes, stage field=etapa_atual;
+  Orbity CRM `Funil` — cards=leads, stage field=stage_id) plus a Processos de
+  Venda board about to be built as the third fork. Roadmap:
+  project-history/roadmaps/erp-processos-venda-2026-07.md.'
+- 'Generic over BOTH the card type and the stage-id type. Consumer supplies
+  pre-grouped `columns: {stage:{id,label}, cards:TCard[]}[]` plus
+  `getCardId`/`getCardStage` accessors — the organ never assumes a domain
+  vocabulary (no `etapa_atual`, no `stage_id` literal baked in). Card
+  *rendering* is always the consumer''s own component via `renderCard`; the
+  organ owns sensors, droppable columns, drag overlay, and computing
+  `(cardId, fromStage, toStage, toIndex)` for `onMove`.'
+- 'Accessible by construction: `PointerSensor` (8px activation distance, so a
+  button click inside a card is not swallowed as a drag) + `KeyboardSensor`
+  (sortableKeyboardCoordinates) — not pointer-only.'
+- 'Move-resolution logic (`computeMove`) is extracted as a pure function so
+  it is unit-testable without simulating real `@dnd-kit` pointer/keyboard
+  events in jsdom (dnd-kit sensors depend on real layout geometry —
+  `getBoundingClientRect` — which jsdom does not compute). The organ does
+  NOT filter same-stage (within-column reorder) moves; a consumer that only
+  wants cross-column transitions checks `fromStage !== toStage` itself
+  before mutating (mirrors the ERP Funil''s current behavior, which the P1.3
+  repoint must preserve per the roadmap''s "behavior guarantee").'
+- 'Dependency decision (roadmap Q4): `@dnd-kit/core` / `@dnd-kit/sortable` /
+  `@dnd-kit/utilities` live in this package''s `devDependencies` (build/test
+  requirement), NOT `peerDependencies` — mirrors the existing `@radix-ui/*`
+  precedent in this same `package.json` (Radix is imported by
+  design-system components but is devDependency-only here; the FRAMEWORK_DEPS
+  list in `seed/framework/frontend/vite.config.factory.ts` +
+  `mcp/noctusai/tools/noctus/dev/check_framework_deps.py` is the actual
+  consumer-side declaration + vite-dedupe registration mechanism). Adding
+  the dnd-kit triple to FRAMEWORK_DEPS is a REQUIRED follow-up at P1.3/P3.1
+  repoint time (out of scope for this registration slice — those files
+  were not in this dispatch''s Files-to-modify).'
+- '`MetasDraggableSection.tsx` (a third pre-existing `@dnd-kit` usage in
+  erp-imobiliario) is explicitly OUT of scope for this organ: it is a
+  single-list reorderable grid (one `SortableContext`, `arrayMove`
+  within one collection, no columns/stages/droppable zones) — a different
+  primitive (a "sortable list", not a "kanban board"). Left untouched.'
+errors_encountered: []
+drifts_surfaced:
+- 'roadmap premise correction: `products/orbity/frontend/src/pages/Funil.tsx`
+  does NOT currently import `@dnd-kit/*` at all (verified via grep,
+  2026-07-16) — its "move card" interaction is a click-driven dropdown menu
+  (`onMoveStage` + a `<button>` list), not drag-and-drop. The roadmap
+  characterizes it as "an independent second fork of the same [dnd-kit]
+  shape", which is not accurate today. This does not block Phase 1 (only
+  P1.1/P1.2 — organ + registration — are in scope here), but it changes
+  what Phase 3 (`P3.1` orbity repoint) actually delivers: repointing orbity
+  onto this organ is a drag-and-drop UPGRADE for that product, not a
+  behavior-preserving repoint of existing DnD code the way P1.3 is for erp.
+  Surfaced for the tech-lead to reconcile in the roadmap''s Phase 3 framing.'
+alternatives_considered:
+- 'A single flattened `SortableContext` across all columns at the board
+  level (the pattern some multi-container dnd-kit examples use) was
+  considered over per-column `SortableContext`s. Chose per-column to mirror
+  the two existing (shipped, working) fork implementations'' proven pattern
+  rather than introduce an unproven board-level indexing scheme under a
+  2-3 hour dispatch time-box.'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
