@@ -43,9 +43,53 @@ class TestContactsRouter:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["email"] == "lead@example.com"
 
+    def test_update_contact_accepts_email(self, client):
+        # Regression: `email` was missing from `ContactUpdate` while the
+        # Contatos edit form sent it. `extra="forbid"` turned that into a
+        # 422 on EVERY contact edit in prod. Email is editable (a typo'd
+        # address must be correctable), so the schema carries it.
+        created = client.post(
+            "/api/email-marketing/contacts",
+            json={"email": "typo@example.com", "nome": "Lead"},
+        )
+        assert created.status_code == 200, created.text
+        contact_id = created.json()["data"]["id"]
+
+        resp = client.patch(
+            f"/api/email-marketing/contacts/{contact_id}",
+            json={"email": "correto@example.com", "nome": "Lead"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["email"] == "correto@example.com"
+
+    def test_update_contact_validates_email(self, client):
+        created = client.post(
+            "/api/email-marketing/contacts",
+            json={"email": "lead2@example.com"},
+        )
+        contact_id = created.json()["data"]["id"]
+        resp = client.patch(
+            f"/api/email-marketing/contacts/{contact_id}",
+            json={"email": "not-an-email"},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_update_contact_still_rejects_unknown_field(self, client):
+        # Widening the schema by one field must not loosen strictness.
+        created = client.post(
+            "/api/email-marketing/contacts",
+            json={"email": "lead3@example.com"},
+        )
+        contact_id = created.json()["data"]["id"]
+        resp = client.patch(
+            f"/api/email-marketing/contacts/{contact_id}",
+            json={"email": "lead3@example.com", "bogus": 1},
+        )
+        assert resp.status_code == 422, resp.text
+
     def test_unauthenticated_request_rejected(self, client):
         resp = client.raw().get("/api/email-marketing/contacts")
-        assert resp.status_code in (401, 403), resp.text
+        assert resp.status_code == 401, resp.text
 
 
 class TestListsRouter:

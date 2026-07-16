@@ -60,6 +60,7 @@ export interface ContactCreateInput {
 }
 
 export interface ContactUpdateInput {
+  email?: string;
   nome?: string;
   telefone?: string;
   empresa?: string;
