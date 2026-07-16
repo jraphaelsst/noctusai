@@ -94,6 +94,11 @@ function setDefaults() {
 }
 
 beforeEach(() => {
+  // Clear recorded calls between tests — without this, `mock.calls`
+  // accumulates across renders and any assertion on call arguments
+  // silently reads a PREVIOUS test's call. (Clears calls only, not the
+  // implementations `setDefaults` installs below.)
+  vi.clearAllMocks();
   setDefaults();
 });
 
@@ -151,6 +156,24 @@ describe("IgVisaoGeral — success", () => {
     const { getByTestId, fireEvent } = await renderPage();
     fireEvent.click(getByTestId("ig-capture-btn"));
     expect(mutate).toHaveBeenCalled();
+  });
+
+  it("passes the integration_accounts id — never the IG graph id — to every data hook", async () => {
+    // Regression: the trend chart and posts table were handed
+    // `context.instagram.id` (Meta's numeric graph id) instead of the
+    // `integration_accounts` row id. The backend does `UUID(account_id)`
+    // on that query param, so both calls 400'd with "invalid account_id"
+    // in prod while the KPI tiles (fed by context) rendered fine.
+    await renderPage();
+
+    const graphId = makeAccount().id;
+    for (const hook of [mockUseIgSnapshots, mockUseIgMedia, mockUseIgInsights]) {
+      expect(hook).toHaveBeenCalled();
+      for (const call of hook.mock.calls) {
+        expect(call[0]).toBe("acc-1");
+        expect(call[0]).not.toBe(graphId);
+      }
+    }
   });
 
   it("surfaces the insights error banner", async () => {

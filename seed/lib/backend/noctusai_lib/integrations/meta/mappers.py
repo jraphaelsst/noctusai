@@ -94,18 +94,28 @@ POST_INSIGHT_METRICS = [
     "post_reactions_anger_total",
 ]
 
+# Per-media (`/{media-id}/insights`) metrics. `engagement` and `video_views`
+# were retired by Meta and REJECT the whole batched call — Graph validates the
+# metric list before serving any of it, so one retired name zeroes every metric
+# on the item. `engagement` → `total_interactions`; `video_views` → `views`
+# (which now covers all media types, not just VIDEO / REELS). Calibrated
+# against a live token 2026-07-16 on Graph v21 — the account this ran against
+# reported the valid set as: impressions, reach, replies, saved, likes,
+# comments, shares, total_interactions, follows, profile_visits,
+# profile_activity, navigation, ig_reels_video_view_total_time,
+# ig_reels_avg_watch_time, views, reels_skip_rate, reposts, facebook_views,
+# crossposted_views, total_views, total_likes, total_comments, link_clicks.
 IG_MEDIA_INSIGHT_METRICS = [
     "impressions",
     "reach",
-    "engagement",
+    "total_interactions",
     "saved",
-    "video_views",  # only meaningful for VIDEO / REELS
+    "views",
 ]
 
 # Account-level (IG User) insights — the `/{ig-user-id}/insights` endpoint,
 # distinct from the per-media `/{media-id}/insights` above. Conservative
-# default: the three long-stable `period=day` account metrics that need no
-# `metric_type=total_value` handling and no extra scope beyond
+# default: three `period=day` account metrics needing no extra scope beyond
 # `instagram_manage_insights`. `impressions` was retired at the account level
 # in Graph v22 (kept only per-media, and even there via `views` in newer
 # versions) — deliberately EXCLUDED here so the default call never 400s on a
@@ -120,6 +130,21 @@ IG_ACCOUNT_INSIGHT_METRICS = [
     "profile_views",
     "follower_count",
 ]
+
+# The subset of account metrics Graph serves ONLY with
+# `metric_type=total_value` — a single summed number over the window, with no
+# per-day series. Requesting one of these in the same batched call as a
+# time-series metric fails the ENTIRE call with `(#100) The following metrics
+# (...) should be specified with parameter metric_type=total_value`, which is
+# why `MetaOAuthAdapter.get_instagram_account_insights` splits its request into
+# a time-series call + a total-value call and merges the rows. An earlier
+# version of this comment asserted the default trio "need no
+# `metric_type=total_value` handling" — that was written from the docs and was
+# WRONG for `profile_views` against a live token (it 502'd the whole Meta
+# overview in prod until 2026-07-16). Calibrated against the real token on
+# Graph v21; extend this set the same way — by observing a live rejection, not
+# by reading the docs.
+IG_TOTAL_VALUE_ACCOUNT_METRICS = frozenset({"profile_views"})
 
 # Facebook Page-level insights — the `/{page-id}/insights` endpoint (distinct
 # from the per-post `POST_INSIGHT_METRICS` above). Meta has been actively
@@ -292,10 +317,31 @@ def _metric_value(values: Any) -> int:
         return 0
 
 
+def _total_value_metric(total_value: Any) -> int:
+    """Flatten a `metric_type=total_value` row's `total_value` payload
+    (`{"value": <int>}`) into a single int.
+
+    A total-value row carries NO `values` list — reading it with
+    `_metric_value` would silently yield 0 for every such metric."""
+
+    if not isinstance(total_value, dict):
+        return 0
+    try:
+        return int(total_value.get("value"))
+    except (TypeError, ValueError):
+        return 0
+
+
 def insights_from_body(
     object_id: str, body: dict[str, Any]
 ) -> PostInsights:
-    """Map `/{id}/insights` `{"data": [{name, period, values}]}`."""
+    """Map `/{id}/insights` `{"data": [{name, period, values}]}`.
+
+    Rows fetched with `metric_type=total_value` carry a `total_value`
+    dict instead of a `values` list (see
+    `IG_TOTAL_VALUE_ACCOUNT_METRICS`); both shapes flatten to one int
+    here so callers see a uniform `metrics` map regardless of which
+    call served the row."""
 
     rows = body.get("data") or []
     metrics: dict[str, int] = {}
@@ -305,7 +351,10 @@ def insights_from_body(
         name = row.get("name")
         if not name:
             continue
-        metrics[name] = _metric_value(row.get("values"))
+        if "total_value" in row:
+            metrics[name] = _total_value_metric(row.get("total_value"))
+        else:
+            metrics[name] = _metric_value(row.get("values"))
     return PostInsights(object_id=object_id, metrics=metrics, raw=list(rows))
 
 

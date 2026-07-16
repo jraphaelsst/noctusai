@@ -57,6 +57,7 @@ from noctusai_lib.integrations.meta.mappers import (
     IG_DM_FIELDS,
     IG_MEDIA_FIELDS,
     IG_MEDIA_INSIGHT_METRICS,
+    IG_TOTAL_VALUE_ACCOUNT_METRICS,
     ME_FIELDS,
     PAGE_FIELDS,
     PAGE_IG_FIELD,
@@ -410,23 +411,53 @@ class MetaOAuthAdapter:
         `period=day` trio). `since`/`until` are unix timestamps bounding
         the window (Graph caps account insights at ~30 days per call);
         omit for Graph's default recent window. `period` is Graph's
-        aggregation bucket (`day` | `week` | `days_28`)."""
+        aggregation bucket (`day` | `week` | `days_28`).
 
-        params: dict[str, Any] = {
-            "metric": ",".join(metrics or IG_ACCOUNT_INSIGHT_METRICS),
-            "period": period,
-        }
+        Requested metrics are SPLIT across up to two Graph calls: the
+        time-series ones, and those Graph only serves with
+        `metric_type=total_value` (`IG_TOTAL_VALUE_ACCOUNT_METRICS`).
+        Graph validates the whole metric list up front and rejects the
+        entire call if a total-value metric appears in a time-series
+        request, so batching them together makes ONE unsupported metric
+        (e.g. `profile_views`) zero out every other metric too. The rows
+        from both calls merge into one `PostInsights`, so callers still
+        see a single flat `metrics` map."""
+
+        requested = list(metrics or IG_ACCOUNT_INSIGHT_METRICS)
+        series_metrics = [
+            m for m in requested if m not in IG_TOTAL_VALUE_ACCOUNT_METRICS
+        ]
+        total_value_metrics = [
+            m for m in requested if m in IG_TOTAL_VALUE_ACCOUNT_METRICS
+        ]
+
+        window: dict[str, Any] = {}
         if since is not None:
-            params["since"] = since
+            window["since"] = since
         if until is not None:
-            params["until"] = until
-        body = _meta_api.graph_get(
-            f"{ig_user_id}/insights",
-            access_token=self._user_token(),
-            params=params,
-            version=self._version,
-        )
-        return insights_from_body(ig_user_id, body)
+            window["until"] = until
+
+        rows: list[dict[str, Any]] = []
+        for group, extra in (
+            (series_metrics, {}),
+            (total_value_metrics, {"metric_type": "total_value"}),
+        ):
+            if not group:
+                continue
+            body = _meta_api.graph_get(
+                f"{ig_user_id}/insights",
+                access_token=self._user_token(),
+                params={
+                    "metric": ",".join(group),
+                    "period": period,
+                    **window,
+                    **extra,
+                },
+                version=self._version,
+            )
+            rows.extend(body.get("data") or [])
+
+        return insights_from_body(ig_user_id, {"data": rows})
 
     # ─── Write / ads surface ──────────────────────────────────────────
 

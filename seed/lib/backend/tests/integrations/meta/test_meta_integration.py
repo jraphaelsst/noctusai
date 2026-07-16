@@ -1495,6 +1495,49 @@ class TestReadPathRegression:
                 )
 
 
+# ─── TestMediaInsights ────────────────────────────────────────────────────
+
+
+class TestMediaInsights:
+    """`get_instagram_media_insights` — the per-media call.
+
+    Graph validates the metric list BEFORE serving any of it, so one
+    retired name zeroes every metric on the item. The router degrades a
+    failed per-media call to `insights: null` per item, which means a
+    rotted name here fails SILENTLY (no toast, just an empty posts
+    table) — hence pinning the requested list explicitly."""
+
+    def test_real_requests_only_live_metric_names(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        captured = {}
+
+        def _get(url, **kw):
+            captured["url"] = url
+            captured["params"] = kw.get("params")
+            return _FakeResponse(
+                {"data": [
+                    {"name": "reach", "period": "lifetime",
+                     "values": [{"value": 88}]},
+                ]}
+            )
+
+        with patch.object(httpx, "get", side_effect=_get):
+            ins = a.get_instagram_media_insights("M1")
+
+        assert ins.object_id == "M1"
+        assert ins.metrics == {"reach": 88}
+        assert captured["url"].endswith("M1/insights")
+
+        requested = captured["params"]["metric"].split(",")
+        # `engagement` → `total_interactions` and `video_views` → `views`:
+        # both retired names 400'd the whole call against a live token
+        # (2026-07-16, Graph v21), nulling every post's metrics in prod.
+        assert "engagement" not in requested
+        assert "video_views" not in requested
+        assert "total_interactions" in requested
+        assert "views" in requested
+
+
 # ─── TestAccountInsights ──────────────────────────────────────────────────
 
 
@@ -1536,32 +1579,63 @@ class TestAccountInsights:
         )
         assert ins.metrics["reach"] == 9
 
-    def test_real_default_metrics_and_endpoint(self):
+    def test_real_default_metrics_split_time_series_from_total_value(self):
+        """The default trio is served by TWO calls, not one batched call.
+
+        `profile_views` is total-value-only: batching it with the
+        time-series metrics makes Graph reject the ENTIRE request
+        (`(#100) The following metrics (profile_views) should be
+        specified with parameter metric_type=total_value`), zeroing
+        `reach` and `follower_count` too. That shipped to prod and 502'd
+        the Meta overview — this test pins the split so it can't
+        regress."""
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
-        captured = {}
+        calls = []
 
         def _get(url, **kw):
-            captured["url"] = url
-            captured["params"] = kw.get("params")
+            params = kw.get("params")
+            calls.append({"url": url, "params": params})
+            if params.get("metric_type") == "total_value":
+                # Total-value rows carry `total_value`, never `values`.
+                return _FakeResponse(
+                    {"data": [
+                        {"name": "profile_views", "period": "day",
+                         "total_value": {"value": 12}},
+                    ]}
+                )
             return _FakeResponse(
                 {"data": [
                     {"name": "reach", "period": "day",
                      "values": [{"value": 300}]},
-                    {"name": "profile_views", "period": "day",
-                     "values": [{"value": 12}]},
+                    {"name": "follower_count", "period": "day",
+                     "values": [{"value": 5}]},
                 ]}
             )
 
         with patch.object(httpx, "get", side_effect=_get):
             ins = a.get_instagram_account_insights("IG1")
+
+        # Both calls' rows merge into one flat map — the total-value row
+        # included (reading it via `values` would silently yield 0).
         assert ins.object_id == "IG1"
-        assert ins.metrics == {"reach": 300, "profile_views": 12}
-        assert captured["url"].endswith("IG1/insights")
-        # Default metric list + daily period; `impressions` deliberately
-        # absent (retired at account level in v22).
-        assert captured["params"]["metric"] == "reach,profile_views,follower_count"
-        assert captured["params"]["period"] == "day"
-        assert "impressions" not in captured["params"]["metric"]
+        assert ins.metrics == {"reach": 300, "follower_count": 5,
+                               "profile_views": 12}
+
+        assert len(calls) == 2
+        series, total = calls
+        assert series["url"].endswith("IG1/insights")
+        assert total["url"].endswith("IG1/insights")
+
+        # Time-series call: no total-value metric rides along.
+        assert series["params"]["metric"] == "reach,follower_count"
+        assert series["params"]["period"] == "day"
+        assert "metric_type" not in series["params"]
+        # `impressions` deliberately absent (retired at account level in v22).
+        assert "impressions" not in series["params"]["metric"]
+
+        # Total-value call: carries ONLY the total-value metric.
+        assert total["params"]["metric"] == "profile_views"
+        assert total["params"]["metric_type"] == "total_value"
 
     def test_real_custom_metrics_and_window_passthrough(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")

@@ -357,7 +357,7 @@ export default function IgVisaoGeral() {
           <CardDescription>Últimos 90 dias, por snapshot.</CardDescription>
         </CardHeader>
         <CardContent>
-          <FollowersTrendChart accountId={account.id} />
+          <FollowersTrendChart accountId={accountId} />
         </CardContent>
       </Card>
 
@@ -369,7 +369,7 @@ export default function IgVisaoGeral() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <PostsTable accountId={account.id} />
+          <PostsTable accountId={accountId} />
         </CardContent>
       </Card>
     </div>
