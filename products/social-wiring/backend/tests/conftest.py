@@ -4,8 +4,30 @@ Pytest configuration and shared fixtures for Social Wiring backend tests.
 The seed product uses the framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
 """
+import os as _os
 import sys as _sys
 from pathlib import Path as _Path
+
+from cryptography.fernet import Fernet as _Fernet
+
+# SEC-3 (erp-httponly-cookie-session-2026-07 roadmap) test-only key —
+# `SocialWiringSettings.redis_url` defaults to a real, reachable local
+# Redis, so `noctusai_seed.auth_router.get_session_store(settings)`
+# (shared by `app.dependencies.get_auth_context` AND the promoted
+# `/api/auth/{login,me,logout}` router — see `app/dependencies.py`'s
+# `_get_session_store` docstring) calls
+# `make_session_store(require_encryption=True)`, which REFUSES to boot
+# a Redis-backed session store without `settings.session_encryption_key`
+# set — fail-loudly-on-misconfiguration is the intended SEC-3 behavior,
+# NOT something to bypass. Setting a per-session-run Fernet key here
+# (BEFORE `app.config`/`app.main` is first imported by any fixture/test)
+# lets the suite exercise the REAL Redis-backed + encrypted session
+# store (dev-prod parity — the roadmap's Slice 4 note warns "Fake store
+# hides the exchange"; a live local Redis is already required by
+# several OTHER redis-backed routers this suite exercises, so this
+# doesn't add a new external dependency). `setdefault` so a real
+# `SESSION_ENCRYPTION_KEY` already exported in the environment wins.
+_os.environ.setdefault("SESSION_ENCRYPTION_KEY", _Fernet.generate_key().decode())
 
 _REPO = _Path(__file__).resolve().parents[4]
 _LIB = _REPO / "seed" / "lib" / "backend"

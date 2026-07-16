@@ -42,10 +42,10 @@ from noctusai_lib.api.auth import (
 from noctusai_lib.api.auth.session import (
     AuthContext,
     FakeApiTokenResolver,
-    FakeSessionStore,
     make_get_auth_context,
 )
 from noctusai_seed import make_get_settings
+from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
 
 from app.config import settings
 from app.sqlite_client import SQLiteClient
@@ -129,6 +129,32 @@ def get_admin_client():
     return _db.get_admin_client()
 
 
+def get_core_client():
+    """``public``-schema-scoped client — ``noctus_users`` lives there,
+    NOT the product schema (a `get_admin_client()` lookup 500s with
+    PGRST205; see ``feedback_product_client_schema_scoping_public_tables``
+    memory entry). Falls back to the sqlite client under local-dev
+    sqlite mode (mirrors ``get_admin_client``'s fallback — sqlite has no
+    schema separation to get wrong)."""
+    if _use_sqlite:
+        return _sqlite_client
+    return _db.get_core_client()
+
+
+# Adapter exposing exactly the `deps.get_admin_client()` / `deps.get_core_client()`
+# surface `noctusai_seed.auth_router.create_auth_router(deps, settings)` needs —
+# NOT the full `ProductDependencies` shape (`_deps` is `None` under sqlite
+# local-dev). Consumed by `app.main` to build the seed's auth router directly
+# (passing this product's REAL `api_token_resolver` / `legacy_jwt_resolver`
+# overrides — the registry's `_build_auth_router(deps, settings, product_name,
+# version)` builder has no seam for those, see `create_auth_router`'s
+# docstring).
+auth_router_deps = SimpleNamespace(
+    get_admin_client=get_admin_client,
+    get_core_client=get_core_client,
+)
+
+
 # Auth-side org_id is sometimes a UUID string, sometimes an opaque
 # fixture string (`"test-org-123"`). DB columns are UUID-typed; coerce
 # here so call sites don't repeat the try/except. Lifted to this module
@@ -161,25 +187,32 @@ def coerce_org_uuid(raw_org: Any) -> UUID:
 # resolution can fall through the new unified path or remain on the
 # legacy JWT verifier — both produce identical ``(user, token, org_id)``).
 
-_session_store = None
 _api_token_resolver = None
 _get_auth_context = None
 
 
 def _get_session_store():
-    """Lazy singleton — ``FakeSessionStore`` under sqlite/dev, the
-    seed's Redis-backed adapter under production. Real Redis adapter
-    is owned by a follow-up wave; until then ``FakeSessionStore``
-    is the runtime store. The cookie path doesn't have a production
-    Real adapter yet — login flow + session-store-Redis-real land
-    together (this file already wires the cookie dep to a real
-    interface so the swap is purely an adapter change)."""
-    global _session_store
-    if _session_store is None:
-        # TODO: swap to RedisSessionStore once the seed real adapter
-        # lands. Tracked in platform-auth-modernization wave 3.
-        _session_store = FakeSessionStore()
-    return _session_store
+    """Delegates to ``noctusai_seed.auth_router.get_session_store(settings)``
+    — the SAME process-local singleton the seed's promoted
+    ``create_auth_router`` composition uses (keyed by ``id(settings)``,
+    see that module's docstring). Redis-backed (SEC-3 encrypted-at-rest)
+    when ``settings.redis_url`` is set; the in-memory ``FakeSessionStore``
+    otherwise (dev/test — no Redis configured).
+
+    Sharing the SAME accessor (rather than this module calling its own
+    ``make_session_store(...)``) matters for the in-memory Fake: a
+    second ``FakeSessionStore()`` instance is a separate empty dict, so
+    a session minted through one composition (this product's
+    ``get_auth_context``, used by ``get_current_user_org_unified``) would
+    be invisible to a lookup running through the OTHER (the seed
+    router's own ``/me``/``/logout``) — and vice versa. Delegating here
+    closes that hazard by construction. Fixes the erp-httponly-cookie-
+    session-2026-07 roadmap Slice 1b (iii) finding: this function
+    previously returned a bare, never-persisted ``FakeSessionStore()``
+    unconditionally (a `TODO: swap to RedisSessionStore` that never
+    landed) — every cookie session died on process restart fleet-wide
+    regardless of ``settings.redis_url``."""
+    return _seed_get_session_store(settings)
 
 
 def _get_api_token_resolver():
@@ -330,10 +363,12 @@ async def get_current_user_org_unified(
 __all__ = [
     "AuthContext",
     "auth_context_to_legacy_tuple",
+    "auth_router_deps",
     "coerce_org_uuid",
     "first_or_none",
     "get_admin_client",
     "get_auth_context",
+    "get_core_client",
     "get_current_user",
     "get_current_user_org",
     "get_current_user_org_unified",

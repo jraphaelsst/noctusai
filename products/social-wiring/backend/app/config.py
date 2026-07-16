@@ -61,6 +61,25 @@ class SocialWiringSettings(ProductSettings):
     # with plaintext tokens in the DB.
     encryption_key: str = ""
 
+    # Fernet key (SEC-3, erp-httponly-cookie-session-2026-07 roadmap)
+    # encrypting the httpOnly-cookie-session's Supabase refresh token +
+    # cached access token at rest in the SHARED FLEET Redis (the same
+    # instance `redis_url` below points at — also used by the LLM cache
+    # + rate-limiter, so a plaintext refresh token there is a
+    # single-Redis-read full-impersonation harvest). Generate the SAME
+    # way as `encryption_key` above. Empty (default) is safe ONLY while
+    # `redis_url` is unset/unreachable and the auth router falls back to
+    # the in-memory `FakeSessionStore` — the moment `redis_url` resolves
+    # to a real reachable Redis (it does by DEFAULT below), the seed's
+    # `noctusai_seed.auth_router.get_session_store(settings)` (shared by
+    # this product's OWN `get_auth_context` composition AND the
+    # promoted `/api/auth/{login,me,logout}` router) calls
+    # `make_session_store(require_encryption=True)`, which REFUSES to
+    # boot a Redis-backed store without this key — fail loudly rather
+    # than silently store plaintext impersonation credentials. MUST be
+    # set (env var `SESSION_ENCRYPTION_KEY`) in every real deployment.
+    session_encryption_key: str = ""
+
     # ─── SMTP (email notifications) ────────────────────────────────────
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 465

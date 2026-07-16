@@ -71,12 +71,31 @@ def _register_media_wiring() -> ModuleRegistration:
     intake-monitor / non-youtube settings + the W2 auth-router pair
     (login/me/logout + api-token management).
 
+    The auth-router pair is consumed directly from the seed's
+    ``noctusai_seed.auth_router.create_auth_router(deps, settings)``
+    factory (promoted from this product's own former
+    ``app/routers/auth.py`` fork per the ``erp-httponly-cookie-session-
+    2026-07`` roadmap, Slice 1b) — NOT via ``standard_routers=["auth"]``.
+    The registry's ``_build_auth_router(deps, settings, product_name,
+    version)`` builder has a fixed 4-arg signature shared by every
+    standard router, with no seam to thread this product's REAL
+    ``SupabaseApiTokenResolver`` / legacy-JWT bridge through; calling the
+    factory directly here passes both, so ``pk_*`` bearer + legacy-JWT
+    callers of ``/api/auth/me``, ``/logout``, and the api-token endpoints
+    keep resolving exactly as they did under the fork (the bare registry
+    entry defaults to the seed's always-empty ``FakeApiTokenResolver()``
+    + no bridge — a real regression for THIS product, see
+    ``create_auth_router``'s docstring).
+
     YouTube footprint (videos / upload / dashboard / YouTube tab + OAuth
     callback) moved to ``app.modules.youtube`` in Phase 8 and is
     registered as its own ``MODULES`` entry below."""
-    from app.routers.auth import (
-        api_tokens_router as auth_api_tokens_router,
-        router as auth_router,
+    from noctusai_seed.auth_router import create_auth_router
+
+    from app.dependencies import (
+        _LazyApiTokenResolver,
+        _legacy_jwt_resolver,
+        auth_router_deps,
     )
     from app.routers.calendar_router import router as calendar_router
     from app.routers.chat_router import router as chat_router
@@ -107,10 +126,32 @@ def _register_media_wiring() -> ModuleRegistration:
     # `scheduler.configure()` call.
     meta_insights_scheduler.configure()
 
+    # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
+    # see the module docstring above for why this calls the factory
+    # directly instead of opting into `standard_routers=["auth"]`.
+    #
+    # `_LazyApiTokenResolver()` (NOT `_get_api_token_resolver()` called
+    # eagerly here) — the real resolver construction touches
+    # `get_admin_client()` -> `DatabaseModule.get_admin_client()`, which
+    # the test conftest only patches AFTER `app.main` starts importing
+    # (`tests/conftest.py::client`'s `with patch(...)` wraps `from
+    # app.main import app`). Building the real resolver at MODULE-IMPORT
+    # time here (this function runs during that import, via the MODULES
+    # assembly loop) would race that patch — resolving too early against
+    # an unpatched `DatabaseModule`. The lazy proxy defers to
+    # `_get_api_token_resolver()` on the FIRST per-request `.resolve()`
+    # call instead, matching the same lazy-singleton shape
+    # `app.dependencies.get_auth_context` already uses.
+    auth_router = create_auth_router(
+        auth_router_deps,
+        settings,
+        api_token_resolver=_LazyApiTokenResolver(),
+        legacy_jwt_resolver=_legacy_jwt_resolver,
+    )
+
     return ModuleRegistration(
         routers=[
             auth_router,
-            auth_api_tokens_router,
             settings_router,
             whatsapp_router,
             whatsapp_connections_router,

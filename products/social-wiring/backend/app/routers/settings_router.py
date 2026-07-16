@@ -581,11 +581,14 @@ async def send_waha_test(
 def _require_admin(user: Any, context: str) -> None:
     """403 unless ``user`` has owner/admin role on their org.
 
-    Same check-shape as ``app.routers.auth._require_admin_role`` (N=2 —
-    flagged as a `scoped-improvement:` in this dispatch's delivery note
-    rather than extracted mid-brief; that helper is also private/
-    module-local, so this one stays local too instead of reaching across
-    a router boundary for an underscore-prefixed symbol).
+    Same check-shape as ``noctusai_seed.auth_router._require_org_admin``
+    (N=2 — flagged as a `scoped-improvement:` in this dispatch's
+    delivery note rather than extracted mid-brief; that helper reads
+    org_role from the TRUSTED `public.noctus_users` row via
+    `deps.get_core_client()`, whereas this one reads `user_metadata`
+    directly — a narrower, still-spoofable check this slice didn't
+    touch; module-local + underscore-prefixed either way, so this one
+    stays local instead of reaching across a router/module boundary).
     """
     metadata = getattr(user, "user_metadata", None) or {}
     role = metadata.get("org_role") or metadata.get("role")
