@@ -514,8 +514,9 @@ Any product customization MUST flow through one of these seams. Any customizatio
 |---|---|---|
 | `routes` / `roleRoutes` | Product-specific pages + role-based routing. | Every product. |
 | `Layout` | Custom Layout component. Accepts `{children}`. **Named extension seam** for products that can't or shouldn't use `createProductLayout()` (e.g., core's `CoreLayout` — admin branch + passthrough). | core. |
-| `authProvider` | Custom auth provider — identity-source products that auth directly against their own backend (not Supabase). Shape: `{ AuthProvider, useAuth }`. | core. |
-| `supabase` / `useAuthStore` | Default Supabase-based auth path. **Mutually exclusive with `authProvider`.** | Every consumer product. |
+| `authProvider` | Custom auth provider. Two legitimate uses (revised 2026-07-16 — see § Control-plane vs. consumer products below): identity-source products that auth directly against their own backend, OR a consumer product on the cookie-session path (`createSessionAuthProvider`). Shape: `{ AuthProvider, useAuth }`. | core; cookie-session consumers (planned: erp). |
+| `supabase` / `useAuthStore` | Default Supabase-based auth path. **Mutually exclusive with `authProvider`.** | Every consumer product not on cookie-session auth. |
+| `sessionAuth` (layout config) | Cookie-session sibling of `ProductLayoutConfig.supabase` — `{ onLogout, onUpdatePassword, onUpdateProfile, onExtend, useStatusPaginas? }`. **Mutually exclusive with (wins over) `supabase`** at the Layout level, mirroring `authProvider`'s precedence at the App level. Exists because Layout's logout/password/activity-refresh calls used to hit `supabase.auth.*` unconditionally — a cookie-session product with no client-side Supabase session got a silent no-op logout. `seed/framework/frontend/src/layout.tsx`. | (planned: erp, `erp-httponly-cookie-session-2026-07` Slice 3). |
 | `unauthRedirect` | Path to redirect unauth'd users. Defaults to `/landing`; core overrides to `/login`. | core. |
 | `Landing` / `Login` / `AcceptInvite` / `ForgotPassword` / `NotFound` | Public-route components — optional. | Most products. |
 | `publicRoutes` | Additional no-auth routes. | core (`/invite/:token`). |
@@ -724,9 +725,12 @@ createProductApp({ authProvider: customAuthProvider, routes, Layout, unauthRedir
 
 `CustomAuthProvider` is a pair of `{ AuthProvider: React.ComponentType, useAuth: () => { user, isInitialized } }` — the framework uses these for route guards and role resolution. `supabase` and `useAuthStore` are not read when `authProvider` is present.
 
-**When a new product needs `authProvider`:** only if it is the identity source itself. If it consumes identity (auths users, reads RLS-scoped data), it is a consumer product and uses the Supabase path. Every consumer product should continue to use the default; adding `authProvider` to a consumer product would throw away Supabase's real-time subscriptions, RLS-header enforcement, and built-in OAuth/SSO flows with no architectural benefit.
+**When a new product needs `authProvider` (revised 2026-07-16 — was stated too narrowly):** two legitimate cases, not one.
 
-### If you find a new non-compliant product
+1. **Identity-source products** (`core`) — the ORIGINAL case above: a Supabase-client-auth path would be circular, so the product auths directly against its own backend.
+2. **Cookie-session consumer products** — a consumer product (still auths users, still reads RLS-scoped data) that has migrated OFF client-side Supabase-JS auth onto the seed's httpOnly-cookie session (`createSessionAuthProvider`, `seed/lib/frontend/src/auth.ts` — first formalized by `erp-httponly-cookie-session-2026-07`'s Slice 1b/3). This is STILL a consumer product; it supplies `authProvider: createSessionAuthProvider(useAuthStore)` to `createProductApp` for the SAME structural reason `core` does — auth state doesn't come from a Supabase-JS session listener — but the underlying motivation is security (no refresh token in `localStorage`), not identity-provider circularity.
+
+The previous version of this passage claimed swapping to `authProvider` "would throw away Supabase's real-time subscriptions, RLS-header enforcement, and built-in OAuth/SSO flows with **no architectural benefit**" for any consumer product. That's wrong for case 2: there IS a benefit (httpOnly cookies are unreadable by JS — the whole point of the migration), and RLS enforcement isn't thrown away, it's RELOCATED server-side (the backend exchanges the cookie session for a genuine Supabase access token per request via a `SupabaseTokenExchanger` — `noctusai_lib.api.auth.session` — and attaches it to a per-request RLS-scoped client). The one REAL, honest tradeoff: client-side Supabase real-time subscriptions (`.channel()`/`.on()`) genuinely don't work without a live Supabase-JS session — a cookie-session product that needs real-time must build a server-push alternative (SSE/WebSocket through its own backend), not assume it's free. `createProductLayout`'s `sessionAuth` config (`seed/framework/frontend/src/layout.tsx`) is the Layout-level sibling of this same seam — see its module docstring for the logout-no-op bug this dual-mode design prevents.
 
 ### If you find a new non-compliant product
 

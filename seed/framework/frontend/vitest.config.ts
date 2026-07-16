@@ -42,6 +42,19 @@ export default defineConfig({
       { find: /^react$/, replacement: resolve(__dirname, "node_modules/react") },
       { find: /^react-dom$/, replacement: resolve(__dirname, "node_modules/react-dom") },
       { find: /^react-router-dom$/, replacement: resolve(__dirname, "node_modules/react-router-dom") },
+      // `layout.test.tsx` (`sessionAuth`/`supabase` dual-mode) is the first
+      // framework test to render `usePageStatus` (lib's `page-status.ts`)
+      // under a `QueryClientProvider` constructed IN THE TEST FILE. Without
+      // this alias, `page-status.ts`'s bare `@tanstack/react-query` import
+      // resolves relative to ITS OWN location (`seed/lib/frontend/src/`) →
+      // lib's copy of the package, a SEPARATE module instance from the one
+      // the test's `QueryClientProvider` uses → `useContext` sees a
+      // mismatched Provider → "Cannot read properties of null (reading
+      // 'useContext')". Same class of problem `@noctusai/lib/query-client`'s
+      // alias above solves for `createQueryClient` itself; this closes the
+      // gap for any REAL lib hook that calls `useQuery`/`useMutation`
+      // directly (not just the client-construction helper).
+      { find: /^@tanstack\/react-query$/, replacement: resolve(__dirname, "node_modules/@tanstack/react-query") },
     ],
   },
 });

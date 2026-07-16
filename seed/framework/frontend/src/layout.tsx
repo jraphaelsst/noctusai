@@ -7,6 +7,25 @@
  *
  * The enrichment hook (`useLayoutEnrichment`) is the extension point
  * that makes ANY product framework-first — no matter how complex.
+ *
+ * ## Dual auth mode (`supabase` vs `sessionAuth`)
+ *
+ * `ProductLayoutConfig` accepts EITHER `supabase` (default — the
+ * original Supabase-JS shape, unchanged) OR `sessionAuth` (the
+ * cookie-session sibling — see `LayoutSessionAuth` below). Exactly the
+ * same precedence rule as `createProductApp`'s `authProvider` vs
+ * `supabase`/`useAuthStore` (`KB § 03-SEED-ARCHITECTURE.md` frontend
+ * seams table): when both are present, `sessionAuth` wins. This exists
+ * because every auth-adjacent action in this file (logout, password
+ * change, activity-refresh) used to call `supabase.auth.*` directly and
+ * unconditionally — a product that migrated its `AuthProvider` to
+ * `createSessionAuthProvider` (httpOnly-cookie session) while Layout
+ * stayed Supabase-bound got a SILENT NO-OP on logout: the session was
+ * never established client-side, so `signOut()` had nothing to sign out
+ * of, the `nai_session` cookie was never cleared, and the user was
+ * redirected to `/login` while their session stayed LIVE. `sessionAuth`
+ * makes that failure mode unrepresentable — see `erp-httponly-cookie-
+ * session-2026-07` roadmap, engineer-C's Slice-3 blocker finding.
  */
 import { useCallback, type ReactNode } from "react";
 import {
@@ -25,7 +44,7 @@ import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus, env,
 } from "@noctusai/lib";
-import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
+import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
 import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -98,12 +117,78 @@ export interface LayoutEnrichment {
   aiBadge?: string | React.ReactNode | null;
 }
 
+/**
+ * Cookie-session sibling of the default `supabase`-based auth wiring — the
+ * seam a product on `createSessionAuthProvider` (httpOnly-cookie session,
+ * `seed/lib/frontend/src/auth.ts`) supplies instead of a live Supabase-JS
+ * client. See the module docstring above for the full "why" (the silent
+ * logout no-op this type makes unrepresentable).
+ *
+ * Every field except `useStatusPaginas` is REQUIRED — a session-mode
+ * product cannot construct a `Layout` with a dead button standing in for
+ * logout/password-change/session-extend. There is no default that could
+ * be correct without knowing the product's own backend contract for
+ * those actions (unlike Supabase mode, which has one universal
+ * `supabase.auth.*` shape to default to).
+ *
+ * `usePageStatus` (`@noctusai/lib`) is an RLS `.from('status_pagina')`
+ * read — it needs a user-JWT Supabase client, which cookie-session mode
+ * doesn't have (the session lives server-side; the browser never holds
+ * a JWT). No seed-level backend route serves `status_pagina` over the
+ * cookie session yet (a future slice, not this one). `useStatusPaginas`
+ * is therefore the one OPTIONAL field: omitting it degrades to exactly
+ * the SAME fallback Supabase-mode already uses while its own query is
+ * still loading — `navGroupsFallback` (unfiltered nav, no dev-page
+ * gating). Not new fake behavior invented for session mode; the
+ * pre-existing "no status data yet" path, reused honestly.
+ */
+export interface LayoutSessionAuth {
+  /**
+   * MUST actually invalidate the server-side session — e.g.
+   * `logoutSession()` from `@noctusai/lib` (`POST /api/auth/logout`,
+   * SEC-4 upstream-revoke). A handler that only clears client-side state
+   * reproduces the exact silent-no-op bug this type exists to prevent.
+   */
+  onLogout: () => Promise<void>;
+  /**
+   * Change password. No seed-level cookie-session password-change
+   * endpoint ships yet — wire this to the product's own backend route.
+   */
+  onUpdatePassword: (newPassword: string) => Promise<void>;
+  /**
+   * Update profile (name/email/phone) — the session-mode counterpart of
+   * this file's default Supabase `handleUpdateProfile`
+   * (`supabase.auth.updateUser`). `LayoutEnrichment.onUpdateProfile`
+   * still overrides this per-render when the product's
+   * `useLayoutEnrichment` hook returns one.
+   */
+  onUpdateProfile: (data: { name: string; email: string; phone: string }) => Promise<void>;
+  /**
+   * Called by `useActivityRefresh` (periodic, activity-gated) and
+   * `InactivityWarning.onExtend` ("Continuar" click) to keep the session
+   * alive. Supabase mode calls `supabase.auth.refreshSession()`;
+   * cookie-session mode has no client-refreshable JWT — wire this to
+   * whatever session-touch/extend mechanism the product's backend
+   * exposes (verify the actual `SessionStore` TTL semantics before
+   * assuming a bare re-`GET /api/auth/me` is sufficient).
+   */
+  onExtend: () => Promise<void>;
+  /**
+   * Optional page-status source for nav dev-gating — see the class
+   * doc above. Shape mirrors the `{ data }` slice of `usePageStatus`'s
+   * TanStack Query result so a product can wire this to its own
+   * `useQuery` once it has a backend endpoint, or to a plain value.
+   */
+  useStatusPaginas?: () => { data?: StatusPagina[] };
+}
+
 export interface ProductLayoutConfig {
   brandIcon: LucideIcon;
   brandTitle: string;
   navGroups: NavGroupWithRoute[];
   navGroupsFallback: NavGroup[];
-  supabase: AnySupabaseClient;
+  /** Supabase-JS client — the default auth path. Required unless `sessionAuth` is provided. */
+  supabase?: AnySupabaseClient;
   useAuthStore: () => { user: any };
   NotificationBell: React.ComponentType;
   standaloneItems?: NavItemWithRoute[];
@@ -121,6 +206,15 @@ export interface ProductLayoutConfig {
    * theme persistence, role labels, loading state.
    */
   useLayoutEnrichment?: () => LayoutEnrichment;
+  /**
+   * Cookie-session auth overrides — the sibling of `supabase` for
+   * products on `createSessionAuthProvider`. See `LayoutSessionAuth` for
+   * the full rationale. When both `supabase` AND `sessionAuth` are
+   * provided, `sessionAuth` WINS (same precedence as `createProductApp`'s
+   * `authProvider` over `supabase`/`useAuthStore`). Required unless
+   * `supabase` is provided.
+   */
+  sessionAuth?: LayoutSessionAuth;
 }
 
 const DEFAULT_ROLE_LABELS: Record<string, string> = {
@@ -149,6 +243,33 @@ const BackToCore = (
   </a>
 );
 
+// Sentinel passed to `usePageStatus` when there's no real Supabase client
+// (session-auth mode). The query's `enabled` flag is `false` in that case,
+// so TanStack Query never invokes `queryFn` — this object only exists so
+// the hook can be called UNCONDITIONALLY every render (Rules of Hooks)
+// regardless of auth mode, without smuggling a real client through. If it's
+// ever reached anyway (a TanStack Query behavior change), it throws loudly
+// instead of returning fake data — no silent errors.
+const UNREACHABLE_SUPABASE: AnySupabaseClient = {
+  auth: {},
+  from: () => {
+    throw new Error(
+      "createProductLayout: usePageStatus queryFn ran with no supabase client " +
+        "(session-auth mode) — this should be unreachable because `enabled` is " +
+        "false. If you see this, TanStack Query's enabled-gating behavior changed.",
+    );
+  },
+};
+
+/**
+ * No-op fallback when `sessionAuth.useStatusPaginas` isn't supplied. Mirrors
+ * the existing "no status data yet" degrade path (nav renders unfiltered via
+ * `navGroupsFallback`) — not new behavior invented for session mode.
+ */
+function useNoStatusPaginas(): { data?: StatusPagina[] } {
+  return { data: undefined };
+}
+
 export function createProductLayout(config: ProductLayoutConfig) {
   const {
     brandIcon,
@@ -158,6 +279,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
     standaloneItems: standaloneWithRoutes,
     standaloneItemsFallback,
     supabase,
+    sessionAuth,
     useAuthStore,
     NotificationBell,
     roleLabels = DEFAULT_ROLE_LABELS,
@@ -166,6 +288,18 @@ export function createProductLayout(config: ProductLayoutConfig) {
     brandSubtitleOverride,
     useLayoutEnrichment,
   } = config;
+
+  if (!sessionAuth && !supabase) {
+    throw new Error(
+      "createProductLayout: must provide either `sessionAuth` (cookie-session " +
+        "auth overrides) or `supabase` (Supabase-JS client).",
+    );
+  }
+
+  // Resolved ONCE per `createProductLayout()` call (not per render) — stable
+  // for this Layout's whole lifetime, so calling this hook slot unconditionally
+  // every render doesn't break the Rules of Hooks (the branch is invariant).
+  const useSessionStatusPaginas = sessionAuth?.useStatusPaginas ?? useNoStatusPaginas;
 
   return function Layout({ children }: { children: React.ReactNode }) {
     const { user } = useAuthStore();
@@ -179,12 +313,33 @@ export function createProductLayout(config: ProductLayoutConfig) {
       onPersist: enrichment.onThemePersist,
     });
 
-    useActivityRefresh({
-      onRefresh: useCallback(async () => { await supabase.auth.refreshSession(); }, []),
-    });
+    // Shared by useActivityRefresh (periodic) + InactivityWarning.onExtend
+    // ("Continuar" click) — see `LayoutSessionAuth.onExtend` doc for why
+    // cookie-session mode needs a distinct implementation. `sessionAuth` /
+    // `supabase` are closed over from `createProductLayout`'s config and
+    // never change for this Layout's lifetime, so the empty dep array is
+    // correct (not a missing-deps lint gap).
+    const extendSession = useCallback(async () => {
+      if (sessionAuth) {
+        await sessionAuth.onExtend();
+      } else {
+        await supabase!.auth.refreshSession();
+      }
+    }, []);
+
+    useActivityRefresh({ onRefresh: extendSession });
 
     // All hooks must be called before any conditional return (Rules of Hooks).
-    const { data: statusPaginas } = usePageStatus(supabase, !!user);
+    // Exactly one of these two "hook slots" is live for a given Layout
+    // instance (decided once at `createProductLayout()` call time — see
+    // `UNREACHABLE_SUPABASE` / `useSessionStatusPaginas` above), so calling
+    // both unconditionally every render doesn't break the Rules of Hooks.
+    const { data: supabaseStatusPaginas } = usePageStatus(
+      supabase ?? UNREACHABLE_SUPABASE,
+      !sessionAuth && !!user && !!supabase,
+    );
+    const { data: sessionStatusPaginas } = useSessionStatusPaginas();
+    const statusPaginas = sessionAuth ? sessionStatusPaginas : supabaseStatusPaginas;
 
     // If enrichment is loading, show loading state
     if (enrichment.isLoading) {
@@ -225,23 +380,39 @@ export function createProductLayout(config: ProductLayoutConfig) {
           : (standaloneItemsFallback || standaloneWithRoutes.map(({ route: _r, ...rest }) => rest) as NavItem[]))
       : [];
 
+    // Logout — the load-bearing seam this whole dual-mode design exists
+    // for (see the module docstring). `sessionAuth.onLogout` MUST actually
+    // invalidate the server-side session; there is no default fallback
+    // here on purpose — a silent no-op is exactly the bug being prevented.
     const handleLogout = async () => {
-      await supabase.auth.signOut();
+      if (sessionAuth) {
+        await sessionAuth.onLogout();
+      } else {
+        await supabase!.auth.signOut();
+      }
       window.location.href = ssoCtx.isSSO ? CORE_URL : "/login";
     };
 
-    // Profile update — use enrichment override or default auth.updateUser
-    const handleUpdateProfile = enrichment.onUpdateProfile || (async (data: { name: string; email: string; phone: string }) => {
-      const { error } = await supabase.auth.updateUser({
-        data: { full_name: data.name, phone: data.phone },
-      });
-      if (error) throw error;
-      toast.success("Perfil atualizado com sucesso!");
-    });
+    // Profile update — enrichment override wins; otherwise the per-mode
+    // default (Supabase `auth.updateUser`, or the required
+    // `sessionAuth.onUpdateProfile` in cookie-session mode).
+    const handleUpdateProfile = enrichment.onUpdateProfile || (sessionAuth
+      ? sessionAuth.onUpdateProfile
+      : (async (data: { name: string; email: string; phone: string }) => {
+          const { error } = await supabase!.auth.updateUser({
+            data: { full_name: data.name, phone: data.phone },
+          });
+          if (error) throw error;
+          toast.success("Perfil atualizado com sucesso!");
+        }));
 
     const handleUpdatePassword = async (newPassword: string) => {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
+      if (sessionAuth) {
+        await sessionAuth.onUpdatePassword(newPassword);
+      } else {
+        const { error } = await supabase!.auth.updateUser({ password: newPassword });
+        if (error) throw error;
+      }
       toast.success("Senha atualizada com sucesso!");
     };
 
@@ -339,7 +510,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
           {children}
         </div>
         <InactivityWarning
-          onExtend={async () => { await supabase.auth.refreshSession(); }}
+          onExtend={extendSession}
           onExpired={() => { window.location.href = CORE_URL; }}
         />
       </AppShell>
