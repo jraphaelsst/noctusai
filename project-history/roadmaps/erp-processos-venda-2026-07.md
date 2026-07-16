@@ -13,32 +13,64 @@ the proposal moves the deal onto the new board at its first stage.
 
 Scoping the request surfaced a methodology trigger: the ERP Funil board is a hand-rolled `@dnd-kit`
 implementation (`pages/Funil.tsx` + `components/clientes/ColunaFunil.tsx` + `ClienteCard.tsx`), and
-`products/orbity/frontend/src/pages/Funil.tsx` is an **independent second fork** of the same shape.
-A local Processos board would be the **third** — and the DRY recurrence rule (`N=3+ MUST formalize;
-shipping the 4th instance is forbidden`) fires. User chose organ-promotion-first over ship-local-and-triage-later.
+`products/orbity/frontend/src/pages/Funil.tsx` appeared to be an **independent second fork** of the same
+shape. On that reading a local Processos board would be the **third** instance and the DRY recurrence rule
+(`N=3+ MUST formalize`) fires. User chose organ-promotion-first over ship-local-and-triage-later.
+
+> ### ⚠️ PREMISE CORRECTED 2026-07-16 — this is N=2, not N=3
+>
+> Engineer D checked the claim against the tree while building the organ: **orbity's Funil does not import
+> `@dnd-kit` at all.** Its card-move interaction is a click-driven dropdown menu, not drag-and-drop. So the
+> real recurrence is `erp Funil + the incoming Processos board = N=2`, which under the DRY rule is
+> **triage**, not MUST-formalize. The organ shipped anyway as a deliberate **accept-with-rationale**: two
+> consumers are imminent and concrete, and the alternative is writing the board twice and repointing twice.
+> Recorded here as an accept, NOT as a rule the evidence compelled — the original framing was wrong and
+> saying so is cheaper than carrying a false premise into the next decision.
+>
+> **Consequence for P3.1**: repointing orbity is a drag-and-drop **UPGRADE** (a behavior change needing
+> user consent), not the behavior-preserving repoint P1.3 is for erp. T2's detection signal is likewise
+> wrong — it assumed a dnd-kit import that does not exist.
+>
+> *(Provenance: engineer-D return + commit `6b092514`. The lesson — verify the recurrence count against the
+> tree BEFORE invoking the rule that the count triggers — is the reusable one.)*
 
 ## Trigger conditions (the "when")
 
 | # | Trigger | Detection signal | Why it tips the balance |
 |---|---|---|---|
 | T1 | **Organ lands + erp Funil repointed green** | `@noctusai/lib` exports `KanbanBoard`; erp Funil imports it; vitest + playwright `funil.spec.ts` green | Processos must be built on the organ, not beside it — otherwise the promotion was theater |
-| T2 | **A 4th kanban consumer appears** | any new `dnd-kit` import outside `@noctusai/lib` | The forbidden-4th-instance rule; forces orbity fan-out to complete |
+| T2 | ~~A 4th kanban consumer appears~~ **RETIRED — premise was false** | ~~any new `dnd-kit` import outside `@noctusai/lib`~~ | Assumed orbity was a dnd-kit consumer. It is not (see PREMISE CORRECTED above), so this trigger could never fire as written. Replaced by **T2′**. |
+| T2′ | **A 3rd genuine board consumer appears** | any new `@dnd-kit` import under `products/` (i.e. outside `@noctusai/lib`) | At N=3 the DRY rule genuinely compels formalization — which the organ already satisfies, so this trigger now means "a consumer forked instead of consuming", i.e. an organ-consumption failure |
 | T3 | **Funil↔Processos handoff needs an audit trail** | user asks "who accepted this proposal and when" | `erp.funil_movimentos` exists but `mover_etapa` never writes to it — a pre-existing gap this roadmap must not silently inherit |
 
-**Today's status**: none fired yet — Phase 1 is the organ promotion itself.
+**Today's status (2026-07-16)**: T1 **partially** fired — the organ landed (`6b092514`) and is registered, but
+erp Funil is NOT yet repointed, so T1 has NOT fully fired and Phase 2 stays gated. T2 retired as false.
+T3 not fired.
 
 > **Every slice carries TWO recipes, not one.** A *test-recipe* (unit/CI proof, green at the module
 > boundary) is **not** a *verify-recipe* (proof against LIVE state — the page renders real rows, the
 > drag persists, the button spawns a row). Tests-green ≠ verified-in-production. Fill the Verify
 > recipe column for every slice; an empty one is a positive "no live check needed" claim, not a skip.
 
-## Phase 1 — canonical KanbanBoard organ + erp Funil repoint (PLANNED)
+## Phase 1 — canonical KanbanBoard organ + erp Funil repoint (PARTIALLY SHIPPED)
 
 | # | Title | Files | Status | Verify recipe (live-state proof, not unit tests) |
 |---|---|---|---|---|
-| P1.1 | Extract `KanbanBoard` / `KanbanColumn` / `KanbanCard` organ | NEW `seed/lib/frontend/src/components/kanban/` + `@noctusai/lib` export | planned | Import from a scratch consumer; drag a card across columns in a browser and see `onMove` fire with correct `(id, fromStage, toStage, index)` |
-| P1.2 | Register the organ in the canonical catalog | `noctus.dev.register_organ` + catalog | planned | `noctus.dev.component_list` returns `KanbanBoard`; `check_canonical_organ_consumption` recognizes it |
+| P1.1 | Extract `KanbanBoard` / `KanbanColumn` / `KanbanCard` organ | `seed/lib/frontend/src/components/kanban/` + `components/index.ts` barrel | **shipped** `6b092514` | ⏳ **NOT yet verified against live state** — no consumer exists, so no browser drag has ever exercised it. tsc clean + 142/142 vitest is the TEST-recipe, not the verify-recipe. First real proof lands at P1.3. |
+| P1.2 | Register the organ in the canonical catalog | `noctus.dev.register_organ` | **shipped** (post-merge, `source_sha=012b639a`) | ✅ `register_organ("KanbanBoard")` → `registered, rows_written=1` from the primary tree at dev `06d6f945`. NOTE: this leg CANNOT complete in-dispatch — `register_organ` has no `worktree_path` param and resolves `REPO_ROOT` to the MCP server's startup workspace, so it never sees worktree-only files (s1 logged against `mcp/noctusai/settings.py`). Tech-lead must re-run post-merge every time. |
 | P1.3 | Repoint erp Funil onto the organ (pilot #1) | EDIT `products/erp-imobiliario/frontend/src/pages/Funil.tsx`, `components/clientes/ColunaFunil.tsx`, `ClienteCard.tsx` | planned | Load `/funil` against a real ERP backend: columns show real counts + `valorTotal`, drag persists across reload (`POST /api/clientes/{id}/mover-etapa`) |
+
+**⚠️ P1.3 blocking follow-up inherited from P1.1**: the `@dnd-kit` triple was added to
+`seed/lib/frontend/package.json` `devDependencies` (mirroring the `@radix-ui` precedent), but it must ALSO
+be added to `FRAMEWORK_DEPS` in `seed/framework/frontend/vite.config.factory.ts` **and** its Python mirror
+in `check_framework_deps.py`. Those were outside P1.1's scope. **A consumer will fail vite dedupe without
+it** — this is the first thing P1.3 must do, not a nicety.
+
+**Honesty note on P1.1's test coverage**: real pointer/keyboard `@dnd-kit` event simulation was NOT
+attempted — jsdom doesn't compute the `getBoundingClientRect` layout math the sensors need. The drag
+resolution logic was extracted as a pure `computeMove` helper and unit-tested directly against both card
+shapes instead. That's an honest proof of the LOGIC and an explicit non-proof of the INTERACTION. The
+interaction is unverified until a browser drives it at P1.3.
 
 **Behavior guarantee**: the ERP Funil's runtime behavior does not change — same columns, same drag,
 same optimistic update. This is a pure structural repoint. Any visible change is a regression.
