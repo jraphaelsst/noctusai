@@ -231,3 +231,4 @@
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/ssh-multiplex-gate", "branch": "feat/ssh-multiplex-gate", "sha": "4a59f4f7304a88e5e93fc76a779eedd8badd5f88", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/ssh-rate-cap", "branch": "feat/ssh-rate-cap", "sha": "5f9d87cc27d3183fc9e311678922e3d025700714", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-14", "event": "worktree-sweep", "path": ".claude/worktrees/role-cascade-trusted", "branch": "feat/role-cascade-trusted", "sha": "1e167893cb5815131c116097ab2c47fcd8c0ea2d", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-16", "event": "worktree-sweep", "path": ".claude/worktrees/meta-ig-insights-metric-fix", "branch": "feat/meta-ig-insights-metric-fix", "sha": "5b1b0b5e352161b32622861fe21d18e861429c04", "reason": "task_branch cleanup (learn-before-delete)"}
