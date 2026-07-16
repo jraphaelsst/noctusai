@@ -44,9 +44,23 @@ Provenance: raw `GET /api/v1/workflows?limit=50` against the operator's instance
 ## 3a. Seed-first analysis
 
 - **Consume, don't fork:** the page consumes the canonical organ `SocialDashboardShell` from `@noctusai/lib/design-system` (`seed/lib/frontend/src/design-system/dashboard/SocialDashboardShell.tsx`). Subtabs are **data**, not files. `ConnectedAccountSwitcher` already takes `provider` / `providerLabel` ⇒ `provider="n8n"` needs no new component. Enforced by `check_canonical_organ_consumption`.
-- **Seed IO module (S1):** `seed/lib/backend/noctusai_lib/integrations/n8n/` ships **Protocol + Fake + Real + factory** — never Protocol-only (`KB § PATTERNS/backend/seed-fake-real-adapter.md`).
+- **Seed IO module (S1a):** `seed/lib/backend/noctusai_lib/integrations/n8n/` ships **Protocol + Fake + Real + factory** — never Protocol-only (`KB § PATTERNS/backend/seed-fake-real-adapter.md`).
+- **Layout is the mailchimp shape, NOT youtube's.** `KB § PATTERNS/backend/seed-fake-real-adapter.md:16-24` documents `__init__.py` (public surface + factory) / `types.py` (value objects + `@runtime_checkable` Protocol + error hierarchy) / `mappers.py` (pure raw→VO) / `fake_adapter.py` / `<vendor>_adapter.py`. `integrations/youtube/`'s `protocol.py`/`fake.py`/`real.py`/`factory.py` is **off-pattern** — its own docstring claims lineage from `google_calendar`, which does not use that layout either. mailchimp is also the functional twin: external HTTP + per-tenant API key + httpx + `get_mailchimp_client(api_key=None)` → Fake when the key is absent.
 - **No new columns:** `integration_accounts` already carries `client_id`, `channel_info JSONB` (provider-specific metadata) and a `status` lifecycle (`wiring|validating|validated|error|disconnected`) from migration `008`. The client tag lives in `channel_info`; a credential-incomplete card is `status='error'`, not a new invention.
-- **Open boundary question** (architect advisory in flight): `mcp/n8n/` already encodes the API facts above in a *sync/urllib/agent-side* layer with its own venv. Is the seed adapter N=2-accept (different layer + transport) or is there a real shared seam? Verdict lands in §11 before S1 dispatch.
+- **Provider registry already declares n8n** — `app/services/integration_providers.py:99-120`, `manual_key_fields: [webhook_url, api_key(optional)]`, no `base_url`. S5 **extends this entry**; it does not open a second credential path. `SUPPORTED_PROVIDER_IDS` mirrors the SQL CHECK at `005_integration_accounts.sql:24`, which already includes `'n8n'` ⇒ no migration for the provider id.
+- **Multi-account is already navigated.** The seed `CredentialStore` is single-row-per-`(org, provider)`, but this product deliberately persists per-account credentials on the `integration_accounts` row instead (`integration_accounts_router.py:444` says so explicitly). C5 (per-client credentials) therefore needs no seed change.
+
+### 3a.1 Architect verdict — the `mcp/n8n` ↔ seed boundary (RESOLVED, `[F]ormalize`)
+
+The tech-lead's premise ("connectors live in a separate venv ⇒ can't share the seed") was **false**. `mcp/_kit/seed_pin.py:16-20` exists solely to pin `noctusai_lib` to the in-tree seed — itself formalized at N=2 — and `_kit/bootstrap.py:32-39` runs it before any connector imports. ~40 files under `mcp/` import `noctusai_lib`, including `mcp/n8n/tests/test_smoke.py:38`.
+
+The house convention is the opposite of the premise: **the connector is a thin wrapper over the seed adapter** — `mcp/google/tools/youtube.py:1` ("thin wrappers over the seed YouTube client"), `mcp/meta/tools/ads.py:31`. `mcp/n8n/api.py` owns HTTP only because no seed n8n adapter exists yet: the N=1 pre-lift state.
+
+⇒ There is no triage here. Building S1a while leaving `mcp/n8n/api.py:28-69` with its own `normalize_base_url` + status taxonomy **creates** the fork. `KB § PATTERNS/architect/project-execution.md:671`: *"if the cleaner shape IS already cross-cutting and the lift is buildable now, lift now."* Two legs, one commit-set (`no incomplete commits`). User ratified the two-leg scope 2026-07-16.
+
+**Stays connector-side** (the real, narrow boundary): `ConfirmationRequiredError`/412 write-gate (`api.py:45-54` — MCP contract, a product API has its own authz) · the 424 not-configured gate (`api.py:89-94` — the seed factory's equivalent is "no api_key → Fake") · `mcp/n8n/settings.py` env/`.env` single-instance resolution (the product resolves per-org creds from `integration_accounts`).
+
+**Anti-drift mechanism** (so the facts in §3 are not re-learned by trial and error), in order of strength: (1) Protocol + `__init__.py` docstrings as the fact carrier — `integrations/youtube/__init__.py:28-32` is the worked example; (2) `noctus.dev.organ_knowledge_append` (`known_facts`/`errors_encountered`); (3) a seed test corpus at `seed/lib/backend/tests/integrations/n8n/` making the facts executable. A KB prose doc is the weakest and is explicitly **not** the mechanism.
 
 ## 4. Scope
 
@@ -60,17 +74,21 @@ Provenance: raw `GET /api/v1/workflows?limit=50` against the operator's instance
 
 | Slice | Lens | Paths (collision zone) | Wave |
 |---|---|---|---|
-| S1 — seed n8n adapter (Protocol/Fake/Real/factory) | `backend-engineer` | `seed/lib/backend/noctusai_lib/integrations/n8n/` + its tests | 1 |
+| S1 — seed n8n adapter (**leg a**) + `mcp/n8n` refactored to consume it (**leg b**) — ONE commit-set | `backend-engineer` | `seed/lib/backend/noctusai_lib/integrations/n8n/`, `seed/lib/backend/tests/integrations/n8n/`, `seed/lib/backend/pyproject.toml`, `mcp/n8n/` | 1 |
 | S2 — folders migration + RLS | `backend-engineer` | `products/social-wiring/backend/migrations/024_n8n_folders.sql` | 1 |
 | S3 — backend n8n module | `backend-engineer` | `products/social-wiring/backend/app/modules/n8n/` + tests | 2 |
 | S4 — page, subtabs, folder tree, dnd | `frontend-engineer` | `products/social-wiring/frontend/src/pages/N8n.tsx`, `components/n8n/`, `hooks/useN8n*.ts`, `App.tsx` | 2 |
-| S5 — client-card reshape | `frontend-engineer` | `products/social-wiring/frontend/src/components/ClienteModal.tsx` | 1 |
+| S5 — client-card reshape + provider-registry field-set | `frontend-engineer` | `products/social-wiring/frontend/src/components/ClienteModal.tsx`, `products/social-wiring/backend/app/services/integration_providers.py` | 1 |
+
+**Fix-on-contact carried by S1:** `httpx` is imported by ~10 seed modules (`meta/_meta_api.py`, `mailchimp/client.py`, `vista/client.py`, …) but **undeclared** in `seed/lib/backend/pyproject.toml`, arriving only transitively via supabase/openai. A new httpx-based adapter compounds that debt — and it bites hardest on the connector path, which has its own install. S1 declares it.
 
 ### 4a.2 Collision protocol (decided at dispatch, not at merge)
 
 🔴 **`feat/seed-auth-router-promotion` (engineer A, `on_going`) claims `products/social-wiring/backend/`.** Our S3 files are new and disjoint — **except router registration**.
 
 ⇒ **No engineer touches `app/main.py`.** S3 delivers the module + an `APIRouter` export and STOPS. The tech-lead registers the router at integration time, after A lands. An engineer that believes it must edit `main.py` **blocks and surfaces** instead.
+
+S5 also reaches into A's subtree for one file (`app/services/integration_providers.py` — the provider field-set). File-disjoint from A's auth-router promotion, so it proceeds — but S5 touches **that file only** on the backend side, and blocks-and-surfaces if it finds itself wanting a second.
 
 Peer branches checked: `seed-kanban-organ` (touches `seed/lib/frontend/` — we only read), `erp-org-from-db-fanout` (touches `seed/lib/backend/.../api/auth/` — disjoint from `integrations/n8n/`), `erp-fe-cookie-session` (erp only).
 
@@ -181,7 +199,7 @@ social_wiring.n8n_workflow_placement
 ## 8. Open questions / blockers
 
 1. **Branch-pointer unpublished** (user: zero push). We are invisible on the global map while peers touch `products/social-wiring/`. MUST publish before integration — tracked as task #1.
-2. **Architect verdict on the `mcp/n8n` ↔ seed-adapter boundary** — in flight; lands in §11 before S1 dispatch.
+2. ~~Architect verdict on the `mcp/n8n` ↔ seed-adapter boundary~~ — **RESOLVED**, see §3a.1. `[F]ormalize`, two legs, one commit-set; user ratified the scope.
 3. **Untracked at repo root**: `PLANO-LANCAMENTO-LIVRO.{md,docx}` — user content, not ours to delete or commit. Surfaced to the user; not blocking (untracked root files do not propagate into worktrees).
 
 ## 9. Success criteria
@@ -197,3 +215,4 @@ social_wiring.n8n_workflow_placement
 ## 11. Change log
 
 - **2026-07-16** — Planning closed with the user (C1–C7). Live-instance facts measured (§3): nodes-on-list, `isArchived` on 2/9, run-eligibility 1/9, WAF-UA requirement, projects 403. Contract authored (§5). Collision protocol with engineer A set (§4a.2). Architect advisory dispatched on the adapter/connector boundary.
+- **2026-07-16 (later)** — Architect verdict landed (§3a.1) and **corrected three tech-lead errors** before any code was written: (1) the "connectors are a separate venv" premise was false (`_kit/seed_pin.py`) ⇒ S1 grows leg b, the connector refactor, ratified by the user; (2) the planned adapter layout (youtube-shaped) was off-pattern ⇒ mailchimp shape per `KB § PATTERNS/backend/seed-fake-real-adapter.md:16-24`; (3) `integration_providers.py:99-120` already declares the n8n field-set ⇒ S5 extends it rather than opening a second credential path. Plus one fix-on-contact (undeclared `httpx` in the seed pyproject). Worth recording: the advisory cost ~4 minutes and moved three decisions before they became commits.
