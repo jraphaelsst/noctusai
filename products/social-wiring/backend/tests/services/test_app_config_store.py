@@ -129,21 +129,55 @@ class TestResolveMetaAppCreds:
         assert app_id is None
         assert app_secret is None
 
-    def test_degrades_to_env_when_store_none_and_encryption_key_missing(self):
-        """store=None (the production default) — the app's real
-        ENCRYPTION_KEY is empty in this test env, so the internal
-        build_app_config_store() call raises EncryptionNotConfigured and
+    def test_degrades_to_env_when_store_none_and_encryption_key_missing(
+        self, monkeypatch
+    ):
+        """store=None (the production default) + an unbuildable store →
         the resolver degrades to env-only, NEVER hard-failing a read-only
-        Meta OAuth/scopes/status call."""
+        Meta OAuth/scopes/status call.
+
+        The EncryptionNotConfigured precondition is forced EXPLICITLY.
+        This test used to rely on the ambient environment happening to
+        have no ENCRYPTION_KEY ("the app's real ENCRYPTION_KEY is empty
+        in this test env"): green on a clean checkout, RED on any machine
+        with a real root `.env`. Worse, where it was green it was green
+        by accident — a build_app_config_store() that stopped raising
+        would not have been caught.
+        """
+        def _raise():
+            raise EncryptionNotConfigured("no key in this test")
+
+        # self-patch-ok: forces the degrade PRECONDITION, not the guard
+        # under test (the degrade branch itself is still exercised).
+        monkeypatch.setattr(
+            "app.services.app_config_store.build_app_config_store", _raise
+        )
+
         app_id, app_secret = resolve_meta_app_creds(
             settings=_Settings(app_id="env-id", app_secret="env-secret")
         )
         assert app_id == "env-id"
         assert app_secret == "env-secret"
 
-    def test_default_settings_used_when_none_passed(self):
+    def test_default_settings_used_when_none_passed(self, monkeypatch):
         """settings=None → falls back to the product's default_settings
-        singleton (empty meta_app_id/secret unless a real .env is loaded)."""
+        singleton.
+
+        Asserts the fallback POSITIVELY (the singleton's values come
+        back) instead of asserting emptiness. The old form
+        (`assert app_id in (None, "")`) only held while the ambient env
+        was empty — it read a developer's real META_APP_ID off the root
+        `.env` and failed, and on CI it passed without proving the
+        singleton was consulted at all.
+        """
+        # self-patch-ok: substitutes the settings SOURCE to isolate the
+        # test from the developer's real .env; the resolver's fallback
+        # path is what's under test.
+        monkeypatch.setattr(
+            "app.services.app_config_store.default_settings",
+            _Settings(app_id="singleton-id", app_secret="singleton-secret"),
+        )
+
         app_id, app_secret = resolve_meta_app_creds(store=FakeAppConfigStore())
-        assert app_id in (None, "")
-        assert app_secret in (None, "")
+        assert app_id == "singleton-id"
+        assert app_secret == "singleton-secret"

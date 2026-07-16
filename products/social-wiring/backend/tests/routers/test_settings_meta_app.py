@@ -189,8 +189,17 @@ class TestPartialUpdate:
 
 class TestStatusReadOnly:
     def test_status_reflects_db_configured_values(
-        self, admin_client, fake_store_override
+        self, admin_client, fake_store_override, override_settings
     ):
+        # Neutralize the ambient env half of the resolve through the
+        # production DI seam (`Depends(get_settings)`), so the assertion
+        # below is about the DB store ONLY. Without this the endpoint's
+        # legitimate env-fallback reads the developer's real root `.env`
+        # and `app_secret_configured` comes back True — the test was
+        # green on a clean checkout and RED on a machine with real
+        # credentials. Per KB § PATTERNS/di-test-seam.md (Class-A).
+        override_settings(meta_app_id="", meta_app_secret="")
+
         fake_store_override.put("meta_app_id", "db-app-id")
         resp = admin_client.get(
             "/api/settings/meta-app/status", headers=_auth_header()
