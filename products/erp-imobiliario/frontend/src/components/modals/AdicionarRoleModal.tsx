@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@noctusai/seed/components/ui/select';
-import { supabase } from '@noctusai/seed/infra';
+import { api } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import { UserPlus } from 'lucide-react';
 
@@ -50,14 +50,13 @@ export function AdicionarRoleModal({
 
     setIsLoading(true);
     try {
-      const { error } = await supabase
-        .from('user_roles')
-        .insert({
-          user_id: userId,
-          role: selectedRole as any,
-        });
-
-      if (error) throw error;
+      // Migrated off the direct `supabase.from('user_roles').insert(...)`
+      // bypass (RLS-via-client-JWT) onto the already-shipped backend
+      // endpoint (`POST /api/profiles/{user_id}/roles`,
+      // `products/erp-imobiliario/backend/app/routers/profiles.py`
+      // `atribuir_role`) — httpOnly-cookie-session migration
+      // (erp-httponly-cookie-session-2026-07 Slice 3).
+      await api.post(`/api/profiles/${userId}/roles`, { role: selectedRole });
 
       toast.success('Role adicionada com sucesso');
       onSuccess();
