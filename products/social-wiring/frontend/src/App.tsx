@@ -46,6 +46,7 @@ import {
   FileText,
   Send,
   Building2,
+  Workflow,
 } from "lucide-react";
 
 // Pages
@@ -58,6 +59,7 @@ const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const YouTube = lazy(() => import("@/pages/YouTube"));
+const N8n = lazy(() => import("@/pages/N8n"));
 const RedirectToClientes = lazy(() => import("@/pages/RedirectToClientes"));
 const RedirectToMeta = lazy(() => import("@/pages/RedirectToMeta"));
 const Monitor = lazy(() => import("@/pages/Monitor"));
@@ -88,6 +90,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
+      { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
     ],
   },
   {
@@ -138,6 +141,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "YouTube", href: "/youtube", icon: Youtube },
       { name: "Meta", href: "/meta", icon: Instagram },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
+      { name: "n8n", href: "/n8n", icon: Workflow },
     ],
   },
   {
@@ -197,6 +201,7 @@ export default createProductApp({
     { path: "/email-marketing/configuracao", component: EmailMarketingConfig },
     { path: "/email-marketing/membros", component: EmailMembros },
     { path: "/youtube", component: YouTube },
+    { path: "/n8n", component: N8n },
     { path: "/meta", component: MetaDashboard },
     // Retired route — remodeled into the unified Meta dashboard (Wave 3)
     { path: "/instagram-insights", component: RedirectToMeta },
