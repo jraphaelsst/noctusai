@@ -143,10 +143,15 @@ class TestProviders:
         assert len(yt["scopes"]) > 0
 
     def test_n8n_provider_has_manual_fields(self, client):
+        """n8n's manual field-set is base_url + api_key (both required) —
+        listing/managing workflows needs the instance's public API root
+        (base_url + X-N8N-API-KEY), not a single workflow's webhook trigger
+        URL. webhook_url is no longer part of the credential."""
         resp = client.get("/api/integrations/providers")
         n8n = next(p for p in resp.json() if p["id"] == "n8n")
         assert n8n["oauth_supported"] is False
-        assert any(f["name"] == "webhook_url" for f in n8n["manual_key_fields"])
+        field_names = {f["name"] for f in n8n["manual_key_fields"]}
+        assert field_names == {"base_url", "api_key"}
 
 
 # ─── CRUD round-trips ─────────────────────────────────────────────────────────
@@ -1383,7 +1388,7 @@ class TestN8nClientIdRoundTrip:
         body = {
             "provider": "n8n",
             "account_label": "N8N Main",
-            "credential": {"webhook_url": "https://n8n.example.com/webhook/abc", "api_key": "n8n-key-123"},
+            "credential": {"base_url": "https://n8n.example.com", "api_key": "n8n-key-123"},
             "client_id": n8n_client_id,
         }
         resp = client.post("/api/integrations/accounts", json=body, headers=_auth_header())
@@ -1401,11 +1406,12 @@ class TestN8nClientIdRoundTrip:
         assert str(accounts[0].client_id) == n8n_client_id
 
     def test_n8n_create_without_client_id(self, client, ia_service):
-        """n8n without client_id also creates successfully (optional field)."""
+        """n8n without client_id also creates successfully (client_id is the
+        optional field here — base_url + api_key are both required)."""
         body = {
             "provider": "n8n",
             "account_label": "N8N Standalone",
-            "credential": {"webhook_url": "https://n8n.example.com/webhook/xyz"},
+            "credential": {"base_url": "https://n8n.example.com", "api_key": "n8n-key-456"},
         }
         resp = client.post("/api/integrations/accounts", json=body, headers=_auth_header())
         assert resp.status_code == 201, resp.text

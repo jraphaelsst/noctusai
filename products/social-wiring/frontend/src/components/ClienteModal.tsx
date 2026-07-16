@@ -147,6 +147,16 @@ const PROVIDER_CATALOG: ProviderDef[] = [
 ];
 
 // ─── N8n inline connect form ──────────────────────────────────────────────────
+//
+// v2 field-set (2026-07-16): base_url + api_key (both required) replace the
+// old webhook_url + optional-api_key shape — see
+// app/services/integration_providers.py for why (a webhook_url is one
+// workflow's trigger URL; it cannot list anything via the n8n public API).
+// Scope is narrow by design: this form only connects the account. The
+// client's n8n tag is set separately, on the n8n page's own Configurações
+// subtab (PUT /api/n8n/settings, app/modules/n8n/) — that module writes
+// channel_info directly and owns the whole lifecycle, so it never touches
+// this generic integration_accounts create path.
 
 function N8nConnectForm({
   clientId,
@@ -158,21 +168,25 @@ function N8nConnectForm({
   onConnected: () => void;
 }) {
   const [label, setLabel] = useState("n8n");
-  const [webhookUrl, setWebhookUrl] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const createAccount = useCreateAccount();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!webhookUrl.trim()) {
-      toast.error("Webhook URL é obrigatório.");
+    if (!baseUrl.trim()) {
+      toast.error("URL da instância é obrigatória.");
+      return;
+    }
+    if (!apiKey.trim()) {
+      toast.error("API Key é obrigatória.");
       return;
     }
     try {
       await createAccount.mutateAsync({
         provider: "n8n",
         account_label: label.trim() || "n8n",
-        credential: { webhook_url: webhookUrl.trim(), api_key: apiKey.trim() },
+        credential: { base_url: baseUrl.trim(), api_key: apiKey.trim() },
         client_id: clientId,
       });
       toast.success("n8n conectado com sucesso.");
@@ -199,19 +213,19 @@ function N8nConnectForm({
         />
       </div>
       <div className="space-y-1">
-        <Label htmlFor="n8n-webhook" className="text-xs">Webhook URL *</Label>
+        <Label htmlFor="n8n-base-url" className="text-xs">URL da instância *</Label>
         <Input
-          id="n8n-webhook"
-          value={webhookUrl}
-          onChange={(e) => setWebhookUrl(e.target.value)}
-          placeholder="https://n8n.example.com/webhook/..."
+          id="n8n-base-url"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="https://n8n.example.com"
           className="h-7 text-xs font-mono"
           disabled={createAccount.isPending}
-          data-testid="n8n-webhook-url"
+          data-testid="n8n-base-url"
         />
       </div>
       <div className="space-y-1">
-        <Label htmlFor="n8n-apikey" className="text-xs">API Key (opcional)</Label>
+        <Label htmlFor="n8n-apikey" className="text-xs">API Key *</Label>
         <Input
           id="n8n-apikey"
           type="password"
@@ -238,7 +252,7 @@ function N8nConnectForm({
           type="submit"
           size="sm"
           className="h-7 text-xs"
-          disabled={createAccount.isPending || !webhookUrl.trim()}
+          disabled={createAccount.isPending || !baseUrl.trim() || !apiKey.trim()}
           data-testid="n8n-connect-submit"
         >
           {createAccount.isPending && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
