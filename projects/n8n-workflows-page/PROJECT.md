@@ -176,7 +176,8 @@ social_wiring.n8n_folders
   name TEXT NOT NULL
   position INT NOT NULL DEFAULT 0
   created_at / updated_at TIMESTAMPTZ
-  UNIQUE (account_id, parent_id, name)       -- no two same-named siblings
+  UNIQUE (account_id, parent_id, name)       -- no two same-named siblings (non-root only — see below)
+  + partial unique index ON (account_id, name) WHERE parent_id IS NULL   -- the root-level half
 
 social_wiring.n8n_workflow_placement
   org_id UUID NOT NULL
@@ -186,6 +187,7 @@ social_wiring.n8n_workflow_placement
   PRIMARY KEY (account_id, workflow_id)      -- 1 workflow = 1 folder, per account
 ```
 
+- 🔴 **`UNIQUE (account_id, parent_id, name)` alone is a defective spec** (tech-lead's error, caught by the S2 engineer against a throwaway postgres container before it shipped): SQL treats each `NULL` as distinct for uniqueness, so it does **not** stop two same-named folders at the **root**. The stated intent ("no two same-named siblings") needs BOTH the constraint and a partial unique index `ON (account_id, name) WHERE parent_id IS NULL`. Root dedup is wanted — the UI gives the operator no way to tell two identically-named root folders apart. Fixed in `024` in place (unmerged ⇒ amend, not a remediation migration for a defect that never shipped).
 - Placement is keyed `(account_id, workflow_id)` — a workflow carrying two clients' tags appears for both, each with its own independent organization. No conflict by construction.
 - `folder_id ON DELETE SET NULL` ⇒ a deleted folder drops its workflows to the root rather than deleting them.
 - RLS org-scoped via `current_org_id()`, matching `011_rls_current_org_id.sql`. Cycle prevention is enforced in the service (§5.2 `422`), not by a CHECK.
