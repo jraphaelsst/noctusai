@@ -17,8 +17,14 @@ export const ADMIN_ROLES: OrgRole[] = ['owner', 'admin'];
 /** Roles that can manage team (invite/remove) but not billing */
 export const MANAGE_TEAM_ROLES: OrgRole[] = ['owner', 'admin', 'manager'];
 
-/** Roles that see "in development" pages */
-export const DEV_ROLES: OrgRole[] = ['owner', 'dev'];
+/**
+ * Roles that see "in development" pages.
+ * 🔴 PARITY CONTRACT: must stay identical to the RLS role array in
+ * social_wiring migration 026_status_pagina_dev_visibility.sql
+ * (`dev_veem_desenvolvimento` policy). Diverge and you get split-brain —
+ * RLS returns the row but the FE hides it, or the reverse.
+ */
+export const DEV_ROLES: OrgRole[] = ['owner', 'dev', 'admin'];
 
 /** Roles that grant product-level platform_admin via SSO */
 export const PRODUCT_ADMIN_ROLES: OrgRole[] = ['owner', 'admin'];
@@ -37,9 +43,14 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
 /** Assignable roles (cannot assign "owner" — that's the org creator only) */
 export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test'];
 
-/** Check if user can see in-development pages */
+/**
+ * Check if user can see in-development pages (dev / owner / admin).
+ * Consumes DEV_ROLES — the prior hardcoded `owner || dev` duplicated the
+ * const beside it AND omitted admin, so it drifted from its own source of
+ * truth. Name kept for call-site stability; it now means "can see dev pages".
+ */
 export function isDevOrOwner(orgRole: string | null | undefined): boolean {
-  return orgRole === 'owner' || orgRole === 'dev';
+  return DEV_ROLES.includes(orgRole as OrgRole);
 }
 
 /** Check if user can manage team (invite/remove) */
