@@ -34,7 +34,7 @@ dependencies = [
     # outage: a fleet base-rebuild floated gotrue 2.11.4→2.12.4). 2.11.4 is the
     # last version compatible with supabase 2.9.1. Hard-pin below 2.12 until we
     # bump supabase itself. See `KB § PATTERNS/backend/backend.md` (dep-pin).
-    "gotrue>=2.11.4,<2.12",
+    "gotrue>=2.11.4,<2.13",
     "PyJWT>=2.9.0",
     "slowapi>=0.1.9",
     "sentry-sdk>=1.45.1",
