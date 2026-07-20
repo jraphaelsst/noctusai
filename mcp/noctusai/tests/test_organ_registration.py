@@ -194,6 +194,126 @@ class TestRegisterOrganEmbedsChunk:
         assert row[1] == "ResourceManager"
 
 
+class TestRegisterOrganWorktreePathScoping:
+    """Regression test for the 2026-07-16 bug (closed 2026-07-20):
+    `register_organ`/`find_reusable_component` without `worktree_path`
+    silently scanned the PRIMARY tree — an engineer's worktree-only organ
+    returned 'bundle-not-found' even though it existed in their own tree."""
+
+    def _make_temp_db(self, tmp_path: Path) -> Path:
+        cache_path = tmp_path / "code-embeddings.sqlite"
+        conn = sqlite3.connect(str(cache_path))
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS code_chunks (
+              rowid_alias INTEGER PRIMARY KEY AUTOINCREMENT,
+              path TEXT NOT NULL, chunk_idx INTEGER NOT NULL,
+              symbol_name TEXT NOT NULL, kind TEXT NOT NULL,
+              chunk_text TEXT NOT NULL, source_sha TEXT NOT NULL, cached_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS code_embeddings_json (
+              chunk_rowid INTEGER PRIMARY KEY, embedding TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        conn.close()
+        return cache_path
+
+    def _make_fake_worktree(self, tmp_path: Path) -> Path:
+        # `resolve_caller_root` only checks EXISTENCE of `.git` + the marker
+        # file — no real git init needed.
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        return wt
+
+    def test_register_organ_resolves_worktree_root(self, tmp_path):
+        wt = self._make_fake_worktree(tmp_path)
+        cache_path = self._make_temp_db(tmp_path)
+        fake_bundle = MagicMock()
+        fake_bundle.source = "// ResourceManager source"
+        fake_bundle.types = ["export interface ResourceColumn<T>"]
+        fake_bundle.tests = "// test source"
+        fake_bundle.wiring_snippet = "<ResourceManager />"
+
+        import tools.noctus.dev.find_reusable_component as _frc_mod
+        import tools.noctus.dev.component_bundle as _cb_mod
+        original_cache = _frc_mod.CACHE_PATH
+        original_bundle = _cb_mod.bundle_component
+        captured_roots = []
+        try:
+            _frc_mod.CACHE_PATH = cache_path
+
+            def _fake_bundle_component(name, *a, repo_root=None, **kw):
+                captured_roots.append(repo_root)
+                return fake_bundle
+            _cb_mod.bundle_component = _fake_bundle_component
+            with patch("tools.noctus.dev.find_reusable_component._ec.embed_sync",
+                       return_value=[0.1] * 1536):
+                result = register_organ("ResourceManager", worktree_path=str(wt))
+        finally:
+            _frc_mod.CACHE_PATH = original_cache
+            _cb_mod.bundle_component = original_bundle
+
+        assert result["ok"] is True
+        assert result["resolved_root"] == str(wt)
+        # bundle_component (and therefore the organ source scan) was called
+        # against the WORKTREE, never the primary.
+        assert captured_roots == [wt]
+
+    def test_register_organ_repo_root_wins_over_worktree_path(self, tmp_path):
+        # explicit repo_root (test/back-compat override) takes priority over
+        # worktree_path — never silently overridden.
+        wt = self._make_fake_worktree(tmp_path)
+        explicit = tmp_path / "explicit-root"
+        explicit.mkdir()
+        cache_path = self._make_temp_db(tmp_path)
+        fake_bundle = MagicMock()
+        fake_bundle.source = "// x"
+        fake_bundle.types = []
+        fake_bundle.tests = ""
+        fake_bundle.wiring_snippet = ""
+
+        import tools.noctus.dev.find_reusable_component as _frc_mod
+        import tools.noctus.dev.component_bundle as _cb_mod
+        original_cache = _frc_mod.CACHE_PATH
+        original_bundle = _cb_mod.bundle_component
+        try:
+            _frc_mod.CACHE_PATH = cache_path
+            _cb_mod.bundle_component = lambda *a, **kw: fake_bundle
+            with patch("tools.noctus.dev.find_reusable_component._ec.embed_sync",
+                       return_value=[0.1] * 1536):
+                result = register_organ(
+                    "ResourceManager", repo_root=explicit, worktree_path=str(wt),
+                )
+        finally:
+            _frc_mod.CACHE_PATH = original_cache
+            _cb_mod.bundle_component = original_bundle
+
+        assert result["resolved_root"] == str(explicit)
+
+    def test_register_organ_worktree_path_rejects_non_worktree_dir(self, tmp_path):
+        bogus = tmp_path / "not-a-worktree"
+        bogus.mkdir()
+        with pytest.raises(ValueError):
+            register_organ("ResourceManager", worktree_path=str(bogus))
+
+    def test_resolve_root_shared_by_find_reusable_component(self, tmp_path):
+        # `_resolve_root` is the SAME helper `find_reusable_component` uses —
+        # unit-test it directly so both public entrypoints stay covered
+        # without duplicating the embedding-search mock machinery.
+        from tools.noctus.dev.find_reusable_component import _resolve_root
+        from settings import REPO_ROOT
+
+        wt = self._make_fake_worktree(tmp_path)
+        assert _resolve_root(None, None) == REPO_ROOT          # neither given → primary
+        assert _resolve_root(None, str(wt)) == wt               # worktree_path → resolved
+        explicit = tmp_path / "explicit"
+        explicit.mkdir()
+        assert _resolve_root(explicit, str(wt)) == explicit    # repo_root wins
+
+
 class TestReRegisterIsIdempotent:
     """Re-registering with the same content must skip the embed (source_sha match)."""
 

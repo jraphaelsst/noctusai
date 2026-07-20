@@ -142,6 +142,25 @@ MCP-toolkit tests: `"$PRIMARY/mcp/noctusai/.venv/bin/python" -m pytest tests/ -q
 
 **Known worktree-env caveats (codified breadcrumbs):** (a) the lib's *vitest render* tests dual-React-fail in a symlinked worktree — pre-existing, **not CI-gated** (lib CI gate is `tsc`); see [[reference_lib_frontend_vitest_render_harness_gap]]. (b) Seed-version-stamp critical false-positives in compliance scans (stamp gitignored/absent) — scope the scan or copy the stamp. (c) `noctus.dev.scan_wiring` may not be live as an MCP tool in a long-running session (no CLI flag yet); call the pure `analyze_*`/`scan_wiring()` functions directly. **Fallback when env-wiring is too fragile: author in the worktree, let the architect build-verify on the primary at integrate** (the documented verify-on-integrate path). **Automated:** `noctus.dev.task_branch action=start wire_env=True` now auto-wires this recipe AFTER the worktree exists — it symlinks the PRIMARY tree's per-package `node_modules` in + re-points each `products/<slug>/frontend/node_modules/@noctusai/{lib,seed}` at the WORKTREE's seed copies, reports `wired`/`skipped`, honors dry-run (reports `would_wire` without `confirm`), and is best-effort (missing primary `node_modules` / a real `node_modules` already in the worktree are reported in `skipped`, never clobbered). All target paths are gitignored ⇒ never staged.
 
+**Primary-contamination fix (2026-07-16 bug, closed 2026-07-20).** The
+observable contract above is unchanged; the INTERNAL mechanism for
+per-product node_modules changed. The old scheme whole-dir symlinked
+`wt/products/<slug>/frontend/node_modules` → the PRIMARY's real directory,
+then created `@noctusai/{lib,seed}` *inside* that path — since the path
+resolves THROUGH the symlink, the write landed in the PRIMARY's shared
+node_modules, re-pointing **every worktree fleet-wide** at whichever
+worktree wired last (confirmed live twice: 9 products silently pointing at
+a peer's `.claude/worktrees/n8n-page-ui/seed/lib/frontend`, then again at
+`orbity-funnel-seed`). Fix: a product's `node_modules` is now a REAL
+directory *in the worktree*, populated with one symlink per top-level
+primary vendor package (cheap — a symlink, not a copy) EXCEPT the
+`@noctusai` scope, which is always worktree-owned. A pre-existing stale
+whole-dir symlink (left by a worktree wired before the fix) is converted
+to a real directory before any entry is planned under it. See
+`mcp/noctusai/tools/noctus/dev/task_branch.py` `_plan_env_wiring` /
+`_apply_env_wiring` module doc + the `test_two_worktrees_wire_env_never_
+contaminates_primary` regression test in `test_task_branch.py`.
+
 ---
 
 ## 5b. Cross-tree hazards under LIVE peers — the worktree isolates Edits, not the tooling

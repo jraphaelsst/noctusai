@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -77,10 +78,31 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _source_sha() -> str:
-    if not LEDGER_PATH.exists():
+def _source_sha(ledger_path: Path | None = None) -> str:
+    p = ledger_path if ledger_path is not None else LEDGER_PATH
+    if not p.exists():
         return ""
-    return hashlib.sha256(LEDGER_PATH.read_bytes()).hexdigest()
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _ledger_path_for(worktree_path: str | None) -> Path:
+    """Resolve the ndjson SOURCE to read/hash for this call. `None` (the
+    default) preserves the pre-existing module-level `LEDGER_PATH` — the
+    primary tree, and what tests monkeypatch. An explicit `worktree_path`
+    resolves the CALLER's own worktree copy instead: each git worktree
+    carries its own working-tree copy of this tracked file (possibly with
+    uncommitted appends), and the MCP server is a fixed-CWD process bound to
+    the primary at startup — omitting `worktree_path` from inside an engineer
+    worktree silently reads the PRIMARY's copy, which can report a false
+    'in-sync' against staleness the worktree's own pre-commit hook correctly
+    catches. Mirrors the `resolve_caller_root` convention used by
+    `noctus.dev.mole` / `build_parallel` / `gen_promotions_index`. The CACHE
+    ITSELF is unaffected — it lives at `<git-common-dir>/noctusai/cache/`
+    (Tier-1, shared by every worktree of this repo); `worktree_path` only
+    changes which file is hashed + read, never where the cache is written."""
+    if worktree_path:
+        return resolve_caller_root(worktree_path) / "project-history" / "auto-improvement.ndjson"
+    return LEDGER_PATH
 
 
 def _connect() -> sqlite3.Connection:
@@ -211,9 +233,18 @@ def log_entry(
     return {"ok": True, "entry": entry, "ledger_path": ledger_path}
 
 
-def refresh(force: bool = False) -> dict:
-    """Re-populate the cache from the ndjson. Idempotent (source_sha guard)."""
-    sha_now = _source_sha()
+def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
+    """Re-populate the cache from the ndjson. Idempotent (source_sha guard).
+
+    `worktree_path`: read the SOURCE ndjson from the CALLER's worktree
+    instead of the MCP server's primary-tree startup CWD — see
+    `_ledger_path_for`. Omit when calling from the primary tree. The
+    response always includes `resolved_ledger_path` so which file was
+    actually hashed/read is never invisible (the fix's transparency leg —
+    the false-'in-sync' bug this closes was dangerous BECAUSE the answer
+    looked plausible with no way to tell it was about the wrong tree)."""
+    ledger_path = _ledger_path_for(worktree_path)
+    sha_now = _source_sha(ledger_path)
     conn = _connect()
     _init_schema(conn)
     if not force:
@@ -226,12 +257,13 @@ def refresh(force: bool = False) -> dict:
                 "status": "in-sync",
                 "source_sha": sha_now,
                 "rows_written": 0,
+                "resolved_ledger_path": str(ledger_path),
             }
     conn.execute("DELETE FROM auto_improvement")
     rows: list[tuple] = []
-    if LEDGER_PATH.exists():
+    if ledger_path.exists():
         now = _now_iso()
-        for line in LEDGER_PATH.read_text(encoding="utf-8").splitlines():
+        for line in ledger_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -271,6 +303,7 @@ def refresh(force: bool = False) -> dict:
         "status": "rebuilt",
         "source_sha": sha_now,
         "rows_written": len(rows),
+        "resolved_ledger_path": str(ledger_path),
     }
 
 
@@ -283,6 +316,7 @@ def query(
     open_only: bool = False,
     limit: int = 200,
     skip_reconcile: bool = False,
+    worktree_path: str | None = None,
 ) -> list[dict]:
     """Consult the cache before editing a doc/agent.
 
@@ -291,7 +325,10 @@ def query(
     `KB § PATTERNS/` for all KB-pattern surfaces). `open_only=True`
     returns only entries that STILL NEED WORK — excludes the terminal
     statuses (`closed` ∪ `s4-keeper`; a keeper-guarded drift is done).
-    Lazy rebuild on source_sha mismatch.
+    Lazy rebuild on source_sha mismatch — `worktree_path` scopes that
+    staleness check to the CALLER's own worktree copy of the ndjson
+    instead of the primary's (see `refresh` / `_ledger_path_for`); omit
+    when calling from the primary tree.
 
     **Auto-reconcile-filter (heal-on-contact at the READ path).** When
     `open_only=True`, the result EXCLUDES any entry whose `resolve_when`
@@ -304,16 +341,17 @@ def query(
     `skip_reconcile=True` to get the raw not-closed set (the ledger's literal
     state — used by the reconcile apply path + tests). Graceful: a reconcile
     failure logs a warning and falls back to the unfiltered set."""
-    sha_now = _source_sha()
+    ledger_path = _ledger_path_for(worktree_path)
+    sha_now = _source_sha(ledger_path)
     if not CACHE_PATH.exists():
-        refresh()
+        refresh(worktree_path=worktree_path)
     conn = _connect()
     _init_schema(conn)
     cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
     row = cur.fetchone()
     if not row or row["value"] != sha_now:
         conn.close()
-        refresh()
+        refresh(worktree_path=worktree_path)
         conn = _connect()
         _init_schema(conn)
     sql = "SELECT * FROM auto_improvement WHERE 1=1"
@@ -654,7 +692,10 @@ def register(server) -> None:
             "mismatch (the cache self-heals on use). With open_only=True the "
             "result AUTO-EXCLUDES entries whose `resolve_when` already passes "
             "(heal-on-contact — landed-but-unclosed drift never surfaces); pass "
-            "skip_reconcile=True for the raw not-closed set."
+            "skip_reconcile=True for the raw not-closed set. Pass "
+            "worktree_path when called from inside a git worktree so the "
+            "staleness check reads THAT worktree's ndjson, not the primary's "
+            "(a stale-primary read can report a false 'in-sync')."
         ),
     )
     def _query(
@@ -665,10 +706,12 @@ def register(server) -> None:
         open_only: bool = False,
         limit: int = 200,
         skip_reconcile: bool = False,
+        worktree_path: str | None = None,
     ) -> list[dict]:
         return query(
             target=target, agent=agent, kind=kind, status=status,
             open_only=open_only, limit=limit, skip_reconcile=skip_reconcile,
+            worktree_path=worktree_path,
         )
 
     @server.tool(
@@ -677,11 +720,19 @@ def register(server) -> None:
             "Re-populate the auto-improvement cache from the ndjson. "
             "Idempotent — source_sha guard short-circuits when in-sync; "
             "force=True rebuilds anyway. Auto-run by pre-commit on "
-            "`project-history/auto-improvement.ndjson` change."
+            "`project-history/auto-improvement.ndjson` change. Pass "
+            "worktree_path when called from inside a git worktree so the "
+            "ndjson is hashed/read from THAT worktree's copy, not the "
+            "primary's (MCP stdio is fixed-CWD at the primary; omitting "
+            "worktree_path silently reports staleness against the wrong "
+            "tree — a false 'in-sync'). The CACHE itself is unaffected — it "
+            "lives in the shared Tier-1 git-common-dir. Response always "
+            "includes resolved_ledger_path so the answer is never silently "
+            "about the wrong tree."
         ),
     )
-    def _refresh(force: bool = False) -> dict:
-        return refresh(force=force)
+    def _refresh(force: bool = False, worktree_path: str | None = None) -> dict:
+        return refresh(force=force, worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.auto_improvement_reconcile",

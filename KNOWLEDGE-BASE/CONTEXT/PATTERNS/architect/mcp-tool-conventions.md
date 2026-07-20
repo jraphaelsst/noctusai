@@ -309,6 +309,94 @@ guard.
 `test_worktree_rollout_phase4.py` (30 tests covering all
 Wave 2 + Wave 3 adopters).
 
+### 5a. READ / verify tools are ALSO tree-dependent — the convention has no write-only exemption
+
+**The bug class is not write-specific.** Any tool whose answer depends on
+tree CONTENTS — not just where it writes — silently answers about the
+PRIMARY when called from a worktree without `worktree_path`. This is
+**worse** than the write-side miss: a bad write is often visible via
+`git status` somewhere; a read/verify tool that answers wrong looks
+**plausible** — there is no error, no diff, nothing to notice. Confirmed
+live 2026-07-16 → 2026-07-20 (three sessions, same root cause):
+
+- `noctus.dev.register_organ` / `noctus.dev.find_reusable_component`
+  (2026-07-16) — an engineer's worktree-only organ returned
+  `bundle-not-found` because the scan ran against the primary.
+- `noctus.dev.pytest` (2026-07-20) — reported **"689 passed" from the
+  primary** while the worktree's actual suite was never run. **This is a
+  false-green generator** — an engineer could ship on a test result that
+  never exercised their code. The single most dangerous instance found.
+- `noctus.dev.auto_improvement_refresh` (2026-07-20) — refreshed the
+  primary's ndjson and reported a false `in-sync`, missing staleness the
+  worktree's own pre-commit hook correctly flagged as blocking.
+
+All three are fixed (2026-07-20) the same way: `worktree_path: str | None
+= None` → `resolve_caller_root(worktree_path)` when given, else the
+pre-existing module-level constant (unchanged default — see `testing.py`
+`_products_dir_for`, `auto_improvement.py` `_ledger_path_for`,
+`find_reusable_component.py` `_resolve_root`). The CACHE a tool writes to
+is frequently **Tier-1 shared** (`<git-common-dir>/noctusai/cache/` — see
+`KB § PATTERNS/common/cache-portable-architecture.md`) and therefore
+identical regardless of caller tree; `worktree_path` only changes which
+SOURCE file/tree is read/hashed/tested — never where the cache lives.
+
+**Refuse-vs-silent-default — the decision (2026-07-20), and why it stays
+default-to-primary.** The obvious-looking fix — make `worktree_path`
+REQUIRED, refuse (raise) when absent — was considered and **rejected** for
+this convention. Reasoning:
+
+1. **The majority of legitimate callers genuinely want the primary.** The
+   orchestrator/tech-lead runs `noctus.dev.pytest()` / `refresh()` /
+   `find_reusable_component()` constantly from the primary tree (pre-release
+   checks, cross-cutting consults, non-worktree sessions). Refusing on
+   `None` would break every one of those call sites for a benefit only the
+   worktree-caller case needs.
+2. **Consistency beats local optimization.** 18+ tools already ship the
+   `None → primary` default (the Wave 1-3 adopters above); a DIFFERENT
+   default semantics on a handful of newer tools would be its own silent
+   footgun — "wait, does THIS one refuse or default?" is exactly the kind
+   of per-tool special-casing this convention exists to eliminate. Brief
+   discipline for this fix explicitly required "mirror the existing
+   pattern... do not invent a new one."
+3. **The actual failure is invisibility, not the default value.** A
+   primary-default answer is CORRECT for the majority caller and
+   RECOVERABLE for the worktree caller — IF the caller can tell which tree
+   answered. The default was never the problem; the silence was.
+
+**What ships instead: mandatory transparency.** Every tree-dependent
+tool's response now carries the resolved root it actually operated
+against — `resolved_root` (`testing.py`, `find_reusable_component.py`
+`register_organ`) or `resolved_ledger_path` (`auto_improvement.py`,
+which resolves a file, not a directory). `find_reusable_component` itself
+returns a plain list (not a dict) — its shape cannot carry the field
+without a breaking change, so it stays undocumented at the call site;
+callers needing tree-provenance for organs should read it off the
+companion `register_organ` call. **New tree-dependent tools MUST return
+their resolved root/tree** — omitting `worktree_path` is a legitimate
+default; omitting the *proof of which tree answered* is the actual bug
+this closes. A refuse-on-`None` posture remains the right call ONLY for a
+tool with **no legitimate primary-default caller at all** — none of the
+tools audited in this pass qualified; if one is ever found, refuse there
+specifically rather than reopening this convention-wide.
+
+**Known further instances, NOT yet fixed (found by grep, not triaged
+one-by-one — do not assume this list is exhaustive or that every entry is
+a real bug):** any tool file under `mcp/noctusai/tools/` importing
+`REPO_ROOT`/`PRODUCTS_DIR` from `settings` with zero `worktree_path`
+occurrence in the file. As of 2026-07-20 that is ~55 files. Some already
+carry the SAME `repo_root or REPO_ROOT` shape `register_organ` had
+pre-fix and are straightforward follow-ups: `refs.py`,
+`component_bundle.py`, `component_list.py`. Some resolve a RELATIVE path
+argument against `REPO_ROOT` unconditionally, so an absolute-path caller
+is unaffected but a relative-path caller from a worktree is not:
+`outline_python.py`, `outline_typescript.py`. Many are legitimately
+primary-only by design — shared ledgers/registries the tool explicitly
+pushes to `origin/dev` regardless of caller tree (`branch_pointer.py`,
+`dispatch_budget.py`, `vector_costs.py`, `brief_ledger.py`, `release.py`)
+— these are NOT bugs and should not be "fixed" into worktree-scoping.
+Triaging the full list is future work; do not silently assume it has been
+done.
+
 ---
 
 ## 6. CLI dual-entrypoint stays

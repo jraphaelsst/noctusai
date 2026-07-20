@@ -608,10 +608,12 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
 
 # ── env auto-wire (the §5a verification-env recipe) ──
 def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
-                  with_seed_nm=True):
+                  with_seed_nm=True, product_nm_entries=("react",)):
     """Build a fixture PRIMARY tree under `primary` (a tmp Path): seed-frontend
-    packages (+ their node_modules) and products/<slug>/frontend (+ node_modules).
-    Returns nothing — just lays out dirs for FsOps (real os) to read."""
+    packages (+ their node_modules) and products/<slug>/frontend (+ node_modules
+    seeded with `product_nm_entries` — fixture vendor packages the per-entry
+    overlay should mirror in). Returns nothing — just lays out dirs for FsOps
+    (real os) to read."""
     for rel in ("seed/lib/frontend", "seed/framework/frontend"):
         (primary / rel).mkdir(parents=True, exist_ok=True)
         if with_seed_nm:
@@ -620,7 +622,10 @@ def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
         fe = primary / "products" / slug / "frontend"
         fe.mkdir(parents=True, exist_ok=True)
         if with_product_nm:
-            (fe / "node_modules").mkdir(exist_ok=True)
+            nm = fe / "node_modules"
+            nm.mkdir(exist_ok=True)
+            for entry in product_nm_entries:
+                (nm / entry).mkdir(exist_ok=True)
 
 
 def _seed_worktree_tree(wt_root):
@@ -639,15 +644,24 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
     links = {w["link"]: w for w in wire}
 
-    # seed node_modules mirrored in (target = PRIMARY's node_modules)
+    # seed node_modules mirrored in WHOLE (target = PRIMARY's node_modules) —
+    # nothing nests inside a seed pkg's node_modules, so this carries no
+    # write-through hazard.
     for rel in ("seed/lib/frontend", "seed/framework/frontend"):
         link = str(wt_root / rel / "node_modules")
         assert link in links and links[link]["kind"] == "node_modules"
         assert links[link]["target"] == str(primary / rel / "node_modules")
 
-    # the product frontend node_modules + the two @noctusai re-points (to WORKTREE seed)
+    # the product frontend node_modules is NEVER a whole-dir symlink (the fixed
+    # 2026-07-16 primary-contamination bug) — it stays a REAL worktree directory;
+    # each primary vendor package gets its OWN per-entry symlink instead.
     pnm = wt_root / "products" / "alpha" / "frontend" / "node_modules"
-    assert str(pnm) in links and links[str(pnm)]["kind"] == "node_modules"
+    assert str(pnm) not in links, "product node_modules must never be a whole-dir symlink"
+    react_link = str(pnm / "react")
+    assert react_link in links and links[react_link]["kind"] == "node_modules_entry"
+    assert links[react_link]["target"] == str(primary / "products/alpha/frontend/node_modules/react")
+
+    # the two @noctusai re-points (to the WORKTREE's own seed copies, never primary)
     lib_link = str(pnm / "@noctusai" / "lib")
     seed_link = str(pnm / "@noctusai" / "seed")
     assert links[lib_link]["kind"] == "@noctusai"
@@ -671,6 +685,72 @@ def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     assert all(w["kind"] == "@noctusai" for w in wire)
 
 
+def test_plan_env_wiring_converts_stale_product_symlink_to_real_dir(tmp_path):
+    # a product node_modules that is ALREADY a whole-dir symlink (leftover from
+    # the pre-fix scheme, or a not-yet-re-wired worktree) must be converted to a
+    # REAL directory before any per-entry symlink is planned under it — else the
+    # per-entry writes would still land through the stale symlink (the bug).
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "gamma"
+    _seed_primary(primary, slugs=("gamma",))
+    _seed_worktree_tree(wt_root)
+    stale = wt_root / "products/gamma/frontend/node_modules"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.symlink_to(primary / "products/gamma/frontend/node_modules")
+
+    wire, _skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    kinds_at_stale = [w["kind"] for w in wire if w["link"] == str(stale)]
+    assert kinds_at_stale == ["ensure_real_dir"]
+    # the ensure_real_dir spec is ordered BEFORE the entries it hosts
+    idx_ensure = next(i for i, w in enumerate(wire) if w["link"] == str(stale))
+    idx_entry = next(i for i, w in enumerate(wire) if w["link"] == str(stale / "react"))
+    assert idx_ensure < idx_entry
+
+    created, failed = T._apply_env_wiring(wire, T.FsOps())
+    assert not failed
+    assert stale.is_dir() and not stale.is_symlink()
+    assert (stale / "react").is_symlink()
+    assert os.path.realpath(stale / "react") == os.path.realpath(
+        primary / "products/gamma/frontend/node_modules/react")
+
+
+def test_two_worktrees_wire_env_never_contaminates_primary(tmp_path):
+    """The regression test for the 2026-07-16 bug (closed 2026-07-20): TWO
+    worktrees off the SAME primary both wire_env — the primary's own product
+    node_modules must be untouched by either, and each worktree's @noctusai/lib
+    must resolve to ITS OWN seed copy, never the peer's and never the primary's.
+    (`cleanup` is out of scope here — `git worktree remove` deletes only the
+    worktree's own directory tree; it never touches the primary, so it cannot
+    reintroduce this class of contamination.)"""
+    primary = tmp_path / "primary"
+    _seed_primary(primary, slugs=("alpha",))
+    primary_pnm = primary / "products/alpha/frontend/node_modules"
+
+    wt1 = primary / ".claude/worktrees/peer-one"
+    wt2 = primary / ".claude/worktrees/peer-two"
+    _seed_worktree_tree(wt1)
+    _seed_worktree_tree(wt2)
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    for slug, wt in (("peer-one", wt1), ("peer-two", wt2)):
+        res = T.task_branch(action="start", slug=slug, confirm=True,
+                            wire_env=True, primary_root=str(primary), run=fake)
+        assert res["status"] == "started" and not res["wired"] == []
+
+    # the PRIMARY's own product node_modules never grew an @noctusai entry —
+    # neither worktree ever wrote THROUGH a symlink into it.
+    assert not (primary_pnm / "@noctusai").exists()
+    assert primary_pnm.is_dir() and not primary_pnm.is_symlink()
+
+    # each worktree's @noctusai/lib resolves to ITS OWN seed copy — never the
+    # peer's, never the primary's.
+    lib1 = wt1 / "products/alpha/frontend/node_modules/@noctusai/lib"
+    lib2 = wt2 / "products/alpha/frontend/node_modules/@noctusai/lib"
+    assert os.path.realpath(lib1) == os.path.realpath(wt1 / "seed/lib/frontend")
+    assert os.path.realpath(lib2) == os.path.realpath(wt2 / "seed/lib/frontend")
+    assert os.path.realpath(lib1) != os.path.realpath(lib2)
+
+
 def test_start_wire_env_dry_run_reports_plan_without_creating(tmp_path):
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "feat-x"
@@ -683,7 +763,8 @@ def test_start_wire_env_dry_run_reports_plan_without_creating(tmp_path):
     assert res["status"] == "planned" and res["wire_env"] is True
     would_links = {w["link"] for w in res["would_wire"]}
     assert str(wt_root / "seed/lib/frontend/node_modules") in would_links
-    assert str(wt_root / "products/alpha/frontend/node_modules") in would_links
+    assert str(wt_root / "products/alpha/frontend/node_modules/react") in would_links
+    assert str(wt_root / "products/alpha/frontend/node_modules/@noctusai/lib") in would_links
     # dry-run created NOTHING on disk
     assert not (wt_root / "seed/lib/frontend/node_modules").exists()
     assert not (wt_root / "products/alpha/frontend/node_modules").exists()
@@ -699,11 +780,19 @@ def test_start_wire_env_confirm_creates_symlinks(tmp_path):
     res = T.task_branch(action="start", slug="feat-y", confirm=True,
                         wire_env=True, primary_root=str(primary), run=fake)
     assert res["status"] == "started" and res["wire_env"] is True
-    # symlinks now exist + point where the recipe says
+    # seed node_modules: whole-dir symlink to primary (safe — nothing nests here)
     seed_nm = wt_root / "seed/lib/frontend/node_modules"
     assert seed_nm.is_symlink()
     assert os.path.realpath(seed_nm) == os.path.realpath(primary / "seed/lib/frontend/node_modules")
-    lib_repoint = wt_root / "products/alpha/frontend/node_modules/@noctusai/lib"
+    # product node_modules: a REAL directory (never a symlink) — the fix —
+    # containing a per-entry symlink for each primary vendor package
+    product_nm = wt_root / "products/alpha/frontend/node_modules"
+    assert product_nm.is_dir() and not product_nm.is_symlink()
+    react_link = product_nm / "react"
+    assert react_link.is_symlink()
+    assert os.path.realpath(react_link) == os.path.realpath(
+        primary / "products/alpha/frontend/node_modules/react")
+    lib_repoint = product_nm / "@noctusai/lib"
     assert lib_repoint.is_symlink()
     # the @noctusai/lib re-point resolves to the WORKTREE seed (crux), not PRIMARY
     assert os.path.realpath(lib_repoint) == os.path.realpath(wt_root / "seed/lib/frontend")

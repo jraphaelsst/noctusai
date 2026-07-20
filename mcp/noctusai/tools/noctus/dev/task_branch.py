@@ -392,10 +392,27 @@ def _pop_stash(runner, wt_path: str, verbose: bool = False) -> None:
 # ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
 # A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,
 # so a vite build / vitest run inside the worktree fails for want of deps. The
-# §5a recipe symlinks the PRIMARY tree's per-package node_modules INTO the
+# §5a recipe mirrors the PRIMARY tree's per-package node_modules INTO the
 # worktree, then re-points the `@noctusai/{lib,seed}` file:-deps at the WORKTREE's
 # own seed copies (the crux — else worktree lib edits are invisible to the build).
 # These are all gitignored paths ⇒ the symlinks never get staged (intended).
+#
+# PRIMARY-CONTAMINATION FIX (2026-07-16 bug, closed 2026-07-20): seed-frontend
+# node_modules (nothing ever nests inside them) stay a whole-dir symlink to
+# primary — safe. Per-PRODUCT node_modules do NOT: the old scheme whole-dir
+# symlinked `wt/products/<slug>/frontend/node_modules` → primary's real
+# directory, then created `@noctusai/{lib,seed}` *inside* that path — which,
+# because the path resolves THROUGH the symlink, physically wrote the entry
+# into the PRIMARY's shared node_modules, re-pointing EVERY worktree fleet-wide
+# at whichever worktree wired last. Fix: a product's `node_modules` is now a
+# REAL directory *in the worktree*, populated with one symlink per top-level
+# primary package (cheap — a symlink, not a copy) EXCEPT the `@noctusai` scope,
+# which is always worktree-owned and points at the worktree's own seed copies.
+# All writes land inside `wt_root`; the primary directory is read-only input,
+# never a write target. A pre-existing STALE whole-dir symlink at the product's
+# node_modules path (left over from a worktree wired before this fix, or a
+# not-yet-wired peer) is converted to a real directory first (`ensure_real_dir`)
+# so nothing lands through it.
 #
 # The filesystem ops are injected (`FsOps`) so the colocated test drives the
 # planner over a tmp_path fixture tree with zero real node_modules. Planning is
@@ -437,20 +454,30 @@ class FsOps:
                 out.append(name)
         return out
 
+    def list_dir(self, p: str) -> list[str]:
+        """Top-level entry names under `p` (sorted). Used to enumerate a
+        primary `node_modules` for the per-entry overlay — see module doc."""
+        return sorted(os.listdir(p))
+
     def symlink(self, target: str, link: str) -> None:
         os.symlink(target, link)
 
 
 def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[dict], list[dict]]:
-    """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink specs
-    {link, target, kind} the recipe WOULD create; `skipped` = {link, reason} for
-    anything best-effort skipped (absent primary source / a real dir already in
-    the worktree). Order is deterministic: seed node_modules, then per-product
-    node_modules + the two @noctusai re-points."""
+    """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink/dir
+    specs {link, target, kind} the recipe WOULD create; `skipped` = {link,
+    reason} for anything best-effort skipped (absent primary source / a real
+    dir already in the worktree). Order is deterministic: seed node_modules
+    (whole-dir symlink — safe, see module doc), then per-product node_modules
+    (per-entry overlay — the primary-contamination fix, see module doc) + the
+    two @noctusai re-points."""
     wire: list[dict] = []
     skipped: list[dict] = []
 
-    def _link_node_modules(rel_pkg: str) -> None:
+    def _link_whole_node_modules(rel_pkg: str) -> None:
+        """Seed-frontend node_modules ONLY. Nothing ever nests inside these
+        (unlike products, no `@noctusai` re-point targets them) so a whole-dir
+        symlink to primary carries no write-through hazard."""
         src = os.path.join(primary_root, rel_pkg, "node_modules")
         link = os.path.join(wt_root, rel_pkg, "node_modules")
         if not fs.exists(src):
@@ -461,14 +488,44 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
-    # seed packages first (the @noctusai re-points below point INTO these)
-    for rel_pkg in _SEED_FRONTENDS:
-        _link_node_modules(rel_pkg)
+    def _link_product_node_modules(rel_fe: str) -> None:
+        """Per-entry overlay (the primary-contamination fix). `link_dir`
+        becomes a REAL directory in the worktree; every primary top-level
+        package gets its own symlink EXCEPT `@noctusai`, wired separately
+        below (always worktree-owned) — so no write ever lands through a
+        shared symlink into the primary tree."""
+        src = os.path.join(primary_root, rel_fe, "node_modules")
+        link_dir = os.path.join(wt_root, rel_fe, "node_modules")
+        if not fs.exists(src):
+            skipped.append({"link": link_dir, "reason": f"primary node_modules absent: {src}"})
+            return
+        if fs.is_dir(link_dir):  # a REAL node_modules already in the worktree
+            # (genuine local install, OR an already-overlaid worktree) — never
+            # clobber/nest/re-sync.
+            skipped.append({"link": link_dir, "reason": "real node_modules already present in worktree"})
+            return
+        if fs.is_symlink(link_dir):
+            # A stale whole-dir symlink — either left over from the pre-fix
+            # scheme, or from a not-yet-re-wired worktree. Convert to a REAL
+            # directory FIRST (planned before any entry below, so applied
+            # first) so the per-entry links land in the WORKTREE, never
+            # write-through into whatever the symlink currently targets.
+            wire.append({"link": link_dir, "target": None, "kind": "ensure_real_dir"})
+        for entry in fs.list_dir(src):
+            if entry == "@noctusai":
+                continue  # worktree-owned; wired below via _NOCTUSAI_REPOINTS
+            wire.append({"link": os.path.join(link_dir, entry),
+                        "target": os.path.join(src, entry), "kind": "node_modules_entry"})
 
-    # every product/<slug>/frontend with a primary node_modules → mirror + re-point
+    # seed packages first (the @noctusai re-points below point INTO the WORKTREE's
+    # own copies of these, never through the product node_modules symlink)
+    for rel_pkg in _SEED_FRONTENDS:
+        _link_whole_node_modules(rel_pkg)
+
+    # every product/<slug>/frontend with a primary node_modules → overlay + re-point
     for slug in fs.list_product_frontends(primary_root):
         rel_fe = f"products/{slug}/frontend"
-        _link_node_modules(rel_fe)
+        _link_product_node_modules(rel_fe)
         nm = os.path.join(wt_root, rel_fe, "node_modules")
         for dep, seed_rel in _NOCTUSAI_REPOINTS:
             link = os.path.join(nm, dep)
@@ -486,13 +543,22 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
     path is an existing symlink, replace it (force); if it is a real dir, SKIP
     (never clobber — should already be filtered by the planner, defensive here);
     any OS error is captured into `failed`, never raised. Returns (created, failed).
-    The @noctusai re-points need their parent node_modules to exist — created
-    first because they are ordered first in the plan."""
+    `ensure_real_dir` specs (a stale whole-dir symlink being converted to a real
+    worktree-owned directory — see `_plan_env_wiring`) are applied in list order
+    BEFORE the entry/@noctusai symlinks planned to land under them, so every
+    subsequent write lands in a REAL worktree directory — never written through
+    a symlink into a shared target (the primary-contamination bug this fixes)."""
     created: list[dict] = []
     failed: list[dict] = []
     for spec in wire:
         link = spec["link"]
         try:
+            if spec.get("kind") == "ensure_real_dir":
+                if fs.is_symlink(link):
+                    os.unlink(link)
+                os.makedirs(link, exist_ok=True)
+                created.append(spec)
+                continue
             if fs.is_dir(link):
                 failed.append({**spec, "reason": "real directory at link path — skipped"})
                 continue

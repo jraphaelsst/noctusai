@@ -128,6 +128,59 @@ class TestRefreshAndQuery:
         assert targets == {"t1", "t2"}
 
 
+class TestWorktreePathScoping:
+    """Regression test for the 2026-07-20 bug: `refresh()`/`query()` without
+    `worktree_path` silently hashed/read the PRIMARY's ndjson (bound at
+    MCP-server-startup CWD) even when called from inside an engineer
+    worktree with its own uncommitted ndjson appends — reporting a false
+    'in-sync' the worktree's own pre-commit hook correctly caught as stale."""
+
+    @staticmethod
+    def _make_fake_worktree(tmp_path, name):
+        # `resolve_caller_root` only checks EXISTENCE of `.git` + the marker
+        # file (KB § PATTERNS/common/... resolve_caller_root contract) — no
+        # real git init needed, mirrors the lightweight fixture in
+        # test_mole_tool.py.
+        wt = tmp_path / name
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        (wt / "project-history").mkdir()
+        return wt
+
+    def test_refresh_reads_worktree_ndjson_not_primary(self, tmp_repo):
+        wt = self._make_fake_worktree(tmp_repo, "wt")
+        wt_ledger = wt / "project-history" / "auto-improvement.ndjson"
+        wt_ledger.write_text(
+            json.dumps({"ts": "2026-07-20T00:00:00Z", "scope": "scoped", "kind": "drift",
+                        "target": "x", "description": "worktree-local, uncommitted",
+                        "status": "s1-emergent"}) + "\n",
+            encoding="utf-8",
+        )
+        assert not ai.LEDGER_PATH.exists()  # primary's own copy genuinely absent
+
+        r = ai.refresh(force=True, worktree_path=str(wt))
+        assert r["status"] == "rebuilt"
+        assert r["rows_written"] == 1
+        assert r["resolved_ledger_path"] == str(wt_ledger)
+
+        rows = ai.query(worktree_path=str(wt))
+        assert len(rows) == 1 and rows[0]["target"] == "x"
+
+        # Omitting worktree_path stays scoped to the (empty) primary — the
+        # bug (a silent, wrong-tree false-'in-sync') is closed by never
+        # reading the worktree's content without being explicitly told to.
+        r_primary = ai.refresh(force=True)
+        assert r_primary["rows_written"] == 0
+        assert r_primary["resolved_ledger_path"] == str(ai.LEDGER_PATH)
+
+    def test_refresh_worktree_path_rejects_non_worktree_dir(self, tmp_repo, tmp_path):
+        bogus = tmp_path / "not-a-worktree"
+        bogus.mkdir()
+        with pytest.raises(ValueError):
+            ai.refresh(worktree_path=str(bogus))
+
+
 class TestFreshnessKeeper:
     def test_fresh_repo_no_issues(self, tmp_repo):
         # No ndjson present → keeper silently passes.

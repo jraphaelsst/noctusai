@@ -117,3 +117,9 @@ scripts/archive-clean-last-sweep.log
 # tracks every project's PROJECT.md/findings.md history. See that project's PROJECT.md.
 **/*production-deploy-migration/reference/
 .claude/scheduled_tasks.lock
+
+# User-authored personal repo-root artifacts — NOT noc code, kept in place
+# (never deleted), just excluded so they stop dirtying `git status` / blocking
+# rebases+pushes.
+/PLANO-LANCAMENTO-LIVRO.md
+/PLANO-LANCAMENTO-LIVRO.docx

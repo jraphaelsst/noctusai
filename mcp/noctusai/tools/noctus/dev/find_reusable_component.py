@@ -46,6 +46,7 @@ import yaml  # PyYAML — available in the venv (used by other tools)
 from pydantic import BaseModel
 
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 # Shared embedding helpers — the §3b META-RULE: embed via noctusai_lib LLM,
 # persist in the existing code-embeddings cache (extend, don't proliferate).
@@ -55,6 +56,24 @@ from .cache_backend import cache_path as _cache_path
 
 # The code-embeddings cache that we EXTEND with chunk_kind='organ'.
 CACHE_PATH = _cache_path("code-embeddings")
+
+
+def _resolve_root(repo_root: Path | None, worktree_path: str | None) -> Path:
+    """Resolve the tree to read organs from. `repo_root` (explicit override,
+    mainly for tests) wins if given. Else `worktree_path` resolves the
+    CALLER's own worktree via `resolve_caller_root` — the MCP server is
+    fixed-CWD at the primary, so omitting `worktree_path` from inside an
+    engineer worktree silently reads the PRIMARY's copy of the organ (a
+    logged 2026-07-16 miss: an engineer's kanban organ returned
+    'bundle-not-found' because the organ existed only in their worktree).
+    Neither given → the pre-existing module-level `REPO_ROOT` (primary) —
+    the same default-to-primary convention as `build_parallel` / `mole` /
+    `gen_promotions_index`."""
+    if repo_root is not None:
+        return repo_root
+    if worktree_path:
+        return resolve_caller_root(worktree_path)
+    return REPO_ROOT
 
 # NEW chunk kind — does NOT conflict with existing 'function'|'async_function'|
 # 'class'|'file' kinds.  The search function in code_embeddings.py supports an
@@ -207,19 +226,25 @@ def register_organ(
     *,
     force: bool = False,
     repo_root: Path | None = None,
+    worktree_path: str | None = None,
 ) -> dict:
     """Embed a seed organ into the code-embeddings cache with chunk_kind='organ'.
 
     Idempotent: if the organ chunk already has the current source_sha, skips.
     ``force=True`` re-embeds regardless.
 
-    Returns ``{ok, status, name, source_sha, rows_written}``.
+    `worktree_path`: register from the CALLER's own worktree copy of the
+    organ instead of the primary's — see `_resolve_root`. The CACHE ITSELF
+    is unaffected (Tier-1, shared by every worktree of this repo);
+    `worktree_path` only changes which source tree is scanned + embedded.
+
+    Returns ``{ok, status, name, source_sha, rows_written, resolved_root}``.
     """
-    root = repo_root or REPO_ROOT
+    root = _resolve_root(repo_root, worktree_path)
     chunk_text = _build_organ_chunk(name, root)
     if chunk_text is None:
         return {"ok": False, "status": "bundle-not-found", "name": name,
-                "source_sha": "", "rows_written": 0}
+                "source_sha": "", "rows_written": 0, "resolved_root": str(root)}
 
     source_sha = _organ_source_sha(chunk_text)
 
@@ -235,7 +260,7 @@ def register_organ(
         if row and row[0] == source_sha:
             conn.close()
             return {"ok": True, "status": "already-current", "name": name,
-                    "source_sha": source_sha, "rows_written": 0}
+                    "source_sha": source_sha, "rows_written": 0, "resolved_root": str(root)}
 
     # Clear existing organ row for this name (path-keyed by symbol_name+kind)
     old_rows = conn.execute(
@@ -272,7 +297,7 @@ def register_organ(
         conn.close()
         logger.error("find_reusable_component: embed failed for %r: %s", name, exc)
         return {"ok": False, "status": f"embed-error: {exc}", "name": name,
-                "source_sha": source_sha, "rows_written": 0}
+                "source_sha": source_sha, "rows_written": 0, "resolved_root": str(root)}
 
     now = _ec.now_iso()
     cur = conn.execute(
@@ -322,7 +347,7 @@ def register_organ(
         logger.warning("find_reusable_component: vector_costs log failed: %s", exc)
 
     return {"ok": True, "status": "registered", "name": name,
-            "source_sha": source_sha, "rows_written": 1}
+            "source_sha": source_sha, "rows_written": 1, "resolved_root": str(root)}
 
 
 # ── Public read path: find_reusable_component ─────────────────────────────────
@@ -334,6 +359,7 @@ def find_reusable_component(
     top_k: int = 5,
     filter_status: list[str] | None = None,
     repo_root: Path | None = None,
+    worktree_path: str | None = None,
 ) -> list[ReusableComponentMatch]:
     """Find reusable seed organs matching a semantic query.
 
@@ -353,8 +379,15 @@ def find_reusable_component(
         Optional list of validation statuses to include (e.g. ``["validated"]``).
     repo_root:
         Override repo root (mainly for testing).
+    worktree_path:
+        Search the CALLER's own worktree copy of the organ catalog instead
+        of the primary's — see `_resolve_root`. Note: this function's
+        return shape is a plain list (not a dict), so unlike
+        `register_organ` it cannot carry a `resolved_root` transparency
+        field without a breaking shape change; check the logs (`debug`
+        level) or call `register_organ`/`component_bundle` for that.
     """
-    root = repo_root or REPO_ROOT
+    root = _resolve_root(repo_root, worktree_path)
 
     # Try embedding-based search first
     try:
@@ -600,12 +633,15 @@ def register_all_canonical_organs(
     *,
     force: bool = False,
     repo_root: Path | None = None,
+    worktree_path: str | None = None,
 ) -> list[dict]:
     """Register all 5 canonical Phase-1 organs. Idempotent.
 
+    `worktree_path`: see `register_organ` / `_resolve_root`.
+
     Returns a list of registration results, one per organ.
     """
-    root = repo_root or REPO_ROOT
+    root = _resolve_root(repo_root, worktree_path)
     results = []
     for name in CANONICAL_ORGANS:
         result = register_organ(name, force=force, repo_root=root)
@@ -632,7 +668,11 @@ def register(server) -> None:
             "wiring_snippet from the component_bundle. "
             "Falls back to keyword search if the embedding provider is unreachable. "
             "Example: find_reusable_component('credentials list with multi-account selector') "
-            "→ returns ResourceManager in top-3. "
+            "→ returns ResourceManager in top-3. Pass worktree_path when called "
+            "from inside a git worktree so the organ catalog searched is THAT "
+            "worktree's, not the primary's — omitting it silently searches the "
+            "primary's copy (a logged miss: a worktree-only organ returned "
+            "not-found). "
             "KB § PATTERNS/architect/seed-organ-canonical-set.md"
         ),
     )
@@ -640,8 +680,11 @@ def register(server) -> None:
         query: str,
         top_k: int = 5,
         filter_status: Optional[list[str]] = None,
+        worktree_path: str | None = None,
     ) -> list[dict]:
-        results = find_reusable_component(query, top_k=top_k, filter_status=filter_status)
+        results = find_reusable_component(
+            query, top_k=top_k, filter_status=filter_status, worktree_path=worktree_path,
+        )
         return [r.model_dump() for r in results]
 
     @server.tool(
@@ -651,12 +694,15 @@ def register(server) -> None:
             "Idempotent: skips if source_sha matches current. "
             "``force=True`` re-embeds regardless. "
             "Called once per organ on registration; called again when the "
-            "organ's source, tests, or knowledge bundle changes. "
-            "Returns {ok, status, name, source_sha, rows_written}."
+            "organ's source, tests, or knowledge bundle changes. Pass "
+            "worktree_path when called from inside a git worktree so the "
+            "organ source is scanned from THAT worktree, not the primary's "
+            "(the cache itself is shared Tier-1 either way). "
+            "Returns {ok, status, name, source_sha, rows_written, resolved_root}."
         ),
     )
-    def _register_organ(name: str, force: bool = False) -> dict:
-        return register_organ(name, force=force)
+    def _register_organ(name: str, force: bool = False, worktree_path: str | None = None) -> dict:
+        return register_organ(name, force=force, worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.register_all_canonical_organs",
@@ -664,12 +710,14 @@ def register(server) -> None:
             "Register all 5 Phase-1 canonical seed organs (LoginForm, "
             "ForgotPasswordPage, AcceptInvitePage, ResourceManager, DigestCard) "
             "into the code-embeddings cache. Idempotent. "
-            "``force=True`` re-embeds all regardless of source_sha. "
-            "Returns list of {ok, status, name, source_sha, rows_written}."
+            "``force=True`` re-embeds all regardless of source_sha. Pass "
+            "worktree_path when called from inside a git worktree (see "
+            "noctus.dev.register_organ). "
+            "Returns list of {ok, status, name, source_sha, rows_written, resolved_root}."
         ),
     )
-    def _register_all(force: bool = False) -> list[dict]:
-        return register_all_canonical_organs(force=force)
+    def _register_all(force: bool = False, worktree_path: str | None = None) -> list[dict]:
+        return register_all_canonical_organs(force=force, worktree_path=worktree_path)
 
 
 __all__ = [
