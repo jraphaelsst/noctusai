@@ -8635,6 +8635,14 @@ def check_all_products() -> tuple[int, list]:
     # Squash-aware (subject-on-dev + git-cherry); never a commit-blocker.
     # KB § CONTEXT/PATTERNS/common/learn-before-archive.md.
     all_issues.extend(check_dangling_remote_branches())
+    # prod-exposure-consent (2026-07-20, orbity-incident closure) — a product's
+    # FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/
+    # ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the
+    # production-promotion decision (the fleet runs :latest built from main —
+    # no later gate reviews this again). Silent on a stable working tree
+    # (declared == baseline); fires only on the set-difference.
+    # KB § PATTERNS/devops/prod-exposure-consent.md.
+    all_issues.extend(check_prod_exposure_consent())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
@@ -12954,6 +12962,372 @@ def check_branch_tree_mirror(
                     "severity": "high",
                 })
 
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_prod_exposure_consent` — the prod-promotion consent gate.
+#
+# INCIDENT: orbity went prod-serving 2026-06-03, the same day it was
+# scaffolded, six weeks before validation, every roadmap phase still ⬜,
+# no consent decision anywhere. Commit 679d0838 "feat(deploy): onboard
+# orbity to the prod fleet" registered orbity on THREE surfaces:
+#   - deploy/fleet/docker-compose.prod.yml  (runs on the VPS fleet)
+#   - deploy/tunnel/ingress.yml             (public edge <slug>.noctusai.com)
+#   - ALL_SLUGS in scripts/infra/build-and-push.sh  (GHCR artifact + :latest)
+#
+# EDITING THOSE THREE SURFACES *IS* THE PRODUCTION-PROMOTION DECISION.
+# Everything downstream (bless -> main-push CI build -> :latest -> fleet
+# pull) is faithful automation of a declaration already made. There is no
+# later gate — the fleet runs :latest built from main, so a prod-branch
+# pin governs nothing that actually runs. KB § PATTERNS/devops/
+# prod-exposure-consent.md.
+# ---------------------------------------------------------------------------
+
+_PROD_COMPOSE_REL = "deploy/fleet/docker-compose.prod.yml"
+_PROD_INGRESS_REL = "deploy/tunnel/ingress.yml"
+_PROD_BUILD_PUSH_REL = "scripts/infra/build-and-push.sh"
+_PROD_CONSENT_DIR_REL = "deploy/consent"
+
+
+def _read_worktree_text(root: Path, rel: str) -> str | None:
+    """Read `rel` from the live working tree; None when absent/unreadable."""
+    p = root / rel
+    if not p.exists():
+        return None
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _read_head_text(root: Path, rel: str) -> str | None:
+    """Read `rel` as committed at HEAD (`git show HEAD:<rel>`); None when
+    the ref/path doesn't resolve (unborn HEAD, path new-at-HEAD, non-git
+    tree)."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"],
+            cwd=str(root), capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _prod_exposure_slugs(
+    compose_text: str | None,
+    ingress_text: str | None,
+    build_push_text: str | None,
+) -> set[str]:
+    """Union of slugs declared across the three prod-exposure surfaces.
+
+    - compose: top-level `services:` keys.
+    - ingress: the in-network service name from each route's
+      `service: http://<name>:<port>` (hostname aliases naturally
+      collapse to one slug; non-product infra rows like n8n/waha/legacy
+      are included too — harmless, since they're always already present
+      at baseline and so never trip `new`).
+    - build-and-push.sh: the `ALL_SLUGS=(...)` bash array.
+
+    A missing/unparseable surface degrades to an empty contribution
+    rather than raising — a partial 3-surface picture (e.g. the file
+    didn't exist yet at HEAD) is exactly the signal this keeper reasons
+    about, not an error condition.
+    """
+    import yaml
+
+    slugs: set[str] = set()
+
+    if compose_text:
+        try:
+            data = yaml.safe_load(compose_text) or {}
+            services = data.get("services") if isinstance(data, dict) else None
+            if isinstance(services, dict):
+                slugs.update(str(k) for k in services)
+        except yaml.YAMLError:
+            pass
+
+    if ingress_text:
+        try:
+            data = yaml.safe_load(ingress_text) or {}
+            routes = data.get("routes") if isinstance(data, dict) else None
+            if isinstance(routes, list):
+                for route in routes:
+                    if not isinstance(route, dict):
+                        continue
+                    svc = str(route.get("service") or "")
+                    m = re.match(r"https?://([a-zA-Z0-9_-]+):\d+", svc)
+                    if m:
+                        slugs.add(m.group(1))
+        except yaml.YAMLError:
+            pass
+
+    if build_push_text:
+        m = re.search(r"ALL_SLUGS=\(([^)]*)\)", build_push_text)
+        if m:
+            slugs.update(m.group(1).split())
+
+    return slugs
+
+
+def _prod_exposure_declared_and_baseline(root: Path) -> tuple[set[str], set[str]]:
+    """(declared, baseline) — working-tree vs HEAD slug sets across the
+    three prod-exposure surfaces. `new = declared - baseline`."""
+    declared = _prod_exposure_slugs(
+        _read_worktree_text(root, _PROD_COMPOSE_REL),
+        _read_worktree_text(root, _PROD_INGRESS_REL),
+        _read_worktree_text(root, _PROD_BUILD_PUSH_REL),
+    )
+    baseline = _prod_exposure_slugs(
+        _read_head_text(root, _PROD_COMPOSE_REL),
+        _read_head_text(root, _PROD_INGRESS_REL),
+        _read_head_text(root, _PROD_BUILD_PUSH_REL),
+    )
+    return declared, baseline
+
+
+def _git_author_email(root: Path) -> str | None:
+    """The committer's configured `git config user.email` — the identity
+    that will author the commit about to be made. None when git/config is
+    unavailable (the caller degrades gracefully, never hard-fails on this
+    alone)."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.email"],
+            cwd=str(root), capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    email = result.stdout.strip()
+    return email or None
+
+
+def _resolve_roadmap_milestone(consent_ref: str, root: Path) -> tuple[bool, str]:
+    """Resolve a `consent_ref` of the form
+    `<relpath-to-roadmap.md>#<milestone-anchor-substring>` against the live
+    tree. Passes when the roadmap file exists AND contains a line whose
+    text includes BOTH the anchor substring AND a ✅ marker — the
+    `roadmap-tracking.md` convention: a milestone bullet gets annotated
+    with ✅ once reached (e.g. `- **M4: prod promote** — ... ✅
+    2026-07-20`). Read from the WORKING TREE (roadmaps are living docs
+    updated independently of the registration commit, unlike the consent
+    record itself which must already be in HEAD).
+
+    KB § PATTERNS/common/roadmap-tracking.md · KB § PATTERNS/devops/
+    prod-exposure-consent.md.
+    """
+    if "#" not in consent_ref:
+        return False, f"consent_ref {consent_ref!r} missing '#<milestone anchor>'"
+    rel, _, anchor = consent_ref.partition("#")
+    rel = rel.strip()
+    anchor = anchor.strip()
+    if not rel or not anchor:
+        return False, f"consent_ref {consent_ref!r} has an empty path or anchor"
+    try:
+        roadmap_path = (root / rel).resolve()
+        roadmap_path.relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False, f"consent_ref path {rel!r} is invalid or escapes the repo root"
+    if not roadmap_path.exists():
+        return False, f"roadmap file {rel!r} not found"
+    try:
+        text = roadmap_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return False, f"roadmap file {rel!r} unreadable: {e}"
+    for line in text.splitlines():
+        if anchor in line and "✅" in line:
+            return True, ""
+    return False, f"no line in {rel!r} contains both {anchor!r} and a ✅ marker"
+
+
+def _validate_prod_consent_record(slug: str, root: Path) -> dict:
+    """Validate `deploy/consent/<slug>.prod.yml` AS COMMITTED IN HEAD (not
+    merely staged/on-disk — the consent record must land in its own prior
+    commit before the registration commit can pass).
+
+    Returns `{"status": "valid" | "missing" | "invalid", "detail": str,
+    "data": dict | None}`. "missing" = no file in HEAD (grandfathered
+    product, or never authored). "invalid" = file exists but fails a
+    validation leg (see `detail`).
+    """
+    consent_rel = f"{_PROD_CONSENT_DIR_REL}/{slug}.prod.yml"
+    text = _read_head_text(root, consent_rel)
+    if text is None:
+        return {"status": "missing", "detail": f"no {consent_rel} in HEAD", "data": None}
+    import yaml
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        return {"status": "invalid", "detail": f"unparseable YAML: {e}", "data": None}
+    if not isinstance(data, dict):
+        return {"status": "invalid", "detail": "not a YAML mapping", "data": None}
+    missing_fields = [
+        k for k in ("consented_by", "consented_on", "consent_ref")
+        if not str(data.get(k) or "").strip()
+    ]
+    if missing_fields:
+        return {
+            "status": "invalid",
+            "detail": f"missing/empty field(s): {', '.join(missing_fields)}",
+            "data": data,
+        }
+    if data.get("dev_validated") is not True:
+        return {"status": "invalid", "detail": "dev_validated is not `true`", "data": data}
+    ok, reason = _resolve_roadmap_milestone(str(data["consent_ref"]), root)
+    if not ok:
+        return {
+            "status": "invalid",
+            "detail": f"consent_ref does not resolve to a ✅ milestone: {reason}",
+            "data": data,
+        }
+    author_email = _git_author_email(root)
+    consented_by = str(data["consented_by"]).strip()
+    if author_email and consented_by.lower() != author_email.lower():
+        return {
+            "status": "invalid",
+            "detail": (
+                f"consented_by ({consented_by}) does not match the commit "
+                f"author ({author_email})"
+            ),
+            "data": data,
+        }
+    return {"status": "valid", "detail": "", "data": data}
+
+
+def _prod_exposure_consent_message(slug: str, reason: str) -> str:
+    """The self-explanatory failure message — teaches the boundary, not
+    just names the violation."""
+    return (
+        f"'{slug}' is a NEW arrival on a prod-exposure surface "
+        f"({_PROD_COMPOSE_REL} / {_PROD_INGRESS_REL} / ALL_SLUGS in "
+        f"{_PROD_BUILD_PUSH_REL}) with no valid consent record: {reason}.\n\n"
+        "Editing those three surfaces IS the production-promotion decision "
+        "— the VPS fleet runs `:latest`, rebuilt from `main` on every "
+        f"bless→promote push, so there is NO LATER GATE that reconsiders "
+        f"whether '{slug}' should be public. This must be a decision the "
+        "USER makes, never a side-effect of an agent registering a "
+        "product.\n\n"
+        f"What the USER must do: author {_PROD_CONSENT_DIR_REL}/{slug}."
+        "prod.yml, in its OWN isolated commit (no other path in that "
+        "commit), containing:\n"
+        "  consented_by: <the user's git-config user.email>\n"
+        "  consented_on: <YYYY-MM-DD>\n"
+        "  consent_ref: <path/to/roadmap.md>#<milestone text, also marked "
+        "✅ on that same line>\n"
+        "  dev_validated: true\n"
+        "Commit that file FIRST (its own commit); only THEN can a commit "
+        "that registers the slug on the three surfaces land. "
+        "`noctus.dev.prod_consent action=request slug=<slug>` prints this "
+        "exact template.\n\n"
+        "An agent MUST NOT create the consent record on the user's "
+        "behalf. KB § PATTERNS/devops/prod-exposure-consent.md."
+    )
+
+
+def _check_consent_commit_isolated(root: Path) -> list[dict]:
+    """A staged `deploy/consent/*.prod.yml` MUST be the only path in its
+    commit — consent records must never ride along inside a feature/
+    registration diff (an agent must not be able to slip consent past
+    review inside unrelated changes)."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=str(root), capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+    if result.returncode != 0:
+        return []
+    staged = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+    consent_files = [
+        f for f in staged
+        if f.startswith(f"{_PROD_CONSENT_DIR_REL}/") and f.endswith(".prod.yml")
+    ]
+    if not consent_files or len(consent_files) == len(staged):
+        return []
+    other = sorted(set(staged) - set(consent_files))
+    return [{
+        "product": "<platform>",
+        "file": ", ".join(consent_files),
+        "issue": (
+            "PROD-EXPOSURE-CONSENT: a deploy/consent/*.prod.yml is staged "
+            f"alongside {len(other)} other path(s) "
+            f"({', '.join(other[:5])}{'…' if len(other) > 5 else ''}). "
+            "Consent records MUST be committed in their OWN isolated "
+            "commit — never mixed into a feature diff (an agent must not "
+            "be able to slip consent past review inside unrelated "
+            "changes). Split into two commits: the consent file alone, "
+            "then the rest. KB § PATTERNS/devops/prod-exposure-consent.md."
+        ),
+        "severity": "high",
+        "symbol": "prod-exposure-consent-not-isolated",
+    }]
+
+
+def check_prod_exposure_consent(repo_root: Path | None = None) -> list[dict]:
+    """Prod-exposure consent gate — closes the orbity incident (see module
+    comment above `_PROD_COMPOSE_REL` for the causal link).
+
+    FIRE BOUNDARY — a SET-DIFFERENCE ON SLUGS, not a content diff:
+        declared = slugs(WORKING TREE: compose.prod ∪ ingress ∪ ALL_SLUGS)
+        baseline = slugs(HEAD:         compose.prod ∪ ingress ∪ ALL_SLUGS)
+        new      = declared - baseline
+        if not new: return []          <- the universal, silent case
+
+    Fires ONLY on a product's FIRST arrival on any of the three surfaces.
+    MUST NOT fire on: any `products/<slug>/**` commit for an already-
+    registered product; routine redeploys; bless/promote; edits *inside*
+    an existing service block (port/env/healthcheck/anchors — those never
+    change the slug SET); de-registration (removing a slug is always
+    allowed — it's never in `new`). Silent-skip when `deploy/` is absent
+    (non-noc tree).
+
+    For each slug in `new`, requires `deploy/consent/<slug>.prod.yml`
+    PRESENT IN HEAD (not merely staged — see `_validate_prod_consent_record`)
+    with non-empty `consented_by` / `consented_on` / `consent_ref`,
+    `dev_validated: true`, `consent_ref` resolving to a ✅-marked roadmap
+    milestone, and `consented_by` matching the current commit author's
+    git-config email. Any failure -> severity `high`.
+
+    ALSO flags a `deploy/consent/*.prod.yml` staged alongside any other
+    path (`_check_consent_commit_isolated`) — independent of the
+    set-difference, so it fires even when `new` is empty.
+
+    KB § PATTERNS/devops/prod-exposure-consent.md.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not (root / "deploy").is_dir():
+        return issues  # non-noc tree — silent skip
+
+    issues.extend(_check_consent_commit_isolated(root))
+
+    declared, baseline = _prod_exposure_declared_and_baseline(root)
+    new = declared - baseline
+    if not new:
+        return issues  # the universal, silent case
+
+    for slug in sorted(new):
+        result = _validate_prod_consent_record(slug, root)
+        if result["status"] == "valid":
+            continue
+        issues.append({
+            "product": slug,
+            "file": f"{_PROD_COMPOSE_REL}, {_PROD_INGRESS_REL}, {_PROD_BUILD_PUSH_REL}",
+            "issue": _prod_exposure_consent_message(
+                slug, result["detail"] or "no consent record found",
+            ),
+            "severity": "high",
+            "symbol": "prod-exposure-consent-missing",
+        })
     return issues
 
 

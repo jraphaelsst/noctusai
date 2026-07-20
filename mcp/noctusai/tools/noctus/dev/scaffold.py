@@ -757,6 +757,19 @@ def scaffold_product(
             + ". The files still contain seed-template content — fix manually "
             "or rerun the rewrite once the LLM call succeeds."
         )
+    # prod-exposure-consent (2026-07-20, orbity-incident closure) — this
+    # scaffold NEVER registers the product on a prod-exposure surface
+    # (deploy/fleet/docker-compose.prod.yml / deploy/tunnel/ingress.yml /
+    # ALL_SLUGS in scripts/infra/build-and-push.sh). Prod exposure is a
+    # SEPARATE, consent-gated step the USER decides explicitly — never a
+    # scaffold side-effect. KB § PATTERNS/devops/prod-exposure-consent.md.
+    next_steps.append(
+        "Prod exposure (the fleet compose file / tunnel ingress map / "
+        "build-push slug list) is a SEPARATE, consent-gated step — this "
+        "scaffold never touched those surfaces. Only the user may author "
+        "deploy/consent/<slug>.prod.yml to authorize exposing this "
+        "product publicly."
+    )
 
     return {
         "created": True,

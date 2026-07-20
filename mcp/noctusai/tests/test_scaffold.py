@@ -1,4 +1,5 @@
 """Tests for product scaffolding."""
+import ast
 import re
 import sys
 import shutil
@@ -1484,3 +1485,71 @@ class TestScaffoldRegistersInRootCompose:
 
         assert "skipped" in result, result
         assert "does not exist" in result["skipped"]
+
+
+class TestScaffoldProductNeverTouchesProdExposureSurfaces:
+    """Locks in the invariant `check_prod_exposure_consent`
+    (`KB § PATTERNS/devops/prod-exposure-consent.md`) depends on:
+    `noctus.dev.scaffold_product` (product creation) NEVER writes to the
+    three prod-exposure surfaces (deploy/fleet/docker-compose.prod.yml,
+    deploy/tunnel/ingress.yml, ALL_SLUGS in scripts/infra/build-and-
+    push.sh). Prod exposure is registered by a SEPARATE, consent-gated
+    step — a human-authored deploy/consent/<slug>.prod.yml plus a
+    deliberate edit to those surfaces — never as a scaffold side-effect.
+    A regression here would silently reopen the exact incident (orbity,
+    2026-06-03) this gate closes.
+    """
+
+    def test_scaffold_source_never_references_prod_exposure_surfaces(self):
+        """AST-based: scans every STRING-LITERAL CODE token (not comments —
+        `ast.walk` never sees `#` comments, so the module's explanatory
+        comment naming all three surfaces is free to stay fully precise)
+        for the three surfaces' exact filenames/tokens. `scaffold_product`
+        must never construct a path or message referencing them by name —
+        the sole legitimate mention (the `next_steps` consent-gate
+        breadcrumb) is deliberately worded to avoid the literal needles.
+        """
+        src_path = Path(scaffold_module.__file__).resolve()
+        tree = ast.parse(src_path.read_text(encoding="utf-8"), filename=str(src_path))
+        needles = (
+            "docker-compose.prod.yml",
+            "deploy/fleet",
+            "deploy/tunnel",
+            "ingress.yml",
+            "ALL_SLUGS",
+            "build-and-push.sh",
+        )
+        offenders = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for needle in needles:
+                    if needle in node.value:
+                        offenders.append((needle, node.value[:120]))
+        assert offenders == [], (
+            f"scaffold.py's code contains prod-exposure-surface reference(s) "
+            f"{offenders} — scaffold_product must NEVER touch a prod-exposure "
+            "surface (that's a separate, consent-gated step). See "
+            "KB § PATTERNS/devops/prod-exposure-consent.md."
+        )
+
+    def test_next_steps_names_prod_exposure_as_a_separate_step(self, tmp_path):
+        """A REAL `scaffold_product` call (repo-hygiene-safe tmp_path seam,
+        same as `TestScaffold.test_creates_new_product`) must always carry
+        the consent-gate breadcrumb in its returned `next_steps` — never
+        silently omitted, never a dynamic reference to the surfaces
+        themselves (the source-absence test above locks that in)."""
+        result = scaffold_product(
+            "Consent Gate Test",
+            "consent-gate-test-scaffold-temp",
+            "test_schema",
+            8099,
+            8199,
+            "Zap",
+            brief={},
+            products_dir=tmp_path,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        next_steps = result["next_steps"]
+        assert any("consent-gated step" in s for s in next_steps), next_steps
+        assert any("Only the user may author" in s for s in next_steps), next_steps

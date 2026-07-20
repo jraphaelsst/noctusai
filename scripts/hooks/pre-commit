@@ -235,6 +235,25 @@ if [[ -n "$STAGED_BANDIT_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6c. Prod-exposure consent gate (blocking, only when a prod-exposure ──
+# surface OR a consent record is staged) ─────────────────────────────────
+# Keeper `check_prod_exposure_consent` + `KB § PATTERNS/devops/prod-
+# exposure-consent.md`. A product's FIRST arrival on deploy/fleet/docker-
+# compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/
+# infra/build-and-push.sh IS the production-promotion decision (the fleet
+# runs :latest built from main — no later gate reviews this again). Also
+# refuses a deploy/consent/*.prod.yml staged alongside any other path
+# (consent commits must be isolated).
+STAGED_PROD_EXPOSURE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/docker-compose\.prod\.yml|deploy/tunnel/ingress\.yml|scripts/infra/build-and-push\.sh|deploy/consent/.*\.prod\.yml)$' || true)
+if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then
+    echo "[pre-commit] prod-exposure surface staged — verifying consent gate..."
+    if ! "$PY" "$CLI" --check-prod-exposure-consent --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PROD-EXPOSURE-CONSENT check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Registering a product on a prod-exposure surface IS the promotion decision — the user (not an agent) must author deploy/consent/<slug>.prod.yml first, in its own commit. See KB § PATTERNS/devops/prod-exposure-consent.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),

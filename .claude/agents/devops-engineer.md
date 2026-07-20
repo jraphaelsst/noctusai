@@ -15,6 +15,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/ci-deploy-prod.md
   - CONTEXT/PATTERNS/devops/dev-main-ci-gates.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
+  - CONTEXT/PATTERNS/devops/prod-exposure-consent.md
   - CONTEXT/PATTERNS/devops/environment.md
   - CONTEXT/PATTERNS/devops/prod-cache-container.md
   - CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md
@@ -50,6 +51,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`
 - **Prod cache container.** `pgvector/pgvector:pg16` service in `deploy/fleet/compose.infra.prod.yml`; profile-gated (`--profile cache` / `--profile full`); volume `noctus-cache-pg-data`; internal-only via `noctus-net`. → `KB § PATTERNS/devops/prod-cache-container.md`
 - **Prod-deploy safety gates.** 4 keepers + composite + cache_deploy_mirror tool — `check_prod_cache_reachable` (high) + `check_cache_backend_env_matches_environment` (warning) + `check_drift_shield` (warning) + `check_slip_shield` (warning) + `check_pre_deploy_gate` (composite). The prod-side closed loop. → `KB § PATTERNS/devops/prod-deploy-safety-gates.md`
+- **Prod-exposure consent — you MUST NOT author a `deploy/consent/*.prod.yml` on the user's behalf.** A product's first arrival on compose.prod.yml/ingress.yml/ALL_SLUGS IS the promotion decision; `check_prod_exposure_consent` (high) gates it, `noctus.dev.prod_consent` only ever hands back status/a template — never writes it. → `KB § PATTERNS/devops/prod-exposure-consent.md`
 - **Sanitization workflow** — inspect (`docker system df`) → classify (dangling / orphan-anon / closed-project / protected) → safe auto-remove regenerable → confirm-with-tech-lead for data-bearing → recreate (`up -d --build --renew-anon-volumes <slug>`) → verify fleet healthy + prod untouched. → `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/containerization-operations.md`
 - **Operate the live VPS via `noctus.vps.*`.** Read-free: `ps` / `health` / `logs` / `inspect` / `images` / `disk` / `stats`. Confirm-gated: `restart` / `recreate` / `prune`. → `KB § 05-INFRASTRUCTURE.md`
 - **CI/CD gates.** Pre-commit hooks, GitHub Actions `build-and-push.yml`, GHCR delivery; AST-first for any code-shaped CI scripts (`.py` / `.ts`); shell + YAML are config. → `KB § PATTERNS/devops/ci-security-gates.md`
