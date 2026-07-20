@@ -244,3 +244,4 @@
 {"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-public-token-404", "branch": "feat/orbity-public-token-404", "sha": "f5b44f28ec8c7fe85a6bd7f1950d78b0e207075f", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-debrand", "branch": "feat/orbity-debrand", "sha": "6f7c462980a48ec75ec735d3140feb11a91222e6", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-funnel-seed", "branch": "feat/orbity-funnel-seed", "sha": "301105cc8c6ff8749cf3d65f47e3ff9435a4d5dc", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-meta-honesty", "branch": "feat/orbity-meta-honesty", "sha": "e53686c0845a6218a9ce2ebf241bd4efa79a583f", "reason": "task_branch cleanup (learn-before-delete)"}
