@@ -1,14 +1,30 @@
 # Orbity
 
-Minimal reference implementation — the spine with no organs. Proves that both seed packages (`noctusai_lib` + `noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend) work end-to-end. Source of truth for the product template (`templates/product-seed/`).
+Agency-management SaaS for marketing/digital agencies: client CRM, sales
+funnel, tasks, agenda, financials, Meta Ads traffic, WhatsApp automation,
+content/social studio, and client-facing reports. Live in production at
+orbity.noctusai.com. Built on the NoctusAI seed framework (`noctusai_lib` +
+`noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend).
 
 ## Stack
 
 - **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port 8010)
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port 8140)
-- **Build**: `createViteConfig()` from seed framework (3-line vite.config.ts)
+- **Build**: `createViteConfig()` from seed framework
 - **Database**: Supabase (schema: `orbity`)
-- **Auth**: SSO + direct login
+- **Auth**: SSO (from Core) + direct login
+
+## Modules
+
+- **Clientes** — agency client roster (CRUD)
+- **CRM / Funil** — leads, funil kanban, activities, lead scoring, public capture form
+- **Financeiro** — contracts, expenses, revenues, monthly cash-flow
+- **Tarefas / Agenda / Rotinas** — tasks, calendar events (+ GCal sync seam), recurring routines
+- **Tráfego** — Meta Ads accounts, campaigns, metrics, spend-vs-leads aggregate
+- **Automação** — WhatsApp automation flow engine (steps, triggers, executions)
+- **Conteúdo** — social/content studio: campaigns, posts, client approval flow (public token link)
+- **Relatórios** — report definitions, snapshot generation, public token-gated read
+- **Equipe** — team management (invite, accept, list, cancel, remove — from the framework)
 
 ## Running
 
@@ -20,19 +36,9 @@ uvicorn app.main:app --reload --port 8010 --app-dir products/orbity/backend
 cd products/orbity/frontend && npm run dev
 ```
 
-## What it proves
-
-- `create_product_app()` works (health, team, notifications — all from framework)
-- `createProductApp()` + `createProductLayout()` works (routing, auth, sidebar, header)
-- `createViteConfig()` works (alias resolution, dependency deduplication)
-- SSO authentication flow
-- Page status filtering
-- Notification proxying
-- Team/invitation management
-- Template auto-sync (post-commit hook → `templates/product-seed/`)
-
 ## Tests
 
 ```bash
-cd products/orbity/backend && pytest  # 6 tests
+cd products/orbity/backend && pytest
+cd products/orbity/frontend && npx vite build  # must build clean
 ```

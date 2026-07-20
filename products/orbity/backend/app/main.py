@@ -1,8 +1,11 @@
 """
-NoctusAI Orbity — Reference Implementation
+NoctusAI Orbity — Agency Management Backend
 
-The simplest possible product. Just the spine, no domain code.
-Proves that the seed framework works end-to-end.
+Agency-management SaaS: clients, CRM funnel, tasks, agenda, financials,
+Meta Ads traffic, WhatsApp automation, content/social studio, and
+reports. Built on the NoctusAI seed framework — infra (auth, SSO,
+notifications, team, rate limiting) comes from `create_product_app()`;
+everything under `app/routers/` + `app/services/` is Orbity domain code.
 
 Run with: uvicorn app.main:app --reload --port 8010
 
@@ -25,7 +28,6 @@ over `gpt-4o-mini`):
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
-from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.clients_router import router as clients_router
 from app.routers.crm_router import router as crm_router, capture_router
@@ -45,7 +47,6 @@ app = create_product_app(
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team", "status_paginas"],
     routers=[
-        example_router,
         webhook_router,
         # CRM Wave 1
         clients_router,    # /api/clients  — clients CRUD

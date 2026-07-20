@@ -1,5 +1,5 @@
 /**
- * Orbity App — the simplest possible product.
+ * Orbity App — agency-management SaaS routes + nav.
  *
  * Infrastructure comes from @/infra (one file, one createProductInfra call).
  * Structure comes from createProductApp + createProductLayout.
@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, Boxes, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone } from "lucide-react";
+import { LayoutDashboard, Users, Home, Box, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -23,10 +23,6 @@ const RelatorioPublico = lazy(() => import("@/pages/RelatorioPublico"));
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // CRM module
 const Clientes = lazy(() => import("@/pages/Clientes"));
@@ -51,7 +47,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Financeiro", href: "/financeiro", icon: DollarSign, route: "financeiro" },
     ],
@@ -123,7 +118,6 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Financeiro", href: "/financeiro", icon: DollarSign },
     ],
@@ -203,7 +197,6 @@ export default createProductApp({
   ],
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
     { path: "/financeiro", component: Financeiro },
     { path: "/clientes", component: Clientes },

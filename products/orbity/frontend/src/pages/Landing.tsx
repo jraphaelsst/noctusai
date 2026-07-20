@@ -32,26 +32,51 @@ export default function Landing() {
             NoctusAI Orbity
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
-            A minimal NoctusAI product
+            Gestão completa para agências, em um só lugar
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Proves the entire shared stack works: authentication, layout,
-            notifications, theme, and SSO.
+            Clientes, funil de vendas, tarefas, agenda, financeiro, tráfego
+            (Meta Ads), automação de WhatsApp e conteúdo — sua agência
+            organizada do primeiro contato à entrega.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
             <Link
               to="/login"
               className="inline-flex items-center justify-center gap-2 h-11 px-6 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             >
-              Comecar Agora
+              Começar Agora
               <ArrowRight className="h-4 w-4" />
             </Link>
             <a
               href={CORE_URL}
               className="inline-flex items-center justify-center h-11 px-6 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
             >
-              Conhecer NoctusAI
+              Conhecer a NoctusAI
             </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Módulos ────────────────────────────────────── */}
+      <section className="py-16 px-4 border-t border-border bg-card">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-2xl sm:text-3xl font-bold text-center text-foreground mb-10">
+            Tudo o que sua agência precisa para operar
+          </h2>
+          <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map((feature) => (
+              <div
+                key={feature.title}
+                className="rounded-lg border border-border bg-background p-6 space-y-2"
+              >
+                <h3 className="font-semibold text-foreground">
+                  {feature.title}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {feature.description}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -73,3 +98,36 @@ export default function Landing() {
     </div>
   );
 }
+
+const FEATURES = [
+  {
+    title: "CRM e Funil de Vendas",
+    description:
+      "Cadastre clientes, acompanhe leads em um funil kanban e nunca perca uma oportunidade.",
+  },
+  {
+    title: "Tarefas, Agenda e Rotinas",
+    description:
+      "Organize entregas, compromissos e processos recorrentes da equipe em um só painel.",
+  },
+  {
+    title: "Financeiro",
+    description:
+      "Contratos, despesas, receitas e fluxo de caixa mensal sempre à mão.",
+  },
+  {
+    title: "Tráfego (Meta Ads)",
+    description:
+      "Conecte contas de anúncio, acompanhe campanhas e métricas de investimento por cliente.",
+  },
+  {
+    title: "Automação de WhatsApp",
+    description:
+      "Fluxos automáticos de mensagens para cada etapa da jornada do cliente.",
+  },
+  {
+    title: "Conteúdo e Relatórios",
+    description:
+      "Aprovação de posts com clientes e relatórios compartilháveis por link público.",
+  },
+];
