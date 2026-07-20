@@ -6,8 +6,6 @@ import { ExternalLink, MessageSquare, Archive, Brain } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { formatCurrency } from '@/lib/utils';
 
 interface ClienteCardProps {
@@ -17,19 +15,16 @@ interface ClienteCardProps {
   isDragging?: boolean;
 }
 
+// Drag-and-drop wiring (ref/attributes/listeners/transform) is owned by the
+// `KanbanCard` organ wrapper (`@noctusai/lib/components`) that renders this
+// component via `renderCard`. `isDragging` here is only the DragOverlay
+// ghost-copy flag the organ passes — it dims the floating copy, mirroring
+// the pre-organ behavior where this component's own `useSortable` opacity
+// served the same purpose.
 export function ClienteCard({ cliente, onRegistrarAtividade, onArquivar, isDragging }: ClienteCardProps) {
   const navigate = useNavigate();
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({ id: cliente.id });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
     opacity: isDragging ? 0.5 : 1,
   };
 
@@ -49,10 +44,7 @@ export function ClienteCard({ cliente, onRegistrarAtividade, onArquivar, isDragg
 
   return (
     <Card
-      ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
       className="p-3 mb-2 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow"
     >
       <div className="flex items-start gap-3">
