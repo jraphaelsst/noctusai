@@ -126,6 +126,40 @@ class TestParseStandardRouters:
         assert state == "unparseable"
         assert parsed is None
 
+    def test_docstring_mention_does_not_shadow_the_real_call(self):
+        """Regression (social-wiring, 2026-07-16): the former regex parser
+        matched the FIRST textual `standard_routers=[...]` anywhere in the file.
+        A module docstring explaining the auth seam ("NOT via
+        standard_routers=["auth"]") therefore parsed as `{"auth"}`, producing a
+        false critical under-grant for `notificacoes` + `team` and reddening CI
+        on a release candidate. The parse must be scoped to the real call node.
+        """
+        content = (
+            '"""Base module.\n'
+            '\n'
+            'The auth pair is consumed from the seed factory directly — NOT via\n'
+            '``standard_routers=["auth"]``, whose fixed-signature builder has no\n'
+            'seam for this product\'s real token resolver.\n'
+            '"""\n'
+            'create_product_app(standard_routers=["health", "notificacoes", "team"])'
+        )
+        state, parsed = _parse_standard_routers(content)
+        assert state == "found"
+        assert parsed == {"health", "notificacoes", "team"}
+
+    def test_same_named_kwarg_on_another_call_is_ignored(self):
+        """Only `create_product_app(...)` defines the opt-in list. social-wiring
+        also passes a `standard_routers=(...)` tuple to its module-registration
+        helper; that call must not be mistaken for the product's opt-in.
+        """
+        content = (
+            '_register(standard_routers=("health", "team"))\n'
+            'create_product_app(standard_routers=["health"])'
+        )
+        state, parsed = _parse_standard_routers(content)
+        assert state == "found"
+        assert parsed == {"health"}
+
 
 # --- check_standard_routers_audit -------------------------------------------
 
