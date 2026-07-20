@@ -24,6 +24,26 @@ from app.services.lead_scoring import compute_score
 
 logger = logging.getLogger(__name__)
 
+# Canonical default pipeline — mirrors orbity.seed_default_lead_stages()
+# (products/orbity/backend/migrations/005_crm_core.sql). Kept in sync by
+# hand: the SQL function is the source of truth for the DB-level backfill
+# (014_seed_default_stages_backfill.sql calls it directly, in-database —
+# no PostgREST/RPC involved), this constant backs the app-level forward
+# path (CRMService.seed_default_stages), which does NOT call the SQL
+# function via `.rpc()` — this backend has no RPC calling mechanism
+# anywhere (zero `.rpc(` call sites) and the seed test double
+# (MockSupabaseClient) has no `.rpc()` support to exercise against.
+DEFAULT_LEAD_STAGES: tuple[dict[str, Any], ...] = (
+    {"name": "Novo", "position": 0, "color": "#94a3b8", "is_won": False, "is_lost": False},
+    {"name": "Contato", "position": 1, "color": "#60a5fa", "is_won": False, "is_lost": False},
+    {"name": "Qualificado", "position": 2, "color": "#34d399", "is_won": False, "is_lost": False},
+    {"name": "Proposta", "position": 3, "color": "#fbbf24", "is_won": False, "is_lost": False},
+    {"name": "Negociação", "position": 4, "color": "#f97316", "is_won": False, "is_lost": False},
+    {"name": "Fechado", "position": 5, "color": "#22c55e", "is_won": True, "is_lost": False},
+    {"name": "Perdido", "position": 6, "color": "#f43f5e", "is_won": False, "is_lost": True},
+)
+
+
 def _normalize_br_phone(raw: str | None) -> str | None:
     """Normalize a Brazilian phone number to 55XXXXXXXXXXX form.
 
@@ -75,6 +95,64 @@ class CRMService:
             logger.exception("crm.list_stages failed org=%s", self._org_id)
             raise
         return result.data or []
+
+    def seed_default_stages(self) -> list[dict[str, Any]]:
+        """Idempotently create the 7 canonical default lead stages for this org.
+
+        Explicit, user-triggered forward path (POST /api/crm/stages/seed-
+        defaults) — deliberately NOT a lazy-seed on a GET/list read. See
+        014_seed_default_stages_backfill.sql for the full rationale.
+
+        Idempotency has two layers:
+          1. App-side: an org that already has stages is a no-op — the
+             existing rows are returned as-is.
+          2. DB-side: two callers racing past that check both attempt the
+             INSERT; the loser hits the `lead_stages_org_position_ux`
+             UNIQUE (org_id, position) index (005_crm_core.sql) and is
+             resolved here as "someone else already seeded" rather than
+             surfaced as a 502.
+
+        Org isolation: `org_id` is stamped from `self._org_id`, which the
+        router derives from the trusted auth dependency
+        (`get_current_user_org`) — never from client input — so this can
+        only ever seed the caller's own org. The write goes through the
+        user-scoped client (same as every other write in this service),
+        so RLS's `lead_stages_insert_own_org` policy (org_id =
+        current_org_id()) is the enforcing layer, not an admin bypass.
+        """
+        existing = self.list_stages()
+        if existing:
+            return existing
+
+        rows = [{**stage, "org_id": self._org_id} for stage in DEFAULT_LEAD_STAGES]
+        try:
+            result = self._t("lead_stages").insert(rows).execute()
+        except Exception as exc:
+            if self._is_duplicate_stage_error(exc):
+                logger.info(
+                    "crm.seed_default_stages: lost the seeding race org=%s, re-reading",
+                    self._org_id,
+                )
+                return self.list_stages()
+            logger.exception("crm.seed_default_stages failed org=%s", self._org_id)
+            raise
+        return result.data or self.list_stages()
+
+    @staticmethod
+    def _is_duplicate_stage_error(exc: Exception) -> bool:
+        """Detect a lead_stages_org_position_ux unique-violation (seed race).
+
+        Same sniff-then-fallback shape as
+        social-wiring/backend/app/services/message_store.py
+        ``_is_duplicate_error`` — Postgres/PostgREST surfaces code 23505;
+        the substring check is cheap and backend-agnostic.
+        """
+        msg = str(exc).lower()
+        return (
+            "23505" in msg
+            or "duplicate key" in msg
+            or ("unique" in msg and "position" in msg)
+        )
 
     # ------------------------------------------------------------------
     # Leads CRUD

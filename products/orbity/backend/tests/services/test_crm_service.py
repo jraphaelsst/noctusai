@@ -179,6 +179,83 @@ class TestFunil:
 
 
 # ---------------------------------------------------------------------------
+# Default stage seeding (self-serve forward path — see
+# 014_seed_default_stages_backfill.sql for the "why not lazy-on-read"
+# rationale)
+# ---------------------------------------------------------------------------
+
+class TestSeedDefaultStages:
+    def test_fresh_org_gets_seven_stages(self):
+        """A fresh org (no stages) gets the 7 canonical default stages."""
+        db, svc = _svc([])
+        result = svc.seed_default_stages()
+        assert len(result) == 7
+        names = [s["name"] for s in result]
+        assert names == [
+            "Novo", "Contato", "Qualificado", "Proposta",
+            "Negociação", "Fechado", "Perdido",
+        ]
+        # Every inserted row is stamped with THIS org's id
+        inserted = db.table("lead_stages").inserted_payloads
+        assert len(inserted) == 7
+        assert all(row["org_id"] == str(ORG) for row in inserted)
+        # is_won / is_lost land on the right stages
+        won = [s for s in result if s["is_won"]]
+        lost = [s for s in result if s["is_lost"]]
+        assert [s["name"] for s in won] == ["Fechado"]
+        assert [s["name"] for s in lost] == ["Perdido"]
+
+    def test_seeding_is_idempotent(self):
+        """Calling seed_default_stages() twice does not duplicate rows."""
+        db, svc = _svc([])
+        first = svc.seed_default_stages()
+        assert len(first) == 7
+
+        second = svc.seed_default_stages()
+        assert len(second) == 7
+
+        # No second INSERT was issued — the app-side existence check
+        # short-circuited before reaching the table.
+        inserted = db.table("lead_stages").inserted_payloads
+        assert len(inserted) == 7
+
+        # A fresh read confirms exactly 7 stages exist for the org, not 14.
+        assert len(svc.list_stages()) == 7
+
+    def test_org_with_existing_stages_is_a_noop(self):
+        """An org that already has (custom) stages is left untouched."""
+        existing = [_stage("s-1", "Custom Stage", 0)]
+        db, svc = _svc(existing)
+        result = svc.seed_default_stages()
+        assert result == existing
+        assert db.table("lead_stages").inserted_payloads == []
+
+    def test_cannot_seed_or_see_another_orgs_stages(self):
+        """Seeding org A never creates or leaks rows into org B's org_id."""
+        other_org = UUID("00000000-0000-0000-0000-000000000001")
+        db = MockSupabaseClient(data=[], schema="orbity")
+        svc_a = CRMService(db, org_id=ORG)
+        svc_b = CRMService(db, org_id=other_org)
+
+        seeded_a = svc_a.seed_default_stages()
+        assert len(seeded_a) == 7
+        assert all(s["org_id"] == str(ORG) for s in seeded_a)
+
+        # Org B, sharing the same underlying table, sees none of org A's
+        # stages (RLS-equivalent org_id filter enforced by list_stages).
+        assert svc_b.list_stages() == []
+
+        # Org B seeding its own funnel only ever stamps org B's id.
+        seeded_b = svc_b.seed_default_stages()
+        assert len(seeded_b) == 7
+        assert all(s["org_id"] == str(other_org) for s in seeded_b)
+
+        # Org A is unaffected by org B's seeding.
+        assert len(svc_a.list_stages()) == 7
+        assert all(s["org_id"] == str(ORG) for s in svc_a.list_stages())
+
+
+# ---------------------------------------------------------------------------
 # Lead scoring (integration: service-level, uses mock DB)
 # ---------------------------------------------------------------------------
 

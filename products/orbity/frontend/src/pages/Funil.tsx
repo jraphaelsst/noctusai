@@ -21,6 +21,7 @@ import {
   useMoveLeadStage,
   useLeadActivities,
   useAddActivity,
+  useSeedDefaultStages,
 } from "@/hooks/useCrm";
 import type {
   Lead,
@@ -43,6 +44,7 @@ import {
   DollarSign,
   MessageSquare,
   X,
+  LayoutGrid,
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -656,6 +658,7 @@ export default function Funil() {
   const updateLead = useUpdateLead();
   const deleteLead = useDeleteLead();
   const moveLead = useMoveLeadStage();
+  const seedDefaultStages = useSeedDefaultStages();
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -749,11 +752,19 @@ export default function Funil() {
 
   if (stages.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-3 p-6">
+      <div className="flex flex-col items-center justify-center h-64 gap-3 p-6 text-center">
+        <LayoutGrid className="h-10 w-10 text-gray-300" />
         <p className="text-gray-600 font-medium">Nenhuma etapa configurada</p>
-        <p className="text-sm text-gray-400">
-          Crie etapas do funil no backend para começar a usar o kanban.
+        <p className="text-sm text-gray-400 max-w-sm">
+          Crie as etapas padrão (Novo, Contato, Qualificado, Proposta,
+          Negociação, Fechado, Perdido) para começar a usar o funil.
         </p>
+        <Button
+          onClick={() => seedDefaultStages.mutate()}
+          disabled={seedDefaultStages.isPending}
+        >
+          {seedDefaultStages.isPending ? "Criando..." : "Criar etapas padrão"}
+        </Button>
       </div>
     );
   }

@@ -97,6 +97,25 @@ describe("useStages", () => {
   });
 });
 
+describe("useSeedDefaultStages", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("posts to /api/crm/stages/seed-defaults with no body", async () => {
+    mockPost.mockResolvedValue([mockStage]);
+
+    const { useSeedDefaultStages } = await import("@/hooks/useCrm");
+    const { result } = renderHook(() => useSeedDefaultStages(), {
+      wrapper: wrapper(),
+    });
+
+    result.current.mutate();
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPost).toHaveBeenCalledWith("/api/crm/stages/seed-defaults");
+    expect(result.current.data).toEqual([mockStage]);
+  });
+});
+
 describe("useCreateLead", () => {
   beforeEach(() => vi.clearAllMocks());
 

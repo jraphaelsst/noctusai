@@ -4,6 +4,8 @@
  * Backend contract (crm_router.py):
  *   GET    /api/crm/funil                → FunilStage[] (kanban grouped)
  *   GET    /api/crm/stages               → Stage[]
+ *   POST   /api/crm/stages/seed-defaults → Stage[] (idempotent; self-serve
+ *                                          "criar etapas padrão" action)
  *   GET    /api/crm/leads                → LeadListResponse
  *   POST   /api/crm/leads                → LeadOut 201
  *   GET    /api/crm/leads/{id}           → LeadOut
@@ -134,6 +136,24 @@ export function useStages() {
       return result;
     },
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+// ─── Seed default stages (self-serve empty-state action) ───────────────────
+
+export function useSeedDefaultStages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<Stage[]>("/api/crm/stages/seed-defaults"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: crmKeys.funil() });
+      qc.invalidateQueries({ queryKey: crmKeys.stages() });
+      toast.success("Etapas padrão criadas");
+    },
+    onError: () => {
+      toast.error("Falha ao criar etapas padrão");
+    },
   });
 }
 

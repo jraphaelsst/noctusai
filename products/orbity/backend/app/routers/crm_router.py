@@ -11,6 +11,10 @@ Auth boundary:
 Endpoints:
   GET    /api/crm/funil                      kanban grouped by stage
   GET    /api/crm/stages                     list stages for org
+  POST   /api/crm/stages/seed-defaults       create the 7 canonical default
+                                              stages for this org (idempotent;
+                                              self-serve forward path — see
+                                              014_seed_default_stages_backfill.sql)
   GET    /api/crm/leads                      paginated lead list
   POST   /api/crm/leads                      create lead → 201
   GET    /api/crm/leads/{id}                 lead detail
@@ -103,6 +107,24 @@ async def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     except Exception:
         logger.exception("crm.stages failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar etapas")
+
+
+@router.post("/api/crm/stages/seed-defaults", status_code=status.HTTP_200_OK)
+async def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> list:
+    """Self-serve: create the 7 canonical default lead stages for this org.
+
+    Idempotent — a second call is a no-op that returns the existing
+    stages. Org-scoped via the trusted auth dependency (never client
+    input); write goes through the user-scoped client so RLS enforces
+    the org boundary. See CRMService.seed_default_stages.
+    """
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    try:
+        return _crm(token, org_id).seed_default_stages()
+    except Exception:
+        logger.exception("crm.seed_default_stages failed org=%s", org_id)
+        raise HTTPException(status_code=502, detail="Falha ao criar etapas padrão")
 
 
 # ---------------------------------------------------------------------------
