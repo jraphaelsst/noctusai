@@ -25,6 +25,29 @@ export function extractErrorMessage(data: any, status: number): string {
   return `Erro HTTP ${status}`;
 }
 
+/**
+ * Error thrown by the API client, carrying the HTTP status as a STRUCTURED
+ * field so consumers branch on `err.status` (409/422/424/502 UX) instead of
+ * regex-parsing the message prefix. The message keeps the historical
+ * `[<status>] <message>` shape for backward compatibility — every existing
+ * consumer reading `err.message` (and the `/^\[(\d+)\]/` parsers products
+ * hand-rolled before this field existed) keeps working unchanged.
+ *
+ * `status` is `null` for a transport-level failure (server unreachable) that
+ * never produced an HTTP response — an honest "there is no status", never 0.
+ */
+export class ApiError extends Error {
+  readonly status: number | null;
+  constructor(status: number | null, message: string) {
+    super(status === null ? message : `[${status}] ${message}`);
+    this.name = 'ApiError';
+    this.status = status;
+    // Restore prototype chain — required when extending built-ins under the
+    // TS `target` this lib compiles to, so `err instanceof ApiError` holds.
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -89,7 +112,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const message = data
         ? extractErrorMessage(data, response.status)
         : `Erro HTTP ${response.status}`;
-      throw new Error(`[${response.status}] ${message}`);
+      throw new ApiError(response.status, message);
     }
     if (response.status === 204) return null as T;
     // 200 OK with non-JSON body is the classic SPA-fallback-eats-API shape
@@ -103,8 +126,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     } catch (err) {
       const path = new URL(response.url).pathname;
       const ct = response.headers.get('content-type') || 'unknown';
-      throw new Error(
-        `[${response.status}] Resposta nao-JSON em ${path} ` +
+      throw new ApiError(
+        response.status,
+        `Resposta nao-JSON em ${path} ` +
         `(content-type=${ct}). Provavel: deploy desatualizado ou ` +
         `descompasso FE/BE — verifique se a rota existe na imagem ativa.`,
       );
@@ -116,7 +140,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       return await fetch(url, init);
     } catch {
       const path = new URL(url).pathname;
-      throw new Error(`Servidor indisponivel (${path}). Verifique se o backend esta rodando.`);
+      throw new ApiError(null, `Servidor indisponivel (${path}). Verifique se o backend esta rodando.`);
     }
   }
 
