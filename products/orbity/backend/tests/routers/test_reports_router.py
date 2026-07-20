@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 # uuid5(NAMESPACE_OID, "test-org-123") — matches coerce_org_uuid("test-org-123")
 COERCED_TEST_ORG = "48ab962b-ec86-517e-9e42-7b581f622377"
@@ -149,6 +150,32 @@ class TestPublicReportEndpoint:
         body = resp.json()
         assert body["payload"] == {}
         assert body["snapshot_id"] is None
+
+    # -----------------------------------------------------------------
+    # Malformed public token — must read as 404, never 502
+    # -----------------------------------------------------------------
+    #
+    # Regression coverage: public_token is a UUID column
+    # (migrations/012_reports.sql:39). A non-UUID token in the path used
+    # to reach postgres and raise 22P02, caught by the router's broad
+    # `except Exception` and reported as 502. An unguessable public link
+    # that doesn't resolve is Not Found regardless of its shape —
+    # malformed and absent must be indistinguishable to the caller. A
+    # genuine DB failure on a syntactically valid token must still
+    # surface as 502 (that distinction is NOT collapsed).
+
+    def test_malformed_token_returns_404_not_502(self, client):
+        resp = client.raw().get("/api/reports/public/not-a-uuid")
+        assert resp.status_code == 404
+        assert resp.status_code != 502
+
+    def test_genuine_db_error_on_wellformed_token_returns_502(self, client):
+        """A well-formed token that hits a real DB failure is still 502, not 404."""
+        token = str(uuid.uuid4())
+        builder = client.mock_supabase.table("reports")
+        with patch.object(builder, "select", side_effect=RuntimeError("connection refused")):
+            resp = client.raw().get(f"/api/reports/public/{token}")
+        assert resp.status_code == 502
 
 
 # ---------------------------------------------------------------------------

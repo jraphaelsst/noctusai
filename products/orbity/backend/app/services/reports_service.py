@@ -322,6 +322,12 @@ class ReportsPublicService:
           - status != "published"
           - expires_at is in the past
 
+        Callers MUST validate that `token` parses as a UUID before calling
+        this method — the router does this (a malformed token is a 404,
+        not a DB round-trip; see reports_router.get_public_report). A
+        non-UUID token handed to this method would otherwise reach postgres
+        as a raw string comparison against a UUID column and raise 22P02.
+
         Raises:
           Exception: DB errors propagate (caller raises 502)
         """

@@ -230,7 +230,21 @@ async def get_public_report(token: str) -> PublicReportOut:
 
     Returns 404 for not-found, not-published, or expired reports to avoid
     leaking the existence of draft/expired reports via 403.
+
+    A malformed token (not a valid UUID) is indistinguishable from an
+    absent one to the caller — both return 404. Shape is validated here
+    (before the DB round-trip) so an invalid UUID literal never reaches
+    postgres, which would otherwise raise 22P02 and get misreported as a
+    502 by the generic except below. A genuine DB failure on a
+    well-formed token still surfaces as 502.
     """
+    not_found_detail = "Relatório não encontrado, não publicado ou expirado"
+
+    try:
+        UUID(token)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
     try:
         result = _public_svc().get_published_report_by_token(token)
     except Exception:
@@ -238,10 +252,7 @@ async def get_public_report(token: str) -> PublicReportOut:
         raise HTTPException(status_code=502, detail="Falha ao buscar relatório público")
 
     if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Relatório não encontrado, não publicado ou expirado",
-        )
+        raise HTTPException(status_code=404, detail=not_found_detail)
 
     report = result["report"]
     snapshot = result.get("snapshot")

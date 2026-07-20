@@ -35,6 +35,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -404,8 +405,19 @@ async def public_get_approval(token: str) -> PublicApprovalView:
     """Public — fetch the post for the client via approval token.
 
     No auth required. Returns a safe PublicApprovalView (no org_id).
-    Returns 404 if token not found. Returns 410 if expired.
+    Returns 404 if token not found or malformed. Returns 410 if expired.
+
+    A malformed token (not a valid UUID) is validated away before the DB
+    round-trip — same non-guessable-link-is-404 reasoning as reports_router
+    (avoids postgres 22P02 being misreported as 502).
     """
+    not_found_detail = "Link de aprovação não encontrado"
+
+    try:
+        UUID(token)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
     svc = _admin_approval_svc()
     try:
         pair = svc.fetch_by_token(token)
@@ -416,7 +428,7 @@ async def public_get_approval(token: str) -> PublicApprovalView:
         logger.exception("public_get_approval failed token=%s", token)
         raise HTTPException(status_code=502, detail="Falha ao buscar aprovação")
     if pair is None:
-        raise HTTPException(status_code=404, detail="Link de aprovação não encontrado")
+        raise HTTPException(status_code=404, detail=not_found_detail)
     approval, post = pair
     return PublicApprovalView(
         approval_id=approval["id"],
@@ -442,8 +454,14 @@ async def public_submit_approval(
     """Public — submit client decision (approved|revision) via token.
 
     No auth required. Token IS the authorization.
-    Returns 404 if token not found. Returns 410 if expired or already decided.
+    Returns 404 if token not found or malformed. Returns 410 if expired or
+    already decided.
     """
+    try:
+        UUID(token)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Approval token not found")
+
     svc = _admin_approval_svc()
     try:
         updated = svc.decide(token, payload.decision, feedback=payload.feedback)

@@ -10,6 +10,8 @@ Validation:
   - StrictHttpModel extra='forbid' → unknown fields → 422.
   - Literal field violations → 422.
 """
+from unittest.mock import patch
+
 import pytest
 
 TEST_ORG = "00000000-0000-0000-0000-000000000001"
@@ -239,3 +241,49 @@ class TestPublicApproveEndpoints:
             json={"decision": "revision", "feedback": "Please darken the colours."},
         )
         assert resp.status_code != 401
+
+
+# ---------------------------------------------------------------------------
+# Malformed public token — must read as 404, never 502
+# ---------------------------------------------------------------------------
+#
+# Regression coverage: public_token is a UUID column (migrations/011_social_
+# content.sql:165). A non-UUID token in the path used to reach postgres and
+# raise 22P02, caught by the routers' broad `except Exception` and reported
+# as 502. An unguessable public link that doesn't resolve is Not Found
+# regardless of its shape — malformed and absent must be indistinguishable
+# to the caller. A genuine DB failure on a syntactically valid token must
+# still surface as 502 (that distinction is NOT collapsed).
+
+class TestPublicApproveTokenValidation:
+    """GET/POST /api/content/approve/{token} — malformed token == 404, real DB failure == 502."""
+
+    def test_get_approval_malformed_token_returns_404_not_502(self, client):
+        resp = client.raw().get("/api/content/approve/not-a-uuid")
+        assert resp.status_code == 404
+        assert resp.status_code != 502
+
+    def test_post_approval_malformed_token_returns_404_not_502(self, client):
+        resp = client.raw().post(
+            "/api/content/approve/not-a-uuid",
+            json={"decision": "approved"},
+        )
+        assert resp.status_code == 404
+        assert resp.status_code != 502
+
+    def test_get_approval_genuine_db_error_returns_502(self, client):
+        """A well-formed token that hits a real DB failure is still 502, not 404."""
+        builder = client.mock_supabase.table("post_approvals")
+        with patch.object(builder, "select", side_effect=RuntimeError("connection refused")):
+            resp = client.raw().get(f"/api/content/approve/{TEST_TOKEN}")
+        assert resp.status_code == 502
+
+    def test_post_approval_genuine_db_error_returns_502(self, client):
+        """A well-formed token that hits a real DB failure is still 502, not 404."""
+        builder = client.mock_supabase.table("post_approvals")
+        with patch.object(builder, "select", side_effect=RuntimeError("connection refused")):
+            resp = client.raw().post(
+                f"/api/content/approve/{TEST_TOKEN}",
+                json={"decision": "approved"},
+            )
+        assert resp.status_code == 502

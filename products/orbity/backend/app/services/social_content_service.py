@@ -334,6 +334,14 @@ class PublicApprovalService:
         """Fetch (approval, post) by public_token.
 
         Returns None if token not found. Raises ValueError if expired or decided.
+
+        Callers MUST validate that `token` parses as a UUID before calling
+        this method — both public_get_approval and public_submit_approval
+        in social_content_router do this (a malformed token is a 404, not
+        a DB round-trip). A non-UUID token handed to this method would
+        otherwise reach postgres as a raw string comparison against a
+        UUID column (public_token) and raise 22P02, which propagates as
+        an unhandled Exception (caller raises 502).
         """
         try:
             result = (
