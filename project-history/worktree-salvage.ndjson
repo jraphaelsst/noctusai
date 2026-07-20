@@ -242,3 +242,4 @@
 {"ts": "2026-07-16", "event": "worktree-sweep", "path": ".claude/worktrees/erp-processos-venda-roadmap", "branch": "feat/erp-processos-venda-roadmap", "sha": "2a960baefbb24a7ddf52d2c5875709dc53a82df6", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-20T16:12:46.257223+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 3, "remote_unique_aged_count": 91}
 {"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-public-token-404", "branch": "feat/orbity-public-token-404", "sha": "f5b44f28ec8c7fe85a6bd7f1950d78b0e207075f", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-20", "event": "worktree-sweep", "path": ".claude/worktrees/orbity-debrand", "branch": "feat/orbity-debrand", "sha": "6f7c462980a48ec75ec735d3140feb11a91222e6", "reason": "task_branch cleanup (learn-before-delete)"}
