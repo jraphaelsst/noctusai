@@ -123,3 +123,6 @@ scripts/archive-clean-last-sweep.log
 # rebases+pushes.
 /PLANO-LANCAMENTO-LIVRO.md
 /PLANO-LANCAMENTO-LIVRO.docx
+
+# Local .env backups — contain secrets, never track
+.env.bak.*
