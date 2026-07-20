@@ -1372,15 +1372,27 @@ class MetaOAuthAdapter:
     #    scope) ───────────────────────────────────────────────────────
 
     def list_instagram_conversations(
-        self, ig_user_id: str, limit: int = 25
+        self, page_id: str, limit: int = 25
     ) -> list[Conversation]:
-        """List Instagram Direct conversation threads for an IG user —
-        `GET /{ig-user}/conversations?platform=instagram`. Needs
-        `instagram_manage_messages` (App-Review-gated)."""
+        """List Instagram Direct conversation threads —
+        `GET /{PAGE-ID}/conversations?platform=instagram` with the
+        **Page** access token of the Facebook Page linked to the IG
+        professional account.
+
+        This is the **Facebook-Login** model (IG account linked to a
+        Page) — the node is the PAGE, not the IG user, and the token is
+        the Page token. Calling `/{ig-user-id}/conversations` with a
+        user token is the *Instagram-Login* model's shape and Graph
+        rejects it on a Facebook-Login app with error (#3) "Application
+        does not have the capability to make this API call" — the DM
+        capability lives on the Page for this model. Needs
+        `instagram_basic` + `instagram_manage_messages` +
+        `pages_manage_metadata`
+        (developers.facebook.com/docs/messenger-platform/conversations)."""
 
         rows = _meta_api.graph_paged(
-            f"{ig_user_id}/conversations",
-            access_token=self._user_token(),
+            f"{page_id}/conversations",
+            access_token=self._page_token(page_id),
             params={
                 "platform": "instagram",
                 "fields": IG_CONVERSATION_FIELDS,
@@ -1392,7 +1404,7 @@ class MetaOAuthAdapter:
         return [conversation_from_body(r) for r in rows]
 
     def list_instagram_messages(
-        self, conversation_id: str, limit: int = 25
+        self, conversation_id: str, page_id: str, limit: int = 25
     ) -> list[DirectMessage]:
         """List messages inside one Direct conversation.
 
@@ -1400,9 +1412,14 @@ class MetaOAuthAdapter:
         (Graph does not expand message fields on the list edge), so
         each message is re-fetched by id (`GET /{message-id}`) for the
         full body — the same link-probe-then-detail-fetch shape
-        `list_instagram_accounts` already uses for the Page→IG link."""
+        `list_instagram_accounts` already uses for the Page→IG link.
 
-        token = self._user_token()
+        Uses the **Page** token (`page_id` = the Facebook Page linked to
+        the IG account) — same Facebook-Login model as
+        `list_instagram_conversations`; the conversation/message edges
+        are Page-scoped operations on this model."""
+
+        token = self._page_token(page_id)
         rows = _meta_api.graph_paged(
             f"{conversation_id}/messages",
             access_token=token,
@@ -1429,26 +1446,30 @@ class MetaOAuthAdapter:
         return messages
 
     def send_instagram_message(
-        self, ig_user_id: str, recipient_id: str, text: str
+        self, page_id: str, recipient_id: str, text: str
     ) -> DirectMessage:
         """Send an Instagram Direct message —
-        `POST /{ig-user}/messages` with nested `recipient={"id": ...}`
-        + `message={"text": ...}` (Meta's Send API shape — nested
-        objects are JSON-encoded form fields, same convention as
-        `create_ad_set`'s `targeting`).
+        `POST /{PAGE-ID}/messages` with nested `recipient={"id": ...}`
+        + `message={"text": ...}` using the **Page** token (Meta's Send
+        API shape — nested objects are JSON-encoded form fields, same
+        convention as `create_ad_set`'s `targeting`).
+
+        Facebook-Login model: the send goes through the PAGE linked to
+        the IG account, not the IG-user node (see
+        `list_instagram_conversations` — the IG-user node returns (#3)
+        on this model).
 
         **Production gate:** `instagram_manage_messages` is App-Review-
-        gated (and additionally requires the IG account to be linked to
-        an app approved for the Instagram Messaging API). Absent it
+        gated for serving OTHER users; absent the granted permission
         Graph returns a permission error and this raises
         `MetaGraphError` with `requires_app_review` true — never a
         faked success."""
 
         import json
 
-        token = self._user_token()
+        token = self._page_token(page_id)
         created = _meta_api.graph_post(
-            f"{ig_user_id}/messages",
+            f"{page_id}/messages",
             access_token=token,
             data={
                 "recipient": json.dumps({"id": recipient_id}),
@@ -1461,13 +1482,13 @@ class MetaOAuthAdapter:
         )
         if not message_id:
             raise MetaGraphError(
-                f"IG Direct send from {ig_user_id} to {recipient_id} "
+                f"IG Direct send from page {page_id} to {recipient_id} "
                 "returned no message id",
                 code=200,
             )
         return DirectMessage(
             id=message_id,
-            sender_id=ig_user_id,
+            sender_id=page_id,
             recipient_id=recipient_id,
             text=text,
         )

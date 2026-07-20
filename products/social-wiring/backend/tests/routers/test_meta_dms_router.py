@@ -25,6 +25,7 @@ _ACCOUNT = "00000000-0000-4000-8000-0000000000ac"
 _ORG = "00000000-0000-4000-8000-000000000099"
 _QS = f"account_id={_ACCOUNT}&org_id={_ORG}"
 _IG_USER = "17841400000000000"
+_PAGE = "1122334455"
 _OTHER = "999888777"
 
 
@@ -43,9 +44,9 @@ class _GatedAdapter(FakeMetaAdapter):
 def _seeded():
     adapter = FakeMetaAdapter()
     adapter.seed(
-        ig_accounts=[InstagramAccount(id=_IG_USER, username="one")],
-        conversations_by_ig_user={
-            _IG_USER: [
+        ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)],
+        conversations_by_page={
+            _PAGE: [
                 Conversation(id="conv-1", participant_ids=[_IG_USER, _OTHER])
             ]
         },
@@ -96,6 +97,19 @@ def _override(adapter):
 
 
 class TestConversations:
+    def test_conversations_404_when_ig_account_has_no_linked_page(self, client):
+        # Facebook-Login model: IG Direct is served through the linked
+        # Page. An IG account with no page_id can't reach conversations —
+        # surfaced as a structured 404, never a silent empty list.
+        adapter = FakeMetaAdapter()
+        adapter.seed(
+            ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=None)]
+        )
+        _override(adapter)
+        resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+        assert resp.status_code == 404, resp.text
+        assert "page" in resp.json()["error"]["message"].lower()
+
     def test_list_conversations(self, client):
         _override(_seeded())
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
@@ -112,7 +126,7 @@ class TestConversations:
 
     def test_list_conversations_graph_error_502(self, client):
         gated = _GatedAdapter(error=MetaGraphError("boom", code=4, http_status=500))
-        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one")])
+        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)])
         _override(gated)
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
         assert resp.status_code == 502, resp.text
@@ -130,7 +144,7 @@ class TestConversations:
                 http_status=400,
             )
         )
-        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one")])
+        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)])
         _override(gated)
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
         assert resp.status_code == 200, resp.text
@@ -169,7 +183,7 @@ class TestMessages:
         gated = _GatedAdapter(
             error=MetaGraphError("permission denied", code=10, http_status=400)
         )
-        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one")])
+        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)])
         _override(gated)
         resp = client.post(
             f"/api/meta/instagram/messages?{_QS}",

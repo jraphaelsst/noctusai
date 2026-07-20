@@ -29,7 +29,8 @@ from noctusai_lib.api import StrictHttpModel
 from app.routers._meta_common import (
     get_account_adapter,
     handle_meta_graph_error,
-    resolve_primary_ig_user_id,
+    resolve_primary_ig_account,
+    resolve_primary_ig_page_id,
 )
 from app.services.meta import MetaAdapter, MetaGraphError
 
@@ -90,8 +91,15 @@ def _conversation_out(conv, *, self_id: str) -> MetaConversationOut:
     )
 
 
-def _message_out(msg, *, self_id: str) -> MetaMessageOut:
-    direction = "outbound" if msg.sender_id == self_id else "inbound"
+def _message_out(msg, *, self_id: str, direction: str | None = None) -> MetaMessageOut:
+    # READ path derives direction by comparing the message's sender to
+    # "self" (the IG business account id). The SEND path passes
+    # ``direction="outbound"`` explicitly — a just-sent message's
+    # synthesized ``sender_id`` is the Page id (the send node on the
+    # Facebook-Login model), which by construction won't equal the IG
+    # account id, so the comparison would misread it as inbound.
+    if direction is None:
+        direction = "outbound" if msg.sender_id == self_id else "inbound"
     return MetaMessageOut(
         id=msg.id,
         conversation_id=msg.conversation_id,
@@ -110,15 +118,16 @@ def list_conversations(
     adapter: MetaAdapter = Depends(get_account_adapter),
 ):
     try:
-        ig_user_id = resolve_primary_ig_user_id(adapter)
-        conversations = adapter.list_instagram_conversations(ig_user_id, limit)
+        account = resolve_primary_ig_account(adapter)
+        page_id = resolve_primary_ig_page_id(adapter)
+        conversations = adapter.list_instagram_conversations(page_id, limit)
     except MetaGraphError as exc:
         logger.warning("meta dms: conversations list failed: %s", exc)
         return handle_meta_graph_error(exc)
 
     return MetaConversationsListOut(
         conversations=[
-            _conversation_out(c, self_id=ig_user_id) for c in conversations
+            _conversation_out(c, self_id=account.id) for c in conversations
         ]
     )
 
@@ -131,8 +140,9 @@ def list_messages(
     adapter: MetaAdapter = Depends(get_account_adapter),
 ):
     try:
-        ig_user_id = resolve_primary_ig_user_id(adapter)
-        messages = adapter.list_instagram_messages(conversation_id, limit)
+        account = resolve_primary_ig_account(adapter)
+        page_id = resolve_primary_ig_page_id(adapter)
+        messages = adapter.list_instagram_messages(conversation_id, page_id, limit)
     except MetaGraphError as exc:
         logger.warning(
             "meta dms: messages list failed for %s: %s", conversation_id, exc
@@ -140,7 +150,7 @@ def list_messages(
         return handle_meta_graph_error(exc)
 
     return MetaMessagesListOut(
-        messages=[_message_out(m, self_id=ig_user_id) for m in messages]
+        messages=[_message_out(m, self_id=account.id) for m in messages]
     )
 
 
@@ -151,15 +161,16 @@ def send_message(
     adapter: MetaAdapter = Depends(get_account_adapter),
 ):
     try:
-        ig_user_id = resolve_primary_ig_user_id(adapter)
+        account = resolve_primary_ig_account(adapter)
+        page_id = resolve_primary_ig_page_id(adapter)
         sent = adapter.send_instagram_message(
-            ig_user_id, payload.recipient_id, payload.text
+            page_id, payload.recipient_id, payload.text
         )
     except MetaGraphError as exc:
         logger.warning("meta dms: send failed to %s: %s", payload.recipient_id, exc)
         return handle_meta_graph_error(exc)
 
-    return _message_out(sent, self_id=ig_user_id)
+    return _message_out(sent, self_id=account.id, direction="outbound")
 
 
 __all__ = ["router"]

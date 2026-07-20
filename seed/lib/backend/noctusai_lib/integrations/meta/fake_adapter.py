@@ -85,7 +85,7 @@ class FakeMetaAdapter:
         # gate here either.
         self._ig_comments_by_media: dict[str, list[InstagramComment]] = {}
         self._fb_comments_by_post: dict[str, list[FacebookComment]] = {}
-        self._conversations_by_ig_user: dict[str, list[Conversation]] = {}
+        self._conversations_by_page: dict[str, list[Conversation]] = {}
         self._messages_by_conversation: dict[str, list[DirectMessage]] = {}
         self.created_instagram_comments: list[InstagramComment] = []
         self.replied_instagram_comments: list[InstagramComment] = []
@@ -117,7 +117,7 @@ class FakeMetaAdapter:
         ad_insights: dict[str, AdInsights] | None = None,
         ig_comments_by_media: dict[str, list[InstagramComment]] | None = None,
         fb_comments_by_post: dict[str, list[FacebookComment]] | None = None,
-        conversations_by_ig_user: dict[str, list[Conversation]] | None = None,
+        conversations_by_page: dict[str, list[Conversation]] | None = None,
         messages_by_conversation: dict[str, list[DirectMessage]] | None = None,
     ) -> "FakeMetaAdapter":
         if pages is not None:
@@ -154,9 +154,9 @@ class FakeMetaAdapter:
             self._fb_comments_by_post = {
                 k: list(v) for k, v in fb_comments_by_post.items()
             }
-        if conversations_by_ig_user is not None:
-            self._conversations_by_ig_user = {
-                k: list(v) for k, v in conversations_by_ig_user.items()
+        if conversations_by_page is not None:
+            self._conversations_by_page = {
+                k: list(v) for k, v in conversations_by_page.items()
             }
         if messages_by_conversation is not None:
             self._messages_by_conversation = {
@@ -502,26 +502,29 @@ class FakeMetaAdapter:
     # ─── IG Direct messages (deterministic in-memory simulation) ───────
 
     def list_instagram_conversations(
-        self, ig_user_id: str, limit: int = 25
+        self, page_id: str, limit: int = 25
     ) -> list[Conversation]:
         return list(
-            self._conversations_by_ig_user.get(ig_user_id, [])
+            self._conversations_by_page.get(page_id, [])
         )[:limit]
 
     def list_instagram_messages(
-        self, conversation_id: str, limit: int = 25
+        self, conversation_id: str, page_id: str, limit: int = 25
     ) -> list[DirectMessage]:
+        # `page_id` accepted for Protocol parity (the Facebook-Login
+        # model reads messages with the Page token) — the Fake keys by
+        # conversation_id.
         return list(
             self._messages_by_conversation.get(conversation_id, [])
         )[:limit]
 
     def send_instagram_message(
-        self, ig_user_id: str, recipient_id: str, text: str
+        self, page_id: str, recipient_id: str, text: str
     ) -> DirectMessage:
         self._dm_seq += 1
         msg = DirectMessage(
-            id=f"{ig_user_id}_dm_{self._dm_seq}",
-            sender_id=ig_user_id,
+            id=f"{page_id}_dm_{self._dm_seq}",
+            sender_id=page_id,
             recipient_id=recipient_id,
             text=text,
         )

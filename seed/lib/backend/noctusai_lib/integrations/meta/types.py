@@ -635,16 +635,20 @@ class MetaAdapter(Protocol):
     # ─── IG Direct messages (additive — `instagram_manage_messages`
     #    scope) ───────────────────────────────────────────────────────
 
+    # Facebook-Login model: IG Direct is served through the linked
+    # Facebook Page (page_id + Page token), NOT the IG-user node — the
+    # IG-user shape is the Instagram-Login model and returns Graph (#3)
+    # here. See MetaOAuthAdapter.list_instagram_conversations.
     def list_instagram_conversations(
-        self, ig_user_id: str, limit: int = 25
+        self, page_id: str, limit: int = 25
     ) -> list[Conversation]: ...
 
     def list_instagram_messages(
-        self, conversation_id: str, limit: int = 25
+        self, conversation_id: str, page_id: str, limit: int = 25
     ) -> list[DirectMessage]: ...
 
     def send_instagram_message(
-        self, ig_user_id: str, recipient_id: str, text: str
+        self, page_id: str, recipient_id: str, text: str
     ) -> DirectMessage: ...
 
     # ─── IG Stories (additive — `instagram_content_publish` scope,

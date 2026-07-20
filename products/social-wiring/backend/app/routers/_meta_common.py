@@ -57,6 +57,7 @@ from app.services.credential_vault import CredentialStore, EncryptionNotConfigur
 from app.services.integration_account_service import IntegrationAccountNotFound
 from app.services.meta import (
     FakeMetaAdapter,
+    InstagramAccount,
     MetaAdapter,
     MetaGraphError,
     MetaOAuthAdapter,
@@ -67,7 +68,9 @@ __all__ = [
     "build_store",
     "adapter_label",
     "get_account_adapter",
+    "resolve_primary_ig_account",
     "resolve_primary_ig_user_id",
+    "resolve_primary_ig_page_id",
     "handle_meta_graph_error",
 ]
 
@@ -139,11 +142,11 @@ def get_account_adapter(
         ) from exc
 
 
-def resolve_primary_ig_user_id(adapter: MetaAdapter) -> str:
-    """The Instagram Business/Creator account id this Meta connection
-    sees — every account-scoped IG endpoint resolves ``ig_user_id`` this
-    way instead of taking it as a path param (the Wave 3 refactor: "the
-    IG user resolved from the account", not from the caller).
+def resolve_primary_ig_account(adapter: MetaAdapter) -> InstagramAccount:
+    """The primary Instagram Business/Creator account this Meta
+    connection sees — every account-scoped IG endpoint resolves it this
+    way instead of taking an id as a path param (the Wave 3 refactor:
+    "the IG account resolved from the connection", not from the caller).
 
     A per-client Meta connection is expected to see exactly one linked
     IG account in practice (mirrors ``integration_accounts_router``'s
@@ -160,7 +163,38 @@ def resolve_primary_ig_user_id(adapter: MetaAdapter) -> str:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="no instagram account linked to this Meta connection",
         )
-    return accounts[0].id
+    return accounts[0]
+
+
+def resolve_primary_ig_user_id(adapter: MetaAdapter) -> str:
+    """The primary IG account's id (its IG-scoped user id) — used as the
+    ``self_id`` when resolving "the other participant" of a DM thread,
+    and by the insights routers as the ``/{ig-user-id}/...`` node."""
+    return resolve_primary_ig_account(adapter).id
+
+
+def resolve_primary_ig_page_id(adapter: MetaAdapter) -> str:
+    """The Facebook **Page** id linked to the primary IG account — the
+    node + token seam for Instagram Direct on the **Facebook-Login**
+    model (``GET /{PAGE-ID}/conversations?platform=instagram`` with the
+    Page token; see ``MetaOAuthAdapter.list_instagram_conversations``).
+
+    Raises 404 (structured) when the IG account has no linked Facebook
+    Page — IG Direct is unreachable on this model without one (the user
+    would need the Instagram-Login model instead), so this is an
+    actionable "not configured" state, never a silent empty list.
+    """
+    account = resolve_primary_ig_account(adapter)
+    if not account.page_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "instagram account has no linked facebook page — "
+                "direct messages require a page-linked (facebook-login) "
+                "connection"
+            ),
+        )
+    return account.page_id
 
 
 def handle_meta_graph_error(exc: MetaGraphError) -> JSONResponse:

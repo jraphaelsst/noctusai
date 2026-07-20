@@ -888,25 +888,27 @@ class TestFakeCommentsMessagesStories:
         assert fake.deleted_instagram_comment_ids == ["c1"]
 
     def test_list_instagram_conversations_and_messages_seeded(self):
+        # Facebook-Login model: conversations are keyed by the linked
+        # PAGE id (page token), not the IG-user id.
         fake = FakeMetaAdapter().seed(
-            conversations_by_ig_user={
-                "IG1": [Conversation(id="conv1", participant_ids=["IG1", "U1"])]
+            conversations_by_page={
+                "PAGE1": [Conversation(id="conv1", participant_ids=["IG1", "U1"])]
             },
             messages_by_conversation={
                 "conv1": [DirectMessage(id="m1", text="hey")]
             },
         )
-        convs = fake.list_instagram_conversations("IG1")
+        convs = fake.list_instagram_conversations("PAGE1")
         assert len(convs) == 1 and convs[0].id == "conv1"
-        msgs = fake.list_instagram_messages("conv1")
+        msgs = fake.list_instagram_messages("conv1", "PAGE1")
         assert len(msgs) == 1 and msgs[0].text == "hey"
         assert fake.list_instagram_conversations("nope") == []
 
     def test_send_instagram_message_records(self):
         fake = FakeMetaAdapter()
-        msg = fake.send_instagram_message("IG1", "U1", "hello there")
-        assert msg.id == "IG1_dm_1"
-        assert msg.sender_id == "IG1"
+        msg = fake.send_instagram_message("PAGE1", "U1", "hello there")
+        assert msg.id == "PAGE1_dm_1"
+        assert msg.sender_id == "PAGE1"
         assert msg.recipient_id == "U1"
         assert msg.text == "hello there"
         assert fake.sent_instagram_messages == [msg]
@@ -1241,7 +1243,11 @@ class TestRealCommentsMessagesStories:
     # ── IG Direct messages ──────────────────────────────────────────
 
     def test_list_instagram_conversations_reads(self):
+        # Facebook-Login model: the node is the PAGE + Page token, NOT
+        # the IG-user id. Calling the IG-user node here is what triggered
+        # Graph (#3) in prod — this test locks the correct node/token.
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["PAGE1"] = "PAGETOK"
         body = {
             "data": [
                 {
@@ -1251,13 +1257,24 @@ class TestRealCommentsMessagesStories:
             ],
             "paging": {},
         }
-        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
-            convs = a.list_instagram_conversations("IG1")
+        captured = {}
+
+        def _get(url, **kw):
+            captured["url"] = url
+            captured["params"] = kw.get("params")
+            return _FakeResponse(body)
+
+        with patch.object(httpx, "get", side_effect=_get):
+            convs = a.list_instagram_conversations("PAGE1")
         assert convs[0].id == "conv1"
         assert convs[0].participant_ids == ["IG1", "U1"]
+        assert captured["url"].endswith("/PAGE1/conversations")
+        assert captured["params"]["platform"] == "instagram"
+        assert captured["params"]["access_token"] == "PAGETOK"
 
     def test_list_instagram_messages_two_step_flow(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["PAGE1"] = "PAGETOK"
         list_body = {"data": [{"id": "m1"}, {"id": "m2"}], "paging": {}}
         detail1 = {
             "id": "m1",
@@ -1271,36 +1288,51 @@ class TestRealCommentsMessagesStories:
             "to": {"data": [{"id": "U1"}]},
             "message": "yo",
         }
-        get_resps = [
-            _FakeResponse(list_body),
-            _FakeResponse(detail1),
-            _FakeResponse(detail2),
-        ]
-        with patch.object(httpx, "get", side_effect=get_resps):
-            msgs = a.list_instagram_messages("conv1")
+        tokens_seen = []
+
+        def _get(url, **kw):
+            tokens_seen.append(kw.get("params", {}).get("access_token"))
+            return _FakeResponse(
+                [list_body, detail1, detail2][len(tokens_seen) - 1]
+            )
+
+        with patch.object(httpx, "get", side_effect=_get):
+            msgs = a.list_instagram_messages("conv1", "PAGE1")
         assert [m.id for m in msgs] == ["m1", "m2"]
         assert msgs[0].sender_id == "U1"
         assert msgs[0].recipient_id == "IG1"
         assert msgs[0].conversation_id == "conv1"
+        # Every call — the list edge AND each detail fetch — uses the
+        # Page token, not the system/user token.
+        assert tokens_seen == ["PAGETOK", "PAGETOK", "PAGETOK"]
 
     def test_send_instagram_message_creates(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
-        with patch.object(
-            httpx, "post", return_value=_FakeResponse({"message_id": "MID1"})
-        ):
-            out = a.send_instagram_message("IG1", "U1", "hello there")
+        a._page_token_cache["PAGE1"] = "PAGETOK"
+        captured = {}
+
+        def _post(url, **kw):
+            captured["url"] = url
+            captured["data"] = kw.get("data")
+            return _FakeResponse({"message_id": "MID1"})
+
+        with patch.object(httpx, "post", side_effect=_post):
+            out = a.send_instagram_message("PAGE1", "U1", "hello there")
         assert out.id == "MID1"
-        assert out.sender_id == "IG1"
+        assert out.sender_id == "PAGE1"
         assert out.recipient_id == "U1"
         assert out.text == "hello there"
+        assert captured["url"].endswith("/PAGE1/messages")
+        assert captured["data"]["access_token"] == "PAGETOK"
 
     def test_send_instagram_message_scope_absent_raises_app_review(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["PAGE1"] = "PAGETOK"
         with patch.object(
             httpx, "post", return_value=_FakeResponse(self._PERM_ERR)
         ):
             with pytest.raises(MetaGraphError) as exc:
-                a.send_instagram_message("IG1", "U1", "blocked")
+                a.send_instagram_message("PAGE1", "U1", "blocked")
         assert exc.value.requires_app_review is True
 
     # ── IG Stories ───────────────────────────────────────────────────
