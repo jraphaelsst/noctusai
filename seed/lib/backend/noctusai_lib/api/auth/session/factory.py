@@ -34,9 +34,9 @@ def make_session_store(
             ``fakeredis.aioredis.FakeRedis`` in tests) — forces the Redis
             adapter regardless of ``redis_url``.
         encryption_key: Fernet key for at-rest encryption of the session
-            tokens (SEC-3). Derive from ``settings.session_encryption_key``
-            (``.encode()``). When ``None``, the Redis store keeps tokens
-            plaintext.
+            tokens (SEC-3). Derive from
+            ``settings.redis_session_encryption_key`` (``.encode()``). When
+            ``None``, the Redis store keeps tokens plaintext.
         extra_decrypt_keys: Old Fernet keys still accepted on the read path
             during a key rotation window (see ``MultiKeyDecryptor``).
         require_encryption: When ``True``, refuse to return a Redis-backed
@@ -58,7 +58,8 @@ def make_session_store(
             "make_session_store: require_encryption is set but no "
             "encryption_key was provided — the Supabase refresh token would "
             "be stored plaintext in shared Redis (SEC-3). Set "
-            "settings.session_encryption_key."
+            "settings.redis_session_encryption_key "
+            "(env var REDIS_SESSION_ENCRYPTION_KEY)."
         )
     if client is not None:
         return RedisSessionStore(

@@ -24,7 +24,7 @@ single entry in ``noctusai_seed.routers._STANDARD_ROUTERS``.
 using ``standard_routers=["auth", ...]`` gets it via ``deps`` (the seed's
 ``ProductDependencies``, built once by ``create_product_app``) + the
 product's own ``settings`` (``ProductSettings`` — ``supabase_url`` /
-``supabase_anon_key`` / ``redis_url`` / ``session_encryption_key`` all live
+``supabase_anon_key`` / ``redis_url`` / ``redis_session_encryption_key`` all live
 there already).
 
 **Scope — what this router's OWN ``get_auth_context`` resolves.** The 5
@@ -103,7 +103,7 @@ def get_session_store(settings) -> SessionStore:
     set; the in-memory ``FakeSessionStore`` otherwise (dev / no Redis
     configured). ``require_encryption=True`` unconditionally — refuses to
     build a plaintext-Redis store even if a caller forgets
-    ``session_encryption_key`` (fails loudly at boot per SEC-3, matching
+    ``redis_session_encryption_key`` (fails loudly at boot per SEC-3, matching
     ``make_session_store``'s documented production-wiring recommendation).
 
     Keyed by ``id(settings)`` (not memoized forever) so per-product test
@@ -112,7 +112,7 @@ def get_session_store(settings) -> SessionStore:
     """
     global _session_store, _session_store_settings_id
     if _session_store is None or _session_store_settings_id != id(settings):
-        raw_key = getattr(settings, "session_encryption_key", "") or ""
+        raw_key = getattr(settings, "redis_session_encryption_key", "") or ""
         encryption_key = raw_key.encode() if raw_key else None
         _session_store = make_session_store(
             redis_url=getattr(settings, "redis_url", None),
@@ -282,7 +282,7 @@ def create_auth_router(
             there).
         settings: The product's ``ProductSettings`` instance —
             ``supabase_url`` / ``supabase_anon_key`` (login + SEC-4
-            revoke) and ``redis_url`` / ``session_encryption_key`` (the
+            revoke) and ``redis_url`` / ``redis_session_encryption_key`` (the
             session store, SEC-3) are read off it.
         api_token_resolver: Optional REAL ``ApiTokenResolver`` (e.g. a
             product's DB-backed ``SupabaseApiTokenResolver``). Defaults

@@ -77,8 +77,11 @@ class SocialWiringSettings(ProductSettings):
     # `make_session_store(require_encryption=True)`, which REFUSES to
     # boot a Redis-backed store without this key — fail loudly rather
     # than silently store plaintext impersonation credentials. MUST be
-    # set (env var `SESSION_ENCRYPTION_KEY`) in every real deployment.
-    session_encryption_key: str = ""
+    # set (env var `REDIS_SESSION_ENCRYPTION_KEY`) in every real
+    # deployment. Named `redis_*` (not just `session_*`) to disambiguate
+    # from the sibling `encryption_key` above — the two are unrelated and
+    # are routinely confused.
+    redis_session_encryption_key: str = ""
 
     # ─── SMTP (email notifications) ────────────────────────────────────
     smtp_host: str = "smtp.gmail.com"

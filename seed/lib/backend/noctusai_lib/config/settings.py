@@ -56,8 +56,12 @@ class BaseAppSettings(BaseSettings):
     # plaintext (acceptable ONLY for the in-memory FakeSessionStore / local
     # dev with no real refresh tokens — the factory refuses a Redis store
     # without a key when `require_encryption` is set). Store OUT-OF-BAND
-    # from Redis (env var / secret manager); rotate via `MultiKeyDecryptor`.
-    session_encryption_key: str = ""
+    # from Redis (env var `REDIS_SESSION_ENCRYPTION_KEY` / secret manager);
+    # rotate via `MultiKeyDecryptor`. Named `redis_*` (not just
+    # `session_*`) to disambiguate from the sibling app-config/credential
+    # at-rest `ENCRYPTION_KEY` in `security/app_config.py` — the two are
+    # unrelated and are routinely confused.
+    redis_session_encryption_key: str = ""
 
     # LLM usage tracking (Phase 15) — opt-in per product via env var.
     # When true, create_product_app() constructs a SupabaseUsageSink that
