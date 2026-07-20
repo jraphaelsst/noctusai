@@ -34,6 +34,7 @@ import hashlib
 import logging
 import re
 import sqlite3
+import textwrap
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -243,28 +244,61 @@ SELF_PROVIDED_ROUTER_FILES: dict[str, list[str]] = {
 
 
 def _parse_standard_routers(main_content: str) -> tuple[str, set[str] | None]:
-    """Parse the `standard_routers=[...]` kwarg from a product's main.py.
+    """AST-parse the `standard_routers=[...]` kwarg on `create_product_app(...)`.
 
     Returns:
-      ("found", {"health", "team", ...})  — parsed a simple list literal
+      ("found", {"health", "team", ...})  — parsed a simple list of str literals
       ("absent", None)                    — no `standard_routers` kwarg at all
       ("unparseable", None)               — kwarg present but not a simple list
                                             literal (e.g., variable reference)
 
     Never silently returns an empty set for an unparseable value — per the
     "no silent errors" rule, the caller must distinguish these three cases.
+
+    AST, not regex (`KB § PATTERNS/common/ast.md`): the former
+    `re.search(r"standard_routers\\s*=\\s*\\[...\\]")` matched the FIRST textual
+    occurrence anywhere in the file — including inside a docstring. social-wiring's
+    module docstring explains its auth seam with the prose "NOT via
+    ``standard_routers=["auth"]``", so the regex parsed `{"auth"}` and reported a
+    false critical under-grant for `notificacoes` + `team` (both correctly opted
+    into on the real `create_product_app(...)` call). Scoping the parse to the
+    actual call node also ignores same-named kwargs on *other* calls.
     """
-    match = re.search(r"standard_routers\s*=\s*\[([^\]]*)\]", main_content, re.DOTALL)
-    if match:
-        items = [
-            s.strip().strip("'\"")
-            for s in match.group(1).split(",")
-            if s.strip() and s.strip() not in {"'", '"'}
-        ]
-        return "found", {r for r in items if r}
-    if "standard_routers" in main_content:
+    try:
+        tree = ast.parse(textwrap.dedent(main_content))
+    except SyntaxError as exc:
+        logger.warning("compliance: cannot parse main.py (%s); marking as unparseable", exc)
         return "unparseable", None
-    return "absent", None
+
+    call = None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "create_product_app"
+        ):
+            call = node
+            break
+
+    if call is None:
+        return "absent", None
+
+    kwarg = next((k for k in call.keywords if k.arg == "standard_routers"), None)
+    if kwarg is None:
+        return "absent", None
+
+    if not isinstance(kwarg.value, ast.List):
+        return "unparseable", None
+
+    names: set[str] = set()
+    for elt in kwarg.value.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            if elt.value:
+                names.add(elt.value)
+        else:
+            return "unparseable", None
+
+    return "found", names
 
 
 def check_standard_routers_audit(product_path: Path) -> list[dict]:
