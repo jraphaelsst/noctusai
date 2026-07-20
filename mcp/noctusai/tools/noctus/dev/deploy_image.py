@@ -52,12 +52,25 @@ _UA = (
 _DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart"})
 # `docker compose` sub-actions the tool may run. Excludes down/rm/kill/stop.
 _COMPOSE_ALLOWED = frozenset({"pull", "up"})
+# Read-only git subcommands the PROD-PIN ancestry guard (below) may run on the
+# VPS checkout — never reset/checkout/clean/push. Same allowlist shape as
+# noctus.dev.release's `_git`, scoped to this tool's one read-only use.
+_GIT_ALLOWED = frozenset({"fetch", "rev-parse", "merge-base"})
 # Asserted-absent by the colocated safety test (defense in depth beyond the
-# allowlists): the tool must never emit any of these.
-_BANNED_TOKENS = ("rmi", "prune", "system", "down", "kill", "volume", "stop")
+# allowlists): the tool must never emit any of these, across BOTH the docker
+# and the git command surfaces.
+_BANNED_TOKENS = ("rmi", "prune", "system", "down", "kill", "volume", "stop",
+                  "reset", "checkout", "restore", "clean")
 
 DEFAULT_COMPOSE = "deploy/fleet/docker-compose.prod.yml"
 DEFAULT_IMAGE_REPO = "ghcr.io/jraphaelsst"
+DEFAULT_REPO_DIR = "/opt/noctus/noctusai"
+
+# The OCI label build-and-push.sh bakes into every image (`git rev-parse HEAD`
+# at build time) — how the PROD-PIN ancestry guard learns which commit a
+# pulled `:latest` actually came from, since a floating tag carries no git
+# identity on its own.
+_REVISION_LABEL = "org.opencontainers.image.revision"
 
 # Container health classes (Go-template returns Health.Status, else State.Status).
 _GOOD = frozenset({"healthy", "running"})
@@ -76,6 +89,49 @@ def _docker(runner, *args) -> tuple[int, str, str]:
     if sub not in _DOCKER_ALLOWED:
         raise ValueError(f"deploy_image: docker '{sub}' not on the safe allowlist {sorted(_DOCKER_ALLOWED)}")
     return runner(["docker", *args])
+
+
+def _git(runner, repo_dir: str, *args) -> tuple[int, str, str]:
+    """Run a read-only git subcommand against the VPS checkout at `repo_dir` —
+    only if on the safe allowlist (fetch / rev-parse / merge-base). Used
+    exclusively by the PROD-PIN ancestry guard; never reset/checkout/push."""
+    sub = args[0] if args else ""
+    if sub not in _GIT_ALLOWED:
+        raise ValueError(f"deploy_image: git '{sub}' not on the safe allowlist {sorted(_GIT_ALLOWED)}")
+    return runner(["git", "-C", repo_dir, *args])
+
+
+def _image_revision(runner, image_ref: str) -> str | None:
+    """The git sha baked into `image_ref`'s `org.opencontainers.image.revision`
+    OCI label (set by build-and-push.sh at build time, per commit), or None
+    when the label is absent/empty — e.g. an image built before this guard
+    existed, or built by a path other than build-and-push.sh."""
+    rc, out, _e = _docker(runner, "inspect", "-f",
+                          f'{{{{ index .Config.Labels "{_REVISION_LABEL}" }}}}', image_ref)
+    val = (out or "").strip()
+    return val if rc == 0 and val and val != "<no value>" else None
+
+
+def _prod_ancestor_check(runner, repo_dir: str, sha: str,
+                         prod_ref: str = "origin/prod") -> tuple[bool | None, str]:
+    """True/False whether `sha` is an ancestor of (or equal to) `prod_ref` on
+    the VPS git checkout at `repo_dir`. Returns (None, detail) — UNVERIFIABLE,
+    never a guess — when the fetch or the ref itself can't be resolved; the
+    caller treats None the same as a hard refusal (fail-closed, no silent
+    errors: 'couldn't check' is not 'checked and it's fine')."""
+    rc_f, _of, err_f = _git(runner, repo_dir, "fetch", "origin", "--quiet")
+    if rc_f != 0:
+        return None, f"git fetch failed on the VPS checkout at {repo_dir}: {err_f.strip()}"
+    rc_p, out_p, err_p = _git(runner, repo_dir, "rev-parse", "--verify", "--quiet", prod_ref)
+    if rc_p != 0 or not out_p.strip():
+        return None, f"cannot resolve '{prod_ref}' on the VPS checkout: {err_p.strip() or out_p.strip()}"
+    rc_a, _oa, err_a = _git(runner, repo_dir, "merge-base", "--is-ancestor", sha, prod_ref)
+    if rc_a not in (0, 1):
+        return None, f"'git merge-base --is-ancestor {sha} {prod_ref}' errored unexpectedly (rc={rc_a}): {err_a.strip()}"
+    is_ancestor = rc_a == 0
+    return is_ancestor, (
+        f"{sha[:12]} is {'an ancestor of' if is_ancestor else 'NOT an ancestor of'} {prod_ref}"
+    )
 
 
 def _compose(runner, compose_file: str, action: str, *rest) -> tuple[int, str, str]:
@@ -182,7 +238,7 @@ def _curl_edge(hostname: str, timeout: int = 20) -> tuple[bool, str]:
 def deploy_image(
     product: str,
     ssh_host: str = "noctus-vps",
-    repo_dir: str = "/opt/noctus/noctusai",
+    repo_dir: str = DEFAULT_REPO_DIR,
     compose_file: str = DEFAULT_COMPOSE,
     image_repo: str = DEFAULT_IMAGE_REPO,
     tag: str = "latest",
@@ -196,12 +252,28 @@ def deploy_image(
     now: Callable[[], _dt.datetime] | None = None,
     edge_hostname: str | None = None,
     http: Callable | None = None,
+    skip_ancestry_check: bool = False,
 ) -> dict[str, Any]:
     """Atomic image redeploy of `product` with C2 rollback. Dry-run unless
     `confirm`. After a successful recreate, restarts noctus-tunnel so
     cloudflared re-resolves its origin connection (leg a). When
     `edge_hostname` is provided, also curls the public hostname with a
     browser UA to confirm CF-edge reachability (leg b).
+
+    PROD-PIN ancestry guard (2026-07-20): when `tag == 'latest'` and
+    `source == 'pull'`, a `:latest` pull is a floating GHCR tag that moves on
+    every `main` push — independent of the `prod` promote-gate
+    (KB § GUIDES/production-deploy.md § 2b). Before recreating the container,
+    this reads the pulled image's `org.opencontainers.image.revision` OCI
+    label (baked by build-and-push.sh) and REFUSES to deploy — fail-closed,
+    container untouched — unless that commit is a verified ancestor of
+    `origin/prod` on the VPS checkout. An unlabeled image or an unresolvable
+    `origin/prod` also refuses (unverifiable ≠ safe). Pass
+    `skip_ancestry_check=True` to override deliberately (e.g. a pinned
+    `tag=<sha>` deploy never needs it — the tag itself already IS the
+    verifiable identity; source='local' also skips it — a build-on-VPS image
+    is a deliberate human action taken right there on the box).
+
     status ∈ {planned, up_to_date, deployed, rolled_back, error}.
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
@@ -310,6 +382,47 @@ def deploy_image(
         return {**base, "status": "up_to_date", "exit_code": 0, "new_image_id": new_image_id,
                 "message": f"image '{image}:{tag}' == running image; no redeploy needed."}
 
+    # ── PROD-PIN ancestry guard — only the risky floating-tag pull path.
+    #    A pinned tag=<sha> deploy already carries verifiable identity in the
+    #    tag itself; source='local' is a deliberate on-box human action. ──
+    if tag == "latest" and source == "pull" and not skip_ancestry_check:
+        revision = _image_revision(runner, f"{image}:{tag}")
+        if not revision:
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "reason": (
+                        f"PROD-PIN GUARD: pulled '{image}:{tag}' carries no "
+                        f"'{_REVISION_LABEL}' OCI label (image predates the guard, or "
+                        "was built by a path other than build-and-push.sh) — cannot "
+                        "verify its source commit is an ancestor of origin/prod. "
+                        "REFUSING (fail-closed): a floating :latest can carry an "
+                        "un-promoted main tip (KB § GUIDES/production-deploy.md § 2b). "
+                        "Deploy a verified tag=<sha> instead, or pass "
+                        "skip_ancestry_check=True to override deliberately. Container "
+                        "untouched."
+                    )}
+        is_ancestor, detail = _prod_ancestor_check(runner, repo_dir, revision)
+        if is_ancestor is None:
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "source_revision": revision,
+                    "reason": f"PROD-PIN GUARD: ancestry unverifiable ({detail}) — REFUSING "
+                              "(fail-closed; 'couldn't check' is not 'checked and it's fine'). "
+                              "Container untouched. Pass skip_ancestry_check=True to override "
+                              "deliberately."}
+        if not is_ancestor:
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "source_revision": revision,
+                    "reason": (
+                        f"PROD-PIN GUARD: refusing to deploy — {detail}. The pulled "
+                        f"':latest' image (commit {revision[:12]}) was built from a "
+                        "commit not yet promoted to origin/prod — deploying it would be "
+                        "exactly the 2026-07-16 PROD-PIN HOLE (KB § "
+                        "GUIDES/production-deploy.md § 2b). Promote it first "
+                        "(noctus.dev.release stage='promote'), or pass "
+                        "skip_ancestry_check=True to override deliberately. Container "
+                        "untouched."
+                    )}
+        base["source_revision"] = revision
+
     port = _container_port(runner, container)
 
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
@@ -373,7 +486,12 @@ def register(server) -> None:
             "GHCR model §2 ①) compose-pulls the new image; source='local' "
             "(build-on-VPS model §2 ②) swaps an already-built local tag (no pull). "
             "BY CONSTRUCTION limited to a safe docker allowlist (inspect/image/tag/"
-            "ps + compose pull/up) — never rmi/prune/down/rm. status: planned | "
+            "ps + compose pull/up) — never rmi/prune/down/rm. PROD-PIN ancestry guard "
+            "(2026-07-20): a tag='latest' + source='pull' deploy REFUSES (fail-closed, "
+            "container untouched) unless the pulled image's baked git revision is a "
+            "verified ancestor of origin/prod — closes the hole where a floating "
+            ":latest can carry an un-promoted main tip; pass skip_ancestry_check=True "
+            "to override deliberately. status: planned | "
             "up_to_date | deployed | rolled_back | error. See KB § GUIDES/production-deploy.md § 2a (C2)."
         ),
     )
@@ -383,8 +501,12 @@ def register(server) -> None:
         tag: str = "latest",
         source: str = "pull",
         ssh_host: str = "noctus-vps",
+        skip_ancestry_check: bool = False,
     ) -> dict:
-        return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm)
+        return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
+                            skip_ancestry_check=skip_ancestry_check)
 
 
-__all__ = ["deploy_image", "_poll_health", "_restart_tunnel", "_curl_edge", "_DOCKER_ALLOWED", "_COMPOSE_ALLOWED", "_BANNED_TOKENS", "_TUNNEL_CONTAINER", "register"]
+__all__ = ["deploy_image", "_poll_health", "_restart_tunnel", "_curl_edge", "_image_revision",
+          "_prod_ancestor_check", "_git", "_DOCKER_ALLOWED", "_COMPOSE_ALLOWED", "_GIT_ALLOWED",
+          "_BANNED_TOKENS", "_TUNNEL_CONTAINER", "register"]

@@ -33,7 +33,8 @@ class FakeDocker:
 
     def __init__(self, running="G0", latest="NEW", health=("up",), snapshot_sticks=True,
                  pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000",
-                 tunnel_restart_rc=0):
+                 tunnel_restart_rc=0, revision="ABCDEF123456789012", prod_ancestor=True,
+                 fetch_rc=0, prod_ref_rc=0):
         self.running = running
         self.tags = {f"{self.IMG}:latest": latest}
         self.health = list(health)
@@ -42,6 +43,14 @@ class FakeDocker:
         self.pull_rc, self.up_rc = pull_rc, up_rc
         self.container_found, self.image_present, self.port = container_found, image_present, port
         self.tunnel_restart_rc = tunnel_restart_rc
+        # PROD-PIN ancestry guard fakes — default models the SAFE/happy path
+        # (a properly-promoted image) so pre-existing tests exercise the full
+        # code path unmodified; dedicated tests below flip these to exercise
+        # each refusal branch.
+        self.revision = revision            # None => no OCI revision label
+        self.prod_ancestor = prod_ancestor  # False => revision NOT an ancestor of origin/prod
+        self.fetch_rc = fetch_rc            # non-zero => git fetch fails (unverifiable)
+        self.prod_ref_rc = prod_ref_rc      # non-zero => origin/prod unresolvable (unverifiable)
         self.calls: list[list[str]] = []
 
     def _id_of(self, ref_or_id):
@@ -53,12 +62,24 @@ class FakeDocker:
             tmpl = cmd[3]
             if ".Image" in tmpl:
                 return (1, "", "No such object") if not self.container_found else (0, self.running + "\n", "")
+            if "Labels" in tmpl:  # PROD-PIN revision label lookup
+                return (0, (self.revision + "\n") if self.revision else "<no value>\n", "")
             if "Healthcheck" in tmpl:  # _container_port prefers the healthcheck test
                 return (0, f'["CMD","curl","-fsS","http://localhost:{self.port}/api/health"]\n'
                         if self.port else "", "")
             if "ExposedPorts" in tmpl:
                 return (0, (self.port + "/tcp ") if self.port else "", "")
             return (0, "running\n", "")  # .State.Status
+        if cmd[0] == "git":  # PROD-PIN ancestor check: ["git", "-C", repo_dir, <sub>, ...]
+            sub = cmd[3] if len(cmd) > 3 else ""
+            if sub == "fetch":
+                return (self.fetch_rc, "", "" if self.fetch_rc == 0 else "network unreachable")
+            if sub == "rev-parse":
+                return (self.prod_ref_rc, "" if self.prod_ref_rc else "PRODSHA123\n",
+                        "" if self.prod_ref_rc == 0 else "unknown revision")
+            if sub == "merge-base":
+                return (0 if self.prod_ancestor else 1, "", "")
+            return (0, "", "")
         if cmd[:2] == ["docker", "restart"]:  # tunnel restart
             return (self.tunnel_restart_rc, "", "" if self.tunnel_restart_rc == 0 else "no such container")
         if cmd[:2] == ["docker", "commit"]:  # snapshot: commit container → :previous
@@ -195,6 +216,112 @@ def test_pull_failure_aborts_without_touching_container():
     r = _run(f, confirm=True)
     assert r["status"] == "error" and "pull" in r["reason"]
     assert f.count("up") == 0
+
+
+# ── PROD-PIN ancestry guard (2026-07-20) ──────────────────────────
+# Default FakeDocker() already models the SAFE/happy path (revision present +
+# an ancestor of origin/prod) — see test_deployed_when_healthy for the
+# implicit regression coverage. These tests flip each fake exclusively to
+# exercise one refusal branch, or the two documented bypass shapes.
+
+def test_ancestry_guard_default_path_records_source_revision():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    assert r["source_revision"] == "ABCDEF123456789012"
+
+
+def test_ancestry_guard_refuses_when_image_has_no_revision_label():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), revision=None)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert "PROD-PIN GUARD" in r["reason"] and "label" in r["reason"]
+    assert f.count("up") == 0  # container untouched — never recreated
+
+
+def test_ancestry_guard_refuses_when_not_ancestor_of_prod():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), prod_ancestor=False)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert "PROD-PIN GUARD" in r["reason"] and "NOT an ancestor" in r["reason"]
+    assert r["source_revision"] == "ABCDEF123456789012"
+    assert f.count("up") == 0
+
+
+def test_ancestry_guard_refuses_fail_closed_when_fetch_unverifiable():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), fetch_rc=1)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert "PROD-PIN GUARD" in r["reason"] and "unverifiable" in r["reason"]
+    assert f.count("up") == 0
+
+
+def test_ancestry_guard_refuses_fail_closed_when_prod_ref_unresolvable():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), prod_ref_rc=1)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert "PROD-PIN GUARD" in r["reason"] and "unverifiable" in r["reason"]
+    assert f.count("up") == 0
+
+
+def test_skip_ancestry_check_overrides_missing_label():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), revision=None)
+    r = _run(f, confirm=True, skip_ancestry_check=True)
+    assert r["status"] == "deployed"
+    assert "source_revision" not in r
+
+
+def test_skip_ancestry_check_overrides_non_ancestor():
+    f = FakeDocker(running="G0", latest="NEW", health=("up",), prod_ancestor=False)
+    r = _run(f, confirm=True, skip_ancestry_check=True)
+    assert r["status"] == "deployed"
+
+
+def test_ancestry_guard_skipped_when_source_is_local():
+    # source='local' (build-on-VPS) is a deliberate on-box human action —
+    # the guard only applies to the risky floating-tag GHCR-pull path.
+    f = FakeDocker(running="G0", latest="LOCALBUILT", health=("up",), revision=None)
+    r = _run(f, confirm=True, source="local")
+    assert r["status"] == "deployed"
+    assert "source_revision" not in r
+
+
+def test_ancestry_guard_skipped_when_tag_is_pinned_sha():
+    # A pinned tag=<sha> deploy already carries verifiable identity in the
+    # tag itself — no need to consult the OCI label or origin/prod at all.
+    f = FakeDocker(running="G0", health=("up",), revision=None)
+    f.tags[f"{FakeDocker.IMG}:abc123def456"] = "PINNEDID"
+    r = _run(f, confirm=True, tag="abc123def456")
+    assert r["status"] == "deployed"
+    assert "source_revision" not in r
+
+
+def test_ancestry_guard_not_consulted_on_up_to_date():
+    # Nothing to deploy => the guard (and its git calls) never even runs.
+    f = FakeDocker(running="SAME", latest="SAME", revision=None)
+    r = _run(f, confirm=True)
+    assert r["status"] == "up_to_date"
+    assert not any(c[0] == "git" for c in f.calls)
+
+
+def test_git_allowlist_blocks_off_list_subcommand():
+    calls = []
+    try:
+        DI._git(lambda cmd: calls.append(cmd) or (0, "", ""), "/opt/x", "push", "origin")
+        assert False, "expected ValueError for git push"
+    except ValueError as e:
+        assert "allowlist" in str(e)
+    assert calls == []
+
+
+def test_image_revision_returns_none_on_no_value_placeholder():
+    f = FakeDocker(revision=None)
+    assert DI._image_revision(f, f"{FakeDocker.IMG}:latest") is None
+
+
+def test_image_revision_returns_sha_when_labeled():
+    f = FakeDocker(revision="DEADBEEF0000")
+    assert DI._image_revision(f, f"{FakeDocker.IMG}:latest") == "DEADBEEF0000"
 
 
 # ── safety invariants ────────────────────────────────────────────

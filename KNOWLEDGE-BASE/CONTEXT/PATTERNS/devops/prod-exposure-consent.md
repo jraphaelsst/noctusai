@@ -8,7 +8,7 @@
 - `deploy/tunnel/ingress.yml` (public edge — `<slug>.noctusai.com`)
 - `ALL_SLUGS` in `scripts/infra/build-and-push.sh` (GHCR artifact + `:latest`)
 
-**Editing those three surfaces *IS* the production-promotion decision.** Everything downstream (bless → main-push CI build → `:latest` → fleet pull) is faithful automation of a declaration already made. There is **no later gate** — the fleet runs `:latest` built from `main` on every push (`.github/workflows/build-and-push.yml`), so a `prod`-branch FF governs the deploy-config **checkout**, never the product **images** that actually execute (`KB § GUIDES/production-deploy.md § 2b` correction). By the time a product shows up on `docker-compose.prod.yml`, it is publicly reachable the moment the next `docker compose pull` happens — no human ever reviews "should this be public" again.
+**Editing those three surfaces *IS* the production-promotion decision.** Everything downstream (bless → promote → CI build → `:latest` → fleet pull) is faithful automation of a declaration already made. There is **no later PER-PRODUCT gate** — once a slug is on `docker-compose.prod.yml`, it is publicly reachable the moment its next promoted build lands on `:latest` (`.github/workflows/build-and-push.yml` — 2026-07-20 fix: `:latest` now moves ONLY on a `prod`-ref build, never a bare `main` push, `KB § GUIDES/production-deploy.md § 2b`) — no human ever reviews "should THIS PRODUCT be public" again. THIS gate is what still fires: the `prod`-branch FF/PROD-PIN fix governs *which build* of already-consented code reaches production; it never asks "should this slug be registered at all."
 
 ## The fire boundary — a SET-DIFFERENCE on slugs, not a content diff
 
@@ -75,8 +75,8 @@ The 9 products (+ n8n/waha/legacy infra rows) already on the three surfaces at g
 
 ## What this does NOT touch (deliberately deferred)
 
-- `.github/workflows/build-and-push.yml` — the CI-job backstop (should CI itself refuse to build/push a newly-registered slug without consent?) is a separate wave pending user decision.
-- `release.py` / `deploy_image.py` — the PROD-PIN HOLE (the fact that `:latest` floats independent of the `prod`-branch promote gate, see the `KB § GUIDES/production-deploy.md § 2b` correction) is a structural gap this doc names but does not fix — fixing it changes what runs in prod and needs its own consent.
+- `.github/workflows/build-and-push.yml` — the CI-job backstop for THIS gate (should CI itself refuse to build/push a newly-registered slug without a consent record?) is a separate wave pending user decision. This is distinct from the PROD-PIN HOLE fix below — that fix changed WHICH build moves `:latest`, not whether a new slug's registration is consent-gated.
+- ~~`release.py` / `deploy_image.py` — the PROD-PIN HOLE ... is a structural gap this doc names but does not fix~~ — **FIXED 2026-07-20** (`KB § GUIDES/production-deploy.md § 2b`): `:latest` now moves ONLY on a `prod`-ref build, and `deploy_image` refuses a `tag=latest source=pull` deploy whose baked revision isn't a verified ancestor of `origin/prod`. This closes the "what RUNS drifts from what was promoted" hole; it is still a *separate* question from THIS gate's "should this product be public at ALL" — the PROD-PIN fix governs which build of an already-consented product's code reaches `:latest`, never whether a product should be registered on the three surfaces in the first place.
 
 ## Mechanism half — `scaffold_product` never touches these surfaces
 

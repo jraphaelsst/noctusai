@@ -4,10 +4,18 @@
 consent-gated hops sit between everyday `dev` work and the live VPS:
 
   • Gate 1 — BLESS  : fast-forward `main` to the `dev` tip (a reviewed release).
+                      `sha=` is NOT accepted here — bless always means "the
+                      WHOLE dev-validated state", never a partial slice
+                      (KB § PATTERNS/architect/git-branch-model.md); passing it
+                      is REFUSED loudly (2026-07-20 — it used to be a SILENT
+                      no-op that still blessed the dev tip while the caller
+                      believed their pin had taken effect).
   • Gate 2 — PROMOTE: fast-forward `prod` to a blessed `main` sha — and FIRST
                       snapshot the *current* prod onto `prod-backup` (instant
                       rollback pointer). The VPS pulls `origin/prod` afterwards
-                      via `noctus.dev.deploy_pull`.
+                      via `noctus.dev.deploy_pull`. `sha=` IS accepted here —
+                      pin promote to an earlier-blessed main sha instead of
+                      main's current tip.
 
 This tool is the ONLY sanctioned path that sets `NOCTUS_ALLOW_MAIN_PUSH=1` (the
 pre-push hook's override) — and it does so ONLY for its own confirm-gated push.
@@ -161,6 +169,23 @@ def release(
 
     # ── BLESS (dev → main) ──
     if stage == "bless":
+        # REFUSE-NOT-NULL (2026-07-20): sha= previously SILENTLY IGNORED on
+        # bless — the caller believed a pin took effect while bless still
+        # advanced main to the dev TIP. Bless is a whole-repo-state concept
+        # ("this dev-validated state") with no notion of a partial slice
+        # (KB § PATTERNS/architect/git-branch-model.md); only promote pins.
+        if sha:
+            return {**base, "status": "error", "exit_code": 1,
+                    "error": (
+                        f"release: stage='bless' does not accept sha= (got {sha!r}). "
+                        f"Bless always fast-forwards {main_branch} to the CURRENT "
+                        f"{dev_branch} tip — there is no partial-bless concept "
+                        "(KB § PATTERNS/architect/git-branch-model.md). If you meant to "
+                        "pin a specific already-blessed commit for deployment, that is "
+                        "promote's job: stage='promote' sha=<main-sha>. This refusal "
+                        "replaces a prior SILENT no-op where sha= was accepted by the "
+                        "schema but ignored by bless."
+                    )}
         if dev == main:
             return {**base, "status": "up_to_date", "exit_code": 0,
                     "message": f"{main_branch} already == {dev_branch}; nothing to bless."}
@@ -267,10 +292,12 @@ def register(server) -> None:
             "model (KB § PATTERNS/branching-and-merging.md § 0.2). stage='status' "
             "(default) shows the feat→dev→main→prod chain (SHAs, FF-ability, the "
             "commits each hop would ship) read-only; stage='bless' fast-forwards "
-            "main to the dev tip; stage='promote' snapshots the current prod onto "
-            "prod-backup then fast-forwards prod to a blessed main sha (pass sha= "
-            "to pin; default = main tip — which ships ALL of prod..main, flagged "
-            "large_promote). DRY-RUN by default — pass confirm=True to push. FF-only "
+            "main to the dev tip (sha= is NOT accepted here — REFUSED loudly, not "
+            "silently ignored: bless is a whole-repo-state concept, no partial slice); "
+            "stage='promote' snapshots the current prod onto prod-backup then "
+            "fast-forwards prod to a blessed main sha (pass sha= to pin; default = "
+            "main tip — which ships ALL of prod..main, flagged large_promote). "
+            "DRY-RUN by default — pass confirm=True to push. FF-only "
             "by construction (never force/reset/checkout). It is the ONLY sanctioned "
             "setter of NOCTUS_ALLOW_MAIN_PUSH, and only for its own push. After a "
             "promote, run noctus.dev.deploy_pull to pull origin/prod onto the VPS. "

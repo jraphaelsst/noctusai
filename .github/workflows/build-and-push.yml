@@ -2,14 +2,31 @@
 #
 # WHAT THIS IS — the BUILD/DELIVER layer. It builds the slim `--target runtime`
 # product images off-box (here, on a GitHub runner) and pushes them to GHCR as
-# immutable `:<sha>` artifacts + a moving `:latest`. It does NOT deploy.
+# immutable `:<sha>` artifacts. It does NOT deploy.
+#
+# PROD-PIN HOLE FIX (2026-07-20) — `:latest` (what the fleet's
+# docker-compose.prod.yml actually pulls) used to move on EVERY `main` push,
+# independent of the `prod` promote-gate (KB § GUIDES/production-deploy.md §
+# 2b). It now moves ONLY on a `prod`-ref build — i.e. this workflow ALSO
+# triggers on push to `prod` (only ever advanced by a deliberate
+# noctus.dev.release stage='promote' FF), and `:latest` is passed
+# --move-latest ONLY when `github.ref == 'refs/heads/prod'` (or the operator
+# explicitly opts in via workflow_dispatch's `move_latest` input — an
+# intentional escape hatch for a supervised manual push, off by default).
+# Every OTHER build (a routine `main` push, an unflagged workflow_dispatch)
+# tags the convenience floating pointer `:edge` instead — pullable for
+# testing, never what the fleet's compose file resolves. Backstop:
+# `noctus.dev.deploy_image` additionally REFUSES a `tag=latest source=pull`
+# deploy whose baked revision isn't a verified ancestor of `origin/prod`.
 #
 # HOW IT COMPOSES (does NOT supersede the deploy tooling):
 #   • THIS workflow   → builds + pushes the artifact (the §2 ② model).
 #   • noctus.dev.deploy_image --source pull  → the DEPLOY/ROLLBACK-SAFETY layer:
-#       snapshot → swap → health-probe → rollback, on the VPS (KB §2a C2).
-#   • The `prod` promote-branch gate is unchanged — building on `main` does NOT
-#       auto-deploy to prod. You still promote + run deploy_image deliberately.
+#       snapshot → swap → ancestry-guard → health-probe → rollback, on the VPS
+#       (KB §2a C2).
+#   • The `prod` promote-branch gate now ALSO governs which build moves
+#       :latest — building on `main` still does NOT auto-deploy to prod. You
+#       still promote + run deploy_image deliberately.
 #   The durable `:<sha>` tags ALSO make rollback/DR robust (pull an old sha)
 #   instead of relying only on the in-place commit-snapshot.
 #
@@ -26,7 +43,7 @@ name: Build & Push Images (GHCR)
 
 on:
   push:
-    branches: [main]
+    branches: [main, prod]
     paths:
       - "products/**"
       - "seed/**"
@@ -35,13 +52,17 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag (default: short git sha). :latest is always moved too."
+        description: "Image tag (default: short git sha). :latest moves only when move_latest=true (or the run is on prod)."
         required: false
         default: ""
       products:
         description: "Space-separated product slugs to build (default: all 8). e.g. 'social-wiring' for a ~3-min targeted test."
         required: false
         default: ""
+      move_latest:
+        description: "Move the floating :latest tag (normally reserved for a prod-ref build). Default false — leave off unless you are deliberately overriding the PROD-PIN guard."
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -114,6 +135,19 @@ jobs:
           echo "mode=subset" >> "$GITHUB_OUTPUT"; echo "products=$SLUGS" >> "$GITHUB_OUTPUT"
           echo "scope: changed products → '$SLUGS'"
 
+      # PROD-PIN fix: :latest moves ONLY for a prod-ref build (push to `prod`,
+      # or a workflow_dispatch run explicitly opting in via move_latest=true —
+      # off by default). Everything else tags :edge instead (see the header).
+      - name: Decide whether this build moves :latest
+        id: latest
+        run: |
+          set -euo pipefail
+          MOVE="false"
+          if [ "${{ github.ref }}" = "refs/heads/prod" ]; then MOVE="true"; fi
+          if [ "${{ github.event.inputs.move_latest }}" = "true" ]; then MOVE="true"; fi
+          echo "move_latest=$MOVE" >> "$GITHUB_OUTPUT"
+          echo "ref=${{ github.ref }} → move_latest=$MOVE"
+
       - name: Build + push (seed bases + product images)
         if: steps.scope.outputs.mode != 'none'
         run: |
@@ -121,8 +155,10 @@ jobs:
           TAG="${{ github.event.inputs.image_tag }}"
           if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
           PRODUCTS="${{ steps.scope.outputs.products }}"
-          echo "Building + pushing at tag: $TAG (+ :latest) — mode=${{ steps.scope.outputs.mode }} products: ${PRODUCTS:-ALL}"
-          NOCTUS_IMAGE_TAG="$TAG" bash scripts/infra/build-and-push.sh $PRODUCTS
+          EXTRA_FLAG=""
+          if [ "${{ steps.latest.outputs.move_latest }}" = "true" ]; then EXTRA_FLAG="--move-latest"; fi
+          echo "Building + pushing at tag: $TAG (+ $( [ -n "$EXTRA_FLAG" ] && echo ':latest' || echo ':edge' )) — mode=${{ steps.scope.outputs.mode }} products: ${PRODUCTS:-ALL}"
+          NOCTUS_IMAGE_TAG="$TAG" bash scripts/infra/build-and-push.sh $EXTRA_FLAG $PRODUCTS
 
       - name: Skip note (nothing to build)
         if: steps.scope.outputs.mode == 'none'
@@ -131,6 +167,11 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          MOVED="edge"
+          if [ "${{ steps.latest.outputs.move_latest }}" = "true" ]; then MOVED="latest"; fi
           echo "### Build & Push" >> "$GITHUB_STEP_SUMMARY"
-          echo "Pushed \`ghcr.io/jraphaelsst/noctus-<slug>\` at \`${GITHUB_SHA::12}\` + \`:latest\`." >> "$GITHUB_STEP_SUMMARY"
-          echo "Deploy with \`noctus.dev.deploy_image <product> --source pull\` (C2 snapshot/health/rollback)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed \`ghcr.io/jraphaelsst/noctus-<slug>\` at \`${GITHUB_SHA::12}\` + \`:${MOVED}\`." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$MOVED" = "edge" ]; then
+            echo "\`:latest\` (the tag the fleet actually pulls) was NOT moved — this was not a prod-ref build. See KB § GUIDES/production-deploy.md § 2b." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "Deploy with \`noctus.dev.deploy_image <product> --source pull\` (C2 snapshot/ancestry-guard/health/rollback)." >> "$GITHUB_STEP_SUMMARY"

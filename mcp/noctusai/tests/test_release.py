@@ -116,6 +116,48 @@ def test_bless_blocked_when_main_not_ancestor_of_dev():
     assert fake.pushes() == []
 
 
+def test_bless_refuses_sha_loudly_instead_of_silently_ignoring_it():
+    # PROD-PIN defect 2: stage='bless' used to silently plan/push the dev tip
+    # even when sha= was passed, misleading the caller into believing their
+    # pin took effect. It must now REFUSE — never a silent no-op.
+    fake = FakeGit(
+        refs={"origin/dev": "d", "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", "d")]),
+        logs={"m..d": "a1 x\na2 y"},
+    )
+    res = R.release(stage="bless", confirm=True, sha="2f35bb74", run=fake)
+    assert res["status"] == "error" and res["exit_code"] == 1
+    assert "sha=" in res["error"] and "bless" in res["error"]
+    assert fake.pushes() == []  # nothing moved — no silent partial-bless
+
+
+def test_bless_refuses_sha_even_on_dry_run():
+    # The refusal fires before the confirm-gate too — dry-run must not report
+    # a misleading "planned" pin either.
+    fake = FakeGit(
+        refs={"origin/dev": "d", "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", "d")]),
+        logs={"m..d": "a1 x"},
+    )
+    res = R.release(stage="bless", confirm=False, sha="2f35bb74", run=fake)
+    assert res["status"] == "error" and res["exit_code"] == 1
+    assert fake.pushes() == []
+
+
+def test_bless_without_sha_still_works_unaffected():
+    # Regression guard: the common no-sha bless path is untouched by the fix.
+    fake = FakeGit(
+        refs={"origin/dev": "d", "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", "d")]),
+        logs={"m..d": "a1 x"},
+    )
+    res = R.release(stage="bless", confirm=True, sha=None, run=fake)
+    assert res["status"] == "blessed"
+
+
 def test_bless_confirm_pushes_main_with_override_and_verifies():
     fake = FakeGit(
         refs={"origin/dev": "d", "origin/main": "m", "origin/prod": "p",

@@ -21,11 +21,27 @@
 #      build recipe). Product images FROM these.
 #   2. For each product: `docker build --target runtime` (slim, baked dist,
 #      node-absent — the shippable image; NOT runtime-watch), passing the
-#      per-product VITE_* build args. BAKE the VITE_* values at BUILD time —
-#      Vite inlines import.meta.env.VITE_* into the bundle; they CANNOT be
-#      supplied at runtime (see README "CRITICAL").
+#      per-product VITE_* build args + an `org.opencontainers.image.revision`
+#      label (the git sha this image was built from — how
+#      `noctus.dev.deploy_image`'s PROD-PIN ancestry guard later verifies a
+#      pulled `:latest` actually came from a promoted commit). BAKE the
+#      VITE_* values at BUILD time — Vite inlines import.meta.env.VITE_* into
+#      the bundle; they CANNOT be supplied at runtime (see README "CRITICAL").
 #   3. Tag each ghcr.io/jraphaelsst/noctus-<slug>:${NOCTUS_IMAGE_TAG:-latest}.
 #   4. docker login ghcr.io (GHCR_USERNAME / GHCR_TOKEN) + push all.
+#
+# PROD-PIN HOLE (2026-07-20) — the safe-by-default tag contract:
+#   The floating `:latest` tag is what the fleet's `docker-compose.prod.yml`
+#   actually pulls (`${NOCTUS_IMAGE_TAG:-latest}`). Moving it on EVERY build
+#   (as this script used to do unconditionally) meant `:latest` tracked
+#   whatever branch happened to trigger a build — independent of the `prod`
+#   promote-gate (KB § GUIDES/production-deploy.md § 2b). `:latest` now moves
+#   ONLY when the caller explicitly passes `--move-latest` (the CI workflow
+#   passes it ONLY on a `prod`-ref build — see .github/workflows/
+#   build-and-push.yml). Every other run (a routine `main` push, a manual
+#   `workflow_dispatch`) tags the convenience floating pointer `:edge`
+#   instead — visible + pullable for testing, but never what the fleet's
+#   compose file resolves.
 #
 # Run from a CI runner or build host with the repo checked out and the
 # VITE_* + GHCR_* vars set in the environment (CI secrets) or a .env that
@@ -40,6 +56,7 @@
 #   bash scripts/infra/build-and-push.sh
 #   bash scripts/infra/build-and-push.sh --no-push          # build only
 #   bash scripts/infra/build-and-push.sh --no-base          # skip seed bases
+#   bash scripts/infra/build-and-push.sh --move-latest       # ALSO move :latest (prod-ref builds only)
 set -euo pipefail
 
 # ── resolve repo root (this file is scripts/infra/) ───────────────────
@@ -60,12 +77,14 @@ REGISTRY="ghcr.io/jraphaelsst"
 TAG="${NOCTUS_IMAGE_TAG:-latest}"
 PUSH=1
 BUILD_BASE=1
+MOVE_LATEST=0   # safe default (2026-07-20 PROD-PIN fix) — :latest moves ONLY on --move-latest
 ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring orbity seed)
 REQUESTED=()   # optional subset of product slugs to build/push (default: all)
 for arg in "$@"; do
   case "$arg" in
     --no-push) PUSH=0 ;;
     --no-base) BUILD_BASE=0 ;;
+    --move-latest) MOVE_LATEST=1 ;;
     --*) echo "unknown flag: $arg" >&2; exit 2 ;;
     *) if printf '%s\n' "${ALL_SLUGS[@]}" | grep -qx "$arg"; then REQUESTED+=("$arg")
        else echo "unknown product slug: $arg (valid: ${ALL_SLUGS[*]})" >&2; exit 2; fi ;;
@@ -73,6 +92,11 @@ for arg in "$@"; do
 done
 # want <slug> → true iff no subset was requested, or <slug> is in the subset.
 want() { [[ ${#REQUESTED[@]} -eq 0 ]] || printf '%s\n' "${REQUESTED[@]}" | grep -qx "$1"; }
+
+# The git sha every image is labeled with (org.opencontainers.image.revision)
+# — how noctus.dev.deploy_image later verifies a pulled :latest actually came
+# from a commit that reached origin/prod, not just any main push.
+GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # ── VITE_* build args (BAKED into the bundle at build time) ────────────
 # Names mirror each product's docker-compose.yml `args:` block (ground
@@ -121,11 +145,12 @@ fi
 build_product() {
   local slug="$1"; shift
   local image="${REGISTRY}/noctus-${slug}:${TAG}"
-  echo "[fleet] building ${image} (--target runtime)"
+  echo "[fleet] building ${image} (--target runtime, revision=${GIT_SHA})"
   docker build \
     --target runtime \
     -f "products/${slug}/backend/Dockerfile" \
     -t "${image}" \
+    --label "org.opencontainers.image.revision=${GIT_SHA}" \
     "$@" \
     .
 }
@@ -165,16 +190,25 @@ if [[ "$PUSH" == "1" ]]; then
     image="${REGISTRY}/noctus-${slug}:${TAG}"
     echo "[fleet] pushing ${image}"
     docker push "${image}"
-    # When TAG is an immutable id (e.g. a git sha from CI), ALSO move the
-    # convenience :latest to it — one run yields both the durable rollback
-    # artifact (:sha, persists in GHCR) and the moving deploy tag (:latest).
+    # PROD-PIN fix (2026-07-20): :latest — what the fleet's compose file
+    # actually pulls — moves ONLY when the caller explicitly opted in via
+    # --move-latest (the CI workflow does this ONLY for a prod-ref build).
+    # Every other run gets the convenience floating pointer :edge instead,
+    # so there is always a pullable "latest built from this ref" tag without
+    # ever silently touching the tag production trusts.
     if [[ "$TAG" != "latest" ]]; then
-      docker tag "${image}" "${REGISTRY}/noctus-${slug}:latest"
-      docker push "${REGISTRY}/noctus-${slug}:latest"
+      if [[ "$MOVE_LATEST" == "1" ]]; then
+        docker tag "${image}" "${REGISTRY}/noctus-${slug}:latest"
+        docker push "${REGISTRY}/noctus-${slug}:latest"
+      else
+        docker tag "${image}" "${REGISTRY}/noctus-${slug}:edge"
+        docker push "${REGISTRY}/noctus-${slug}:edge"
+      fi
     fi
     pushed=$((pushed + 1))
   done
-  echo "[fleet] pushed ${pushed} product image(s) at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo ' (+ :latest)' )"
+  moved="edge"; [[ "$MOVE_LATEST" == "1" ]] && moved="latest"
+  echo "[fleet] pushed ${pushed} product image(s) at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo " (+ :${moved})" )"
 else
   echo "[fleet] --no-push: built ${#ALL_SLUGS[@]} product images locally (tag ${TAG}), not pushed"
 fi

@@ -32,8 +32,10 @@
 #   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# Image tag defaults to :latest in prod (CI moves :latest on each main
-# push; pin NOCTUS_IMAGE_TAG=<git-sha> in .env for an immutable deploy).
+# Image tag defaults to :latest in prod. CI moves :latest ONLY on a
+# prod-ref build (KB § GUIDES/production-deploy.md § 2b PROD-PIN fix,
+# 2026-07-20) — a routine `main` push tags the non-fleet-facing :edge
+# instead. Pin NOCTUS_IMAGE_TAG=<git-sha> in .env for an immutable deploy.
 
 name: noctusai-products-prod
 

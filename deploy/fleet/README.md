@@ -49,8 +49,10 @@ docker network create noctus-net
 #   (VITE_* values are NOT consumed here — they were baked at build time.)
 cp .env.example .env && $EDITOR .env
 
-# pin the image tag you intend to run (default :latest moves on each main
-# push; pin a git-sha for an immutable, rollback-able deploy)
+# pin the image tag you intend to run (default :latest — moves ONLY on a
+# prod-ref build, KB § GUIDES/production-deploy.md § 2b; pin a git-sha for
+# an immutable, rollback-able deploy; :edge is the non-fleet-facing
+# convenience tag a bare `main` build pushes for manual testing)
 echo 'NOCTUS_IMAGE_TAG=<git-sha-or-latest>' >> .env
 ```
 
@@ -65,13 +67,18 @@ export VITE_CORE_URL=https://<core-public-host>
 export VITE_CORE_API_URL=https://<core-public-host>
 export NOCTUS_IMAGE_TAG=$(git rev-parse --short HEAD)   # optional; default latest
 
-bash deploy/fleet/build-and-push.sh
+bash scripts/infra/build-and-push.sh
 ```
 
 This builds the two shared seed bases (`noctus-seed-{backend,frontend}-base:dev`
 — pinned to `dev` because the product Dockerfiles hardcode that `FROM`), then
 each of the 8 products `--target runtime` (slim, baked dist, node-absent),
 tags `ghcr.io/jraphaelsst/noctus-<slug>:${NOCTUS_IMAGE_TAG:-latest}`, and pushes.
+The floating `:edge` tag also moves by default (a convenience pointer for
+manual testing); pass `--move-latest` to ALSO move the fleet-facing `:latest`
+— reserve that for a genuinely promoted build (KB § GUIDES/production-deploy.md
+§ 2b PROD-PIN fix); the CI workflow does this automatically only for a
+`prod`-ref build.
 
 > **In CI**, supply `VITE_*` and `GHCR_*` as repository/organization **secrets**
 > and export them into the job environment before invoking the script. Set
