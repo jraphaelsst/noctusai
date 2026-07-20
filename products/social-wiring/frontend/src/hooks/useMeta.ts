@@ -43,6 +43,28 @@ export function isAppReviewGate(x: unknown): x is AppReviewGate {
   return !!x && typeof x === "object" && (x as AppReviewGate).requires_app_review === true;
 }
 
+/**
+ * The app lacks the Meta *product* behind an endpoint (Graph code 3 —
+ * "Application does not have the capability to make this API call"). A
+ * READ can come back gated this way — e.g. Instagram DMs when the
+ * Messenger / Instagram-messaging product is not set up on the app. The
+ * backend returns `{ requires_setup: true, error }` as a 200 (never a
+ * 502), so the UI renders an actionable "finish the Meta setup" card
+ * instead of a scary error toast. Distinct from `AppReviewGate`: the
+ * remedy is a dashboard configuration step, not App Review submission.
+ */
+export interface MetaSetupGate {
+  requires_setup: true;
+  error: string | null;
+}
+
+export function isMetaSetupGate(x: unknown): x is MetaSetupGate {
+  return !!x && typeof x === "object" && (x as MetaSetupGate).requires_setup === true;
+}
+
+/** A READ endpoint's success payload OR a `MetaSetupGate` (both 200). */
+export type SetupGatedResult<T> = T | MetaSetupGate;
+
 // ─── Types (mirror the Wave 3 backend contract) ─────────────────────────────
 
 export interface IGAccount {
@@ -349,10 +371,13 @@ export function useIgDeleteComment(accountId: string | null, mediaId: string | n
 // ─── Instagram — DMs ─────────────────────────────────────────────────────────
 
 export function useIgConversations(accountId: string | null) {
-  return useQuery<IGConversationsResponse>({
+  // Returns the list OR a `MetaSetupGate` (200, not thrown) when the app
+  // lacks the Instagram-messaging capability — callers branch via
+  // `isMetaSetupGate` before reading `.conversations`.
+  return useQuery<SetupGatedResult<IGConversationsResponse>>({
     queryKey: IG_CONVERSATIONS_KEY(accountId),
     queryFn: () =>
-      api.get<IGConversationsResponse>(
+      api.get<SetupGatedResult<IGConversationsResponse>>(
         `/api/meta/instagram/conversations${qs({ account_id: accountId })}`,
       ),
     enabled: !!accountId,
@@ -361,10 +386,10 @@ export function useIgConversations(accountId: string | null) {
 }
 
 export function useIgMessages(accountId: string | null, conversationId: string | null) {
-  return useQuery<IGMessagesResponse>({
+  return useQuery<SetupGatedResult<IGMessagesResponse>>({
     queryKey: IG_MESSAGES_KEY(accountId, conversationId),
     queryFn: () =>
-      api.get<IGMessagesResponse>(
+      api.get<SetupGatedResult<IGMessagesResponse>>(
         `/api/meta/instagram/messages${qs({ account_id: accountId, conversation_id: conversationId })}`,
       ),
     enabled: !!accountId && !!conversationId,

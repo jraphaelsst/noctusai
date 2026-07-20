@@ -924,6 +924,13 @@ META_IA_OAUTH_SCOPES: tuple[str, ...] = (
     "pages_read_engagement",
     "pages_manage_posts",
     "pages_manage_engagement",
+    # Required by Meta's Instagram Conversations API alongside
+    # instagram_basic + instagram_manage_messages — without it, reading IG
+    # Direct returns Graph error (#3) "Application does not have the
+    # capability to make this API call" even though instagram_manage_messages
+    # was granted. Documented at
+    # developers.facebook.com/docs/messenger-platform/conversations.
+    "pages_manage_metadata",
 )
 
 

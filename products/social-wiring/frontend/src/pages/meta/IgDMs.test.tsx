@@ -36,6 +36,8 @@ const mockUseSendIgMessage = vi.fn();
 vi.mock("@/hooks/useMeta", () => ({
   isAppReviewGate: (x: unknown) =>
     !!x && typeof x === "object" && (x as any).requires_app_review === true,
+  isMetaSetupGate: (x: unknown) =>
+    !!x && typeof x === "object" && (x as any).requires_setup === true,
   useActiveMetaAccountId: mockUseActiveMetaAccountId,
   useIgConversations: mockUseIgConversations,
   useIgMessages: mockUseIgMessages,
@@ -70,6 +72,22 @@ describe("IgDMs — no account selected", () => {
     mockUseActiveMetaAccountId.mockReturnValue(null);
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-dm-no-account")).toBeTruthy();
+  });
+});
+
+describe("IgDMs — Meta setup gate", () => {
+  it("renders the actionable setup notice (not ChatWindow) when the app lacks the messaging capability", async () => {
+    // Graph #3 → backend returns `{requires_setup: true}` (200). The tab
+    // must show the actionable card, NOT an empty ChatWindow that would
+    // misread as "no conversations" and NOT a 502 error toast.
+    mockUseIgConversations.mockReturnValue({
+      data: { requires_setup: true, error: "Application does not have the capability" },
+      isLoading: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderPage();
+    expect(getByTestId("meta-setup-gate")).toBeTruthy();
+    expect(lastProps).toBeNull(); // ChatWindow never rendered
   });
 });
 

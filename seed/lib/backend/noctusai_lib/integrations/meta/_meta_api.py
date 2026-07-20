@@ -50,6 +50,17 @@ _RATE_LIMIT_CODES = {4, 17, 32, 613}
 # consumer can tell "needs App-Review-approved scope" apart from
 # "token expired" (`is_auth_error`) — never a silent or faked success.
 _PERMISSION_ERROR_CODES = {10, 200}
+# Capability Graph code — `3` = "Application does not have the capability
+# to make this API call." DISTINCT from the permission codes above: this
+# is not "a scope wasn't granted to the token" but "the APP itself lacks
+# the product/capability behind this endpoint" (e.g. reading Instagram
+# Direct via `/conversations` when the Messenger product / Instagram
+# messaging is not set up on the app). The requested scope can be present
+# in the token and this still fires. It is a Meta-side *configuration*
+# gate — actionable by the app admin (add the product / finish the setup),
+# never a transient error and never a code defect — so consumers surface
+# it as its own structured "needs setup" state rather than a raw 502.
+_CAPABILITY_ERROR_CODES = {3}
 
 # Kitchen-sink scope catalog. Versioned with the adapter, NOT in env
 # (env-var scope lists drift across workspaces — session-notes §A.1
@@ -112,6 +123,23 @@ class MetaGraphError(Exception):
         valid but the requested scope was never granted to it."""
 
         return self.code in _PERMISSION_ERROR_CODES
+
+    @property
+    def is_capability_missing(self) -> bool:
+        """The APP lacks the product/capability behind this endpoint.
+
+        Graph code `3` ("Application does not have the capability to make
+        this API call"). Distinct from `is_permission` (a scope not
+        granted to the token) and `is_auth_error` (token expired): the
+        token can be valid and carry the requested scope and this still
+        fires when the app has not had the underlying product wired up
+        (e.g. Instagram Direct via `/conversations` with the Messenger /
+        Instagram-messaging product not set up). A Meta-side
+        *configuration* gate the app admin resolves in the dashboard —
+        surfaced as its own structured "needs setup" state, never a raw
+        server error."""
+
+        return self.code in _CAPABILITY_ERROR_CODES
 
     @property
     def requires_app_review(self) -> bool:

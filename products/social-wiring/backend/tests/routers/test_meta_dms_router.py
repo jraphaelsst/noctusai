@@ -117,6 +117,27 @@ class TestConversations:
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
         assert resp.status_code == 502, resp.text
 
+    def test_list_conversations_capability_gate_returns_200_structured(self, client):
+        # Graph #3 ("Application does not have the capability") is a
+        # Meta-side SETUP gate (Messenger/IG-messaging product not wired up),
+        # not a server failure — it must surface as a structured 200
+        # `{requires_setup: true}` so the DMs tab renders an actionable
+        # "finish Meta setup" card, NOT a raw 502 toast.
+        gated = _GatedAdapter(
+            error=MetaGraphError(
+                "Application does not have the capability to make this API call.",
+                code=3,
+                http_status=400,
+            )
+        )
+        gated.seed(ig_accounts=[InstagramAccount(id=_IG_USER, username="one")])
+        _override(gated)
+        resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["requires_setup"] is True
+        assert "requires_app_review" not in body  # distinct gate
+
 
 class TestMessages:
     def test_list_messages_direction(self, client):

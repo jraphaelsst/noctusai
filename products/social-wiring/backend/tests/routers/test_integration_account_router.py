@@ -1121,6 +1121,9 @@ class TestMetaOAuthStart:
             "pages_read_engagement",
             "pages_manage_posts",
             "pages_manage_engagement",
+            # Required by the IG Conversations API (DM reading) alongside
+            # instagram_manage_messages — missing it caused Graph #3.
+            "pages_manage_metadata",
         ):
             assert scope in body["auth_url"], scope
         assert _ORG_A in body["state"]

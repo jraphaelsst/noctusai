@@ -742,6 +742,23 @@ class TestMetaGraphErrorPermission:
         assert e.requires_app_review is False
         assert e.is_auth_error is True
 
+    def test_capability_code_3_is_distinct_from_permission_and_auth(self):
+        # Code 3 = "Application does not have the capability to make this
+        # API call" — a Meta-side SETUP gate (product not wired up), NOT a
+        # scope-not-granted (10/200) and NOT a token expiry (190). Must be
+        # its own classifier so consumers render a "needs setup" state
+        # instead of a raw 502.
+        e = MetaGraphError("no capability", code=3)
+        assert e.is_capability_missing is True
+        assert e.is_permission is False
+        assert e.requires_app_review is False
+        assert e.is_auth_error is False
+        assert e.is_rate_limited is False
+
+    def test_permission_codes_are_not_capability_missing(self):
+        for c in (10, 200):
+            assert MetaGraphError("perm", code=c).is_capability_missing is False
+
 
 # ─── TestFakeWriteSurface ─────────────────────────────────────────────────
 

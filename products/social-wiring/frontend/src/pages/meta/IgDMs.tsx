@@ -26,18 +26,23 @@ import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system"
 
 import {
   isAppReviewGate,
+  isMetaSetupGate,
   useActiveMetaAccountId,
   useIgConversations,
   useIgMessages,
   useSendIgMessage,
 } from "@/hooks/useMeta";
+import { MetaSetupNotice } from "./MetaSetupNotice";
 
 // ─── Meta DM adapter ──────────────────────────────────────────────────────────
 
 function useMetaDMThreadsAdapter(accountId: string | null) {
   const { data, isLoading, isError } = useIgConversations(accountId);
+  // A setup gate carries no `conversations` — the main component renders
+  // the actionable notice instead, so here it degrades to an empty list.
+  const conversations = isMetaSetupGate(data) ? [] : data?.conversations ?? [];
   return {
-    data: (data?.conversations ?? []).map((c) => ({
+    data: conversations.map((c) => ({
       id: c.id,
       title: c.participant_name ?? "Contato",
       lastMessagePreview: c.snippet,
@@ -51,8 +56,9 @@ function useMetaDMThreadsAdapter(accountId: string | null) {
 
 function useMetaDMMessagesAdapter(accountId: string | null, conversationId: string | null) {
   const { data, isLoading, isError } = useIgMessages(accountId, conversationId);
+  const messages = isMetaSetupGate(data) ? [] : data?.messages ?? [];
   return {
-    data: (data?.messages ?? []).map((m) => ({
+    data: messages.map((m) => ({
       id: m.id,
       direction: m.direction,
       body: m.text,
@@ -67,8 +73,9 @@ function useMetaDMSendAdapter(accountId: string | null, conversationId: string |
   // Shares the TanStack Query cache entry with useMetaDMThreadsAdapter
   // (same queryKey) — no extra network call, just a lookup for participant_id.
   const { data } = useIgConversations(accountId);
+  const conversations = isMetaSetupGate(data) ? [] : data?.conversations ?? [];
   const recipientId =
-    data?.conversations.find((c) => c.id === conversationId)?.participant_id ?? null;
+    conversations.find((c) => c.id === conversationId)?.participant_id ?? null;
   const send = useSendIgMessage(accountId, conversationId);
 
   return {
@@ -98,6 +105,11 @@ const metaDMAdapter: ChatWindowAdapter = {
 
 export default function IgDMs() {
   const accountId = useActiveMetaAccountId();
+  // Shares the TanStack cache entry with the ChatWindow adapters (same
+  // queryKey) — no extra request. Intercepts the "needs Meta setup" gate
+  // (Graph #3) so the tab shows an actionable card instead of an empty
+  // ChatWindow that would misread as "no conversations".
+  const { data: conversationsData } = useIgConversations(accountId);
 
   if (!accountId) {
     return (
@@ -110,6 +122,10 @@ export default function IgDMs() {
         </CardContent>
       </Card>
     );
+  }
+
+  if (isMetaSetupGate(conversationsData)) {
+    return <MetaSetupNotice error={conversationsData.error} />;
   }
 
   return (

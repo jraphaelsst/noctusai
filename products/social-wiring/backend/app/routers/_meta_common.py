@@ -171,9 +171,21 @@ def handle_meta_graph_error(exc: MetaGraphError) -> JSONResponse:
     ``requires_app_review`` → 200 with ``{requires_app_review: true,
     error}`` (NOT 500 — a write/read scope pending Meta App Review is an
     expected, actionable state; the FE renders a "requer Revisão do app
-    Meta" prompt from this shape). Any other ``MetaGraphError`` → 502
-    with a structured body (never an unhandled 500 leaking Graph's raw
-    error envelope).
+    Meta" prompt from this shape).
+
+    ``is_capability_missing`` (Graph code ``3``) → 200 with
+    ``{requires_setup: true, error}`` — the app lacks the *product* behind
+    this endpoint (e.g. Instagram Direct via ``/conversations`` with the
+    Messenger / Instagram-messaging product not set up). Like the
+    App-Review case, this is an expected, admin-actionable Meta-side
+    CONFIGURATION gate, not a server failure — so it must NOT render as a
+    raw 502 (the DMs tab was surfacing a scary ``[502]`` toast for exactly
+    this). Kept a DISTINCT flag from ``requires_app_review`` because the
+    remedy differs: App Review = submit the app; setup = add/finish the
+    product in the dashboard.
+
+    Any other ``MetaGraphError`` → 502 with a structured body (never an
+    unhandled 500 leaking Graph's raw error envelope).
 
     Returns a ``JSONResponse`` directly for BOTH branches — never
     ``HTTPException(detail={...})``: the seed's global
@@ -191,6 +203,11 @@ def handle_meta_graph_error(exc: MetaGraphError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"requires_app_review": True, "error": str(exc)},
+        )
+    if exc.is_capability_missing:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"requires_setup": True, "error": str(exc)},
         )
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
