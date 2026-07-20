@@ -125,6 +125,35 @@ function EmptyState({ label, onAdd }: { label: string; onAdd?: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Integration honesty notice
+//
+// There is no OAuth / credential / Meta API call anywhere in this page today
+// (NOC-REMEDIATE[orbity-meta-ads-live], tracked in the backend service).
+// Every account and campaign here is a manual record. This banner keeps the
+// UI honest about that instead of letting "Conectar" / zero-value cards
+// imply a live sync that does not exist.
+// ---------------------------------------------------------------------------
+
+function IntegrationNoticeBanner() {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+      <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+      <div className="text-sm">
+        <p className="font-medium text-amber-900 dark:text-amber-300">
+          Integração automática com a Meta ainda não está disponível
+        </p>
+        <p className="mt-1 text-amber-800/90 dark:text-amber-400/90">
+          Contas, campanhas e valores nesta página são cadastros manuais.
+          Nenhum dado é buscado ou sincronizado automaticamente com a API da
+          Meta — o que você vê aqui é exatamente o que foi digitado nesta
+          tela.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Situation chip
 // ---------------------------------------------------------------------------
 
@@ -228,6 +257,21 @@ function AggregateCard() {
 
   if (error || !data) {
     return null;
+  }
+
+  // Zero here means "nothing was cadastrado" — never "we checked the Meta
+  // API and spend was zero" (no such check happens). Say that explicitly
+  // instead of presenting R$ 0,00 as a verified live figure.
+  if (data.total_spend === 0 && data.total_leads === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-muted/30 p-5 text-center">
+        <p className="text-sm text-muted-foreground">
+          Nenhum investimento ou lead cadastrado nos últimos 30 dias. Estes
+          valores não vêm da Meta — eles refletem apenas o que foi digitado
+          manualmente nas campanhas.
+        </p>
+      </div>
+    );
   }
 
   const cards = [
@@ -406,6 +450,10 @@ function CampaignDialog({
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="ex: 12345678901234"
               />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Apenas um identificador de referência — não é validado nem
+                sincronizado com a Meta.
+              </p>
             </div>
           )}
           <div>
@@ -564,6 +612,8 @@ function CampanhasTab() {
 
   return (
     <div className="space-y-6">
+      <IntegrationNoticeBanner />
+
       {/* Aggregate summary */}
       <AggregateCard />
 
@@ -634,17 +684,30 @@ function CampanhasTab() {
               Sincronizar
             </button>
           )}
-          <button
-            onClick={() => {
-              setEditing(null);
-              setDialogOpen(true);
-            }}
-            disabled={adAccounts.length === 0}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="h-4 w-4" />
-            Nova campanha
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={() => {
+                setEditing(null);
+                setDialogOpen(true);
+              }}
+              disabled={adAccounts.length === 0}
+              title={
+                adAccounts.length === 0
+                  ? 'Cadastre uma conta de anúncio na aba "Contas de Anúncio" primeiro'
+                  : undefined
+              }
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="h-4 w-4" />
+              Nova campanha
+            </button>
+            {adAccounts.length === 0 && (
+              <p className="text-xs text-muted-foreground text-right max-w-[220px]">
+                Cadastre uma conta de anúncio na aba "Contas de Anúncio" para
+                poder criar campanhas.
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -876,7 +939,9 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">
-            {editing ? "Editar conta de anúncio" : "Conectar conta de anúncio"}
+            {editing
+              ? "Editar conta de anúncio"
+              : "Cadastrar conta de anúncio (manual)"}
           </h2>
           <button
             onClick={onClose}
@@ -885,6 +950,12 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
             <X className="h-4 w-4" />
           </button>
         </div>
+        {!editing && (
+          <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-400">
+            Cadastro manual — não há integração com a API da Meta. Nenhum
+            dado de campanhas ou gastos será sincronizado automaticamente.
+          </p>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           {!editing && (
             <div>
@@ -904,6 +975,10 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="ex: act_123456789"
               />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Apenas um identificador de referência — não conecta nem
+                autentica com a Meta.
+              </p>
             </div>
           )}
           <div>
@@ -960,7 +1035,7 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
               ) : editing ? (
                 "Salvar alterações"
               ) : (
-                "Conectar conta"
+                "Cadastrar conta"
               )}
             </button>
           </div>
@@ -985,6 +1060,8 @@ function ContasTab() {
 
   return (
     <div className="space-y-4">
+      <IntegrationNoticeBanner />
+
       <div className="flex justify-end">
         <button
           onClick={() => {
@@ -994,7 +1071,7 @@ function ContasTab() {
           className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus className="h-4 w-4" />
-          Conectar conta
+          Cadastrar conta (manual)
         </button>
       </div>
 
@@ -1004,7 +1081,7 @@ function ContasTab() {
         <ErrorState message={error.message} onRetry={() => refetch()} />
       ) : accounts.length === 0 ? (
         <EmptyState
-          label="Nenhuma conta de anúncio conectada"
+          label="Nenhuma conta de anúncio cadastrada"
           onAdd={() => {
             setEditing(null);
             setDialogOpen(true);
@@ -1025,7 +1102,7 @@ function ContasTab() {
                   Status
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">
-                  Conectado em
+                  Cadastrado em
                 </th>
                 <th className="px-4 py-3 font-medium text-muted-foreground">
                   Ações
@@ -1069,7 +1146,7 @@ function ContasTab() {
                       <button
                         onClick={() => setConfirmDelete(account)}
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                        title="Desconectar"
+                        title="Remover"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -1098,10 +1175,10 @@ function ContasTab() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-2 text-lg font-semibold text-foreground">
-              Desconectar conta
+              Remover conta
             </h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja desconectar a conta{" "}
+              Tem certeza que deseja remover o cadastro da conta{" "}
               <strong className="text-foreground">{confirmDelete.name}</strong>?
               As campanhas vinculadas serão mantidas.
             </p>
@@ -1124,7 +1201,7 @@ function ContasTab() {
                 {deleteMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
-                Confirmar desconexão
+                Confirmar remoção
               </button>
             </div>
           </div>

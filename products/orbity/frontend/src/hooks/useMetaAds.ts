@@ -195,10 +195,10 @@ export function useCreateAdAccount() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-ads-accounts"] });
-      toast.success("Conta de anúncio conectada com sucesso!");
+      toast.success("Conta de anúncio cadastrada com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao conectar conta de anúncio", {
+      toast.error("Erro ao cadastrar conta de anúncio", {
         description: error.message,
       });
     },
@@ -235,10 +235,10 @@ export function useDeleteAdAccount() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-ads-accounts"] });
-      toast.success("Conta de anúncio desconectada com sucesso!");
+      toast.success("Conta de anúncio removida com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao desconectar conta de anúncio", {
+      toast.error("Erro ao remover conta de anúncio", {
         description: error.message,
       });
     },
