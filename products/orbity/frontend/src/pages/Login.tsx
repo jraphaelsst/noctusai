@@ -15,7 +15,7 @@ export default function Login() {
       <LoginForm
         brandIcon={Box}
         brandTitle="Orbity"
-        brandSubtitle="A minimal NoctusAI product"
+        brandSubtitle="Gestão para agências"
         supabase={supabase}
         onSuccess={() => navigate("/")}
         showForgotPassword
