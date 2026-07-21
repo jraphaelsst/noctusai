@@ -257,6 +257,36 @@ export function useAdoptLegacy(provider: string) {
   });
 }
 
+// ─── OAuth new-tab helper ─────────────────────────────────────────────────────
+
+/**
+ * openOAuthTab — opens a blank tab SYNCHRONOUSLY (before any await) so the
+ * browser's popup blocker still attributes it to the user gesture that
+ * triggered the mutation, and returns a setter that points that tab at the
+ * auth URL once it's known (or falls back to a same-tab redirect if the
+ * blocker won the race and `window.open` returned null).
+ *
+ * Usage:
+ *   const openTab = openOAuthTab();
+ *   ... await the network call ...
+ *   openTab(res.auth_url);
+ */
+function openOAuthTab() {
+  const tab =
+    typeof window !== "undefined"
+      ? window.open("", "_blank", "noopener,noreferrer")
+      : null;
+  return (authUrl: string) => {
+    if (tab) {
+      tab.location.href = authUrl;
+    } else {
+      // Popup blocked (or no window gesture) — fall back to same-tab redirect
+      // so the OAuth flow never silently dies.
+      window.location.assign(authUrl);
+    }
+  };
+}
+
 // ─── YouTube OAuth ───────────────────────────────────────────────────────────
 
 export interface YouTubeOAuthStartOptions {
@@ -267,18 +297,17 @@ export interface YouTubeOAuthStartOptions {
 export function useStartYouTubeOAuth() {
   return useMutation({
     mutationFn: async (options?: YouTubeOAuthStartOptions) => {
+      const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
       if (options?.clientId) body.client_id = options.clientId;
       const res = await api.post<OAuthStartResponse>(
         "/api/integrations/accounts/youtube/oauth/start",
         body
       );
-      return res;
-    },
-    onSuccess: (res) => {
       if (res?.auth_url) {
-        window.location.assign(res.auth_url);
+        openTab(res.auth_url);
       }
+      return res;
     },
   });
 }
@@ -294,8 +323,9 @@ export interface ProviderOAuthStartOptions {
  * useStartProviderOAuth — generic OAuth-start hook.
  *
  * POSTs to `/api/integrations/accounts/{provider}/oauth/start` with an
- * optional `client_id` body field, then redirects the browser to the returned
- * `auth_url`.  Mirror of `useStartYouTubeOAuth`.
+ * optional `client_id` body field, then opens the returned `auth_url` in a
+ * new tab (see `openOAuthTab`), keeping this app open in the current tab.
+ * Mirror of `useStartYouTubeOAuth`.
  *
  * Usage:
  *   const oauthStart = useStartProviderOAuth("gmail");
@@ -304,18 +334,17 @@ export interface ProviderOAuthStartOptions {
 export function useStartProviderOAuth(provider: string) {
   return useMutation({
     mutationFn: async (options?: ProviderOAuthStartOptions) => {
+      const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
       if (options?.clientId) body.client_id = options.clientId;
       const res = await api.post<OAuthStartResponse>(
         `/api/integrations/accounts/${provider}/oauth/start`,
         body,
       );
-      return res;
-    },
-    onSuccess: (res) => {
       if (res?.auth_url) {
-        window.location.assign(res.auth_url);
+        openTab(res.auth_url);
       }
+      return res;
     },
   });
 }

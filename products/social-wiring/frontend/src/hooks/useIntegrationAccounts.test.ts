@@ -4,10 +4,12 @@
  * Verifies:
  *   · queries return data from the API (bare arrays/objects — no envelope)
  *   · mutations call the right endpoints and invalidate query keys
- *   · useStartYouTubeOAuth assigns window.location on success
+ *   · useStartYouTubeOAuth / useStartProviderOAuth open the auth_url in a
+ *     NEW TAB (window.open at mutation start, tab.location.href on success),
+ *     falling back to a same-tab redirect when the popup is blocked
  *   · useAdoptLegacy calls adopt-legacy endpoint and invalidates accounts
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── Stub @noctusai/seed/infra ─────────────────────────────────────────
 // vi.hoisted: the static `import ... from "./useIntegrationAccounts"` below is
@@ -65,11 +67,16 @@ import {
   useDeleteAccount,
   useAdoptLegacy,
   useStartYouTubeOAuth,
+  useStartProviderOAuth,
 } from "./useIntegrationAccounts";
 
 // Reset mocks between tests to avoid cross-test pollution
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("useIntegrationProviders", () => {
@@ -202,8 +209,11 @@ describe("useAdoptLegacy", () => {
 });
 
 describe("useStartYouTubeOAuth", () => {
-  it("calls POST /api/integrations/accounts/youtube/oauth/start", async () => {
+  it("calls POST /api/integrations/accounts/youtube/oauth/start and opens a new tab", async () => {
+    const fakeTab = { location: { href: "" } };
+    const openSpy = vi.fn().mockReturnValue(fakeTab);
     const assignSpy = vi.fn();
+    vi.stubGlobal("open", openSpy);
     Object.defineProperty(window, "location", {
       value: { assign: assignSpy },
       writable: true,
@@ -215,6 +225,61 @@ describe("useStartYouTubeOAuth", () => {
       "/api/integrations/accounts/youtube/oauth/start",
       {}
     );
-    expect(assignSpy).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/auth?foo=1");
+    expect(openSpy).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(fakeTab.location.href).toBe(
+      "https://accounts.google.com/o/oauth2/auth?foo=1"
+    );
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to window.location.assign when the popup is blocked", async () => {
+    vi.stubGlobal("open", vi.fn().mockReturnValue(null));
+    const assignSpy = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { assign: assignSpy },
+      writable: true,
+    });
+    mockPost.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?foo=2", state: "abc" });
+    const hook = useStartYouTubeOAuth() as any;
+    await hook.mutateAsync();
+    expect(assignSpy).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/auth?foo=2");
+  });
+});
+
+describe("useStartProviderOAuth", () => {
+  it("calls POST /api/integrations/accounts/{provider}/oauth/start and opens a new tab", async () => {
+    const fakeTab = { location: { href: "" } };
+    const openSpy = vi.fn().mockReturnValue(fakeTab);
+    const assignSpy = vi.fn();
+    vi.stubGlobal("open", openSpy);
+    Object.defineProperty(window, "location", {
+      value: { assign: assignSpy },
+      writable: true,
+    });
+    mockPost.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?bar=1", state: "xyz" });
+    const hook = useStartProviderOAuth("gmail") as any;
+    await hook.mutateAsync();
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/integrations/accounts/gmail/oauth/start",
+      {}
+    );
+    expect(openSpy).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(fakeTab.location.href).toBe(
+      "https://accounts.google.com/o/oauth2/auth?bar=1"
+    );
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to window.location.assign when the popup is blocked", async () => {
+    vi.stubGlobal("open", vi.fn().mockReturnValue(null));
+    const assignSpy = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { assign: assignSpy },
+      writable: true,
+    });
+    mockPost.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?bar=2", state: "xyz" });
+    const hook = useStartProviderOAuth("drive") as any;
+    await hook.mutateAsync();
+    expect(assignSpy).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/auth?bar=2");
   });
 });
