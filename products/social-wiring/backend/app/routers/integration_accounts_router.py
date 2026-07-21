@@ -931,6 +931,15 @@ META_IA_OAUTH_SCOPES: tuple[str, ...] = (
     # was granted. Documented at
     # developers.facebook.com/docs/messenger-platform/conversations.
     "pages_manage_metadata",
+    # THE actual blocker for reading conversations, confirmed against the
+    # live token 2026-07-21: the `/{page-id}/conversations` edge (both IG
+    # and Messenger) returns Graph (#200) "Requires permission:
+    # pages_messaging" without it. instagram_manage_messages +
+    # pages_manage_metadata + the Page MESSAGING task are NOT sufficient —
+    # `pages_messaging` is the permission Graph names. It was absent from
+    # this list, so no reconnect ever requested it. (Meta's IG-messaging
+    # docs omit it; the live API is the source of truth.)
+    "pages_messaging",
 )
 
 
