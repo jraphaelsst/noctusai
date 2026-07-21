@@ -65,6 +65,7 @@ dance; it ships only the read-only introspection seam).
 """
 
 from noctusai_lib.integrations.meta._meta_api import (
+    IG_GRAPH_BASE,
     META_KITCHEN_SINK_SCOPES,
     MetaGraphError,
     discover_app_permissions,
@@ -80,6 +81,11 @@ from noctusai_lib.integrations.meta.credentials import (
     OAuthMetaCredentials,
 )
 from noctusai_lib.integrations.meta.fake_adapter import FakeMetaAdapter
+from noctusai_lib.integrations.meta.instagram_login_adapter import (
+    FakeInstagramLoginAdapter,
+    InstagramLoginMessagingAdapter,
+    InstagramLoginOAuthAdapter,
+)
 from noctusai_lib.integrations.meta.mappers import (
     conversation_from_body,
     direct_message_from_body,
@@ -173,8 +179,12 @@ __all__ = [
     "FacebookComment",
     "FacebookPage",
     "FacebookPost",
+    "FakeInstagramLoginAdapter",
     "FakeMetaAdapter",
+    "IG_GRAPH_BASE",
     "InstagramAccount",
+    "InstagramLoginMessagingAdapter",
+    "InstagramLoginOAuthAdapter",
     "InstagramComment",
     "InstagramMedia",
     "META_KITCHEN_SINK_SCOPES",

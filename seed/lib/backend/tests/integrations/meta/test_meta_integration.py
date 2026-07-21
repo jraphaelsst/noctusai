@@ -2102,3 +2102,88 @@ class TestVideoReelPublish:
         a = MetaOAuthAdapter(system_user_token="SYSTOK")
         with pytest.raises(ValueError, match="non-empty video_url"):
             a.publish_facebook_video("P1", "")
+
+
+class TestInstagramLoginAdapter:
+    """Instagram API with Instagram Login — the agency-model read adapter over
+    graph.instagram.com + an IG User token (roadmap S1). Reuses the shared
+    Conversation/DirectMessage mappers; only host + token differ from the
+    Facebook-Login path."""
+
+    def test_fake_seeded_conversations_and_messages(self):
+        from noctusai_lib.integrations.meta import FakeInstagramLoginAdapter
+
+        fake = FakeInstagramLoginAdapter().seed(
+            conversations=[Conversation(id="c1", participant_ids=["IGSELF", "U1"])],
+            messages_by_conversation={"c1": [DirectMessage(id="m1", text="oi")]},
+        )
+        convs = fake.list_instagram_conversations()
+        assert len(convs) == 1 and convs[0].id == "c1"
+        msgs = fake.list_instagram_messages("c1")
+        assert len(msgs) == 1 and msgs[0].text == "oi"
+        assert fake.list_instagram_messages("nope") == []
+
+    def test_real_conversations_use_ig_graph_host_and_me_node(self):
+        # Instagram-Login model: host is graph.instagram.com, node is /me/
+        # conversations (NOT a page), token is the IG User token. This locks the
+        # model boundary so we never regress onto the Facebook-Login shape.
+        from noctusai_lib.integrations.meta import (
+            IG_GRAPH_BASE,
+            InstagramLoginOAuthAdapter,
+        )
+
+        a = InstagramLoginOAuthAdapter("IGUSERTOK")
+        body = {
+            "data": [
+                {"id": "c1", "participants": {"data": [{"id": "IGSELF"}, {"id": "U1"}]}}
+            ],
+            "paging": {},
+        }
+        captured = {}
+
+        def _get(url, **kw):
+            captured["url"] = url
+            captured["params"] = kw.get("params")
+            return _FakeResponse(body)
+
+        with patch.object(httpx, "get", side_effect=_get):
+            convs = a.list_instagram_conversations()
+
+        assert convs[0].id == "c1"
+        assert convs[0].participant_ids == ["IGSELF", "U1"]
+        assert captured["url"].startswith(IG_GRAPH_BASE)
+        assert "graph.facebook.com" not in captured["url"]
+        assert captured["url"].endswith("/me/conversations")
+        assert captured["params"]["platform"] == "instagram"
+        assert captured["params"]["access_token"] == "IGUSERTOK"
+        # Lean field set — same cost discipline as the Facebook-Login path.
+        assert captured["params"]["fields"] == "participants{id},updated_time"
+
+    def test_real_messages_two_step_flow_on_ig_graph(self):
+        from noctusai_lib.integrations.meta import (
+            IG_GRAPH_BASE,
+            InstagramLoginOAuthAdapter,
+        )
+
+        a = InstagramLoginOAuthAdapter("IGUSERTOK")
+        list_body = {"data": [{"id": "m1"}], "paging": {}}
+        detail = {
+            "id": "m1",
+            "from": {"id": "U1"},
+            "to": {"data": [{"id": "IGSELF"}]},
+            "message": "hi",
+        }
+        hosts = []
+
+        def _get(url, **kw):
+            hosts.append(url)
+            return _FakeResponse(list_body if url.endswith("/messages") else detail)
+
+        with patch.object(httpx, "get", side_effect=_get):
+            msgs = a.list_instagram_messages("c1")
+
+        assert [m.id for m in msgs] == ["m1"]
+        assert msgs[0].sender_id == "U1"
+        assert msgs[0].conversation_id == "c1"
+        # Every call stays on graph.instagram.com.
+        assert all(h.startswith(IG_GRAPH_BASE) for h in hosts)

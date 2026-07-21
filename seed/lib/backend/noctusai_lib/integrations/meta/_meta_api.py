@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GRAPH_VERSION = "v21.0"
 GRAPH_BASE = "https://graph.facebook.com"
+# Instagram-Login model host — the Instagram API with Instagram Login serves
+# from graph.instagram.com (NOT graph.facebook.com) with a per-client IG User
+# access token. Used by `InstagramLoginAdapter`; pass as `base=` to the graph_*
+# helpers. See roadmap ig-login-messaging-migration-2026-07.
+IG_GRAPH_BASE = "https://graph.instagram.com"
 # Graph calls from the prod container run 3–18s (observed egress latency to
 # graph.facebook.com); 15s was tipping the IG-Direct `/conversations` call
 # into httpx.ReadTimeout. 30s covers the observed range with headroom — and a
@@ -243,16 +248,19 @@ def graph_get(
     params: dict[str, Any] | None = None,
     version: str = DEFAULT_GRAPH_VERSION,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    base: str = GRAPH_BASE,
 ) -> dict[str, Any]:
-    """GET `{GRAPH_BASE}/{version}/{path}` with the token appended.
+    """GET `{base}/{version}/{path}` with the token appended.
 
     `path` is version-relative (e.g. `"me"`, `"me/accounts"`,
-    `"{page_id}/posts"`). Raises `MetaGraphError` on a Graph error
-    envelope (even at HTTP 200) or a non-JSON body."""
+    `"{page_id}/posts"`). `base` defaults to the Facebook-Login host
+    (`GRAPH_BASE`); pass `IG_GRAPH_BASE` for the Instagram-Login model.
+    Raises `MetaGraphError` on a Graph error envelope (even at HTTP 200)
+    or a non-JSON body."""
 
     q: dict[str, Any] = dict(params or {})
     q["access_token"] = access_token
-    url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
+    url = f"{base}/{version}/{path.lstrip('/')}"
     resp = _graph_request("GET", url, params=q, timeout=timeout)
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
@@ -273,14 +281,17 @@ def graph_paged(
     max_pages: int = DEFAULT_MAX_PAGES,
     limit: int | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    base: str = GRAPH_BASE,
 ) -> list[dict[str, Any]]:
     """Follow `paging.next` and accumulate `data` rows, up to
-    `max_pages`. `limit` (when set) truncates the accumulated list."""
+    `max_pages`. `limit` (when set) truncates the accumulated list.
+    `base` selects the host (`GRAPH_BASE` vs `IG_GRAPH_BASE`)."""
 
     q: dict[str, Any] = dict(params or {})
     rows: list[dict[str, Any]] = []
     body = graph_get(
-        path, access_token=access_token, params=q, version=version, timeout=timeout
+        path, access_token=access_token, params=q, version=version,
+        timeout=timeout, base=base,
     )
     rows.extend(body.get("data") or [])
     pages = 1
