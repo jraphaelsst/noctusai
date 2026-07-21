@@ -34,7 +34,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GRAPH_VERSION = "v21.0"
 GRAPH_BASE = "https://graph.facebook.com"
-DEFAULT_TIMEOUT_SECONDS = 15.0
+# Graph calls from the prod container run 3–18s (observed egress latency to
+# graph.facebook.com); 15s was tipping the IG-Direct `/conversations` call
+# into httpx.ReadTimeout. 30s covers the observed range with headroom — and a
+# genuine hang past 30s now surfaces as a clean MetaGraphError (see
+# `_graph_request`), never a raw 500.
+DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_PAGES = 5
 
 # Auth-error Graph codes — token expired / revoked / wrong scope.
@@ -198,6 +203,39 @@ def _parse_json(resp: httpx.Response) -> Any:
         return resp.text
 
 
+def _graph_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """Single Graph HTTP call with network/timeout failures normalized to
+    ``MetaGraphError``.
+
+    Every Graph HTTP call routes through here so a slow or unreachable
+    Meta surfaces the SAME way as a Graph error envelope — the caller's
+    ``except MetaGraphError`` catches it and maps to a structured 502,
+    instead of a raw ``httpx.ReadTimeout`` bubbling up as an unhandled
+    500. The IG-Direct ``/conversations`` read was doing exactly that
+    when Graph ran slow (the read exceeded the HTTP timeout and crashed
+    the endpoint). Timeouts and transport errors are the ONLY thing
+    caught here — a Graph *error envelope* (even at HTTP 200) is still
+    parsed + raised by the callers via ``_raise_for_graph_error``."""
+    # Dispatch to the per-method httpx functions (not httpx.request) so the
+    # transport stays interceptable via `patch.object(httpx, "get")` etc. —
+    # the shape every existing test double relies on.
+    _fn = {"GET": httpx.get, "POST": httpx.post, "DELETE": httpx.delete}[method]
+    try:
+        return _fn(url, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise MetaGraphError(
+            "Graph API request timed out — Meta was slow to respond. "
+            "Please retry in a moment.",
+            http_status=504,
+        ) from exc
+    except httpx.RequestError as exc:
+        raise MetaGraphError(
+            f"Graph API request failed ({type(exc).__name__}) — could not "
+            "reach Meta.",
+            http_status=502,
+        ) from exc
+
+
 def graph_get(
     path: str,
     *,
@@ -215,7 +253,7 @@ def graph_get(
     q: dict[str, Any] = dict(params or {})
     q["access_token"] = access_token
     url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
-    resp = httpx.get(url, params=q, timeout=timeout)
+    resp = _graph_request("GET", url, params=q, timeout=timeout)
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
     if not isinstance(body, dict):
@@ -248,7 +286,7 @@ def graph_paged(
     pages = 1
     next_url = (body.get("paging") or {}).get("next")
     while next_url and pages < max_pages:
-        resp = httpx.get(next_url, timeout=timeout)
+        resp = _graph_request("GET", next_url, timeout=timeout)
         nb = _parse_json(resp)
         _raise_for_graph_error(nb, http_status=resp.status_code)
         if not isinstance(nb, dict):
@@ -286,7 +324,7 @@ def graph_post(
     form: dict[str, Any] = dict(data or {})
     form["access_token"] = access_token
     url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
-    resp = httpx.post(url, data=form, timeout=timeout)
+    resp = _graph_request("POST", url, data=form, timeout=timeout)
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
     if not isinstance(body, dict):
@@ -322,7 +360,7 @@ def graph_delete(
     q: dict[str, Any] = dict(params or {})
     q["access_token"] = access_token
     url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
-    resp = httpx.delete(url, params=q, timeout=timeout)
+    resp = _graph_request("DELETE", url, params=q, timeout=timeout)
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)
     if not isinstance(body, dict):
@@ -512,7 +550,8 @@ def exchange_code_for_token_bundle(
     `expires_in`, so it is None-safe). `exchange_code_for_token`
     delegates to this and returns just `.access_token`."""
 
-    resp = httpx.get(
+    resp = _graph_request(
+        "GET",
         f"{GRAPH_BASE}/{version}/oauth/access_token",
         params={
             "client_id": app_id,
@@ -543,7 +582,8 @@ def exchange_for_long_lived_bundle(
     `exchange_for_long_lived` delegates to this and returns just
     `.access_token`."""
 
-    resp = httpx.get(
+    resp = _graph_request(
+        "GET",
         f"{GRAPH_BASE}/{version}/oauth/access_token",
         params={
             "grant_type": "fb_exchange_token",

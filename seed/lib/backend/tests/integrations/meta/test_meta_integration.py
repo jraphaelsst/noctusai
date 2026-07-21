@@ -316,6 +316,37 @@ class TestGraphErrorParsing:
         assert not exc.value.is_rate_limited
         assert exc.value.fbtrace_id == "AnAtKzKqMpqAJqf"
 
+    def test_read_timeout_wrapped_as_metagraph_error(self):
+        # A slow Graph (httpx.ReadTimeout) must surface as a MetaGraphError
+        # so the caller's `except MetaGraphError` catches it — NOT a raw
+        # httpx exception bubbling up as an unhandled 500. This is the exact
+        # crash the IG-Direct /conversations read hit in prod.
+        from noctusai_lib.integrations.meta import _meta_api
+
+        with patch.object(httpx, "get", side_effect=httpx.ReadTimeout("slow")):
+            with pytest.raises(MetaGraphError) as exc:
+                _meta_api.graph_get("me", access_token="x")
+        assert not isinstance(exc.value, httpx.HTTPError)
+        assert "timed out" in str(exc.value).lower()
+        # A wrapped-timeout is NOT a permission/capability/review gate.
+        assert exc.value.is_permission is False
+        assert exc.value.is_capability_missing is False
+        assert exc.value.requires_app_review is False
+
+    def test_transport_error_wrapped_as_metagraph_error(self):
+        from noctusai_lib.integrations.meta import _meta_api
+
+        with patch.object(httpx, "get", side_effect=httpx.ConnectError("down")):
+            with pytest.raises(MetaGraphError) as exc:
+                _meta_api.graph_get("me", access_token="x")
+        assert "could not" in str(exc.value).lower()
+
+    def test_default_timeout_has_headroom_for_slow_graph(self):
+        # Container→Graph egress runs 3–18s; the timeout must clear that.
+        from noctusai_lib.integrations.meta import _meta_api
+
+        assert _meta_api.DEFAULT_TIMEOUT_SECONDS >= 30
+
     def test_rate_limit_classification(self):
         err = MetaGraphError("limit", code=4)
         assert err.is_rate_limited
@@ -1585,6 +1616,10 @@ class TestMediaInsights:
         assert "video_views" not in requested
         assert "total_interactions" in requested
         assert "views" in requested
+        # `impressions` retired for media in Graph v22 ("no longer supported
+        # for the queried media") — dropped 2026-07-21; it was failing the
+        # whole per-post insights call in prod.
+        assert "impressions" not in requested
 
 
 # ─── TestAccountInsights ──────────────────────────────────────────────────

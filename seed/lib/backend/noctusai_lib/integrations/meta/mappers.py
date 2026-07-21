@@ -94,19 +94,16 @@ POST_INSIGHT_METRICS = [
     "post_reactions_anger_total",
 ]
 
-# Per-media (`/{media-id}/insights`) metrics. `engagement` and `video_views`
-# were retired by Meta and REJECT the whole batched call — Graph validates the
-# metric list before serving any of it, so one retired name zeroes every metric
-# on the item. `engagement` → `total_interactions`; `video_views` → `views`
-# (which now covers all media types, not just VIDEO / REELS). Calibrated
-# against a live token 2026-07-16 on Graph v21 — the account this ran against
-# reported the valid set as: impressions, reach, replies, saved, likes,
-# comments, shares, total_interactions, follows, profile_visits,
-# profile_activity, navigation, ig_reels_video_view_total_time,
-# ig_reels_avg_watch_time, views, reels_skip_rate, reposts, facebook_views,
-# crossposted_views, total_views, total_likes, total_comments, link_clicks.
+# Per-media (`/{media-id}/insights`) metrics. Graph validates the whole metric
+# list up front and REJECTS the entire call if ANY name is unsupported, so one
+# retired name zeroes every metric on the item. Retirements observed against a
+# live token:
+#   - `engagement` → `total_interactions`, `video_views` → `views` (2026-07-16)
+#   - `impressions` retired for media in Graph v22+ ("the impressions metric is
+#     no longer supported for the queried media") — dropped 2026-07-21; it was
+#     failing the whole per-post insights call in prod.
+# Kept conservative to the names that serve across media product types.
 IG_MEDIA_INSIGHT_METRICS = [
-    "impressions",
     "reach",
     "total_interactions",
     "saved",
