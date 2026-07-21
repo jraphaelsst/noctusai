@@ -272,16 +272,28 @@ export function useAdoptLegacy(provider: string) {
  *   openTab(res.auth_url);
  */
 function openOAuthTab() {
+  // NB: do NOT pass "noopener" here — per the HTML spec `window.open(...,
+  // "noopener")` returns `null`, which would strand this blank tab AND trip the
+  // fallback below into redirecting the CURRENT page (the exact bug reported).
+  // We need the window handle to point the NEW tab at the auth URL, so we open
+  // WITHOUT noopener and instead sever the opener link ourselves for anti-
+  // reverse-tabnabbing (we never use `tab.opener`).
   const tab =
-    typeof window !== "undefined"
-      ? window.open("", "_blank", "noopener,noreferrer")
-      : null;
+    typeof window !== "undefined" ? window.open("", "_blank") : null;
+  if (tab) {
+    try {
+      tab.opener = null;
+    } catch {
+      /* some browsers freeze `opener` — best-effort, non-fatal */
+    }
+  }
   return (authUrl: string) => {
     if (tab) {
+      // Navigate ONLY the new tab; the current page stays put.
       tab.location.href = authUrl;
     } else {
-      // Popup blocked (or no window gesture) — fall back to same-tab redirect
-      // so the OAuth flow never silently dies.
+      // Popup blocked (no window handle) — fall back to same-tab redirect so
+      // the OAuth flow never silently dies.
       window.location.assign(authUrl);
     }
   };

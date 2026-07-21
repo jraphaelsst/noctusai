@@ -44,8 +44,6 @@ from app.dependencies import (
 from app.schemas.settings import (
     EmailTestRequest,
     EmailTestResult,
-    InstagramAppConfigStatus,
-    InstagramAppConfigUpdate,
     KeyHealth,
     KeyStatusEntry,
     KeysStatus,
@@ -61,12 +59,9 @@ from app.schemas.settings import (
 )
 from app.schemas.whatsapp import WAHASessionInfo, extract_waha_message_id
 from app.services.app_config_store import (
-    INSTAGRAM_APP_ID_KEY,
-    INSTAGRAM_APP_SECRET_KEY,
     META_APP_ID_KEY,
     META_APP_SECRET_KEY,
     build_app_config_store,
-    resolve_instagram_app_creds,
     resolve_meta_app_creds,
 )
 from app.services.chatbot_service import append_memory as _append_chat_memory
@@ -693,68 +688,6 @@ def get_meta_app_config_status(
     """Which half of the Meta App credential pair is configured (DB or
     env) — never the secret itself."""
     return _meta_app_status(cfg, store=store)
-
-
-# ─── Instagram App config tab (byte-for-byte mirror of the Meta App tab
-# above, keyed on the Instagram Business Login app credential pair) ─────
-def _instagram_app_status(cfg: SocialWiringSettings, store=None) -> InstagramAppConfigStatus:
-    """Build the status response from the current DB-or-env resolution.
-
-    Mirrors ``_meta_app_status`` exactly (see its docstring), resolving
-    via :func:`resolve_instagram_app_creds` instead."""
-    app_id, app_secret = resolve_instagram_app_creds(settings=cfg, store=store)
-    app_id_masked = None
-    if app_id:
-        app_id_masked = app_id if len(app_id) <= 4 else f"...{app_id[-4:]}"
-    return InstagramAppConfigStatus(
-        app_id_configured=bool(app_id),
-        app_secret_configured=bool(app_secret),
-        app_id_masked=app_id_masked,
-    )
-
-
-@router.put("/instagram-app", response_model=InstagramAppConfigStatus)
-def update_instagram_app_config(
-    payload: InstagramAppConfigUpdate,
-    auth: tuple = Depends(get_current_user_org),
-    cfg: SocialWiringSettings = Depends(get_settings),
-    store=Depends(get_app_config_store_dep),
-) -> InstagramAppConfigStatus:
-    """Admin-gated write for the Instagram App ID / App Secret pair.
-
-    Persists into ``social_wiring.app_integration_config`` (migration
-    022) via the seed ``AppConfigStore`` — encrypted at rest, DB value
-    wins over the ``INSTAGRAM_APP_ID`` / ``INSTAGRAM_APP_SECRET`` env
-    fallback. ``app_secret`` is write-only and only overwritten when the
-    caller supplies a non-blank value (never echoed back in the
-    response).
-    """
-    user, _token, _raw_org = auth
-    _require_admin(user, "Instagram App config")
-
-    if payload.app_id is None and not payload.app_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="provide at least one of app_id / app_secret",
-        )
-
-    if payload.app_id is not None:
-        store.put(INSTAGRAM_APP_ID_KEY, payload.app_id.strip())
-    if payload.app_secret:  # blank/omitted never overwrites — write-only, opt-in
-        store.put(INSTAGRAM_APP_SECRET_KEY, payload.app_secret)
-
-    return _instagram_app_status(cfg, store=store)
-
-
-@router.get("/instagram-app/status", response_model=InstagramAppConfigStatus)
-def get_instagram_app_config_status(
-    _auth: tuple = Depends(get_current_user_org),
-    cfg: SocialWiringSettings = Depends(get_settings),
-    store=Depends(get_app_config_store_optional_dep),
-) -> InstagramAppConfigStatus:
-    """Which half of the Instagram App credential pair is configured
-    (DB or env) — never the secret itself."""
-    return _instagram_app_status(cfg, store=store)
 
 
 def _extract_waha_session_status(payload) -> str | None:

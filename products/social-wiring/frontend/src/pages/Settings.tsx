@@ -38,8 +38,6 @@ import {
   useKeysStatus,
   useMetaAppStatus,
   useSaveMetaApp,
-  useInstagramAppStatus,
-  useSaveInstagramApp,
   type KeyStatusEntry,
   type Recipient,
   type RecipientCreate,
@@ -315,7 +313,6 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
       </Card>
 
       {isAdminOrDev && <MetaAppSection />}
-      {isAdminOrDev && <InstagramAppSection />}
     </div>
   );
 }
@@ -448,150 +445,6 @@ function MetaAppSection() {
                 />
               </div>
               <Button type="submit" disabled={saving} data-testid="meta-app-save-btn">
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Salvar"
-                )}
-              </Button>
-            </form>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Instagram App credentials section (owner/admin/dev only) ───────────
-// App ID + App Secret for the Instagram Business Login product — a
-// DIFFERENT app than the Meta (Facebook/Instagram) app above. Mirrors
-// MetaAppSection exactly: the secret is write-only (never re-echoed), so
-// the input always starts empty and is only sent when the admin actually
-// types a new value.
-function InstagramAppSection() {
-  const { data: status, loading: statusLoading, refresh } = useInstagramAppStatus();
-  const { save, saving } = useSaveInstagramApp();
-  const [appId, setAppId] = useState("");
-  const [appSecret, setAppSecret] = useState("");
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!appId.trim()) {
-      toast.error("Informe o App ID do Instagram.");
-      return;
-    }
-    try {
-      await save({
-        app_id: appId.trim(),
-        app_secret: appSecret.trim() || undefined,
-      });
-      setAppId("");
-      setAppSecret("");
-      await refresh();
-    } catch {
-      // useSaveInstagramApp already surfaced the error toast.
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <KeyRound className="h-5 w-5 text-muted-foreground" />
-          <div>
-            <CardTitle>Aplicativo Instagram</CardTitle>
-            <CardDescription>
-              App ID e App Secret do app de Instagram Business Login usado
-              no OAuth do Instagram. Nao e o Facebook App ID acima nem o
-              Token de Cliente — e o app cadastrado especificamente para
-              login do Instagram. O App Secret nunca e reexibido depois de
-              salvo.
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {statusLoading ? (
-          <div className="flex items-center justify-center p-6">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <>
-            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="rounded-md border p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <p className="text-sm font-medium">App ID</p>
-                  <Badge
-                    variant={status?.app_id_configured ? "default" : "destructive"}
-                    className="gap-1 font-mono text-[11px]"
-                    data-testid="instagram-app-id-badge"
-                  >
-                    {status?.app_id_configured ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : (
-                      <CircleAlert className="h-3 w-3" />
-                    )}
-                    {status?.app_id_configured ? "configurado" : "ausente"}
-                  </Badge>
-                </div>
-                {status?.app_id_masked && (
-                  <p className="text-xs text-muted-foreground">
-                    Atual: {status.app_id_masked}
-                  </p>
-                )}
-              </div>
-              <div className="rounded-md border p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <p className="text-sm font-medium">App Secret</p>
-                  <Badge
-                    variant={status?.app_secret_configured ? "default" : "destructive"}
-                    className="gap-1 font-mono text-[11px]"
-                    data-testid="instagram-app-secret-badge"
-                  >
-                    {status?.app_secret_configured ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : (
-                      <CircleAlert className="h-3 w-3" />
-                    )}
-                    {status?.app_secret_configured ? "configurado" : "ausente"}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-3"
-              data-testid="instagram-app-form"
-            >
-              <div className="space-y-1">
-                <Label htmlFor="instagram-app-id">App ID *</Label>
-                <Input
-                  id="instagram-app-id"
-                  value={appId}
-                  onChange={(e) => setAppId(e.target.value)}
-                  placeholder="Ex: 1234567890123456"
-                  disabled={saving}
-                  data-testid="instagram-app-id-input"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="instagram-app-secret">App Secret</Label>
-                <Input
-                  id="instagram-app-secret"
-                  type="password"
-                  value={appSecret}
-                  onChange={(e) => setAppSecret(e.target.value)}
-                  placeholder={
-                    status?.app_secret_configured
-                      ? "Deixe em branco para manter o atual"
-                      : "Informe o App Secret"
-                  }
-                  disabled={saving}
-                  data-testid="instagram-app-secret-input"
-                />
-              </div>
-              <Button type="submit" disabled={saving} data-testid="instagram-app-save-btn">
                 {saving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (

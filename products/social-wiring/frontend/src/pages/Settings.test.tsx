@@ -1,6 +1,7 @@
 /**
- * Settings page tests — Meta App + Instagram App credentials sections
- * (Chaves API tab).
+ * Settings page tests — Meta App credentials section (Chaves API tab).
+ * The unified Meta app covers both Facebook and Instagram, so a single
+ * Meta App section drives OAuth for both.
  *
  * Coverage (Meta App):
  *   1. Meta App section is hidden for a non-admin/dev user
@@ -9,18 +10,11 @@
  *      with the right payload, then clears both fields (secret never echoed)
  *   4. Validation: empty App ID blocks submit (no save() call)
  *
- * Coverage (Instagram App — mirrors Meta App):
- *   5. Instagram App section is hidden for a non-admin/dev user
- *   6. Instagram App section renders for an admin/dev user (status badges)
- *   7. Save flow calls useSaveInstagramApp with the right payload, clears
- *      both fields after success
- *   8. Validation: empty App ID blocks submit (no save() call)
- *
  * Mock strategy:
  *   · @noctusai/seed/infra — useAuthStore returns a fixture user
  *   · @noctusai/lib — resolveSSOContext (real role-resolution logic mirrored
  *     inline) + StatusPaginaPanel stubbed (Visibilidade tab, out of scope)
- *   · @/hooks/useSettings — all hooks mocked (recipients/keys/meta-app/instagram-app)
+ *   · @/hooks/useSettings — all hooks mocked (recipients/keys/meta-app)
  *   · @/components/ui/tabs — stubbed as a structural pass-through (renders
  *     every TabsContent unconditionally) so the test doesn't depend on Radix's
  *     real activation semantics; Card/Badge/Input/etc stay real (thin shadcn
@@ -79,17 +73,12 @@ const mockUseKeysStatus = vi.fn();
 const mockUseMetaAppStatus = vi.fn();
 const mockSave = vi.fn();
 const mockRefresh = vi.fn();
-const mockUseInstagramAppStatus = vi.fn();
-const mockSaveInstagram = vi.fn();
-const mockRefreshInstagram = vi.fn();
 
 vi.mock("@/hooks/useSettings", () => ({
   useRecipients: mockUseRecipients,
   useKeysStatus: mockUseKeysStatus,
   useMetaAppStatus: mockUseMetaAppStatus,
   useSaveMetaApp: () => ({ save: mockSave, saving: false }),
-  useInstagramAppStatus: mockUseInstagramAppStatus,
-  useSaveInstagramApp: () => ({ save: mockSaveInstagram, saving: false }),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -148,14 +137,6 @@ beforeEach(() => {
   mockSave.mockReset();
   mockSave.mockResolvedValue(undefined);
   mockRefresh.mockReset();
-  mockUseInstagramAppStatus.mockReturnValue({
-    data: { app_id_configured: false, app_secret_configured: false },
-    loading: false,
-    refresh: mockRefreshInstagram,
-  });
-  mockSaveInstagram.mockReset();
-  mockSaveInstagram.mockResolvedValue(undefined);
-  mockRefreshInstagram.mockReset();
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -270,97 +251,6 @@ describe("Settings — Meta App save flow", () => {
     await (await import("@testing-library/react")).waitFor(() => {
       expect(mockSave).toHaveBeenCalledWith({
         app_id: "999888777",
-        app_secret: undefined,
-      });
-    });
-  });
-});
-
-describe("Settings — Instagram App section visibility", () => {
-  it("is hidden for a non-admin/dev user", async () => {
-    setUser("member");
-    const { queryByText } = await renderSettingsOnKeysTab();
-    expect(queryByText("Aplicativo Instagram")).toBeNull();
-  });
-
-  it("renders for an admin user with status badges", async () => {
-    setUser("admin");
-    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
-    expect(getByText("Aplicativo Instagram")).toBeTruthy();
-    expect(getByTestId("instagram-app-id-badge")).toBeTruthy();
-    expect(getByTestId("instagram-app-secret-badge")).toBeTruthy();
-  });
-
-  it("shows 'ausente' badges when nothing is configured", async () => {
-    setUser("owner");
-    const { getByTestId } = await renderSettingsOnKeysTab();
-    expect(getByTestId("instagram-app-id-badge").textContent).toMatch(/ausente/i);
-    expect(getByTestId("instagram-app-secret-badge").textContent).toMatch(/ausente/i);
-  });
-
-  it("shows 'configurado' badges + masked hint when already set", async () => {
-    setUser("owner");
-    mockUseInstagramAppStatus.mockReturnValue({
-      data: {
-        app_id_configured: true,
-        app_secret_configured: true,
-        app_id_masked: "5678****4321",
-      },
-      loading: false,
-      refresh: mockRefreshInstagram,
-    });
-    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
-    expect(getByTestId("instagram-app-id-badge").textContent).toMatch(/configurado/i);
-    expect(getByTestId("instagram-app-secret-badge").textContent).toMatch(/configurado/i);
-    expect(getByText(/5678\*\*\*\*4321/)).toBeTruthy();
-  });
-});
-
-describe("Settings — Instagram App save flow", () => {
-  it("blocks submit and does not call save() when App ID is empty", async () => {
-    setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
-    fireEvent.click(getByTestId("instagram-app-save-btn"));
-    expect(mockSaveInstagram).not.toHaveBeenCalled();
-  });
-
-  it("calls save() with app_id + app_secret and clears both fields after success", async () => {
-    setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
-
-    const appIdInput = getByTestId("instagram-app-id-input") as HTMLInputElement;
-    const appSecretInput = getByTestId("instagram-app-secret-input") as HTMLInputElement;
-
-    fireEvent.change(appIdInput, { target: { value: "1122334455" } });
-    fireEvent.change(appSecretInput, { target: { value: "igsecret" } });
-    fireEvent.click(getByTestId("instagram-app-save-btn"));
-
-    await (await import("@testing-library/react")).waitFor(() => {
-      expect(mockSaveInstagram).toHaveBeenCalledWith({
-        app_id: "1122334455",
-        app_secret: "igsecret",
-      });
-    });
-
-    await (await import("@testing-library/react")).waitFor(() => {
-      expect(appIdInput.value).toBe("");
-      expect(appSecretInput.value).toBe("");
-    });
-    expect(mockRefreshInstagram).toHaveBeenCalled();
-  });
-
-  it("omits app_secret from the payload when left blank (keeps existing secret)", async () => {
-    setUser("owner");
-    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
-
-    fireEvent.change(getByTestId("instagram-app-id-input"), {
-      target: { value: "666777888" },
-    });
-    fireEvent.click(getByTestId("instagram-app-save-btn"));
-
-    await (await import("@testing-library/react")).waitFor(() => {
-      expect(mockSaveInstagram).toHaveBeenCalledWith({
-        app_id: "666777888",
         app_secret: undefined,
       });
     });

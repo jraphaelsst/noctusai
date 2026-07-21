@@ -225,7 +225,7 @@ describe("useStartYouTubeOAuth", () => {
       "/api/integrations/accounts/youtube/oauth/start",
       {}
     );
-    expect(openSpy).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
     expect(fakeTab.location.href).toBe(
       "https://accounts.google.com/o/oauth2/auth?foo=1"
     );
@@ -263,7 +263,7 @@ describe("useStartProviderOAuth", () => {
       "/api/integrations/accounts/gmail/oauth/start",
       {}
     );
-    expect(openSpy).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
+    expect(openSpy).toHaveBeenCalledWith("", "_blank");
     expect(fakeTab.location.href).toBe(
       "https://accounts.google.com/o/oauth2/auth?bar=1"
     );

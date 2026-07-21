@@ -64,7 +64,7 @@ from app.dependencies import (
     get_user_client,
 )
 from app.config import SocialWiringSettings
-from app.services.app_config_store import resolve_instagram_app_creds, resolve_meta_app_creds
+from app.services.app_config_store import resolve_meta_app_creds
 from app.services.credential_vault import (
     CredentialStoreError,
     EncryptionNotConfigured,
@@ -1427,17 +1427,19 @@ def instagram_oauth_start(
     Mirrors ``meta_oauth_start``: 3-part state
     ``{org_id}:{nonce}:{client_id_or_empty}``; ``client_id`` is validated
     against the calling org BEFORE it's encoded into the redirect
-    round-trip. App ID/secret resolve DB-first (Settings-writable) with
-    env fallback via ``resolve_instagram_app_creds`` — a 503 config-gap
-    when neither is set.
+    round-trip. The unified Meta app holds both Facebook and Instagram, so
+    the Instagram-Login flow consumes the SAME Meta App ID/Secret — resolved
+    DB-first (Settings → Aplicativo Meta) with env fallback via
+    ``resolve_meta_app_creds`` — a 503 config-gap when neither is set.
     """
-    app_id, app_secret = resolve_instagram_app_creds(settings=cfg)
+    app_id, app_secret = resolve_meta_app_creds(settings=cfg)
     if not app_id or not app_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET not configured. Set "
-                "them in .env or Settings → Instagram App to enable OAuth."
+                "META_APP_ID / META_APP_SECRET not configured. Set them in "
+                ".env or Settings → Aplicativo Meta to enable OAuth (the unified "
+                "Meta app covers both Facebook and Instagram)."
             ),
         )
 
@@ -1531,11 +1533,11 @@ def instagram_oauth_callback(
                 client_id_part,
             )
 
-    app_id, app_secret = resolve_instagram_app_creds(settings=cfg)
+    app_id, app_secret = resolve_meta_app_creds(settings=cfg)
     if not app_id or not app_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET not configured.",
+            detail="META_APP_ID / META_APP_SECRET not configured.",
         )
 
     redirect_uri = _build_ia_instagram_redirect_uri(cfg)

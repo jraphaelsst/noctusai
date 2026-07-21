@@ -264,18 +264,14 @@ class SocialWiringSettings(ProductSettings):
     meta_oauth_scopes: str = "auto"
 
     # ─── Instagram Business Login (Instagram-Login model) ──────────────
-    # A SEPARATE app credential pair from meta_app_id/meta_app_secret
-    # above — Instagram Business Login authenticates against its OWN
-    # Instagram App ID/Secret (registered under "Instagram" in the Meta
-    # developer dashboard, distinct from the "Facebook Login" app used by
-    # the meta_* flow), and its token chain runs through
-    # api.instagram.com / graph.instagram.com rather than
-    # graph.facebook.com. See
-    # `noctusai_lib.integrations.meta.instagram_login_adapter` +
+    # The unified Meta app holds BOTH Facebook and Instagram, so the
+    # Instagram-Login flow consumes the SAME meta_app_id/meta_app_secret as
+    # the meta_* flow (resolved via `resolve_meta_app_creds`). Only the
+    # callback URL differs — its token chain still runs through
+    # api.instagram.com / graph.instagram.com rather than graph.facebook.com.
+    # See `noctusai_lib.integrations.meta.instagram_login_adapter` +
     # `_meta_api.build_ig_authorize_url` / `exchange_ig_code_for_token` /
     # `exchange_ig_for_long_lived`.
-    instagram_app_id: str = ""
-    instagram_app_secret: str = ""
     instagram_oauth_redirect_uri: str = (
         "http://localhost:8011/api/integrations/accounts/instagram/oauth/callback"
     )
