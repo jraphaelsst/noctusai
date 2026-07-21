@@ -17,7 +17,11 @@ What it does
        ahead — finish or salvage").
     5. Also detect orphan branches (no worktree, no project artifacts)
        via `orphan_branch_sweeper.scan`.
-    6. Combine both views + log a summary entry to
+    6. Auto-heal stale branch-tree pointers: flip any `on_going` pointer
+       whose branch is already integrated into origin/dev → `shipped`
+       (the backstop for the "flip before merge" discipline; see
+       `_autoheal_branch_pointers`).
+    7. Combine the views + log a summary entry to
        `project-history/worktree-salvage.ndjson`.
 
 Why not auto-delete
@@ -56,6 +60,11 @@ _LEDGER_PATHS = [
     "project-history/ledger.ndjson",
     "project-history/worktree-salvage.ndjson",
     "project-history/branch-tree.ndjson",
+    # The branch-tree MIRROR — kept byte-identical to the canonical ledger by
+    # construction (branch_pointer._write_row writes both). It MUST ship in the
+    # same delivery, else a pointer flip (e.g. the auto-heal) commits the
+    # canonical without its mirror → dirty tree + check_branch_tree_mirror drift.
+    "project-history/branch-tree.mirror.ndjson",
 ]
 
 
@@ -193,7 +202,82 @@ def _has_uncommitted(repo_root: Path, worktree_path: Path) -> bool:
     return bool(out.strip())
 
 
-def sweep(repo_root: Path | None = None, deliver_ledgers: bool = True) -> dict[str, Any]:
+def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
+    """Flip stale `on_going` branch-tree pointers → `shipped` when their branch
+    is already integrated into origin/dev.
+
+    The backstop for the "engineers must flip on_going→shipped BEFORE merging"
+    discipline: when a slice lands but its pointer was never updated, the global
+    branch-tree map keeps showing phantom in-flight work and mis-routes peers'
+    collision decisions. This pass detects those already-integrated pointers and
+    heals them.
+
+    "Already integrated" = one of:
+      • the branch still exists AND is merged into origin/dev (SHA-ancestry OR
+        every commit cherry-picked/squashed in — `_worktree_staleness.is_merged`), OR
+      • the branch no longer exists (cleaned up post-integrate) AND its recorded
+        commit is an ancestor of origin/dev (the work demonstrably landed).
+    A branch that's gone with an unreachable commit is left `on_going` (we can't
+    prove it landed — never a silent false-heal).
+
+    Writes each flip with `push_dev=False`; the caller's `deliver_trailing_ledgers`
+    step (which already lists `branch-tree.ndjson` + its mirror) delivers them in
+    ONE push. Best-effort + never raises — returns `{healed, skipped_unproven, errors}`.
+    """
+    healed: list[dict[str, str]] = []
+    skipped_unproven: list[str] = []
+    errors: list[str] = []
+    try:
+        from . import _worktree_staleness as wts
+        from . import branch_pointer as bp
+    except Exception as e:  # noqa: BLE001
+        return {"healed": [], "skipped_unproven": [], "errors": [f"import failed: {e}"[:200]]}
+
+    try:
+        run = wts.make_subprocess_runner(repo_root, timeout=30)
+        base = wts.resolve_merged_base(run)
+        candidates = bp.query(status="on_going")
+    except Exception as e:  # noqa: BLE001
+        return {"healed": [], "skipped_unproven": [], "errors": [f"query failed: {e}"[:200]]}
+
+    for row in candidates:
+        branch = row.get("branch", "")
+        commit = (row.get("commit") or "").strip()
+        if not branch:
+            continue
+        try:
+            branch_exists = run(["git", "rev-parse", "--verify", "--quiet", branch])[0] == 0
+            if branch_exists:
+                integrated = wts.is_merged(run, branch, base)
+                reason = "branch integrated into dev"
+            else:
+                integrated = bool(commit) and wts.is_ancestor(run, commit, base)
+                reason = "branch cleaned up; recorded commit is in dev"
+            if not integrated:
+                if not branch_exists:
+                    skipped_unproven.append(branch)
+                continue
+            res = bp.update(
+                branch=branch,
+                status="shipped",
+                notes=f"auto-healed by session_end_sweep: {reason}",
+                push_dev=False,
+            )
+            if res.get("ok"):
+                healed.append({"branch": branch, "reason": reason})
+            else:
+                errors.append(f"{branch}: {res.get('error', 'update failed')}"[:200])
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{branch}: {e}"[:200])
+
+    return {"healed": healed, "skipped_unproven": skipped_unproven, "errors": errors}
+
+
+def sweep(
+    repo_root: Path | None = None,
+    deliver_ledgers: bool = True,
+    heal_pointers: bool = True,
+) -> dict[str, Any]:
     """Survey all worktrees + orphan branches; classify each.
 
     Returns:
@@ -285,6 +369,18 @@ def sweep(repo_root: Path | None = None, deliver_ledgers: bool = True) -> dict[s
     except Exception as e:  # noqa: BLE001
         remote_summary = {"ok": False, "error": str(e)[:200]}
 
+    # Auto-heal stale branch-tree pointers: flip any `on_going` pointer whose
+    # branch is already integrated into origin/dev → `shipped` (the backstop for
+    # the "flip before merge" discipline). Writes with push_dev=False so the
+    # flipped rows ride out on the single ledger-delivery push below. Runs BEFORE
+    # the summary append + delivery so the healed rows are part of this sweep's push.
+    pointer_heal: dict[str, Any] = {"healed": [], "skipped_unproven": [], "errors": []}
+    if heal_pointers:
+        try:
+            pointer_heal = _autoheal_branch_pointers(repo_root)
+        except Exception as e:  # noqa: BLE001 — never fail the survey over the heal
+            pointer_heal = {"healed": [], "skipped_unproven": [], "errors": [str(e)[:200]]}
+
     # Log sweep summary to ledger.
     try:
         ledger = repo_root / "project-history" / "worktree-salvage.ndjson"
@@ -301,6 +397,7 @@ def sweep(repo_root: Path | None = None, deliver_ledgers: bool = True) -> dict[s
                              if w["classification"] == "ahead-of-dev"],
             "remote_integrated_count": remote_summary.get("integrated_count", 0),
             "remote_unique_aged_count": remote_summary.get("unique_aged_count", 0),
+            "pointers_healed": [h["branch"] for h in pointer_heal.get("healed", [])],
         }
         with ledger.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -325,6 +422,7 @@ def sweep(repo_root: Path | None = None, deliver_ledgers: bool = True) -> dict[s
         "worktrees": wt_findings,
         "orphan_branches": orphan_result,
         "remote_branches": remote_summary,
+        "pointer_heal": pointer_heal,
         "ledger_delivery": ledger_delivery,
     }
 
@@ -342,8 +440,11 @@ def register(server) -> None:
             "ahead-of-dev / unknown. Remote branch section: integrated "
             "(suggest delete-integrated via noctus.dev.delete_integrated_remote) / "
             "unique-aged (suggest salvage+triage). Squash-aware classification. "
+            "Auto-heals stale branch-tree pointers (flips an `on_going` pointer "
+            "whose branch already integrated into origin/dev → `shipped`; the "
+            "backstop for the flip-before-merge discipline). "
             "Logs a sweep entry to project-history/worktree-salvage.ndjson. "
-            "Never auto-deletes; always surfaces + suggests. "
+            "Never auto-deletes worktrees; always surfaces + suggests. "
             "KB § CONTEXT/PATTERNS/common/session-end-sweep.md · "
             "KB § CONTEXT/PATTERNS/common/learn-before-archive.md."
         ),

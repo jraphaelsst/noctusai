@@ -147,4 +147,17 @@ New divergent knob ⇒ add a row + route it through `resolve_config` / `require_
 
 ---
 
-**Doc anchors.** Memory entry: `feedback_deploy_config_contract.md` (authored 2026-05-23). CLAUDE.md §2 Map pointer (deploy-config-contract rule) — wired. Siblings: [[dev-prod-parity]] (the discipline; doc authored 2026-05-23) · [[seed-canonical-defaults]]. Project: `seed-deploy-config-contract` (2026-05-23). Primitive: `noctusai_lib.config.deploy_config`. Keepers: `check_derives_from_dev_only_artifact` (static) + `prod_config_parity` pre-deploy gate (§5b).
+## 8 · Fleet-wide baseline required-env (`BASELINE_REQUIRED_PROD_ENV`)
+
+The `required_prod_config=[...]` seam (§6 table row) is per-product opt-in. But some required-in-prod keys are **seed contracts, not per-product choices** — every product inherits them by consuming the seed. The canonical case: every product's seed `auth_router` builds a Redis-backed session store with `require_encryption=True` (`noctusai_lib.api.auth.session.factory.make_session_store`), so any product running against a real Redis in prod **requires `REDIS_SESSION_ENCRYPTION_KEY`**. When that key was renamed/introduced, a product refused to boot in prod — and the pre-deploy gate had no knowledge of it (it only knew `PRODUCT_URL_*`/CORS keys), so the gap surfaced as a prod boot failure instead of a caught pre-deploy violation.
+
+The fix is **one source of truth both sides read** — `deploy_config.BASELINE_REQUIRED_PROD_ENV` (a tuple; accessor `baseline_required_prod_env()`):
+
+- **Boot side** — `create_product_app` folds the baseline into `require_prod_config` (conditioned on `settings.redis_url` being set, exactly when `make_session_store` would otherwise fail *lazily* on first session read). A deploy missing the key now aborts loudly at startup, aggregated, instead of a deep lazy `ValueError`.
+- **Gate side** — `noctus.dev.predeploy_check` check `required_prod_env_present` diffs the same baseline list against the prod `.env` snapshot, catching a missing/empty key **before** the deploy. Failure classifies as `required_prod_env_missing` (B4 container env).
+
+Because both read `BASELINE_REQUIRED_PROD_ENV`, the requirement can never drift between what boot enforces and what the gate checks — the gate↔methodology-sync shape ([[gate-methodology-sync]]): the boot guard is the compliance-by-construction mechanism, the pre-deploy gate is the backstop, and the constant is the shared declaration. **Extend the tuple whenever a seed capability makes a new env var required at boot** — both the boot guard and the gate then enforce it for free.
+
+---
+
+**Doc anchors.** Memory entry: `feedback_deploy_config_contract.md` (authored 2026-05-23) · `feedback_baseline_required_prod_env_gate.md` (§8, 2026-07-21). CLAUDE.md §2 Map pointer (deploy-config-contract rule) — wired. Siblings: [[dev-prod-parity]] (the discipline; doc authored 2026-05-23) · [[seed-canonical-defaults]] · [[gate-methodology-sync]] (§8 baseline↔gate). Project: `seed-deploy-config-contract` (2026-05-23). Primitive: `noctusai_lib.config.deploy_config` (`BASELINE_REQUIRED_PROD_ENV`). Keepers: `check_derives_from_dev_only_artifact` (static) + `prod_config_parity` + `required_prod_env_present` pre-deploy gates (§5b/§8).

@@ -1,6 +1,8 @@
 # Rebuild only modified products, never the whole fleet
 
 > **Rule.** Container rebuild scope = **the products whose code was actually modified this session**. NOT the fleet, even when a seed-level change technically affects every product. Other products catch up lazily on their next own-modify-triggered rebuild — every product Dockerfile `FROM noctus-seed-*-base`, so the seed change rides in on whatever build the next user actually needs.
+>
+> **Read-side corollary (§8).** The same rule governs the *reconcile* decision, not just the *build* decision: a fleet-revision **parity lag** — "N products run an older image label than prod git HEAD" surfaced by a wrap-up/hygiene/status sweep — is the EXPECTED steady state, not a drift to chase. Do not rebuild unaffected products to make image labels uniform.
 
 ---
 
@@ -80,6 +82,25 @@ Default in interactive sessions: **only modified products + base images if seed 
 ## 7 · Detection — codify when recurrence ≥3
 
 A `noctus.dev.*` MCP tool `check_rebuild_scope` could, given a session's planned `docker compose up -d --build ...` invocations + the working-tree diff, flag any rebuild whose target slug doesn't appear in the diff. Current recurrence: N=2 (this + the 2026-05-19 fleet-wide-build pre-crash documented in fleet/build-isolated branch). Stage-4 codification deferred to N=3 per [[KB § PATTERNS/common/methodology-codification-pipeline.md]]. For now [A] accept-with-rationale at the memory level.
+
+---
+
+## 8 · Read-side mirror — fleet-revision parity lag is benign, don't reconcile it
+
+The build-scope rule (§1–4) has a read-side twin: the **reconcile** decision. A wrap-up, hygiene, or fleet-status sweep will routinely surface a line like *"N products run image `<old-sha>` while prod git HEAD is `<new-sha>`."* That revision lag is the **expected steady state** of lazy-cascade builds — NOT a drift to fix. The intervening commits were scoped to some OTHER product (or seed-only); the lagging products are behaviorally byte-identical, only their image *label* trails. Rebuilding them "to restore parity" is exactly the fleet-wide-build reflex §1 forbids — just triggered by a status report instead of a seed commit.
+
+**Parity is a per-product property, never a fleet-uniform-sha property.** The real question is *"does THIS product's running image contain the commits that touched THIS product?"* — not *"do all products share one image sha?"*
+
+**Decision when a parity-lag is surfaced:**
+
+| Situation | Call |
+|---|---|
+| Intervening commits touched products OTHER than the laggards (or seed-only) | **Accept the lag. Do NOT reconcile.** Each laggard picks it all up on its next own-modify build (§3). |
+| An intervening commit actually modified a laggard's `products/<slug>/`, yet it's still on the old image | **That one product is genuinely stale — rebuild just it** (§2 scope), never the fleet. |
+
+We work mainly on ONE product's prod environment at a time. Chasing fleet-revision parity mid-dev burns build minutes + Docker daemon stability for zero behavioral gain — the daemon-crash failure mode of §1 applies identically.
+
+**2026-07-21 bit** — a session shipped a chain of social-wiring-only Meta-adapter fixes to prod; a wrap-up sweep flagged 8 non-social-wiring products at image `e4669ee5` vs prod git `22394086`. User: *"Dont mind the rest of the fleet, we're working on social wiring prod environment, we'll lose time while we're dev'ing if we keep building every non-affected product to every change we make to the code base."* Correct call: accept the lag, no reconcile. This corollary is why the wrap-up survey should present a fleet-revision lag as *informational* (which laggards, if any, were actually modified) and never as a reconcile action item when the diff is out-of-scope for them.
 
 ---
 

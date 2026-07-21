@@ -48,6 +48,35 @@ _DEPLOY_APP_ENVS: frozenset[str] = frozenset({"production", "staging"})
 _PRODUCT_URL_PREFIX = "PRODUCT_URL_"
 _PRODUCT_URL_PATTERN_KEY = "PRODUCT_URL_PATTERN"
 
+# ── Fleet-wide baseline required-in-prod env (the single source of truth) ──────
+# Every product's seed auth_router builds a Redis-backed session store with
+# ``require_encryption=True`` (see
+# ``noctusai_lib.api.auth.session.factory.make_session_store``), so whenever a
+# product runs against a real Redis in a deploy context it REQUIRES
+# ``REDIS_SESSION_ENCRYPTION_KEY`` — this is a seed contract, not a per-product
+# opt-in. Declaring it ONCE here lets BOTH sides read the same list, so the
+# requirement can never drift between what boot enforces and what the pre-deploy
+# gate checks (the gate↔methodology-sync rule):
+#   • boot side  — ``create_product_app`` folds this into ``require_prod_config``
+#                  (conditioned on ``settings.redis_url`` being set), so a deploy
+#                  missing the key aborts loudly at startup instead of failing
+#                  lazily on the first session read.
+#   • gate side  — ``noctus.dev.predeploy_check`` (check ``required_prod_env_present``)
+#                  diffs this list against the prod ``.env`` snapshot, catching a
+#                  newly-required key BEFORE the deploy rather than after boot.
+# Extend this tuple whenever a seed capability makes a new env var required at
+# boot; both the boot guard and the pre-deploy gate then enforce it for free.
+BASELINE_REQUIRED_PROD_ENV: tuple[str, ...] = ("REDIS_SESSION_ENCRYPTION_KEY",)
+
+
+def baseline_required_prod_env() -> list[str]:
+    """The fleet-wide baseline required-in-prod env keys as a fresh list.
+
+    A thin accessor over :data:`BASELINE_REQUIRED_PROD_ENV` so callers (the boot
+    guard and the pre-deploy parity gate) share one source of truth without
+    importing the tuple constant directly."""
+    return list(BASELINE_REQUIRED_PROD_ENV)
+
 
 class MissingProdConfigError(RuntimeError):
     """Required-in-prod config is absent in a deploy context.
@@ -167,7 +196,9 @@ def require_prod_config(keys: list[str]) -> None:
 
 
 __all__ = [
+    "BASELINE_REQUIRED_PROD_ENV",
     "MissingProdConfigError",
+    "baseline_required_prod_env",
     "is_deploy_context",
     "require_prod_config",
     "resolve_config",

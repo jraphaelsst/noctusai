@@ -46,11 +46,18 @@ This is the by-construction close of the "auto-ledger appends a strand on the pr
 
 Worktrees can carry uncommitted work even when their branch is integrated (architect made tweaks but didn't commit). Auto-delete would silently lose work. **Surface + suggest; never act.** (Ledger *delivery* above is the exception that proves the rule — it only ever FF-pushes append-only, union-merge, cache-exempt ledger rows, never task work.)
 
+## Branch-pointer auto-heal (the flip-before-merge backstop)
+
+The discipline is: an engineer flips their branch-tree pointer `on_going → shipped` **before** merging ([[branch-tree-tracking]]). When they forget, the global branch map keeps showing phantom in-flight work that mis-routes a peer's collision decision. The sweep is the **backstop**: it flips any `on_going` pointer whose branch is already integrated into `origin/dev` → `shipped`.
+
+"Already integrated" = the branch still exists AND is merged (SHA-ancestry ∨ every commit cherry-picked/squashed in — the shared `_worktree_staleness.is_merged` predicate), OR the branch is gone (cleaned up post-integrate) AND its recorded commit is an ancestor of `origin/dev`. A branch that's gone with an *unreachable* commit is left `on_going` — never a silent false-heal (we can't prove it landed). Each flip is written `push_dev=False`; the existing ledger-delivery leg pushes them in **one** FF commit (the mirror ledger is in `_LEDGER_PATHS` so canonical+mirror ship together — never a half-committed mirror). Runs by default; `heal_pointers=False` disables it. This is the discipline↔backstop pair: the engineer flip is compliance-by-construction, the auto-heal is the safety net, and `is_merged` is the shared predicate both `cleanup_stale_worktrees` and this pass read.
+
 ## API
 
 ```python
-session_end_sweep.sweep(deliver_ledgers=True) -> dict   # deliver_ledgers=False = survey-only
+session_end_sweep.sweep(deliver_ledgers=True, heal_pointers=True) -> dict   # both False = survey-only
 session_end_sweep.deliver_trailing_ledgers(repo_root) -> dict
+session_end_sweep._autoheal_branch_pointers(repo_root) -> dict  # {healed, skipped_unproven, errors}
 ```
 
 ## Composes with

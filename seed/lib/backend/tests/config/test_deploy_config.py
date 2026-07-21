@@ -21,7 +21,9 @@ import os
 import pytest
 
 from noctusai_lib.config.deploy_config import (
+    BASELINE_REQUIRED_PROD_ENV,
     MissingProdConfigError,
+    baseline_required_prod_env,
     is_deploy_context,
     require_prod_config,
     resolve_config,
@@ -191,3 +193,31 @@ def test_require_prod_config_deploy_signal_via_product_url(
     with pytest.raises(MissingProdConfigError) as excinfo:
         require_prod_config(["NEEDED"])
     assert excinfo.value.missing_keys == ["NEEDED"]
+
+
+# ── Fleet-wide baseline required-in-prod env (the shared source of truth) ──────
+def test_baseline_required_prod_env_includes_redis_key() -> None:
+    # REDIS_SESSION_ENCRYPTION_KEY is the fleet baseline (every product's seed
+    # auth_router builds a Redis session store with require_encryption=True).
+    assert "REDIS_SESSION_ENCRYPTION_KEY" in BASELINE_REQUIRED_PROD_ENV
+
+
+def test_baseline_helper_returns_fresh_mutable_copy() -> None:
+    a = baseline_required_prod_env()
+    b = baseline_required_prod_env()
+    assert a == list(BASELINE_REQUIRED_PROD_ENV)
+    assert a is not b  # a fresh list each call — callers can mutate safely
+    a.append("SENTINEL")
+    assert "SENTINEL" not in baseline_required_prod_env()
+
+
+def test_baseline_key_enforced_in_deploy_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The boot guard folds the baseline into require_prod_config; assert the
+    # baseline key raises when absent in a deploy context (the mechanism the boot
+    # guard relies on).
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(MissingProdConfigError) as excinfo:
+        require_prod_config(baseline_required_prod_env())
+    assert "REDIS_SESSION_ENCRYPTION_KEY" in excinfo.value.missing_keys

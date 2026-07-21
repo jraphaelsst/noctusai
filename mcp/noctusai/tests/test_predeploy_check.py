@@ -491,3 +491,86 @@ def test_load_roster_slugs_returns_list_against_real_tree():
     assert isinstance(slugs, list)
     if slugs:  # seed import + start.sh reachable → core is always in the roster
         assert "core" in slugs
+
+
+# ── required_prod_env_present — newly-required-at-boot env key gate ────────────
+def test_required_prod_env_in_default_checks():
+    assert "required_prod_env_present" in PC.DEFAULT_CHECKS
+
+
+def test_audit_required_prod_env_clean():
+    a = PC.audit_required_prod_env_present(
+        ["REDIS_SESSION_ENCRYPTION_KEY"],
+        {"REDIS_SESSION_ENCRYPTION_KEY": "a-real-secret"},
+    )
+    assert a["violations"] == [] and a["checked"] == 1
+    assert a["source"] == "prod-env-snapshot"
+
+
+def test_audit_required_prod_env_missing_key_flagged():
+    a = PC.audit_required_prod_env_present(["REDIS_SESSION_ENCRYPTION_KEY"], {})
+    assert len(a["violations"]) == 1
+    assert "REDIS_SESSION_ENCRYPTION_KEY" in a["violations"][0]
+
+
+def test_audit_required_prod_env_empty_value_flagged():
+    # present-but-empty is as bad as absent — the boot guard treats both as unset.
+    a = PC.audit_required_prod_env_present(
+        ["REDIS_SESSION_ENCRYPTION_KEY"], {"REDIS_SESSION_ENCRYPTION_KEY": "   "}
+    )
+    assert len(a["violations"]) == 1
+
+
+def test_classify_required_prod_env_missing_is_known():
+    msg = (
+        "required prod env MISSING: required-in-prod env "
+        "'REDIS_SESSION_ENCRYPTION_KEY' is absent/empty in the prod snapshot — ..."
+    )
+    c = PC.classify_failure(msg)
+    assert c is not None and c["class_id"] == "required_prod_env_missing"
+    assert "BASELINE_REQUIRED_PROD_ENV" in c["suggested_fix"]
+    assert c["auto_fixable"] is False
+
+
+def test_required_prod_env_runner_skips_without_snapshot(monkeypatch, tmp_path):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    ok, msg = PC._default_run_check("required_prod_env_present", "core", tmp_path)
+    assert ok is True  # skip is not a failure
+    assert "SKIPPED" in msg
+
+
+def test_required_prod_env_runner_skips_on_empty_baseline(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=x\n")
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: [])
+    ok, msg = PC._default_run_check("required_prod_env_present", "core", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg
+
+
+def test_required_prod_env_runner_clean(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=a-real-secret\n")
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+    ok, msg = PC._default_run_check("required_prod_env_present", "core", tmp_path)
+    assert ok is True
+    assert "ok" in msg.lower()
+
+
+def test_required_prod_env_runner_blocks_on_missing(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_CORE=https://noctusai.com\n")  # key absent
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+    ok, msg = PC._default_run_check("required_prod_env_present", "core", tmp_path)
+    assert ok is False
+    assert "REDIS_SESSION_ENCRYPTION_KEY" in msg
+
+
+def test_load_baseline_required_env_matches_seed_constant():
+    # The gate MUST read the same source of truth the boot guard folds in.
+    keys = PC._load_baseline_required_env()
+    assert isinstance(keys, list)
+    if keys:  # seed import reachable
+        from noctusai_lib.config.deploy_config import BASELINE_REQUIRED_PROD_ENV
+        assert keys == list(BASELINE_REQUIRED_PROD_ENV)
+        assert "REDIS_SESSION_ENCRYPTION_KEY" in keys

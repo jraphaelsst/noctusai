@@ -50,6 +50,7 @@ DEFAULT_CHECKS: list[str] = [
     "backend_tests",
     "deploy_local_gitignored",  # D3 — every deploy_state.DEPLOY_LOCAL_FILES pattern is gitignored
     "prod_config_parity",  # value-correctness: prod env resolves a non-localhost URL per product
+    "required_prod_env_present",  # newly-required-at-boot env keys (seed baseline) present in prod snapshot
     "cors_roster_complete",  # backstop: every registry slug has a CORS-resolvable origin
 ]
 
@@ -175,6 +176,29 @@ _KNOWN: list[dict[str, Any]] = [
             "recreate core. Short-name products (erp-imobiliario → erp.noctusai.com) "
             "keep their existing overrides; new products (e.g. orbity) are "
             "pattern-filled automatically. See KB § PATTERNS/frontend/core-url-routing.md § 6."
+        ),
+        "auto_fixable": False,
+    },
+    {
+        "class_id": "required_prod_env_missing",
+        "rx": re.compile(r"required prod env MISSING|required-in-prod env '[^']+' is absent"),
+        "boundary": "B4 container env",
+        "explanation": (
+            "A seed-baseline env var that is REQUIRED at boot in a deploy context "
+            "(e.g. REDIS_SESSION_ENCRYPTION_KEY — every product's auth_router "
+            "builds a Redis-backed session store with require_encryption=True) is "
+            "absent/empty in the prod env snapshot. The boot guard "
+            "(create_product_app → require_prod_config, folding in "
+            "deploy_config.BASELINE_REQUIRED_PROD_ENV) would abort this deploy at "
+            "startup. The prior parity gate only knew PRODUCT_URL_*/CORS keys, so "
+            "a newly-required key like this slipped through to a prod boot failure "
+            "(the REDIS_SESSION_ENCRYPTION_KEY incident) — this check closes that gap."
+        ),
+        "suggested_fix": (
+            "Set the missing key(s) on the deploy box's root .env before promoting "
+            "(they are required in production/staging; dev leaves them unset). The "
+            "authoritative list is deploy_config.BASELINE_REQUIRED_PROD_ENV — the "
+            "same one the boot guard reads. See KB § PATTERNS/deploy-config-contract.md."
         ),
         "auto_fixable": False,
     },
@@ -315,6 +339,38 @@ def audit_prod_config_parity(
     }
 
 
+def audit_required_prod_env_present(
+    required_keys: list[str], env: dict[str, str] | None
+) -> dict[str, Any]:
+    """Pure: assert every ``required_keys`` entry is present + non-empty in the
+    prod env snapshot. Closes the "a code change makes a NEW env var required at
+    boot, but the parity gate has no knowledge of it, so the boot guard fails in
+    production instead" gap (the ``REDIS_SESSION_ENCRYPTION_KEY`` incident).
+
+    The key list is the seed's ``deploy_config.BASELINE_REQUIRED_PROD_ENV`` (the
+    same source of truth ``create_product_app``'s boot guard folds in), so this
+    gate and the boot enforcement can never disagree. ``env`` is any str→str
+    mapping (a parsed prod ``.env`` snapshot), injected so the test needs no real
+    environment. Returns ``{source, checked, violations}``."""
+    env = dict(env or {})
+    violations: list[str] = []
+    for key in required_keys:
+        if not (env.get(key) or "").strip():
+            violations.append(
+                f"required-in-prod env '{key}' is absent/empty in the prod "
+                "snapshot — the boot guard "
+                "(create_product_app → require_prod_config, seed baseline) will "
+                "abort this deploy at startup. Set it on the deploy env before "
+                "promoting (present-but-missing fails HERE, pre-deploy, instead "
+                "of at boot)."
+            )
+    return {
+        "source": "prod-env-snapshot",
+        "checked": len(required_keys),
+        "violations": violations,
+    }
+
+
 def audit_cors_roster_complete(
     roster_slugs: list[str], env: dict[str, str] | None
 ) -> dict[str, Any]:
@@ -406,6 +462,18 @@ def _load_roster_slugs(root: pathlib.Path) -> list[str]:
     return [entry["slug"] for entry in parse_products_registry(root / "start.sh")]
 
 
+def _load_baseline_required_env() -> list[str]:
+    """The seed's fleet-wide baseline required-in-prod env keys (the SAME source
+    of truth ``create_product_app``'s boot guard reads). Lazy seed import;
+    returns ``[]`` if the seed is unavailable so the caller SKIPs loudly rather
+    than crashing — never silently passing a check it could not run."""
+    try:
+        from noctusai_lib.config.deploy_config import baseline_required_prod_env
+    except Exception:
+        return []
+    return baseline_required_prod_env()
+
+
 def _default_run_check(
     check: str, product: str, root: pathlib.Path, prod_env_path: str | None = None
 ) -> tuple[bool, str]:
@@ -462,6 +530,35 @@ def _default_run_check(
         return True, (
             f"prod-config parity ok — {audit['checked']} product(s) resolve a "
             f"non-localhost prod URL ({env_path.name})"
+        )
+    if check == "required_prod_env_present":
+        # Platform-wide (product arg unused): every seed-baseline required-in-prod
+        # env key must be present + non-empty in the prod snapshot. SKIPs loudly
+        # (ok=True) when no snapshot resolves (same pattern as prod_config_parity)
+        # or when the seed baseline is unreadable from here.
+        env_path = _resolve_prod_env_path(root, prod_env_path)
+        if env_path is None:
+            return True, (
+                "required_prod_env_present SKIPPED — no prod env snapshot "
+                "resolvable (pass prod_env_path, set NOCTUS_PROD_ENV_FILE, or add "
+                "a .env.prod/.env.production at the repo root). The dev .env is "
+                "intentionally NOT used (a required key may legitimately be unset "
+                "in dev)."
+            )
+        required = _load_baseline_required_env()
+        if not required:
+            return True, (
+                "required_prod_env_present SKIPPED — seed baseline "
+                "required-env list unreadable from here (deploy_config import "
+                "failed)."
+            )
+        env = _parse_env_file(env_path.read_text(encoding="utf-8"))
+        audit = audit_required_prod_env_present(required, env)
+        if audit["violations"]:
+            return False, "required prod env MISSING: " + "; ".join(audit["violations"])
+        return True, (
+            f"required prod env ok — {audit['checked']} baseline key(s) present "
+            f"in the prod snapshot ({env_path.name})"
         )
     if check == "cors_roster_complete":
         # Backstop: every registry slug must have a resolvable CORS origin for
@@ -655,6 +752,7 @@ __all__ = [
     "classify_failure",
     "audit_deploy_local",
     "audit_prod_config_parity",
+    "audit_required_prod_env_present",
     "audit_cors_roster_complete",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",

@@ -35,7 +35,10 @@ from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging
 from noctusai_lib.api.app_factory import configure_app
 from noctusai_lib.config.credentials import configure_credentials
-from noctusai_lib.config.deploy_config import require_prod_config
+from noctusai_lib.config.deploy_config import (
+    baseline_required_prod_env,
+    require_prod_config,
+)
 from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.budget import configure_budget_module
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
@@ -168,13 +171,25 @@ def create_product_app(
     configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name=app_name)
 
     # 1a. Deploy-config guard — fail loud at boot if a required-in-prod config
-    #     key is unset in a deploy context (no-op in dev). Opt-in per product via
-    #     `required_prod_config=[...]` — the seam every product inherits with zero
-    #     per-product code; a missing key aborts the boot listing every gap at
-    #     once, never a half-booted app silently serving dev values.
+    #     key is unset in a deploy context (no-op in dev). The seam every product
+    #     inherits with zero per-product code; a missing key aborts the boot
+    #     listing every gap at once, never a half-booted app silently serving dev
+    #     values. Two sources fold together:
+    #       • the fleet-wide baseline (`REDIS_SESSION_ENCRYPTION_KEY`) — added
+    #         only when this product runs against a real Redis session store
+    #         (`settings.redis_url` set), exactly when the auth_router's
+    #         `make_session_store(require_encryption=True)` would otherwise fail
+    #         lazily on first session read; declaring it here fails fast + is the
+    #         same list `noctus.dev.predeploy_check` audits pre-deploy.
+    #       • the per-product opt-in `required_prod_config=[...]`.
     #     → KB § PATTERNS/deploy-config-contract.md
-    if required_prod_config:
-        require_prod_config(required_prod_config)
+    _required_prod_keys: list[str] = list(required_prod_config or [])
+    if getattr(settings, "redis_url", None):
+        for _k in baseline_required_prod_env():
+            if _k not in _required_prod_keys:
+                _required_prod_keys.append(_k)
+    if _required_prod_keys:
+        require_prod_config(_required_prod_keys)
 
     # 2. Auto-wire credential resolution (Tier 1+2 need a public-schema client).
     #    Every product's settings carries the same Supabase URL + keys from the
