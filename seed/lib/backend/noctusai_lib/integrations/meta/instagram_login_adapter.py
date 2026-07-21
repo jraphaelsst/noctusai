@@ -25,7 +25,7 @@ dataclasses are reused (no second copy).
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from noctusai_lib.integrations.meta import _meta_api
 from noctusai_lib.integrations.meta._meta_api import IG_GRAPH_BASE, MetaGraphError
@@ -50,6 +50,8 @@ class InstagramLoginMessagingAdapter(Protocol):
     Concrete: ``InstagramLoginOAuthAdapter`` (live ``graph.instagram.com``),
     ``FakeInstagramLoginAdapter`` (deterministic in-memory; dev/test)."""
 
+    def me(self) -> dict[str, Any]: ...
+
     def list_instagram_conversations(self, limit: int = ...) -> list[Conversation]: ...
 
     def list_instagram_messages(
@@ -73,6 +75,21 @@ class InstagramLoginOAuthAdapter:
     ) -> None:
         self._token = ig_user_token
         self._version = version
+
+    def me(self) -> dict[str, Any]:
+        """The authenticated IG professional account (`/me`): `id`,
+        `username`. Used as a best-effort label probe after OAuth (or to
+        validate a manually-pasted token) — never the primary auth
+        boundary (Graph itself is the source of truth on token validity;
+        a probe failure raises `MetaGraphError`, never a silent pass)."""
+
+        return _meta_api.graph_get(
+            "me",
+            access_token=self._token,
+            params={"fields": "id,username"},
+            version=self._version,
+            base=IG_GRAPH_BASE,
+        )
 
     def list_instagram_conversations(self, limit: int = 25) -> list[Conversation]:
         """List IG Direct threads — ``GET /me/conversations?platform=instagram``
@@ -134,12 +151,14 @@ class FakeInstagramLoginAdapter:
     def __init__(self) -> None:
         self._conversations: list[Conversation] = []
         self._messages_by_conversation: dict[str, list[DirectMessage]] = {}
+        self._me: dict[str, Any] = {"id": "FAKE_IG_USER", "username": "fake_ig_user"}
 
     def seed(
         self,
         *,
         conversations: list[Conversation] | None = None,
         messages_by_conversation: dict[str, list[DirectMessage]] | None = None,
+        me: dict[str, Any] | None = None,
     ) -> "FakeInstagramLoginAdapter":
         if conversations is not None:
             self._conversations = list(conversations)
@@ -147,7 +166,12 @@ class FakeInstagramLoginAdapter:
             self._messages_by_conversation = {
                 k: list(v) for k, v in messages_by_conversation.items()
             }
+        if me is not None:
+            self._me = dict(me)
         return self
+
+    def me(self) -> dict[str, Any]:
+        return dict(self._me)
 
     def list_instagram_conversations(self, limit: int = 25) -> list[Conversation]:
         return list(self._conversations)[:limit]

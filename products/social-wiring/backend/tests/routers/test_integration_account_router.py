@@ -41,7 +41,7 @@ _IA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS integration_accounts (
     id                  TEXT PRIMARY KEY,
     org_id              TEXT NOT NULL,
-    provider            TEXT NOT NULL CHECK (provider IN ('youtube', 'google_drive', 'gmail', 'meta', 'n8n')),
+    provider            TEXT NOT NULL CHECK (provider IN ('youtube', 'google_drive', 'gmail', 'meta', 'n8n', 'instagram')),
     account_label       TEXT NOT NULL,
     encrypted_credential TEXT NOT NULL,
     metadata            TEXT NOT NULL DEFAULT '{}',
@@ -134,7 +134,14 @@ class TestProviders:
         assert resp.status_code == 200
         providers = resp.json()
         ids = {p["id"] for p in providers}
-        assert {"youtube", "google_drive", "gmail", "meta", "n8n"} == ids
+        assert {
+            "youtube",
+            "google_drive",
+            "gmail",
+            "meta",
+            "instagram",
+            "n8n",
+        } == ids
 
     def test_youtube_provider_has_oauth_supported(self, client):
         resp = client.get("/api/integrations/providers")
@@ -1374,6 +1381,394 @@ class TestMetaOAuthCallback:
             app.dependency_overrides.pop(get_settings, None)
             if prev is not None:
                 app.dependency_overrides[get_settings] = prev
+
+
+# ─── Instagram Business Login (Instagram-Login model) OAuth ─────────────────
+class TestInstagramOAuthStart:
+    """POST /accounts/instagram/oauth/start — app creds resolve via
+    ``resolve_instagram_app_creds`` (DB-first, env-fallback); ENCRYPTION_KEY
+    is empty in this test env so the DB leg raises EncryptionNotConfigured
+    and the resolver falls back to the injected settings."""
+
+    @staticmethod
+    def _fake_cfg(app_id="fake-ig-app-id", app_secret="fake-ig-app-secret"):
+        from app.config import settings as _settings
+
+        return _settings.model_copy(
+            update={"instagram_app_id": app_id, "instagram_app_secret": app_secret}
+        )
+
+    def test_start_returns_auth_url_and_state(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/oauth/start",
+                headers=_auth_header(),
+            )
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "auth_url" in body
+        assert "state" in body
+        assert "www.instagram.com" in body["auth_url"]
+        assert "client_id=fake-ig-app-id" in body["auth_url"]
+        for scope in (
+            "instagram_business_basic",
+            "instagram_business_manage_messages",
+        ):
+            assert scope in body["auth_url"], scope
+        assert _ORG_A in body["state"]
+        parts = body["state"].split(":")
+        assert len(parts) == 3
+        assert parts[2] == ""
+
+    def test_start_503_when_app_creds_missing(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg(app_id="", app_secret="")
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/oauth/start",
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+    def test_start_404_when_client_id_not_found(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg()
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/oauth/start",
+                json={"client_id": _FAKE_YT_CLIENT_ID},
+                headers=_auth_header(),
+            )
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
+class TestInstagramOAuthCallback:
+    """GET /accounts/instagram/oauth/callback — injects fake code/long-lived
+    exchange callables + a fake InstagramLoginOAuthAdapter factory via the
+    router's DI seams (get_ig_code_exchange / get_ig_long_lived_exchange /
+    get_instagram_oauth_adapter_factory), mirroring the Meta callback tests.
+    No monkey-patching of this module's own imported symbols."""
+
+    @staticmethod
+    def _fake_cfg():
+        from app.config import settings as _settings
+
+        return _settings.model_copy(
+            update={
+                "instagram_app_id": "fake-ig-app-id",
+                "instagram_app_secret": "fake-ig-app-secret",
+                "frontend_base_url": "",
+            }
+        )
+
+    class _FakeIgProbeAdapter:
+        """Stand-in for InstagramLoginOAuthAdapter's /me probe — no network."""
+
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def me(self):
+            return {"id": "IGUSER1", "username": "test_ig_user"}
+
+    def _ig_overrides(self):
+        from app.dependencies import get_settings
+        from app.routers.integration_accounts_router import (
+            get_ig_code_exchange,
+            get_ig_long_lived_exchange,
+            get_instagram_oauth_adapter_factory,
+        )
+        from noctusai_lib.integrations.meta._meta_api import IgLongToken, IgShortToken
+
+        fake_cfg = self._fake_cfg()
+        return {
+            get_settings: lambda: fake_cfg,
+            get_ig_code_exchange: lambda: (
+                lambda **kw: IgShortToken(
+                    access_token="IG-SHORT", user_id="IGUSER1", permissions="p1,p2"
+                )
+            ),
+            get_ig_long_lived_exchange: lambda: (
+                lambda **kw: IgLongToken(
+                    access_token="IG-LONG", token_type="bearer", expires_in=5184000
+                )
+            ),
+            get_instagram_oauth_adapter_factory: lambda: (
+                lambda *a, **kw: self._FakeIgProbeAdapter(*a, **kw)
+            ),
+        }
+
+    def test_callback_creates_account_with_ig_label(self, client, ia_service):
+        from app.main import app
+
+        overrides = self._ig_overrides()
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce123"
+            resp = client.get(
+                "/api/integrations/accounts/instagram/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        location = resp.headers.get("location", "")
+        assert "clientes" in location
+        assert "account_created=" in location
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        assert len(accounts) == 1
+        acct = accounts[0]
+        assert acct.metadata.get("channel_id") == "IGUSER1"
+        assert acct.account_label == "test_ig_user"
+        assert acct.metadata.get("model") == "instagram_login"
+
+    def test_callback_reconnect_same_channel_is_idempotent(self, client, ia_service):
+        from app.main import app
+
+        overrides = self._ig_overrides()
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-reconnect"
+            for _ in range(2):
+                resp = client.get(
+                    "/api/integrations/accounts/instagram/oauth/callback"
+                    f"?code=auth-code&state={state}",
+                    follow_redirects=False,
+                )
+                assert resp.status_code in (302, 303), resp.text
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        same = [a for a in accounts if a.metadata.get("channel_id") == "IGUSER1"]
+        assert len(same) == 1, f"expected 1 account for IGUSER1, got {len(same)}"
+
+    def test_callback_with_client_id_links_account(self, client, ia_service):
+        from app.main import app
+
+        overrides = self._ig_overrides()
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-client:{_FAKE_YT_CLIENT_ID}"
+            resp = client.get(
+                "/api/integrations/accounts/instagram/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        assert len(accounts) == 1
+        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+
+    def test_callback_falls_back_to_short_token_on_long_lived_failure(
+        self, client, ia_service
+    ):
+        """A failed long-lived exchange never blocks account creation —
+        the short-lived token is persisted instead."""
+        from app.main import app
+        from noctusai_lib.integrations.meta._meta_api import MetaGraphError
+
+        overrides = self._ig_overrides()
+
+        def _boom(**kw):
+            raise MetaGraphError("long-lived exchange failed", code=190)
+
+        from app.routers.integration_accounts_router import get_ig_long_lived_exchange
+
+        overrides[get_ig_long_lived_exchange] = lambda: _boom
+        prev = {k: app.dependency_overrides.get(k) for k in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            state = f"{_ORG_A}:nonce-fallback"
+            resp = client.get(
+                "/api/integrations/accounts/instagram/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+        finally:
+            for k, p in prev.items():
+                app.dependency_overrides.pop(k, None)
+                if p is not None:
+                    app.dependency_overrides[k] = p
+
+        assert resp.status_code in (302, 303), resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        assert len(accounts) == 1
+
+    def test_callback_missing_code_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/instagram/oauth/callback?state=x",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_error_param_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/instagram/oauth/callback?error=access_denied",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_malformed_state_400(self, client):
+        resp = client.get(
+            "/api/integrations/accounts/instagram/oauth/callback?code=c&state=no-org",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 400
+
+    def test_callback_503_when_app_creds_missing(self, client):
+        from app.dependencies import get_settings
+        from app.main import app
+
+        fake_cfg = self._fake_cfg().model_copy(
+            update={"instagram_app_id": "", "instagram_app_secret": ""}
+        )
+        prev = app.dependency_overrides.get(get_settings)
+        app.dependency_overrides[get_settings] = lambda: fake_cfg
+        try:
+            state = f"{_ORG_A}:nonce-noapp"
+            resp = client.get(
+                "/api/integrations/accounts/instagram/oauth/callback"
+                f"?code=auth-code&state={state}",
+                follow_redirects=False,
+            )
+            assert resp.status_code == 503
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            if prev is not None:
+                app.dependency_overrides[get_settings] = prev
+
+
+class TestInstagramManualToken:
+    """POST /accounts/instagram/token — manual-token fallback. Validated by
+    probing ``/me`` via the ``get_instagram_oauth_adapter_factory`` DI seam;
+    an invalid token 400s before anything is persisted."""
+
+    class _FakeIgProbeAdapter:
+        def __init__(self, token, *_a, **_kw):
+            self._token = token
+
+        def me(self):
+            if self._token == "BAD-TOKEN":
+                from noctusai_lib.integrations.meta._meta_api import MetaGraphError
+
+                raise MetaGraphError("invalid token", code=190)
+            return {"id": "IGUSER2", "username": "manual_ig_user"}
+
+    def _override(self, app):
+        from app.routers.integration_accounts_router import (
+            get_instagram_oauth_adapter_factory,
+        )
+
+        prev = app.dependency_overrides.get(get_instagram_oauth_adapter_factory)
+        app.dependency_overrides[get_instagram_oauth_adapter_factory] = (
+            lambda: self._FakeIgProbeAdapter
+        )
+        return prev, get_instagram_oauth_adapter_factory
+
+    def test_valid_token_creates_account(self, client, ia_service):
+        from app.main import app
+
+        prev, key = self._override(app)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/token",
+                json={"access_token": "GOOD-TOKEN"},
+                headers=_auth_header(),
+            )
+        finally:
+            app.dependency_overrides.pop(key, None)
+            if prev is not None:
+                app.dependency_overrides[key] = prev
+
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["provider"] == "instagram"
+        assert body["account_label"] == "manual_ig_user"
+        assert body["metadata"]["channel_id"] == "IGUSER2"
+
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        assert len(accounts) == 1
+
+    def test_invalid_token_400(self, client, ia_service):
+        from app.main import app
+
+        prev, key = self._override(app)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/token",
+                json={"access_token": "BAD-TOKEN"},
+                headers=_auth_header(),
+            )
+        finally:
+            app.dependency_overrides.pop(key, None)
+            if prev is not None:
+                app.dependency_overrides[key] = prev
+
+        assert resp.status_code == 400, resp.text
+        accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
+        assert len(accounts) == 0
+
+    def test_client_id_not_found_404(self, client, ia_service):
+        from app.main import app
+
+        prev, key = self._override(app)
+        try:
+            resp = client.post(
+                "/api/integrations/accounts/instagram/token",
+                json={"access_token": "GOOD-TOKEN", "client_id": _FAKE_YT_CLIENT_ID},
+                headers=_auth_header(),
+            )
+        finally:
+            app.dependency_overrides.pop(key, None)
+            if prev is not None:
+                app.dependency_overrides[key] = prev
+
+        assert resp.status_code == 404, resp.text
 
 
 # ─── n8n manual create with client_id round-trip ─────────────────────────────

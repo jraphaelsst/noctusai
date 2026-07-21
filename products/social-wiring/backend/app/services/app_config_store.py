@@ -38,11 +38,21 @@ from app.dependencies import get_admin_client
 from app.services.credential_vault import EncryptionNotConfigured, require_fernet
 
 __all__ = [
+    "INSTAGRAM_APP_ID_KEY",
+    "INSTAGRAM_APP_SECRET_KEY",
     "META_APP_ID_KEY",
     "META_APP_SECRET_KEY",
     "build_app_config_store",
+    "resolve_instagram_app_creds",
     "resolve_meta_app_creds",
 ]
+
+# Instagram Business Login app-config keys — product-local (not part of
+# the seed's `noctusai_lib.security.app_config` well-known-key pair,
+# which is Meta/Facebook-Login-specific). Same DB-first/env-fallback
+# shape as `resolve_meta_app_creds` below, keyed on these two instead.
+INSTAGRAM_APP_ID_KEY = "instagram_app_id"
+INSTAGRAM_APP_SECRET_KEY = "instagram_app_secret"
 
 
 def build_app_config_store(
@@ -98,3 +108,34 @@ def resolve_meta_app_creds(
     return _seed_resolve_meta_app_credentials(
         store, env_app_id=env_app_id, env_app_secret=env_app_secret
     )
+
+
+def resolve_instagram_app_creds(
+    *,
+    settings=None,
+    store: Optional[AppConfigStore] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve the Instagram App ID / Secret pair: DB value wins, env
+    falls back per-key. Mirrors :func:`resolve_meta_app_creds` exactly
+    (same DB-first/env-fallback shape, same graceful degrade to
+    env-only when the app-config store can't be built) but keyed on
+    ``INSTAGRAM_APP_ID_KEY`` / ``INSTAGRAM_APP_SECRET_KEY`` — a
+    SEPARATE app credential pair from the Facebook-Login
+    ``meta_app_id``/``meta_app_secret`` (Instagram Business Login
+    authenticates against its own Instagram App ID/Secret).
+    """
+    settings = settings or default_settings
+    env_app_id = getattr(settings, "instagram_app_id", "") or None
+    env_app_secret = getattr(settings, "instagram_app_secret", "") or None
+    if store is None:
+        try:
+            store = build_app_config_store()
+        except EncryptionNotConfigured:
+            return env_app_id, env_app_secret
+    app_id = store.get(INSTAGRAM_APP_ID_KEY)
+    if app_id is None:
+        app_id = env_app_id
+    app_secret = store.get(INSTAGRAM_APP_SECRET_KEY)
+    if app_secret is None:
+        app_secret = env_app_secret
+    return app_id, app_secret

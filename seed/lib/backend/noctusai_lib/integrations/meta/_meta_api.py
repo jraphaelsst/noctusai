@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -39,6 +41,13 @@ GRAPH_BASE = "https://graph.facebook.com"
 # access token. Used by `InstagramLoginAdapter`; pass as `base=` to the graph_*
 # helpers. See roadmap ig-login-messaging-migration-2026-07.
 IG_GRAPH_BASE = "https://graph.instagram.com"
+# Instagram Business Login — the browser-facing consent dialog + the
+# code→token exchange host, DISTINCT from both `GRAPH_BASE` (Facebook
+# Login's `/oauth/access_token`) and `IG_GRAPH_BASE` (the per-token Graph
+# read/write host used post-auth). Meta's Instagram-Login model splits
+# these three hosts; see `build_ig_authorize_url` / `exchange_ig_code_for_token`.
+IG_AUTHORIZE_BASE = "https://www.instagram.com"
+IG_CODE_EXCHANGE_BASE = "https://api.instagram.com"
 # Graph calls from the prod container run 3–18s (observed egress latency to
 # graph.facebook.com); 15s was tipping the IG-Direct `/conversations` call
 # into httpx.ReadTimeout. 30s covers the observed range with headroom — and a
@@ -609,6 +618,153 @@ def exchange_for_long_lived_bundle(
     return _token_bundle_from_body(body)
 
 
+# ─── Instagram Business Login (Instagram-Login model) OAuth chain ────────
+#
+# Distinct 3-host token chain from the Facebook-Login flow above — see
+# `IG_AUTHORIZE_BASE` / `IG_CODE_EXCHANGE_BASE` / `IG_GRAPH_BASE` docstrings.
+# Uses the Instagram App ID/Secret (a separate app credential pair from the
+# Facebook App ID/Secret the Facebook-Login flow uses).
+
+
+@dataclass(frozen=True)
+class IgShortToken:
+    """Step 2 result: authorization `code` → short-lived (~1h) IG User
+    token, via `POST https://api.instagram.com/oauth/access_token`.
+
+    `permissions` is the comma-separated granted-scope string Graph
+    returns alongside the token (present on the Instagram-Login exchange,
+    absent on the Facebook-Login one — hence its own dataclass rather
+    than reusing `TokenBundle`)."""
+
+    access_token: str
+    user_id: str | None = None
+    permissions: str | None = None
+
+
+@dataclass(frozen=True)
+class IgLongToken:
+    """Step 3 result: short-lived → long-lived (~60d) IG User token, via
+    `GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token`."""
+
+    access_token: str
+    token_type: str | None = None
+    expires_in: int | None = None
+
+
+def build_ig_authorize_url(
+    *,
+    app_id: str,
+    redirect_uri: str,
+    scopes: list[str] | tuple[str, ...],
+    state: str,
+) -> str:
+    """Pure builder for the Instagram Business Login consent dialog URL.
+
+    NOT called server-side — this is the URL the browser is redirected
+    to (`https://www.instagram.com/oauth/authorize`). Distinct dialog
+    host from the Facebook-Login flow's `https://www.facebook.com/{v}/
+    dialog/oauth` — the Instagram-Login model has its own consent UI."""
+
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": ",".join(scopes),
+        "state": state,
+    }
+    return f"{IG_AUTHORIZE_BASE}/oauth/authorize?{urlencode(params)}"
+
+
+def exchange_ig_code_for_token(
+    *,
+    code: str,
+    app_id: str,
+    app_secret: str,
+    redirect_uri: str,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> IgShortToken:
+    """Step 2: authorization `code` → short-lived (~1h) IG User token.
+
+    `POST https://api.instagram.com/oauth/access_token`
+    (`application/x-www-form-urlencoded`) — routed through
+    `_graph_request` so a slow/unreachable host surfaces as the same
+    `MetaGraphError` every other Graph call does. The documented
+    response is a bare `{"access_token", "user_id", "permissions"}`
+    object; a defensive `{"data": [{...}]}` wrapper (seen from some
+    Graph API surfaces) is also tolerated."""
+
+    resp = _graph_request(
+        "POST",
+        f"{IG_CODE_EXCHANGE_BASE}/oauth/access_token",
+        data={
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code,
+        },
+        timeout=timeout,
+    )
+    body = _parse_json(resp)
+    _raise_for_graph_error(body, http_status=resp.status_code)
+    if isinstance(body, dict) and isinstance(body.get("data"), list) and body["data"]:
+        body = body["data"][0]
+    if not isinstance(body, dict) or not body.get("access_token"):
+        raise MetaGraphError(
+            f"Expected an access_token from the IG code exchange, got "
+            f"{body!r}",
+            http_status=resp.status_code,
+        )
+    return IgShortToken(
+        access_token=body["access_token"],
+        user_id=(
+            str(body["user_id"]) if body.get("user_id") is not None else None
+        ),
+        permissions=body.get("permissions"),
+    )
+
+
+def exchange_ig_for_long_lived(
+    *,
+    short_token: str,
+    app_secret: str,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> IgLongToken:
+    """Step 3: short-lived → long-lived (~60d) IG User token, via
+    `GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token`.
+
+    Unlike the Facebook-Login long-lived exchange this call takes NO
+    `client_id` — only `client_secret` + the short-lived `access_token`
+    (per Meta's documented Instagram-Login contract)."""
+
+    resp = _graph_request(
+        "GET",
+        f"{IG_GRAPH_BASE}/access_token",
+        params={
+            "grant_type": "ig_exchange_token",
+            "client_secret": app_secret,
+            "access_token": short_token,
+        },
+        timeout=timeout,
+    )
+    body = _parse_json(resp)
+    _raise_for_graph_error(body, http_status=resp.status_code)
+    if not isinstance(body, dict) or not body.get("access_token"):
+        raise MetaGraphError(
+            f"Expected an access_token from the IG long-lived exchange, "
+            f"got {body!r}",
+            http_status=resp.status_code,
+        )
+    expires_in = body.get("expires_in")
+    if expires_in is not None:
+        expires_in = int(expires_in)
+    return IgLongToken(
+        access_token=body["access_token"],
+        token_type=body.get("token_type"),
+        expires_in=expires_in,
+    )
+
+
 # ─── Scope auto-discovery ─────────────────────────────────────────────────
 
 
@@ -689,14 +845,22 @@ __all__ = [
     "DEFAULT_GRAPH_VERSION",
     "DEFAULT_MAX_PAGES",
     "GRAPH_BASE",
+    "IG_AUTHORIZE_BASE",
+    "IG_CODE_EXCHANGE_BASE",
+    "IG_GRAPH_BASE",
+    "IgLongToken",
+    "IgShortToken",
     "META_KITCHEN_SINK_SCOPES",
     "MetaGraphError",
     "app_access_token",
+    "build_ig_authorize_url",
     "discover_app_permissions",
     "exchange_code_for_token",
     "exchange_code_for_token_bundle",
     "exchange_for_long_lived",
     "exchange_for_long_lived_bundle",
+    "exchange_ig_code_for_token",
+    "exchange_ig_for_long_lived",
     "graph_delete",
     "graph_get",
     "graph_paged",

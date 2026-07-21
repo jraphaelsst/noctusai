@@ -15,6 +15,11 @@ Endpoints:
     GET    /api/integrations/accounts/gmail/oauth/callback      → exchange code, create account
     POST   /api/integrations/accounts/google_drive/oauth/start  → {auth_url, state}
     GET    /api/integrations/accounts/google_drive/oauth/callback → exchange code, create account
+    POST   /api/integrations/accounts/meta/oauth/start           → {auth_url, state}
+    GET    /api/integrations/accounts/meta/oauth/callback        → exchange code, create account
+    POST   /api/integrations/accounts/instagram/oauth/start      → {auth_url, state}
+    GET    /api/integrations/accounts/instagram/oauth/callback   → exchange code, create account
+    POST   /api/integrations/accounts/instagram/token            → manual-token fallback, create account
 
 Auth: ``Depends(get_current_user_org)`` throughout. The admin client is
 used for all DB writes (mirrors whatsapp_connections_router). The OAuth
@@ -37,8 +42,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from noctusai_lib.integrations.gmail import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE
 from noctusai_lib.integrations.meta._meta_api import (
+    build_ig_authorize_url,
     exchange_code_for_token,
     exchange_for_long_lived_bundle,
+    exchange_ig_code_for_token,
+    exchange_ig_for_long_lived,
+)
+from noctusai_lib.integrations.meta.instagram_login_adapter import (
+    InstagramLoginOAuthAdapter,
 )
 from noctusai_lib.integrations.youtube import make_youtube_client
 from noctusai_lib.security.oauth import GoogleProvider
@@ -53,7 +64,7 @@ from app.dependencies import (
     get_user_client,
 )
 from app.config import SocialWiringSettings
-from app.services.app_config_store import resolve_meta_app_creds
+from app.services.app_config_store import resolve_instagram_app_creds, resolve_meta_app_creds
 from app.services.credential_vault import (
     CredentialStoreError,
     EncryptionNotConfigured,
@@ -147,6 +158,20 @@ class OAuthStartIn(BaseModel):
 # Backward-compat aliases so existing references (response_model, tests) keep working.
 YouTubeOAuthStartOut = OAuthStartOut
 YouTubeOAuthStartIn = OAuthStartIn
+
+
+class InstagramTokenIn(BaseModel):
+    """Manual-token fallback body for the Instagram Business Login flow —
+    an operator who already has a valid IG User access token (e.g.
+    pasted from the Graph API Explorer) can register it directly instead
+    of walking the browser OAuth dialog. Validated by probing ``/me``
+    before the account is created (never trust an unverified token)."""
+
+    access_token: str
+    client_id: Optional[UUID] = None
+
+    class Config:
+        extra = "forbid"
 
 
 # ─── DI seam ─────────────────────────────────────────────────────────────────
@@ -1322,6 +1347,459 @@ def meta_oauth_callback(
             f"clientes?account_created={account.id}",
         )
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+# ─── Instagram Business Login (Instagram-Login model) OAuth endpoints ────────
+# Distinct model from the Meta (Facebook-Login) flow above: authenticates
+# against a SEPARATE Instagram App ID/Secret, no Facebook Page required, and
+# the token chain runs through www.instagram.com (consent) →
+# api.instagram.com (code exchange) → graph.instagram.com (long-lived
+# exchange + subsequent reads) rather than graph.facebook.com throughout.
+# See `noctusai_lib.integrations.meta.instagram_login_adapter` +
+# `KB § INTEGRATIONS/meta.md` (Model contrast table) +
+# roadmap ``ig-login-messaging-migration-2026-07``.
+
+INSTAGRAM_PROVIDER = "instagram"
+
+# Pinned scope set per Meta's documented Instagram Business Login contract —
+# the minimum surface for reading + replying to IG Direct as this product's
+# agency-model client connection.
+IG_IA_OAUTH_SCOPES: tuple[str, ...] = (
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+)
+
+
+# ─── Instagram OAuth DI seams ─────────────────────────────────────────────────
+# Mirrors the Meta DI-seam shape immediately above (get_meta_code_exchange /
+# get_meta_long_lived_exchange / get_meta_oauth_adapter_factory) — tests
+# override via app.dependency_overrides instead of monkeypatching this
+# module's own imported symbols.
+def get_ig_code_exchange():
+    """DI seam: the IG code→short-lived-token exchange callable
+    (``exchange_ig_code_for_token``)."""
+    return exchange_ig_code_for_token
+
+
+def get_ig_long_lived_exchange():
+    """DI seam: the IG short→long-lived token exchange callable
+    (``exchange_ig_for_long_lived``)."""
+    return exchange_ig_for_long_lived
+
+
+def get_instagram_oauth_adapter_factory():
+    """DI seam: the ``InstagramLoginOAuthAdapter`` constructor used to
+    probe ``/me`` for a username/id label during the callback (and to
+    validate a manually-pasted token on the ``/token`` fallback). Tests
+    override to return a fake adapter factory."""
+    return InstagramLoginOAuthAdapter
+
+
+def _build_ia_instagram_redirect_uri(cfg: SocialWiringSettings) -> str:
+    """Redirect URI for the Instagram Business Login flow.
+
+    Mirrors ``_build_ia_meta_redirect_uri``'s derivation shape: derives
+    from ``oauth_redirect_base_url`` / ``tunnel_hostname`` when set (one
+    env var routes every IA OAuth flow, Instagram included); falls back
+    to ``cfg.instagram_oauth_redirect_uri`` otherwise.
+
+    IMPORTANT: every derived URI must be registered as a valid OAuth
+    redirect URI in the Instagram app's Business Login product settings.
+    """
+    oauth_base = cfg.oauth_redirect_base_url or cfg.tunnel_hostname
+    if oauth_base:
+        base = oauth_base.rstrip("/")
+        return f"{base}/api/integrations/accounts/instagram/oauth/callback"
+    return cfg.instagram_oauth_redirect_uri
+
+
+@router.post(
+    "/accounts/instagram/oauth/start",
+    response_model=OAuthStartOut,
+)
+def instagram_oauth_start(
+    body: OAuthStartIn = OAuthStartIn(),
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> OAuthStartOut:
+    """Build an Instagram Business Login consent URL.
+
+    Mirrors ``meta_oauth_start``: 3-part state
+    ``{org_id}:{nonce}:{client_id_or_empty}``; ``client_id`` is validated
+    against the calling org BEFORE it's encoded into the redirect
+    round-trip. App ID/secret resolve DB-first (Settings-writable) with
+    env fallback via ``resolve_instagram_app_creds`` — a 503 config-gap
+    when neither is set.
+    """
+    app_id, app_secret = resolve_instagram_app_creds(settings=cfg)
+    if not app_id or not app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET not configured. Set "
+                "them in .env or Settings → Instagram App to enable OAuth."
+            ),
+        )
+
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    client_id_str = ""
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id_str = str(body.client_id)
+
+    redirect_uri = _build_ia_instagram_redirect_uri(cfg)
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    auth_url = build_ig_authorize_url(
+        app_id=app_id,
+        redirect_uri=redirect_uri,
+        scopes=IG_IA_OAUTH_SCOPES,
+        state=state,
+    )
+    return OAuthStartOut(auth_url=auth_url, state=state)
+
+
+@router.get("/accounts/instagram/oauth/callback")
+def instagram_oauth_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    cfg: SocialWiringSettings = Depends(get_settings),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    code_exchange=Depends(get_ig_code_exchange),
+    long_lived_exchange=Depends(get_ig_long_lived_exchange),
+    adapter_factory=Depends(get_instagram_oauth_adapter_factory),
+):
+    """Instagram's redirect target for the Instagram Business Login flow.
+
+    Exchanges code → short-lived → long-lived IG User token (falls back
+    to the short-lived token if the long-lived exchange fails — a 60d
+    token is preferred but a 1h token is still usable for the initial
+    connection), probes ``/me`` for a username/id label (best-effort — a
+    probe failure never blocks account creation), creates (or
+    re-authenticates, keyed on ``metadata.channel_id``) a
+    ``provider="instagram"`` ``integration_accounts`` row, then redirects
+    to ``/clientes?account_created=<id>``.
+
+    Uses the admin client throughout (no JWT in Instagram's redirect —
+    mirrors ``meta_oauth_callback``). ``code_exchange`` /
+    ``long_lived_exchange`` / ``adapter_factory`` are DI seams; tests
+    override them via ``app.dependency_overrides``.
+    """
+    if error:
+        detail = f"OAuth flow returned an error: {error}"
+        if error_description:
+            detail = f"{detail} — {error_description}"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth callback missing code or state.",
+        )
+
+    parts = state.split(":")
+    if len(parts) < 2 or not parts[0]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token malformed.",
+        )
+    try:
+        org_id = UUID(parts[0])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state token does not encode a valid org_id.",
+        ) from exc
+
+    client_id_part = parts[2] if len(parts) >= 3 else ""
+    _callback_client_id: Optional[UUID] = None
+    if client_id_part:
+        try:
+            _callback_client_id = UUID(client_id_part)
+        except ValueError:
+            logger.warning(
+                "integration_accounts: Instagram OAuth state carries "
+                "non-UUID client_id_part=%r — ignoring",
+                client_id_part,
+            )
+
+    app_id, app_secret = resolve_instagram_app_creds(settings=cfg)
+    if not app_id or not app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET not configured.",
+        )
+
+    redirect_uri = _build_ia_instagram_redirect_uri(cfg)
+
+    # 1) code → short-lived IG User token.
+    try:
+        short = code_exchange(
+            code=code,
+            app_id=app_id,
+            app_secret=app_secret,
+            redirect_uri=redirect_uri,
+        )
+    except MetaGraphError as exc:
+        logger.exception("integration_accounts: Instagram OAuth code exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth code exchange failed: {exc}",
+        ) from exc
+    if not short or not short.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Instagram did not return an access_token from the code exchange.",
+        )
+
+    # 2) short → long-lived IG User token. Falls back to the short-lived
+    # token on failure — still usable for the initial connection, and the
+    # account is re-synced (re-running the OAuth flow) rather than losing
+    # the connection outright over a transient long-lived-exchange error.
+    long_token = short.access_token
+    token_type = "bearer"
+    expires_in: Optional[int] = None
+    try:
+        long_bundle = long_lived_exchange(
+            short_token=short.access_token,
+            app_secret=app_secret,
+        )
+        long_token = long_bundle.access_token or short.access_token
+        token_type = long_bundle.token_type or "bearer"
+        expires_in = long_bundle.expires_in
+    except MetaGraphError as exc:
+        logger.warning(
+            "integration_accounts: Instagram long-lived exchange failed for "
+            "org_id=%s — falling back to the short-lived token: %s",
+            org_id,
+            exc,
+        )
+
+    # 3) probe /me for a username/id label — best-effort; never blocks
+    # account creation on a probe failure.
+    probe_adapter = adapter_factory(long_token)
+    user_id: Optional[str] = short.user_id
+    user_name: Optional[str] = None
+    try:
+        me = probe_adapter.me()
+        user_id = str(me.get("id")) if me.get("id") is not None else user_id
+        user_name = me.get("username")
+    except MetaGraphError as exc:  # noqa: BLE001 — best-effort; account still created
+        logger.warning(
+            "integration_accounts: Instagram /me probe failed during OAuth "
+            "callback for org_id=%s — using fallback label: %s",
+            org_id,
+            exc,
+        )
+
+    bundle = {
+        "access_token": long_token,
+        "token_type": token_type,
+        "expires_in": expires_in,
+        "scope": ",".join(IG_IA_OAUTH_SCOPES),
+        "user_id": user_id,
+    }
+    account_label = user_name or f"Instagram account ({org_id})"
+    metadata = {
+        "user_id": user_id,
+        "channel_id": user_id,
+        "channel_title": user_name,
+        "scopes": list(IG_IA_OAUTH_SCOPES),
+        "model": "instagram_login",
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    channel_info: dict = {}
+    if user_id:
+        channel_info = {"channel_id": user_id, "title": user_name or ""}
+
+    # Idempotent on channel_id (mirrors meta_oauth_callback) — reconnecting
+    # the same IG account re-authenticates the existing row instead of
+    # inserting a duplicate.
+    ig_accounts = svc.list_accounts(org_id, provider=INSTAGRAM_PROVIDER)
+    existing = (
+        next(
+            (a for a in ig_accounts if (a.metadata or {}).get("channel_id") == user_id),
+            None,
+        )
+        if user_id
+        else None
+    )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+        account = svc.update_channel_info(
+            account_id=existing.id,
+            org_id=org_id,
+            channel_info=channel_info,
+            status="validated",
+            last_synced_at=_dt.now(_tz.utc),
+        )
+    else:
+        existing_labels = {a.account_label for a in ig_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels and user_id:
+            unique_label = f"{account_label} · {user_id[-6:]}"
+        account = svc.create_account(
+            org_id=org_id,
+            provider=INSTAGRAM_PROVIDER,
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not ig_accounts,
+            status="validated",
+            client_id=_callback_client_id,
+        )
+        if channel_info:
+            account = svc.update_channel_info(
+                account_id=account.id,
+                org_id=org_id,
+                channel_info=channel_info,
+                status="validated",
+                last_synced_at=_dt.now(_tz.utc),
+            )
+
+    redirect_url = f"/clientes?account_created={account.id}"
+    if cfg.frontend_base_url:
+        redirect_url = urljoin(
+            cfg.frontend_base_url.rstrip("/") + "/",
+            f"clientes?account_created={account.id}",
+        )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.post(
+    "/accounts/instagram/token",
+    response_model=IntegrationAccountOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def instagram_manual_token(
+    body: InstagramTokenIn,
+    auth: tuple = Depends(get_current_user_org),
+    svc: IntegrationAccountService = Depends(get_account_service),
+    adapter_factory=Depends(get_instagram_oauth_adapter_factory),
+) -> IntegrationAccountOut:
+    """Manual-token fallback: register an already-obtained IG User access
+    token directly (no browser OAuth round-trip).
+
+    Validated by probing ``/me`` via ``InstagramLoginOAuthAdapter`` — an
+    invalid or unauthorized token 400s with a clear message rather than
+    persisting an untested credential. Idempotent on ``metadata.channel_id``
+    (same reconnect semantics as the OAuth callback).
+    """
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    client_id: Optional[UUID] = None
+    if body.client_id is not None:
+        client_svc = build_client_service(get_admin_client())
+        found = client_svc.get_client(body.client_id, org_id)
+        if found is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client_id not found or does not belong to this org.",
+            )
+        client_id = body.client_id
+
+    probe_adapter = adapter_factory(body.access_token)
+    try:
+        me = probe_adapter.me()
+    except MetaGraphError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="token inválido ou sem permissão",
+        ) from exc
+
+    user_id = str(me.get("id")) if me.get("id") is not None else None
+    user_name = me.get("username")
+
+    bundle = {
+        "access_token": body.access_token,
+        "token_type": "bearer",
+        "expires_in": None,
+        "scope": "manual",
+        "user_id": user_id,
+    }
+    account_label = user_name or f"Instagram account ({org_id})"
+    metadata = {
+        "user_id": user_id,
+        "channel_id": user_id,
+        "channel_title": user_name,
+        "model": "instagram_login",
+    }
+    metadata = {k: v for k, v in metadata.items() if v is not None}
+
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    channel_info: dict = {}
+    if user_id:
+        channel_info = {"channel_id": user_id, "title": user_name or ""}
+
+    ig_accounts = svc.list_accounts(org_id, provider=INSTAGRAM_PROVIDER)
+    existing = (
+        next(
+            (a for a in ig_accounts if (a.metadata or {}).get("channel_id") == user_id),
+            None,
+        )
+        if user_id
+        else None
+    )
+    if existing is not None:
+        account = svc.update_credential(
+            account_id=existing.id,
+            org_id=org_id,
+            credential_dict=bundle,
+            metadata=metadata,
+        )
+        if channel_info:
+            account = svc.update_channel_info(
+                account_id=existing.id,
+                org_id=org_id,
+                channel_info=channel_info,
+                status="validated",
+                last_synced_at=_dt.now(_tz.utc),
+            )
+    else:
+        existing_labels = {a.account_label for a in ig_accounts}
+        unique_label = account_label
+        if unique_label in existing_labels and user_id:
+            unique_label = f"{account_label} · {user_id[-6:]}"
+        account = svc.create_account(
+            org_id=org_id,
+            provider=INSTAGRAM_PROVIDER,
+            account_label=unique_label,
+            credential_dict=bundle,
+            metadata=metadata,
+            is_default=not ig_accounts,
+            status="validated",
+            client_id=client_id,
+        )
+        if channel_info:
+            account = svc.update_channel_info(
+                account_id=account.id,
+                org_id=org_id,
+                channel_info=channel_info,
+                status="validated",
+                last_synced_at=_dt.now(_tz.utc),
+            )
+
+    return _out(account)
 
 
 # ─── Gmail OAuth endpoints ────────────────────────────────────────────────────

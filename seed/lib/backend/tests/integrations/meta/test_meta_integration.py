@@ -24,18 +24,25 @@ from noctusai_lib.integrations.meta import (
     DirectMessage,
     FacebookComment,
     FacebookPage,
+    FakeInstagramLoginAdapter,
     FakeMetaAdapter,
+    IgLongToken,
+    IgShortToken,
     InstagramAccount,
     InstagramComment,
+    InstagramLoginOAuthAdapter,
     MetaGraphError,
     OAuthMetaCredentials,
     PostInsights,
     TokenBundle,
+    build_ig_authorize_url,
     discover_app_permissions,
     exchange_code_for_token,
     exchange_code_for_token_bundle,
     exchange_for_long_lived,
     exchange_for_long_lived_bundle,
+    exchange_ig_code_for_token,
+    exchange_ig_for_long_lived,
     get_meta_adapter,
     make_meta_router,
     parse_graph_datetime,
@@ -509,6 +516,153 @@ class TestOAuthExchangeBundle:
             )
         assert tok == "LONG60D"
         assert isinstance(tok, str)
+
+
+# ─── TestInstagramLoginOAuth ──────────────────────────────────────────────
+# Instagram Business Login (Instagram-Login model) token chain — a
+# DISTINCT 3-host flow from the Facebook-Login `TestOAuthExchange*`
+# classes above: consent (www.instagram.com, not called here — pure
+# builder), code exchange (api.instagram.com, POST form), long-lived
+# exchange (graph.instagram.com, GET).
+
+
+class TestBuildIgAuthorizeUrl:
+    def test_pure_builder_shape(self):
+        url = build_ig_authorize_url(
+            app_id="IG_APP_ID",
+            redirect_uri="https://example.com/cb",
+            scopes=["instagram_business_basic", "instagram_business_manage_messages"],
+            state="s123",
+        )
+        assert url.startswith("https://www.instagram.com/oauth/authorize?")
+        assert "client_id=IG_APP_ID" in url
+        assert "redirect_uri=https%3A%2F%2Fexample.com%2Fcb" in url
+        assert "response_type=code" in url
+        assert "scope=instagram_business_basic%2Cinstagram_business_manage_messages" in url
+        assert "state=s123" in url
+
+
+class TestExchangeIgCodeForToken:
+    def test_posts_form_and_parses_bare_object(self):
+        body = {
+            "access_token": "IG-SHORT",
+            "user_id": 17841400000000123,
+            "permissions": "instagram_business_basic,instagram_business_manage_messages",
+        }
+        with patch.object(httpx, "post", return_value=_FakeResponse(body)) as mock_post:
+            tok = exchange_ig_code_for_token(
+                code="c",
+                app_id="a",
+                app_secret="s",
+                redirect_uri="https://example.com/cb",
+            )
+        assert isinstance(tok, IgShortToken)
+        assert tok.access_token == "IG-SHORT"
+        assert tok.user_id == "17841400000000123"
+        assert tok.permissions == (
+            "instagram_business_basic,instagram_business_manage_messages"
+        )
+        # Assert the exact URL + form body the Graph docs specify.
+        call_args, call_kwargs = mock_post.call_args
+        assert call_args[0] == "https://api.instagram.com/oauth/access_token"
+        assert call_kwargs["data"] == {
+            "client_id": "a",
+            "client_secret": "s",
+            "grant_type": "authorization_code",
+            "redirect_uri": "https://example.com/cb",
+            "code": "c",
+        }
+
+    def test_tolerates_data_wrapper(self):
+        body = {"data": [{"access_token": "IG-SHORT", "user_id": "999"}]}
+        with patch.object(httpx, "post", return_value=_FakeResponse(body)):
+            tok = exchange_ig_code_for_token(
+                code="c", app_id="a", app_secret="s", redirect_uri="x"
+            )
+        assert tok.access_token == "IG-SHORT"
+        assert tok.user_id == "999"
+
+    def test_propagates_graph_error(self):
+        body = {"error": {"message": "bad code", "code": 100}}
+        with patch.object(httpx, "post", return_value=_FakeResponse(body)):
+            with pytest.raises(MetaGraphError):
+                exchange_ig_code_for_token(
+                    code="c", app_id="a", app_secret="s", redirect_uri="x"
+                )
+
+    def test_missing_access_token_raises(self):
+        with patch.object(httpx, "post", return_value=_FakeResponse({"user_id": "1"})):
+            with pytest.raises(MetaGraphError):
+                exchange_ig_code_for_token(
+                    code="c", app_id="a", app_secret="s", redirect_uri="x"
+                )
+
+
+class TestExchangeIgForLongLived:
+    def test_gets_expected_url_and_params(self):
+        body = {
+            "access_token": "IG-LONG60D",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)) as mock_get:
+            tok = exchange_ig_for_long_lived(short_token="IG-SHORT", app_secret="s")
+        assert isinstance(tok, IgLongToken)
+        assert tok.access_token == "IG-LONG60D"
+        assert tok.token_type == "bearer"
+        assert tok.expires_in == 5184000
+        call_args, call_kwargs = mock_get.call_args
+        assert call_args[0] == "https://graph.instagram.com/access_token"
+        assert call_kwargs["params"] == {
+            "grant_type": "ig_exchange_token",
+            "client_secret": "s",
+            "access_token": "IG-SHORT",
+        }
+
+    def test_propagates_graph_error(self):
+        body = {"error": {"message": "bad token", "code": 190}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            with pytest.raises(MetaGraphError):
+                exchange_ig_for_long_lived(short_token="IG-SHORT", app_secret="s")
+
+    def test_missing_access_token_raises(self):
+        with patch.object(httpx, "get", return_value=_FakeResponse({})):
+            with pytest.raises(MetaGraphError):
+                exchange_ig_for_long_lived(short_token="IG-SHORT", app_secret="s")
+
+
+class TestInstagramLoginOAuthAdapterMe:
+    """``InstagramLoginOAuthAdapter.me()`` — the /me label probe used by
+    the OAuth callback + the manual-token fallback."""
+
+    def test_me_hits_ig_graph_base_with_expected_fields(self):
+        adapter = InstagramLoginOAuthAdapter("IG-LONG60D")
+        body = {"id": "17841400000000123", "username": "test_ig_user"}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)) as mock_get:
+            me = adapter.me()
+        assert me == body
+        call_args, call_kwargs = mock_get.call_args
+        assert call_args[0] == "https://graph.instagram.com/v21.0/me"
+        assert call_kwargs["params"]["fields"] == "id,username"
+        assert call_kwargs["params"]["access_token"] == "IG-LONG60D"
+
+    def test_me_propagates_graph_error(self):
+        adapter = InstagramLoginOAuthAdapter("BAD-TOKEN")
+        body = {"error": {"message": "expired", "code": 190}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            with pytest.raises(MetaGraphError):
+                adapter.me()
+
+
+class TestFakeInstagramLoginAdapterMe:
+    def test_default_me(self):
+        fake = FakeInstagramLoginAdapter()
+        me = fake.me()
+        assert me["id"] and me["username"]
+
+    def test_seeded_me(self):
+        fake = FakeInstagramLoginAdapter().seed(me={"id": "1", "username": "abc"})
+        assert fake.me() == {"id": "1", "username": "abc"}
 
 
 # ─── TestScopeDiscovery ───────────────────────────────────────────────────

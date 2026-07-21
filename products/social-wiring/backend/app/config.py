@@ -263,6 +263,23 @@ class SocialWiringSettings(ProductSettings):
     # Graph reports, and (after consent) what the user granted.
     meta_oauth_scopes: str = "auto"
 
+    # ─── Instagram Business Login (Instagram-Login model) ──────────────
+    # A SEPARATE app credential pair from meta_app_id/meta_app_secret
+    # above — Instagram Business Login authenticates against its OWN
+    # Instagram App ID/Secret (registered under "Instagram" in the Meta
+    # developer dashboard, distinct from the "Facebook Login" app used by
+    # the meta_* flow), and its token chain runs through
+    # api.instagram.com / graph.instagram.com rather than
+    # graph.facebook.com. See
+    # `noctusai_lib.integrations.meta.instagram_login_adapter` +
+    # `_meta_api.build_ig_authorize_url` / `exchange_ig_code_for_token` /
+    # `exchange_ig_for_long_lived`.
+    instagram_app_id: str = ""
+    instagram_app_secret: str = ""
+    instagram_oauth_redirect_uri: str = (
+        "http://localhost:8011/api/integrations/accounts/instagram/oauth/callback"
+    )
+
     def model_post_init(self, __context) -> None:
         """Append tunnel hostname to CORS origins so the seed's CORS
         middleware picks it up without any framework changes."""
@@ -287,6 +304,9 @@ class SocialWiringSettings(ProductSettings):
             self.youtube_redirect_uri = f"{base}/api/youtube/oauth/callback"
             self.google_oauth_redirect_uri = f"{base}/api/calendar/oauth/callback"
             self.meta_oauth_redirect_uri = f"{base}/api/meta/oauth/callback"
+            self.instagram_oauth_redirect_uri = (
+                f"{base}/api/integrations/accounts/instagram/oauth/callback"
+            )
 
 
 settings = SocialWiringSettings()

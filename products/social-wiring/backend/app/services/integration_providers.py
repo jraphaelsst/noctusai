@@ -96,6 +96,28 @@ PROVIDERS: list[dict[str, Any]] = [
         ),
     },
     {
+        "id": "instagram",
+        "display_name": "Instagram (Business Login)",
+        "icon": "instagram",
+        "oauth_supported": True,
+        "manual_entry": True,
+        "manual_key_fields": [
+            {
+                "name": "access_token",
+                "label": "Access Token",
+                "type": "password",
+                "placeholder": "IGAA...",
+            },
+        ],
+        "scopes": [
+            "instagram_business_basic",
+            "instagram_business_manage_messages",
+        ],
+        "tutorial_url": (
+            "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login"
+        ),
+    },
+    {
         "id": "n8n",
         "display_name": "n8n",
         "icon": "n8n",
