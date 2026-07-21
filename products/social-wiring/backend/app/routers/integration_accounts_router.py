@@ -931,15 +931,20 @@ META_IA_OAUTH_SCOPES: tuple[str, ...] = (
     # was granted. Documented at
     # developers.facebook.com/docs/messenger-platform/conversations.
     "pages_manage_metadata",
-    # THE actual blocker for reading conversations, confirmed against the
-    # live token 2026-07-21: the `/{page-id}/conversations` edge (both IG
-    # and Messenger) returns Graph (#200) "Requires permission:
-    # pages_messaging" without it. instagram_manage_messages +
-    # pages_manage_metadata + the Page MESSAGING task are NOT sufficient —
-    # `pages_messaging` is the permission Graph names. It was absent from
-    # this list, so no reconnect ever requested it. (Meta's IG-messaging
-    # docs omit it; the live API is the source of truth.)
-    "pages_messaging",
+    # NOTE — do NOT add `pages_messaging` here. It is a real permission but
+    # it is NOT enabled in this app's use-case config, so Meta's OAuth flow
+    # rejects it as an "Invalid Scope" (blocking the admin's own reconnect).
+    # More importantly, reading INSTAGRAM Direct does NOT require it: the
+    # `(#200) Requires permission: pages_messaging` we saw came from the
+    # MESSENGER branch of the conversations edge (`/{page-id}/conversations`
+    # with NO `platform` param). The Instagram branch
+    # (`?platform=instagram`) needs only instagram_basic +
+    # instagram_manage_messages + pages_manage_metadata (all present). The
+    # real remaining blockers are Meta-account-level, not scopes: the IG
+    # "Allow Access to Messages" toggle, Business Verification (required for
+    # the IG conversations branch), and Advanced Access via App Review for
+    # reading accounts the app does not own.
+    # KB § — Meta IG-DM Facebook-Login model (memory reference).
 )
 
 

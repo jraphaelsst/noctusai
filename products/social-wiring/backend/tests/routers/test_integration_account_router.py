@@ -1124,11 +1124,13 @@ class TestMetaOAuthStart:
             # Required by the IG Conversations API (DM reading) alongside
             # instagram_manage_messages — missing it caused Graph #3.
             "pages_manage_metadata",
-            # THE conversations-read blocker — Graph #200 "Requires
-            # permission: pages_messaging" (confirmed live 2026-07-21).
-            "pages_messaging",
         ):
             assert scope in body["auth_url"], scope
+        # `pages_messaging` must NOT be requested — it's an Invalid Scope for
+        # this use-case config (blocks the admin's OAuth) and the IG
+        # conversations branch does not need it (that #200 was the Messenger
+        # branch). See META_IA_OAUTH_SCOPES note.
+        assert "pages_messaging" not in body["auth_url"]
         assert _ORG_A in body["state"]
         parts = body["state"].split(":")
         assert len(parts) == 3
