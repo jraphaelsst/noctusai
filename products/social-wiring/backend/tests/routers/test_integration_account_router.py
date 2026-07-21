@@ -1385,18 +1385,17 @@ class TestMetaOAuthCallback:
 
 # ─── Instagram Business Login (Instagram-Login model) OAuth ─────────────────
 class TestInstagramOAuthStart:
-    """POST /accounts/instagram/oauth/start — the unified Meta app covers
-    Instagram too, so app creds resolve via ``resolve_meta_app_creds``
-    (DB-first, env-fallback); ENCRYPTION_KEY is empty in this test env so the
-    DB leg raises EncryptionNotConfigured and the resolver falls back to the
-    injected settings."""
+    """POST /accounts/instagram/oauth/start — app creds resolve via
+    ``resolve_instagram_app_creds`` (DB-first, env-fallback); ENCRYPTION_KEY
+    is empty in this test env so the DB leg raises EncryptionNotConfigured
+    and the resolver falls back to the injected settings."""
 
     @staticmethod
     def _fake_cfg(app_id="fake-ig-app-id", app_secret="fake-ig-app-secret"):
         from app.config import settings as _settings
 
         return _settings.model_copy(
-            update={"meta_app_id": app_id, "meta_app_secret": app_secret}
+            update={"instagram_app_id": app_id, "instagram_app_secret": app_secret}
         )
 
     def test_start_returns_auth_url_and_state(self, client):
@@ -1483,8 +1482,8 @@ class TestInstagramOAuthCallback:
 
         return _settings.model_copy(
             update={
-                "meta_app_id": "fake-ig-app-id",
-                "meta_app_secret": "fake-ig-app-secret",
+                "instagram_app_id": "fake-ig-app-id",
+                "instagram_app_secret": "fake-ig-app-secret",
                 "frontend_base_url": "",
             }
         )
@@ -1666,7 +1665,7 @@ class TestInstagramOAuthCallback:
         from app.main import app
 
         fake_cfg = self._fake_cfg().model_copy(
-            update={"meta_app_id": "", "meta_app_secret": ""}
+            update={"instagram_app_id": "", "instagram_app_secret": ""}
         )
         prev = app.dependency_overrides.get(get_settings)
         app.dependency_overrides[get_settings] = lambda: fake_cfg

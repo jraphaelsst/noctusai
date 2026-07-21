@@ -73,6 +73,21 @@ export interface MetaAppSave {
   app_secret?: string;
 }
 
+// ─── Instagram App credentials (admin/dev only) ─────────────────────────
+// Same shape as Meta App — a distinct Instagram Business Login app (its own
+// App ID/Secret, separate from the Facebook app id + the "Token de Cliente").
+export interface InstagramAppStatus {
+  app_id_configured: boolean;
+  app_secret_configured: boolean;
+  app_id_masked?: string | null;
+}
+
+export interface InstagramAppSave {
+  app_id: string;
+  /** Omit to keep the currently stored secret unchanged. */
+  app_secret?: string;
+}
+
 // ─── Recipients tab ─────────────────────────────────────────────────────
 export function useRecipients() {
   const [data, setData] = useState<Recipient[]>([]);
@@ -207,3 +222,61 @@ export function useSaveMetaApp() {
   return { save, saving };
 }
 
+// ─── Instagram App credentials tab ──────────────────────────────────────
+/**
+ * useInstagramAppStatus — GET /api/settings/instagram-app/status.
+ *
+ * Mirrors useMetaAppStatus: never returns the secret itself — only booleans
+ * + an optional masked app_id for display. Exposes `refresh()` so the save
+ * form can re-fetch status after a successful write.
+ */
+export function useInstagramAppStatus() {
+  const [data, setData] = useState<InstagramAppStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const status = await api.get<InstagramAppStatus>(
+        "/api/settings/instagram-app/status"
+      );
+      setData(status);
+    } catch (err) {
+      console.error("instagram-app status load failed", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { data, loading, refresh };
+}
+
+/**
+ * useSaveInstagramApp — PUT /api/settings/instagram-app.
+ *
+ * Mirrors useSaveMetaApp: `app_secret` is write-only — omit it to keep the
+ * currently stored value (backend never echoes it back). Callers should
+ * clear their local secret field after a successful save.
+ */
+export function useSaveInstagramApp() {
+  const [saving, setSaving] = useState(false);
+
+  const save = useCallback(async (payload: InstagramAppSave) => {
+    setSaving(true);
+    try {
+      await api.put("/api/settings/instagram-app", payload);
+      toast.success("Credenciais do Instagram App salvas.");
+    } catch (err: any) {
+      toast.error(err?.message ?? "Falha ao salvar credenciais do Instagram App.");
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { save, saving };
+}
