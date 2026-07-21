@@ -38,8 +38,8 @@ Key facts (see memory `reference_meta_ig_dm_facebook_login_model`):
 
 | Slice | What | State |
 |---|---|---|
-| **S1** | Seed **read adapter** — `InstagramLoginAdapter` (graph.instagram.com): list conversations / list messages via IG user token. Fake+Real+tests. Pure code, fully unit-testable. | **in progress (this session)** |
-| S2 | **Instagram Business Login OAuth** — authorize URL + callback + code→IG-user-token exchange (`graph.instagram.com/oauth/access_token` → long-lived), store token. New provider/mode on `integration_accounts` (e.g. `provider="instagram"` or a mode flag). | ⬜ planned |
+| **S1** | Seed **read adapter** — `InstagramLoginAdapter` (graph.instagram.com): list conversations / list messages via IG user token. Fake+Real+tests. Pure code, fully unit-testable. | ✅ shipped (2026-07-21) |
+| S2 | **Instagram Business Login OAuth** — authorize URL + callback + code→IG-user-token exchange (`api.instagram.com/oauth/access_token` short → `graph.instagram.com/access_token` long-lived), store as `provider="instagram"`. + manual token-paste fallback endpoint. Contract-first parallel dispatch (BE: seed exchange helpers + start/callback/token endpoints + settings + provider-CHECK migration; FE: instagram connect row + token-paste UI). | 🟡 in progress (2026-07-21, dispatched) |
 | S3 | **Router wiring** — DMs router routes an IG-Login-model account to `InstagramLoginAdapter`; keep the Facebook-Login path for existing Page-linked connections. Model resolved from the stored account. | ⬜ planned |
 | S4 | **Send** path on the IG-Login adapter (`POST /me/messages`) + FE connect flow ("Conectar Instagram (mensagens diretas)"). | ⬜ planned |
 | S5 | **App Review submission** — Advanced Access on `instagram_business_manage_messages` + Business Verification. USER/ops task, not code. Prereq for reading real client inboxes. | ⬜ user/ops |
@@ -51,6 +51,15 @@ Key facts (see memory `reference_meta_ig_dm_facebook_login_model`):
   for any already-connected Page-linked accounts (no forced migration).
 - 2026-07-21 — S1 built adapter-first (testable without live Meta), because live
   verification is blocked on the user's Business Verification + App Review.
+- 2026-07-21 — S2 verified the OAuth surface against Meta's live docs: authorize
+  `www.instagram.com/oauth/authorize` (scopes `instagram_business_basic` +
+  `instagram_business_manage_messages`), code→short `POST api.instagram.com/oauth/access_token`,
+  short→long `GET graph.instagram.com/access_token?grant_type=ig_exchange_token`.
+  Uses the **Instagram App ID/Secret** (distinct from the Facebook app id). Built as a
+  contract-first parallel dispatch (BE + FE, file-disjoint) against the Fake adapter;
+  user inserts a real token/logs in once App-side config is ready. Manual token-paste
+  kept as fallback. Correction surfaced to user: the "Token de Cliente" (Client Token)
+  is NOT the user access token and cannot read DMs.
 
 ## Retrospective (fill on completion)
 
