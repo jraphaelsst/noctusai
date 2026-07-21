@@ -58,6 +58,8 @@ const mockUseSyncAccount = vi.fn();
 const mockUseUpdateClient = vi.fn();
 const mockUseDeleteClient = vi.fn();
 
+const mockUseSubmitInstagramToken = vi.fn();
+
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: mockUseIntegrationAccounts,
   useUpdateAccount: mockUseUpdateAccount,
@@ -67,6 +69,7 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useCreateAccount: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useStartYouTubeOAuth: () => ({ mutate: vi.fn(), isPending: false }),
   useStartProviderOAuth: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useSubmitInstagramToken: mockUseSubmitInstagramToken,
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -214,6 +217,7 @@ beforeEach(() => {
   mockUseDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
+  mockUseSubmitInstagramToken.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   mockNavigate.mockClear();
   mockSetActiveClient.mockClear();
   mockSetActiveAccount.mockClear();
@@ -455,6 +459,69 @@ describe("ClienteModal — Mailchimp per-cliente connect", () => {
     expect(getByText(/Newsletter/)).toBeTruthy();
     // Re-configure re-opens the same form (pre-filled)
     expect(getByTestId("mailchimp-reconfigure-btn")).toBeTruthy();
+  });
+});
+
+describe("ClienteModal — Instagram connect (OAuth + token-paste fallback)", () => {
+  it("shows Instagram as a live OAuth Conectar row plus a token-paste toggle", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByTestId, queryByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    expect(getByTestId("provider-row-instagram")).toBeTruthy();
+    expect(getByTestId("connect-btn-instagram")).toBeTruthy();
+    expect(getByTestId("instagram-token-toggle")).toBeTruthy();
+    // Token-paste form is collapsed until the toggle is clicked
+    expect(queryByTestId("instagram-token-form")).toBeNull();
+  });
+
+  it("wires the Instagram Conectar button to useStartProviderOAuth('instagram')", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    expect(() => fireEvent.click(getByTestId("connect-btn-instagram"))).not.toThrow();
+  });
+
+  it("toggles the inline token-paste form open/closed", async () => {
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const { getByTestId, queryByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("instagram-token-toggle"));
+    expect(getByTestId("instagram-token-form")).toBeTruthy();
+    expect(getByTestId("instagram-token-input")).toBeTruthy();
+    fireEvent.click(getByTestId("instagram-token-toggle"));
+    expect(queryByTestId("instagram-token-form")).toBeNull();
+  });
+
+  it("submits the pasted token via useSubmitInstagramToken and closes the form on success", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ id: "acc-ig", provider: "instagram", account_label: "IG", status: "validated" });
+    mockUseSubmitInstagramToken.mockReturnValue({ mutate: vi.fn(), mutateAsync, isPending: false });
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+
+    const { getByTestId, queryByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("instagram-token-toggle"));
+    fireEvent.change(getByTestId("instagram-token-input"), { target: { value: "IGAA-fake-token" } });
+    fireEvent.click(getByTestId("instagram-token-submit"));
+
+    await vi.waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith({ access_token: "IGAA-fake-token", client_id: "client-1" });
+    });
+    await vi.waitFor(() => {
+      expect(queryByTestId("instagram-token-form")).toBeNull();
+    });
+  });
+
+  it("surfaces the backend's 400 detail inline when the token is invalid", async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error("[400] Token invalido ou expirado."));
+    mockUseSubmitInstagramToken.mockReturnValue({ mutate: vi.fn(), mutateAsync, isPending: false });
+    mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+
+    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    fireEvent.click(getByTestId("instagram-token-toggle"));
+    fireEvent.change(getByTestId("instagram-token-input"), { target: { value: "bad-token" } });
+    fireEvent.click(getByTestId("instagram-token-submit"));
+
+    await vi.waitFor(() => {
+      expect(getByTestId("instagram-token-error").textContent).toMatch(/Token invalido ou expirado/);
+    });
+    // The form stays open on error so the user can retry.
+    expect(getByTestId("instagram-token-form")).toBeTruthy();
   });
 });
 

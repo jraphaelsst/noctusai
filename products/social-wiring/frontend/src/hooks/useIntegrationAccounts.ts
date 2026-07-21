@@ -319,3 +319,39 @@ export function useStartProviderOAuth(provider: string) {
     },
   });
 }
+
+// ─── Instagram manual token-paste fallback ───────────────────────────────────
+
+export interface SubmitInstagramTokenInput {
+  /** Instagram User access token (NOT the app "Token de Cliente"). */
+  access_token: string;
+  /** Assign the new account to this client. */
+  client_id?: string | null;
+}
+
+/**
+ * useSubmitInstagramToken — manual fallback for the Instagram Business Login
+ * OAuth flow. POSTs a pasted user access token to the backend, which
+ * validates it and creates/returns the account (400 on an invalid token).
+ * Invalidates the accounts query on success, mirroring the OAuth-start hooks.
+ *
+ * Usage:
+ *   const submitToken = useSubmitInstagramToken();
+ *   submitToken.mutate({ access_token, client_id: client.id });
+ */
+export function useSubmitInstagramToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: SubmitInstagramTokenInput) => {
+      const res = await api.post<IntegrationAccount>(
+        "/api/integrations/accounts/instagram/token",
+        payload,
+      );
+      return res;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY() });
+      qc.invalidateQueries({ queryKey: ACCOUNTS_KEY("instagram") });
+    },
+  });
+}
