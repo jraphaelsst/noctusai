@@ -63,7 +63,21 @@ Key facts (see memory `reference_meta_ig_dm_facebook_login_model`):
 
 ## Retrospective (fill on completion)
 
-- (pending)
+- 🔴 **Instagram App ID ≠ Facebook App ID, even in ONE unified Meta app** (2026-07-21,
+  proven live). A single Meta app exposes TWO distinct App IDs: the Facebook App ID (top
+  of the dashboard) and a separate **Instagram App ID** (in Instagram → API setup with
+  Instagram login → Business login settings, alongside the Instagram App Secret + the
+  OAuth redirect URIs). Instagram Business Login's authorize step
+  (`instagram.com/oauth/authorize`) accepts ONLY the Instagram App ID as `client_id`;
+  sending the Facebook App ID yields Instagram's *"Esta página não está disponível"*
+  (invalid platform app). So the Instagram-Login OAuth MUST resolve its own
+  `instagram_app_id`/`instagram_app_secret` (Settings → Aplicativo Instagram /
+  `resolve_instagram_app_creds`) — NOT the meta_app_id. A mid-session detour wired it to
+  meta creds on a (mistaken) "one app = one cred" premise and it failed live; reverted.
+  The redirect URI + App Secret also live in that Business login settings panel.
+- OAuth-in-new-tab: `window.open(url, "_blank", "noopener")` returns `null` per spec →
+  strands the blank tab AND falls back to redirecting the current page. Open WITHOUT
+  noopener (sever `tab.opener` manually) to navigate only the new tab.
 
 ## Absorb-on-completion
 
