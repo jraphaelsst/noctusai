@@ -1302,6 +1302,9 @@ class TestRealCommentsMessagesStories:
         assert captured["url"].endswith("/PAGE1/conversations")
         assert captured["params"]["platform"] == "instagram"
         assert captured["params"]["access_token"] == "PAGETOK"
+        # Lean field set — participants scoped to {id} so Graph doesn't
+        # reject a busy inbox with (#1) "reduce the amount of data".
+        assert captured["params"]["fields"] == "participants{id},updated_time"
 
     def test_list_instagram_messages_two_step_flow(self):
         a = MetaOAuthAdapter(system_user_token="SYSTOK")

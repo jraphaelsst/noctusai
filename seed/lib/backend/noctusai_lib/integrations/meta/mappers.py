@@ -70,7 +70,12 @@ FB_COMMENT_FIELDS = (
 # IG Direct conversations list edge (`instagram_manage_messages`
 # scope) — `id` is always returned; `participants`/`updated_time` are
 # requested explicitly (thin default field surface on this edge).
-IG_CONVERSATION_FIELDS = "participants,updated_time"
+# Lean field set for the IG conversations edge. `participants` is expanded to
+# JUST `{id}` (all `conversation_from_body` uses) — the default expansion pulls
+# username/name per participant and, combined with the page size, makes Graph
+# reject the whole call with (#1) "Please reduce the amount of data you're
+# asking for" on a busy inbox. Scope it to ids to keep the query cheap.
+IG_CONVERSATION_FIELDS = "participants{id},updated_time"
 
 # Per-message detail fetch (the conversations `/messages` list edge
 # returns bare `{"id": ...}` rows — every field must be re-fetched

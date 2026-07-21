@@ -114,7 +114,11 @@ def _message_out(msg, *, self_id: str, direction: str | None = None) -> MetaMess
 # ─── GET /conversations ──────────────────────────────────────────────────
 @router.get("/api/meta/instagram/conversations", response_model=MetaConversationsListOut)
 def list_conversations(
-    limit: int = Query(default=25, ge=1, le=100),
+    # Small default page: Graph rejects the IG conversations edge with (#1)
+    # "Please reduce the amount of data you're asking for" on a busy inbox
+    # when the page size + participant expansion get too heavy. 10 keeps the
+    # first page cheap; callers can page for more.
+    limit: int = Query(default=10, ge=1, le=50),
     adapter: MetaAdapter = Depends(get_account_adapter),
 ):
     try:
