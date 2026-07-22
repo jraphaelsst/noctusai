@@ -59,6 +59,14 @@ export type { InputProps } from "./ui/Input";
 
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 
+// Skeleton / TableSkeleton — canonical loading-placeholder primitives (seed-skeleton-organs
+// slice). Formalizes the animate-pulse bg-muted block hand-rolled across ChartCard,
+// PageSkeleton, KanbanBoard, IntegrationCard, ClientCredentialPanel, ChatWindow (N>=5).
+export { Skeleton } from "./ui/Skeleton";
+export type { SkeletonProps, SkeletonRounded } from "./ui/Skeleton";
+export { TableSkeleton } from "./ui/TableSkeleton";
+export type { TableSkeletonProps } from "./ui/TableSkeleton";
+
 export { LLMProviderSelector } from "./components/LLMProviderSelector";
 export type { LLMProviderSelectorProps } from "./components/LLMProviderSelector";
 

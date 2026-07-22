@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { TableSkeleton } from "@noctusai/lib/design-system";
 import {
   useLeadImportBatches,
   useLeadImportCommit,
@@ -185,9 +186,9 @@ export default function Importacao() {
           <CardTitle>Histórico de importações</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {batchesQ.isLoading && (
-            <div className="p-4 text-sm text-muted-foreground" data-testid="leads-batches-loading">
-              Carregando...
+          {batchesQ.isPending && (
+            <div className="p-4" data-testid="leads-batches-loading">
+              <TableSkeleton rows={5} columns={6} />
             </div>
           )}
           {batchesQ.isError && (
@@ -195,12 +196,12 @@ export default function Importacao() {
               Erro ao carregar o histórico.
             </div>
           )}
-          {!batchesQ.isLoading && !batchesQ.isError && batches.length === 0 && (
+          {!batchesQ.isPending && !batchesQ.isFetching && !batchesQ.isError && batches.length === 0 && (
             <div className="p-4 text-center text-sm text-muted-foreground" data-testid="leads-batches-empty">
               Nenhuma importação registrada ainda.
             </div>
           )}
-          {!batchesQ.isLoading && !batchesQ.isError && batches.length > 0 && (
+          {!batchesQ.isPending && !batchesQ.isError && batches.length > 0 && (
             <div className="overflow-x-auto" data-testid="leads-batches-table">
               <table className="w-full text-sm">
                 <thead>

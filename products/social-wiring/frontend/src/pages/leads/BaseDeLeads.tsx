@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { TableSkeleton } from "@noctusai/lib/design-system";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,7 +85,7 @@ export default function BaseDeLeads() {
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
 
-  const { data, isLoading, isError, error } = useLeadsList(filters, {
+  const { data, isPending, isFetching, isError, error } = useLeadsList(filters, {
     page,
     pageSize: PAGE_SIZE,
     sort,
@@ -171,12 +171,12 @@ export default function BaseDeLeads() {
         </Button>
       </div>
 
-      {isLoading && (
-        <div className="space-y-2" data-testid="leads-table-loading">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
-        </div>
+      {isPending && (
+        <Card data-testid="leads-table-loading">
+          <CardContent className="p-0">
+            <TableSkeleton rows={8} columns={6} />
+          </CardContent>
+        </Card>
       )}
 
       {isError && (
@@ -191,7 +191,7 @@ export default function BaseDeLeads() {
         </Card>
       )}
 
-      {!isLoading && !isError && leads.length === 0 && (
+      {!isPending && !isFetching && !isError && leads.length === 0 && (
         <Card data-testid="leads-table-empty">
           <CardHeader>
             <CardTitle className="text-base">Nenhum lead encontrado</CardTitle>
@@ -204,7 +204,7 @@ export default function BaseDeLeads() {
         </Card>
       )}
 
-      {!isLoading && !isError && leads.length > 0 && (
+      {!isPending && !isError && leads.length > 0 && (
         <Card data-testid="leads-table">
           <CardContent className="p-0">
             <div className="overflow-x-auto">

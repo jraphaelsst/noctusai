@@ -1,0 +1,32 @@
+name: Skeleton
+path: seed/lib/frontend/src/design-system/ui/Skeleton.tsx
+phase: seed-skeleton-organs
+registered_at: "2026-07-22"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Canonical `animate-pulse bg-muted` loading-placeholder primitive. Formalizes N>=5 hand-rolled copies found across the seed lib (ChartCard.tsx, PageSkeleton.tsx's internal `Skel`, KanbanBoard.tsx, IntegrationCard.tsx, ClientCredentialPanel.tsx, ChatWindow.tsx) — the recurrence rule (N>=3 MUST formalize) applies."
+  - "`announce` (default true) toggles between the ONE `role=\"status\"` + `aria-label` block per loading region (screen readers hear exactly one \"Carregando\") and `aria-hidden=\"true\"` decorative repeats — see TableSkeleton for the canonical multi-block consumer."
+  - "`prefers-reduced-motion` suppression is JS-detected via `window.matchMedia` (with a try/catch fallback to `false`/motion-OK for environments without it), NOT a pure Tailwind `motion-reduce:` CSS variant — chosen specifically so the suppression is unit-testable (jsdom doesn't evaluate CSS media queries, so a CSS-only approach can't be asserted in vitest)."
+  - "PageSkeleton.tsx's internal `Skel` was refactored to consume this Skeleton at its definition site — the formalization is proven by adoption, not just declared."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "KanbanBoard.tsx / IntegrationCard.tsx / ChatWindow.tsx / ClientCredentialPanel.tsx still hand-roll their own `animate-pulse bg-muted` blocks post-formalization — deliberately deferred (pilot-products-first fan-out), not fixed in this slice."
+
+alternatives_considered:
+  - "Considered a pure Tailwind `motion-reduce:animate-none` CSS variant (zero JS, zero hook) — rejected because jsdom/vitest cannot evaluate CSS media-query variants, so 'reduced-motion suppresses animation' would be unfalsifiable in a colocated test; the JS-detected approach is real AND testable."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

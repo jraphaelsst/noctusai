@@ -14,6 +14,8 @@
  *   DialogFooter  — footer sub-component for Dialog
  *   Input         — single-line text input (fully forwarded ref)
  *   HoverCard     — Radix-backed hover card (pre-existing)
+ *   Skeleton      — canonical loading-placeholder block (announce + reduced-motion aware)
+ *   TableSkeleton — table-shaped loading placeholder composed from Skeleton
  */
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeVariant } from "./Badge";
@@ -33,3 +35,9 @@ export { Input } from "./Input";
 export type { InputProps } from "./Input";
 
 export { HoverCard, HoverCardTrigger, HoverCardContent } from "./hover-card";
+
+export { Skeleton } from "./Skeleton";
+export type { SkeletonProps, SkeletonRounded } from "./Skeleton";
+
+export { TableSkeleton } from "./TableSkeleton";
+export type { TableSkeletonProps } from "./TableSkeleton";

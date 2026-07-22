@@ -9,12 +9,18 @@
  * change," and coercing it to `0%` would silently lie (see the Leads
  * contract's `variacao_pct: number | null`).
  *
+ * `loading` renders a `Skeleton`, NEVER "—" — an em-dash is also what a
+ * genuinely-resolved-null `delta` renders, so reusing it for "value not
+ * loaded yet" would make "loading" and "no value" visually indistinguishable
+ * (the same lie-in-miniature the Leads tables had; see seed-skeleton-organs).
+ *
  * Trend is conveyed by ICON + TEXT (an Arrow-up/down/flat glyph plus the
  * signed delta string), never by color alone — a color-blind viewer, or
  * anyone viewing a screenshot in grayscale, still gets the direction.
  */
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { cn } from "../../utils";
+import { Skeleton } from "../ui/Skeleton";
 import { formatPercentDelta } from "./formatters";
 import type { StatTileProps, StatTileTrend } from "./types";
 
@@ -63,11 +69,11 @@ export function StatTile({
       </div>
 
       <div className="mt-3 text-3xl font-semibold tabular-nums text-card-foreground">
-        {loading ? <span className="text-muted-foreground/50">—</span> : value}
+        {loading ? <Skeleton className="h-8 w-20" /> : value}
       </div>
 
       <div className="mt-1 flex items-center gap-2 text-xs">
-        {delta !== undefined && (
+        {!loading && delta !== undefined && (
           <span
             className={cn(
               "inline-flex items-center gap-1 font-medium",

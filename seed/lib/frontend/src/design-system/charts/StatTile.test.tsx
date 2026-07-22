@@ -13,10 +13,21 @@ describe("StatTile", () => {
     expect(screen.getByText("128")).toBeInTheDocument();
   });
 
-  it("shows an em dash instead of the value while loading", () => {
+  it("shows a Skeleton instead of the value while loading — never an em dash", () => {
     render(<StatTile label="Total" value={128} loading />);
     expect(screen.queryByText("128")).not.toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Carregando" })).toBeInTheDocument();
+  });
+
+  it("hides the delta row entirely while loading, even when delta resolves to null", () => {
+    // Regression: `variacao_pct` on an in-flight query is `null` (not
+    // `undefined`), which used to render a delta em dash that was
+    // indistinguishable from a genuinely-resolved-null delta.
+    render(<StatTile label="Total" value={128} delta={null} loading hint="vs. período anterior" />);
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+    // `hint` itself is independent of `delta`/`loading` and still renders.
+    expect(screen.getByText("vs. período anterior")).toBeInTheDocument();
   });
 
   it("renders null delta as an em dash, never as 0%", () => {

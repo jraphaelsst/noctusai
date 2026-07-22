@@ -8,6 +8,7 @@ import { useState } from "react";
 import {
   BarChart,
   ChartCard,
+  TableSkeleton,
   formatPercent,
   formatPercentDelta,
 } from "@noctusai/lib/design-system";
@@ -72,9 +73,9 @@ export default function Empreendimentos() {
             Clique numa linha para filtrar todas as abas por ela (drill-in).
           </p>
         </div>
-        {byDimQ.isLoading && (
-          <div className="p-4 text-sm text-muted-foreground" data-testid="leads-empreendimentos-table-loading">
-            Carregando...
+        {byDimQ.isPending && (
+          <div className="p-4" data-testid="leads-empreendimentos-table-loading">
+            <TableSkeleton rows={8} columns={4} />
           </div>
         )}
         {byDimQ.isError && (
@@ -82,7 +83,7 @@ export default function Empreendimentos() {
             Erro ao carregar dados.
           </div>
         )}
-        {!byDimQ.isLoading && !byDimQ.isError && rankedBuckets.length === 0 && (
+        {!byDimQ.isPending && !byDimQ.isFetching && !byDimQ.isError && rankedBuckets.length === 0 && (
           <div
             className="p-4 text-center text-sm text-muted-foreground"
             data-testid="leads-empreendimentos-table-empty"
@@ -90,7 +91,7 @@ export default function Empreendimentos() {
             Sem dados para o período selecionado.
           </div>
         )}
-        {!byDimQ.isLoading && !byDimQ.isError && rankedBuckets.length > 0 && (
+        {!byDimQ.isPending && !byDimQ.isError && rankedBuckets.length > 0 && (
           <div className="overflow-x-auto" data-testid="leads-empreendimentos-table">
             <table className="w-full text-sm">
               <thead>

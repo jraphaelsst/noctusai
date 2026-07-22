@@ -10,6 +10,7 @@ import {
   BarChart,
   ChartCard,
   DonutChart,
+  TableSkeleton,
   formatPercent,
   formatPercentDelta,
 } from "@noctusai/lib/design-system";
@@ -81,9 +82,9 @@ export default function Corretores() {
             Clique num corretor para filtrar todas as abas por ele (drill-in).
           </p>
         </div>
-        {byDimQ.isLoading && (
-          <div className="p-4 text-sm text-muted-foreground" data-testid="leads-corretores-table-loading">
-            Carregando...
+        {byDimQ.isPending && (
+          <div className="p-4" data-testid="leads-corretores-table-loading">
+            <TableSkeleton rows={8} columns={6} />
           </div>
         )}
         {byDimQ.isError && (
@@ -91,7 +92,7 @@ export default function Corretores() {
             Erro ao carregar corretores.
           </div>
         )}
-        {!byDimQ.isLoading && !byDimQ.isError && buckets.length === 0 && (
+        {!byDimQ.isPending && !byDimQ.isFetching && !byDimQ.isError && buckets.length === 0 && (
           <div
             className="p-4 text-center text-sm text-muted-foreground"
             data-testid="leads-corretores-table-empty"
@@ -99,7 +100,7 @@ export default function Corretores() {
             Sem dados para o período selecionado.
           </div>
         )}
-        {!byDimQ.isLoading && !byDimQ.isError && buckets.length > 0 && (
+        {!byDimQ.isPending && !byDimQ.isError && buckets.length > 0 && (
           <div className="overflow-x-auto" data-testid="leads-corretores-table">
             <table className="w-full text-sm">
               <thead>

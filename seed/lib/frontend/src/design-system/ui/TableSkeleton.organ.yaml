@@ -1,0 +1,32 @@
+name: TableSkeleton
+path: seed/lib/frontend/src/design-system/ui/TableSkeleton.tsx
+phase: seed-skeleton-organs
+registered_at: "2026-07-22"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Direct replacement for the hand-rolled `{isLoading && <div>Carregando...</div>}` shape found in the social-wiring Leads subtabs (Corretores.tsx / Empreendimentos.tsx / Origens.tsx / Importacao.tsx) — the observed bug: a TEXT placeholder that lies (looks fine, tells the user nothing is loading) instead of a skeleton that visibly signals 'not known yet.'"
+  - "`{ rows?, columns?, showHeader?, className? }` — renders a header row (optional) + N body rows of pulsing cells shaped like the real table, so there is no layout jump when real data replaces it."
+  - "Composes `Skeleton` with `announce=false` on every cell except the very first body cell — exactly ONE `role=\"status\"` announcement for the whole table, not one per cell."
+  - "Leads.social-wiring is the first real consumer (Slice: seed-skeleton-organs) — swept into Corretores/Empreendimentos/Origens/Importacao/BaseDeLeads in the same slice."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "Configuracao.tsx (Leads 7th subtab) has NO loading/error handling at all for its sources/aliases/corretores lists (destructures only `{ data }`, ignores isPending/isError) — a DIFFERENT, more severe gap than the 'lying text' shape this organ fixes. Out of scope for this slice; flagged for a follow-up."
+
+alternatives_considered:
+  - "Considered a bare `<Skeleton height={200} />` block instead of a table-shaped placeholder — rejected because a full-width rectangle doesn't communicate 'a table is coming' and causes a bigger layout shift once the real table (with its own row heights) mounts."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
