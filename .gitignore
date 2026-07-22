@@ -126,3 +126,7 @@ scripts/archive-clean-last-sweep.log
 
 # Local .env backups — contain secrets, never track
 .env.bak.*
+
+# Lead-control spreadsheet — 12k client names + phone numbers (LGPD). Imported to
+# Supabase locally, never committed. See products/social-wiring/projects/leads-module-PROJECT.md D6.
+/CONTROLE LEADS*.xlsx
