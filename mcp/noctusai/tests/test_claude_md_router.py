@@ -58,10 +58,14 @@ class TestClaudeMdRouter:
         assert any("words (cap" in i["issue"] for i in issues)
 
     def test_total_budget_flagged(self, tmp_path):
-        big = "# CLAUDE.md\n\n" + ("filler " * 2600) + "\n## 1 · Universal rules\n\n## 2 · Map\n"
+        # Derive the fixture size + expected cap from the live constant so this
+        # test survives a cap change (raised 2500→3500 2026-07-22) instead of
+        # pinning a stale literal — the exact drift this session codified against.
+        from tools.noctus.dev.compliance import _CLAUDE_MD_MAX_WORDS
+        big = "# CLAUDE.md\n\n" + ("filler " * (_CLAUDE_MD_MAX_WORDS + 100)) + "\n## 1 · Universal rules\n\n## 2 · Map\n"
         self._write(tmp_path, big)
         issues = check_claude_md_router(repo_root=tmp_path)
-        assert any("cap 2500" in i["issue"] for i in issues)
+        assert any(f"cap {_CLAUDE_MD_MAX_WORDS}" in i["issue"] for i in issues)
 
     def test_missing_file_no_crash(self, tmp_path):
         assert check_claude_md_router(repo_root=tmp_path) == []
