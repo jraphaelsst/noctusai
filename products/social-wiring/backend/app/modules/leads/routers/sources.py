@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from noctusai_lib.primitives.exceptions import NotFoundError
 from noctusai_lib.primitives.responses import deleted_response, success_response
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.schemas import (
     LeadSourceAliasCreate,
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/leads/sources", tags=["leads-sources"])
 
 @router.get("")
 def list_sources(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -37,7 +37,7 @@ def list_sources(
 @router.post("", status_code=201)
 def create_source(
     body: LeadSourceCreate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -51,7 +51,7 @@ def create_source(
 @router.get("/aliases")
 def list_aliases(
     unmapped: bool = Query(default=False),
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -64,7 +64,7 @@ def list_aliases(
 @router.post("/aliases", status_code=201)
 def create_alias(
     body: LeadSourceAliasCreate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -78,7 +78,7 @@ def create_alias(
 @router.delete("/aliases/{alias_id}")
 def delete_alias(
     alias_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -93,7 +93,7 @@ def delete_alias(
 def update_source(
     source_id: UUID,
     body: LeadSourceUpdate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -108,7 +108,7 @@ def update_source(
 def delete_source(
     source_id: UUID,
     reassign_to: Optional[UUID] = Query(default=None),
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth

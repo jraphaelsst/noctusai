@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from noctusai_lib.primitives.exceptions import ValidationError_
 from noctusai_lib.primitives.responses import paginated_response, success_response
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.importer import import_service
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/leads/import", tags=["leads-import"])
 def list_batches(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -35,7 +35,7 @@ def list_batches(
 @router.post("/preview")
 async def preview_import(
     file: UploadFile = File(...),
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -50,7 +50,7 @@ async def preview_import(
 @router.post("/commit", status_code=201)
 async def commit_import(
     file: UploadFile = File(...),
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     user, _token, raw_org = auth

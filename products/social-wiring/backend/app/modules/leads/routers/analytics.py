@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.routers.params import get_lead_filters
 from app.modules.leads.services import analytics_service, leads_service
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/leads/analytics", tags=["leads-analytics"])
 
 @router.get("/summary")
 def get_summary(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
 ) -> dict:
@@ -33,7 +33,7 @@ def get_summary(
 
 @router.get("/timeseries")
 def get_timeseries(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
     grain: str = Query(default="mes"),
@@ -49,7 +49,7 @@ def get_timeseries(
 
 @router.get("/by-dimension")
 def get_by_dimension(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
     dim: str = Query(...),
@@ -65,7 +65,7 @@ def get_by_dimension(
 
 @router.get("/heatmap")
 def get_heatmap(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
 ) -> dict:

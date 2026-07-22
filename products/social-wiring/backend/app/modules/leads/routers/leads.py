@@ -1,6 +1,6 @@
 """Leads CRUD + facets — /api/leads/*, /api/leads/facets.
 
-Auth: ``Depends(get_current_user_org)`` throughout (admin/service-role
+Auth: ``Depends(get_current_user_org_unified)`` throughout (admin/service-role
 client for all reads/writes, RLS is defense-in-depth, same shape as
 ``clients_router``). Errors: ``AppException`` subclasses only.
 """
@@ -18,7 +18,7 @@ from noctusai_lib.primitives.responses import (
     success_response,
 )
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.routers.params import get_lead_filters
 from app.modules.leads.schemas import LeadCreate, LeadOut, LeadUpdate
@@ -34,7 +34,7 @@ def _out(row: dict, refs: dict) -> dict:
 
 @router.get("")
 def list_leads(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
     page: int = Query(default=1, ge=1),
@@ -55,7 +55,7 @@ def list_leads(
 @router.post("", status_code=201)
 def create_lead(
     body: LeadCreate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -67,7 +67,7 @@ def create_lead(
 
 @router.get("/facets")
 def get_facets(
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
     filters: LeadFilters = Depends(get_lead_filters),
 ) -> dict:
@@ -83,7 +83,7 @@ def get_facets(
 @router.get("/{lead_id}")
 def get_lead(
     lead_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -99,7 +99,7 @@ def get_lead(
 def update_lead(
     lead_id: UUID,
     body: LeadUpdate,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
@@ -114,7 +114,7 @@ def update_lead(
 @router.delete("/{lead_id}")
 def delete_lead(
     lead_id: UUID,
-    auth: tuple = Depends(get_current_user_org),
+    auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
 ) -> dict:
     _, _token, raw_org = auth
