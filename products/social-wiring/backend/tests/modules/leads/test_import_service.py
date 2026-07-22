@@ -16,7 +16,7 @@ import pytest
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.modules.leads.importer import import_service
-from app.modules.leads.services import dimensions_service
+from app.modules.leads.services import dimensions_service, leads_service
 
 ORG = UUID("00000000-0000-4000-8000-0000000000a1")
 
@@ -153,6 +153,54 @@ class TestCommit:
         assert second_count == first_count  # no duplicates
         assert second_batch["rows_inserted"] == 0
         assert second_batch["rows_updated"] == 6
+
+    def test_recommit_never_overwrites_a_manually_edited_lead(self, workbook_bytes):
+        """The addendum's data-loss finding: a human correction made via
+        `PATCH /api/leads/{id}` between two imports of the SAME (or an
+        updated) workbook must survive the second import untouched —
+        `leads.edited_at` (migration 028) is the guard."""
+        client = _scoped_mock()
+        import_service.commit(client, ORG, workbook_bytes, "test.xlsx")
+        from app.modules.leads.services.query import LeadFilters, fetch_filtered
+
+        alice = next(
+            r for r in fetch_filtered(client, ORG, LeadFilters())
+            if r["cliente_nome"] == "Alice"
+        )
+        # Simulate the human correction a real PATCH would make.
+        leads_service.update_lead(
+            client, ORG, UUID(alice["id"]), {"cliente_nome": "Alice Corrected"}
+        )
+
+        second_batch = import_service.commit(client, ORG, workbook_bytes, "test.xlsx")
+
+        refreshed = leads_service.get_lead(client, ORG, UUID(alice["id"]))
+        assert refreshed["cliente_nome"] == "Alice Corrected"
+        # 5 of the 6 existing rows update normally; Alice's is preserved.
+        assert second_batch["rows_updated"] == 5
+        assert second_batch["rows_skipped_edited"] == 1
+        assert second_batch["rows_skipped"] == 1 + 1  # 1 unparseable-date + 1 edited-skip
+        assert any("preservado" in w for w in second_batch["warnings"])
+
+    def test_editing_one_lead_does_not_block_the_others_from_updating(self, workbook_bytes):
+        client = _scoped_mock()
+        import_service.commit(client, ORG, workbook_bytes, "test.xlsx")
+        from app.modules.leads.services.query import LeadFilters, fetch_filtered
+
+        alice = next(
+            r for r in fetch_filtered(client, ORG, LeadFilters())
+            if r["cliente_nome"] == "Alice"
+        )
+        leads_service.update_lead(client, ORG, UUID(alice["id"]), {"observacoes": "edited"})
+
+        import_service.commit(client, ORG, workbook_bytes, "test.xlsx")
+        bob = next(
+            r for r in fetch_filtered(client, ORG, LeadFilters())
+            if r["cliente_nome"] == "Bob"
+        )
+        # Bob was never manually edited — a normal re-import update still
+        # applies to him (source_sheet/source_row unchanged either way).
+        assert bob["source_sheet"] == "JULHO_26"
 
     def test_novo_retorno_column_wins_over_name_prefix(self, workbook_bytes):
         client = _scoped_mock()

@@ -98,7 +98,15 @@ def update_source(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = dimensions_service.update_source(client, org_id, source_id, **body.model_dump())
+    # `exclude_unset=True` (not the previous bare `model_dump()`) — a
+    # key's PRESENCE in the resulting dict now means the caller
+    # explicitly sent it (including an explicit `null`), matching
+    # `routers/leads.py`'s PATCH contract. See
+    # `dimensions_service.update_source`'s docstring for how each field
+    # handles an explicit null.
+    row = dimensions_service.update_source(
+        client, org_id, source_id, **body.model_dump(exclude_unset=True)
+    )
     if row is None:
         raise NotFoundError("lead_sources", str(source_id))
     return success_response(row)

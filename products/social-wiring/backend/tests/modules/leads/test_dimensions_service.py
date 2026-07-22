@@ -60,6 +60,33 @@ class TestCreateSourceAliasRelink:
         assert refreshed["needs_review"] is True
 
 
+class TestUnmappedOrigensBlankBucket:
+    def test_blank_origem_raw_surfaces_as_a_distinct_bucket(self):
+        """Previously a lead with NO `origem_raw` at all was silently
+        skipped by this queue forever (~79 such leads in the real
+        dataset) — now folded into `_BLANK_ORIGEM_BUCKET`."""
+        client = _scoped_mock()
+        leads_service.create_lead(client, ORG, {"data_entrada": "2026-07-01"})
+        leads_service.create_lead(client, ORG, {"data_entrada": "2026-07-02"})
+
+        unmapped = dimensions_service.list_unmapped_origens(client, ORG)
+        blank = next(u for u in unmapped if u["alias"] == dimensions_service._BLANK_ORIGEM_BUCKET)
+        assert blank["count"] == 2
+
+    def test_no_blank_bucket_when_every_lead_has_an_origem_raw(self):
+        client = _scoped_mock()
+        client.table("leads").insert(
+            {
+                "id": "00000000-0000-4000-8000-00000000e001",
+                "org_id": str(ORG),
+                "data_entrada": "2026-07-01",
+                "origem_raw": "ZAP",
+            }
+        ).execute()
+        unmapped = dimensions_service.list_unmapped_origens(client, ORG)
+        assert all(u["alias"] != dimensions_service._BLANK_ORIGEM_BUCKET for u in unmapped)
+
+
 class TestEnsureDefaultDimensions:
     def test_idempotent_second_call_does_not_duplicate(self):
         client = _scoped_mock()

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from tests.modules.leads.conftest import auth_headers
 
 
@@ -57,6 +59,54 @@ class TestSummary:
         assert data["total"] == 3
         assert data["novos"] == 2
         assert data["retornos"] == 1
+
+
+class TestMediaDiariaClamp:
+    """One definition everywhere: leads per CALENDAR DAY, clamped so the
+    divisor never counts a day that hasn't happened yet or predates the
+    earliest lead in the filtered set (migration 029 + the matching
+    Python oracle in `analytics_service._reference_summary`)."""
+
+    def test_unfiltered_divides_by_the_observed_span_not_days_with_data(self, http_client):
+        # 3 leads across an OBSERVED 5-day span (Jan 1..Jan 5) — the old
+        # unfiltered formula divided by `count(DISTINCT data_entrada)`
+        # (3 days-with-data); the fixed formula divides by the full
+        # calendar span (5 days): 3/5 = 0.6, not 3/3 = 1.0.
+        _create_lead(http_client, data_entrada="2020-01-01")
+        _create_lead(http_client, data_entrada="2020-01-03")
+        _create_lead(http_client, data_entrada="2020-01-05")
+        resp = http_client.get("/api/leads/analytics/summary", headers=auth_headers())
+        assert resp.json()["data"]["media_diaria"] == 0.6
+
+    def test_future_ate_is_clamped_to_today_not_divided_by_unrealized_days(self, http_client):
+        today = date.today()
+        _create_lead(http_client, data_entrada=today.isoformat())
+        far_future = (today + timedelta(days=365 * 50)).isoformat()
+
+        resp = http_client.get(
+            "/api/leads/analytics/summary",
+            params={"de": today.isoformat(), "ate": far_future},
+            headers=auth_headers(),
+        )
+        # Without the clamp this would be ~1/(50 years) ≈ 0.0; with it,
+        # the window collapses to exactly today -> 1 lead / 1 day.
+        assert resp.json()["data"]["media_diaria"] == 1.0
+
+    def test_media_diaria_is_zero_not_an_error_for_a_wholly_future_range(self, http_client):
+        today = date.today()
+        _create_lead(http_client, data_entrada=today.isoformat())
+        future_de = (today + timedelta(days=365)).isoformat()
+        future_ate = (today + timedelta(days=730)).isoformat()
+
+        resp = http_client.get(
+            "/api/leads/analytics/summary",
+            params={"de": future_de, "ate": future_ate},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["total"] == 0
+        assert data["media_diaria"] == 0.0
 
 
 class TestByDimension:

@@ -120,6 +120,7 @@ def parse_sheet(worksheet: Any, sheet_name: str) -> SheetParseResult:
         rows_read += 1
         if not looks_like_date_value(row[0]):
             rows_skipped += 1
+            warnings.append(f"{sheet_name}:{row_number} — data ilegível: {row[0]!r}")
             continue
         candidates.append((row_number, row))
 
@@ -138,6 +139,7 @@ def parse_sheet(worksheet: Any, sheet_name: str) -> SheetParseResult:
             # count, per the contract ("unparseable date -> skip and
             # count it").
             rows_skipped += 1
+            warnings.append(f"{sheet_name}:{row_number} — data ilegível: {row[0]!r}")
             continue
 
         codigo_raw = row[1] if len(row) > 1 and row[1] not in (None, "") else None

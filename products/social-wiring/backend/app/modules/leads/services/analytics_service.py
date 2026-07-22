@@ -47,6 +47,23 @@ def _round1(value: float) -> float:
     return round(value, 1)
 
 
+def _as_date(value: Any) -> Optional[date]:
+    """``rows`` are raw dicts from ``fetch_filtered`` — ``data_entrada``
+    round-trips as an ISO string through both the real Supabase client
+    and the mock, not a ``datetime.date`` object. Used only by
+    ``media_diaria``'s clamp math, which needs real date arithmetic."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
 def _previous_window_rows(
     client: Any, org_id: UUID, filters: LeadFilters
 ) -> Optional[list[dict]]:
@@ -88,12 +105,30 @@ def _reference_summary(client: Any, org_id: UUID, filters: LeadFilters, refs: di
         )
         comparativo = {"total_anterior": total_anterior, "variacao_pct": variacao}
 
-    if filters.de and filters.ate:
-        span_days = (filters.ate - filters.de).days + 1
+    # media_diaria: leads per CALENDAR DAY, clamped to the days that
+    # could plausibly have data — see migration 029's header comment for
+    # the full rationale (this must match `leads_analytics_summary`'s
+    # SQL exactly; it's the Python equivalence oracle for it).
+    #   upper bound: never divide by days that haven't happened yet.
+    #   lower bound: never divide by days before the earliest lead in
+    #     this filtered set.
+    #   unfiltered case: `de`/`ate` default to this filtered set's own
+    #     observed min/max `data_entrada`.
+    #   total == 0: short-circuit to 0 (no dates to clamp against, and a
+    #     wholly-future filter range must floor to 0, never divide by a
+    #     zero/negative span).
+    if total == 0:
+        media_diaria = 0.0
     else:
-        dias = {r["data_entrada"] for r in rows if r.get("data_entrada")}
-        span_days = len(dias) or 1
-    media_diaria = round(total / span_days, 2) if span_days else 0.0
+        observed = [d for d in (_as_date(r.get("data_entrada")) for r in rows) if d is not None]
+        min_observed = min(observed)
+        max_observed = max(observed)
+        eff_de = filters.de or min_observed
+        eff_ate = filters.ate or max_observed
+        clamped_de = max(eff_de, min_observed)
+        clamped_ate = min(eff_ate, date.today())
+        span_days = max((clamped_ate - clamped_de).days + 1, 1)
+        media_diaria = round(total / span_days, 2)
 
     top_origem = None
     if origem_ids:

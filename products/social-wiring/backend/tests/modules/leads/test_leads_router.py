@@ -156,6 +156,110 @@ class TestFilters:
         assert resp.status_code == 200
 
 
+class TestBlankStringDateCoercion:
+    """The FE form posts `""` for an empty date input — the fix is a
+    `field_validator(mode="before")` coercing `""`/whitespace -> `None`
+    (`schemas._blank_to_none`), tested here at the full HTTP boundary."""
+
+    def test_create_with_blank_follow_up_data_is_not_422(self, http_client):
+        resp = http_client.post(
+            "/api/leads",
+            json={"data_entrada": "2026-07-01", "follow_up_data": ""},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["follow_up_data"] is None
+
+    def test_update_with_blank_data_entrada_is_not_422_and_ignored(self, http_client):
+        """`data_entrada` is `NOT NULL` — a blank-coerced-to-None patch
+        value has no valid applied state and is dropped (not a 422, not
+        a DB constraint violation)."""
+        created = _create_lead(http_client)
+        resp = http_client.patch(
+            f"/api/leads/{created['id']}",
+            json={"data_entrada": "", "cliente_nome": "Still Works"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["cliente_nome"] == "Still Works"
+        assert resp.json()["data"]["data_entrada"] == created["data_entrada"]
+
+    def test_update_with_blank_follow_up_data_clears_it(self, http_client):
+        created = _create_lead(http_client, follow_up_data="2026-08-01")
+        resp = http_client.patch(
+            f"/api/leads/{created['id']}",
+            json={"follow_up_data": ""},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["follow_up_data"] is None
+
+
+class TestExplicitNullClear:
+    """`PATCH` with an explicit `null` genuinely clears a nullable field
+    now (dropping the old `is not None` filter) — un-assigning a
+    corretor previously showed a false-success toast with nothing
+    actually changed."""
+
+    def test_explicit_null_unassigns_corretor(self, http_client):
+        corretor_resp = http_client.post(
+            "/api/leads/corretores", json={"nome": "Fulano"}, headers=auth_headers()
+        )
+        corretor_id = corretor_resp.json()["data"]["id"]
+        created = _create_lead(http_client, corretor_id=corretor_id)
+        assert created["corretor_id"] == corretor_id
+
+        resp = http_client.patch(
+            f"/api/leads/{created['id']}",
+            json={"corretor_id": None},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["corretor_id"] is None
+        assert resp.json()["data"]["corretor"] is None
+
+
+class TestNeedsReviewAutoClear:
+    """Setting `origem_id` to a real value auto-clears `needs_review` —
+    its only cause is an unrecognized/blank origem — regardless of
+    whether `needs_review` is also present in the same payload."""
+
+    def test_setting_origem_id_clears_needs_review(self, http_client):
+        created = _create_lead(http_client)
+        http_client.patch(
+            f"/api/leads/{created['id']}", json={"needs_review": True}, headers=auth_headers()
+        )
+        source_resp = http_client.post(
+            "/api/leads/sources", json={"label": "Alguma Origem"}, headers=auth_headers()
+        )
+        source_id = source_resp.json()["data"]["id"]
+
+        resp = http_client.patch(
+            f"/api/leads/{created['id']}",
+            json={"origem_id": source_id},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["needs_review"] is False
+
+    def test_origem_id_clear_overrides_an_explicit_needs_review_true_in_the_same_payload(
+        self, http_client
+    ):
+        created = _create_lead(http_client)
+        source_resp = http_client.post(
+            "/api/leads/sources", json={"label": "Outra Origem"}, headers=auth_headers()
+        )
+        source_id = source_resp.json()["data"]["id"]
+
+        resp = http_client.patch(
+            f"/api/leads/{created['id']}",
+            json={"origem_id": source_id, "needs_review": True},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["needs_review"] is False
+
+
 class TestOrgIsolation:
     def test_list_only_own_org(self, http_client, mock_db):
         from unittest.mock import MagicMock

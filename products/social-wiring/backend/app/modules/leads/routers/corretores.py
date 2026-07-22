@@ -97,7 +97,12 @@ def update_corretor(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = dimensions_service.update_corretor(client, org_id, corretor_id, **body.model_dump())
+    # `exclude_unset=True` — see `routers/sources.py`'s update_source for
+    # why (an explicit null now genuinely means "clear this field" where
+    # the column allows it).
+    row = dimensions_service.update_corretor(
+        client, org_id, corretor_id, **body.model_dump(exclude_unset=True)
+    )
     if row is None:
         raise NotFoundError("lead_corretores", str(corretor_id))
     return success_response(row)

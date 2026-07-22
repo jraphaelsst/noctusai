@@ -12,7 +12,20 @@ from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.api import StrictHttpModel
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _blank_to_none(value: Any) -> Any:
+    """``field_validator(mode="before")`` shared by every optional-date
+    field on this module's write models. The FE form posts an empty
+    string (``""``) for a cleared/never-filled date input — Pydantic v2
+    has no built-in "" -> None coercion for ``date`` fields, so a
+    perfectly reasonable "no follow-up date yet" body 422s instead of
+    validating. Non-string/non-blank values pass through untouched (the
+    normal ``date`` validator still runs on them)."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 # ─── shared nested refs (joined) ───────────────────────────────────────
@@ -90,6 +103,8 @@ class LeadCreate(StrictHttpModel):
     follow_up_data: Optional[date] = None
     follow_up_nota: Optional[str] = None
 
+    _blank_follow_up_data = field_validator("follow_up_data", mode="before")(_blank_to_none)
+
 
 class LeadUpdate(StrictHttpModel):
     """PATCH /api/leads/{id} body — all fields optional (partial update)."""
@@ -111,6 +126,9 @@ class LeadUpdate(StrictHttpModel):
     follow_up_data: Optional[date] = None
     follow_up_nota: Optional[str] = None
     needs_review: Optional[bool] = None
+
+    _blank_data_entrada = field_validator("data_entrada", mode="before")(_blank_to_none)
+    _blank_follow_up_data = field_validator("follow_up_data", mode="before")(_blank_to_none)
 
 
 # ─── analytics: summary ─────────────────────────────────────────────────
@@ -233,7 +251,12 @@ class LeadSourceOut(BaseModel):
 
 
 class LeadSourceCreate(StrictHttpModel):
-    slug: str
+    # ``slug`` is optional — the UI never sends it; the server derives
+    # one from ``label`` (see ``dimensions_service.create_source``) when
+    # omitted/blank. An explicit non-empty slug from a caller that DOES
+    # know what it's doing (scripts, future admin UI) is still honored
+    # verbatim.
+    slug: Optional[str] = None
     label: str
     categoria: str = "outro"
     cor: Optional[str] = None
@@ -247,6 +270,14 @@ class LeadSourceUpdate(StrictHttpModel):
     cor: Optional[str] = None
     ativo: Optional[bool] = None
     ordem: Optional[int] = None
+    # Accepted (not rejected as an unknown/forbidden field — the FE reads
+    # `slug` on the source object it PATCHes and round-trips it back even
+    # when the user didn't touch it) but only APPLIED when truthy — see
+    # ``dimensions_service.update_source``'s docstring for why an explicit
+    # `null`/empty slug is silently ignored rather than treated as
+    # "clear it" (`slug` is `NOT NULL UNIQUE(org_id, slug)`, migration
+    # 025 — there is no valid cleared state for it).
+    slug: Optional[str] = None
 
 
 class LeadSourceAliasOut(BaseModel):
@@ -325,9 +356,19 @@ class ImportBatchOut(BaseModel):
     rows_inserted: int
     rows_updated: int
     rows_skipped: int
+    # Of `rows_skipped`, how many were skipped specifically because the
+    # existing lead had already been manually edited via `PATCH
+    # /api/leads/{id}` (`leads.edited_at IS NOT NULL`) — re-importing the
+    # same/updated workbook NEVER overwrites a human correction. See
+    # `import_service.commit`'s module docstring.
+    rows_skipped_edited: int = 0
     rows_flagged: int
     status: str
     erro: Optional[str] = None
+    # Non-fatal, reviewable issues from this run — unparseable-date skips
+    # (`f"{sheet}:{row} — data ilegível: {value!r}"`) plus anything else
+    # `xlsx_reader.parse_sheet` surfaces. Empty on a clean run.
+    warnings: list[str] = Field(default_factory=list)
     started_at: datetime
     finished_at: Optional[datetime] = None
 

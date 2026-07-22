@@ -14,6 +14,8 @@ therefore read-existing-then-insert/update-missing, mirroring
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -28,8 +30,22 @@ from app.modules.leads.seed_data import (
     SOURCE_ALIAS_RAW,
     normalize_alias,
 )
+from app.modules.leads.services.query import chunked, iter_leads_rows
 
 _SCHEMA = "social_wiring"
+_RELINK_CHUNK_SIZE = 500
+
+#: `list_unmapped_origens`'s distinct bucket for leads with NO origem_raw
+#: at all (as opposed to an unrecognized one) — see that function's
+#: docstring for why these were previously invisible.
+_BLANK_ORIGEM_BUCKET = "(sem origem)"
+
+#: Columns migration 025 declares `NOT NULL` on `lead_sources` /
+#: `lead_corretores` (excluding `slug`, handled separately in
+#: `update_source`) — an explicit `null` patch value for one of these is
+#: ignored rather than applied. See `update_source`/`update_corretor`.
+_SOURCE_NOT_NULLABLE_FIELDS = {"label", "categoria", "ativo", "ordem"}
+_CORRETOR_NOT_NULLABLE_FIELDS = {"nome", "ativo"}
 
 
 def _table(client: Any, name: str):
@@ -45,6 +61,33 @@ def _new_id_and_created_at() -> tuple[str, str]:
     client and ``MockSupabaseClient`` (whose auto-id is
     ``mock-<table>-<n>``, not a UUID)."""
     return str(uuid.uuid4()), datetime.now(timezone.utc).isoformat()
+
+
+def _slugify(value: str) -> str:
+    """NFD-strip accents -> lowercase -> non-alphanumeric to ``-`` ->
+    collapse repeats -> trim. Single-purpose to this module (only one
+    caller-shape needs it today — a slug derived from a source
+    ``label``); promote to ``noctusai_lib`` if a second product needs
+    the same derivation (the N=2 recurrence rule)."""
+    normalized = unicodedata.normalize("NFD", value)
+    stripped = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    slug = re.sub(r"[^a-z0-9]+", "-", stripped.lower())
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug or "origem"
+
+
+def _unique_slug(client: Any, org_id: UUID, base_slug: str, *, exclude_id: Optional[str] = None) -> str:
+    """``base_slug`` if free in this org, else ``base_slug-2``,
+    ``base_slug-3``, ... — never a bare 409 on a duplicate label."""
+    existing = {
+        r["slug"] for r in list_sources(client, org_id) if r["id"] != exclude_id
+    }
+    if base_slug not in existing:
+        return base_slug
+    n = 2
+    while f"{base_slug}-{n}" in existing:
+        n += 1
+    return f"{base_slug}-{n}"
 
 
 # ─── sources ──────────────────────────────────────────────────────────────
@@ -72,13 +115,20 @@ def create_source(
     client: Any,
     org_id: UUID,
     *,
-    slug: str,
+    slug: Optional[str] = None,
     label: str,
     categoria: str = "outro",
     cor: Optional[str] = None,
     ativo: bool = True,
     ordem: int = 0,
 ) -> dict:
+    # `slug` is optional at the HTTP boundary (§ schemas.LeadSourceCreate)
+    # — the UI never sends one. Derive from `label` when absent/blank,
+    # then guarantee `UNIQUE (org_id, slug)` (migration 025) holds by
+    # appending `-2`/`-3`/... on collision instead of letting the INSERT
+    # 500 on a duplicate label.
+    base_slug = _slugify(slug) if slug and slug.strip() else _slugify(label)
+    slug = _unique_slug(client, org_id, base_slug)
     row_id, created_at = _new_id_and_created_at()
     payload = {
         "id": row_id,
@@ -98,10 +148,34 @@ def create_source(
 
 
 def update_source(client: Any, org_id: UUID, source_id: UUID, **patch: Any) -> Optional[dict]:
+    """The router now calls this with ``**body.model_dump(exclude_unset=True)``
+    (see ``routers/sources.py``) — a key's PRESENCE here means the caller
+    explicitly sent it, so (unlike the old ``is not None`` filter) an
+    explicit ``null`` for ``label``/``categoria``/``cor``/``ativo``/``ordem``
+    genuinely clears that field rather than being silently dropped.
+
+    ``slug`` is the one exception: it's ``NOT NULL UNIQUE(org_id, slug)``
+    (migration 025) — there's no valid cleared state for it, so an
+    explicit `null`/blank slug is silently ignored (kept as-is) rather
+    than attempted as a clear. A truthy slug is slugified + made unique
+    (excluding this row) the same way ``create_source`` derives one."""
     existing = get_source(client, org_id, source_id)
     if existing is None:
         return None
-    clean = {k: v for k, v in patch.items() if v is not None}
+    raw_slug = patch.pop("slug", None)
+    # `label`/`categoria`/`ativo`/`ordem` are `NOT NULL` (migration 025) —
+    # same reasoning as `slug`: an explicit `null` for one of these has no
+    # valid applied state, so it's ignored rather than sent to the DB
+    # (which would 500 on the constraint). `cor` IS nullable — an
+    # explicit `null` there genuinely clears it.
+    clean = {
+        k: v for k, v in patch.items()
+        if not (v is None and k in _SOURCE_NOT_NULLABLE_FIELDS)
+    }
+    if raw_slug and raw_slug.strip():
+        clean["slug"] = _unique_slug(
+            client, org_id, _slugify(raw_slug), exclude_id=str(source_id)
+        )
     if not clean:
         return existing
     resp = (
@@ -117,12 +191,12 @@ def update_source(client: Any, org_id: UUID, source_id: UUID, **patch: Any) -> O
 def count_leads_for_source(client: Any, org_id: UUID, source_id: UUID) -> int:
     resp = (
         _table(client, "leads")
-        .select("id")
+        .select("id", count="exact")
         .eq("org_id", str(org_id))
         .eq("origem_id", str(source_id))
         .execute()
     )
-    return len(list(resp.data or []))
+    return resp.count or 0
 
 
 def delete_source(
@@ -138,16 +212,17 @@ def delete_source(
                 f"{referenced} lead(s) still reference this source",
                 resource="lead_sources",
             )
-        leads = (
-            _table(client, "leads")
-            .select("id")
-            .eq("org_id", str(org_id))
-            .eq("origem_id", str(source_id))
-            .execute()
-        )
-        for row in list(leads.data or []):
-            _table(client, "leads").update({"origem_id": str(reassign_to)}).eq(
-                "id", str(row["id"])
+        # Paged read (>1000 referencing leads is exactly the scenario a
+        # bare `.select()` silently truncated) + batched writes (one
+        # UPDATE per ~500 ids instead of one per row — a 12k-lead source
+        # deletion was previously thousands of round-trips).
+        ids = [
+            r["id"]
+            for r in iter_leads_rows(client, org_id, "id", origem_id=str(source_id))
+        ]
+        for chunk in chunked(ids, _RELINK_CHUNK_SIZE):
+            _table(client, "leads").update({"origem_id": str(reassign_to)}).in_(
+                "id", chunk
             ).execute()
     _table(client, "lead_sources").delete().eq("id", str(source_id)).execute()
     return True
@@ -165,27 +240,32 @@ def list_source_aliases(client: Any, org_id: UUID) -> list[dict]:
 
 def list_unmapped_origens(client: Any, org_id: UUID) -> list[dict]:
     """Distinct ``origem_raw`` values on ``leads`` with no matching alias
-    yet — drives the import "map these first" UI queue."""
+    yet — drives the import "map these first" UI queue. Blank/missing
+    ``origem_raw`` leads (~79 in the real dataset — see
+    ``importer.resolvers.resolve_origem``, which flags them
+    ``needs_review`` but has no alias to attach) are folded into a
+    distinct ``_BLANK_ORIGEM_BUCKET`` entry instead of being silently
+    skipped — they were previously invisible to this queue forever."""
     aliases = list_source_aliases(client, org_id)
     known_norms = {a["alias_norm"] for a in aliases}
-    resp = (
-        _table(client, "leads")
-        .select("origem_raw")
-        .eq("org_id", str(org_id))
-        .execute()
-    )
+    rows = iter_leads_rows(client, org_id, "origem_raw")
     counts: dict[str, int] = {}
-    for row in list(resp.data or []):
+    blank_count = 0
+    for row in rows:
         raw = row.get("origem_raw")
         if not raw:
+            blank_count += 1
             continue
         norm = normalize_alias(raw)
         if norm in known_norms:
             continue
         counts[raw] = counts.get(raw, 0) + 1
-    return [{"alias": alias, "count": count} for alias, count in sorted(
+    out = [{"alias": alias, "count": count} for alias, count in sorted(
         counts.items(), key=lambda kv: -kv[1]
     )]
+    if blank_count:
+        out.append({"alias": _BLANK_ORIGEM_BUCKET, "count": blank_count})
+    return out
 
 
 def create_source_alias(client: Any, org_id: UUID, *, alias: str, source_id: UUID) -> dict:
@@ -231,19 +311,21 @@ def create_source_alias(client: Any, org_id: UUID, *, alias: str, source_id: UUI
 def _relink_leads_by_origem(
     client: Any, org_id: UUID, alias_norm: str, source_id: UUID, categoria: Optional[str]
 ) -> None:
-    resp = (
-        _table(client, "leads")
-        .select("id, origem_raw")
-        .eq("org_id", str(org_id))
-        .execute()
-    )
+    """Paged read (mapping an alias against a >1000-lead org used to
+    relink only the first page and silently report success — see
+    ``services/query.py``'s header for the class of bug this is) +
+    batched writes (one UPDATE per ~500 matching ids, not one per row —
+    a 3,000-lead alias was previously 3,000 round-trips)."""
+    rows = iter_leads_rows(client, org_id, "id, origem_raw")
     needs_review = categoria == "outro"
-    for row in list(resp.data or []):
-        raw = row.get("origem_raw")
-        if raw and normalize_alias(raw) == alias_norm:
-            _table(client, "leads").update(
-                {"origem_id": str(source_id), "needs_review": needs_review}
-            ).eq("id", str(row["id"])).execute()
+    matching_ids = [
+        row["id"] for row in rows
+        if row.get("origem_raw") and normalize_alias(row["origem_raw"]) == alias_norm
+    ]
+    for chunk in chunked(matching_ids, _RELINK_CHUNK_SIZE):
+        _table(client, "leads").update(
+            {"origem_id": str(source_id), "needs_review": needs_review}
+        ).in_("id", chunk).execute()
 
 
 def delete_source_alias(client: Any, org_id: UUID, alias_id: UUID) -> bool:
@@ -295,10 +377,16 @@ def create_corretor(
 
 
 def update_corretor(client: Any, org_id: UUID, corretor_id: UUID, **patch: Any) -> Optional[dict]:
+    """See ``update_source``'s docstring — same "explicit null genuinely
+    clears the field, except on NOT NULL columns" rule. ``nome``/``ativo``
+    are `NOT NULL` (migration 025); `cor` is nullable."""
     existing = get_corretor(client, org_id, corretor_id)
     if existing is None:
         return None
-    clean = {k: v for k, v in patch.items() if v is not None}
+    clean = {
+        k: v for k, v in patch.items()
+        if not (v is None and k in _CORRETOR_NOT_NULLABLE_FIELDS)
+    }
     if "nome" in clean:
         clean["nome_norm"] = normalize_alias(clean["nome"])
     if not clean:
@@ -316,12 +404,12 @@ def update_corretor(client: Any, org_id: UUID, corretor_id: UUID, **patch: Any) 
 def count_leads_for_corretor(client: Any, org_id: UUID, corretor_id: UUID) -> int:
     resp = (
         _table(client, "leads")
-        .select("id")
+        .select("id", count="exact")
         .eq("org_id", str(org_id))
         .eq("corretor_id", str(corretor_id))
         .execute()
     )
-    return len(list(resp.data or []))
+    return resp.count or 0
 
 
 def delete_corretor(
@@ -337,16 +425,15 @@ def delete_corretor(
                 f"{referenced} lead(s) still reference this corretor",
                 resource="lead_corretores",
             )
-        leads = (
-            _table(client, "leads")
-            .select("id")
-            .eq("org_id", str(org_id))
-            .eq("corretor_id", str(corretor_id))
-            .execute()
-        )
-        for row in list(leads.data or []):
-            _table(client, "leads").update({"corretor_id": str(reassign_to)}).eq(
-                "id", str(row["id"])
+        # Paged read + batched writes — same reasoning as
+        # `delete_source`'s reassign path.
+        ids = [
+            r["id"]
+            for r in iter_leads_rows(client, org_id, "id", corretor_id=str(corretor_id))
+        ]
+        for chunk in chunked(ids, _RELINK_CHUNK_SIZE):
+            _table(client, "leads").update({"corretor_id": str(reassign_to)}).in_(
+                "id", chunk
             ).execute()
     _table(client, "lead_corretores").delete().eq("id", str(corretor_id)).execute()
     return True
@@ -375,14 +462,9 @@ def list_corretor_aliases(client: Any, org_id: UUID) -> list[dict]:
 def list_unmapped_corretores(client: Any, org_id: UUID) -> list[dict]:
     aliases = list_corretor_aliases(client, org_id)
     known_norms = {a["alias_norm"] for a in aliases}
-    resp = (
-        _table(client, "leads")
-        .select("corretor_raw")
-        .eq("org_id", str(org_id))
-        .execute()
-    )
+    rows = iter_leads_rows(client, org_id, "corretor_raw")
     counts: dict[str, int] = {}
-    for row in list(resp.data or []):
+    for row in rows:
         raw = row.get("corretor_raw")
         if not raw:
             continue
@@ -427,18 +509,15 @@ def create_corretor_alias(client: Any, org_id: UUID, *, alias: str, corretor_id:
         rows = list(resp.data or [])
         record = rows[0] if rows else payload
 
-    resp2 = (
-        _table(client, "leads")
-        .select("id, corretor_raw")
-        .eq("org_id", str(org_id))
-        .execute()
-    )
-    for row in list(resp2.data or []):
-        raw = row.get("corretor_raw")
-        if raw and normalize_alias(raw) == alias_norm:
-            _table(client, "leads").update({"corretor_id": str(corretor_id)}).eq(
-                "id", str(row["id"])
-            ).execute()
+    rows = iter_leads_rows(client, org_id, "id, corretor_raw")
+    matching_ids = [
+        row["id"] for row in rows
+        if row.get("corretor_raw") and normalize_alias(row["corretor_raw"]) == alias_norm
+    ]
+    for chunk in chunked(matching_ids, _RELINK_CHUNK_SIZE):
+        _table(client, "leads").update({"corretor_id": str(corretor_id)}).in_(
+            "id", chunk
+        ).execute()
     return record
 
 

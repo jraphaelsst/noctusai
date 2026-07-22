@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 from app.modules.leads.importer import xlsx_reader
 from app.modules.leads.importer.resolvers import resolve_corretor, resolve_origem
 from app.modules.leads.services import dimensions_service, leads_service
-from app.modules.leads.services.query import backfill_generated_columns
+from app.modules.leads.services.query import backfill_generated_columns, chunked, iter_leads_rows
 
 _SCHEMA = "social_wiring"
 _INSERT_CHUNK_SIZE = 500
@@ -85,33 +85,33 @@ def _build_payload(
 
 
 def _existing_keys_for_org(client: Any, org_id: UUID) -> set[tuple[str, int]]:
-    resp = (
-        _table(client, "leads")
-        .select("source_sheet, source_row")
-        .eq("org_id", str(org_id))
-        .execute()
-    )
+    # Paged (`iter_leads_rows`, not a bare `.select()`) — an org with
+    # >1000 total leads used to silently show every row past the
+    # PostgREST cap as "new" in the preview, undercounting
+    # `rows_existing`. See `services/query.py`'s header for the class
+    # of bug this belongs to.
+    rows = iter_leads_rows(client, org_id, "source_sheet, source_row")
     return {
         (r["source_sheet"], r["source_row"])
-        for r in list(resp.data or [])
+        for r in rows
         if r.get("source_sheet") is not None and r.get("source_row") is not None
     }
 
 
-def _existing_ids_for_sheet(client: Any, org_id: UUID, sheet_name: str) -> dict[int, str]:
-    resp = (
-        _table(client, "leads")
-        .select("id, source_row")
-        .eq("org_id", str(org_id))
-        .eq("source_sheet", sheet_name)
-        .execute()
+def _existing_rows_for_sheet(client: Any, org_id: UUID, sheet_name: str) -> dict[int, dict]:
+    """``{source_row: {"id": ..., "edited_at": ...}}`` for existing leads
+    in this ``(org, sheet)`` — ``commit`` uses ``id`` to decide
+    insert-vs-update, and ``edited_at`` to decide whether an update
+    would silently overwrite a human's manual correction (see that
+    function's docstring + migration 028). Paged (a sheet dense enough
+    to cross the 1000-row PostgREST cap used to make ``commit``
+    re-INSERT rows it should UPDATE, hitting
+    ``uq_sw_leads_org_sheet_row`` and failing the batch after partial
+    inserts)."""
+    rows = iter_leads_rows(
+        client, org_id, "id, source_row, edited_at", source_sheet=sheet_name
     )
-    return {r["source_row"]: r["id"] for r in list(resp.data or [])}
-
-
-def _chunks(items: list, size: int):
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
+    return {r["source_row"]: {"id": r["id"], "edited_at": r.get("edited_at")} for r in rows}
 
 
 def preview(client: Any, org_id: UUID, file_bytes: bytes, filename: str) -> dict:
@@ -196,7 +196,28 @@ def commit(
     """Parses + upserts. Ensures the org's canonical dimensions exist
     FIRST (this is the one write-triggering call site for
     ``ensure_default_dimensions`` — see ``migrations/025_leads.sql``'s
-    header comment)."""
+    header comment).
+
+    Never overwrites a manually-edited lead
+    ─────────────────────────────────────────
+    Re-running commit walks EVERY sheet again (a new month's sheet
+    being added doesn't change that), not just the ones that changed
+    since the last import. Before this fix, an existing row matched by
+    ``(org_id, source_sheet, source_row)`` got the FULL spreadsheet
+    payload blasted onto it unconditionally — so a human correction made
+    via ``PATCH /api/leads/{id}`` (fixed a name, reassigned a corretor,
+    cleared ``needs_review``) since the last import was silently
+    reverted on the next one, with ``rows_updated`` just going up and no
+    diff surfaced. ``leads_service.update_lead`` now stamps
+    ``leads.edited_at`` on every real PATCH (migration 028); this
+    function checks it via ``_existing_rows_for_sheet`` and, when set,
+    skips the update for that row entirely — counted into BOTH
+    ``rows_skipped`` (existing counter) and the new
+    ``rows_skipped_edited`` (so the UI can show "N preserved because
+    manually edited" distinctly from "N skipped, unparseable date"), and
+    a reviewable message is appended to ``warnings`` (persisted on the
+    batch row — previously ``xlsx_reader.parse_sheet``'s own warnings
+    were computed but discarded here; see migration 028's header)."""
     dimensions_service.ensure_default_dimensions(client, org_id)
     source_map, corretor_map = dimensions_service.build_resolution_maps(client, org_id)
     workbook = _load_workbook(file_bytes)
@@ -215,15 +236,17 @@ def commit(
     batch_id = batch_row["id"]
 
     sheets_count = 0
-    rows_read = rows_inserted = rows_updated = rows_skipped = rows_flagged = 0
+    rows_read = rows_inserted = rows_updated = rows_skipped = rows_flagged = rows_skipped_edited = 0
+    warnings: list[str] = []
     try:
         for name, worksheet in _iter_lead_sheets(workbook):
             sheets_count += 1
             result = xlsx_reader.parse_sheet(worksheet, name)
             rows_read += result.rows_read
             rows_skipped += result.rows_skipped
+            warnings.extend(result.warnings)
 
-            existing_ids = _existing_ids_for_sheet(client, org_id, name)
+            existing_rows = _existing_rows_for_sheet(client, org_id, name)
             to_insert: list[dict] = []
             to_update: list[tuple[str, dict]] = []
             for parsed in result.rows:
@@ -232,10 +255,8 @@ def commit(
                 payload["import_batch_id"] = str(batch_id)
                 if payload["needs_review"]:
                     rows_flagged += 1
-                existing_id = existing_ids.get(parsed.source_row)
-                if existing_id:
-                    to_update.append((existing_id, payload))
-                else:
+                existing = existing_rows.get(parsed.source_row)
+                if existing is None:
                     # Fresh id/created_at — see `leads_service.create_lead`'s
                     # docstring for why this is explicit rather than a DB
                     # default (mock/real-client parity for the id shape).
@@ -247,12 +268,28 @@ def commit(
                             **payload,
                         }
                     )
+                elif existing.get("edited_at"):
+                    rows_skipped += 1
+                    rows_skipped_edited += 1
+                    warnings.append(
+                        f"{name}:{parsed.source_row} — preservado (editado "
+                        f"manualmente em {existing['edited_at']}), não "
+                        f"sobrescrito pela reimportação"
+                    )
+                else:
+                    to_update.append((existing["id"], payload))
 
-            for chunk in _chunks(to_insert, _INSERT_CHUNK_SIZE):
+            for chunk in chunked(to_insert, _INSERT_CHUNK_SIZE):
                 if chunk:
                     _table(client, "leads").insert(chunk).execute()
             rows_inserted += len(to_insert)
 
+            # NOT batched via `.in_(...)` like `dimensions_service`'s
+            # relink/reassign fixes — each row here carries its OWN
+            # payload (not one uniform value applied to every matching
+            # id), so there's no shared update to batch. Bounded anyway:
+            # a sheet is a few hundred rows, not the 12k-row scale the
+            # relink/reassign paths guard against.
             for existing_id, payload in to_update:
                 _table(client, "leads").update(payload).eq("id", existing_id).execute()
             rows_updated += len(to_update)
@@ -265,7 +302,9 @@ def commit(
                 "rows_inserted": rows_inserted,
                 "rows_updated": rows_updated,
                 "rows_skipped": rows_skipped,
+                "rows_skipped_edited": rows_skipped_edited,
                 "rows_flagged": rows_flagged,
+                "warnings": warnings,
                 "status": "ok",
                 "finished_at": finished_at,
             }
@@ -276,7 +315,12 @@ def commit(
             batch_id, org_id, filename, exc, exc_info=True,
         )
         _table(client, "lead_import_batches").update(
-            {"status": "erro", "erro": str(exc), "finished_at": datetime.now(timezone.utc).isoformat()}
+            {
+                "status": "erro",
+                "erro": str(exc),
+                "warnings": warnings,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
         ).eq("id", batch_id).execute()
         raise
 

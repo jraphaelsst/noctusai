@@ -243,6 +243,55 @@ def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict
     return rows
 
 
+def iter_leads_rows(
+    client: Any,
+    org_id: UUID,
+    columns: str = "*",
+    **eq_filters: Any,
+) -> list[dict]:
+    """Shared PostgREST pager for the ``leads`` table reads that aren't
+    already covered by ``fetch_filtered``'s ``LeadFilters``-shaped call
+    sites — dimension-management scans (unmapped-origem/corretor,
+    relink-by-alias, delete-with-reassign) and the importer's
+    existing-row lookups. Every one of those used to be a bare
+    ``.select().execute()``, capped at PostgREST's ``_PAGE_SIZE`` rows
+    with no truncation signal (the same class of bug ``fetch_filtered``
+    already fixes — see this module's header comment for the incident).
+
+    Same paging contract as ``fetch_filtered``: pages via
+    ``.order("id").range(...)``, raises ``LeadsResultTooLargeError``
+    instead of silently truncating past ``_MAX_PAGES``. Callers pass
+    plain ``column=value`` equality filters as kwargs (``.eq(k, v)`` per
+    entry) instead of a full ``LeadFilters`` — every current caller only
+    needs ``org_id`` scoping plus at most one extra ``eq`` (e.g.
+    ``source_sheet=name``)."""
+    rows: list[dict] = []
+    for page_index in range(_MAX_PAGES):
+        start = page_index * _PAGE_SIZE
+        query = client.table("leads").select(columns).eq("org_id", str(org_id))
+        for key, value in eq_filters.items():
+            query = query.eq(key, value)
+        resp = query.order("id").range(start, start + _PAGE_SIZE - 1).execute()
+        page = list(resp.data or [])
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            break
+    else:
+        raise LeadsResultTooLargeError(
+            f"leads scan exceeded {_MAX_PAGES * _PAGE_SIZE} rows for "
+            f"org_id={org_id} — refusing to return a silently truncated set"
+        )
+    return rows
+
+
+def chunked(items: list, size: int):
+    """Yield ``items`` in ``size``-sized slices — shared by every batched
+    write in this module (``.in_("id", chunk)`` writes instead of one
+    round-trip per row)."""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
 __all__ = [
     "LeadFilters",
     "apply_db_filters",
@@ -252,4 +301,6 @@ __all__ = [
     "backfill_generated_columns",
     "LeadsResultTooLargeError",
     "to_rpc_params",
+    "iter_leads_rows",
+    "chunked",
 ]

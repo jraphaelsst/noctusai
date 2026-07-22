@@ -51,6 +51,11 @@ from app.modules.leads.services.query import (
 )
 
 _SCHEMA = "social_wiring"
+#: `NOT NULL` columns on `leads` (migration 025) — see `update_lead`'s
+#: docstring for why an explicit `null` patch value for one of these is
+#: ignored rather than applied.
+_LEADS_NOT_NULLABLE_FIELDS = {"data_entrada", "tipo_lead", "needs_review"}
+
 _SORTABLE = {"data_entrada", "cliente_nome", "origem", "corretor", "created_at"}
 #: sort names that map 1:1 onto a real `leads` column PostgREST can
 #: `.order()` directly — the other two (`origem`/`corretor`) need a
@@ -114,12 +119,47 @@ def get_lead(client: Any, org_id: UUID, lead_id: UUID) -> Optional[dict]:
 
 
 def update_lead(client: Any, org_id: UUID, lead_id: UUID, payload: dict) -> Optional[dict]:
+    """The router calls this with ``body.model_dump(exclude_unset=True)``
+    — a key's PRESENCE means the caller explicitly sent it. Unlike the
+    previous ``is not None`` filter, an explicit ``null`` now genuinely
+    CLEARS that field (e.g. un-assigning a corretor: ``{"corretor_id":
+    null}``) instead of being silently dropped — the old behavior showed
+    "Lead atualizado." with nothing actually changed, a false-success
+    toast over a no-op write.
+
+    ``data_entrada``/``tipo_lead``/``needs_review`` are ``NOT NULL`` on
+    ``leads`` (migration 025) — an explicit null for one of those has no
+    valid applied state and is ignored (dropped), same reasoning as
+    ``dimensions_service.update_source``'s ``label``/``categoria``/etc.
+
+    Setting ``origem_id`` to a non-null value auto-clears
+    ``needs_review`` — its only cause is an unrecognized/blank origem
+    (``importer.resolvers.resolve_origem``), so pointing a lead at a
+    real source resolves the flag. This overrides any ``needs_review``
+    ALSO present in the same payload (deliberately unconditional) so a
+    bulk alias-mapping (``dimensions_service._relink_leads_by_origem``)
+    clears the flag the exact same way a manual PATCH does.
+
+    Every real write also stamps ``updated_at`` (previously never set —
+    it stayed NULL forever) and ``edited_at``, a marker
+    ``importer.import_service.commit`` checks before ever overwriting an
+    existing row from a re-imported spreadsheet — see that module's
+    docstring for the data-loss class this closes."""
     existing = get_lead(client, org_id, lead_id)
     if existing is None:
         return None
-    clean = _jsonify_payload({k: v for k, v in payload.items() if v is not None})
+    clean = {
+        k: v for k, v in payload.items()
+        if not (v is None and k in _LEADS_NOT_NULLABLE_FIELDS)
+    }
+    if clean.get("origem_id") is not None and "origem_id" in clean:
+        clean["needs_review"] = False
     if not clean:
         return existing
+    clean = _jsonify_payload(clean)
+    now = datetime.now(timezone.utc).isoformat()
+    clean["updated_at"] = now
+    clean["edited_at"] = now
     resp = _table(client, "leads").update(clean).eq("id", str(lead_id)).execute()
     rows = list(resp.data or [])
     result = rows[0] if rows else {**existing, **clean}
@@ -167,7 +207,17 @@ def _list_leads_db(
 
     page_query = _table(client, "leads").select("*").eq("org_id", str(org_id))
     page_query = apply_db_filters(page_query, filters)
-    page_query = page_query.order(sort, desc=(order == "desc")).range(start, end)
+    # `.order("id")` tiebreaker: `sort` alone has no stable ordering
+    # guarantee across ties (~14 leads/day on `data_entrada` across
+    # 12,177 rows makes ties the norm, not the exception) — without a
+    # deterministic secondary key Postgres can return overlapping/missing
+    # rows for the same tied group across two page requests, so the same
+    # lead shows on page 3 AND page 4 while another never appears at all.
+    # `id` is unique, so appending it as the secondary sort makes the
+    # ordering total and every page request reproducible.
+    page_query = (
+        page_query.order(sort, desc=(order == "desc")).order("id").range(start, end)
+    )
     rows = [backfill_generated_columns(r) for r in list(page_query.execute().data or [])]
     return rows, total
 

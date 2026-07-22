@@ -66,6 +66,56 @@ class TestSourcesCRUD:
         resp = http_client.delete(f"/api/leads/sources/{source['id']}", headers=auth_headers())
         assert resp.status_code == 409
 
+    def test_slug_derived_server_side_when_omitted(self, http_client):
+        resp = http_client.post(
+            "/api/leads/sources",
+            json={"label": "Instagram (Josi)"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["slug"] == "instagram-josi"
+
+    def test_slug_collision_appends_suffix(self, http_client):
+        first = http_client.post(
+            "/api/leads/sources", json={"label": "Facebook"}, headers=auth_headers()
+        ).json()["data"]
+        second = http_client.post(
+            "/api/leads/sources", json={"label": "Facebook"}, headers=auth_headers()
+        ).json()["data"]
+        assert first["slug"] == "facebook"
+        assert second["slug"] == "facebook-2"
+
+    def test_blank_slug_is_treated_as_omitted(self, http_client):
+        resp = http_client.post(
+            "/api/leads/sources",
+            json={"slug": "  ", "label": "Ligação"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["slug"] == "ligacao"
+
+    def test_update_applies_a_truthy_slug(self, http_client):
+        created = _create_source(http_client)
+        resp = http_client.patch(
+            f"/api/leads/sources/{created['id']}",
+            json={"slug": "renomeado"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["slug"] == "renomeado"
+
+    def test_update_with_null_slug_is_ignored_not_a_500(self, http_client):
+        created = _create_source(http_client)
+        resp = http_client.patch(
+            f"/api/leads/sources/{created['id']}",
+            json={"slug": None, "label": "Still Renamed"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["label"] == "Still Renamed"
+        assert data["slug"] == created["slug"]
+
     def test_delete_referenced_with_reassign_succeeds(self, http_client):
         source_a = _create_source(http_client, slug="a", label="A")
         source_b = _create_source(http_client, slug="b", label="B")
