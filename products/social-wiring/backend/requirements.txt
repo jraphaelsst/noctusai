@@ -52,3 +52,7 @@ PyMuPDF>=1.24.0
 resend>=2.0.0
 APScheduler>=3.10.0
 sqlalchemy>=2.0.0
+
+# ─── Leads module (app/modules/leads) ───
+# .xlsx workbook parsing for the CONTROLE LEADS import (preview/commit).
+openpyxl>=3.1.0

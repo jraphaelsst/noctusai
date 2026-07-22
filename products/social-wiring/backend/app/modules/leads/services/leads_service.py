@@ -1,0 +1,203 @@
+"""CRUD + list + facets over the ``leads`` fact table.
+
+Every write coerces UUID/date python values to their JSON-safe string
+form before hitting the query builder (both the real Supabase client and
+the SQLite/Mock test doubles store JSON-serializable primitives, not
+python ``UUID``/``date`` objects).
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime, timezone
+from typing import Any, Optional
+from uuid import UUID
+
+from app.modules.leads.services.query import (
+    LeadFilters,
+    backfill_generated_columns,
+    fetch_filtered,
+)
+
+_SCHEMA = "social_wiring"
+_SORTABLE = {"data_entrada", "cliente_nome", "origem", "corretor", "created_at"}
+
+
+def _table(client: Any, name: str):
+    # `client` is already `social_wiring`-scoped — see
+    # `app/modules/leads/deps.py::get_leads_client`'s docstring for why
+    # this deliberately does NOT re-call `.schema(_SCHEMA)` here.
+    return client.table(name)
+
+
+def _jsonify(value: Any) -> Any:
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+def _jsonify_payload(payload: dict) -> dict:
+    return {k: _jsonify(v) for k, v in payload.items()}
+
+
+def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
+    # `id`/`created_at` are explicit here (not left to a DB DEFAULT) so
+    # the returned row is deterministic across the real Supabase client
+    # AND `MockSupabaseClient` (whose auto-id is `mock-<table>-<n>`, not
+    # a UUID — would break `LeadOut.id: UUID` validation). `ano`/`mes`
+    # are deliberately NEVER in this payload: they're
+    # `GENERATED ALWAYS AS (...) STORED` on real Postgres (§4) and an
+    # explicit value there is a hard error — `backfill_generated_columns`
+    # derives them at read time instead (mock parity only).
+    row = {
+        "id": str(uuid.uuid4()),
+        "org_id": str(org_id),
+        "needs_review": False,
+        "tipo_lead": "desconhecido",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": None,
+    }
+    row.update(_jsonify_payload(payload))
+    resp = _table(client, "leads").insert(row).execute()
+    rows = list(resp.data or [])
+    result = rows[0] if rows else row
+    return backfill_generated_columns(result)
+
+
+def get_lead(client: Any, org_id: UUID, lead_id: UUID) -> Optional[dict]:
+    resp = (
+        _table(client, "leads")
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(lead_id))
+        .execute()
+    )
+    rows = list(resp.data or [])
+    return backfill_generated_columns(rows[0]) if rows else None
+
+
+def update_lead(client: Any, org_id: UUID, lead_id: UUID, payload: dict) -> Optional[dict]:
+    existing = get_lead(client, org_id, lead_id)
+    if existing is None:
+        return None
+    clean = _jsonify_payload({k: v for k, v in payload.items() if v is not None})
+    if not clean:
+        return existing
+    resp = _table(client, "leads").update(clean).eq("id", str(lead_id)).execute()
+    rows = list(resp.data or [])
+    result = rows[0] if rows else {**existing, **clean}
+    return backfill_generated_columns(result)
+
+
+def delete_lead(client: Any, org_id: UUID, lead_id: UUID) -> bool:
+    existing = get_lead(client, org_id, lead_id)
+    if existing is None:
+        return False
+    _table(client, "leads").delete().eq("id", str(lead_id)).execute()
+    return True
+
+
+def _sort_key(row: dict, sort: str, refs: dict):
+    if sort == "origem":
+        source = refs["sources_by_id"].get(row.get("origem_id"))
+        return (source or {}).get("label") or ""
+    if sort == "corretor":
+        corretor = refs["corretores_by_id"].get(row.get("corretor_id"))
+        return (corretor or {}).get("nome") or ""
+    return row.get(sort) or ""
+
+
+def list_leads(
+    client: Any,
+    org_id: UUID,
+    filters: LeadFilters,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    sort: str = "data_entrada",
+    order: str = "desc",
+    refs: Optional[dict] = None,
+) -> tuple[list[dict], int]:
+    """Return ``(page_rows, total)`` — filter → sort → paginate, all in
+    Python (see ``services/query.py`` for why)."""
+    sort = sort if sort in _SORTABLE else "data_entrada"
+    order = order if order in ("asc", "desc") else "desc"
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+
+    rows = fetch_filtered(client, org_id, filters)
+    refs = refs or {"sources_by_id": {}, "corretores_by_id": {}}
+    rows.sort(key=lambda r: _sort_key(r, sort, refs), reverse=(order == "desc"))
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    return rows[start : start + page_size], total
+
+
+def facets(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+    rows = fetch_filtered(client, org_id, filters)
+    emp_counts: dict[str, int] = {}
+    reg_counts: dict[str, int] = {}
+    anos: set[int] = set()
+    for r in rows:
+        if r.get("empreendimento"):
+            emp_counts[r["empreendimento"]] = emp_counts.get(r["empreendimento"], 0) + 1
+        if r.get("regiao"):
+            reg_counts[r["regiao"]] = reg_counts.get(r["regiao"], 0) + 1
+        if r.get("ano") is not None:
+            anos.add(int(r["ano"]))
+
+    def _sorted_items(counts: dict[str, int]) -> list[dict]:
+        return [
+            {"value": k, "count": v}
+            for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+
+    return {
+        "empreendimentos": _sorted_items(emp_counts),
+        "regioes": _sorted_items(reg_counts),
+        "anos": sorted(anos),
+    }
+
+
+def build_refs(client: Any, org_id: UUID) -> dict:
+    """``{sources_by_id, corretores_by_id}`` — fetched once per request and
+    threaded through list/sort/serialize so a page of N leads costs 2
+    extra queries total, not 2*N."""
+    from app.modules.leads.services import dimensions_service
+
+    sources = {r["id"]: r for r in dimensions_service.list_sources(client, org_id)}
+    corretores = {r["id"]: r for r in dimensions_service.list_corretores(client, org_id)}
+    return {"sources_by_id": sources, "corretores_by_id": corretores}
+
+
+def resolve_lead_out(row: dict, refs: dict) -> dict:
+    """Attach the joined ``origem``/``corretor`` nested refs (§5.3) to a
+    raw ``leads`` row dict, ready for ``LeadOut.model_validate``."""
+    out = dict(row)
+    source = refs["sources_by_id"].get(row.get("origem_id"))
+    out["origem"] = (
+        {"id": source["id"], "slug": source["slug"], "label": source["label"], "cor": source.get("cor")}
+        if source
+        else None
+    )
+    corretor = refs["corretores_by_id"].get(row.get("corretor_id"))
+    out["corretor"] = (
+        {"id": corretor["id"], "nome": corretor["nome"], "cor": corretor.get("cor")}
+        if corretor
+        else None
+    )
+    return out
+
+
+__all__ = [
+    "create_lead",
+    "get_lead",
+    "update_lead",
+    "delete_lead",
+    "list_leads",
+    "facets",
+    "build_refs",
+    "resolve_lead_out",
+]
