@@ -90,7 +90,6 @@ import {
   useSyncAccount,
   useStartYouTubeOAuth,
   useStartProviderOAuth,
-  useSubmitInstagramToken,
   type IntegrationAccount,
   type IntegrationStatus,
 } from "@/hooks/useIntegrationAccounts";
@@ -245,108 +244,6 @@ function N8nConnectForm({
           data-testid="n8n-connect-submit"
         >
           {createAccount.isPending && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-          Conectar
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-// ─── Instagram manual token-paste fallback form ───────────────────────────────
-//
-// Secondary path alongside Instagram Business Login OAuth — some orgs cannot
-// complete the OAuth redirect (e.g. app not yet reviewed) and need to paste a
-// long-lived user access token directly. Mirrors N8nConnectForm's inline-form
-// shape; posts via useSubmitInstagramToken (POST /api/integrations/accounts/
-// instagram/token), surfacing the backend's 400 `detail` inline on failure.
-
-function InstagramTokenConnectForm({
-  clientId,
-  onCancel,
-  onConnected,
-}: {
-  clientId: string;
-  onCancel: () => void;
-  onConnected: () => void;
-}) {
-  const [token, setToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const submitToken = useSubmitInstagramToken();
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (!token.trim()) {
-      setError("Token de acesso é obrigatório.");
-      return;
-    }
-    try {
-      await submitToken.mutateAsync({ access_token: token.trim(), client_id: clientId });
-      toast.success("Instagram conectado com sucesso.");
-      setToken("");
-      onConnected();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Falha ao conectar Instagram.";
-      setError(message);
-      toast.error(message);
-    }
-  }
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="mt-2 space-y-2 rounded-md border bg-muted/20 p-3"
-      data-testid="instagram-token-form"
-    >
-      <div className="space-y-1">
-        <Label htmlFor="ig-token" className="text-xs">
-          Token de acesso do Instagram
-        </Label>
-        <Input
-          id="ig-token"
-          type="password"
-          value={token}
-          onChange={(e) => {
-            setToken(e.target.value);
-            if (error) setError(null);
-          }}
-          placeholder="IGAA..."
-          className="h-7 text-xs font-mono"
-          disabled={submitToken.isPending}
-          data-testid="instagram-token-input"
-        />
-        <p className="text-[11px] text-muted-foreground">
-          Cole o <strong>token de acesso do usuário (User access token)</strong> gerado pelo
-          Instagram Business Login — <strong>NÃO</strong> é o &quot;Token de Cliente&quot; do app.
-        </p>
-      </div>
-
-      {error && (
-        <p className="flex items-center gap-1.5 text-xs text-destructive" data-testid="instagram-token-error">
-          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-          {error}
-        </p>
-      )}
-
-      <div className="flex gap-2 pt-1">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-7 text-xs"
-          onClick={onCancel}
-          disabled={submitToken.isPending}
-        >
-          Cancelar
-        </Button>
-        <Button
-          type="submit"
-          size="sm"
-          className="h-7 text-xs"
-          disabled={submitToken.isPending || !token.trim()}
-          data-testid="instagram-token-submit"
-        >
-          {submitToken.isPending && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
           Conectar
         </Button>
       </div>
@@ -752,11 +649,9 @@ function ContasTab({ client }: { client: Client }) {
   const gmailOAuth = useStartProviderOAuth("gmail");
   const driveOAuth = useStartProviderOAuth("google_drive");
   const metaOAuth = useStartProviderOAuth("meta");
-  const instagramOAuth = useStartProviderOAuth("instagram");
 
   const [busyAccId, setBusyAccId] = useState<string | null>(null);
   const [n8nFormOpen, setN8nFormOpen] = useState(false);
-  const [instagramTokenFormOpen, setInstagramTokenFormOpen] = useState(false);
 
   const [openIntAccount, setOpenIntAccount] = useState<IntegrationAccount | null>(null);
 
@@ -991,8 +886,7 @@ function ContasTab({ client }: { client: Client }) {
                             (provider.id === "youtube" && youtubeOAuth.isPending) ||
                             (provider.id === "gmail" && gmailOAuth.isPending) ||
                             (provider.id === "google_drive" && driveOAuth.isPending) ||
-                            (provider.id === "meta" && metaOAuth.isPending) ||
-                            (provider.id === "instagram" && instagramOAuth.isPending)
+                            ((provider.id === "meta" || provider.id === "instagram") && metaOAuth.isPending)
                           }
                           onClick={() => {
                             const opts = { clientId: client.id };
@@ -1008,12 +902,11 @@ function ContasTab({ client }: { client: Client }) {
                               driveOAuth.mutate(opts, {
                                 onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
                               });
-                            } else if (provider.id === "meta") {
+                            } else if (provider.id === "meta" || provider.id === "instagram") {
+                              // This app uses Facebook Login for Business — Instagram is
+                              // reached THROUGH the Facebook/Meta connection (a linked Page),
+                              // so the Instagram button runs the same Meta OAuth.
                               metaOAuth.mutate(opts, {
-                                onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
-                              });
-                            } else if (provider.id === "instagram") {
-                              instagramOAuth.mutate(opts, {
                                 onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
                               });
                             }
@@ -1023,29 +916,13 @@ function ContasTab({ client }: { client: Client }) {
                           {((provider.id === "youtube" && youtubeOAuth.isPending) ||
                             (provider.id === "gmail" && gmailOAuth.isPending) ||
                             (provider.id === "google_drive" && driveOAuth.isPending) ||
-                            (provider.id === "meta" && metaOAuth.isPending) ||
-                            (provider.id === "instagram" && instagramOAuth.isPending)) ? (
+                            ((provider.id === "meta" || provider.id === "instagram") && metaOAuth.isPending)) ? (
                             <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                           ) : (
                             <Plus className="h-3.5 w-3.5 mr-1" />
                           )}
                           Conectar
                         </Button>
-
-                        {/* Instagram-only: manual token-paste fallback affordance,
-                            for orgs that cannot complete the OAuth redirect. */}
-                        {provider.id === "instagram" && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 text-xs text-muted-foreground"
-                            onClick={() => setInstagramTokenFormOpen((prev) => !prev)}
-                            data-testid="instagram-token-toggle"
-                          >
-                            Colar token manualmente
-                          </Button>
-                        )}
                       </div>
                     )}
 
@@ -1062,15 +939,6 @@ function ContasTab({ client }: { client: Client }) {
                       </Button>
                     )}
                   </div>
-
-                  {/* Instagram token-paste inline form */}
-                  {provider.id === "instagram" && instagramTokenFormOpen && (
-                    <InstagramTokenConnectForm
-                      clientId={client.id}
-                      onCancel={() => setInstagramTokenFormOpen(false)}
-                      onConnected={() => setInstagramTokenFormOpen(false)}
-                    />
-                  )}
 
                   {/* n8n inline form */}
                   {provider.id === "n8n" && n8nFormOpen && (
