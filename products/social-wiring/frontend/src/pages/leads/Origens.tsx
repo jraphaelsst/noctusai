@@ -24,10 +24,11 @@ import {
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadSources } from "@/hooks/useLeadsSources";
 import { useLeadsByDimension, useLeadsSummary, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { attributionSubtitle, isOutrosBucket } from "./utils";
 
 export default function Origens() {
-  const { filters, toggleMulti } = useLeadsFilters();
+  const { filters, toggleMulti, clearAll } = useLeadsFilters();
   const { data: sources } = useLeadSources();
 
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "origem" });
@@ -69,6 +70,7 @@ export default function Origens() {
         loading={timeseriesQ.isPending || timeseriesQ.isFetching}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução por origem." : null}
         isEmpty={areaData.length === 0}
+        actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
       >
         <AreaChart data={areaData} xKey="label" series={areaSeries} stacked height={320} />
       </ChartCard>
@@ -92,8 +94,12 @@ export default function Origens() {
           </div>
         )}
         {byDimQ.isError && (
-          <div className="p-4 text-sm text-destructive" data-testid="leads-origens-table-error">
-            Erro ao carregar origens.
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-destructive"
+            data-testid="leads-origens-table-error"
+          >
+            <span>Erro ao carregar origens.</span>
+            <ClearFiltersButton onClick={clearAll} />
           </div>
         )}
         {!byDimQ.isPending && !byDimQ.isFetching && !byDimQ.isError && buckets.length === 0 && (

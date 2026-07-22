@@ -16,6 +16,7 @@ afterEach(async () => {
 });
 
 const mockToggleMulti = vi.fn();
+const mockClearAll = vi.fn();
 const mockUseLeadsFilters = vi.fn();
 vi.mock("@/hooks/useLeadsFilters", () => ({
   useLeadsFilters: mockUseLeadsFilters,
@@ -61,6 +62,7 @@ beforeEach(() => {
   mockUseLeadsFilters.mockReturnValue({
     filters: { empreendimento: [] as string[], regiao: [] as string[] },
     toggleMulti: mockToggleMulti,
+    clearAll: mockClearAll,
   });
   mockUseLeadsByDimension.mockReturnValue(
     makeQuery({ data: { dim: "empreendimento", total: 50, buckets: BUCKETS } }),
@@ -85,5 +87,19 @@ describe("Empreendimentos — 'outros' row", () => {
     const { getByTestId, fireEvent } = await renderPage();
     fireEvent.click(getByTestId("leads-empreendimento-row-Residencial Alfa"));
     expect(mockToggleMulti).toHaveBeenCalledWith("empreendimento", "Residencial Alfa");
+  });
+});
+
+describe("Empreendimentos — table error recovery", () => {
+  it("renders a 'Limpar filtros' action next to the table error and wires it to clearAll", async () => {
+    mockUseLeadsByDimension.mockReturnValue(makeQuery({ isError: true }));
+    const { getByTestId, fireEvent } = await renderPage();
+
+    const errorBlock = getByTestId("leads-empreendimentos-table-error");
+    const clearButton = getByTestId("leads-error-clear-filters");
+    expect(errorBlock.contains(clearButton)).toBe(true);
+
+    fireEvent.click(clearButton);
+    expect(mockClearAll).toHaveBeenCalledTimes(1);
   });
 });

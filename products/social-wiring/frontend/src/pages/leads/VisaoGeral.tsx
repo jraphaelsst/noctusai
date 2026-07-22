@@ -27,10 +27,11 @@ import {
   useLeadsSummary,
   useLeadsTimeseries,
 } from "@/hooks/useLeadsAnalytics";
+import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { attributionSubtitle } from "./utils";
 
 export default function VisaoGeral() {
-  const { filters, setNeedsReview } = useLeadsFilters();
+  const { filters, setNeedsReview, clearAll } = useLeadsFilters();
 
   const summaryQ = useLeadsSummary(filters);
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "origem" });
@@ -136,6 +137,7 @@ export default function VisaoGeral() {
         loading={timeseriesQ.isPending || timeseriesQ.isFetching}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução mensal." : null}
         isEmpty={areaData.length === 0}
+        actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
       >
         <AreaChart data={areaData} xKey="label" series={areaSeries} stacked height={320} />
       </ChartCard>
@@ -147,6 +149,7 @@ export default function VisaoGeral() {
           loading={origemQ.isPending || origemQ.isFetching}
           error={origemQ.isError ? "Erro ao carregar leads por origem." : null}
           isEmpty={donutData.length === 0}
+          actions={origemQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
         >
           <DonutChart data={donutData} nameKey="label" valueKey="total" colorKey="cor" />
         </ChartCard>
@@ -157,6 +160,7 @@ export default function VisaoGeral() {
           loading={corretorQ.isPending || corretorQ.isFetching}
           error={corretorQ.isError ? "Erro ao carregar o ranking de corretores." : null}
           isEmpty={corretorData.length === 0}
+          actions={corretorQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
         >
           <BarChart
             data={corretorData}
@@ -174,6 +178,7 @@ export default function VisaoGeral() {
         error={heatmapQ.isError ? "Erro ao carregar o heatmap." : null}
         isEmpty={!heatmapQ.data || heatmapQ.data.anos.length === 0}
         minBodyHeight={220}
+        actions={heatmapQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
       >
         {heatmapQ.data && (
           <Heatmap anos={heatmapQ.data.anos} cells={heatmapQ.data.cells} max={heatmapQ.data.max} />

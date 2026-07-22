@@ -22,6 +22,7 @@ afterEach(async () => {
 // ─── Hook mocks ─────────────────────────────────────────────────────────────
 
 const mockToggleMulti = vi.fn();
+const mockClearAll = vi.fn();
 const mockUseLeadsFilters = vi.fn();
 vi.mock("@/hooks/useLeadsFilters", () => ({
   useLeadsFilters: mockUseLeadsFilters,
@@ -84,6 +85,7 @@ beforeEach(() => {
   mockUseLeadsFilters.mockReturnValue({
     filters: { origem_id: [] as string[] },
     toggleMulti: mockToggleMulti,
+    clearAll: mockClearAll,
   });
   mockUseLeadSources.mockReturnValue(makeQuery({ data: SOURCES }));
   mockUseLeadsByDimension.mockReturnValue(makeQuery({ data: { dim: "origem", total: 100, buckets: BUCKETS } }));
@@ -120,5 +122,19 @@ describe("Origens — drill-in click", () => {
     const { getByTestId } = await renderPage();
     const note = getByTestId("leads-origens-attribution");
     expect(note.textContent).toMatch(/100 de 100 leads com origem identificada/i);
+  });
+});
+
+describe("Origens — table error recovery", () => {
+  it("renders a 'Limpar filtros' action next to the table error and wires it to clearAll", async () => {
+    mockUseLeadsByDimension.mockReturnValue(makeQuery({ isError: true }));
+    const { getByTestId, fireEvent } = await renderPage();
+
+    const errorBlock = getByTestId("leads-origens-table-error");
+    const clearButton = getByTestId("leads-error-clear-filters");
+    expect(errorBlock.contains(clearButton)).toBe(true);
+
+    fireEvent.click(clearButton);
+    expect(mockClearAll).toHaveBeenCalledTimes(1);
   });
 });

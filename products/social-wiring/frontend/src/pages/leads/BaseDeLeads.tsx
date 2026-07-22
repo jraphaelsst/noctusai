@@ -37,6 +37,7 @@ import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from 
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
 import { LeadDetailDrawer } from "./components/LeadDetailDrawer";
+import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { describeError } from "./utils";
 
 const PAGE_SIZE = 25;
@@ -77,7 +78,7 @@ function SortHeader({ label, field, sort, order, onSort }: SortHeaderProps) {
 }
 
 export default function BaseDeLeads() {
-  const { filters, setNeedsReview } = useLeadsFilters();
+  const { filters, setNeedsReview, clearAll } = useLeadsFilters();
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<LeadsSort>("data_entrada");
   const [order, setOrder] = useState<LeadsOrder>("desc");
@@ -192,12 +193,15 @@ export default function BaseDeLeads() {
 
       {isError && (
         <Card className="border-destructive" data-testid="leads-table-error">
-          <CardContent className="flex items-center gap-3 pt-6">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              Erro ao carregar leads:{" "}
-              {((error as Error)?.message ?? "").replace(/^\[\d+\]\s*/, "") || "Tente novamente."}
-            </p>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              <p className="text-sm text-destructive">
+                Erro ao carregar leads:{" "}
+                {((error as Error)?.message ?? "").replace(/^\[\d+\]\s*/, "") || "Tente novamente."}
+              </p>
+            </div>
+            <ClearFiltersButton onClick={clearAll} />
           </CardContent>
         </Card>
       )}

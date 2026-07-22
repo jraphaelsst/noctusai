@@ -15,6 +15,7 @@ afterEach(async () => {
 });
 
 const mockToggleMulti = vi.fn();
+const mockClearAll = vi.fn();
 const mockUseLeadsFilters = vi.fn();
 vi.mock("@/hooks/useLeadsFilters", () => ({
   useLeadsFilters: mockUseLeadsFilters,
@@ -59,6 +60,7 @@ beforeEach(() => {
   mockUseLeadsFilters.mockReturnValue({
     filters: { corretor_id: [] as string[] },
     toggleMulti: mockToggleMulti,
+    clearAll: mockClearAll,
   });
   mockUseLeadsByDimension.mockReturnValue(makeQuery({ data: { dim: "corretor", total: 30, buckets: BUCKETS } }));
   mockUseLeadsSummary.mockReturnValue(makeQuery({ data: { total: 100 } }));
@@ -88,5 +90,19 @@ describe("Corretores — 'outros' row", () => {
   it("surfaces the unattributed count next to the donut", async () => {
     const { container } = await renderPage();
     expect(container.textContent).toMatch(/30 de 100 leads com corretor identificado/i);
+  });
+});
+
+describe("Corretores — table error recovery", () => {
+  it("renders a 'Limpar filtros' action next to the table error and wires it to clearAll", async () => {
+    mockUseLeadsByDimension.mockReturnValue(makeQuery({ isError: true }));
+    const { getByTestId, fireEvent } = await renderPage();
+
+    const errorBlock = getByTestId("leads-corretores-table-error");
+    const clearButton = getByTestId("leads-error-clear-filters");
+    expect(errorBlock.contains(clearButton)).toBe(true);
+
+    fireEvent.click(clearButton);
+    expect(mockClearAll).toHaveBeenCalledTimes(1);
   });
 });

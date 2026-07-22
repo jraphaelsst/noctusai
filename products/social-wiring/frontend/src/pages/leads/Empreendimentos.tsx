@@ -15,12 +15,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLeadsFilters, type LeadsMultiKey } from "@/hooks/useLeadsFilters";
 import { useLeadsByDimension } from "@/hooks/useLeadsAnalytics";
+import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { isOutrosBucket } from "./utils";
 
 type Dim = "empreendimento" | "regiao";
 
 export default function Empreendimentos() {
-  const { filters, toggleMulti } = useLeadsFilters();
+  const { filters, toggleMulti, clearAll } = useLeadsFilters();
   const [dim, setDim] = useState<Dim>("empreendimento");
   const filterKey: LeadsMultiKey = dim;
 
@@ -55,6 +56,7 @@ export default function Empreendimentos() {
         loading={byDimQ.isPending || byDimQ.isFetching}
         error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
         isEmpty={rankedBuckets.length === 0}
+        actions={byDimQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
       >
         <BarChart
           data={rankedBuckets}
@@ -80,8 +82,12 @@ export default function Empreendimentos() {
           </div>
         )}
         {byDimQ.isError && (
-          <div className="p-4 text-sm text-destructive" data-testid="leads-empreendimentos-table-error">
-            Erro ao carregar dados.
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-destructive"
+            data-testid="leads-empreendimentos-table-error"
+          >
+            <span>Erro ao carregar dados.</span>
+            <ClearFiltersButton onClick={clearAll} />
           </div>
         )}
         {!byDimQ.isPending && !byDimQ.isFetching && !byDimQ.isError && rankedBuckets.length === 0 && (

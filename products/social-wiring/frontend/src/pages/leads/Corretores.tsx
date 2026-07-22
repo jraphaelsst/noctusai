@@ -16,10 +16,11 @@ import {
 } from "@noctusai/lib/design-system";
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadsByDimension, useLeadsSummary, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { attributionSubtitle, isOutrosBucket } from "./utils";
 
 export default function Corretores() {
-  const { filters, toggleMulti } = useLeadsFilters();
+  const { filters, toggleMulti, clearAll } = useLeadsFilters();
 
   const byDimQ = useLeadsByDimension(filters, { dim: "corretor", limit: 50 });
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "corretor" });
@@ -55,6 +56,7 @@ export default function Corretores() {
           loading={byDimQ.isPending || byDimQ.isFetching}
           error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
           isEmpty={rankedBuckets.length === 0}
+          actions={byDimQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
         >
           <BarChart
             data={rankedBuckets}
@@ -70,6 +72,7 @@ export default function Corretores() {
           loading={byDimQ.isPending || byDimQ.isFetching}
           error={byDimQ.isError ? "Erro ao carregar a participação." : null}
           isEmpty={buckets.length === 0}
+          actions={byDimQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
         >
           <DonutChart data={buckets} nameKey="label" valueKey="total" colorKey="cor" />
         </ChartCard>
@@ -81,6 +84,7 @@ export default function Corretores() {
         loading={timeseriesQ.isPending || timeseriesQ.isFetching}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução por corretor." : null}
         isEmpty={areaData.length === 0}
+        actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
       >
         <AreaChart data={areaData} xKey="label" series={areaSeries} height={320} />
       </ChartCard>
@@ -98,8 +102,12 @@ export default function Corretores() {
           </div>
         )}
         {byDimQ.isError && (
-          <div className="p-4 text-sm text-destructive" data-testid="leads-corretores-table-error">
-            Erro ao carregar corretores.
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-destructive"
+            data-testid="leads-corretores-table-error"
+          >
+            <span>Erro ao carregar corretores.</span>
+            <ClearFiltersButton onClick={clearAll} />
           </div>
         )}
         {!byDimQ.isPending && !byDimQ.isFetching && !byDimQ.isError && buckets.length === 0 && (
