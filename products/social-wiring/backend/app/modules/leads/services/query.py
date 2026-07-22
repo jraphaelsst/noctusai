@@ -143,17 +143,57 @@ def matches_ano_mes(row: dict, filters: LeadFilters) -> bool:
     return True
 
 
+#: PostgREST caps any single response at ``db-max-rows`` (1000 by default on
+#: Supabase). A bare ``.select().execute()`` therefore returns AT MOST 1000
+#: rows with NO error and NO truncation signal — the caller cannot tell a
+#: complete 1000-row result from a truncated 12,000-row one. Every count,
+#: share_pct and chart series in this module derives from `fetch_filtered`,
+#: so that silent cap made all of them wrong (observed 2026-07-22: summary
+#: reported total=1000 against 12,177 real rows). We page explicitly instead.
+_PAGE_SIZE = 1000
+
+#: Hard ceiling on the paging loop — a runaway (e.g. a client whose `.range()`
+#: is a no-op) must fail LOUDLY rather than spin or silently truncate.
+_MAX_PAGES = 500
+
+
+class LeadsResultTooLargeError(RuntimeError):
+    """Raised when a filter set resolves to more rows than the pager will
+    walk. Deliberately an exception, not a silent truncation: a wrong-but-
+    plausible number in a KPI tile is worse than a visible failure."""
+
+
 def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict]:
     """Fetch every ``leads`` row (as raw dicts, joins not yet resolved)
     for ``org_id`` matching ``filters`` — the shared primitive every
     list/analytics service builds on. ``client`` is already
     ``social_wiring``-scoped — see
     ``app/modules/leads/deps.py::get_leads_client``'s docstring for why
-    this deliberately does NOT call ``.schema(...)`` itself."""
-    query = client.table("leads").select("*").eq("org_id", str(org_id))
-    query = apply_db_filters(query, filters)
-    resp = query.execute()
-    rows = [backfill_generated_columns(r) for r in list(resp.data or [])]
+    this deliberately does NOT call ``.schema(...)`` itself.
+
+    Pages through PostgREST's per-response row cap (see ``_PAGE_SIZE``)
+    and returns the COMPLETE result set. ``.order("id")`` is required for
+    the paging to be stable — without a deterministic sort PostgREST may
+    return overlapping/missing rows across ranges."""
+    rows: list[dict] = []
+    for page_index in range(_MAX_PAGES):
+        start = page_index * _PAGE_SIZE
+        query = client.table("leads").select("*").eq("org_id", str(org_id))
+        query = apply_db_filters(query, filters)
+        resp = (
+            query.order("id").range(start, start + _PAGE_SIZE - 1).execute()
+        )
+        page = list(resp.data or [])
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            break
+    else:
+        raise LeadsResultTooLargeError(
+            f"leads result exceeded {_MAX_PAGES * _PAGE_SIZE} rows for "
+            f"org_id={org_id} — refusing to return a silently truncated set"
+        )
+
+    rows = [backfill_generated_columns(r) for r in rows]
     rows = [r for r in rows if matches_ano_mes(r, filters)]
     if filters.q:
         rows = [r for r in rows if matches_free_text(r, filters.q)]
@@ -167,4 +207,5 @@ __all__ = [
     "matches_ano_mes",
     "fetch_filtered",
     "backfill_generated_columns",
+    "LeadsResultTooLargeError",
 ]
