@@ -74,7 +74,7 @@ export default function Modules() {
             {catalogLoading ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 rounded" />
+                  <Skeleton key={i} className="h-10 rounded" announce={i === 0} />
                 ))}
               </div>
             ) : catalog.modules.length === 0 ? (
@@ -124,7 +124,7 @@ export default function Modules() {
             ) : moduleLoading ? (
               <div className="space-y-2">
                 {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-12 rounded" />
+                  <Skeleton key={i} className="h-12 rounded" announce={i === 0} />
                 ))}
               </div>
             ) : moduleError ? (

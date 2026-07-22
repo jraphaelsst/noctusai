@@ -132,7 +132,7 @@ export default function Dashboard() {
           {runsLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 rounded" />
+                <Skeleton key={i} className="h-12 rounded" announce={i === 0} />
               ))}
             </div>
           ) : recent.length === 0 ? (

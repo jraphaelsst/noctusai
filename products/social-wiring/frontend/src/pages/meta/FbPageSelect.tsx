@@ -80,5 +80,9 @@ export function FbContextError() {
 }
 
 export function FbContextLoading() {
-  return <Skeleton className="h-10 w-64" data-testid="fb-context-loading" />;
+  return (
+    <div data-testid="fb-context-loading">
+      <Skeleton className="h-10 w-64" />
+    </div>
+  );
 }

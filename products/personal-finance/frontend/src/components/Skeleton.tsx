@@ -1,3 +1,9 @@
+/**
+ * TableSkeleton re-exported from the shared design system — canonical organ.
+ * (No local consumer at time of migration; kept for backward compatibility.)
+ */
+export { TableSkeleton } from "@noctusai/lib/design-system";
+
 function Bar({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className}`} />;
 }
@@ -21,25 +27,6 @@ export function CardSkeleton({ lines = 3 }: { lines?: number }) {
       <Bar className="h-5 w-32" />
       {Array.from({ length: lines }).map((_, i) => (
         <Bar key={i} className="h-4 w-full" />
-      ))}
-    </div>
-  );
-}
-
-export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
-  return (
-    <div className="rounded-lg border bg-card overflow-hidden">
-      <div className="border-b bg-muted/50 p-3 flex gap-4">
-        {Array.from({ length: cols }).map((_, i) => (
-          <Bar key={i} className="h-4 flex-1" />
-        ))}
-      </div>
-      {Array.from({ length: rows }).map((_, r) => (
-        <div key={r} className="p-3 flex gap-4 border-b last:border-b-0">
-          {Array.from({ length: cols }).map((_, c) => (
-            <Bar key={c} className="h-4 flex-1" />
-          ))}
-        </div>
       ))}
     </div>
   );

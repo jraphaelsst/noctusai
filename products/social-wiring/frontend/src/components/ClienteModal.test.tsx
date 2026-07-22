@@ -158,6 +158,17 @@ vi.mock("@/components/WhatsAppChatWindow", () => ({
   ),
 }));
 
+// The real module now re-exports the canonical organ from
+// `@noctusai/lib/design-system`, which transitively creates a live Supabase
+// client at import time (see seed/lib/frontend/src/supabase.ts) — that
+// subpath isn't covered by the `@noctusai/lib` mock above (different module
+// specifier). Stub it directly, mirroring the sibling test files.
+vi.mock("@/components/ui/skeleton", () => ({
+  Skeleton: ({ className }: any) => (
+    <div data-testid="skeleton" className={className} />
+  ),
+}));
+
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

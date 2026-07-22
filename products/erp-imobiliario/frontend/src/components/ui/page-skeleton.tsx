@@ -1,6 +1,14 @@
 import { Skeleton } from '@noctusai/seed/components/ui/skeleton';
 import { Card, CardContent, CardHeader } from '@noctusai/seed/components/ui/card';
 
+/**
+ * TableSkeleton re-exported from the shared design system — canonical organ.
+ * Every call site here only passes `rows`, so this is a drop-in swap; the
+ * canonical component renders a real `<table>` (header + N body rows)
+ * shaped for the same purpose (see `@noctusai/lib/design-system`).
+ */
+export { TableSkeleton } from '@noctusai/lib/design-system';
+
 /** Detail page skeleton — breadcrumb + header card + tabs */
 export function DetailPageSkeleton() {
   return (
@@ -40,18 +48,6 @@ export function DetailPageSkeleton() {
           </div>
         </Card>
       </div>
-    </div>
-  );
-}
-
-/** Bare table rows skeleton — for use inside CardContent */
-export function TableSkeleton({ rows = 5 }: { rows?: number }) {
-  return (
-    <div className="space-y-3">
-      <Skeleton className="h-10 w-full" />
-      {Array.from({ length: rows }).map((_, i) => (
-        <Skeleton key={i} className="h-12 w-full" />
-      ))}
     </div>
   );
 }

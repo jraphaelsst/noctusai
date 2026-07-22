@@ -136,7 +136,7 @@ export default function Runs() {
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-14 rounded" />
+                <Skeleton key={i} className="h-14 rounded" announce={i === 0} />
               ))}
             </div>
           ) : runs.length === 0 ? (

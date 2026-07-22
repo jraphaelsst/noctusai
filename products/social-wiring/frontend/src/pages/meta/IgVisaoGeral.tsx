@@ -71,7 +71,11 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
   );
 
   if (isLoading) {
-    return <Skeleton className="h-64 rounded-md" data-testid="ig-trend-loading" />;
+    return (
+      <div data-testid="ig-trend-loading">
+        <Skeleton className="h-64 rounded-md" />
+      </div>
+    );
   }
 
   if (isError) {
