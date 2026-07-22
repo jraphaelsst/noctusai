@@ -88,6 +88,10 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Sibling workspaces consume noc read-only, whole.** Trimming the inherited surface breaks seed-first analysis + sync. → `KB § PATTERNS/architect/seed-workspace.md`
 - **Divergent-architecture absorptions → house container model.** One container, `serve_spa`, seed base image; no fleet carve-out. → `KB § PATTERNS/devops/containerization.md §12a` · skill `noc-absorb-product`
 - **Parallel-agent collision protocol.** Twice-reverted → STOP, wait, continue non-colliding; no collision-report project. → `KB § PATTERNS/architect/project-execution.md`
+- **No lying loading states — gate `loading` on `isPending || isFetching`, never `isLoading`.** TanStack v5 `isLoading` is false during a background refetch, so an `isEmpty` branch renders "no data" over data that exists; keeper `check_lying_loading_state`. → `KB § PATTERNS/frontend/lying-loading-state.md`
+- **Hand-maintained lists drift and break the fleet — derive, don't sync by hand; gate pre-push.** Slug sets ∧ lockfile-embedded seed snapshots discovered in CI *after* promotion; keepers `check_hardcoded_product_slug_set` + `check_product_lockfile_dep_sync`. → `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`
+- **Per-branch green ≠ integration green — re-run gates on the MERGED tip before bless.** File-disjoint isn't effect-disjoint; derived artifacts (baselines/lockfiles/parity/barrels) couple parallel slices. → `KB § PATTERNS/common/methodology-execution-discipline.md`
+- **Verify PASS/FAIL by exit code, never a piped `tail` — `cmd | tail` returns tail's status.** A trimmed pipe converts "did it pass?" into "did tail run?" (always yes); use `pipefail` or capture `rc=$?`. → `KB § PATTERNS/common/methodology-execution-discipline.md`
 
 ---
 

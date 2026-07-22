@@ -9115,7 +9115,7 @@ def check_all_products() -> tuple[int, list]:
 # reply. The contract: §1 carries PRINCIPLE + the MAP; PROCEDURE/bodies live in
 # `.claude/skills/` + the `KB § …` pointers. Re-bloating it back toward the verbose
 # v3.0 form is gated. Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
-_CLAUDE_MD_MAX_WORDS = 2500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat)
+_CLAUDE_MD_MAX_WORDS = 3500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat). Raised 2500→3500 2026-07-22 by user directive to unblock pending §1 rules; a real trim pass is the deferred follow-up, not a further raise.
 _CLAUDE_MD_MAX_RULE_WORDS = 60        # a §1 bullet beyond this is an inlined body
 _CLAUDE_MD_SECTION1_RE = re.compile(r"^##\s+1\s*[·.]")   # "## 1 · Universal rules"
 _CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …" header
