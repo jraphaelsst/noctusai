@@ -51,7 +51,7 @@ export default function Empreendimentos() {
       <ChartCard
         title={dim === "empreendimento" ? "Leads por empreendimento" : "Leads por região"}
         subtitle="Ranking do período selecionado."
-        loading={byDimQ.isLoading}
+        loading={byDimQ.isPending || byDimQ.isFetching}
         error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
         isEmpty={rankedBuckets.length === 0}
       >

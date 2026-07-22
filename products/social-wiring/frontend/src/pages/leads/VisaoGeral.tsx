@@ -58,7 +58,7 @@ export default function VisaoGeral() {
         <StatTile
           label="Total de leads"
           value={summary ? formatCompactNumber(summary.total) : "—"}
-          loading={summaryQ.isLoading}
+          loading={summaryQ.isPending || summaryQ.isFetching}
           delta={variacao}
           hint="vs. período anterior"
         />
@@ -69,32 +69,32 @@ export default function VisaoGeral() {
               ? `${formatCompactNumber(summary.novos)} / ${formatCompactNumber(summary.retornos)}`
               : "—"
           }
-          loading={summaryQ.isLoading}
+          loading={summaryQ.isPending || summaryQ.isFetching}
         />
         <StatTile
           label="Média diária"
           value={summary ? summary.media_diaria.toFixed(1) : "—"}
-          loading={summaryQ.isLoading}
+          loading={summaryQ.isPending || summaryQ.isFetching}
         />
         <StatTile
           label="Top origem"
           value={summary?.top_origem?.label ?? "—"}
           hint={summary?.top_origem ? `${formatPercent(summary.top_origem.share_pct)} do total` : undefined}
-          loading={summaryQ.isLoading}
+          loading={summaryQ.isPending || summaryQ.isFetching}
         />
         <StatTile
           label="Variação"
           value={variacao === null ? "—" : formatPercent(Math.abs(variacao))}
           delta={variacao}
           hint="vs. período anterior"
-          loading={summaryQ.isLoading}
+          loading={summaryQ.isPending || summaryQ.isFetching}
         />
       </StatTileRow>
 
       <ChartCard
         title="Evolução mensal por origem"
         subtitle="Total de leads por mês, separados por origem canônica."
-        loading={timeseriesQ.isLoading}
+        loading={timeseriesQ.isPending || timeseriesQ.isFetching}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução mensal." : null}
         isEmpty={areaData.length === 0}
       >
@@ -105,7 +105,7 @@ export default function VisaoGeral() {
         <ChartCard
           title="Leads por origem"
           subtitle="Distribuição do período selecionado."
-          loading={origemQ.isLoading}
+          loading={origemQ.isPending || origemQ.isFetching}
           error={origemQ.isError ? "Erro ao carregar leads por origem." : null}
           isEmpty={donutData.length === 0}
         >
@@ -115,7 +115,7 @@ export default function VisaoGeral() {
         <ChartCard
           title="Top 10 corretores"
           subtitle="Ranking por total de leads no período."
-          loading={corretorQ.isLoading}
+          loading={corretorQ.isPending || corretorQ.isFetching}
           error={corretorQ.isError ? "Erro ao carregar o ranking de corretores." : null}
           isEmpty={corretorData.length === 0}
         >
@@ -131,7 +131,7 @@ export default function VisaoGeral() {
       <ChartCard
         title="Heatmap ano × mês"
         subtitle="Volume de leads por mês, todos os anos importados."
-        loading={heatmapQ.isLoading}
+        loading={heatmapQ.isPending || heatmapQ.isFetching}
         error={heatmapQ.isError ? "Erro ao carregar o heatmap." : null}
         isEmpty={!heatmapQ.data || heatmapQ.data.anos.length === 0}
         minBodyHeight={220}
