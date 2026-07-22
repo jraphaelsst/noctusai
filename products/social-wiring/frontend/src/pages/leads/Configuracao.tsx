@@ -7,8 +7,9 @@
  * other's shape per §5.2 ("mirrors the source-alias endpoints").
  */
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { Skeleton, TableSkeleton } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -76,9 +77,12 @@ function emptySourceForm(): LeadSourceInput {
 // ─── Sources ─────────────────────────────────────────────────────────────────
 
 function OrigensConfig() {
-  const { data: sources } = useLeadSources();
-  const { data: aliases } = useLeadSourceAliases();
-  const { data: unmapped } = useLeadSourceUnmapped();
+  const sourcesQ = useLeadSources();
+  const aliasesQ = useLeadSourceAliases();
+  const unmappedQ = useLeadSourceUnmapped();
+  const sources = sourcesQ.data ?? [];
+  const aliases = aliasesQ.data ?? [];
+  const unmapped = unmappedQ.data ?? [];
   const { create, update, remove } = useLeadSourceMutations();
   const { upsert, remove: removeAlias } = useLeadSourceAliasMutations();
 
@@ -161,48 +165,72 @@ function OrigensConfig() {
         </Button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border" data-testid="sources-table">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/50 text-left text-muted-foreground">
-              <th className="px-3 py-2">Label</th>
-              <th className="px-3 py-2">Categoria</th>
-              <th className="px-3 py-2">Ordem</th>
-              <th className="px-3 py-2">Ativo</th>
-              <th className="px-3 py-2 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(sources ?? []).map((s) => (
-              <tr key={s.id} className="border-b last:border-0" data-testid={`source-row-${s.id}`}>
-                <td className="px-3 py-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    {s.cor && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.cor }} />}
-                    {s.label}
-                  </span>
-                </td>
-                <td className="px-3 py-2">{s.categoria}</td>
-                <td className="px-3 py-2">{s.ordem}</td>
-                <td className="px-3 py-2">
-                  <Badge variant={s.ativo ? "default" : "outline"}>{s.ativo ? "Ativo" : "Inativo"}</Badge>
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(s)} data-testid={`source-edit-${s.id}`}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteTarget(s)}
-                    data-testid={`source-delete-${s.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </td>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        {sourcesQ.isPending && (
+          <div className="p-4" data-testid="sources-loading">
+            <TableSkeleton rows={5} columns={5} />
+          </div>
+        )}
+        {sourcesQ.isError && (
+          <div
+            className="flex flex-wrap items-center gap-2 p-4 text-sm text-destructive"
+            data-testid="sources-error"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Erro ao carregar origens.
+            <Button size="sm" variant="outline" onClick={() => sourcesQ.refetch()}>
+              Tentar novamente
+            </Button>
+          </div>
+        )}
+        {!sourcesQ.isPending && !sourcesQ.isFetching && !sourcesQ.isError && sources.length === 0 && (
+          <div className="p-4 text-center text-sm text-muted-foreground" data-testid="sources-empty">
+            Nenhuma origem cadastrada ainda. Clique em "Nova origem" para começar.
+          </div>
+        )}
+        {!sourcesQ.isPending && !sourcesQ.isError && sources.length > 0 && (
+          <table className="w-full text-sm" data-testid="sources-table">
+            <thead>
+              <tr className="border-b bg-muted/50 text-left text-muted-foreground">
+                <th className="px-3 py-2">Label</th>
+                <th className="px-3 py-2">Categoria</th>
+                <th className="px-3 py-2">Ordem</th>
+                <th className="px-3 py-2">Ativo</th>
+                <th className="px-3 py-2 text-right">Ações</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sources.map((s) => (
+                <tr key={s.id} className="border-b last:border-0" data-testid={`source-row-${s.id}`}>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      {s.cor && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.cor }} />}
+                      {s.label}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">{s.categoria}</td>
+                  <td className="px-3 py-2">{s.ordem}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={s.ativo ? "default" : "outline"}>{s.ativo ? "Ativo" : "Inativo"}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <Button variant="ghost" size="icon" onClick={() => openEdit(s)} data-testid={`source-edit-${s.id}`}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setDeleteTarget(s)}
+                      data-testid={`source-delete-${s.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="rounded-lg border border-border p-4">
@@ -249,70 +277,129 @@ function OrigensConfig() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5" data-testid="aliases-list">
-          {(aliases ?? []).map((a) => (
-            <span
-              key={a.id}
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs"
-            >
-              {a.alias} → {sources?.find((s) => s.id === a.source_id)?.label ?? a.source_id}
-              <button
-                type="button"
-                onClick={() => removeAlias.mutate(a.id)}
-                aria-label={`Remover alias ${a.alias}`}
-                className="ml-0.5 rounded-full hover:text-destructive"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-
-        {(unmapped ?? []).length > 0 && (
-          <div className="mt-3 border-t border-dashed border-border pt-3" data-testid="sources-unmapped-queue">
-            <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
-              Não mapeados ({unmapped?.length})
-            </p>
-            <div className="space-y-1.5">
-              {(unmapped ?? []).map((u) => (
-                <div key={u.alias} className="flex items-center gap-2 text-sm">
-                  <span className="w-48 truncate" title={u.alias}>
-                    {u.alias}
-                  </span>
-                  <span className="text-xs text-muted-foreground">({u.count})</span>
-                  <Select
-                    value={mapTarget[u.alias] ?? ""}
-                    onValueChange={(v) => setMapTarget({ ...mapTarget, [u.alias]: v })}
-                  >
-                    <SelectTrigger className="h-8 w-44 text-xs">
-                      <SelectValue placeholder="Mapear para..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(sources ?? []).map((s) => (
-                        <SelectItem key={s.id} value={s.id}>
-                          {s.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!mapTarget[u.alias]}
-                    onClick={() =>
-                      upsert.mutate(
-                        { alias: u.alias, source_id: mapTarget[u.alias] },
-                        { onSuccess: () => toast.success("Alias mapeado.") },
-                      )
-                    }
-                  >
-                    Mapear
-                  </Button>
-                </div>
-              ))}
-            </div>
+        {aliasesQ.isPending && (
+          <div className="flex flex-wrap gap-1.5" data-testid="aliases-loading">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} height={22} width={104} rounded="full" announce={i === 0} />
+            ))}
           </div>
         )}
+        {aliasesQ.isError && (
+          <p className="flex items-center gap-1.5 text-xs text-destructive" data-testid="aliases-error">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Erro ao carregar aliases.
+            <button
+              type="button"
+              onClick={() => aliasesQ.refetch()}
+              className="underline underline-offset-2 hover:text-destructive/80"
+            >
+              Tentar novamente
+            </button>
+          </p>
+        )}
+        {!aliasesQ.isPending && !aliasesQ.isFetching && !aliasesQ.isError && aliases.length === 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="aliases-empty">
+            Nenhum alias mapeado ainda.
+          </p>
+        )}
+        {!aliasesQ.isPending && !aliasesQ.isError && aliases.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" data-testid="aliases-list">
+            {aliases.map((a) => (
+              <span
+                key={a.id}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs"
+              >
+                {a.alias} → {sources.find((s) => s.id === a.source_id)?.label ?? a.source_id}
+                <button
+                  type="button"
+                  onClick={() => removeAlias.mutate(a.id)}
+                  aria-label={`Remover alias ${a.alias}`}
+                  className="ml-0.5 rounded-full hover:text-destructive"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 border-t border-dashed border-border pt-3">
+          {unmappedQ.isPending && (
+            <div data-testid="sources-unmapped-loading">
+              <Skeleton height={12} width={140} className="mb-2" />
+              <div className="space-y-1.5">
+                <Skeleton height={32} announce={false} />
+                <Skeleton height={32} announce={false} />
+              </div>
+            </div>
+          )}
+          {unmappedQ.isError && (
+            <div
+              className="flex flex-wrap items-center gap-2 text-xs text-destructive"
+              data-testid="sources-unmapped-error"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Erro ao carregar a fila de não mapeados.
+              <Button size="sm" variant="outline" onClick={() => unmappedQ.refetch()}>
+                Tentar novamente
+              </Button>
+            </div>
+          )}
+          {!unmappedQ.isPending && !unmappedQ.isFetching && !unmappedQ.isError && unmapped.length === 0 && (
+            <p
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+              data-testid="sources-unmapped-empty"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Tudo mapeado — nenhuma origem pendente.
+            </p>
+          )}
+          {!unmappedQ.isPending && !unmappedQ.isError && unmapped.length > 0 && (
+            <div data-testid="sources-unmapped-queue">
+              <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                Não mapeados ({unmapped.length})
+              </p>
+              <div className="space-y-1.5">
+                {unmapped.map((u) => (
+                  <div key={u.alias} className="flex items-center gap-2 text-sm">
+                    <span className="w-48 truncate" title={u.alias}>
+                      {u.alias}
+                    </span>
+                    <span className="text-xs text-muted-foreground">({u.count})</span>
+                    <Select
+                      value={mapTarget[u.alias] ?? ""}
+                      onValueChange={(v) => setMapTarget({ ...mapTarget, [u.alias]: v })}
+                    >
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue placeholder="Mapear para..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sources.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!mapTarget[u.alias]}
+                      onClick={() =>
+                        upsert.mutate(
+                          { alias: u.alias, source_id: mapTarget[u.alias] },
+                          { onSuccess: () => toast.success("Alias mapeado.") },
+                        )
+                      }
+                    >
+                      Mapear
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
@@ -431,9 +518,12 @@ function emptyCorretorForm(): LeadCorretorInput {
 }
 
 function CorretoresConfig() {
-  const { data: corretores } = useLeadCorretores();
-  const { data: aliases } = useLeadCorretorAliases();
-  const { data: unmapped } = useLeadCorretorUnmapped();
+  const corretoresQ = useLeadCorretores();
+  const aliasesQ = useLeadCorretorAliases();
+  const unmappedQ = useLeadCorretorUnmapped();
+  const corretores = corretoresQ.data ?? [];
+  const aliases = aliasesQ.data ?? [];
+  const unmapped = unmappedQ.data ?? [];
   const { create, update, remove } = useLeadCorretorMutations();
   const { upsert, remove: removeAlias } = useLeadCorretorAliasMutations();
 
@@ -509,46 +599,70 @@ function CorretoresConfig() {
         </Button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border" data-testid="corretores-table">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/50 text-left text-muted-foreground">
-              <th className="px-3 py-2">Nome</th>
-              <th className="px-3 py-2 text-right">Leads</th>
-              <th className="px-3 py-2">Ativo</th>
-              <th className="px-3 py-2 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(corretores ?? []).map((c) => (
-              <tr key={c.id} className="border-b last:border-0" data-testid={`corretor-row-${c.id}`}>
-                <td className="px-3 py-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    {c.cor && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.cor }} />}
-                    {c.nome}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums">{c.lead_count}</td>
-                <td className="px-3 py-2">
-                  <Badge variant={c.ativo ? "default" : "outline"}>{c.ativo ? "Ativo" : "Inativo"}</Badge>
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(c)} data-testid={`corretor-edit-${c.id}`}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteTarget(c)}
-                    data-testid={`corretor-delete-${c.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </td>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        {corretoresQ.isPending && (
+          <div className="p-4" data-testid="corretores-loading">
+            <TableSkeleton rows={5} columns={4} />
+          </div>
+        )}
+        {corretoresQ.isError && (
+          <div
+            className="flex flex-wrap items-center gap-2 p-4 text-sm text-destructive"
+            data-testid="corretores-error"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Erro ao carregar corretores.
+            <Button size="sm" variant="outline" onClick={() => corretoresQ.refetch()}>
+              Tentar novamente
+            </Button>
+          </div>
+        )}
+        {!corretoresQ.isPending && !corretoresQ.isFetching && !corretoresQ.isError && corretores.length === 0 && (
+          <div className="p-4 text-center text-sm text-muted-foreground" data-testid="corretores-empty">
+            Nenhum corretor cadastrado ainda. Clique em "Novo corretor" para começar.
+          </div>
+        )}
+        {!corretoresQ.isPending && !corretoresQ.isError && corretores.length > 0 && (
+          <table className="w-full text-sm" data-testid="corretores-table">
+            <thead>
+              <tr className="border-b bg-muted/50 text-left text-muted-foreground">
+                <th className="px-3 py-2">Nome</th>
+                <th className="px-3 py-2 text-right">Leads</th>
+                <th className="px-3 py-2">Ativo</th>
+                <th className="px-3 py-2 text-right">Ações</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {corretores.map((c) => (
+                <tr key={c.id} className="border-b last:border-0" data-testid={`corretor-row-${c.id}`}>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      {c.cor && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.cor }} />}
+                      {c.nome}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{c.lead_count}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={c.ativo ? "default" : "outline"}>{c.ativo ? "Ativo" : "Inativo"}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <Button variant="ghost" size="icon" onClick={() => openEdit(c)} data-testid={`corretor-edit-${c.id}`}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setDeleteTarget(c)}
+                      data-testid={`corretor-delete-${c.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="rounded-lg border border-border p-4">
@@ -594,70 +708,129 @@ function CorretoresConfig() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {(aliases ?? []).map((a) => (
-            <span
-              key={a.id}
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs"
-            >
-              {a.alias} → {corretores?.find((c) => c.id === a.corretor_id)?.nome ?? a.corretor_id}
-              <button
-                type="button"
-                onClick={() => removeAlias.mutate(a.id)}
-                aria-label={`Remover alias ${a.alias}`}
-                className="ml-0.5 rounded-full hover:text-destructive"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-
-        {(unmapped ?? []).length > 0 && (
-          <div className="mt-3 border-t border-dashed border-border pt-3" data-testid="corretores-unmapped-queue">
-            <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
-              Não mapeados ({unmapped?.length})
-            </p>
-            <div className="space-y-1.5">
-              {(unmapped ?? []).map((u) => (
-                <div key={u.alias} className="flex items-center gap-2 text-sm">
-                  <span className="w-48 truncate" title={u.alias}>
-                    {u.alias}
-                  </span>
-                  <span className="text-xs text-muted-foreground">({u.count})</span>
-                  <Select
-                    value={mapTarget[u.alias] ?? ""}
-                    onValueChange={(v) => setMapTarget({ ...mapTarget, [u.alias]: v })}
-                  >
-                    <SelectTrigger className="h-8 w-44 text-xs">
-                      <SelectValue placeholder="Mapear para..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(corretores ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.nome}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!mapTarget[u.alias]}
-                    onClick={() =>
-                      upsert.mutate(
-                        { alias: u.alias, corretor_id: mapTarget[u.alias] },
-                        { onSuccess: () => toast.success("Alias mapeado.") },
-                      )
-                    }
-                  >
-                    Mapear
-                  </Button>
-                </div>
-              ))}
-            </div>
+        {aliasesQ.isPending && (
+          <div className="flex flex-wrap gap-1.5" data-testid="corretor-aliases-loading">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} height={22} width={104} rounded="full" announce={i === 0} />
+            ))}
           </div>
         )}
+        {aliasesQ.isError && (
+          <p className="flex items-center gap-1.5 text-xs text-destructive" data-testid="corretor-aliases-error">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Erro ao carregar aliases.
+            <button
+              type="button"
+              onClick={() => aliasesQ.refetch()}
+              className="underline underline-offset-2 hover:text-destructive/80"
+            >
+              Tentar novamente
+            </button>
+          </p>
+        )}
+        {!aliasesQ.isPending && !aliasesQ.isFetching && !aliasesQ.isError && aliases.length === 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="corretor-aliases-empty">
+            Nenhum alias mapeado ainda.
+          </p>
+        )}
+        {!aliasesQ.isPending && !aliasesQ.isError && aliases.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" data-testid="corretor-aliases-list">
+            {aliases.map((a) => (
+              <span
+                key={a.id}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs"
+              >
+                {a.alias} → {corretores.find((c) => c.id === a.corretor_id)?.nome ?? a.corretor_id}
+                <button
+                  type="button"
+                  onClick={() => removeAlias.mutate(a.id)}
+                  aria-label={`Remover alias ${a.alias}`}
+                  className="ml-0.5 rounded-full hover:text-destructive"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 border-t border-dashed border-border pt-3">
+          {unmappedQ.isPending && (
+            <div data-testid="corretores-unmapped-loading">
+              <Skeleton height={12} width={140} className="mb-2" />
+              <div className="space-y-1.5">
+                <Skeleton height={32} announce={false} />
+                <Skeleton height={32} announce={false} />
+              </div>
+            </div>
+          )}
+          {unmappedQ.isError && (
+            <div
+              className="flex flex-wrap items-center gap-2 text-xs text-destructive"
+              data-testid="corretores-unmapped-error"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Erro ao carregar a fila de não mapeados.
+              <Button size="sm" variant="outline" onClick={() => unmappedQ.refetch()}>
+                Tentar novamente
+              </Button>
+            </div>
+          )}
+          {!unmappedQ.isPending && !unmappedQ.isFetching && !unmappedQ.isError && unmapped.length === 0 && (
+            <p
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+              data-testid="corretores-unmapped-empty"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Tudo mapeado — nenhum corretor pendente.
+            </p>
+          )}
+          {!unmappedQ.isPending && !unmappedQ.isError && unmapped.length > 0 && (
+            <div data-testid="corretores-unmapped-queue">
+              <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                Não mapeados ({unmapped.length})
+              </p>
+              <div className="space-y-1.5">
+                {unmapped.map((u) => (
+                  <div key={u.alias} className="flex items-center gap-2 text-sm">
+                    <span className="w-48 truncate" title={u.alias}>
+                      {u.alias}
+                    </span>
+                    <span className="text-xs text-muted-foreground">({u.count})</span>
+                    <Select
+                      value={mapTarget[u.alias] ?? ""}
+                      onValueChange={(v) => setMapTarget({ ...mapTarget, [u.alias]: v })}
+                    >
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue placeholder="Mapear para..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {corretores.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!mapTarget[u.alias]}
+                      onClick={() =>
+                        upsert.mutate(
+                          { alias: u.alias, corretor_id: mapTarget[u.alias] },
+                          { onSuccess: () => toast.success("Alias mapeado.") },
+                        )
+                      }
+                    >
+                      Mapear
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

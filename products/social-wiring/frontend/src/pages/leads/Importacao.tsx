@@ -35,7 +35,13 @@ export default function Importacao() {
   const commit = useLeadImportCommit();
   const batchesQ = useLeadImportBatches({ page: 1, pageSize: 20 });
 
+  // A mutation in flight (preview parse OR commit write) — the dropzone and
+  // commit button both gate on this so a user can never swap in a new file
+  // (or double-fire commit) while a request is still resolving.
+  const busy = preview.isPending || commit.isPending;
+
   function pickFile(f: File | null) {
+    if (busy) return;
     if (!f) return;
     if (!f.name.toLowerCase().endsWith(".xlsx")) {
       toast.error("Envie um arquivo .xlsx.");
@@ -77,21 +83,23 @@ export default function Importacao() {
         <CardContent className="space-y-4">
           <div
             role="button"
-            tabIndex={0}
-            onClick={() => inputRef.current?.click()}
+            aria-disabled={busy}
+            tabIndex={busy ? -1 : 0}
+            onClick={() => !busy && inputRef.current?.click()}
             onDragOver={(e) => {
               e.preventDefault();
-              setDragActive(true);
+              if (!busy) setDragActive(true);
             }}
             onDragLeave={() => setDragActive(false)}
             onDrop={(e) => {
               e.preventDefault();
               setDragActive(false);
+              if (busy) return;
               pickFile(e.dataTransfer.files?.[0] ?? null);
             }}
-            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-10 text-center transition-colors ${
-              dragActive ? "border-primary bg-primary/5" : "border-border"
-            }`}
+            className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-10 text-center transition-colors ${
+              busy ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+            } ${dragActive ? "border-primary bg-primary/5" : "border-border"}`}
             data-testid="leads-import-dropzone"
           >
             <Upload className="h-8 w-8 text-muted-foreground" />
@@ -106,6 +114,7 @@ export default function Importacao() {
               ref={inputRef}
               type="file"
               accept=".xlsx"
+              disabled={busy}
               className="hidden"
               onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
               data-testid="leads-import-file-input"

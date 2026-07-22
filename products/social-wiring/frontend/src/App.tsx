@@ -26,6 +26,7 @@
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
+import { useSocialWiringLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
 import {
@@ -186,6 +187,7 @@ const Layout = createProductLayout({
   navGroupsFallback: NAV_FALLBACK,
   ...infra.appConfig,
   NotificationBell: infra.NotificationBell,
+  useLayoutEnrichment: useSocialWiringLayoutEnrichment,
 });
 
 export default createProductApp({
