@@ -9,10 +9,16 @@ with 5,000 likes returns ~80 bytes instead of ~200KB).
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from noctusai_lib.integrations.meta.types import (
+    Ad,
+    AdAccount,
+    AdActivity,
+    AdInsightsRow,
+    AdSet,
     Conversation,
     DirectMessage,
     FacebookComment,
@@ -452,6 +458,202 @@ def direct_message_from_body(
     )
 
 
+# ─── Ads-read body → dataclass mappers ─────────────────────────────────────
+
+
+def _safe_int(value: Any) -> int | None:
+    """Best-effort int coercion for Graph numeric-as-string fields
+    (`daily_budget`, …). Returns `None` rather than raising or
+    silently defaulting to 0 — a missing budget is not the same fact
+    as a zero budget."""
+
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def ad_account_from_body(body: dict[str, Any]) -> AdAccount:
+    """Map one row of `GET me/adaccounts` to `AdAccount`.
+
+    Strips the `act_` prefix Graph returns on `id` — see `AdAccount`'s
+    docstring for why (bare-id convention every other
+    `ad_account_id`-consuming method in this module expects)."""
+
+    raw_id = str(body.get("id") or "")
+    bare_id = raw_id[4:] if raw_id.startswith("act_") else raw_id
+    return AdAccount(
+        id=bare_id,
+        name=body.get("name"),
+        currency=body.get("currency"),
+        timezone_name=body.get("timezone_name"),
+        amount_spent=body.get("amount_spent"),
+        balance=body.get("balance"),
+        spend_cap=body.get("spend_cap"),
+        account_status=_safe_int(body.get("account_status")),
+    )
+
+
+def ad_set_from_body(body: dict[str, Any]) -> AdSet:
+    """Map one row of `GET act_{id}/adsets` to `AdSet`. `daily_budget`
+    arrives as a Graph numeric-as-string field; coerced via
+    `_safe_int` (`None` on a missing/unparseable value, never a
+    silent 0)."""
+
+    return AdSet(
+        id=str(body["id"]),
+        name=body.get("name"),
+        status=body.get("status"),
+        effective_status=body.get("effective_status"),
+        campaign_id=body.get("campaign_id"),
+        daily_budget=_safe_int(body.get("daily_budget")),
+        billing_event=body.get("billing_event"),
+        optimization_goal=body.get("optimization_goal"),
+        targeting=dict(body.get("targeting") or {}),
+    )
+
+
+def ad_from_body(body: dict[str, Any]) -> Ad:
+    """Map one row of `GET act_{id}/ads` to `Ad`. `creative` is the
+    nested `creative{id,thumbnail_url,object_story_spec}` expansion
+    `list_ads` requests — flattened here onto `creative_id` /
+    `creative_thumbnail_url` / `creative_object_story_spec`."""
+
+    creative = body.get("creative")
+    creative = creative if isinstance(creative, dict) else {}
+    return Ad(
+        id=str(body["id"]),
+        name=body.get("name"),
+        status=body.get("status"),
+        effective_status=body.get("effective_status"),
+        adset_id=body.get("adset_id"),
+        creative_id=creative.get("id"),
+        creative_thumbnail_url=creative.get("thumbnail_url"),
+        creative_object_story_spec=dict(
+            creative.get("object_story_spec") or {}
+        ),
+    )
+
+
+def _actions_to_metrics(actions: Any) -> dict[str, float]:
+    """Fold Graph's `actions` / `action_values` shape — a list of
+    `{"action_type": str, "value": str}` rows — into a
+    `{action_type: float}` map.
+
+    THE fix for gap #4: the old single-row flatten tried
+    `float(row["actions"])` directly on the raw list, which always
+    raises `TypeError` and was silently `continue`d past — every
+    conversion metric vanished with no error. This function instead
+    walks the list and converts each row's own `value`."""
+
+    result: dict[str, float] = {}
+    if not isinstance(actions, list):
+        return result
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        action_type = item.get("action_type")
+        if not action_type:
+            continue
+        try:
+            result[str(action_type)] = float(item.get("value"))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def ad_insights_row_from_body(
+    row: dict[str, Any], *, breakdown_keys: list[str] | None = None
+) -> AdInsightsRow:
+    """Map ONE row of `GET /{object-id}/insights` `data` to
+    `AdInsightsRow` — the per-row twin of `insights_from_body` above,
+    used by `ad_insights_series` to preserve every row (not just the
+    first, see `AdInsightsRow`'s docstring).
+
+    `breakdown_keys` — the `breakdowns` dimension names the caller
+    requested (e.g. `["publisher_platform"]`) — are pulled off the row
+    into `breakdown` rather than left to fall into `metrics` (their
+    values are dimension labels, e.g. `"instagram"`, not numbers, so a
+    plain `float()` flatten would silently drop them anyway; here
+    they're explicitly preserved instead)."""
+
+    if not isinstance(row, dict):
+        row = {}
+    breakdown_names = set(breakdown_keys or [])
+    breakdown = {k: row[k] for k in breakdown_names if k in row}
+    excluded = breakdown_names | {
+        "date_start", "date_stop", "actions", "action_values",
+    }
+    metrics: dict[str, float] = {}
+    for key, val in row.items():
+        if key in excluded:
+            continue
+        try:
+            metrics[key] = float(val)
+        except (TypeError, ValueError):
+            continue
+    return AdInsightsRow(
+        date_start=row.get("date_start"),
+        date_stop=row.get("date_stop"),
+        breakdown=breakdown,
+        metrics=metrics,
+        actions=_actions_to_metrics(row.get("actions")),
+        action_values=_actions_to_metrics(row.get("action_values")),
+        raw=dict(row),
+    )
+
+
+def ad_activity_from_body(body: dict[str, Any]) -> AdActivity:
+    """Map one row of `GET act_{id}/activities` to `AdActivity`.
+
+    `extra_data` arrives as a JSON-ENCODED STRING (not a nested
+    object) on the live edge; parsed here and, when it carries an
+    `old_value`/`new_value` pair (status-flip / budget-change event
+    types), those are lifted onto the typed fields — see
+    `AdActivity`'s docstring for why other event types leave them
+    `None` while still preserving the parsed dict on `raw`.
+
+    `id` — Graph does not return a stable row id on this edge (it's
+    an audit log, not a Graph node); a locally-synthesized composite
+    key is used instead. See `AdActivity`'s docstring — this is
+    asserted from documentation, not confirmed live (`ads_read` not
+    yet granted)."""
+
+    extra_raw = body.get("extra_data")
+    extra: dict[str, Any] = {}
+    if isinstance(extra_raw, str) and extra_raw:
+        try:
+            parsed = json.loads(extra_raw)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            extra = parsed
+    elif isinstance(extra_raw, dict):
+        extra = extra_raw
+
+    row_id = body.get("id")
+    if not row_id:
+        row_id = (
+            f"{body.get('object_id')}:{body.get('event_time')}:"
+            f"{body.get('event_type')}"
+        )
+
+    return AdActivity(
+        id=str(row_id),
+        object_id=body.get("object_id"),
+        object_level=body.get("object_type"),
+        event_type=body.get("event_type") or body.get("translated_event_type"),
+        occurred_at=parse_graph_datetime(body.get("event_time")),
+        actor_name=body.get("actor_name"),
+        actor_id=body.get("actor_id"),
+        old_value=extra.get("old_value"),
+        new_value=extra.get("new_value"),
+        raw=dict(body),
+    )
+
+
 __all__ = [
     "FB_COMMENT_FIELDS",
     "IG_ACCOUNT_FIELDS",
@@ -467,6 +669,11 @@ __all__ = [
     "PAGE_INSIGHT_METRICS",
     "POST_FIELDS",
     "POST_INSIGHT_METRICS",
+    "ad_account_from_body",
+    "ad_activity_from_body",
+    "ad_from_body",
+    "ad_insights_row_from_body",
+    "ad_set_from_body",
     "conversation_from_body",
     "direct_message_from_body",
     "facebook_comment_from_body",

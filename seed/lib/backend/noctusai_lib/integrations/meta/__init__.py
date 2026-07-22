@@ -12,17 +12,20 @@ account). Sibling to `google_calendar/`, `google_maps/`,
 - Value objects: `FacebookPage`, `InstagramAccount`, `FacebookPost`,
   `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`,
   `PublishedPost`, `PublishedMedia`, `MediaProcessingStatus`,
-  `AdCampaign`, `AdInsights`, `InstagramComment`, `FacebookComment`,
-  `Conversation`, `DirectMessage`.
-- Contract: `MetaAdapter` (Protocol) — read surface + write/ads
-  surface (publish FB post / IG media / IG carousel / IG Reel /
-  FB video+Reel / list ad campaigns / ad insights) + comments/DMs/
-  Stories surface (IG comment list/reply/hide/delete, IG Direct
-  conversations/messages/send, IG Stories publish, FB comment
-  list/reply/hide/delete). Video / Reel publish uses the asynchronous
-  resumable-upload + processing-status poll contract
-  (`poll_media_status`), distinct from the synchronous image flow but
-  with the same typed error model.
+  `AdCampaign`, `AdAccount`, `AdSet`, `Ad`, `AdCreative`, `AdInsights`,
+  `AdInsightsRow`, `AdInsightsSeries`, `AdActivity`, `InstagramComment`,
+  `FacebookComment`, `Conversation`, `DirectMessage`.
+- Contract: `MetaAdapter` (Protocol) — read surface + ads-read surface
+  (list ad accounts/campaigns/sets/ads, multi-row `ad_insights_series`
+  with `actions`/`action_values` conversion metrics, ad-account change
+  log via `list_activities`) + write/ads surface (publish FB post / IG
+  media / IG carousel / IG Reel / FB video+Reel / ads-management
+  create/update graph) + comments/DMs/Stories surface (IG comment
+  list/reply/hide/delete, IG Direct conversations/messages/send, IG
+  Stories publish, FB comment list/reply/hide/delete). Video / Reel
+  publish uses the asynchronous resumable-upload + processing-status
+  poll contract (`poll_media_status`), distinct from the synchronous
+  image flow but with the same typed error model.
 - `FakeMetaAdapter` — deterministic in-memory; dev/test default.
 - `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
   (production; required for Business-Portfolio-owned assets) →
@@ -94,6 +97,11 @@ from noctusai_lib.integrations.meta.instagram_login_adapter import (
     InstagramLoginOAuthAdapter,
 )
 from noctusai_lib.integrations.meta.mappers import (
+    ad_account_from_body,
+    ad_activity_from_body,
+    ad_from_body,
+    ad_insights_row_from_body,
+    ad_set_from_body,
     conversation_from_body,
     direct_message_from_body,
     facebook_comment_from_body,
@@ -107,8 +115,19 @@ from noctusai_lib.integrations.meta.mappers import (
 )
 from noctusai_lib.integrations.meta.router import make_meta_router
 from noctusai_lib.integrations.meta.types import (
+    Ad,
+    AdAccount,
+    AdActivity,
     AdCampaign,
+    AdCreative,
+    AdCreativeSpec,
     AdInsights,
+    AdInsightsRow,
+    AdInsightsSeries,
+    AdSet,
+    AdSetSpec,
+    AdSpec,
+    CampaignSpec,
     Conversation,
     DirectMessage,
     FacebookComment,
@@ -179,8 +198,19 @@ def get_meta_adapter(
 
 
 __all__ = [
+    "Ad",
+    "AdAccount",
+    "AdActivity",
     "AdCampaign",
+    "AdCreative",
+    "AdCreativeSpec",
     "AdInsights",
+    "AdInsightsRow",
+    "AdInsightsSeries",
+    "AdSet",
+    "AdSetSpec",
+    "AdSpec",
+    "CampaignSpec",
     "Conversation",
     "DirectMessage",
     "FacebookComment",
@@ -208,6 +238,11 @@ __all__ = [
     "PublishedMedia",
     "PublishedPost",
     "TokenBundle",
+    "ad_account_from_body",
+    "ad_activity_from_body",
+    "ad_from_body",
+    "ad_insights_row_from_body",
+    "ad_set_from_body",
     "build_ig_authorize_url",
     "conversation_from_body",
     "direct_message_from_body",

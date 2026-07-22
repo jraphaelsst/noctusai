@@ -28,7 +28,7 @@ the carve-out. The factory picks `system_user` → `user_oauth` → Fake.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 
 
@@ -243,6 +243,43 @@ class AdCampaign:
 
 
 @dataclass(frozen=True)
+class AdAccount:
+    """A Marketing-API ad account the authenticated identity can
+    access.
+
+    `me/adaccounts` returns id / name / currency / timezone_name /
+    amount_spent / balance / spend_cap / account_status. Reading
+    accounts needs the `ads_read` scope (App-Review-gated for
+    production) — the same gate `list_ad_campaigns` uses; there is no
+    separate discovery-specific scope.
+
+    `id` is the BARE account id, WITHOUT the `act_` prefix. Graph's
+    `me/adaccounts` edge returns `id` already prefixed (`act_123456`);
+    `list_ad_accounts` strips it so `AdAccount.id` matches the bare-id
+    convention every other `ad_account_id`-consuming method in this
+    module expects — each of them re-adds the `act_` prefix
+    internally (see `list_ad_campaigns`, `list_ad_sets`, `list_ads`).
+    `amount_spent` / `balance` / `spend_cap` are kept as Graph's raw
+    decimal STRINGS (minor-currency-unit values) rather than coerced
+    to float/int — an unconditional numeric coercion risks precision
+    loss on large accounts and Graph does not document the value as a
+    plain integer. `account_status` is Graph's numeric account-status
+    enum, kept as the raw int rather than mapped to a name here (Meta
+    has extended this enum over time; a stale local name-map would
+    silently misreport a newly-added status) — consult Meta's Ad
+    Account Status enum docs to interpret the value."""
+
+    id: str
+    name: str | None = None
+    currency: str | None = None
+    timezone_name: str | None = None
+    amount_spent: str | None = None
+    balance: str | None = None
+    spend_cap: str | None = None
+    account_status: int | None = None
+
+
+@dataclass(frozen=True)
 class AdInsights:
     """Flattened ad-insights metrics for an object (campaign / adset /
     ad / ad-account).
@@ -251,12 +288,65 @@ class AdInsights:
     keyed by `level`; `metrics` flattens the first row's numeric
     fields (`impressions`, `reach`, `spend`, `clicks`, …) into a
     `{name: float}` map; `raw` keeps every row for consumers that need
-    the breakdown / time-range detail."""
+    the breakdown / time-range detail.
+
+    Kept AS-IS for back-compat — existing callers depend on the
+    first-row-only shape. `ad_insights_series` / `AdInsightsSeries`
+    below is the fixed multi-row / conversion-metrics-aware sibling;
+    prefer it for anything beyond a single-row account-total peek."""
 
     object_id: str
     level: str
     metrics: dict[str, float] = field(default_factory=dict)
     raw: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AdInsightsRow:
+    """One row of an ad-insights TIME SERIES (`AdInsightsSeries.rows`).
+
+    Distinct from `AdInsights.metrics` (which flattens only the FIRST
+    row of a `/insights` response — kept as-is there for back-compat).
+    `date_start`/`date_stop` are Graph's per-row window bounds
+    (present whenever `time_increment` splits the pull into daily /
+    monthly slices). `breakdown` holds the requested `breakdowns`
+    dimension values for THIS row (e.g.
+    `{"publisher_platform": "instagram"}`) when the series was
+    requested with `breakdowns=[...]`; empty otherwise. `metrics`
+    flattens the plain numeric fields (excludes `actions` /
+    `action_values`, parsed separately below, and excludes whatever
+    keys `breakdown` already claimed).
+
+    `actions`/`action_values` are Graph's conversion-metrics edges —
+    each a list of `{"action_type": str, "value": str}` rows, folded
+    here into `{action_type: float}` maps. This exists BECAUSE the
+    old single-row flatten (`float(val)` inside a bare
+    `except (TypeError, ValueError): continue`) silently dropped BOTH
+    fields entirely — a list value never survives `float()`, so every
+    conversion metric vanished with no error, no log, nothing. `raw`
+    keeps the untouched row for anything this mapper doesn't model."""
+
+    date_start: str | None = None
+    date_stop: str | None = None
+    breakdown: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
+    actions: dict[str, float] = field(default_factory=dict)
+    action_values: dict[str, float] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdInsightsSeries:
+    """The full multi-row result of `ad_insights_series(...)` — EVERY
+    row Graph returned, not just the first (see `AdInsightsRow` for
+    why `AdInsights.metrics` alone is insufficient for a time-series
+    pull). A 12-month `time_increment=1` daily pull returns up to
+    ~365 `rows`; the adapter follows `paging.next` to collect all of
+    them — a single Graph page is not guaranteed to hold that many."""
+
+    object_id: str
+    level: str
+    rows: list[AdInsightsRow] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -321,7 +411,15 @@ class Ad:
 
     `act_{ad_account_id}/ads` returns id / name / status /
     effective_status plus the parent `adset_id` and the
-    `creative_id` it renders. Created/updated under `ads_management`."""
+    `creative_id` it renders. Created/updated under `ads_management`.
+
+    `creative_thumbnail_url` / `creative_object_story_spec` are
+    populated by the READ surface (`list_ads`), which requests a
+    nested `creative{id,thumbnail_url,object_story_spec}` expansion so
+    a UI can render a thumbnail without a second round-trip per ad;
+    the ads-*management* write surface (`create_ad`) leaves them at
+    their `None` / `{}` defaults since Graph's ad-creation response
+    doesn't expand the creative it just bound."""
 
     id: str
     name: str | None = None
@@ -329,6 +427,48 @@ class Ad:
     effective_status: str | None = None
     adset_id: str | None = None
     creative_id: str | None = None
+    creative_thumbnail_url: str | None = None
+    creative_object_story_spec: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdActivity:
+    """One row of an ad account's change log (`act_{id}/activities`)
+    — the intra-day status-flip history a daily insights snapshot
+    cannot see (an operator activating → pausing → reactivating a
+    campaign within one calendar day is only visible here).
+
+    Meta's Activities edge is an audit log, not a first-class Graph
+    node — Graph does NOT return a stable per-row `id` on this edge
+    (unlike campaigns/adsets/ads). `id` here is therefore a LOCALLY
+    SYNTHESIZED composite key (`{object_id}:{event_time}:{event_type}`),
+    useful only as a caller-side dict/dedup key — it is NOT a Graph
+    object id and is not guaranteed stable across a Graph API version
+    change. This is asserted from Meta's public Marketing API
+    documentation, NOT confirmed against a live token (`ads_read` is
+    not yet granted for this app — roadmap trigger T1); reconcile
+    against a live pull once available.
+
+    `object_level` mirrors Graph's `object_type` field (e.g.
+    `"campaign"` / `"ad_set"` / `"ad"`). `event_type` is Graph's raw
+    event-type string. `old_value`/`new_value` are populated only for
+    event types whose `extra_data` payload carries a before/after pair
+    (status flips, budget changes); many other event types carry a
+    different `extra_data` shape, which is preserved verbatim on `raw`
+    even when `old_value`/`new_value` are `None`. `occurred_at` is
+    Graph's `event_time`, parsed into a tz-aware datetime — this is
+    the field that carries the intra-day fidelity."""
+
+    id: str
+    object_id: str | None = None
+    object_level: str | None = None
+    event_type: str | None = None
+    occurred_at: datetime | None = None
+    actor_name: str | None = None
+    actor_id: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -586,6 +726,36 @@ class MetaAdapter(Protocol):
         level: str,
         date_preset: str | None = None,
     ) -> AdInsights: ...
+
+    # ─── Ads-read surface, W1 completion (additive — `list_ad_campaigns`
+    #    / `ad_insights` above unchanged) ────────────────────────────
+
+    def list_ad_accounts(self) -> list[AdAccount]: ...
+
+    def list_ad_sets(
+        self, ad_account_id: str, campaign_id: str | None = None
+    ) -> list[AdSet]: ...
+
+    def list_ads(
+        self, ad_account_id: str, adset_id: str | None = None
+    ) -> list[Ad]: ...
+
+    def ad_insights_series(
+        self,
+        object_id: str,
+        level: str,
+        *,
+        time_range: tuple[date, date] | None = None,
+        date_preset: str | None = None,
+        time_increment: int | str = 1,
+        breakdowns: list[str] | None = None,
+        action_attribution_windows: list[str] | None = None,
+        fields: list[str] | None = None,
+    ) -> AdInsightsSeries: ...
+
+    def list_activities(
+        self, ad_account_id: str, since: int, until: int
+    ) -> list[AdActivity]: ...
 
     # ─── Ads management surface (additive — read/insights/posting
     #    callers unaffected; distinct ``ads_management`` scope) ──────

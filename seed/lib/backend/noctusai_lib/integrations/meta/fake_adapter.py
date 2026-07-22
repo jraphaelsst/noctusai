@@ -18,10 +18,13 @@ from __future__ import annotations
 
 from noctusai_lib.integrations.meta.types import (
     Ad,
+    AdAccount,
+    AdActivity,
     AdCampaign,
     AdCreative,
     AdCreativeSpec,
     AdInsights,
+    AdInsightsSeries,
     AdSet,
     AdSetSpec,
     AdSpec,
@@ -62,6 +65,14 @@ class FakeMetaAdapter:
         self.published_media: list[PublishedMedia] = []
         self._ad_campaigns_by_account: dict[str, list[AdCampaign]] = {}
         self._ad_insights: dict[str, AdInsights] = {}
+        # Ads-read surface, W1 completion — seedable state, same
+        # "deterministic, never raises the App-Review gate" posture as
+        # the ads-read/-management recorders above.
+        self._ad_accounts: list[AdAccount] = []
+        self._ad_sets_by_account: dict[str, list[AdSet]] = {}
+        self._ads_by_account: dict[str, list[Ad]] = {}
+        self._ad_insights_series: dict[str, AdInsightsSeries] = {}
+        self._activities_by_account: dict[str, list[AdActivity]] = {}
         self._post_seq = 0
         self._media_seq = 0
         # Ads-management recorders — deterministic in-memory CRUD so
@@ -115,6 +126,11 @@ class FakeMetaAdapter:
         me: dict[str, str] | None = None,
         ad_campaigns_by_account: dict[str, list[AdCampaign]] | None = None,
         ad_insights: dict[str, AdInsights] | None = None,
+        ad_accounts: list[AdAccount] | None = None,
+        ad_sets_by_account: dict[str, list[AdSet]] | None = None,
+        ads_by_account: dict[str, list[Ad]] | None = None,
+        ad_insights_series: dict[str, AdInsightsSeries] | None = None,
+        activities_by_account: dict[str, list[AdActivity]] | None = None,
         ig_comments_by_media: dict[str, list[InstagramComment]] | None = None,
         fb_comments_by_post: dict[str, list[FacebookComment]] | None = None,
         conversations_by_page: dict[str, list[Conversation]] | None = None,
@@ -146,6 +162,22 @@ class FakeMetaAdapter:
             }
         if ad_insights is not None:
             self._ad_insights = dict(ad_insights)
+        if ad_accounts is not None:
+            self._ad_accounts = list(ad_accounts)
+        if ad_sets_by_account is not None:
+            self._ad_sets_by_account = {
+                k: list(v) for k, v in ad_sets_by_account.items()
+            }
+        if ads_by_account is not None:
+            self._ads_by_account = {
+                k: list(v) for k, v in ads_by_account.items()
+            }
+        if ad_insights_series is not None:
+            self._ad_insights_series = dict(ad_insights_series)
+        if activities_by_account is not None:
+            self._activities_by_account = {
+                k: list(v) for k, v in activities_by_account.items()
+            }
         if ig_comments_by_media is not None:
             self._ig_comments_by_media = {
                 k: list(v) for k, v in ig_comments_by_media.items()
@@ -383,6 +415,84 @@ class FakeMetaAdapter:
         return self._ad_insights.get(
             object_id, AdInsights(object_id=object_id, level=level)
         )
+
+    # ─── Ads-read surface, W1 completion (deterministic, seeded) ───────
+
+    def list_ad_accounts(self) -> list[AdAccount]:
+        return list(self._ad_accounts)
+
+    def list_ad_sets(
+        self, ad_account_id: str, campaign_id: str | None = None
+    ) -> list[AdSet]:
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        rows = list(
+            self._ad_sets_by_account.get(
+                acct, self._ad_sets_by_account.get(ad_account_id, [])
+            )
+        )
+        if campaign_id:
+            rows = [r for r in rows if r.campaign_id == campaign_id]
+        return rows
+
+    def list_ads(
+        self, ad_account_id: str, adset_id: str | None = None
+    ) -> list[Ad]:
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        rows = list(
+            self._ads_by_account.get(
+                acct, self._ads_by_account.get(ad_account_id, [])
+            )
+        )
+        if adset_id:
+            rows = [r for r in rows if r.adset_id == adset_id]
+        return rows
+
+    def ad_insights_series(
+        self,
+        object_id: str,
+        level: str,
+        *,
+        time_range=None,
+        date_preset: str | None = None,
+        time_increment: int | str = 1,
+        breakdowns: list[str] | None = None,
+        action_attribution_windows: list[str] | None = None,
+        fields: list[str] | None = None,
+    ) -> AdInsightsSeries:
+        # Deterministic: every filter/window arg is accepted for
+        # Protocol parity but ignored — same "seeded, not computed"
+        # posture as ad_insights / get_instagram_account_insights
+        # above. Serves whatever multi-row series was seeded for this
+        # object_id.
+        return self._ad_insights_series.get(
+            object_id, AdInsightsSeries(object_id=object_id, level=level)
+        )
+
+    def list_activities(
+        self, ad_account_id: str, since: int, until: int
+    ) -> list[AdActivity]:
+        # Deterministic: since/until accepted for Protocol parity but
+        # ignored — serves whatever activity sequence was seeded for
+        # this account (in seeded order — the Fake never reorders).
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        return list(
+            self._activities_by_account.get(
+                acct, self._activities_by_account.get(ad_account_id, [])
+            )
+        )
+
     def create_ad_campaign(self, ad_account_id, spec):
         self._camp_seq += 1
         camp = AdCampaign(

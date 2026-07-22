@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 from typing import Any
 
 from noctusai_lib.integrations.meta import _meta_api
@@ -64,6 +65,11 @@ from noctusai_lib.integrations.meta.mappers import (
     PAGE_INSIGHT_METRICS,
     POST_FIELDS,
     POST_INSIGHT_METRICS,
+    ad_account_from_body,
+    ad_activity_from_body,
+    ad_from_body,
+    ad_insights_row_from_body,
+    ad_set_from_body,
     conversation_from_body,
     direct_message_from_body,
     facebook_comment_from_body,
@@ -76,10 +82,13 @@ from noctusai_lib.integrations.meta.mappers import (
 )
 from noctusai_lib.integrations.meta.types import (
     Ad,
+    AdAccount,
+    AdActivity,
     AdCampaign,
     AdCreative,
     AdCreativeSpec,
     AdInsights,
+    AdInsightsSeries,
     AdSet,
     AdSetSpec,
     AdSpec,
@@ -101,10 +110,32 @@ from noctusai_lib.integrations.meta.types import (
 # Default ad-insights metric set — the common spend/delivery KPIs.
 # Graph rejects unknown fields, so this is a conservative core set.
 _AD_INSIGHT_FIELDS = "impressions,reach,spend,clicks,cpc,cpm,ctr"
+# `ad_insights_series`' default field set — adds `date_start`/`date_stop`
+# (needed once time_increment splits the pull into multiple rows) and
+# `actions`/`action_values` (the conversion metrics `_AD_INSIGHT_FIELDS`
+# above never requested — see `ad_insights_row_from_body`/gap #4).
+_AD_INSIGHTS_SERIES_FIELDS = (
+    "date_start,date_stop,impressions,reach,spend,clicks,cpc,cpm,ctr,"
+    "actions,action_values"
+)
 _AD_CAMPAIGN_FIELDS = "id,name,objective,status,effective_status"
 _AD_SET_FIELDS = (
     "id,name,status,effective_status,campaign_id,"
     "daily_budget,billing_event,optimization_goal,targeting"
+)
+_AD_ACCOUNT_FIELDS = (
+    "id,name,currency,timezone_name,amount_spent,balance,spend_cap,"
+    "account_status"
+)
+# Nested `creative{...}` expansion — enough for a UI thumbnail without a
+# second round-trip per ad (roadmap W1.3).
+_AD_FIELDS = (
+    "id,name,status,effective_status,adset_id,"
+    "creative{id,thumbnail_url,object_story_spec}"
+)
+_AD_ACTIVITY_FIELDS = (
+    "event_type,event_time,object_id,object_type,object_name,"
+    "actor_id,actor_name,translated_event_type,extra_data"
 )
 
 logger = logging.getLogger(__name__)
@@ -1006,6 +1037,246 @@ class MetaOAuthAdapter:
             metrics=metrics,
             raw=list(rows),
         )
+
+    # ─── Ads-read surface, W1 completion (additive — `list_ad_campaigns`
+    #    / `ad_insights` above unchanged) ────────────────────────────
+
+    def list_ad_accounts(self) -> list[AdAccount]:
+        """List the ad accounts the authenticated identity can access
+        (`me/adaccounts`) — the missing discovery path for
+        `ad_account_id` (every other ads-read/-management method
+        below takes it as a caller-supplied arg with no way to
+        enumerate it first).
+
+        **Production gate:** `ads_read` is App-Review-gated; absent it
+        Graph returns a permission error and `graph_paged` raises
+        `MetaGraphError` with `requires_app_review` true — never a
+        faked empty list. See `AdAccount` for the `act_`-prefix
+        normalization this method applies."""
+
+        rows = _meta_api.graph_paged(
+            "me/adaccounts",
+            access_token=self._user_token(),
+            params={"fields": _AD_ACCOUNT_FIELDS, "limit": 100},
+            version=self._version,
+        )
+        return [ad_account_from_body(r) for r in rows if r.get("id")]
+
+    def list_ad_sets(
+        self, ad_account_id: str, campaign_id: str | None = None
+    ) -> list[AdSet]:
+        """List ad sets under an ad account, optionally scoped to one
+        campaign (reads — `ads_read`).
+
+        `act_{id}/adsets`. `campaign_id`, when given, filters
+        SERVER-SIDE via Graph's `filtering` param
+        (`campaign.id EQUAL <id>`) rather than a client-side scan —
+        cheaper and correct even when the unfiltered result would
+        otherwise span multiple pages. Same `ads_read` production
+        gate + never-a-faked-empty-list contract as
+        `list_ad_campaigns`."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        params: dict[str, Any] = {"fields": _AD_SET_FIELDS, "limit": 100}
+        if campaign_id:
+            params["filtering"] = json.dumps([
+                {
+                    "field": "campaign.id",
+                    "operator": "EQUAL",
+                    "value": campaign_id,
+                }
+            ])
+        rows = _meta_api.graph_paged(
+            f"{acct}/adsets",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+        )
+        return [ad_set_from_body(r) for r in rows if r.get("id")]
+
+    def list_ads(
+        self, ad_account_id: str, adset_id: str | None = None
+    ) -> list[Ad]:
+        """List ads under an ad account, optionally scoped to one ad
+        set (reads — `ads_read`).
+
+        `act_{id}/ads`, requesting a nested `creative{id,thumbnail_url,
+        object_story_spec}` expansion so read callers get enough
+        creative detail for a UI thumbnail without a second
+        round-trip per ad (see `Ad.creative_thumbnail_url`).
+        `adset_id`, when given, filters SERVER-SIDE via Graph's
+        `filtering` param (`adset.id EQUAL <id>`). Same `ads_read`
+        production gate + never-a-faked-empty-list contract as
+        `list_ad_campaigns`."""
+
+        import json
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        params: dict[str, Any] = {"fields": _AD_FIELDS, "limit": 100}
+        if adset_id:
+            params["filtering"] = json.dumps([
+                {"field": "adset.id", "operator": "EQUAL", "value": adset_id}
+            ])
+        rows = _meta_api.graph_paged(
+            f"{acct}/ads",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+        )
+        return [ad_from_body(r) for r in rows if r.get("id")]
+
+    def ad_insights_series(
+        self,
+        object_id: str,
+        level: str,
+        *,
+        time_range: tuple[date, date] | None = None,
+        date_preset: str | None = None,
+        time_increment: int | str = 1,
+        breakdowns: list[str] | None = None,
+        action_attribution_windows: list[str] | None = None,
+        fields: list[str] | None = None,
+    ) -> AdInsightsSeries:
+        """Ad-insights TIME SERIES for an object (campaign / adset /
+        ad / account) — every row Graph returns, unlike `ad_insights`
+        (kept as-is for back-compat) which only surfaces the first.
+
+        Fixes two gaps in `ad_insights`: (1) it read only `rows[0]`,
+        so a `time_increment=1` multi-day pull silently dropped every
+        row past the first; (2) its flatten (`float(val)` inside a
+        bare `except (TypeError, ValueError): continue`) silently
+        discarded `actions`/`action_values` ENTIRELY — those are lists
+        of dicts, and `float(<list>)` always raises, so every
+        conversion metric vanished with no error. This method parses
+        both correctly via `ad_insights_row_from_body` (`mappers.py`).
+
+        `time_range` is a `(since, until)` date pair, JSON-encoded per
+        Graph's documented `time_range={"since":...,"until":...}`
+        shape (mutually exclusive with `date_preset` at the Graph
+        level — pass one or the other; Graph 400s on both, not
+        validated here since Graph's own error is already
+        descriptive). `time_increment` controls row granularity: `1`
+        = one row per day, `"monthly"` = one row per month,
+        `"all_days"` = one aggregate row over the whole window
+        (Graph's own tri-state, passed through as-is — stringified
+        since Graph expects the query param as text either way).
+        `breakdowns` (e.g. `["publisher_platform", "age"]`) fans a
+        single Graph row out into one row per breakdown-dimension
+        combination; each resulting `AdInsightsRow.breakdown` carries
+        the dimension values for that row. `action_attribution_windows`
+        (e.g. `["7d_click", "1d_view"]`) selects which attribution
+        window(s) Graph uses when computing `actions`/`action_values`
+        — JSON-encoded per Graph's documented array-param shape.
+
+        **Pagination:** a 12-month daily pull at ad level can exceed a
+        single Graph page — this requests a large per-page `limit`
+        AND raises `graph_paged`'s `max_pages` well above its 5-page
+        default so the full window is collected, never silently
+        truncated mid-series.
+
+        **Production gate:** `ads_read` is App-Review-gated; absent it
+        the call raises `MetaGraphError` with `requires_app_review`
+        true — never a silent partial series."""
+
+        import json
+
+        params: dict[str, Any] = {
+            "level": level,
+            "fields": (
+                ",".join(fields) if fields else _AD_INSIGHTS_SERIES_FIELDS
+            ),
+            "time_increment": str(time_increment),
+            "limit": 500,
+        }
+        if time_range is not None:
+            since_date, until_date = time_range
+            params["time_range"] = json.dumps({
+                "since": since_date.isoformat(),
+                "until": until_date.isoformat(),
+            })
+        if date_preset:
+            params["date_preset"] = date_preset
+        if breakdowns:
+            params["breakdowns"] = ",".join(breakdowns)
+        if action_attribution_windows:
+            params["action_attribution_windows"] = json.dumps(
+                list(action_attribution_windows)
+            )
+        rows = _meta_api.graph_paged(
+            f"{object_id}/insights",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+            max_pages=50,
+        )
+        return AdInsightsSeries(
+            object_id=object_id,
+            level=level,
+            rows=[
+                ad_insights_row_from_body(r, breakdown_keys=breakdowns)
+                for r in rows
+                if isinstance(r, dict)
+            ],
+        )
+
+    def list_activities(
+        self, ad_account_id: str, since: int, until: int
+    ) -> list[AdActivity]:
+        """The ad account's change log (`act_{id}/activities`) —
+        intra-day status-flip history a daily insights snapshot
+        cannot see (an operator activating → pausing → reactivating a
+        campaign within one calendar day is only visible here).
+
+        `since`/`until` are UNIX epoch seconds (same convention as
+        `get_facebook_page_insights` / `get_instagram_account_insights`
+        above).
+
+        **Retention window (roadmap open question O3) — UNVERIFIED:**
+        Meta's public Marketing API documentation for this edge does
+        not state an explicit retention day-count as of this writing,
+        and this method has NOT been exercised against a live token
+        (`ads_read` is not yet granted for this app — roadmap trigger
+        T1). Do not treat any specific number as settled from this
+        docstring. Once T1 lands, the live-verification action is to
+        request progressively older `since` windows (e.g. 30 / 90 /
+        180 / 365 days back) against a known-active account and
+        observe where Graph starts returning an empty `data` list —
+        THAT empirical boundary is the real answer, not a documentation
+        guess.
+
+        **Production gate:** `ads_read` is App-Review-gated; absent it
+        `graph_paged` raises `MetaGraphError` with `requires_app_review`
+        true — never a faked empty list. See `AdActivity` for why
+        `id` is a locally-synthesized key, not a Graph object id."""
+
+        acct = (
+            ad_account_id
+            if ad_account_id.startswith("act_")
+            else f"act_{ad_account_id}"
+        )
+        rows = _meta_api.graph_paged(
+            f"{acct}/activities",
+            access_token=self._user_token(),
+            params={
+                "fields": _AD_ACTIVITY_FIELDS,
+                "since": since,
+                "until": until,
+                "limit": 100,
+            },
+            version=self._version,
+        )
+        return [ad_activity_from_body(r) for r in rows if isinstance(r, dict)]
+
     # ─── Ads management surface (additive — read/insights/posting
     #     unchanged; mutations use the App-Review-gated
     #     ``ads_management`` scope, distinct from ``ads_read``) ───────
