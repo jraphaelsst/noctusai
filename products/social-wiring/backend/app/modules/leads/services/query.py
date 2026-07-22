@@ -32,10 +32,23 @@ TWO filters are deliberately NOT DB-pushed:
 
 Both are applied in Python, post-fetch (after
 ``backfill_generated_columns`` so ``ano``/``mes`` are guaranteed
-present), same as the aggregation math (sorting/pagination/analytics)
-already has to be — the fact table is bounded (~12k rows for the source
-org) so this stays well within a single request's budget, and it's the
-SAME code path prod and tests exercise.
+present), same as the aggregation math used to be — the fact table is
+bounded (~12k rows for the source org) so a full fetch stays within a
+single request's budget, but a full fetch PER endpoint, times 5+
+concurrent analytics calls on one page load, does not (see
+migration 027's header + ``analytics_service.py``'s module docstring
+for the incident this caused). ``summary``/``timeseries``/
+``by_dimension``/``heatmap``/``facets`` no longer call ``fetch_filtered``
+at all — they call the ``social_wiring.leads_analytics_*`` /
+``leads_facets`` SQL functions via ``to_rpc_params`` + ``client.rpc()``,
+which push ``q``/``ano``/``mes`` (and every other filter) into Postgres
+directly; the mock/prod divergence noted above is exactly why those
+functions are the ANALYTICS-only escape hatch and this module's
+``apply_db_filters``/``fetch_filtered`` stay as they were for the two
+paths that still need real Python-side rows: the list endpoint's
+default-sort fast path still needs ``q``/``ano``/``mes`` applied
+post-fetch when it falls back to full rows (label-sort / those three
+filters set), and the importer.
 """
 from __future__ import annotations
 
@@ -131,6 +144,36 @@ def matches_free_text(row: dict, q: Optional[str]) -> bool:
     return False
 
 
+def to_rpc_params(org_id: UUID, filters: LeadFilters) -> dict:
+    """Marshal ``(org_id, filters)`` into the parameter dict every
+    ``social_wiring.leads_analytics_*`` / ``leads_facets`` RPC function
+    expects (migration ``027_leads_analytics_rpc.sql``) — the single
+    source of truth for the Python<->SQL parameter contract, shared by
+    every RPC-calling service function (no per-caller drift).
+
+    An empty repeatable filter becomes SQL ``NULL`` (not an empty array):
+    the SQL side applies each filter as
+    ``(p_x IS NULL OR col = ANY(p_x))``, and Postgres's ``= ANY('{}')``
+    matches NOTHING — passing ``[]`` would silently turn "no constraint
+    on this dimension" into "match zero rows", the opposite of §5.1
+    ("Empty/absent = no constraint")."""
+    return {
+        "p_org_id": str(org_id),
+        "p_de": filters.de.isoformat() if filters.de else None,
+        "p_ate": filters.ate.isoformat() if filters.ate else None,
+        "p_ano": list(filters.ano) or None,
+        "p_mes": list(filters.mes) or None,
+        "p_origem_id": [str(v) for v in filters.origem_id] or None,
+        "p_corretor_id": [str(v) for v in filters.corretor_id] or None,
+        "p_tipo": list(filters.tipo) or None,
+        "p_tier": list(filters.tier) or None,
+        "p_empreendimento": list(filters.empreendimento) or None,
+        "p_regiao": list(filters.regiao) or None,
+        "p_needs_review": filters.needs_review,
+        "p_q": filters.q,
+    }
+
+
 def matches_ano_mes(row: dict, filters: LeadFilters) -> bool:
     """Post-fetch ``ano``/``mes`` predicate — see the module docstring
     for why these two aren't DB-pushed. Call AFTER
@@ -208,4 +251,5 @@ __all__ = [
     "fetch_filtered",
     "backfill_generated_columns",
     "LeadsResultTooLargeError",
+    "to_rpc_params",
 ]

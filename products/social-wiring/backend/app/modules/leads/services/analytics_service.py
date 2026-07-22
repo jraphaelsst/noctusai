@@ -1,8 +1,31 @@
 """Analytics endpoints (§5.2/§5.3) — summary / timeseries / by-dimension /
-heatmap. All four share the same filtered-rows-in-Python approach as
-``leads_service.list_leads`` (see ``services/query.py`` for why); the
-aggregation math (share_pct, variação, grouping) is plain Python over a
-bounded row set (~12k rows for the source org), not SQL ``GROUP BY``.
+heatmap.
+
+SQL-side now (migration ``027_leads_analytics_rpc.sql``)
+──────────────────────────────────────────────────────────
+Until 2026-07-22 all four fetched EVERY matching row via
+``fetch_filtered`` (paging through PostgREST's 1000-row cap) and did the
+counting/grouping in Python. With 12,177 real leads that is ~13 HTTP
+round-trips PER endpoint; a single Leads page load fires summary +
+timeseries + by-dimension×2 + heatmap concurrently → 50-100 PostgREST
+requests per page view, and real transient 500s were observed on
+``/api/leads/sources``/``/corretores`` under that burst (PostgREST
+returned a non-JSON body under load → ``json.decoder.JSONDecodeError``).
+
+``summary``/``timeseries``/``by_dimension``/``heatmap`` below are now
+thin wrappers: build the RPC param dict via
+``query.to_rpc_params`` and call the matching
+``social_wiring.leads_analytics_*`` SQL function — ONE round-trip each,
+the aggregation happens in Postgres. The four ``_reference_*`` functions
+that follow keep the ORIGINAL Python implementation verbatim (still
+exercising ``fetch_filtered`` + the same math) — they are the equivalence
+ORACLE the SQL functions were authored to match line-for-line (see each
+SQL function's header comment), and the test suite's RPC simulator
+(``tests/modules/leads/conftest.py``) calls them to fake what the real
+SQL would compute, since ``MockSupabaseClient`` cannot execute SQL. They
+are intentionally NOT deleted — per the brief, "the SQL-aggregated
+result must equal what the Python aggregation produced" needs a live
+Python implementation to equal against.
 """
 from __future__ import annotations
 
@@ -11,7 +34,7 @@ from datetime import date, timedelta
 from typing import Any, Optional
 from uuid import UUID
 
-from app.modules.leads.services.query import LeadFilters, fetch_filtered
+from app.modules.leads.services.query import LeadFilters, fetch_filtered, to_rpc_params
 
 _MES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 _TIPO_LABEL = {"novo": "Novo", "retorno": "Retorno", "desconhecido": "Desconhecido"}
@@ -39,7 +62,7 @@ def _previous_window_rows(
     return fetch_filtered(client, org_id, prev_filters)
 
 
-def summary(client: Any, org_id: UUID, filters: LeadFilters, refs: dict) -> dict:
+def _reference_summary(client: Any, org_id: UUID, filters: LeadFilters, refs: dict) -> dict:
     rows = fetch_filtered(client, org_id, filters)
     total = len(rows)
     novos = sum(1 for r in rows if r.get("tipo_lead") == "novo")
@@ -159,7 +182,7 @@ def _split_key_label_cor(row: dict, split: str, refs: dict) -> Optional[tuple[st
     return None
 
 
-def timeseries(
+def _reference_timeseries(
     client: Any,
     org_id: UUID,
     filters: LeadFilters,
@@ -218,7 +241,7 @@ def timeseries(
     return {"grain": grain, "split": split, "series_meta": series_meta, "points": points}
 
 
-def by_dimension(
+def _reference_by_dimension(
     client: Any,
     org_id: UUID,
     filters: LeadFilters,
@@ -301,7 +324,7 @@ def by_dimension(
     return {"dim": dim, "total": total_all, "buckets": buckets}
 
 
-def heatmap(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+def _reference_heatmap(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
     rows = fetch_filtered(client, org_id, filters)
     grid: dict[int, list[Optional[int]]] = {}
     for row in rows:
@@ -322,4 +345,67 @@ def heatmap(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
     return {"anos": anos, "cells": cells, "max": max_val}
 
 
-__all__ = ["summary", "timeseries", "by_dimension", "heatmap"]
+# ─── SQL-side (the served path) ─────────────────────────────────────────
+#
+# Each of the four functions below is a THIN wrapper: build the RPC param
+# dict once via `query.to_rpc_params` and call the one matching SQL
+# function — ONE round-trip, no Python-side row fetch, no `refs` needed
+# (the SQL functions join `lead_sources`/`lead_corretores` themselves).
+# `client` is the org-scoped admin client from `deps.get_leads_client()`
+# (already `.schema("social_wiring")`-bound), so `client.rpc(name, ...)`
+# resolves the function in that schema — same as every other RPC call
+# site in the fleet (e.g. `erp-imobiliario/backend/app/routers/metas.py`).
+
+
+def summary(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+    params = to_rpc_params(org_id, filters)
+    resp = client.rpc("leads_analytics_summary", params).execute()
+    return resp.data or {}
+
+
+def timeseries(
+    client: Any,
+    org_id: UUID,
+    filters: LeadFilters,
+    *,
+    grain: str = "mes",
+    split: Optional[str] = None,
+) -> dict:
+    params = to_rpc_params(org_id, filters)
+    params["p_grain"] = grain
+    params["p_split"] = split
+    resp = client.rpc("leads_analytics_timeseries", params).execute()
+    return resp.data or {"grain": grain, "split": split, "series_meta": [], "points": []}
+
+
+def by_dimension(
+    client: Any,
+    org_id: UUID,
+    filters: LeadFilters,
+    *,
+    dim: str,
+    limit: int = 15,
+) -> dict:
+    params = to_rpc_params(org_id, filters)
+    params["p_dim"] = dim
+    params["p_limit"] = limit
+    resp = client.rpc("leads_analytics_by_dimension", params).execute()
+    return resp.data or {"dim": dim, "total": 0, "buckets": []}
+
+
+def heatmap(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+    params = to_rpc_params(org_id, filters)
+    resp = client.rpc("leads_analytics_heatmap", params).execute()
+    return resp.data or {"anos": [], "cells": {}, "max": 0}
+
+
+__all__ = [
+    "summary",
+    "timeseries",
+    "by_dimension",
+    "heatmap",
+    "_reference_summary",
+    "_reference_timeseries",
+    "_reference_by_dimension",
+    "_reference_heatmap",
+]

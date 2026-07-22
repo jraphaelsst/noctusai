@@ -13,7 +13,7 @@ from noctusai_lib.primitives.responses import success_response
 from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.routers.params import get_lead_filters
-from app.modules.leads.services import analytics_service, leads_service
+from app.modules.leads.services import analytics_service
 from app.modules.leads.services.query import LeadFilters
 
 router = APIRouter(prefix="/api/leads/analytics", tags=["leads-analytics"])
@@ -27,8 +27,7 @@ def get_summary(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    refs = leads_service.build_refs(client, org_id)
-    return success_response(analytics_service.summary(client, org_id, filters, refs))
+    return success_response(analytics_service.summary(client, org_id, filters))
 
 
 @router.get("/timeseries")
@@ -41,9 +40,8 @@ def get_timeseries(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    refs = leads_service.build_refs(client, org_id)
     return success_response(
-        analytics_service.timeseries(client, org_id, filters, refs, grain=grain, split=split)
+        analytics_service.timeseries(client, org_id, filters, grain=grain, split=split)
     )
 
 
@@ -57,9 +55,8 @@ def get_by_dimension(
 ) -> dict:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    refs = leads_service.build_refs(client, org_id)
     return success_response(
-        analytics_service.by_dimension(client, org_id, filters, refs, dim=dim, limit=limit)
+        analytics_service.by_dimension(client, org_id, filters, dim=dim, limit=limit)
     )
 
 

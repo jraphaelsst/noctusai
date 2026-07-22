@@ -4,6 +4,36 @@ Every write coerces UUID/date python values to their JSON-safe string
 form before hitting the query builder (both the real Supabase client and
 the SQLite/Mock test doubles store JSON-serializable primitives, not
 python ``UUID``/``date`` objects).
+
+List pagination — DB-pushed count + page, with a documented fallback
+────────────────────────────────────────────────────────────────────
+``list_leads`` used to call ``fetch_filtered`` unconditionally — fetch
+EVERY matching row, sort in Python, then slice the requested page — so
+``total`` (and every page after the first) cost a full-table fetch. It
+now pushes both the count (``select("id", count="exact")``, the same
+idiom as ``documentos.py``/``propostas.py``/every other paginated list
+in this fleet) and the page itself (``.order().range()``) to Postgres
+for the COMMON case: sort by a real column (``data_entrada``,
+``cliente_nome``, ``created_at``) with none of ``q``/``ano``/``mes`` set.
+
+Three things are NOT DB-pushed here, each for the same reason
+``query.py``'s module docstring gives:
+
+* ``q`` — not evaluated server-side by ``apply_db_filters`` (see there).
+* ``ano``/``mes`` — ``GENERATED ALWAYS`` columns; a mock-inserted row has
+  no such key until ``backfill_generated_columns`` runs, so pushing
+  ``.in_("ano", ...)`` would silently match zero rows in the test suite.
+* ``sort in ("origem", "corretor")`` — these order by the JOINED
+  label (``lead_sources.label`` / ``lead_corretores.nome``), which the
+  bare ``leads`` table has no column for; sorting requires the full
+  row set resolved against ``refs`` in Python, same as before.
+
+Any of the three still routes through the ORIGINAL ``fetch_filtered`` +
+Python sort/slice path — unchanged, still the safety net for those
+cases. This is a deliberate, narrower win than "always one round-trip":
+it eliminates the full-fetch for the sort/filter combination the Leads
+page actually opens with by default (``data_entrada`` desc, no
+`q`/`ano`/`mes`), not every combination.
 """
 from __future__ import annotations
 
@@ -14,12 +44,18 @@ from uuid import UUID
 
 from app.modules.leads.services.query import (
     LeadFilters,
+    apply_db_filters,
     backfill_generated_columns,
     fetch_filtered,
+    to_rpc_params,
 )
 
 _SCHEMA = "social_wiring"
 _SORTABLE = {"data_entrada", "cliente_nome", "origem", "corretor", "created_at"}
+#: sort names that map 1:1 onto a real `leads` column PostgREST can
+#: `.order()` directly — the other two (`origem`/`corretor`) need a
+#: joined label, see the module docstring.
+_DB_SORTABLE = {"data_entrada", "cliente_nome", "created_at"}
 
 
 def _table(client: Any, name: str):
@@ -108,6 +144,34 @@ def _sort_key(row: dict, sort: str, refs: dict):
     return row.get(sort) or ""
 
 
+def _list_leads_db(
+    client: Any,
+    org_id: UUID,
+    filters: LeadFilters,
+    *,
+    page: int,
+    page_size: int,
+    sort: str,
+    order: str,
+) -> tuple[list[dict], int]:
+    """DB-pushed fast path — one ``count="exact"`` round-trip + one
+    ``.order().range()`` round-trip for the page, instead of fetching
+    every matching row. See the module docstring for the exact
+    fallback conditions (never called for those)."""
+    start = (page - 1) * page_size
+    end = start + page_size - 1
+
+    count_query = _table(client, "leads").select("id", count="exact").eq("org_id", str(org_id))
+    count_query = apply_db_filters(count_query, filters)
+    total = count_query.execute().count or 0
+
+    page_query = _table(client, "leads").select("*").eq("org_id", str(org_id))
+    page_query = apply_db_filters(page_query, filters)
+    page_query = page_query.order(sort, desc=(order == "desc")).range(start, end)
+    rows = [backfill_generated_columns(r) for r in list(page_query.execute().data or [])]
+    return rows, total
+
+
 def list_leads(
     client: Any,
     org_id: UUID,
@@ -119,12 +183,21 @@ def list_leads(
     order: str = "desc",
     refs: Optional[dict] = None,
 ) -> tuple[list[dict], int]:
-    """Return ``(page_rows, total)`` — filter → sort → paginate, all in
-    Python (see ``services/query.py`` for why)."""
+    """Return ``(page_rows, total)``. Pushes count + page to Postgres for
+    the common case (see the module docstring); falls back to the
+    original filter-all-then-Python-sort-then-slice path (via
+    ``fetch_filtered``) when the sort needs a joined label or any of
+    ``q``/``ano``/``mes`` is set."""
     sort = sort if sort in _SORTABLE else "data_entrada"
     order = order if order in ("asc", "desc") else "desc"
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
+
+    needs_python_fallback = sort not in _DB_SORTABLE or filters.q or filters.ano or filters.mes
+    if not needs_python_fallback:
+        return _list_leads_db(
+            client, org_id, filters, page=page, page_size=page_size, sort=sort, order=order
+        )
 
     rows = fetch_filtered(client, org_id, filters)
     refs = refs or {"sources_by_id": {}, "corretores_by_id": {}}
@@ -135,7 +208,11 @@ def list_leads(
     return rows[start : start + page_size], total
 
 
-def facets(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+def _reference_facets(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+    """Original Python implementation — kept as the equivalence oracle
+    for ``social_wiring.leads_facets`` (migration 027). See
+    ``analytics_service.py``'s module docstring for why this is
+    retained rather than deleted."""
     rows = fetch_filtered(client, org_id, filters)
     emp_counts: dict[str, int] = {}
     reg_counts: dict[str, int] = {}
@@ -159,6 +236,14 @@ def facets(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
         "regioes": _sorted_items(reg_counts),
         "anos": sorted(anos),
     }
+
+
+def facets(client: Any, org_id: UUID, filters: LeadFilters) -> dict:
+    """SQL-side (§5.2 ``GET /api/leads/facets``) — one round-trip via
+    ``social_wiring.leads_facets`` instead of a full ``fetch_filtered``."""
+    params = to_rpc_params(org_id, filters)
+    resp = client.rpc("leads_facets", params).execute()
+    return resp.data or {"empreendimentos": [], "regioes": [], "anos": []}
 
 
 def build_refs(client: Any, org_id: UUID) -> dict:
@@ -198,6 +283,7 @@ __all__ = [
     "delete_lead",
     "list_leads",
     "facets",
+    "_reference_facets",
     "build_refs",
     "resolve_lead_out",
 ]
