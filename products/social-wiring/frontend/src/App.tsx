@@ -6,7 +6,7 @@
  * This file only defines pages and nav — zero boilerplate.
  *
  * Nav:
- *   Principal     · Dashboard / Criação de mídia / Contatos / YouTube / Meta / WhatsApp
+ *   Principal     · Dashboard / Criação de mídia / Contatos / Leads / YouTube / Meta / WhatsApp
  *   Conexões      · Clientes / Monitor
  *   Configuração  · Configurações / Equipe
  *
@@ -46,6 +46,7 @@ import {
   FileText,
   Send,
   Building2,
+  Target,
 } from "lucide-react";
 
 // Pages
@@ -73,6 +74,7 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const MetaDashboard = lazy(() => import("@/pages/MetaDashboard"));
+const Leads = lazy(() => import("@/pages/leads/Leads"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -85,6 +87,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
+      { name: "Leads", href: "/leads", icon: Target, route: "leads" },
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
@@ -135,6 +138,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Contatos", href: "/contatos", icon: UserRound },
+      { name: "Leads", href: "/leads", icon: Target },
       { name: "YouTube", href: "/youtube", icon: Youtube },
       { name: "Meta", href: "/meta", icon: Instagram },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
@@ -191,6 +195,7 @@ export default createProductApp({
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
+    { path: "/leads", component: Leads },
     { path: "/email-marketing/listas", component: EmailListas },
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },
