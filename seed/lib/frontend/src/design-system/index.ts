@@ -168,3 +168,47 @@ export type {
   ChatSendResult,
   ChatAutoReplyResult,
 } from "./chat";
+
+// Chart / KPI / filter organs — seed-canonical (N=3 recurrence rule, see
+// leads-module-PROJECT.md §7/§8). Leads is the first consumer; migrating the
+// 3 pre-existing hand-rolled sets (social-wiring/personal-finance/erp-imobiliario)
+// is a separate, pilot-products-first slice — not part of this build.
+export {
+  ChartCard,
+  LineChart,
+  AreaChart,
+  BarChart,
+  DonutChart,
+  Heatmap,
+  StatTile,
+  StatTileRow,
+  FilterBar,
+  useChartTheme,
+  CHART_PALETTE_SIZE,
+  CHART_COLOR_VAR_NAMES,
+  CHART_PALETTE_FALLBACK,
+  resolveSeriesColor,
+  heatmapStep,
+  buildSequentialScale,
+  formatCompactNumber,
+  formatPercent,
+  formatPercentDelta,
+  PT_BR_MONTH_LABELS_SHORT,
+} from "./charts";
+export type {
+  ChartCardProps,
+  ChartTheme,
+  ChartDatum,
+  ChartSeries,
+  CartesianChartProps,
+  LineChartProps,
+  AreaChartProps,
+  BarChartProps,
+  DonutChartProps,
+  HeatmapProps,
+  StatTileTrend,
+  StatTileProps,
+  StatTileRowProps,
+  FilterChip,
+  FilterBarProps,
+} from "./charts";

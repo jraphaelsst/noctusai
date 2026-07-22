@@ -1,0 +1,31 @@
+name: ChartCard
+path: seed/lib/frontend/src/design-system/charts/ChartCard.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Titled/subtitled card frame with the loading / empty / error / success state machine baked in — formalizes the triad that was copy-pasted verbatim across VisaoGeralPanel.tsx (social-wiring), the personal-finance chart cards, and erp-imobiliario's ui/chart.tsx consumers."
+  - "Slot-based: `children` renders only in the success state. `loading` -> pulsing skeleton block; `error` (any truthy string) -> dashed border + destructive text; `isEmpty` -> dashed border + muted text with a default pt-BR message, overridable via `emptyMessage`."
+  - "0 consumers at ship time BY DESIGN — this is Slice B of the Leads module PROJECT (products/social-wiring/projects/leads-module-PROJECT.md); Slice D (wave 2, dispatched after B merges) is the scheduled first consumer, not an orphan."
+  - "`minBodyHeight` keeps card height stable across all four states so a subtab doesn't reflow while data loads."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered composing the seed's existing PageSkeleton for the loading state instead of a bespoke pulse block — PageSkeleton is page-level (full-page shell), not card-body-scoped, so a lighter local skeleton was used instead."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

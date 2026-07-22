@@ -1,0 +1,31 @@
+name: FilterBar
+path: seed/lib/frontend/src/design-system/charts/FilterBar.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Composable filter shell: label+control slots (`children`), an active-filter chips row with individual clear buttons, an optional 'Limpar tudo' action, and a collapsed/expanded toggle on narrow (< sm) viewports. Built for the Leads 'Base de Leads' sticky filter bar (leads-module-PROJECT.md §6) and its canonical filter set (§5.1), but has ZERO dependency on that domain."
+  - "PRESENTATIONAL ONLY — filter STATE (selected values, the URL-query-string mirror) stays entirely with the consumer (e.g. a `useLeadsFilters()`-style hook). This component owns only its own collapsed/expanded UI-local boolean."
+  - "Chips are keyed + individually clearable via `chip.onClear`; 'Limpar tudo' only renders when both `chips.length > 0` AND `onClearAll` is supplied."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered owning filter state internally (a built-in reducer) — rejected: the Leads spec requires filter state to be shared across subtabs and mirrored into the URL query string, which only the page-level consumer can own; a self-contained FilterBar would fight that requirement."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

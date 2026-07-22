@@ -1,0 +1,33 @@
+name: useChartTheme
+kind: hook
+path: seed/lib/frontend/src/design-system/charts/useChartTheme.ts
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Resolves the chart color palette + axis/grid/tooltip colors from the live CSS custom properties (tokens.css `--chart-1`..`--chart-8`, `--muted-foreground`, `--border`, `--background`, `--foreground`, `--primary`) so charts follow light/dark theme without any consumer hardcoding `hsl(var(--primary))`-style strings."
+  - "recharts `stroke`/`fill` props need a literal resolved color string, not a CSS variable reference — this hook is the single place that does that resolution (composes the pure `palette.ts` helpers with `getComputedStyle`)."
+  - "Returns `{ palette, getSeriesColor, axisColor, gridColor, tooltipBackground, tooltipBorder, tooltipForeground, sequentialScale }`. `sequentialScale(steps)` builds a single-hue lightness ramp from the resolved `--primary` value for magnitude charts (Heatmap) — distinct from the categorical `palette` used for identity charts (Line/Area/Bar/Donut)."
+  - "Re-resolves on a `dark`-class MutationObserver against `document.documentElement` (the seed's `useTheme()` hook toggles that class), so a live theme toggle updates chart colors without a page reload."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered reading CSS vars once at module-load time (module-level constant) instead of a hook with MutationObserver — rejected: would freeze colors at whichever theme was active on first import, breaking a live light/dark toggle."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

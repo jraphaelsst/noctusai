@@ -1,0 +1,30 @@
+name: LineChart
+path: seed/lib/frontend/src/design-system/charts/LineChart.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Thin, typed recharts wrapper. Props: `data`, `xKey`, `series: {key,label,color?}[]`, `height` (default 280), `valueFormatter` (default `formatCompactNumber`), `xTickFormatter`, `className`. Shares axis/grid/tooltip rendering with AreaChart/BarChart via the internal `_cartesian-shared.tsx` (not exported)."
+  - "Per-series color resolution goes through `useChartTheme().getSeriesColor(index, series[i].color)` — an explicit `color` wins (e.g. the Leads `lead_sources.cor` hex), otherwise the theme-aware categorical palette (`--chart-1`..`--chart-8`) cycles by index."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered a single generic `CartesianChart` component parameterized by chart kind (line/area/bar) instead of 3 separate exports — rejected: recharts' per-kind props (Area's fillOpacity, Bar's radius/layout) diverge enough that a single component would need a large discriminated-union prop surface, worse for the consumer than 3 small typed wrappers."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

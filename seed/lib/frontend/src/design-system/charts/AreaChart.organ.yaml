@@ -1,0 +1,29 @@
+name: AreaChart
+path: seed/lib/frontend/src/design-system/charts/AreaChart.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Thin, typed recharts wrapper. Same shared props as LineChart plus `stacked?: boolean` — stacks series (via recharts `stackId`) instead of overlaying translucent fills. Targets the Leads 'evolução mensal, split by origem' view (leads-module-PROJECT.md §6)."
+  - "Fill opacity is fixed at 0.18 with a matching stroke — deliberately NOT a prop; every existing consumer used a near-identical low-opacity fill and varying it per-callsite was never actually needed (avoiding an unused-knob prop)."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered: []
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

@@ -1,0 +1,32 @@
+name: Heatmap
+path: seed/lib/frontend/src/design-system/charts/Heatmap.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "ano×mês grid. Plain HTML table, NOT recharts — recharts has no first-class calendar/matrix heatmap primitive, and a table gives every cell a real DOM node (title attribute for the tooltip) rather than an SVG path, which is both simpler and more accessible."
+  - "Props map 1:1 onto the Leads API's `HeatmapOut` shape (`anos`, `cells`, `max`) so a consumer can pass the fetch response straight through with no reshaping."
+  - "null cell != 0 cell by construction: `heatmapStep()` (palette.ts) is only invoked for non-null values; a null cell renders blank (text-transparent, muted/40 background, no color-scale lookup) while a genuine 0 renders as the LOWEST FILLED step of the sequential scale — collapsing the two would misrepresent 'no data collected that month' as 'confirmed zero leads,' which the source spreadsheet's 28-month history cannot support for out-of-range months."
+  - "Uses `useChartTheme().sequentialScale(steps)` — a single-hue lightness ramp derived from the resolved `--primary` CSS variable — NOT the categorical palette (`--chart-1..8`), because a heatmap encodes an ORDERED magnitude, not category identity."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered rendering the grid as SVG rects (recharts-adjacent) for visual consistency with the other charts — rejected: no accessibility/tooltip benefit over a semantic <table>, and a table is trivially responsive via overflow-x-auto."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

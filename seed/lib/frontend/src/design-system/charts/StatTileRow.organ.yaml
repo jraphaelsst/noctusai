@@ -1,0 +1,29 @@
+name: StatTileRow
+path: seed/lib/frontend/src/design-system/charts/StatTileRow.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Pure layout wrapper: `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4` — the responsive KPI grid every product currently re-derives by hand (social-wiring/personal-finance/erp-imobiliario each has an equivalent inline className)."
+  - "Takes `children` (typically `<StatTile/>` instances) with no coupling to StatTile's props — a consumer could put any content in the grid."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered: []
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

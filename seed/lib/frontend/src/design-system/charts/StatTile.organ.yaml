@@ -1,0 +1,32 @@
+name: StatTile
+path: seed/lib/frontend/src/design-system/charts/StatTile.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "KPI tile. Promotes social-wiring's MetricCard.tsx shape (icon, label, value, hint, loading) and adds `delta?: number | null` + `trend?: 'up'|'down'|'flat'` for the Leads KPI row (leads-module-PROJECT.md §6/§5.3)."
+  - "`delta === null` renders '—', NEVER '0%' — matches the Leads API contract's `variacao_pct: number | null` (null = unresolvable comparison, e.g. no data in the preceding window; NOT the same fact as zero change)."
+  - "Trend is conveyed by ICON + SIGNED TEXT together (ArrowUp/ArrowDown/Minus + the formatted delta string), never by color alone. Color (text-success/text-destructive/text-muted-foreground) is an ADDITIONAL, non-exclusive signal — a color-blind viewer or a grayscale screenshot still reads the direction correctly."
+  - "When `trend` is omitted, direction is derived from `delta`'s sign (0 => 'flat')."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered a colored background chip for trend (green/red fill) instead of icon+text — rejected per the hard accessibility requirement: never encode meaning in hue alone."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

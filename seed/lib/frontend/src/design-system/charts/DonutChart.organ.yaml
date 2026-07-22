@@ -1,0 +1,31 @@
+name: DonutChart
+path: seed/lib/frontend/src/design-system/charts/DonutChart.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Thin, typed recharts wrapper over PieChart/Pie. Deliberately does NOT share LineChart/AreaChart/BarChart's `xKey`/`series` shape — a donut plots ROWS as slices, not columns as series. Props: `data`, `nameKey`, `valueKey`, `colorKey?` (per-row hex field, e.g. `lead_sources.cor`), `height`, `valueFormatter`, `innerRadiusRatio` (default 0.6)."
+  - "Matches every existing consumer's actual data shape (personal-finance's DonutChartCard took `{nome,total,cor?}[]`; the Leads `DimensionBucket` shape is `{key,label,cor,total,...}[]`) instead of forcing an artificial series array onto pie data — a deliberate deviation from the brief's literal 'shared props: data, xKey, series' instruction, called out explicitly in the return note so the wave-2 consumer isn't surprised."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "Deviated from the brief's literal shared-props instruction (data/xKey/series for ALL FOUR chart types) for this one component — documented as a considered API decision, not an oversight, in both this sidecar and the return note."
+
+alternatives_considered:
+  - "Considered forcing DonutChart into the same `series: {key,label,color?}[]` shape as the other three (treating the first series entry as the value field) — rejected: it would misrepresent the actual data shape (one row per slice, not one column per series) and every real consumer already has row-shaped bucket data."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

@@ -85,6 +85,19 @@
     --sidebar-accent-foreground: 0 0% 92%;
     --sidebar-border: 0 0% 18%;
     --sidebar-ring: 220 10% 40%;
+
+    /* Chart palette — categorical, 8 hues. Consumed via `useChartTheme()`
+     * (seed/lib/frontend/src/design-system/charts), never hardcoded by
+     * products. Kept manually in sync with `CHART_PALETTE_FALLBACK` in
+     * charts/palette.ts (the DOM-less safety net for tests/SSR). */
+    --chart-1: 220 70% 55%;
+    --chart-2: 160 60% 40%;
+    --chart-3: 35 85% 50%;
+    --chart-4: 280 60% 55%;
+    --chart-5: 10 75% 50%;
+    --chart-6: 195 70% 45%;
+    --chart-7: 320 55% 50%;
+    --chart-8: 95 45% 40%;
   }
 
   .dark {
@@ -143,6 +156,18 @@
     --sidebar-accent-foreground: 0 0% 92%;
     --sidebar-border: 0 0% 16%;
     --sidebar-ring: 220 10% 50%;
+
+    /* Chart palette — dark-theme variants (higher L for contrast against
+     * the dark background). See the light-theme block above for the
+     * rationale + sync note. */
+    --chart-1: 220 75% 65%;
+    --chart-2: 160 55% 55%;
+    --chart-3: 35 85% 62%;
+    --chart-4: 280 65% 68%;
+    --chart-5: 10 80% 65%;
+    --chart-6: 195 75% 60%;
+    --chart-7: 320 60% 65%;
+    --chart-8: 95 45% 55%;
   }
 }
 

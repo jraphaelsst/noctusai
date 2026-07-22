@@ -1,0 +1,30 @@
+name: BarChart
+path: seed/lib/frontend/src/design-system/charts/BarChart.tsx
+phase: leads-seed-charts
+registered_at: "2026-07-21"
+organ_version: "1.0"
+validation_status: shelfware
+
+known_facts:
+  - "Thin, typed recharts wrapper. Same shared props as LineChart plus `stacked?` and `horizontal?` (ranked horizontal bars — the Leads 'barras top-10 corretores' view, leads-module-PROJECT.md §6)."
+  - "`horizontal` hides recharts' inverted `layout=\"vertical\"` vocabulary (layout=\"vertical\" actually means HORIZONTAL bars in recharts — category on Y, value on X) behind a name that means what it says from the consumer's perspective."
+  - "0 consumers at ship time — Slice B of the Leads module PROJECT; Slice D (wave 2) is the scheduled first consumer."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Considered exposing recharts' raw `layout` prop instead of `horizontal` — rejected: recharts' layout naming is inverted from common usage (layout=\"vertical\" draws horizontal bars) and would leak a footgun into every call site."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
