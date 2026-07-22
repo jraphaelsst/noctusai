@@ -10,7 +10,6 @@ import {
   ChartCard,
   formatPercent,
   formatPercentDelta,
-  type ChartDatum,
 } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { useLeadsFilters, type LeadsMultiKey } from "@/hooks/useLeadsFilters";
@@ -55,10 +54,8 @@ export default function Empreendimentos() {
         error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
         isEmpty={rankedBuckets.length === 0}
       >
-        {/* `DimensionBucket` (frozen §5.3 contract type) has no index signature — see
-            this engineer's return note on the `ChartDatum` structural-typing gap. */}
         <BarChart
-          data={rankedBuckets as unknown as ChartDatum[]}
+          data={rankedBuckets}
           xKey="label"
           series={[{ key: "total", label: "Leads" }]}
           horizontal

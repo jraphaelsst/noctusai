@@ -36,13 +36,13 @@ function makeWrapper() {
   return { qc, Wrapper };
 }
 
-const originalFetch = global.fetch;
+const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(() => {
-  global.fetch = originalFetch;
+  globalThis.fetch = originalFetch;
   vi.clearAllMocks();
 });
 
@@ -99,7 +99,7 @@ describe("useLeadImportPreview", () => {
         },
       }),
     });
-    global.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useLeadImportPreview(), { wrapper: Wrapper });
@@ -121,7 +121,7 @@ describe("useLeadImportPreview", () => {
   });
 
   it("throws a typed error on a non-ok response", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 422,
       text: async () => "arquivo invalido",
@@ -142,7 +142,7 @@ describe("useLeadImportPreview", () => {
 
 describe("useLeadImportCommit", () => {
   it("POSTs to /api/leads/import/commit and invalidates the leads family", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         data: {
@@ -172,7 +172,7 @@ describe("useLeadImportCommit", () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect((global.fetch as any).mock.calls[0][0]).toContain("/api/leads/import/commit");
+    expect((globalThis.fetch as any).mock.calls[0][0]).toContain("/api/leads/import/commit");
     expect(result.current.data?.id).toBe("batch-2");
     expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["leads"] }));
   });

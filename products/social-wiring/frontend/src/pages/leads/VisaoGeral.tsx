@@ -18,7 +18,6 @@ import {
   StatTileRow,
   formatCompactNumber,
   formatPercent,
-  type ChartDatum,
 } from "@noctusai/lib/design-system";
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
 import {
@@ -50,13 +49,8 @@ export default function VisaoGeral() {
     color: m.cor ?? undefined,
   }));
 
-  // `DimensionBucket` (the frozen §5.3 contract type) has no index signature,
-  // so it doesn't structurally satisfy the chart organs' generic `ChartDatum`
-  // bound — the shapes are runtime-compatible (the organs only read
-  // `nameKey`/`valueKey`/`colorKey`/`xKey` off each row), this is a
-  // TS-nominal-vs-index-signature gap only. See this engineer's return note.
-  const donutData = (origemQ.data?.buckets ?? []) as unknown as ChartDatum[];
-  const corretorData = (corretorQ.data?.buckets ?? []) as unknown as ChartDatum[];
+  const donutData = origemQ.data?.buckets ?? [];
+  const corretorData = corretorQ.data?.buckets ?? [];
 
   return (
     <div className="space-y-6" data-testid="leads-overview-success">

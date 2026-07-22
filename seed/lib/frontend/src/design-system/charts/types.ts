@@ -9,8 +9,19 @@
  */
 import type { ComponentType, ReactNode } from "react";
 
-/** A generic row shape a chart plots against — recharts wants `Record<string, unknown>`. */
-export type ChartDatum = Record<string, unknown>;
+/**
+ * A generic row shape a chart plots against.
+ *
+ * Deliberately `object` and NOT `Record<string, unknown>`: a declared
+ * `interface` (which is what every API-contract row type in this platform is)
+ * has no implicit index signature, so it does NOT structurally satisfy
+ * `Record<string, unknown>` — every call site would need an
+ * `as unknown as ChartDatum[]` cast, which throws away the row's real type.
+ * With `object`, concrete contract types pass directly AND `keyof T` resolves
+ * to the row's actual field union, so `xKey` / `nameKey` / `valueKey` become
+ * typo-safe instead of accepting any string.
+ */
+export type ChartDatum = object;
 
 /**
  * One plotted series (a line / area / bar column). `color` is OPTIONAL —

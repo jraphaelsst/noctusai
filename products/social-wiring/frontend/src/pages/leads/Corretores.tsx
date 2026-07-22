@@ -12,7 +12,6 @@ import {
   DonutChart,
   formatPercent,
   formatPercentDelta,
-  type ChartDatum,
 } from "@noctusai/lib/design-system";
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadsByDimension, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
@@ -46,10 +45,8 @@ export default function Corretores() {
           error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
           isEmpty={rankedBuckets.length === 0}
         >
-          {/* `DimensionBucket` (frozen §5.3 contract type) has no index signature — see
-              this engineer's return note on the `ChartDatum` structural-typing gap. */}
           <BarChart
-            data={rankedBuckets as unknown as ChartDatum[]}
+            data={rankedBuckets}
             xKey="label"
             series={[{ key: "total", label: "Leads" }]}
             horizontal
@@ -63,7 +60,7 @@ export default function Corretores() {
           error={byDimQ.isError ? "Erro ao carregar a participação." : null}
           isEmpty={buckets.length === 0}
         >
-          <DonutChart data={buckets as unknown as ChartDatum[]} nameKey="label" valueKey="total" colorKey="cor" />
+          <DonutChart data={buckets} nameKey="label" valueKey="total" colorKey="cor" />
         </ChartCard>
       </div>
 
