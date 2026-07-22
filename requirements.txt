@@ -89,6 +89,7 @@ gdown>=5.2.0                     # knowledge-extractor + social-wiring (drive pu
 google-auth>=2.30.0             # knowledge-extractor (drive oauth)
 google-auth-httplib2>=0.2.0     # knowledge-extractor + social-wiring
 google-generativeai>=0.8.0      # therapy-platform (LLM)
+openpyxl>=3.1.0                 # social-wiring (leads xlsx importer)
 pdfminer.six>=20231228          # social-wiring (pdf extract)
 psycopg2-binary>=2.9.0          # daily-life
 python-docx>=1.1.0              # knowledge-extractor (docx_export service)
