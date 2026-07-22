@@ -269,3 +269,4 @@
 {"ts": "2026-07-22", "event": "worktree-sweep", "path": ".claude/worktrees/meta-ads-roadmap", "branch": "feat/meta-ads-roadmap", "sha": "1d22e372db3f244f8cad461487a575e1dc1ccc1a", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-22", "event": "worktree-sweep", "path": ".claude/worktrees/meta-ads-seed-read", "branch": "feat/meta-ads-seed-read", "sha": "7ba1fab4f7019f1ebc3a9b6d0e1cc9ca20538b6e", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-22", "event": "worktree-sweep", "path": ".claude/worktrees/leads-contract", "branch": "feat/leads-contract", "sha": "e5a09fe88776ffed52aeaa1e221abc0162f85a43", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-22", "event": "worktree-sweep", "path": ".claude/worktrees/leads-seed-charts", "branch": "feat/leads-seed-charts", "sha": "c7a315596fba39f0c834704a8d88afcd1fd04530", "reason": "task_branch cleanup (learn-before-delete)"}
