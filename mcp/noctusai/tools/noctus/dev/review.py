@@ -97,6 +97,7 @@ def _detect(
         check_canonical_organ_consumption,             # products-consume-canonical-organs 2026-05-29
         check_auth_boundary_false_green,               # auth-boundary-false-green 2026-05-29
         check_dangling_remote_branches,                # dangling-remote-branches 2026-05-30
+        check_lying_loading_state,                     # lying-loading-state 2026-07-22
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -134,6 +135,7 @@ def _detect(
         issues.extend(check_out_of_contract_trees())
         issues.extend(check_canonical_organ_consumption())  # products-consume-canonical-organs 2026-05-29
         issues.extend(check_dangling_remote_branches())      # dangling-remote-branches 2026-05-30
+        issues.extend(check_lying_loading_state())           # lying-loading-state 2026-07-22
     return products, issues
 
 

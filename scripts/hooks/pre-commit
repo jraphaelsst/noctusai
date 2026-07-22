@@ -290,6 +290,25 @@ if [[ -n "$STAGED_LOCKFILE_DEPS" ]] && have_py; then
     fi
 fi
 
+# ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
+# .tsx changed) ──────────────────────────────────────────────────────────
+# Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-
+# loading-state.md`. TanStack Query v5 `isLoading` is FALSE during a
+# background refetch (`isLoading === isPending && isFetching`); a `loading=`/
+# `isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0`
+# guard falls through to its EMPTY branch mid-refetch — "no data" over live
+# data. Live incident 2026-07-21/22 (social-wiring Leads, 12,177 leads / 28
+# brokers, fixed b0cb47b1 + ae9087ce). Severity warning — observe-first
+# cadence on a brand-new detector (never blocks a commit); scoped to staged
+# .tsx under products/*/frontend/src so backend-only commits pay nothing.
+STAGED_LOADING_TSX=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/frontend/src/.*\.tsx$' || true)
+if [[ -n "$STAGED_LOADING_TSX" ]] && have_py; then
+    echo "[pre-commit] product frontend .tsx staged — checking for lying-loading-state (TanStack v5 isLoading)..."
+    "$PY" "$CLI" --check-lying-loading-state --worktree-path "$REPO_ROOT" || true
+    # advisory only (severity warning) — the CLI itself always exits 0 for
+    # this gate; never block the commit on a brand-new detector's findings.
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),

@@ -145,6 +145,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── consent-routes-mandate.md
 │   │   │   ├── core-url-routing.md
 │   │   │   ├── frontend.md
+│   │   │   ├── lying-loading-state.md
 │   │   │   ├── product-icon-registry.md
 │   │   │   ├── product-internal-wiring.md
 │   │   │   ├── spa-cache-and-service-worker.md

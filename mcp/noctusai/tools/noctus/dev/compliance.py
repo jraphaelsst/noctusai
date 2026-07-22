@@ -7339,6 +7339,255 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_lying_loading_state` — TanStack Query v5 contract: `isLoading` is
+# FALSE during a background refetch (`isLoading === isPending && isFetching`).
+# A component gated on `.isLoading` (as a `loading=`/`isLoading=` JSX prop, or
+# a hand-rolled `!X.isLoading && ... .length === 0` empty-state guard) drops
+# out of its loading branch mid-refetch and falls through to its EMPTY
+# branch — rendering "no data" over data that exists.
+#
+# Live incident (2026-07-21/22): `products/social-wiring/frontend/src/pages/
+# leads/*.tsx` passed `loading={q.isLoading}` to `ChartCard` (state priority
+# loading > error > empty). ~2s after a correct skeleton frame, mid-refetch,
+# every card flipped to "Sem dados para o período selecionado." against a
+# live dataset of 28 brokers / 12,177 leads. Fixed in `b0cb47b1` (14 props,
+# 4 files) by switching to `loading={q.isPending || q.isFetching}`. A
+# hand-rolled predecessor of the same bug (`!byDimQ.isLoading && ... &&
+# buckets.length === 0`) was fixed one commit earlier in `ae9087ce`.
+#
+# Invisible to tests: a mocked query object never transitions through a
+# background refetch, so a unit test exercising `isLoading` never sees the
+# gap — only a static scan of live JSX catches it pre-merge.
+#
+# No tree-sitter / ts-morph dependency is available in this environment
+# (verified 2026-07-22 — `import tree_sitter` fails, no Node/ts-morph
+# toolchain wired). This scanner follows the SAME code-only-text +
+# brace-walk technique every other TSX keeper in this file already uses
+# (`check_query_fn_returns_undefined` above; `scan_wiring._scan_promise_all_
+# in_text`) — comments/strings blanked via `_strip_for_scan`, JSX opening-tag
+# boundaries isolated via an explicit `{`/`}` depth walk — rather than a
+# blind `.*`-across-the-tag regex.
+# ---------------------------------------------------------------------------
+
+_LYING_LOADING_SEVERITY = "warning"  # promote to "high" once observed clean for a cycle (KB § PATTERNS/frontend/lying-loading-state.md)
+
+_LYING_LOADING_EXCLUDED_PARTS: set[str] = {
+    "node_modules", "dist", "build", ".git", ".turbo", "coverage",
+}
+
+# `loading={q.isLoading}` / `isLoading={q.isLoading}` — the JSX-prop shape.
+# The prop VALUE must be EXACTLY `<chain>.isLoading` (nothing else inside the
+# braces), so `loading={q.isPending || q.isFetching}` and `loading={someBool}`
+# (an unrelated plain-boolean prop) never match.
+_LOADING_PROP_RE = re.compile(
+    r"\b(?:loading|isLoading)\s*=\s*\{\s*"
+    r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.isLoading"
+    r"\s*\}"
+)
+
+# Hand-rolled empty-state guard: `!X.isLoading && ... && Y.length === 0` on
+# one line — every observed instance is single-line (the Corretores.tsx
+# pre-`ae9087ce` shape). Requires >=1 `&&` between the negated `.isLoading`
+# and the `.length === 0` test so a bare `!x.isLoading` alone (e.g. a plain
+# spinner guard) never false-flags.
+_HANDROLLED_LOADING_GUARD_RE = re.compile(
+    r"!\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.isLoading\b"
+    r"(?:[^\n&]*&&){1,4}[^\n]*?\.length\s*===\s*0"
+)
+
+# Props signalling "empty wins over data" when paired with a `.isLoading`
+# loading prop on the SAME JSX opening tag — the `ChartCard` shape that
+# shipped live (state priority loading > error > empty).
+_EMPTY_PROP_RE = re.compile(r"\b(?:isEmpty|empty)\s*=")
+
+# Escape hatch — `lying-loading-ok` in a same-line or up-to-3-preceding-line
+# comment. Use only when the v5 contract has been read and a defensible
+# reason exists (e.g. the query object is a `Fake`/non-TanStack shape).
+_LYING_LOADING_RATIONALE_RE = re.compile(r"lying-loading-ok", re.IGNORECASE)
+_LYING_LOADING_RATIONALE_WINDOW = 3
+
+
+def _lying_loading_product_fe_src_dirs(root: Path) -> list[Path]:
+    """Every `products/<slug>/frontend/src` directory on disk.
+
+    Scoped to products (not `seed/`) per the incident surface — walks disk
+    directly so a not-yet-registered product is still scanned.
+    """
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return []
+    dirs: list[Path] = []
+    for child in sorted(products_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        src = child / "frontend" / "src"
+        if src.is_dir():
+            dirs.append(src)
+    return dirs
+
+
+def _find_jsx_opening_tag(code_only_text: str, match_start: int) -> str | None:
+    """Return the full opening-tag text enclosing a prop-match at
+    ``match_start`` (`<Component ...>` or `<Component .../>`), or ``None`` if
+    no JSX tag start can be found nearby.
+
+    Walks BACKWARD to the nearest `<Identifier` tag-open before
+    ``match_start`` (bounded to a 2000-char window — JSX opening tags in this
+    codebase are always far shorter), then walks FORWARD tracking `{`/`}`
+    depth so an embedded expression's `>` (a ternary, a generic) never
+    mistakenly closes the tag early.
+    """
+    tag_open_re = re.compile(r"<[A-Za-z][\w.]*")
+    search_from = max(0, match_start - 2000)
+    last_open: int | None = None
+    for m in tag_open_re.finditer(code_only_text, search_from, match_start + 1):
+        last_open = m.start()
+    if last_open is None:
+        return None
+    depth = 0
+    i = last_open
+    n = len(code_only_text)
+    while i < n:
+        ch = code_only_text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == ">" and depth == 0:
+            return code_only_text[last_open:i + 1]
+        i += 1
+    return None
+
+
+def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
+    """Flag the TanStack Query v5 `isLoading`-during-refetch lying-UI class.
+
+    `isLoading === isPending && isFetching` — FALSE during a background
+    refetch. A UI gated on `.isLoading` falls through to its EMPTY branch
+    mid-refetch, rendering "no data" over data that exists. Three shapes:
+
+      1. `loading={q.isLoading}` / `isLoading={q.isLoading}` JSX prop.
+      2. The higher-value variant: the SAME JSX opening tag also carries an
+         `isEmpty=`/`empty=` prop — the exact "empty outranks loading" shape
+         that shipped live (`ChartCard`'s loading > error > empty priority).
+      3. The hand-rolled equivalent: `!X.isLoading && ... && rows.length
+         === 0 && <EmptyState/>`.
+
+    Correct gate: `q.isPending || q.isFetching`. Live incident 2026-07-21/22 —
+    `products/social-wiring/frontend/src/pages/leads/*.tsx` rendered "Sem
+    dados para o período selecionado." mid-refetch against 28 brokers /
+    12,177 real leads. Fixed in `b0cb47b1` (JSX-prop shape, 14 props / 4
+    files) + `ae9087ce` (hand-rolled shape). Invisible to unit tests — a
+    mocked query object never transitions through a background refetch.
+
+    Severity: `_LYING_LOADING_SEVERITY` (`warning` — observe-first cadence on
+    a brand-new detector; promote to `high` in one line once clean for a
+    cycle). Escape hatch: `lying-loading-ok` in a same-line or
+    up-to-3-preceding-line comment. Per
+    `KB § PATTERNS/frontend/lying-loading-state.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for src_dir in _lying_loading_product_fe_src_dirs(root):
+        product = src_dir.parent.parent.name
+        for path in src_dir.rglob("*.tsx"):
+            if any(p in _LYING_LOADING_EXCLUDED_PARTS for p in path.parts):
+                continue
+            if path.name.endswith((".test.tsx", ".spec.tsx")):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if "isLoading" not in content:
+                continue  # cheap pre-filter — most FE files don't touch TanStack.
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            lines = content.splitlines()
+            _lines_nc, lines_code_only = _strip_for_scan(content, path.suffix)
+            code_only_text = "\n".join(lines_code_only)
+
+            def _escape_hatched(line_idx_1based: int) -> bool:
+                window_start = max(0, line_idx_1based - 1 - _LYING_LOADING_RATIONALE_WINDOW)
+                window = lines[window_start:line_idx_1based]
+                return any(_LYING_LOADING_RATIONALE_RE.search(ln) for ln in window)
+
+            # Shape 1 + 2 — JSX loading prop (plain, or paired with isEmpty=).
+            for m in _LOADING_PROP_RE.finditer(code_only_text):
+                line_no = code_only_text.count("\n", 0, m.start()) + 1
+                if _escape_hatched(line_no):
+                    continue
+                query_expr = m.group(1)
+                tag_text = _find_jsx_opening_tag(code_only_text, m.start())
+                paired_empty = bool(tag_text and _EMPTY_PROP_RE.search(tag_text))
+                if paired_empty:
+                    detail = (
+                        f"`{relative}:{line_no}` gates BOTH `loading=` on "
+                        f"`{query_expr}.isLoading` AND an `isEmpty=`/`empty=` "
+                        f"prop on the same tag — the exact shape that shipped "
+                        f"live: `isLoading` drops mid-refetch, the empty "
+                        f"branch outranks it, and the component renders "
+                        f'"no data" over real data (28 brokers / 12,177 '
+                        f"leads, `products/social-wiring/.../leads/*.tsx`, "
+                        f"fixed in `b0cb47b1`)."
+                    )
+                else:
+                    detail = (
+                        f"`{relative}:{line_no}` gates a loading prop on "
+                        f"`{query_expr}.isLoading`."
+                    )
+                issues.append({
+                    "product": product,
+                    "file": relative,
+                    "issue": (
+                        f"{detail} TanStack Query v5: `isLoading === "
+                        f"isPending && isFetching` — FALSE during a "
+                        f"background refetch. Use `{query_expr}.isPending || "
+                        f"{query_expr}.isFetching` instead. Per "
+                        f"`KB § PATTERNS/frontend/lying-loading-state.md`. "
+                        f"Escape hatch: `lying-loading-ok` in a same-line or "
+                        f"preceding-line comment."
+                    ),
+                    "severity": _LYING_LOADING_SEVERITY,
+                })
+
+            # Shape 3 — hand-rolled empty-state guard.
+            for m in _HANDROLLED_LOADING_GUARD_RE.finditer(code_only_text):
+                line_no = code_only_text.count("\n", 0, m.start()) + 1
+                if _escape_hatched(line_no):
+                    continue
+                issues.append({
+                    "product": product,
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{line_no}` hand-rolled empty-state "
+                        f"guard `!X.isLoading && ... && rows.length === 0` — "
+                        f"the same lying-UI class as the JSX `loading=` prop "
+                        f"shape, without the wrapper component. TanStack "
+                        f"Query v5: `isLoading === isPending && isFetching` "
+                        f"— FALSE during a background refetch, so this guard "
+                        f"opens mid-refetch and renders the empty branch "
+                        f"over real data. Use `!X.isPending && !X.isFetching "
+                        f"&& ...` instead (the pre-`ae9087ce` shape of this "
+                        f"exact incident). Per "
+                        f"`KB § PATTERNS/frontend/lying-loading-state.md`. "
+                        f"Escape hatch: `lying-loading-ok` in a same-line or "
+                        f"preceding-line comment."
+                    ),
+                    "severity": _LYING_LOADING_SEVERITY,
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_playwright_supabase_env` — the E2E-harness sibling of
 # `check_dockerfile_vite_supabase_args`. Every product's frontend Playwright
 # config whose `webServer` boots the real SPA MUST inject the boot-critical
@@ -8803,6 +9052,13 @@ def check_all_products() -> tuple[int, list]:
     # only signal because no unit test exercises the real Provider +
     # real queryFn + real 404 response).
     all_issues.extend(check_query_fn_returns_undefined())
+    # lying-loading-state (2026-07-22, N=1 live-incident escalation) —
+    # TanStack Query v5 `isLoading` is FALSE during a background refetch;
+    # a UI gated on it (JSX `loading=` prop, or the hand-rolled
+    # `!X.isLoading && ... .length === 0` guard) falls through to its EMPTY
+    # branch over live data. Severity warning (observe-first on a brand-new
+    # detector). KB § PATTERNS/frontend/lying-loading-state.md.
+    all_issues.extend(check_lying_loading_state())
     # fleet-limiter-conftest-adoption Stage-4 (2026-05-23) — products with
     # app/rate_limit.py must import the seed `reset_rate_limiter` autouse
     # fixture into tests/conftest.py, else the in-memory slowapi limiter

@@ -169,6 +169,7 @@ def main():
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
     parser.add_argument("--check-consent-routes", action="store_true", help="Keeper: seed consent routes (/consent, /consent/privacy-policy, /consent/terms-of-use) must stay mounted in seed/framework/frontend/src/app.tsx + exported from index.ts; no product may shadow them with a local re-declaration. Severity high. KB § PATTERNS/frontend/consent-routes-mandate.md.")
     parser.add_argument("--check-hashlib-usedforsecurity", action="store_true", help="Keeper: a weak-hash call (hashlib.md5/sha1/new(\"md5\"|\"sha1\", ...)) in the Bandit scope (products/*/backend/app + seed/lib/backend/noctusai_lib) used for a non-security purpose MUST pass usedforsecurity=False, or Bandit B324 (High) hard-fails CI. AST-based; a `# noqa: S324` does NOT satisfy it. Severity error (baseline 0). KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.")
+    parser.add_argument("--check-lying-loading-state", action="store_true", help="Keeper: TanStack Query v5 `isLoading` is FALSE during a background refetch (`isLoading === isPending && isFetching`); a `loading=`/`isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0` guard falls through to its EMPTY branch mid-refetch, rendering \"no data\" over live data. Live incident 2026-07-21/22 (social-wiring Leads, 12,177 leads / 28 brokers, fixed b0cb47b1). Scans products/*/frontend/src/**/*.tsx. Severity warning (observe-first on a brand-new detector). Escape hatch: `lying-loading-ok` comment. KB § PATTERNS/frontend/lying-loading-state.md.")
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
@@ -1207,6 +1208,18 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.check_lying_loading_state:
+        from tools.noctus.dev.compliance import check_lying_loading_state
+        issues = check_lying_loading_state()
+        if not issues:
+            print(f"  {GREEN}✓ lying-loading-state: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(issues)} lying-loading-state issue(s) (warnings — observe-first cadence):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
+        # severity=warning only — do NOT block commits (new detector, observe-first).
+        sys.exit(0)
 
     elif args.check_hardcoded_product_slug_set:
         from tools.noctus.dev.compliance import check_hardcoded_product_slug_set

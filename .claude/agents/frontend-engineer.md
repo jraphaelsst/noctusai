@@ -9,6 +9,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/core-url-routing.md
   - CONTEXT/PATTERNS/frontend/product-internal-wiring.md
   - CONTEXT/PATTERNS/frontend/product-icon-registry.md
+  - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
   - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/frontend/01-CORE.md
@@ -33,6 +34,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **Cross-product nav.** Core dashboard tiles env-driven via `resolve_product_url`; product `url_base = HOUSE port` (not the vestigial frontend port). → `KB § PATTERNS/frontend/core-url-routing.md`
 - **Status_pagina-gated nav.** A nav entry needs a `status_pagina` row OR it's silently HIDDEN by `filterNavByPageStatus` / `isPageVisible`. → `KB § PATTERNS/frontend/product-internal-wiring.md`
 - **Product icon must render.** A product's `icone` must register as a REAL icon — empty/missing fails `check_product_icon_registered`. → `KB § PATTERNS/frontend/product-icon-registry.md`
+- **Never gate loading UI on `.isLoading` alone.** TanStack Query v5 `isLoading` is FALSE mid-refetch; use `isPending || isFetching` or the empty branch wins over live data. `check_lying_loading_state` enforces (warning). → `KB § PATTERNS/frontend/lying-loading-state.md`
 - **SVG via seed primitive.** Use `svg_render` (the media-creator residual) — not hand-rolled `<svg>` strings in components. → `KB § PATTERNS/frontend/svg-render-mode.md`
 - **Consent routes are seed-mounted — never re-declare per-product.** Do NOT declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally; `createProductApp` mounts `/consent*` by construction. `check_consent_routes_mounted` enforces. → `KB § PATTERNS/frontend/consent-routes-mandate.md`
 - **No precaching service worker.** Products don't ship a PWA/`VitePWA` service worker (it precaches the shell+JS BYPASSING HTTP caching → clients pinned to STALE bundles after deploy). Retire with `selfDestroying: true` or declare `// noc-allow: service-worker`. `check_product_service_worker` enforces. → `KB § PATTERNS/frontend/spa-cache-and-service-worker.md`
