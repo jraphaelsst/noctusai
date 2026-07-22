@@ -5203,6 +5203,22 @@ _SLUG_LITERAL_RATIONALE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# N=3 instance of the same class (2026-07-22 launch-blocker):
+# `scripts/infra/build-and-push.sh` froze `ALL_SLUGS=(core erp-imobiliario
+# ...)` — a hand-copied deployable-product-set literal that drifted from
+# `deploy/fleet/docker-compose.prod.yml` the moment `knowledge-extractor`
+# became a real on-disk product without joining the prod fleet, aborting
+# the ENTIRE fleet image build (`exit 2` on the first unrecognized slug).
+# Root-fixed by deriving `ALL_SLUGS` from the compose file at run time; this
+# regex extends the scan surface so a REGRESSION back to a hardcoded bash
+# array in a build/CI shell script is caught mechanically, not just in
+# `seed/lib/backend/tests/`. Bash arrays can't be `ast.parse`d, so this is a
+# regex extraction of a `NAME=( ... )` assignment body (single- or
+# multi-line), not an AST walk.
+_BASH_ARRAY_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=\(([^()]*)\)", re.DOTALL)
+# Bareword / quoted tokens inside a bash array body — the literal elements.
+_BASH_ARRAY_TOKEN_RE = re.compile(r'"([^"]+)"|\'([^\']+)\'|([A-Za-z0-9][A-Za-z0-9._-]*)')
+
 
 def _live_product_slugs(root: Path) -> set[str]:
     """Set of product directory names under `products/` — the live fleet.
@@ -5233,14 +5249,51 @@ def _string_constants_in_collection(node: ast.AST) -> list[str] | None:
     return out
 
 
-def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict]:
-    """Seed tests must derive product sets from `parse_products_registry()`,
-    never freeze a product-slug literal.
+def _bash_array_literal_hits(
+    content: str, live_slugs: set[str]
+) -> list[tuple[int, list[str]]]:
+    """Find `NAME=( ... )` bash-array assignments in `content` whose element
+    tokens intersect `live_slugs` at >= `_SLUG_LITERAL_MIN_HITS`. Returns a
+    list of ``(1-based line number of the assignment, sorted hit slugs)``.
 
-    A literal tuple/set/list under `seed/lib/backend/tests/` that contains
-    ≥3 live product slugs is a frozen product-slug set: it goes stale the
-    moment the fleet changes (product added / removed / consolidated) and
-    produces misattributed assertion failures.
+    Regex-based, not AST — bash isn't `ast.parse`-able. Mirrors
+    `_string_constants_in_collection`'s Python-AST equivalent for the
+    non-Python surface (`scripts/infra/*.sh`) the same drift class now also
+    touches (`feedback_hardcoded_product_slug_set_keeper`, N=3).
+    """
+    out: list[tuple[int, list[str]]] = []
+    for match in _BASH_ARRAY_RE.finditer(content):
+        body = match.group(1)
+        tokens = {
+            g1 or g2 or g3
+            for g1, g2, g3 in _BASH_ARRAY_TOKEN_RE.findall(body)
+        }
+        hits = sorted(tokens & live_slugs)
+        if len(hits) >= _SLUG_LITERAL_MIN_HITS:
+            lineno = content.count("\n", 0, match.start()) + 1
+            out.append((lineno, hits))
+    return out
+
+
+def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict]:
+    """Seed tests + build/CI shell scripts must derive product sets from a
+    live source of truth, never freeze a product-slug literal.
+
+    Two scan surfaces, same drift class:
+
+    1. A literal tuple/set/list under `seed/lib/backend/tests/` (Python AST)
+       that contains ≥3 live product slugs is a frozen product-slug set: it
+       goes stale the moment the fleet changes (product added / removed /
+       consolidated) and produces misattributed assertion failures. Fix:
+       derive from `parse_products_registry()`
+       (`noctusai_lib.config.cors_registry`).
+    2. A bash `NAME=( ... )` array literal under `scripts/infra/*.sh` (regex —
+       bash isn't AST-parseable) with the same ≥3-live-slug shape — e.g. the
+       `ALL_SLUGS=(core erp-imobiliario ...)` that drifted from
+       `deploy/fleet/docker-compose.prod.yml` and aborted the whole fleet
+       image build the moment `knowledge-extractor` became a real product
+       without joining the prod fleet (2026-07-22). Fix: derive from the
+       fleet compose file (or `parse_products_registry()`) at run time.
 
     Opt-out: a `slug-literal-ok` / `registry-exempt` / `not-a-product-set`
     rationale keyword in a nearby comment or docstring (mirrors the
@@ -5248,7 +5301,8 @@ def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict
     slug→x fixture mapping.
 
     Per `feedback_hardcoded_product_slug_set_keeper`. N=2 evidenced by
-    social-wiring-absorption W3.5 (cors_registry + per_product_cors_sentinel).
+    social-wiring-absorption W3.5 (cors_registry + per_product_cors_sentinel);
+    N=3 evidenced by the 2026-07-22 `build-and-push.sh` fleet-build outage.
 
     Severity: `warning`.
     """
@@ -5257,74 +5311,222 @@ def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict
     if not root.exists():
         return issues
 
-    seed_tests = root / "seed" / "lib" / "backend" / "tests"
-    if not seed_tests.exists():
-        return issues
-
     live_slugs = _live_product_slugs(root)
     if not live_slugs:
         # No fleet to compare against — cannot reason; skip.
         return issues
 
-    # NB: `_SEED_EXPORT_SCAN_EXCLUDED_PARTS` includes "tests" — but this
-    # detector scans *inside* `seed/lib/backend/tests/` deliberately, so we
-    # only exclude transient/build dirs here, never the tests tree itself.
-    _slug_excluded = _SEED_EXPORT_SCAN_EXCLUDED_PARTS - {"tests", "__tests__"}
-    for py_path in seed_tests.rglob("*.py"):
-        if any(p in _slug_excluded for p in py_path.parts):
+    seed_tests = root / "seed" / "lib" / "backend" / "tests"
+    if seed_tests.exists():
+        # NB: `_SEED_EXPORT_SCAN_EXCLUDED_PARTS` includes "tests" — but this
+        # detector scans *inside* `seed/lib/backend/tests/` deliberately, so
+        # we only exclude transient/build dirs here, never the tests tree
+        # itself.
+        _slug_excluded = _SEED_EXPORT_SCAN_EXCLUDED_PARTS - {"tests", "__tests__"}
+        for py_path in seed_tests.rglob("*.py"):
+            if any(p in _slug_excluded for p in py_path.parts):
+                continue
+            try:
+                content = py_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", py_path, exc)
+                continue
+            if _SLUG_LITERAL_RATIONALE_RE.search(content):
+                continue
+            try:
+                tree = ast.parse(content, filename=str(py_path))
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", py_path, exc)
+                continue
+
+            try:
+                rel = str(py_path.relative_to(root))
+            except ValueError:
+                rel = str(py_path)
+
+            for node in ast.walk(tree):
+                collection: ast.AST | None = None
+                if isinstance(node, ast.Assign):
+                    collection = node.value
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    collection = node.value
+                else:
+                    continue
+                strings = _string_constants_in_collection(collection)
+                if strings is None:
+                    continue
+                hits = sorted(set(strings) & live_slugs)
+                if len(hits) < _SLUG_LITERAL_MIN_HITS:
+                    continue
+                lineno = getattr(collection, "lineno", node.lineno)
+                issues.append({
+                    "product": "<seed-tests>",
+                    "file": rel,
+                    "issue": (
+                        f"`{rel}:{lineno}` freezes a literal collection of "
+                        f"product slugs ({len(hits)} live slugs: "
+                        f"{', '.join(hits[:5])}{'…' if len(hits) > 5 else ''}). "
+                        f"A frozen product-slug literal goes stale when the "
+                        f"fleet changes (product added/removed/consolidated) "
+                        f"and misattributes assertion failures. Derive from "
+                        f"`parse_products_registry()` "
+                        f"(`noctusai_lib.config.cors_registry`) — the single "
+                        f"source of truth — instead. If this is a legitimate "
+                        f"non-product-set mapping, add a `slug-literal-ok` "
+                        f"rationale comment. Per "
+                        f"`feedback_hardcoded_product_slug_set_keeper`."
+                    ),
+                    "severity": "warning",
+                })
+
+    # Surface 2: build/CI shell scripts (`scripts/infra/*.sh`). Regex-based
+    # (bash isn't AST-parseable) — same threshold, same opt-out convention.
+    infra_scripts = root / "scripts" / "infra"
+    if infra_scripts.exists():
+        for sh_path in infra_scripts.rglob("*.sh"):
+            try:
+                content = sh_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", sh_path, exc)
+                continue
+            if _SLUG_LITERAL_RATIONALE_RE.search(content):
+                continue
+
+            try:
+                rel = str(sh_path.relative_to(root))
+            except ValueError:
+                rel = str(sh_path)
+
+            for lineno, hits in _bash_array_literal_hits(content, live_slugs):
+                issues.append({
+                    "product": "<infra-scripts>",
+                    "file": rel,
+                    "issue": (
+                        f"`{rel}:{lineno}` freezes a bash array literal of "
+                        f"product slugs ({len(hits)} live slugs: "
+                        f"{', '.join(hits[:5])}{'…' if len(hits) > 5 else ''}). "
+                        f"A frozen deployable-product-set array goes stale "
+                        f"the moment the fleet changes (a real, on-disk "
+                        f"product not yet in the prod fleet, or a "
+                        f"newly-deployed one) and can abort the whole build "
+                        f"on an unrecognized slug. Derive it at run time from "
+                        f"`deploy/fleet/docker-compose.prod.yml` (or "
+                        f"`parse_products_registry()`) instead. If this is a "
+                        f"legitimate non-product-set array, add a "
+                        f"`slug-literal-ok` rationale comment. Per "
+                        f"`feedback_hardcoded_product_slug_set_keeper`."
+                    ),
+                    "severity": "warning",
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_product_lockfile_dep_sync` — a product's package.json can declare a
+# required dep while its package-lock.json snapshot (what `npm ci` actually
+# materializes) never caught up. N=3 in one week (2026-07): @dnd-kit/* (commit
+# acfef9bb), then recharts + @radix-ui/react-tabs when chart organs were
+# promoted (broke SEVEN products), plus the sibling shape in
+# `check_hardcoded_product_slug_set` (scripts/infra/build-and-push.sh). All
+# three: a hand-maintained/derived-but-stale artifact drifting from the real
+# thing it mirrors, discovered only in CI, after promotion.
+#
+# Severity: `high`.
+# ---------------------------------------------------------------------------
+
+
+def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]:
+    """A clean `npm ci` uses ONLY package-lock.json — never re-resolves from
+    package.json. When a product's package.json declares a required dep
+    (`FRAMEWORK_DEPS` + the live seed-organ transitive-dep scan — see
+    `check_framework_deps._required_deps`) but the lockfile has no
+    `node_modules/<dep>` entry, `npm ci` in a clean container will NOT
+    install it, and the build fails with `Rollup failed to resolve import`
+    — invisible in dev, where an already-populated node_modules masks the
+    gap (the dev-prod-parity class), and historically caught only in CI
+    after the code had already been promoted.
+
+    This is the OTHER half of the drift `check_framework_deps` already
+    guards: that check audits the DECLARATION (package.json); this one
+    audits the RESOLVED SNAPSHOT (package-lock.json). A product can pass
+    `check_framework_deps` and still fail here.
+
+    Fix: refresh the lockfile — but NEVER with a bare `npm install` (it
+    re-resolves the WHOLE dependency tree; 535 unrelated version bumps were
+    measured from doing this naively on one product). Prefer
+    `npm install <dep>` scoped to exactly the missing dep(s), or splice the
+    missing `node_modules/<dep>` entries in by hand from a sibling product's
+    lockfile that already has them.
+
+    Per the 2026-07-22 devops escalation (three recurrences in one session:
+    @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling). Severity
+    `high` — a clean-build break, not a style nit.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    try:
+        from tools.noctus.dev.check_framework_deps import _required_deps
+    except ImportError:
+        logger.debug("compliance: check_framework_deps unavailable; skipping lockfile-dep-sync")
+        return issues
+
+    required, _organ_transitive = _required_deps(root)
+    if not required:
+        return issues
+
+    import json as _json
+
+    for pkg_path in sorted(root.glob("products/*/frontend/package.json")):
+        slug = pkg_path.parent.parent.name
+        lock_path = pkg_path.parent / "package-lock.json"
+        if not lock_path.exists():
             continue
         try:
-            content = py_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug("compliance: cannot read %s (%s)", py_path, exc)
+            pkg = _json.loads(pkg_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", pkg_path, exc)
             continue
-        if _SLUG_LITERAL_RATIONALE_RE.search(content):
-            continue
+        declared = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
         try:
-            tree = ast.parse(content, filename=str(py_path))
-        except SyntaxError as exc:
-            logger.debug("compliance: cannot parse %s (%s)", py_path, exc)
+            lock = _json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", lock_path, exc)
+            continue
+        packages = lock.get("packages") if isinstance(lock, dict) else None
+        if not isinstance(packages, dict):
             continue
 
+        stale = sorted(
+            d for d in required
+            if d in declared and f"node_modules/{d}" not in packages
+        )
+        if not stale:
+            continue
         try:
-            rel = str(py_path.relative_to(root))
+            rel = str(lock_path.relative_to(root))
         except ValueError:
-            rel = str(py_path)
-
-        for node in ast.walk(tree):
-            collection: ast.AST | None = None
-            if isinstance(node, ast.Assign):
-                collection = node.value
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                collection = node.value
-            else:
-                continue
-            strings = _string_constants_in_collection(collection)
-            if strings is None:
-                continue
-            hits = sorted(set(strings) & live_slugs)
-            if len(hits) < _SLUG_LITERAL_MIN_HITS:
-                continue
-            lineno = getattr(collection, "lineno", node.lineno)
-            issues.append({
-                "product": "<seed-tests>",
-                "file": rel,
-                "issue": (
-                    f"`{rel}:{lineno}` freezes a literal collection of "
-                    f"product slugs ({len(hits)} live slugs: "
-                    f"{', '.join(hits[:5])}{'…' if len(hits) > 5 else ''}). "
-                    f"A frozen product-slug literal goes stale when the "
-                    f"fleet changes (product added/removed/consolidated) "
-                    f"and misattributes assertion failures. Derive from "
-                    f"`parse_products_registry()` "
-                    f"(`noctusai_lib.config.cors_registry`) — the single "
-                    f"source of truth — instead. If this is a legitimate "
-                    f"non-product-set mapping, add a `slug-literal-ok` "
-                    f"rationale comment. Per "
-                    f"`feedback_hardcoded_product_slug_set_keeper`."
-                ),
-                "severity": "warning",
-            })
+            rel = str(lock_path)
+        issues.append({
+            "product": slug,
+            "file": rel,
+            "issue": (
+                f"{slug}: package.json declares "
+                f"{', '.join(stale[:5])}{'…' if len(stale) > 5 else ''} but "
+                f"{rel} has no `node_modules/<dep>` entry for it — a clean "
+                f"`npm ci` will NOT install it, breaking the container build "
+                f"(the @dnd-kit/recharts/@radix-ui-react-tabs recurrence, "
+                f"2026-07). Refresh the lockfile with `npm install <dep>` "
+                f"scoped to the missing dep(s) in products/{slug}/frontend/ "
+                f"— NEVER a bare `npm install` (re-resolves the whole tree; "
+                f"535 unrelated version bumps measured from doing this "
+                f"naively)."
+            ),
+            "severity": "high",
+        })
 
     return issues
 
@@ -8456,6 +8658,10 @@ def check_all_products() -> tuple[int, list]:
     # social-wiring-absorption W5.9-rest — numeric-axis twin of the
     # slug-set keeper (frozen fleet-size literals stale on consolidation).
     all_issues.extend(check_hardcoded_fleet_size_literal())
+    # 2026-07-22 devops escalation (N=3 recurrence in one session: @dnd-kit,
+    # recharts/@radix-ui-react-tabs, ALL_SLUGS) — a product's lockfile
+    # snapshot of a required dep goes stale relative to its own package.json.
+    all_issues.extend(check_product_lockfile_dep_sync())
     # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
     # doc-symbology / symbol-first authoring methodology (warn-only).
     all_issues.extend(check_doc_symbology_drift())

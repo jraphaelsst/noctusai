@@ -348,6 +348,64 @@ class TestCheckHardcodedProductSlugSet:
         issues = check_hardcoded_product_slug_set(tmp_path)
         assert issues == []
 
+    # -- surface 2: scripts/infra/*.sh bash-array literals (N=3, 2026-07-22
+    # build-and-push.sh fleet-build outage) --------------------------------
+
+    def _mk_infra_script(self, tmp_path: Path, sh: str, *, name: str = "build-and-push.sh") -> None:
+        d = tmp_path / "scripts" / "infra"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(sh)
+
+    def test_flags_frozen_bash_array_in_infra_script(self, tmp_path):
+        # The actual ALL_SLUGS=(...) shape that aborted the fleet build.
+        self._mk_fleet(tmp_path, ["core", "erp-imobiliario", "therapy-platform", "adconnect"])
+        self._mk_infra_script(
+            tmp_path,
+            "#!/usr/bin/env bash\n"
+            "ALL_SLUGS=(core erp-imobiliario therapy-platform adconnect)\n",
+        )
+        issues = check_hardcoded_product_slug_set(tmp_path)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["product"] == "<infra-scripts>"
+        assert "docker-compose.prod.yml" in issues[0]["issue"]
+
+    def test_does_not_flag_derived_bash_array(self, tmp_path):
+        # The root-fix shape: array populated at run time, no frozen literal.
+        self._mk_fleet(tmp_path, ["core", "erp-imobiliario", "therapy-platform"])
+        self._mk_infra_script(
+            tmp_path,
+            "#!/usr/bin/env bash\n"
+            "ALL_SLUGS=()\n"
+            "while IFS= read -r slug; do ALL_SLUGS+=(\"$slug\"); done < <(true)\n",
+        )
+        issues = check_hardcoded_product_slug_set(tmp_path)
+        assert issues == [], issues
+
+    def test_bash_array_rationale_keyword_opts_out(self, tmp_path):
+        self._mk_fleet(tmp_path, ["core", "erp-imobiliario", "therapy-platform"])
+        self._mk_infra_script(
+            tmp_path,
+            "#!/usr/bin/env bash\n"
+            "# slug-literal-ok: fixture, not the deployable set\n"
+            "SAMPLE=(core erp-imobiliario therapy-platform)\n",
+        )
+        issues = check_hardcoded_product_slug_set(tmp_path)
+        assert issues == [], issues
+
+    def test_bash_array_below_threshold_not_flagged(self, tmp_path):
+        self._mk_fleet(tmp_path, ["core", "erp-imobiliario", "therapy-platform"])
+        self._mk_infra_script(
+            tmp_path, "#!/usr/bin/env bash\nPAIR=(core erp-imobiliario)\n",
+        )
+        issues = check_hardcoded_product_slug_set(tmp_path)
+        assert issues == [], issues
+
+    def test_no_infra_scripts_dir_no_error(self, tmp_path):
+        self._mk_fleet(tmp_path, ["core", "erp-imobiliario", "therapy-platform"])
+        issues = check_hardcoded_product_slug_set(tmp_path)
+        assert issues == []
+
 
 # ---------------------------------------------------------------------------
 # check_hardcoded_fleet_size_literal

@@ -78,20 +78,83 @@ TAG="${NOCTUS_IMAGE_TAG:-latest}"
 PUSH=1
 BUILD_BASE=1
 MOVE_LATEST=0   # safe default (2026-07-20 PROD-PIN fix) — :latest moves ONLY on --move-latest
-ALL_SLUGS=(core erp-imobiliario personal-finance therapy-platform daily-life adconnect dev-team social-wiring orbity seed)
-REQUESTED=()   # optional subset of product slugs to build/push (default: all)
+
+# ── deployable slug set — the SINGLE SOURCE OF TRUTH (2026-07-22 fix) ──
+# Previously a hand-maintained `ALL_SLUGS` literal array here, which drifted
+# from the real prod fleet: `products/knowledge-extractor/` is a real,
+# on-disk, start.sh-registered product that was never added to
+# `deploy/fleet/docker-compose.prod.yml` (never deployed). The CI workflow
+# derives its build-scope slugs from *changed files* under `products/<slug>/`
+# — the moment knowledge-extractor got a commit, CI passed it as an arg here,
+# it failed the (hardcoded, stale) membership check, and the script's fatal
+# `exit 2` killed the ENTIRE fleet build — no image pushed for ANY product.
+#
+# Root fix: derive the deployable set from `deploy/fleet/docker-compose.prod.yml`
+# itself — the file that actually defines "what's in the prod fleet" — instead
+# of maintaining a second hand-copied list that can only ever drift from it.
+# Extracted from the `image: ghcr.io/.../noctus-<slug>:` lines (not the nested
+# `services:` YAML keys) so no YAML parser is needed and non-product blocks
+# (the `networks:` section, any future infra-only service) are never swept in.
+FLEET_COMPOSE="$REPO_ROOT/deploy/fleet/docker-compose.prod.yml"
+if [[ ! -f "$FLEET_COMPOSE" ]]; then
+  echo "ERROR: $FLEET_COMPOSE not found — cannot derive the deployable product set." >&2
+  exit 1
+fi
+# `while read` (not `mapfile`/`readarray` — bash 4+ only) so this also runs
+# on macOS's stock bash 3.2 (a "build host" per the header's usage doc), not
+# just the ubuntu-latest CI runner.
+ALL_SLUGS=()
+while IFS= read -r slug; do
+  [[ -n "$slug" ]] && ALL_SLUGS+=("$slug")
+done < <(
+  grep -oE 'ghcr\.io/jraphaelsst/noctus-[a-z0-9-]+:' "$FLEET_COMPOSE" \
+    | sed -E 's#^ghcr\.io/jraphaelsst/noctus-##; s/:$//' \
+    | sort -u
+)
+if [[ ${#ALL_SLUGS[@]} -eq 0 ]]; then
+  echo "ERROR: derived an EMPTY deployable product set from $FLEET_COMPOSE — refusing to build nothing (likely a parse regression)." >&2
+  exit 1
+fi
+
+REQUESTED=()    # deployable subset of product slugs to build/push (default: all)
+ANY_SLUG_ARG=0  # true iff >=1 positional (non-flag) arg was passed at all —
+                # tracked SEPARATELY from REQUESTED so that passing ONLY a
+                # real-but-undeployed slug (e.g. `knowledge-extractor` alone)
+                # means "build nothing" (deliberately skipped), NOT "no subset
+                # requested -> build the whole fleet" (the empty-REQUESTED
+                # fallback below is for the true no-args case only).
 for arg in "$@"; do
   case "$arg" in
     --no-push) PUSH=0 ;;
     --no-base) BUILD_BASE=0 ;;
     --move-latest) MOVE_LATEST=1 ;;
     --*) echo "unknown flag: $arg" >&2; exit 2 ;;
-    *) if printf '%s\n' "${ALL_SLUGS[@]}" | grep -qx "$arg"; then REQUESTED+=("$arg")
-       else echo "unknown product slug: $arg (valid: ${ALL_SLUGS[*]})" >&2; exit 2; fi ;;
+    *)
+      ANY_SLUG_ARG=1
+      if printf '%s\n' "${ALL_SLUGS[@]}" | grep -qx "$arg"; then
+        REQUESTED+=("$arg")
+      elif [[ -d "$REPO_ROOT/products/$arg" ]]; then
+        # A REAL, on-disk product (e.g. knowledge-extractor) that simply
+        # isn't in the prod fleet yet — deliberate skip, never fatal. This
+        # is the exact case that used to abort the whole fleet build.
+        echo "[fleet] skipping '$arg' — real product, not in the prod fleet (absent from deploy/fleet/docker-compose.prod.yml); nothing to build/push for it" >&2
+      else
+        # Not on disk at all — a genuine typo/bogus slug. Fatal is correct
+        # here: there is nothing real this could plausibly mean.
+        echo "unknown product slug: $arg (not a real product, and not one of the deployable slugs: ${ALL_SLUGS[*]})" >&2
+        exit 2
+      fi
+      ;;
   esac
 done
-# want <slug> → true iff no subset was requested, or <slug> is in the subset.
-want() { [[ ${#REQUESTED[@]} -eq 0 ]] || printf '%s\n' "${REQUESTED[@]}" | grep -qx "$1"; }
+# want <slug> → true iff no slug arg was requested at all (default: build
+# everything), or <slug> is in the resolved deployable subset. A run given
+# ONLY undeployed real slugs (ANY_SLUG_ARG=1, REQUESTED empty) correctly
+# builds nothing rather than falling back to "build all".
+want() {
+  [[ "$ANY_SLUG_ARG" == "0" ]] && return 0
+  [[ ${#REQUESTED[@]} -gt 0 ]] && printf '%s\n' "${REQUESTED[@]}" | grep -qx "$1"
+}
 
 # The git sha every image is labeled with (org.opencontainers.image.revision)
 # — how noctus.dev.deploy_image later verifies a pulled :latest actually came
@@ -168,7 +231,16 @@ if want erp-imobiliario; then
     --build-arg "VITE_CORE_URL=${VITE_CORE_URL}"
 fi
 
-for slug in personal-finance therapy-platform daily-life adconnect dev-team social-wiring orbity seed; do
+# The rest of the fleet (everything in ALL_SLUGS except core + erp-imobiliario,
+# which are special-cased above for their extra VITE_CORE_API_URL arg). Derived
+# from ALL_SLUGS — same root fix as above: this used to be its own hand-copied
+# slug list, a SECOND drift vector alongside ALL_SLUGS itself (a product added
+# to the prod fleet would pass the membership check above but silently never
+# get built here).
+for slug in "${ALL_SLUGS[@]}"; do
+  case "$slug" in
+    core|erp-imobiliario) continue ;;  # handled above with their extra arg
+  esac
   want "$slug" || continue
   build_product "$slug" \
     "${COMMON_VITE_ARGS[@]}" \
@@ -210,7 +282,15 @@ if [[ "$PUSH" == "1" ]]; then
   moved="edge"; [[ "$MOVE_LATEST" == "1" ]] && moved="latest"
   echo "[fleet] pushed ${pushed} product image(s) at tag ${TAG}$( [[ "$TAG" != "latest" ]] && echo " (+ :${moved})" )"
 else
-  echo "[fleet] --no-push: built ${#ALL_SLUGS[@]} product images locally (tag ${TAG}), not pushed"
+  # Pre-existing bug fixed in passing: this used to unconditionally report
+  # `${#ALL_SLUGS[@]}` regardless of what `want` actually filtered down to
+  # (wrong whenever a subset — or, as of the ANY_SLUG_ARG fix, nothing — was
+  # requested). Count what `want` actually said yes to.
+  built=0
+  for slug in "${ALL_SLUGS[@]}"; do
+    want "$slug" && built=$((built + 1))
+  done
+  echo "[fleet] --no-push: built ${built} product image(s) locally (tag ${TAG}), not pushed"
 fi
 
 echo "[fleet] done."

@@ -254,6 +254,42 @@ if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then
     fi
 fi
 
+# ─── 6d. Hardcoded product-slug-set gate (blocking-on-high, only when a ──
+# build/CI script or a seed test is staged) ──────────────────────────────
+# Keeper `check_hardcoded_product_slug_set` + `KB § PATTERNS/devops/product-
+# lockfile-and-slug-drift.md`. A hand-copied product-slug literal (a bash
+# `ALL_SLUGS=(...)` array in scripts/infra/*.sh, or a frozen Python
+# tuple/set/list in seed/lib/backend/tests/) drifts from the live fleet the
+# moment a product is added/removed/never-deployed — the 2026-07-22
+# knowledge-extractor fleet-build outage. Catch it locally, before CI.
+STAGED_SLUG_SET=$(git diff --cached --name-only 2>/dev/null | grep -E '^(scripts/infra/.*\.sh|seed/lib/backend/tests/.*\.py|start\.sh)$' || true)
+if [[ -n "$STAGED_SLUG_SET" ]] && have_py; then
+    echo "[pre-commit] build script / seed test staged — checking for a hardcoded product-slug set..."
+    if ! "$PY" "$CLI" --check-hardcoded-product-slug-set --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] HARDCODED-PRODUCT-SLUG-SET check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Derive the product/slug set from the live fleet (deploy/fleet/docker-compose.prod.yml or parse_products_registry()) instead of a hand-copied literal — it WILL drift. See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md." >&2
+        exit 1
+    fi
+fi
+
+# ─── 6e. Product lockfile ↔ seed dep sync gate (blocking, only when a ────
+# product package.json/lockfile or a seed frontend package changed) ──────
+# Keeper `check_product_lockfile_dep_sync` + `KB § PATTERNS/devops/product-
+# lockfile-and-slug-drift.md`. A product's package-lock.json can go stale
+# relative to its OWN package.json (or the seed-organ imports it transitively
+# needs) — `npm ci` in CI/a clean container then fails to resolve the import.
+# N=3 in one session (2026-07-22): @dnd-kit, recharts/@radix-ui-react-tabs,
+# and the sibling ALL_SLUGS class above. Catch it before it ships.
+STAGED_LOCKFILE_DEPS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/package(-lock)?\.json|seed/lib/frontend/(package\.json|src/.*\.tsx?)|seed/framework/frontend/package\.json)$' || true)
+if [[ -n "$STAGED_LOCKFILE_DEPS" ]] && have_py; then
+    echo "[pre-commit] product/seed frontend package changed — checking lockfile ↔ package.json dep sync..."
+    if ! "$PY" "$CLI" --check-product-lockfile-dep-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PRODUCT-LOCKFILE-DEP-SYNC check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A required dep is declared in package.json but missing from package-lock.json's resolved snapshot — npm ci will not install it. Run 'npm install <dep>' SCOPED to the missing dep(s) in the affected product's frontend/ (a bare 'npm install' re-resolves the whole tree — hundreds of unrelated version bumps). See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),
