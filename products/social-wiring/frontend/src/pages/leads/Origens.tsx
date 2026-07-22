@@ -5,7 +5,15 @@
  * preceding window · drill-in to a single source (clicking a row toggles
  * that `origem_id` into the SHARED `useLeadsFilters()` state, so every
  * other subtab narrows to it too — the same filter set drives every chart).
+ *
+ * `by-dimension?dim=origem` buckets are keyed by the source SLUG (see
+ * `_split_key_label_cor` in analytics_service.py — `source["slug"]`), but
+ * `origem_id` is a typed-UUID filter param. The row click resolves
+ * slug→id via `useLeadSources()` (already loaded fleet-wide for the filter
+ * bar) BEFORE toggling the filter — toggling the raw slug 422s every
+ * endpoint sharing `get_lead_filters` (leads-p0-frontend-ux finding #1).
  */
+import { useMemo } from "react";
 import {
   AreaChart,
   ChartCard,
@@ -14,13 +22,17 @@ import {
   formatPercentDelta,
 } from "@noctusai/lib/design-system";
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
-import { useLeadsByDimension, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { useLeadSources } from "@/hooks/useLeadsSources";
+import { useLeadsByDimension, useLeadsSummary, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { attributionSubtitle, isOutrosBucket } from "./utils";
 
 export default function Origens() {
   const { filters, toggleMulti } = useLeadsFilters();
+  const { data: sources } = useLeadSources();
 
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "origem" });
   const byDimQ = useLeadsByDimension(filters, { dim: "origem", limit: 50 });
+  const summaryQ = useLeadsSummary(filters);
 
   const areaData = (timeseriesQ.data?.points ?? []).map((p) => ({
     label: p.label,
@@ -32,7 +44,22 @@ export default function Origens() {
     color: m.cor ?? undefined,
   }));
 
+  // slug -> id: the by-dimension bucket `key` is a slug; `origem_id` filters
+  // (and `filters.origem_id`) are ids. Resolved once per sources fetch.
+  const idBySlug = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of sources ?? []) map.set(s.slug, s.id);
+    return map;
+  }, [sources]);
+
   const buckets = byDimQ.data?.buckets ?? [];
+
+  const attribution = attributionSubtitle({
+    dimTotal: byDimQ.data?.total,
+    grandTotal: summaryQ.data?.total,
+    dimensionLabel: "com origem identificada",
+    missingLabel: "sem origem",
+  });
 
   return (
     <div className="space-y-4" data-testid="leads-origens-success">
@@ -50,8 +77,13 @@ export default function Origens() {
         <div className="border-b border-border p-4">
           <h3 className="font-semibold">Origens no período</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Clique numa origem para filtrar todas as abas por ela (drill-in).
+            Clique numa origem para filtrar todas as abas por ela.
           </p>
+          {attribution && (
+            <p className="mt-0.5 text-xs text-muted-foreground" data-testid="leads-origens-attribution">
+              {attribution}
+            </p>
+          )}
         </div>
 
         {byDimQ.isPending && (
@@ -84,14 +116,17 @@ export default function Origens() {
               </thead>
               <tbody>
                 {buckets.map((b) => {
-                  const isActive = filters.origem_id.includes(b.key);
+                  const outros = isOutrosBucket(b.key);
+                  const origemId = outros ? undefined : idBySlug.get(b.key);
+                  const isActive = !!origemId && filters.origem_id.includes(origemId);
+                  const clickable = !outros && !!origemId;
                   return (
                     <tr
                       key={b.key}
-                      onClick={() => toggleMulti("origem_id", b.key)}
-                      className={`cursor-pointer border-b last:border-0 hover:bg-muted/30 ${
-                        isActive ? "bg-primary/5" : ""
-                      }`}
+                      onClick={clickable ? () => toggleMulti("origem_id", origemId) : undefined}
+                      className={`border-b last:border-0 ${
+                        clickable ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
+                      } ${isActive ? "bg-primary/5" : ""}`}
                       data-testid={`leads-origem-row-${b.key}`}
                     >
                       <td className="px-4 py-2">

@@ -8,8 +8,10 @@
  *   <MultiSelectPopover label="Origem" options={sourceOptions}
  *     selected={filters.origem_id} onToggle={(v) => toggleMulti("origem_id", v)} />
  */
-import { Check, ChevronDown } from "lucide-react";
+import { useState } from "react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -42,9 +44,14 @@ export function MultiSelectPopover({
   testId,
 }: MultiSelectPopoverProps) {
   const count = selected.length;
+  const [search, setSearch] = useState("");
+
+  const filteredOptions = search.trim()
+    ? options.filter((o) => o.label.toLowerCase().includes(search.trim().toLowerCase()))
+    : options;
 
   return (
-    <Popover>
+    <Popover onOpenChange={(open) => !open && setSearch("")}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -62,13 +69,29 @@ export function MultiSelectPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-64 p-2" align="start">
+        {options.length > 6 && (
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar..."
+              className="h-8 pl-7 text-xs"
+              data-testid={testId ? `${testId}-search` : undefined}
+            />
+          </div>
+        )}
         <div className="max-h-72 space-y-0.5 overflow-y-auto">
           {options.length === 0 ? (
             <p className="px-2 py-3 text-center text-xs text-muted-foreground">
               {emptyMessage}
             </p>
+          ) : filteredOptions.length === 0 ? (
+            <p className="px-2 py-3 text-center text-xs text-muted-foreground" data-testid={testId ? `${testId}-no-results` : undefined}>
+              Nenhum resultado para "{search}".
+            </p>
           ) : (
-            options.map((option) => {
+            filteredOptions.map((option) => {
               const isSelected = selected.includes(option.value);
               return (
                 <button

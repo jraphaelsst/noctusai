@@ -15,16 +15,26 @@ import {
   formatPercentDelta,
 } from "@noctusai/lib/design-system";
 import { useLeadsFilters } from "@/hooks/useLeadsFilters";
-import { useLeadsByDimension, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { useLeadsByDimension, useLeadsSummary, useLeadsTimeseries } from "@/hooks/useLeadsAnalytics";
+import { attributionSubtitle, isOutrosBucket } from "./utils";
 
 export default function Corretores() {
   const { filters, toggleMulti } = useLeadsFilters();
 
   const byDimQ = useLeadsByDimension(filters, { dim: "corretor", limit: 50 });
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "corretor" });
+  const summaryQ = useLeadsSummary(filters);
 
   const buckets = byDimQ.data?.buckets ?? [];
   const rankedBuckets = [...buckets].sort((a, b) => b.total - a.total).slice(0, 15);
+
+  const donutSubtitle =
+    attributionSubtitle({
+      dimTotal: byDimQ.data?.total,
+      grandTotal: summaryQ.data?.total,
+      dimensionLabel: "com corretor identificado",
+      missingLabel: "sem corretor",
+    }) ?? "Distribuição do total de leads.";
 
   const areaData = (timeseriesQ.data?.points ?? []).map((p) => ({
     label: p.label,
@@ -56,7 +66,7 @@ export default function Corretores() {
 
         <ChartCard
           title="Participação por corretor"
-          subtitle="Distribuição do total de leads."
+          subtitle={donutSubtitle}
           loading={byDimQ.isPending || byDimQ.isFetching}
           error={byDimQ.isError ? "Erro ao carregar a participação." : null}
           isEmpty={buckets.length === 0}
@@ -79,7 +89,7 @@ export default function Corretores() {
         <div className="border-b border-border p-4">
           <h3 className="font-semibold">Corretores no período</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Clique num corretor para filtrar todas as abas por ele (drill-in).
+            Clique num corretor para filtrar todas as abas por ele.
           </p>
         </div>
         {byDimQ.isPending && (
@@ -115,14 +125,15 @@ export default function Corretores() {
               </thead>
               <tbody>
                 {buckets.map((b) => {
-                  const isActive = filters.corretor_id.includes(b.key);
+                  const outros = isOutrosBucket(b.key);
+                  const isActive = !outros && filters.corretor_id.includes(b.key);
                   return (
                     <tr
                       key={b.key}
-                      onClick={() => toggleMulti("corretor_id", b.key)}
-                      className={`cursor-pointer border-b last:border-0 hover:bg-muted/30 ${
-                        isActive ? "bg-primary/5" : ""
-                      }`}
+                      onClick={outros ? undefined : () => toggleMulti("corretor_id", b.key)}
+                      className={`border-b last:border-0 ${
+                        outros ? "cursor-default" : "cursor-pointer hover:bg-muted/30"
+                      } ${isActive ? "bg-primary/5" : ""}`}
                       data-testid={`leads-corretor-row-${b.key}`}
                     >
                       <td className="px-4 py-2">

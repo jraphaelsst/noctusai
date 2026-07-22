@@ -18,6 +18,7 @@ import {
   useLeadImportCommit,
   useLeadImportPreview,
 } from "@/hooks/useLeadsImport";
+import { describeError } from "./utils";
 
 const STATUS_LABEL: Record<string, string> = { running: "Em andamento", ok: "OK", erro: "Erro" };
 const STATUS_VARIANT: Record<string, "default" | "destructive" | "secondary"> = {
@@ -50,7 +51,7 @@ export default function Importacao() {
     setFile(f);
     preview.reset();
     preview.mutate(f, {
-      onError: () => toast.error("Erro ao processar a planilha."),
+      onError: (err) => toast.error(describeError(err, "Erro ao processar a planilha.")),
     });
   }
 
@@ -64,7 +65,7 @@ export default function Importacao() {
         setFile(null);
         preview.reset();
       },
-      onError: () => toast.error("Erro ao confirmar a importação."),
+      onError: (err) => toast.error(describeError(err, "Erro ao confirmar a importação.")),
     });
   }
 
@@ -76,8 +77,8 @@ export default function Importacao() {
         <CardHeader>
           <CardTitle>Importar planilha</CardTitle>
           <CardDescription>
-            Arraste um `.xlsx` do controle de leads ou clique para escolher. Todas as linhas são
-            pré-visualizadas antes de gravar (§1/§4).
+            Arraste um arquivo .xlsx do controle de leads ou clique para escolher. Todas as linhas
+            são pré-visualizadas antes de gravar — nada é salvo até você confirmar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -134,7 +135,7 @@ export default function Importacao() {
           {preview.isError && (
             <div className="flex items-center gap-2 text-sm text-destructive" data-testid="leads-import-preview-error">
               <AlertTriangle className="h-4 w-4" />
-              {(preview.error as Error)?.message ?? "Erro ao processar a planilha."}
+              {describeError(preview.error, "Erro ao processar a planilha.")}
             </div>
           )}
 

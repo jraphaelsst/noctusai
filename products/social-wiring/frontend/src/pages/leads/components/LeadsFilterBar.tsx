@@ -10,6 +10,7 @@
  * `corretor_id` options + colors come from the sources/corretores lists;
  * `empreendimento` / `regiao` / `ano` options come from `/api/leads/facets`.
  */
+import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { FilterBar, type FilterChip } from "@noctusai/lib/design-system";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,13 @@ import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import { useLeadsFacets } from "@/hooks/useLeadsAnalytics";
 import { useLeadsFilters, type LeadsMultiKey } from "@/hooks/useLeadsFilters";
 import { MultiSelectPopover, type MultiSelectOption } from "./MultiSelectPopover";
+
+// One-shot at module-eval time (mirrors `defaultCollapsed`'s own contract —
+// it only seeds INITIAL state, never reacts to a later resize). Guards SSR /
+// non-browser test environments where `window` is undefined.
+function isMobileViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+}
 
 const TIPO_OPTIONS: MultiSelectOption[] = [
   { value: "novo", label: "Novo" },
@@ -46,6 +54,31 @@ export function LeadsFilterBar() {
   const { data: sources } = useLeadSources();
   const { data: corretores } = useLeadCorretores();
   const { data: facets } = useLeadsFacets();
+
+  // `q` drives a real backend search — every keystroke firing a full-table
+  // query is ~78 scans typed at normal speed AND forces the query off its
+  // fast path (leads-p0-frontend-ux finding #9). Mirror to a local input
+  // value immediately (keeps typing responsive) but only write to the
+  // shared URL-backed filter (and therefore fire the query) 300ms after the
+  // user stops typing.
+  const [searchInput, setSearchInput] = useState(filters.q ?? "");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    setSearchInput(filters.q ?? "");
+  }, [filters.q]);
+
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  function handleSearchChange(value: string) {
+    setSearchInput(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setSingle("q", value), 300);
+  }
+
+  // `defaultCollapsed` only seeds the `FilterBar`'s initial React state
+  // (see its docstring) — computed once on mount, matching that contract.
+  const [defaultCollapsed] = useState(isMobileViewport);
 
   const origemOptions: MultiSelectOption[] = (sources ?? []).map((s) => ({
     value: s.id,
@@ -90,7 +123,17 @@ export function LeadsFilterBar() {
   const chips: FilterChip[] = [];
   if (filters.de) chips.push({ key: "de", label: `De: ${filters.de}`, onClear: () => clearKey("de") });
   if (filters.ate) chips.push({ key: "ate", label: `Até: ${filters.ate}`, onClear: () => clearKey("ate") });
-  if (filters.q) chips.push({ key: "q", label: `Busca: "${filters.q}"`, onClear: () => setSingle("q", null) });
+  if (filters.q) {
+    chips.push({
+      key: "q",
+      label: `Busca: "${filters.q}"`,
+      onClear: () => {
+        clearTimeout(debounceRef.current);
+        setSearchInput("");
+        setSingle("q", null);
+      },
+    });
+  }
   if (filters.needs_review !== null) {
     chips.push({
       key: "needs_review",
@@ -115,14 +158,15 @@ export function LeadsFilterBar() {
     <FilterBar
       chips={chips}
       onClearAll={activeCount > 0 ? clearAll : undefined}
+      defaultCollapsed={defaultCollapsed}
     >
       <div className="relative w-full max-w-xs sm:w-56">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           className="h-8 pl-8 text-sm"
           placeholder="Buscar cliente, contato, código..."
-          value={filters.q ?? ""}
-          onChange={(e) => setSingle("q", e.target.value)}
+          value={searchInput}
+          onChange={(e) => handleSearchChange(e.target.value)}
           data-testid="leads-filter-search"
         />
       </div>

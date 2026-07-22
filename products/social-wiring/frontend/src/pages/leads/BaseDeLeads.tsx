@@ -7,7 +7,7 @@
  * `Leads.tsx` above every subtab — this page only reads the shared
  * `useLeadsFilters()` state + adds the needs_review quick-toggle button.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -32,11 +32,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useLeadsFilters } from "@/hooks/useLeadsFilters";
+import { leadsFiltersQueryKey, useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from "@/hooks/useLeads";
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
 import { LeadDetailDrawer } from "./components/LeadDetailDrawer";
+import { describeError } from "./utils";
 
 const PAGE_SIZE = 25;
 
@@ -85,6 +86,16 @@ export default function BaseDeLeads() {
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
 
+  // A filter change (drill-in click, search, date range, ...) invalidates
+  // whatever page number was in scroll — without this, staying on e.g. page
+  // 40 of a narrower result set renders the empty-state "Nenhum lead
+  // encontrado" even though the filtered leads DO exist, just on an earlier
+  // page (leads-p0-frontend-ux finding #5).
+  const filtersKey = leadsFiltersQueryKey(filters);
+  useEffect(() => {
+    setPage(1);
+  }, [filtersKey]);
+
   const { data, isPending, isFetching, isError, error } = useLeadsList(filters, {
     page,
     pageSize: PAGE_SIZE,
@@ -127,7 +138,7 @@ export default function BaseDeLeads() {
             toast.success("Lead atualizado.");
             setFormOpen(false);
           },
-          onError: () => toast.error("Erro ao atualizar lead."),
+          onError: (err) => toast.error(describeError(err, "Erro ao atualizar lead.")),
         },
       );
     } else {
@@ -136,7 +147,7 @@ export default function BaseDeLeads() {
           toast.success("Lead criado.");
           setFormOpen(false);
         },
-        onError: () => toast.error("Erro ao criar lead."),
+        onError: (err) => toast.error(describeError(err, "Erro ao criar lead.")),
       });
     }
   }
@@ -149,7 +160,7 @@ export default function BaseDeLeads() {
         setDeleteTarget(null);
         setDetailLead(null);
       },
-      onError: () => toast.error("Erro ao remover lead."),
+      onError: (err) => toast.error(describeError(err, "Erro ao remover lead.")),
     });
   }
 

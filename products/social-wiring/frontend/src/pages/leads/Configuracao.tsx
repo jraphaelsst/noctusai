@@ -60,6 +60,7 @@ import type {
   LeadSourceCategoria,
   LeadSourceInput,
 } from "@/pages/leads/types";
+import { describeError } from "./utils";
 
 const CATEGORIA_OPTIONS: { value: LeadSourceCategoria; label: string }[] = [
   { value: "portal", label: "Portal" },
@@ -70,6 +71,7 @@ const CATEGORIA_OPTIONS: { value: LeadSourceCategoria; label: string }[] = [
   { value: "outro", label: "Outro" },
 ];
 
+// No `slug` field — the backend derives it from `label` server-side.
 function emptySourceForm(): LeadSourceInput {
   return { label: "", categoria: "outro", cor: "#6366f1", ativo: true, ordem: 0 };
 }
@@ -102,8 +104,10 @@ function OrigensConfig() {
   }
   function openEdit(source: LeadSource) {
     setEditing(source);
+    // `slug` is server-derived from `label` (never client-supplied) —
+    // `LeadSourceUpdate` is `extra="forbid"`, so sending it back 422s every
+    // edit (leads-p0-frontend-ux finding #4).
     setForm({
-      slug: source.slug,
       label: source.label,
       categoria: source.categoria,
       cor: source.cor,
@@ -122,7 +126,7 @@ function OrigensConfig() {
             toast.success("Origem atualizada.");
             setFormOpen(false);
           },
-          onError: () => toast.error("Erro ao atualizar origem."),
+          onError: (err) => toast.error(describeError(err, "Erro ao atualizar origem.")),
         },
       );
     } else {
@@ -131,7 +135,7 @@ function OrigensConfig() {
           toast.success("Origem criada.");
           setFormOpen(false);
         },
-        onError: () => toast.error("Erro ao criar origem."),
+        onError: (err) => toast.error(describeError(err, "Erro ao criar origem.")),
       });
     }
   }
@@ -267,7 +271,7 @@ function OrigensConfig() {
                     setNewAlias("");
                     setNewAliasSource("");
                   },
-                  onError: () => toast.error("Erro ao mapear alias."),
+                  onError: (err) => toast.error(describeError(err, "Erro ao mapear alias.")),
                 },
               )
             }
@@ -556,7 +560,7 @@ function CorretoresConfig() {
             toast.success("Corretor atualizado.");
             setFormOpen(false);
           },
-          onError: () => toast.error("Erro ao atualizar corretor."),
+          onError: (err) => toast.error(describeError(err, "Erro ao atualizar corretor.")),
         },
       );
     } else {
@@ -565,7 +569,7 @@ function CorretoresConfig() {
           toast.success("Corretor criado.");
           setFormOpen(false);
         },
-        onError: () => toast.error("Erro ao criar corretor."),
+        onError: (err) => toast.error(describeError(err, "Erro ao criar corretor.")),
       });
     }
   }
@@ -699,7 +703,7 @@ function CorretoresConfig() {
                     setNewAlias("");
                     setNewAliasCorretor("");
                   },
-                  onError: () => toast.error("Erro ao mapear alias."),
+                  onError: (err) => toast.error(describeError(err, "Erro ao mapear alias.")),
                 },
               )
             }

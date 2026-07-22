@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -26,7 +27,12 @@ import { useLeadSources } from "@/hooks/useLeadsSources";
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import type { Lead, LeadCreateInput } from "@/pages/leads/types";
 
-export interface LeadFormValues extends LeadCreateInput {}
+export interface LeadFormValues extends LeadCreateInput {
+  /** Only meaningful when editing (`lead` set) — omitted (`undefined`) on
+   * create, so it is never sent on the create payload even if that
+   * endpoint also forbids unknown fields. */
+  needs_review?: boolean;
+}
 
 const NONE = "__none__";
 
@@ -65,6 +71,34 @@ function fromLead(lead: Lead): LeadFormValues {
     observacoes: lead.observacoes ?? "",
     follow_up_data: lead.follow_up_data ?? "",
     follow_up_nota: lead.follow_up_nota ?? "",
+    needs_review: lead.needs_review,
+  };
+}
+
+function emptyToNull(v: string | null | undefined): string | null {
+  return v ? v : null;
+}
+
+/**
+ * Pydantic rejects `""` for `Optional[date]` (`follow_up_data`) — and more
+ * broadly, an empty text input submitted as `""` persists as an empty
+ * string, not the NULL that "left it blank" actually means. Coerce every
+ * optional text/date field before sending (leads-p0-frontend-ux finding #3
+ * — every save 422s when `follow_up_data` is blank, i.e. nearly every one
+ * of the 12,177 imported leads).
+ */
+function cleanFormValues(values: LeadFormValues): LeadFormValues {
+  return {
+    ...values,
+    codigo_raw: emptyToNull(values.codigo_raw),
+    empreendimento: emptyToNull(values.empreendimento),
+    regiao: emptyToNull(values.regiao),
+    cliente_nome: emptyToNull(values.cliente_nome),
+    contato: emptyToNull(values.contato),
+    status: emptyToNull(values.status),
+    observacoes: emptyToNull(values.observacoes),
+    follow_up_data: emptyToNull(values.follow_up_data),
+    follow_up_nota: emptyToNull(values.follow_up_nota),
   };
 }
 
@@ -95,7 +129,7 @@ export function LeadFormDialog({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSubmit(form);
+    onSubmit(cleanFormValues(form));
   }
 
   return (
@@ -246,7 +280,7 @@ export function LeadFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="lead-codigo">Código do imóvel (raw)</Label>
+            <Label htmlFor="lead-codigo">Código do imóvel</Label>
             <Input
               id="lead-codigo"
               value={form.codigo_raw ?? ""}
@@ -290,6 +324,19 @@ export function LeadFormDialog({
               />
             </div>
           </div>
+
+          {lead && (
+            <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
+              <Label htmlFor="lead-resolvido">Resolvido — tirar da revisão</Label>
+              <Switch
+                id="lead-resolvido"
+                checked={!form.needs_review}
+                onCheckedChange={(v) => setForm({ ...form, needs_review: !v })}
+                disabled={isPending}
+                data-testid="lead-form-needs-review-toggle"
+              />
+            </div>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

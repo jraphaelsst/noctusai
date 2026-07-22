@@ -8,6 +8,7 @@
  * Reads the shared `useLeadsFilters()` state (mirrored to the URL by
  * `LeadsFilterBar`, mounted once in `Leads.tsx`) — no local filter UI here.
  */
+import { AlertCircle } from "lucide-react";
 import {
   AreaChart,
   BarChart,
@@ -26,9 +27,10 @@ import {
   useLeadsSummary,
   useLeadsTimeseries,
 } from "@/hooks/useLeadsAnalytics";
+import { attributionSubtitle } from "./utils";
 
 export default function VisaoGeral() {
-  const { filters } = useLeadsFilters();
+  const { filters, setNeedsReview } = useLeadsFilters();
 
   const summaryQ = useLeadsSummary(filters);
   const timeseriesQ = useLeadsTimeseries(filters, { grain: "mes", split: "origem" });
@@ -51,6 +53,22 @@ export default function VisaoGeral() {
 
   const donutData = origemQ.data?.buckets ?? [];
   const corretorData = corretorQ.data?.buckets ?? [];
+
+  const origemSubtitle =
+    attributionSubtitle({
+      dimTotal: origemQ.data?.total,
+      grandTotal: summary?.total,
+      dimensionLabel: "com origem identificada",
+      missingLabel: "sem origem",
+    }) ?? "Distribuição do período selecionado.";
+
+  const corretorSubtitle =
+    attributionSubtitle({
+      dimTotal: corretorQ.data?.total,
+      grandTotal: summary?.total,
+      dimensionLabel: "com corretor identificado",
+      missingLabel: "sem corretor",
+    }) ?? "Ranking por total de leads no período.";
 
   return (
     <div className="space-y-6" data-testid="leads-overview-success">
@@ -89,6 +107,27 @@ export default function VisaoGeral() {
           hint="vs. período anterior"
           loading={summaryQ.isPending || summaryQ.isFetching}
         />
+        {/*
+          StatTile (seed organ) has no onClick prop — wrapping it in a plain
+          <button> keeps the organ untouched (no local fork) while adding the
+          drill-in affordance this KPI needs. Worth promoting an `onClick`
+          prop upstream if a 2nd product needs a clickable StatTile (logged
+          below as a scoped-improvement, not yet at the N=2 seed-lib bar).
+        */}
+        <button
+          type="button"
+          className="text-left"
+          onClick={() => setNeedsReview(filters.needs_review === true ? null : true)}
+          data-testid="leads-stat-needs-review"
+        >
+          <StatTile
+            icon={AlertCircle}
+            label="Precisam de revisão"
+            value={summary ? formatCompactNumber(summary.needs_review) : "—"}
+            loading={summaryQ.isPending || summaryQ.isFetching}
+            hint={filters.needs_review === true ? "filtro ativo — clique para limpar" : "clique para filtrar"}
+          />
+        </button>
       </StatTileRow>
 
       <ChartCard
@@ -104,7 +143,7 @@ export default function VisaoGeral() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ChartCard
           title="Leads por origem"
-          subtitle="Distribuição do período selecionado."
+          subtitle={origemSubtitle}
           loading={origemQ.isPending || origemQ.isFetching}
           error={origemQ.isError ? "Erro ao carregar leads por origem." : null}
           isEmpty={donutData.length === 0}
@@ -114,7 +153,7 @@ export default function VisaoGeral() {
 
         <ChartCard
           title="Top 10 corretores"
-          subtitle="Ranking por total de leads no período."
+          subtitle={corretorSubtitle}
           loading={corretorQ.isPending || corretorQ.isFetching}
           error={corretorQ.isError ? "Erro ao carregar o ranking de corretores." : null}
           isEmpty={corretorData.length === 0}

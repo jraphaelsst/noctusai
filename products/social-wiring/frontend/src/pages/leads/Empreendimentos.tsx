@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLeadsFilters, type LeadsMultiKey } from "@/hooks/useLeadsFilters";
 import { useLeadsByDimension } from "@/hooks/useLeadsAnalytics";
+import { isOutrosBucket } from "./utils";
 
 type Dim = "empreendimento" | "regiao";
 
@@ -70,7 +71,7 @@ export default function Empreendimentos() {
             {dim === "empreendimento" ? "Empreendimentos" : "Regiões"} no período
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Clique numa linha para filtrar todas as abas por ela (drill-in).
+            Clique numa linha para filtrar todas as abas por ela.
           </p>
         </div>
         {byDimQ.isPending && (
@@ -104,14 +105,15 @@ export default function Empreendimentos() {
               </thead>
               <tbody>
                 {rankedBuckets.map((b) => {
-                  const isActive = filters[filterKey].includes(b.key);
+                  const outros = isOutrosBucket(b.key);
+                  const isActive = !outros && filters[filterKey].includes(b.key);
                   return (
                     <tr
                       key={b.key}
-                      onClick={() => toggleMulti(filterKey, b.key)}
-                      className={`cursor-pointer border-b last:border-0 hover:bg-muted/30 ${
-                        isActive ? "bg-primary/5" : ""
-                      }`}
+                      onClick={outros ? undefined : () => toggleMulti(filterKey, b.key)}
+                      className={`border-b last:border-0 ${
+                        outros ? "cursor-default" : "cursor-pointer hover:bg-muted/30"
+                      } ${isActive ? "bg-primary/5" : ""}`}
                       data-testid={`leads-${dim}-row-${b.key}`}
                     >
                       <td className="px-4 py-2">{b.label}</td>
