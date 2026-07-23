@@ -118,6 +118,14 @@ PROVIDERS: list[dict[str, Any]] = [
         ),
     },
     {
+        # v2 field-set (2026-07-16): base_url + api_key replace the old
+        # webhook_url + optional-api_key shape. Listing/managing workflows
+        # needs the instance's public API root ({base_url}/api/v1) + the
+        # X-N8N-API-KEY header — a per-workflow webhook_url can't list
+        # anything, and an optional api_key meant half the accounts could
+        # never call the API at all. Per-workflow webhook run URLs are
+        # derived ({base_url}/webhook/{path}) from the workflow's own
+        # webhook node at read time, never stored on the account.
         "id": "n8n",
         "display_name": "n8n",
         "icon": "n8n",
@@ -125,14 +133,14 @@ PROVIDERS: list[dict[str, Any]] = [
         "manual_entry": True,
         "manual_key_fields": [
             {
-                "name": "webhook_url",
-                "label": "Webhook URL",
+                "name": "base_url",
+                "label": "URL da instância",
                 "type": "text",
-                "placeholder": "https://n8n.example.com/webhook/...",
+                "placeholder": "https://n8n.example.com",
             },
             {
                 "name": "api_key",
-                "label": "API Key (optional)",
+                "label": "API Key",
                 "type": "password",
                 "placeholder": "n8n-api-key",
             },
