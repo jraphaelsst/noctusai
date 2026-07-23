@@ -137,11 +137,28 @@ class AdsSyncService:
         return count
 
     def sync_hierarchy(
-        self, *, org_id: UUID, adapter: MetaAdapter, ad_account_id: str
+        self,
+        *,
+        org_id: UUID,
+        adapter: MetaAdapter,
+        ad_account_id: str,
+        deep: bool = False,
     ) -> dict[str, int]:
-        """``list_ad_campaigns`` + (for each) ``list_ad_sets`` +
-        ``list_ads`` → upsert the unified ``ads_objects`` hierarchy.
-        Returns per-level upsert counts."""
+        """Upsert the ``ads_objects`` hierarchy.
+
+        🔴 **Shallow by default (``deep=False``): campaigns ONLY.** Ad
+        sets and ads are fetched LIVE on drill-down via the router's
+        ``GET /campaigns/{id}/children`` endpoint (``list_ad_sets`` /
+        ``list_ads`` straight off the adapter) — so pre-populating them
+        into ``ads_objects`` is dead weight the UI never reads. It is
+        also the exact call-burst that tripped Meta's user-level rate
+        limit on the first live 12-month backfill (2026-07-23): eagerly
+        walking every campaign → every ad set → every ad is O(campaigns ×
+        adsets × ads) Graph calls on top of the insight backfill.
+
+        ``deep=True`` restores the full walk (retained as a capability,
+        not deleted) for a future explicit need — never on the daily /
+        backfill path. Returns per-level upsert counts."""
         acct = _acct_prefixed(ad_account_id)
         now_iso = datetime.now(timezone.utc).isoformat()
         counts = {"campaigns": 0, "adsets": 0, "ads": 0}
@@ -152,6 +169,9 @@ class AdsSyncService:
                 self._campaign_row(camp, org_id=org_id, act_id=acct, synced_at=now_iso)
             )
             counts["campaigns"] += 1
+
+            if not deep:
+                continue
 
             adsets = adapter.list_ad_sets(ad_account_id, campaign_id=camp.id)
             for aset in adsets:

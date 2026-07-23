@@ -291,7 +291,10 @@ class TestSyncAccounts:
 
 # ─── sync_hierarchy ───────────────────────────────────────────────────────
 class TestSyncHierarchy:
-    def test_upserts_campaign_adset_ad_with_parent_chain(self):
+    def test_shallow_by_default_campaigns_only(self):
+        """Default (deep=False): campaigns ONLY — the fix for the live
+        rate-limit blowout. Ad sets/ads come live via /children, so the
+        daily+backfill path must NOT walk them."""
         admin = _FakeAdminClient()
         svc = AdsSyncService(admin_supabase=admin)
         adapter = _adapter_with_fixtures()
@@ -300,14 +303,27 @@ class TestSyncHierarchy:
             org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID
         )
 
-        assert counts == {"campaigns": 1, "adsets": 1, "ads": 1}
+        assert counts == {"campaigns": 1, "adsets": 0, "ads": 0}
         rows = {r["object_id"]: r for r in admin.tables["ads_objects"]}
+        assert set(rows) == {"camp_1"}
         assert rows["camp_1"]["level"] == "campaign"
         assert rows["camp_1"]["parent_id"] is None
-        assert rows["adset_1"]["level"] == "adset"
+
+    def test_deep_flag_walks_full_chain(self):
+        """deep=True restores the full walk (capability retained, never
+        on the daily/backfill path)."""
+        admin = _FakeAdminClient()
+        svc = AdsSyncService(admin_supabase=admin)
+        adapter = _adapter_with_fixtures()
+
+        counts = svc.sync_hierarchy(
+            org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True
+        )
+
+        assert counts == {"campaigns": 1, "adsets": 1, "ads": 1}
+        rows = {r["object_id"]: r for r in admin.tables["ads_objects"]}
         assert rows["adset_1"]["parent_id"] == "camp_1"
         assert rows["adset_1"]["daily_budget_cents"] == 5000
-        assert rows["ad_1"]["level"] == "ad"
         assert rows["ad_1"]["parent_id"] == "adset_1"
         assert rows["ad_1"]["creative_id"] == "creative_1"
 
@@ -316,8 +332,8 @@ class TestSyncHierarchy:
         svc = AdsSyncService(admin_supabase=admin)
         adapter = _adapter_with_fixtures()
 
-        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
-        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True)
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True)
 
         assert len(admin.tables["ads_objects"]) == 3
 
@@ -405,11 +421,12 @@ class TestBackfillCampaignInsights:
         snapshot_rows = admin.tables["ads_insight_snapshots"]
         assert snapshot_rows  # the fixture's single row is returned every chunk
         assert all(r["level"] == "campaign" for r in snapshot_rows)
-        # Hierarchy sync also ran — adset/ad objects exist in ads_objects,
-        # but NEVER as insight-snapshot rows.
+        # Backfill's hierarchy sync is SHALLOW — only campaign objects land
+        # in ads_objects; ad-set/ad rows are fetched live on drill-down and
+        # never backfilled (rate-limit fix, 2026-07-23).
         object_rows = admin.tables["ads_objects"]
         levels_in_objects = {r["level"] for r in object_rows}
-        assert levels_in_objects == {"campaign", "adset", "ad"}
+        assert levels_in_objects == {"campaign"}
         levels_in_snapshots = {r["level"] for r in snapshot_rows}
         assert levels_in_snapshots == {"campaign"}
 
