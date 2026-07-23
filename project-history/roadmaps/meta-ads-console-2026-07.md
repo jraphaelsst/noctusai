@@ -21,7 +21,31 @@ Pre-flight audit of the seed found the **read** side of the Marketing API largel
 | **T4** | Operator wants to pause/resume/re-budget from our UI | Explicit user request | Fires the `ads_management` App-Review path (a *distinct* gate from `ads_read`). |
 | **T5** | A second org / client ad account needs connecting | Any non-owner ad account requested | Fires the OAuth + App-Review path; the System-User token is single-business by construction. |
 
-**Today's status**: T0 ✅ fired · T1 pending (user action, W0) · T2 unknown (pixel exists, configuration unaudited) · T3 blocked (DM initiative paused) · T4–T5 not fired.
+**Today's status**: T0 ✅ fired · **T1 ✅ FIRED 2026-07-23** (live System User token validated — see below) · T2 ✅ **resolved: N/A** (this account is lead-gen, not purchase — no ROAS to light up; objective-aware KPI design absorbs it) · T3 blocked (DM initiative paused) · T4–T5 not fired.
+
+### ✅ T1 FIRED — live validation against the real account (2026-07-23)
+
+Operator supplied a **System User token** (Facebook user `Raphael`, id `122134702173150635`). Validated every W1 method against live Graph v21.0. **Token is NOT stored in git** — held in-session only; must be Fernet-vaulted at W2 wiring time via the `meta` integration account, never committed.
+
+**Permissions granted** (both read AND management — v1 uses read only): `ads_read`, `ads_management`, `read_insights`, `business_management`, `pages_show_list`, `pages_manage_ads`, `instagram_manage_messages` (← note: DM scope also present), + full IG/pages/whatsapp suite. **No App Review wall** — own-asset System User reads work exactly as the roadmap predicted. The DM initiative's Business-Verification blocker does **not** gate ads.
+
+**The account (resolves O1):**
+| Fact | Value |
+|---|---|
+| Ad account | `act_873947475957808` — "One Consultoria Imobiliária" |
+| Currency | **BRL** |
+| Timezone | **America/Sao_Paulo** (store snapshots against the *Meta* day in this tz, per O1) |
+| Money fields | **cents** — `amount_spent: 674426` = R$6.744,26 lifetime; `balance: 12519` = R$125,19; `spend_cap: 50000000` = R$500.000 |
+| Account status | `1` (active) |
+
+**Every W1 method confirmed live:**
+- `list_ad_accounts` → 1 account, all fields populated correctly, `act_` prefix present (mapper strips it).
+- `list_ad_campaigns` → real campaigns, mostly `OUTCOME_LEADS` (real-estate Instant Forms, "SENSEYS"), some `OUTCOME_TRAFFIC`/`OUTCOME_ENGAGEMENT`, mix of ACTIVE/PAUSED. **Zero purchase campaigns → confirms objective-aware KPI was the correct call; a fixed ROAS tile would be dead on every card.**
+- `ad_insights` account-level `last_30d` → **32 conversion metrics in the `actions` array** — the exact data the old method silently dropped (gap #4). Highlights: `lead = 320` (→ ~R$27 CPL on R$8.643,45 / 30d), `link_click = 5673`, and 🎯 **`onsite_conversion.messaging_conversation_started_7d = 26`** — the Phase-2 DM-attribution metric is present in the payload TODAY.
+- `ad_insights_series` `time_increment=1` → clean N-rows-per-day (7 days → 7 rows), ~R$380/day.
+- `list_activities` → live change log. **Confirmed: rows have NO `id` field** (W1's synthesized composite key was correct); `extra_data` is a JSON string with `old_value`/`new_value` (as assumed); actors include **real humans** ("Leonardo Salomão") AND "Meta" system events; `update_ad_run_status` rows carry `"Análise pendente" → "Ativo"` transitions — the "who changed what, when" layer, including Meta-UI-side edits, for free.
+
+**O3 (activities retention) — partially resolved:** the `since`/`until` params are honored and the edge paginates. One month of this account = **500 events in a single page** with a `next` cursor continuing further back. So retention is NOT the constraint (goes well past 30d); **volume + pagination** is. The 12-month activity backfill is reachable but chunky (est. thousands of events/yr) — W2.3 must page defensively, not assume one call. Exact retention floor still unmeasured (would need to page to exhaustion); not worth the API spend now — treat "≥ several months, paginated" as the working fact.
 
 ### 🔴 Shared-gate risk inherited from the DM initiative (2026-07-21)
 
@@ -213,9 +237,9 @@ Adds `ads_read` to `META_KITCHEN_SINK_SCOPES`, the OAuth consent path, and App R
 
 ## Open questions (revisit at trigger time)
 
-- **O1** — Which `act_` id, currency (BRL?) and account timezone? Meta reports in the *account's* timezone; snapshots must store the Meta day, not the server day, or month boundaries drift. → resolve at W0.
-- **O2** — Pixel configuration: which events fire, with what values? Determines whether T2 can ever fire. → audit at W0; a standalone Events-Manager check.
-- **O3** — 🔴 `act_/activities` retention window. If shorter than 12 months the change-history backfill promise must be scoped down honestly rather than silently under-delivering. → measure at T1.
+- **O1** — ✅ **RESOLVED 2026-07-23.** `act_873947475957808`, BRL, America/Sao_Paulo. Money fields in cents. Snapshots store the Meta day in that tz.
+- **O2** — ✅ **RESOLVED (moot).** Account is lead-gen (Instant Forms + messaging), not purchase-based. No purchase/value events to surface; ROAS is structurally N/A here. Conversions ARE leads (`lead=320`) and DM conversations (`messaging_conversation_started_7d=26`) — both live in `actions`. Objective-aware KPIs render CPL, not ROAS. If a purchase campaign is ever added, the `action_values` path already handles it.
+- **O3** — ⚠️ **PARTIALLY RESOLVED 2026-07-23.** Retention is not the binding constraint — the edge honors `since`/`until` and pages back well beyond 30d (500 events/month/next-cursor). Volume is the constraint: W2.3 must page defensively for the 12-month activity backfill. Exact retention floor left unmeasured (not worth the API spend); working fact = "≥ several months, paginated."
 - **O4** — Rate-limit budget for the 12-month `time_increment=1` backfill at ad level. May need overnight chunking. → measure at T1 with real object counts.
 - **O5** — Default attribution window (7d-click / 1d-view is Meta's default). Changing it changes every historical number. Pick once, store it on the snapshot row.
 - **O6** — pt-BR copy for all new labels (product copy is pt-BR verbatim). Draft: *Anúncios · Visão geral · Campanhas · Histórico · Financeiro · Sincronizar agora*.
@@ -246,9 +270,13 @@ Pre-dispatch gates: `noc-verify-seed` (W1 is the *build* leg, W2–W4 the *consu
 - **2026-07-21**: ROAS deliberately **not** a fixed tile. Operator boosts for traffic and does not sell on-platform; objective-aware KPI rendering avoids permanently-dead cards.
 - **2026-07-21**: `META_KITCHEN_SINK_SCOPES` explicitly frozen for v1 — direct lesson from `aace91df`.
 
-## Retrospective (filled at first trigger fire)
+## Retrospective (partial — T1 fired 2026-07-23)
 
-*To be filled when W0/T1 fires.*
+- **W1's adapter-first, mock-only build held up perfectly against live Graph.** Every assumption the engineer flagged as unverified (composite activity key, `extra_data` as JSON string, `account_status` as raw int) matched reality on first contact. Zero live-vs-mock drift. This is the payoff of the sibling DM initiative's "build against the Fake while the gate is closed" sequencing — the code was correct before the token existed.
+- **The gap-#4 fix was not academic.** The live account's 30-day `actions` array had 32 entries. The old method deleted all 32 silently. Had we skipped W1 and gone straight to a product dashboard on the old adapter, every conversion tile would have read zero and we'd have burned a day blaming the token or RLS. → memory `feedback_numeric_flatten_swallows_structured_fields`.
+- **T2 collapsed on contact with reality.** We planned an objective-aware KPI row to *avoid dead ROAS tiles*; the live account turned out to have no purchase events at all, making that design load-bearing rather than nice-to-have. Interviewing for "which financials" surfaced the requirement; the live data proved the design. Lesson: design for the objective, not the metric catalog.
+- **Phase 2 (DM attribution) is closer than scoped.** `messaging_conversation_started_7d` is already in the daily `actions` payload, so W2's snapshot table captures it from day 1 with no extra work — the Phase-2 seam is not just planned, it's pre-populated. When the DM initiative resumes and T3 fires, the ad-side data will already be there historically.
+- Time-to-execution: W1 dispatch → live-validated in ~2 sessions. Estimate held.
 
 ## Composes with
 
