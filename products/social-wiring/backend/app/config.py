@@ -248,6 +248,14 @@ class SocialWiringSettings(ProductSettings):
     # sistema → [new user] → Gerar token → pick the app + scopes.
     # Long-lived (never expires while the System User has access).
     meta_system_user_token: str = ""
+    # Meta Ads console (roadmap `meta-ads-console-2026-07`) — the single
+    # Business-Portfolio-owned ad account the System User token above
+    # reads. Bare id or `act_`-prefixed; the seed adapter normalizes
+    # either form internally (see `AdAccount`'s docstring in
+    # `noctusai_lib.integrations.meta.types`). Empty ⇒ every
+    # `/api/meta/ads/*` route that needs an account returns a 503
+    # "not configured" — never a silent zeros dashboard.
+    meta_ad_account_id: str = ""
     meta_oauth_redirect_uri: str = "http://localhost:8011/api/meta/oauth/callback"
     # Graph API version pinned per release. v21.0 is the current stable
     # as of Jan 2026; v22.0 ships in May 2026. Pin explicitly so a

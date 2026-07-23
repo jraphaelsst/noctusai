@@ -175,12 +175,14 @@ from app.modules.email_marketing import register as _register_email_marketing
 from app.modules.leads import register as _leads
 from app.modules.mailchimp import register as _mailchimp
 from app.modules.media_creation import register as _register_media_creation
+from app.modules.meta_ads import register as _meta_ads
 from app.modules.scheduling import register as _scheduling
 from app.modules.youtube import register as _youtube
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
-# / Phase 8 (youtube) / Leads-module (leads) module ``register`` callables
-# here — the assembly loop below needs NO edit.
+# / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
+# module ``register`` callables here — the assembly loop below needs NO
+# edit.
 MODULES = [
     _register_media_wiring,
     _youtube,
@@ -189,6 +191,7 @@ MODULES = [
     _register_media_creation,
     _mailchimp,
     _leads,
+    _meta_ads,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
