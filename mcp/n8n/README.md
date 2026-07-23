@@ -11,9 +11,18 @@ as `mcp/github` / `mcp/vista`): bootstrap, settings, registry, error
 envelope, in-tree seed pin — all inherited, ~0 boilerplate re-derived.
 
 It talks to the n8n **public REST API** (`/api/v1`, header
-`X-N8N-API-KEY`) through the single `n8n.api.request_json` stdlib-`urllib`
-HTTP seam (no extra deps — mirrors how `mcp/github` wraps the stdlib
-`subprocess` `gh` seam).
+`X-N8N-API-KEY`) through `noctusai_lib.integrations.n8n`'s `N8nClient`
+Protocol
+(`seed/lib/backend/noctusai_lib/integrations/n8n/`; Protocol + Fake +
+Real + factory, the `mcp/google/tools/youtube.py` / `mcp/meta/tools
+/ads.py` "thin connector over the seed adapter" pattern). Every tool
+in `mcp/n8n/tools/` builds its client through `mcp/n8n/client
+.get_client()` — a settings-resolved DI seam, 424-gated when
+unconfigured (stricter than the seed factory's own "no api_key →
+Fake" default; see `client.py`'s module docstring). The connector owns
+only the MCP write-gate (412), the not-configured gate (424), and the
+per-instance `.env` credential resolution — the wire mechanics + error
+taxonomy live in the seed, once, shared with every other consumer.
 
 ## Tool surface
 
@@ -31,7 +40,10 @@ HTTP seam (no extra deps — mirrors how `mcp/github` wraps the stdlib
 | `n8n.execution.get` | READ | `GET /executions/{id}?includeData=true` + best-effort `error_summary` |
 | `n8n.execution.delete` | WRITE — confirm-gated (412) | `DELETE /executions/{id}` |
 | `n8n.tag.list` | READ | `GET /tags` |
-| `n8n.diagnostics.connection_status` | READ | `GET /workflows?limit=1` probe |
+| `n8n.credential.create` | WRITE — confirm-gated (412) | `POST /credentials` (id/name/type only — secret never echoed back) |
+| `n8n.credential.delete` | WRITE — confirm-gated (412), hard-to-reverse | `DELETE /credentials/{id}` |
+| `n8n.credential.schema` | READ | `GET /credentials/schema/{type}` |
+| `n8n.diagnostics.connection_status` | READ | `client.list_workflows(include_archived=True)` — one call doubles as the reachability probe AND the true workflow count (the seed already exhausts pagination) |
 
 **Debugging recipe:** `n8n.execution.list` (filter `workflow_id` +
 `status="error"`) → pick the newest → `n8n.execution.get` → read
@@ -91,7 +103,12 @@ mcp/noctusai/.venv/bin/python -m pytest mcp/n8n/tests/ -q
 ```
 
 No network — pure validation (confirm gate, URL normalization) or
-`unittest.mock.patch` on the external HTTP seam (`n8n.api.request_json`).
-Pins the tool-name set, dotted naming, the confirm gate (no
-side-effect), gated-capability honesty, and best-effort error
-extraction from real-shaped run-data.
+dependency injection via `n8n.client.configure_client(...)` (the
+seed's `FakeN8nClient`, or a tiny local raising stub for typed-error
+paths — never a patch of connector code). Wire-shape assertions (exact
+PUT/POST bodies, tag-id-body shape, endpoint paths) live in the seed's
+own corpus, `seed/lib/backend/tests/integrations/n8n/`. This suite
+pins the tool-name set, dotted naming, the confirm gate (no
+side-effect — proven by injecting a client that raises on any call),
+gated-capability honesty, and best-effort error extraction from
+real-shaped run-data.

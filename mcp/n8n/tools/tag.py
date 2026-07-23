@@ -5,9 +5,10 @@ PURE read: list. Tag *assignment* to a workflow is
 `tools/workflow.py`); this leaf is the read side that surfaces the
 tag-id ↔ name mapping `set_tags` needs.
 
-Routes through the single `api.request_json` HTTP seam (tests patch
-`n8n.api.request_json`). API failure ⇒ a typed-error envelope, never a
-fabricated success.
+Thin MCP Out shaping over `client.get_client().list_tags()` — the
+seed already returns typed `Tag` value objects, so there is no raw
+dict to hand-parse here at all (see `mcp/n8n/tools/workflow.py`'s
+module docstring for the shared DI-seam shape).
 """
 from __future__ import annotations
 
@@ -17,40 +18,25 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from _kit.errors import typed_error
+from noctusai_lib.integrations.n8n import N8nError
 
 from .. import api
-from ..settings import get_settings
+from ..client import get_client
 from ..types import TagListInput, TagListOutput, TagSummary
 
 logger = logging.getLogger(__name__)
 
 
-def _ctx() -> dict:
-    s = get_settings()
-    return {
-        "base_url": s.base_url or "",
-        "api_key": s.api_key or "",
-        "timeout": s.timeout_seconds,
-    }
-
-
 async def tag_list(args: dict) -> dict:
     inp = TagListInput(**args)
     try:
-        data = api.request_json(
-            "GET", "/tags", params={"limit": inp.limit}, **_ctx()
-        )
-    except api.N8nApiError as e:
-        return TagListOutput(error=typed_error(e)).model_dump()
-    items = (data or {}).get("data", []) if isinstance(data, dict) else []
+        client = get_client()
+        tags = await client.list_tags()
+    except (api.N8nApiError, N8nError) as e:
+        return TagListOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return TagListOutput(
-        tags=[
-            TagSummary(id=str(d.get("id", "")), name=d.get("name", ""))
-            for d in items
-            if d.get("id")
-        ],
-        next_cursor=(data or {}).get("nextCursor")
-        if isinstance(data, dict) else None,
+        tags=[TagSummary(id=t.id, name=t.name) for t in tags][: inp.limit],
+        next_cursor=None,
     ).model_dump()
 
 

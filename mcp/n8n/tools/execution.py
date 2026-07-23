@@ -4,9 +4,11 @@ PURE reads (no confirm gate): list / get. This is the debugging core —
 `list` (filter workflow_id + status="error") finds recent failures,
 `get` pulls the full run payload of one so the actual error is visible.
 
-Every tool routes through the single `api.request_json` HTTP seam
-(tests patch `n8n.api.request_json`). API failure ⇒ a typed-error
-envelope, never a fabricated success.
+Thin MCP In/Out shaping over `client.get_client()` — see
+`mcp/n8n/tools/workflow.py`'s module docstring for the shared DI-seam
+shape. `_extract_error` stays connector-side: it's presentation logic
+specific to this tool's `error_summary` Output field, not a
+generalizable seed concern.
 """
 from __future__ import annotations
 
@@ -17,9 +19,10 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from _kit.errors import typed_error
+from noctusai_lib.integrations.n8n import Execution, N8nError
 
 from .. import api
-from ..settings import get_settings
+from ..client import get_client
 from ..types import (
     ExecutionDeleteInput,
     ExecutionDeleteOutput,
@@ -33,27 +36,16 @@ from ..types import (
 logger = logging.getLogger(__name__)
 
 
-def _ctx() -> dict:
-    s = get_settings()
-    return {
-        "base_url": s.base_url or "",
-        "api_key": s.api_key or "",
-        "timeout": s.timeout_seconds,
-    }
-
-
-def _summary(d: dict) -> ExecutionSummary:
+def _summary(e: Execution) -> ExecutionSummary:
     return ExecutionSummary(
-        id=int(d.get("id")),
-        finished=d.get("finished"),
-        mode=d.get("mode"),
-        status=d.get("status"),
-        retryOf=d.get("retryOf"),
-        startedAt=d.get("startedAt"),
-        stoppedAt=d.get("stoppedAt"),
-        workflowId=(
-            str(d["workflowId"]) if d.get("workflowId") is not None else None
-        ),
+        id=e.id,
+        finished=e.finished,
+        mode=e.mode,
+        status=e.status,
+        retryOf=e.retry_of,
+        startedAt=e.started_at.isoformat() if e.started_at else None,
+        stoppedAt=e.stopped_at.isoformat() if e.stopped_at else None,
+        workflowId=e.workflow_id,
     )
 
 
@@ -103,39 +95,26 @@ def _extract_error(execution: dict) -> Optional[dict]:
 async def execution_list(args: dict) -> dict:
     inp = ExecutionListInput(**args)
     try:
-        data = api.request_json(
-            "GET",
-            "/executions",
-            params={
-                "workflowId": inp.workflow_id,
-                "status": inp.status,
-                "limit": inp.limit,
-                "includeData": "false",
-            },
-            **_ctx(),
+        client = get_client()
+        executions = await client.list_executions(
+            workflow_id=inp.workflow_id, status=inp.status, limit=inp.limit
         )
-    except api.N8nApiError as e:
-        return ExecutionListOutput(error=typed_error(e)).model_dump()
-    items = (data or {}).get("data", []) if isinstance(data, dict) else []
+    except (api.N8nApiError, N8nError) as e:
+        return ExecutionListOutput(error=typed_error(api.map_seed_error(e))).model_dump()
     return ExecutionListOutput(
-        executions=[_summary(d) for d in items],
-        next_cursor=(data or {}).get("nextCursor")
-        if isinstance(data, dict) else None,
+        executions=[_summary(e) for e in executions],
+        next_cursor=None,
     ).model_dump()
 
 
 async def execution_get(args: dict) -> dict:
     inp = ExecutionGetInput(**args)
     try:
-        data = api.request_json(
-            "GET",
-            f"/executions/{inp.id}",
-            params={"includeData": "true" if inp.include_data else "false"},
-            **_ctx(),
-        )
-    except api.N8nApiError as e:
-        return ExecutionGetOutput(error=typed_error(e)).model_dump()
-    execution = data if isinstance(data, dict) else None
+        client = get_client()
+        execution = await client.get_execution(inp.id, include_data=inp.include_data)
+    except (api.N8nApiError, N8nError) as e:
+        return ExecutionGetOutput(error=typed_error(api.map_seed_error(e))).model_dump()
+    execution = execution if isinstance(execution, dict) else None
     return ExecutionGetOutput(
         execution=execution,
         error_summary=_extract_error(execution) if execution else None,
@@ -151,10 +130,11 @@ async def execution_delete(args: dict) -> dict:
             )
         ).model_dump()
     try:
-        api.request_json("DELETE", f"/executions/{inp.id}", **_ctx())
-    except api.N8nApiError as e:
+        client = get_client()
+        await client.delete_execution(inp.id)
+    except (api.N8nApiError, N8nError) as e:
         return ExecutionDeleteOutput(
-            id=inp.id, error=typed_error(e)
+            id=inp.id, error=typed_error(api.map_seed_error(e))
         ).model_dump()
     return ExecutionDeleteOutput(id=inp.id, deleted=True).model_dump()
 

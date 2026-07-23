@@ -88,6 +88,16 @@ dependencies = [
     # deterministically without a system font install (dev↔prod parity). Added
     # Added 2026-05-24 (media-creator absorption residual).
     "resvg-py>=0.3.0",
+    # Async HTTP client — fix-on-contact: ~10 seed modules already import
+    # `httpx` (meta/_meta_api.py, mailchimp/client.py, vista/client.py,
+    # whatsapp/client.py, …) but it was never declared here, arriving only
+    # transitively via supabase/openai. noctusai_lib.integrations.n8n's
+    # HttpxN8nClient is another direct consumer; declared explicitly so a
+    # future transitive drop (or an install without supabase/openai) doesn't
+    # quietly break every httpx-based adapter — worst on the connector path,
+    # which has its own separate install. Floor matches the version already
+    # resolved transitively in the root venv (0.27.2) at declaration time.
+    "httpx>=0.27.0",
 ]
 
 [tool.setuptools.packages.find]

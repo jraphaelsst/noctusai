@@ -1,17 +1,18 @@
 """Tests for the n8n.credential.* tools.
 
-No network: every test either exercises pure validation (the confirm
-gate) or `unittest.mock.patch`-es the external HTTP seam
-(`n8n.api.request_json`). Patching an external service is sanctioned by
-CLAUDE.md §1; our own code is never patched. Mirrors the seam +
-sys.path trick of `mcp/n8n/tests/test_smoke.py`.
+No network: every test exercises pure validation (the confirm gate) or
+injects a client via `n8n.client.configure_client(...)` — the seed's
+`FakeN8nClient` for happy paths, a tiny local raising stub for the
+typed-error paths. Dependency injection, NOT monkeypatching — see
+`mcp/n8n/tests/test_smoke.py`'s module docstring for the full
+rationale. Mirrors the sys.path trick of that file.
 
 Pins, per the connector contract:
 - the confirm gate (create/delete refuse + perform NO side-effect),
 - happy create returns id/name/type (n8n never echoes the secret),
-- happy delete issues DELETE /credentials/{id},
+- happy delete removes the credential,
 - schema is READ-ONLY (no confirm) and surfaces the raw schema,
-- API failure ⇒ typed-error envelope (never a fabricated success),
+- adapter failure ⇒ typed-error envelope (never a fabricated success),
 - the n8n no-list/get design omission is intentional (no such tool).
 """
 from __future__ import annotations
@@ -56,6 +57,27 @@ if not _resolves_to_this_worktree():
 
 sys.path.insert(0, str(_SEED))
 
+import pytest
+
+
+class _PoisonClient:
+    """An `N8nClient` stand-in that raises on ANY method call — proves
+    the confirm gate fires before the client is ever touched. Same
+    shape as `test_smoke.py::_PoisonClient`."""
+
+    def __getattr__(self, name):
+        async def _boom(*args, **kwargs):
+            raise AssertionError(
+                f"client.{name}() must not be called before confirm=true"
+            )
+        return _boom
+
+
+def _configure(client):
+    from n8n import client as n8n_client
+    n8n_client.configure_client(client)
+    return n8n_client
+
 
 # ─── Confirm gate — writes refuse + perform NO side-effect ───────────────
 
@@ -63,13 +85,15 @@ sys.path.insert(0, str(_SEED))
 def test_credential_create_without_confirm_blocks_no_side_effect():
     from n8n.tools.credential import credential_create
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client = _configure(_PoisonClient())
+    try:
         out = asyncio.run(
             credential_create(
                 {"name": "hdr", "type": "httpHeaderAuth", "data": {"a": "b"}}
             )
         )
-    req.assert_not_called()  # NO HTTP — the gate fired first
+    finally:
+        n8n_client.configure_client(None)
     assert out["created"] is False
     assert out["error"]["error_class"] == "ConfirmationRequiredError"
     assert out["error"]["status"] == 412
@@ -78,7 +102,8 @@ def test_credential_create_without_confirm_blocks_no_side_effect():
 def test_credential_create_confirm_false_explicit_also_blocks():
     from n8n.tools.credential import credential_create
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client = _configure(_PoisonClient())
+    try:
         out = asyncio.run(
             credential_create(
                 {
@@ -89,7 +114,8 @@ def test_credential_create_confirm_false_explicit_also_blocks():
                 }
             )
         )
-    req.assert_not_called()
+    finally:
+        n8n_client.configure_client(None)
     assert out["created"] is False
     assert out["error"]["status"] == 412
 
@@ -97,30 +123,28 @@ def test_credential_create_confirm_false_explicit_also_blocks():
 def test_credential_delete_without_confirm_blocks_no_side_effect():
     from n8n.tools.credential import credential_delete
 
-    with patch("n8n.api.request_json") as req:
+    n8n_client = _configure(_PoisonClient())
+    try:
         out = asyncio.run(credential_delete({"id": "cred1"}))
-    req.assert_not_called()
+    finally:
+        n8n_client.configure_client(None)
     assert out["deleted"] is False
     assert out["error"]["error_class"] == "ConfirmationRequiredError"
     assert out["error"]["status"] == 412
 
 
-# ─── Happy paths (external HTTP seam patched) ────────────────────────────
+# ─── Happy paths (injected FakeN8nClient) ────────────────────────────────
 
 
-def test_credential_create_confirmed_posts_and_returns_id_no_secret():
-    """POST /credentials with {name,type,data}; n8n echoes id/name/type
-    but NEVER the secret `data` — output carries no `data` key."""
+def test_credential_create_confirmed_returns_id_no_secret():
+    """n8n echoes id/name/type but NEVER the secret `data` — output
+    carries no `data` key."""
     from n8n.tools.credential import credential_create
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    captured = {}
-
-    def _cap(method, path, **kw):
-        captured.update(method=method, path=path, body=kw.get("body"))
-        # n8n's real create response shape — note: no `data`.
-        return {"id": "9xZ", "name": "hdr", "type": "httpHeaderAuth"}
-
-    with patch("n8n.api.request_json", side_effect=_cap):
+    fake = FakeN8nClient()
+    n8n_client = _configure(fake)
+    try:
         out = asyncio.run(
             credential_create(
                 {
@@ -131,78 +155,71 @@ def test_credential_create_confirmed_posts_and_returns_id_no_secret():
                 }
             )
         )
-    assert captured["method"] == "POST"
-    assert captured["path"] == "/credentials"
-    assert captured["body"] == {
-        "name": "hdr",
-        "type": "httpHeaderAuth",
-        "data": {"name": "X-Api-Key", "value": "s3cr3t"},
-    }
+    finally:
+        n8n_client.configure_client(None)
     assert out["created"] is True
-    assert out["id"] == "9xZ"
+    assert out["id"] == "fake-cred-1"
     assert out["name"] == "hdr"
     assert out["type"] == "httpHeaderAuth"
     assert "data" not in out  # secret never round-trips back
     assert out["error"] is None
 
 
-def test_credential_delete_confirmed_calls_delete_verb():
-    from n8n.tools.credential import credential_delete
+def test_credential_delete_confirmed_removes_it():
+    from n8n.tools.credential import credential_create, credential_delete
+    from noctusai_lib.integrations.n8n import FakeN8nClient, N8nNotFoundError
 
-    captured = {}
-
-    def _cap(method, path, **kw):
-        captured.update(method=method, path=path)
-        return {}
-
-    with patch("n8n.api.request_json", side_effect=_cap):
-        out = asyncio.run(
-            credential_delete({"id": "cred1", "confirm": True})
+    fake = FakeN8nClient()
+    n8n_client = _configure(fake)
+    try:
+        created = asyncio.run(
+            credential_create(
+                {"name": "hdr", "type": "httpHeaderAuth", "data": {}, "confirm": True}
+            )
         )
-    assert captured["method"] == "DELETE"
-    assert captured["path"] == "/credentials/cred1"
+        out = asyncio.run(
+            credential_delete({"id": created["id"], "confirm": True})
+        )
+    finally:
+        n8n_client.configure_client(None)
     assert out["deleted"] is True
-    assert out["id"] == "cred1"
+    assert out["id"] == created["id"]
     assert out["error"] is None
+    with pytest.raises(N8nNotFoundError):
+        asyncio.run(fake.delete_credential(created["id"]))
 
 
 def test_credential_schema_is_read_only_no_confirm_needed():
-    """schema takes no confirm and GETs /credentials/schema/{type}."""
+    """schema takes no confirm and surfaces the seed's canned schema."""
     from n8n.tools.credential import credential_schema
+    from noctusai_lib.integrations.n8n import FakeN8nClient
 
-    captured = {}
-    schema_payload = {
-        "type": "object",
-        "required": ["name", "value"],
-        "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
-    }
-
-    def _cap(method, path, **kw):
-        captured.update(method=method, path=path)
-        return schema_payload
-
-    with patch("n8n.api.request_json", side_effect=_cap):
+    fake = FakeN8nClient()
+    n8n_client = _configure(fake)
+    try:
         out = asyncio.run(
             credential_schema({"credential_type_name": "httpHeaderAuth"})
         )
-    assert captured["method"] == "GET"
-    assert captured["path"] == "/credentials/schema/httpHeaderAuth"
+    finally:
+        n8n_client.configure_client(None)
     assert out["credential_type_name"] == "httpHeaderAuth"
-    assert out["schema"] == schema_payload
+    assert out["schema"]["required"] == ["name", "value"]
     assert out["error"] is None
 
 
-# ─── Typed-error on API failure (never a fabricated success) ─────────────
+# ─── Typed-error on adapter failure (never a fabricated success) ────────
 
 
 def test_credential_create_api_failure_returns_typed_error():
     from n8n.tools.credential import credential_create
-    from n8n import api
+    from noctusai_lib.integrations.n8n import N8nRejectedError
 
-    def _boom(*a, **kw):
-        raise api.N8nApiError("n8n API POST /credentials → HTTP 400", status=400)
+    class _RejectingClient:
+        async def create_credential(self, **kw):
+            raise N8nRejectedError("n8n rejected the payload", status=400)
 
-    with patch("n8n.api.request_json", side_effect=_boom):
+    n8n_client = _configure(_RejectingClient())
+    try:
         out = asyncio.run(
             credential_create(
                 {
@@ -213,6 +230,8 @@ def test_credential_create_api_failure_returns_typed_error():
                 }
             )
         )
+    finally:
+        n8n_client.configure_client(None)
     assert out["created"] is False
     assert out["error"]["status"] == 400
     assert out["error"]["error_class"] == "N8nApiError"
@@ -220,28 +239,30 @@ def test_credential_create_api_failure_returns_typed_error():
 
 def test_credential_delete_api_failure_returns_typed_error_with_id():
     from n8n.tools.credential import credential_delete
-    from n8n import api
+    from noctusai_lib.integrations.n8n import N8nNotFoundError
 
-    def _boom(*a, **kw):
-        raise api.N8nApiError("not found", status=404)
+    class _NotFoundClient:
+        async def delete_credential(self, credential_id):
+            raise N8nNotFoundError("not found", status=404)
 
-    with patch("n8n.api.request_json", side_effect=_boom):
+    n8n_client = _configure(_NotFoundClient())
+    try:
         out = asyncio.run(
             credential_delete({"id": "ghost", "confirm": True})
         )
+    finally:
+        n8n_client.configure_client(None)
     assert out["deleted"] is False
     assert out["id"] == "ghost"
     assert out["error"]["status"] == 404
 
 
-def test_credential_schema_api_failure_returns_typed_error():
+def test_credential_schema_not_configured_returns_typed_424():
     from n8n.tools.credential import credential_schema
-    from n8n import api
+    from n8n.settings import N8nConnectorSettings
 
-    def _boom(*a, **kw):
-        raise api.N8nApiError("not configured", status=424)
-
-    with patch("n8n.api.request_json", side_effect=_boom):
+    with patch("n8n.client.get_settings",
+               return_value=N8nConnectorSettings()):
         out = asyncio.run(
             credential_schema({"credential_type_name": "httpHeaderAuth"})
         )
