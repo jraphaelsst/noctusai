@@ -1,7 +1,7 @@
 """FoldersService — CRUD over ``social_wiring.n8n_folders`` /
 ``social_wiring.n8n_workflow_placement``.
 
-``migrations/024_n8n_folders.sql`` ships these two tables on a sibling
+``migrations/030_n8n_folders.sql`` ships these two tables on a sibling
 unmerged branch (``feat/n8n-folders-migration``) — this slice codes
 against the DOCUMENTED shape without re-authoring a competing copy of
 that migration:

@@ -1,4 +1,4 @@
--- 026_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
+-- 032_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
 -- visible to dev / owner / admin, closing a gate that hid them from EVERYONE.
 --
 -- THE DEFECT (verified against live prod 2026-07-17):

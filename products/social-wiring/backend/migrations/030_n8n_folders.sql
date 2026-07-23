@@ -1,4 +1,4 @@
--- 024_n8n_folders.sql — operator-built folder tree for the /n8n workflows page.
+-- 030_n8n_folders.sql — operator-built folder tree for the /n8n workflows page.
 --
 -- Context: n8n's native folder concept lives inside license-gated "projects"
 -- (`GET /projects` → 403 on this instance) — we cannot rely on n8n's own

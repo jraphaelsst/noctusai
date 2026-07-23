@@ -20,7 +20,7 @@ export const MANAGE_TEAM_ROLES: OrgRole[] = ['owner', 'admin', 'manager'];
 /**
  * Roles that see "in development" pages.
  * 🔴 PARITY CONTRACT: must stay identical to the RLS role array in
- * social_wiring migration 026_status_pagina_dev_visibility.sql
+ * social_wiring migration 032_status_pagina_dev_visibility.sql
  * (`dev_veem_desenvolvimento` policy). Diverge and you get split-brain —
  * RLS returns the row but the FE hides it, or the reverse.
  */

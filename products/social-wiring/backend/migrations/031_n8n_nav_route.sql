@@ -1,4 +1,4 @@
--- 025_n8n_nav_route.sql — register /n8n in status_pagina
+-- 031_n8n_nav_route.sql — register /n8n in status_pagina
 --
 -- The `/n8n` workflows page (client folder tree + drag-and-drop workflow
 -- assignment) ships its route as `route: "n8n"` in App.tsx's NAV_GROUPS
