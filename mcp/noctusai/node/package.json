@@ -1,0 +1,13 @@
+{
+  "name": "noctusai-mcp-ts-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Node/ts-morph helper scripts invoked by mcp/noctusai/tools/noctus/dev/*.py for real TypeScript AST edits (KB § PATTERNS/common/ast.md — AST-first, never regex). NOT a product frontend dependency — do not import from products/*/frontend.",
+  "type": "module",
+  "scripts": {
+    "ts-ast-edit": "node ts_ast_edit.mjs"
+  },
+  "dependencies": {
+    "ts-morph": "^24.0.0"
+  }
+}
