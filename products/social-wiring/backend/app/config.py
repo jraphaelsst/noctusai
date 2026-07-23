@@ -256,6 +256,16 @@ class SocialWiringSettings(ProductSettings):
     # `/api/meta/ads/*` route that needs an account returns a 503
     # "not configured" — never a silent zeros dashboard.
     meta_ad_account_id: str = ""
+    # The SINGLE org (tenant) the workspace-global System User ad account
+    # above belongs to. The token + `meta_ad_account_id` are workspace-
+    # global (one Business-Portfolio account), but the ads_* tables are
+    # org-scoped by RLS — so the daily sync must write into exactly ONE
+    # org, not fan out across every tenant in `noctus_users` (that would
+    # leak the operator's private ad spend into other tenants' RLS rows).
+    # Empty ⇒ the daily scheduler SKIPS (safe-by-default — never a
+    # fan-out); Phase 4 (multi-org ad accounts) replaces this single-value
+    # setting with a per-org `integration_accounts` mapping.
+    meta_ads_org_id: str = ""
     meta_oauth_redirect_uri: str = "http://localhost:8011/api/meta/oauth/callback"
     # Graph API version pinned per release. v21.0 is the current stable
     # as of Jan 2026; v22.0 ships in May 2026. Pin explicitly so a

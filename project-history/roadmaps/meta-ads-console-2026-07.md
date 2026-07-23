@@ -269,6 +269,8 @@ Pre-dispatch gates: `noc-verify-seed` (W1 is the *build* leg, W2–W4 the *consu
 - **2026-07-21**: Nav revised from "subtab under each network" to "third Anúncios network + per-network top-ads strip" — campaigns are ad-account-scoped and span placements, so a per-network-only view can never show a true campaign total.
 - **2026-07-21**: ROAS deliberately **not** a fixed tile. Operator boosts for traffic and does not sell on-platform; objective-aware KPI rendering avoids permanently-dead cards.
 - **2026-07-21**: `META_KITCHEN_SINK_SCOPES` explicitly frozen for v1 — direct lesson from `aace91df`.
+- **2026-07-23**: Migration `030` applied to the live NoctusAI DB (`nyplttplcoyiiqjrvtiw`, `social_wiring` schema) with explicit operator consent — 4 additive `ads_*` tables, RLS on, recorded in `schema_migrations`. Backend (W2+W3) shipped to `dev` at `78851141`.
+- **2026-07-23**: 🔴 **Scheduler org-scoping fix** — the W2 scheduler fanned the daily sync across EVERY org in `noctus_users`. Harmless with one operator, but the live DB has 4 orgs (incl. other tenants), so the workspace-global ad account's private spend would have been written into every tenant's RLS-scoped rows — a financial-data leak. Replaced the fan-out with a single `settings.meta_ads_org_id` target, **safe-by-default** (unset ⇒ skip, never fan out). Set to the operator's org `6dd73140` for v1. Phase 4 (multi-org) replaces the single value with a per-org `integration_accounts` mapping — additive. This closes the W2 engineer's flagged "scheduler iterates every org" scoped-improvement. The live backfill likewise targets only `6dd73140`.
 
 ## Retrospective (partial — T1 fired 2026-07-23)
 
