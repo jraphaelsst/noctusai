@@ -11,12 +11,22 @@ Scans `products/<product>/frontend/` + `products/<product>/backend/` for
 three static failure shapes:
 
 **Leg A — FE-endpoint → backend-route existence** (catches 404s /
-route-exists-but-missing). Every literal `api.<method>('<path>')` call in
-the FE is matched against the set of registered backend routes
+route-exists-but-missing). Every `api.<method>(<path-arg>)` call in the FE
+is matched against the set of registered backend routes
 (`@router.<method>("<path>")` + the router's `include_router(..., prefix=)`
 mount). Dynamic segments (`${id}` / `{id}` / `:id`) normalize to a single
 placeholder on BOTH sides; matching is by segment-count + literal segments.
-A FE call with no backend match is FLAGGED.
+The path argument can be a literal, a template literal, OR a
+`+`-concatenation (`'/api/x/' + id`) — a concatenation is reconstructed
+into the same `${...}`-marked form so it normalizes identically to its
+template-literal equivalent (fixes the false-positive where the old
+extraction captured only the literal PREFIX of a concatenation, under-
+counting segments and flagging a route that actually exists). A call whose
+path has no literal `/`-rooted anchor (a bare variable, or a
+concatenation/template STARTING with a dynamic term) is genuinely
+unknowable statically — NOT flagged as missing (we can't prove absence)
+and NOT silently dropped either: it comes back as an `indeterminate_routes`
+finding. A FE call with a DETERMINATE path and no backend match is FLAGGED.
 
 **Leg B — name-on-`nome` column lint** (the recurring 500 class). The
 platform schema is Portuguese: tables `plans` / `products` / `organizations`
@@ -132,6 +142,16 @@ class ScanWiringOutput(BaseModel):
         default_factory=list,
         description="Leg C — `Promise.all` of bare fetches under one shared catch.",
     )
+    indeterminate_routes: list[WiringFinding] = Field(
+        default_factory=list,
+        description=(
+            "Leg A — FE calls whose path segment-count is statically "
+            "unknowable (a bare-variable path, or a concatenation/template "
+            "literal STARTING with a dynamic term). Advisory-only — NOT a "
+            "missing-route claim (we can't prove absence) and NOT silently "
+            "dropped (no-silent-errors); not folded into `totals.total`."
+        ),
+    )
     totals: dict[str, int] = Field(
         default_factory=dict,
         description="Per-leg + grand-total finding counts.",
@@ -205,12 +225,15 @@ def _is_dynamic_segment(seg: str) -> bool:
 # Leg A — FE api-call extraction
 # ---------------------------------------------------------------------------
 
-# Matches `api.get('<path>')`, `api.post("<path>")`, and template-literal
-# `api.get(`<path>`)`. The path capture stops at the matching quote/backtick.
-_FE_API_CALL_RE = re.compile(
-    r"\bapi\.(?P<method>" + "|".join(_HTTP_METHODS) + r")\s*\(\s*"
-    r"""(?P<q>['"`])(?P<path>[^'"`]*?)(?P=q)""",
-)
+# Matches the START of any `api.<method>(` call — the anchor both Leg A
+# (FE-call path extraction, below) and Leg C (`Promise.all` body scan,
+# `_is_pure_shared_catch`) walk from. Match end lands right after the "(", so
+# `m.end() - 1` is the bracket-open index `_balanced_slice` needs.
+# Deliberately NOT quote-anchored (unlike the old `_FE_API_CALL_RE` it
+# replaces, which only matched a literal quoted/template-literal argument) —
+# the path argument can ALSO be a `+`-concatenation or a bare variable; we
+# isolate the FULL bracket-balanced argument list and parse it below.
+_API_CALL_START_RE = re.compile(r"\bapi\.(?P<method>" + "|".join(_HTTP_METHODS) + r")\s*\(")
 
 
 @dataclass
@@ -222,9 +245,116 @@ class _FeCall:
     line: int
 
 
-def _extract_fe_calls(fe_root: Path, repo_root: Path) -> list[_FeCall]:
-    """Extract every literal `api.<method>('<path>')` call in the FE src tree."""
+def _split_top_level(text: str, sep_chars: str) -> list[str]:
+    """Split `text` on any char in `sep_chars` at bracket-depth 0, quote-aware.
+
+    Shared splitter for (a) isolating a call's first argument (split on `,`)
+    and (b) breaking a `+`-concatenation into its terms (split on `+`) — same
+    bracket/quote-balancing discipline as `_balanced_slice`/`_element_has_catch`
+    below, generalized to an arbitrary separator set.
+    """
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and ch in sep_chars:
+            parts.append(text[start:i])
+            start = i + 1
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _first_top_level_arg(args_text: str) -> str | None:
+    """The first (path) argument of a call's argument-list text, or `None`
+    for an empty call (`api.get()`)."""
+    first = _split_top_level(args_text, ",")[0].strip()
+    return first or None
+
+
+def _reconstruct_fe_path(arg_text: str) -> str | None:
+    """Rebuild a normalizable path string from a FE call's first-argument
+    expression.
+
+    A pure literal (`'...'` / `"..."` / `` `...` ``, template interpolations
+    left as-is) passes through unchanged — the original, already-correct
+    case (a whole-segment `${id}` normalizes against a backend `{id}` via
+    `_is_dynamic_segment`).
+
+    A `+`-concatenation is rebuilt term-by-term: a literal term keeps its
+    text; any non-literal term (identifier / member-expr / call-expr / ...)
+    becomes the marker `${DYN}` — deliberately reusing the SAME `${...}`
+    dynamic-segment detection `_normalize_path`/`_is_dynamic_segment` already
+    apply to template literals, so `'/api/x/' + id` (trailing bare-variable
+    segment, literal ends in `/`) and `'/api/wf-' + id` (mid-segment
+    fragment, no trailing `/`) normalize EXACTLY like their template-literal
+    equivalents (`` `/api/x/${id}` `` / `` `/api/wf-${id}` ``) — no new
+    normalization rule, just feeding concatenation through the existing one.
+
+    Returns `None` when the reconstructed text is NOT anchored to a literal
+    `/`-rooted prefix — the segment count is then genuinely unknowable
+    statically (`api.get(url)`, `` `${basePath}/run` ``, `basePath + '/run'`
+    all have a DYNAMIC first term, so we don't know how many segments it
+    itself contributes). The caller surfaces this as an explicit
+    indeterminate finding rather than silently matching or silently
+    dropping the call (no-silent-errors).
+    """
+    rebuilt: list[str] = []
+    for term in _split_top_level(arg_text, "+"):
+        term = term.strip()
+        if len(term) >= 2 and term[0] == term[-1] and term[0] in ("'", '"', "`"):
+            rebuilt.append(term[1:-1])
+        else:
+            rebuilt.append("${DYN}")
+    reconstructed = "".join(rebuilt)
+    if not reconstructed.startswith("/"):
+        return None
+    return reconstructed
+
+
+def _extract_fe_calls(fe_root: Path, repo_root: Path) -> tuple[list[_FeCall], list[WiringFinding]]:
+    """Extract every `api.<method>(...)` call in the FE src tree.
+
+    Handles three path-argument shapes:
+      - a literal string / template literal (`'/api/x'`, `` `/api/x/${id}` ``)
+        — the pre-existing, already-correct case.
+      - a `+`-concatenation (`'/api/x/' + id`, `basePath + '/run'`) —
+        reconstructed via `_reconstruct_fe_path` into the same `${...}`-marked
+        form so it normalizes identically to a template literal (fixes the
+        false-positive where the old regex captured only the literal PREFIX
+        of a concatenation, under-counting segments and flagging a route
+        that actually exists — Finding #6).
+      - a call whose path has no literal `/`-rooted anchor (a bare variable,
+        or a concatenation/template STARTING with a dynamic term) — the
+        segment count is statically unknowable. NOT silently dropped
+        (no-silent-errors, fixes the OTHER half of Finding #6: the old
+        regex simply never matched these calls at all): returned as an
+        `indeterminate` finding instead.
+
+    Returns `(calls, indeterminate_findings)`.
+    """
     calls: list[_FeCall] = []
+    indeterminate: list[WiringFinding] = []
     src = fe_root / "src"
     scan_root = src if src.exists() else fe_root
     for path in scan_root.rglob("*"):
@@ -241,23 +371,38 @@ def _extract_fe_calls(fe_root: Path, repo_root: Path) -> list[_FeCall]:
             rel = str(path.relative_to(repo_root))
         except ValueError:
             rel = str(path)
-        for lineno, line in enumerate(content.splitlines(), start=1):
-            for m in _FE_API_CALL_RE.finditer(line):
-                method = m.group("method").lower()
-                raw_path = m.group("path")
-                # Skip fully-dynamic paths we can't normalize: a path that
-                # is ONLY a `${...}` with no leading literal `/api/...` slug
-                # (we can't tell which backend route it targets).
-                if not raw_path.startswith("/"):
-                    continue
-                calls.append(_FeCall(
-                    method=method,
-                    raw_path=raw_path,
-                    norm_path=_normalize_path(raw_path),
+        for m in _API_CALL_START_RE.finditer(content):
+            method = m.group("method").lower()
+            call_open = m.end() - 1
+            args_text, _after = _balanced_slice(content, call_open, "(", ")")
+            if args_text is None:
+                continue  # unbalanced call — can't isolate the arg; skip
+            first_arg = _first_top_level_arg(args_text)
+            if first_arg is None:
+                continue  # `api.get()` — no path argument at all
+            lineno = content.count("\n", 0, m.start()) + 1
+            reconstructed = _reconstruct_fe_path(first_arg)
+            if reconstructed is None:
+                indeterminate.append(WiringFinding(
                     file=rel,
                     line=lineno,
+                    detail=(
+                        f"FE calls `api.{method}({first_arg.strip()})` with a "
+                        f"path expression that has no literal `/`-rooted "
+                        f"prefix — segment count is statically unknowable. "
+                        f"SKIPPED (not silently dropped) — verify manually "
+                        f"or via the runtime leg."
+                    ),
                 ))
-    return calls
+                continue
+            calls.append(_FeCall(
+                method=method,
+                raw_path=reconstructed,
+                norm_path=_normalize_path(reconstructed),
+                file=rel,
+                line=lineno,
+            ))
+    return calls, indeterminate
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +712,9 @@ def _balanced_slice(text: str, open_idx: int, open_ch: str, close_ch: str) -> tu
     """Return (inner_text, index_after_close) for the bracket opened at open_idx.
 
     Bracket-balanced, quote/template/backtick-aware enough to skip brackets
-    inside string literals. Returns (None, open_idx) if unbalanced.
+    inside string literals. Returns (None, open_idx) if unbalanced. Shared by
+    Leg A (`_extract_fe_calls`, isolating a call's full argument list) and
+    Leg C (`_is_pure_shared_catch` below, isolating each element's own call).
     """
     depth = 0
     i = open_idx
@@ -601,8 +748,9 @@ def _balanced_slice(text: str, open_idx: int, open_ch: str, close_ch: str) -> tu
 # A bare fetch = `api.<method>(` that is NOT immediately followed (after its
 # own bracket-balanced call) by a `.catch(`. We approximate per-element
 # `.catch` by checking whether each `api.<method>(...)` occurrence in the
-# array body is chained to `.catch(` within the same element.
-_API_CALL_IN_BODY_RE = re.compile(r"\bapi\.(" + "|".join(_HTTP_METHODS) + r")\s*\(")
+# array body is chained to `.catch(` within the same element. Reuses the
+# SAME `_API_CALL_START_RE` Leg A walks from (single call-anchor regex, two
+# legs — no duplicate compiled pattern).
 
 
 def _is_pure_shared_catch(body: str) -> bool:
@@ -616,7 +764,7 @@ def _is_pure_shared_catch(body: str) -> bool:
     the bug, so we do NOT flag it. We flag only when zero elements are guarded.
     """
     saw_api = False
-    for m in _API_CALL_IN_BODY_RE.finditer(body):
+    for m in _API_CALL_START_RE.finditer(body):
         saw_api = True
         call_open = m.end() - 1
         _inner, after = _balanced_slice(body, call_open, "(", ")")
@@ -712,14 +860,24 @@ def analyze_missing_routes(
 ) -> list[WiringFinding]:
     """Leg A — FE `api.<method>('<path>')` calls with no matching backend route.
 
-    Pure predicate: extract every literal FE api-call + the registered backend
+    Pure predicate: extract every FE api-call (literal, template-literal, or
+    `+`-concatenation — see `_extract_fe_calls`) + the registered backend
     routes (decorator path + APIRouter/include_router prefix + seed-framework
-    routers), then flag each FE call whose (method, normalized-path) matches no
-    route. Route-exists ≠ wired — this is the 404/route-missing class.
+    routers), then flag each DETERMINATE FE call whose (method,
+    normalized-path) matches no route. Route-exists ≠ wired — this is the
+    404/route-missing class.
+
+    Calls whose segment count is statically unknowable (a bare-variable path,
+    or a concatenation starting with a dynamic term) are NOT included here —
+    they cannot be proven missing OR present, so flagging them `high` would
+    be a false-positive gate failure on legitimate dynamic-URL code. See
+    `analyze_indeterminate_routes` (advisory-only, surfaced by the
+    `noctus.dev.scan_wiring` tool, not wired into the `check_fe_route_missing`
+    keeper).
     """
     if not fe_root.exists():
         return []
-    fe_calls = _extract_fe_calls(fe_root, repo_root)
+    fe_calls, _indeterminate = _extract_fe_calls(fe_root, repo_root)
     be_scan = _scan_backend_routes(be_root, repo_root=repo_root) if be_root.exists() else _BeRouteScan()
     missing: list[WiringFinding] = []
     for call in fe_calls:
@@ -735,6 +893,28 @@ def analyze_missing_routes(
                 ),
             ))
     return missing
+
+
+def analyze_indeterminate_routes(
+    fe_root: Path,
+    repo_root: Path,
+) -> list[WiringFinding]:
+    """Leg A companion — FE calls whose path segment-count is statically
+    unknowable (a bare-variable arg, or a concatenation/template literal
+    that STARTS with a dynamic term — e.g. `api.get(url)`,
+    `` `${basePath}/run` ``, `basePath + '/run'`).
+
+    These are NOT missing-route findings (we cannot prove absence) and are
+    NOT silently dropped either (no-silent-errors) — advisory-only, surfaced
+    via `noctus.dev.scan_wiring`'s `indeterminate_routes` output for
+    human/runtime-leg follow-up. Deliberately NOT wired into
+    `check_fe_route_missing` (the hard-fail keeper) to avoid false-positive
+    gate failures on legitimate dynamic-URL construction.
+    """
+    if not fe_root.exists():
+        return []
+    _calls, indeterminate = _extract_fe_calls(fe_root, repo_root)
+    return indeterminate
 
 
 def analyze_name_on_nome(
@@ -817,7 +997,9 @@ def scan_wiring(
     # the keeper detectors also consume — single source of truth, no dup).
     # Leg A diagnostics (fe_calls_found / backend_routes_found) are recomputed
     # here cheaply for the tool's report; the keeper doesn't need them.
-    fe_calls = _extract_fe_calls(fe_root, root) if fe_root.exists() else []
+    fe_calls, fe_indeterminate = (
+        _extract_fe_calls(fe_root, root) if fe_root.exists() else ([], [])
+    )
     be_scan = _scan_backend_routes(be_root, repo_root=root) if be_root.exists() else _BeRouteScan()
 
     # --- Leg A: FE calls → backend routes ---
@@ -831,6 +1013,9 @@ def scan_wiring(
         "missing_routes": len(missing),
         "name_on_nome": len(name_on_nome),
         "shared_catch_promise_all": len(shared_catch),
+        # Advisory-only — NOT folded into `total` (no hard-fail semantics;
+        # see `analyze_indeterminate_routes`).
+        "indeterminate_routes": len(fe_indeterminate),
         "total": len(missing) + len(name_on_nome) + len(shared_catch),
     }
 
@@ -840,6 +1025,7 @@ def scan_wiring(
         missing_routes=missing,
         name_on_nome=name_on_nome,
         shared_catch_promise_all=shared_catch,
+        indeterminate_routes=fe_indeterminate,
         totals=totals,
         backend_routes_found=len(be_scan.routes),
         fe_calls_found=len(fe_calls),
@@ -849,12 +1035,21 @@ def scan_wiring(
 
 
 def _next_action(totals: dict[str, int]) -> str:
+    indeterminate = totals.get("indeterminate_routes", 0)
     if totals["total"] == 0:
-        return (
+        base = (
             "Static wiring clean (legs A/B/C). Still run the RUNTIME leg "
             "(probe each endpoint live for 200 + real rows) + the page-scoped "
             "CRUD leg — `KB § PATTERNS/product-internal-wiring.md` steps 3 + 7."
         )
+        if indeterminate:
+            base += (
+                f" NOTE: {indeterminate} FE call(s) build a path from an "
+                f"expression whose segment count is statically unknowable "
+                f"(SKIPPED, not verified either way) — review `indeterminate_"
+                f"routes` manually."
+            )
+        return base
     parts: list[str] = []
     if totals["missing_routes"]:
         parts.append(
@@ -871,6 +1066,11 @@ def _next_action(totals: dict[str, int]) -> str:
             f"{totals['shared_catch_promise_all']} shared-catch `Promise.all` "
             f"(all-zeros class) — give each fetch its own `.catch()`"
         )
+    if indeterminate:
+        parts.append(
+            f"{indeterminate} FE call(s) build a statically-unknowable path "
+            f"(SKIPPED, not verified) — review `indeterminate_routes` manually"
+        )
     return "Fix: " + "; ".join(parts) + "."
 
 
@@ -885,16 +1085,20 @@ def register(server) -> None:
             "Static wiring-check for ONE product (the product-internal-wiring "
             "rule, `KB § PATTERNS/product-internal-wiring.md` legs 2/4/5). "
             "Scans `products/<product>/frontend` + `/backend`: (A) every FE "
-            "`api.<method>('<path>')` call → must have a matching backend "
+            "`api.<method>(<path-arg>)` call → must have a matching backend "
             "`@router.<method>` route + mount prefix (catches 404s / "
             "route-exists-but-missing; dynamic segments normalized on both "
-            "sides); (B) selecting `name` on a `nome`-table (plans/products/"
-            "organizations) — the recurring 500 class; (C) `Promise.all([bare "
-            "fetches])` under one shared try/catch — the all-zeros fast-fail. "
-            "Route-exists ≠ wired. Returns per-leg findings (file/line/detail) "
-            "+ totals + next_action. The runtime (leg 3) + page-scoped-CRUD "
-            "(leg 7) legs are out of scope (runtime = live probe). Honest "
-            "typed error if the product doesn't exist."
+            "sides — literal, template-literal `${...}`, AND `+`-concatenation "
+            "path args; a call whose segment-count is statically unknowable "
+            "comes back as `indeterminate_routes`, not silently dropped and "
+            "not falsely flagged missing); (B) selecting `name` on a "
+            "`nome`-table (plans/products/organizations) — the recurring 500 "
+            "class; (C) `Promise.all([bare fetches])` under one shared "
+            "try/catch — the all-zeros fast-fail. Route-exists ≠ wired. "
+            "Returns per-leg findings (file/line/detail) + totals + "
+            "next_action. The runtime (leg 3) + page-scoped-CRUD (leg 7) "
+            "legs are out of scope (runtime = live probe). Honest typed "
+            "error if the product doesn't exist."
         ),
     )
     def _scan_wiring(product: str, worktree_path: str | None = None) -> dict:
@@ -909,6 +1113,7 @@ __all__ = [
     # Shared per-leg analyzers — consumed by BOTH this tool and the keeper
     # detectors in compliance.py (one predicate, two surfaces — DRY).
     "analyze_missing_routes",
+    "analyze_indeterminate_routes",
     "analyze_name_on_nome",
     "analyze_promise_all_shared_catch",
     "ScanWiringInput",
