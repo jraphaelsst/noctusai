@@ -2,7 +2,7 @@
 export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from './utils';
 
 // API client
-export { createApiClient, extractErrorMessage } from './api';
+export { createApiClient, extractErrorMessage, ApiError } from './api';
 export type { ApiClient, CreateApiClientOptions } from './api';
 
 // Auth
