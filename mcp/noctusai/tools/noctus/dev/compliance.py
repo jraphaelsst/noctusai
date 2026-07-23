@@ -1637,6 +1637,15 @@ def check_phase_state_consistency(repo_root: Path | None = None) -> list[dict]:
 # Module prefixes that are "ours" (production code in this repo). Patching
 # any of these in tests neuters our own logic — UNLESS the target attribute
 # is a known boundary accessor (see _BOUNDARY_ACCESSOR_NAMES).
+#
+# NOTE: this fixed tuple does NOT cover the in-repo `mcp/<vendor>` connector
+# clients (`n8n.*`, `waha.*`, `github.*`, ...) — those are namespace-rooted
+# at their own top-level package name, not under `app.`/`noctusai_lib.`/
+# `noctusai_seed.`. See `_discover_connector_module_prefixes` below, which
+# extends this set per-call with the DERIVED connector-package prefixes
+# (found `mcp/n8n/build` Wave 1 — `n8n.tools.credential.credential_create`
+# monkeypatched in a test slipped past this detector entirely because the
+# `n8n.` namespace wasn't "ours").
 _OUR_MODULE_PREFIXES: tuple[str, ...] = (
     "app.",
     "noctusai_lib.",
@@ -1688,6 +1697,24 @@ _BOUNDARY_ACCESSOR_NAMES: set[str] = {
     # JWT decoder boundary — wraps cryptographic verification of an
     # external token; patching skips a real signing key in tests.
     "__from_token__",
+    # Connector-MCP env-config boundary — every `mcp/<vendor>` connector's
+    # `get_settings()` is the `_kit.settings.make_get_settings`-built,
+    # `lru_cache`-wrapped env/.env reader (base_url/api_key/token, no
+    # business logic). Same category as `get_whatsapp_config_from_env`
+    # above. Shared name across ALL connectors (n8n/waha/cloudflare/
+    # hostinger/github/meta/vista/supabase) — see `mcp/_kit/settings.py`.
+    "get_settings",
+    # Connector-MCP subprocess boundary — GitHub connector shells out to
+    # the `gh` CLI instead of an HTTP client; `run_gh` is the subprocess
+    # boundary, `gh_available` a PATH-presence check. Mirrors `request_json`
+    # below for the HTTP-based connectors.
+    "run_gh",
+    "gh_available",
+    # Shared connector transport primitive — `_kit.transport.urlopen` is
+    # stdlib `urllib.request.urlopen` re-exported into the shared seam;
+    # `mcp/hostinger` + `mcp/supabase` test_smoke.py patch it directly
+    # (one level below the per-vendor `request_json`).
+    "urlopen",
 }
 # Boundary-accessor patterns by suffix (for `_get_<x>_token`,
 # `_get_<x>_client`, `_get_<x>_config`-style getters that wrap external
@@ -1704,6 +1731,14 @@ _BOUNDARY_ACCESSOR_REGEXES: tuple[re.Pattern[str], ...] = (
     # outbound email is the standard test pattern; the alternative is a
     # network call to a real provider.
     re.compile(r"^send_[a-z][a-z0-9_]*_email$"),
+    # Connector-MCP HTTP boundary — every `mcp/<vendor>/api.py` exposes the
+    # SAME single-HTTP-seam shape: `request_json` (n8n/waha/cloudflare/
+    # hostinger/supabase) or `request_envelope` (cloudflare's pagination
+    # variant), both wrapping the shared `_kit.transport.request_json` +
+    # stdlib `urllib`. Mocking it is the sanctioned "skip the real network
+    # call" pattern documented identically in every connector's api.py
+    # docstring.
+    re.compile(r"^request_(?:json|envelope)$"),
 )
 # External library names — when an external symbol is re-imported through
 # our module (e.g. `app.routers.X.httpx.AsyncClient`), the test is
@@ -1732,6 +1767,63 @@ _NO_SELF_MONKEYPATCH_HIGH_SEVERITY_PRODUCTS: frozenset[str] = frozenset({
 })
 
 
+# Directory names under `mcp/` that are never a vendor-connector "ours"
+# namespace: `noctusai` is the platform MCP toolkit itself (this very
+# module), not a connector client — it imports as `tools.*`, not
+# `noctusai.*`, so it's a non-issue either way, but the exclusion documents
+# intent. `__pycache__` is build noise.
+_MCP_NON_CONNECTOR_DIR_NAMES: frozenset[str] = frozenset({"noctusai", "__pycache__"})
+
+
+def _discover_connector_module_prefixes(root: Path) -> tuple[str, ...]:
+    """Return the top-level import-name prefixes for every in-repo
+    `mcp/<vendor>` connector package (e.g. `("n8n.", "waha.", "_kit.", ...)`).
+
+    DERIVED from the `mcp/` directory listing rather than hand-maintained —
+    a silently-missed new connector would otherwise reopen the exact blind
+    spot this closes (found `mcp/n8n/build`: `n8n.tools.credential.
+    credential_create` monkeypatched in a test was invisible to
+    `check_no_self_monkeypatch` because no `mcp/<vendor>` namespace was
+    ever "ours"). Per the "hand-maintained lists drift" rule (CLAUDE.md §1
+    / `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`).
+
+    Two exclusions, both deliberate:
+    - `_MCP_NON_CONNECTOR_DIR_NAMES` (the platform toolkit itself).
+    - any dir name that collides with a known EXTERNAL SDK top-level
+      import name in `_EXTERNAL_LIB_NAMES` — e.g. `mcp/google` and
+      `mcp/supabase` share their vendor's REAL PyPI top-level import name
+      (`google.*` / `supabase.*`). Classifying those as "ours" would
+      misroute genuine external-SDK patches (the real `supabase-py` /
+      `google-auth` clients used all over `products/*/backend`) into
+      false-positive self-monkeypatch flags — the exact over-flagging
+      failure mode this fix must avoid. `mcp/google` already dodges the
+      collision itself (imports its own modules as bare `tools`/
+      `settings`, never `google.*` — see `mcp/google/conftest.py`);
+      `mcp/supabase`'s tests DO use `supabase.tools.*.get_settings`
+      (covered anyway via the `get_settings` boundary-accessor exemption
+      above, so excluding the prefix costs no real coverage today) —
+      tracked, not silently absorbed: `NOC-REMEDIATE[connector-namespace-collision]`
+      would apply if `mcp/supabase` grows non-boundary business-logic
+      patches that need catching.
+    """
+    mcp_dir = root / "mcp"
+    if not mcp_dir.is_dir():
+        return ()
+    prefixes: list[str] = []
+    for child in sorted(mcp_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name in _MCP_NON_CONNECTOR_DIR_NAMES:
+            continue
+        if name in _EXTERNAL_LIB_NAMES:
+            continue
+        if not (child / "__init__.py").exists():
+            continue
+        prefixes.append(f"{name}.")
+    return tuple(prefixes)
+
+
 def _is_boundary_accessor_target(full_target: str) -> bool:
     """True if the patched target's last component is a known boundary
     accessor (e.g. `noctusai_seed.database.DatabaseModule.get_client`).
@@ -1756,9 +1848,20 @@ def _has_external_lib_segment(full_target: str) -> bool:
     return any(seg in _EXTERNAL_LIB_NAMES for seg in segments)
 
 
-def _classify_patch_target(target: str) -> str:
-    """Return 'ours' / 'boundary' / 'external' / 'external-via-ours' / 'unknown'."""
-    if not any(target.startswith(p) for p in _OUR_MODULE_PREFIXES):
+def _classify_patch_target(
+    target: str, extra_our_prefixes: tuple[str, ...] = ()
+) -> str:
+    """Return 'ours' / 'boundary' / 'external' / 'external-via-ours' / 'unknown'.
+
+    `extra_our_prefixes` extends `_OUR_MODULE_PREFIXES` for this call — used
+    by `check_no_self_monkeypatch` to fold in the per-repo-root DERIVED
+    `mcp/<vendor>` connector prefixes (`_discover_connector_module_prefixes`)
+    without baking a specific worktree's connector roster into the module
+    constant.
+    """
+    if not any(
+        target.startswith(p) for p in (*_OUR_MODULE_PREFIXES, *extra_our_prefixes)
+    ):
         return "external"
     if _is_boundary_accessor_target(target):
         return "boundary"
@@ -1864,6 +1967,8 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
     if not root.exists():
         return issues
 
+    connector_prefixes = _discover_connector_module_prefixes(root)
+
     for path in _walk_test_files(root):
         try:
             content = path.read_text(encoding="utf-8")
@@ -1890,7 +1995,7 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
             if raw_target is None:
                 continue
             target_str = _resolve_target_via_imports(raw_target, import_map)
-            classification = _classify_patch_target(target_str)
+            classification = _classify_patch_target(target_str, connector_prefixes)
             if classification != "ours":
                 continue
             line_no = getattr(node, "lineno", 0) or 0
