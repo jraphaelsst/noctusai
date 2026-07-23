@@ -1,7 +1,16 @@
 # Leads module — social-wiring · PROJECT
 
-> **Status:** Wave 1 dispatched · **Owner:** tech-lead · **Started:** 2026-07-21
+> **Status:** ✅ SHIPPED + LIVE IN PROD (2026-07-23) · **Owner:** tech-lead · **Started:** 2026-07-21
 > **Source of truth for the domain:** `CONTROLE LEADS (1).xlsx` (repo root, gitignored — PII).
+>
+> **Ship record (2026-07-23):** All waves merged to `dev`→`main`→`prod` (tip `634d2daf`). Prod
+> Supabase (`nyplttplcoyiiqjrvtiw`, schema `social_wiring`): migrations 025–029 applied, nav row
+> `leads`→`producao` set, **12,177 leads + 23 sources imported** (1 import batch). Prod container
+> `noctus-social-wiring` deployed on image revision `634d2daf`; `/api/leads` + analytics RPCs live
+> (401-for-anon = route mounted + auth-guarded), `/leads` SPA route + chart chunks serve 200.
+> Root-cause of the delayed launch: the VPS ran a 55-commit-stale pre-leads image that reported
+> "healthy" (healthcheck only pings `/api/health`) — fixed by an ancestry-guarded `deploy_image`
+> pull once a green prod build moved `:latest`. Lesson absorbed → `memory/feedback_healthcheck_blind_to_stale_image.md`.
 
 ---
 
