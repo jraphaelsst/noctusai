@@ -761,6 +761,48 @@ def get_account_insights(
     return _aggregate_account_snapshots(org_id=org_id, since=since, until=until)
 
 
+# ─── GET /export ──────────────────────────────────────────────────────────
+@router.get("/export")
+def export_report(
+    format: Literal["csv", "pdf"] = Query("csv"),
+    since: date = Query(...),
+    until: date = Query(...),
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Download a per-campaign period report as CSV or PDF. DB-only (reads
+    the persisted snapshots + the stored account row) — no live Meta call,
+    so an export can never be rate-limited."""
+    from fastapi import Response
+
+    from app.modules.meta_ads.services import ads_export_service as export
+
+    org_id, _adapter = org_and_adapter
+    admin = get_admin_client()
+    acct_resp = (
+        admin.schema(_SCHEMA).table("ads_accounts")
+        .select("name,currency").eq("org_id", str(org_id)).limit(1).execute()
+    )
+    acct = (acct_resp.data or [{}])[0]
+    report = export.build_report(
+        admin, org_id=org_id,
+        account_name=acct.get("name") or "Conta de anúncios",
+        currency=acct.get("currency") or "BRL",
+        since=since, until=until,
+    )
+    stamp = f"anuncios_{since.isoformat()}_{until.isoformat()}"
+    if format == "pdf":
+        return Response(
+            content=export.to_pdf(report),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{stamp}.pdf"'},
+        )
+    return Response(
+        content=export.to_csv(report),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{stamp}.csv"'},
+    )
+
+
 # ─── GET /activities ──────────────────────────────────────────────────────
 @router.get("/activities", response_model=AdsActivitiesListOut)
 def list_activities(

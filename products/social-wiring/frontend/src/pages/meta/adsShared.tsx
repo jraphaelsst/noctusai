@@ -10,11 +10,20 @@
  * backend follow-up (an `/insights/account` aggregate would remove the N
  * fan-out); until then this is correct, just chattier.
  */
-import { useMemo, useState } from "react";
-import { CircleAlert, Loader2, SlidersHorizontal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Bookmark,
+  CircleAlert,
+  Download,
+  FileText,
+  Loader2,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -22,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { downloadAdsExport } from "@/hooks/useMetaAds";
 import type {
   AdsActivity,
   AdsCampaign,
@@ -121,6 +131,172 @@ export function DateRangeSelect({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+// ─── Export (CSV / PDF) ─────────────────────────────────────────────────────
+
+export function ExportButtons({
+  since,
+  until,
+}: {
+  since: string;
+  until: string;
+}) {
+  const [busy, setBusy] = useState<"csv" | "pdf" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback(
+    async (format: "csv" | "pdf") => {
+      setBusy(format);
+      setError(null);
+      try {
+        await downloadAdsExport(format, since, until);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Falha ao exportar");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [since, until],
+  );
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button variant="outline" size="sm" disabled={busy !== null}
+        onClick={() => run("csv")}>
+        {busy === "csv" ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="mr-2 h-4 w-4" />
+        )}
+        CSV
+      </Button>
+      <Button variant="outline" size="sm" disabled={busy !== null}
+        onClick={() => run("pdf")}>
+        {busy === "pdf" ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <FileText className="mr-2 h-4 w-4" />
+        )}
+        PDF
+      </Button>
+      {error && <span className="text-xs text-destructive">{error}</span>}
+    </div>
+  );
+}
+
+// ─── Saved views (localStorage) ─────────────────────────────────────────────
+
+const _SAVED_VIEWS_KEY = "meta-ads:saved-views";
+
+interface SavedView {
+  name: string;
+  preset: RangePreset;
+}
+
+function _loadViews(): SavedView[] {
+  try {
+    const raw = localStorage.getItem(_SAVED_VIEWS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A named-date-range "saved view" store, persisted to localStorage. The
+ *  saved view captures the date-range preset so an operator can jump back
+ *  to a reporting window they use often. */
+export function useSavedViews() {
+  const [views, setViews] = useState<SavedView[]>(_loadViews);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(_SAVED_VIEWS_KEY, JSON.stringify(views));
+    } catch {
+      /* private-mode / quota — non-fatal */
+    }
+  }, [views]);
+
+  const save = useCallback((name: string, preset: RangePreset) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setViews((prev) => [
+      ...prev.filter((v) => v.name !== clean),
+      { name: clean, preset },
+    ]);
+  }, []);
+
+  const remove = useCallback((name: string) => {
+    setViews((prev) => prev.filter((v) => v.name !== name));
+  }, []);
+
+  return { views, save, remove };
+}
+
+export function SavedViewsControl({
+  preset,
+  onApply,
+}: {
+  preset: RangePreset;
+  onApply: (preset: RangePreset) => void;
+}) {
+  const { views, save, remove } = useSavedViews();
+  const [name, setName] = useState("");
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex items-center gap-2">
+      {views.length > 0 && (
+        <Select onValueChange={(n) => {
+          const v = views.find((x) => x.name === n);
+          if (v) onApply(v.preset);
+        }}>
+          <SelectTrigger className="h-9 w-[160px]">
+            <Bookmark className="mr-1.5 h-3.5 w-3.5" />
+            <SelectValue placeholder="Visões salvas" />
+          </SelectTrigger>
+          <SelectContent>
+            {views.map((v) => (
+              <div key={v.name} className="flex items-center justify-between pr-1">
+                <SelectItem value={v.name} className="flex-1">{v.name}</SelectItem>
+                <button
+                  className="p-1 text-muted-foreground hover:text-destructive"
+                  onClick={(e) => { e.preventDefault(); remove(v.name); }}
+                  aria-label={`Remover ${v.name}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {open ? (
+        <div className="flex items-center gap-1">
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Nome da visão"
+            className="h-9 w-[150px]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { save(name, preset); setName(""); setOpen(false); }
+              if (e.key === "Escape") setOpen(false);
+            }}
+          />
+          <Button size="sm" variant="secondary"
+            onClick={() => { save(name, preset); setName(""); setOpen(false); }}>
+            Salvar
+          </Button>
+        </div>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+          <Bookmark className="mr-1.5 h-3.5 w-3.5" /> Salvar visão
+        </Button>
+      )}
     </div>
   );
 }

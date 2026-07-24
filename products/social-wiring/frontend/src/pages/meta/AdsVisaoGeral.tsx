@@ -55,6 +55,8 @@ import {
   AdsLoading,
   AdsNotConfigured,
   DateRangeSelect,
+  ExportButtons,
+  SavedViewsControl,
   dominantObjective,
   useDateRange,
   type DateRange,
@@ -321,8 +323,10 @@ export default function AdsVisaoGeral() {
             {objective ? ` · objetivo predominante: ${objective.replace("OUTCOME_", "")}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SavedViewsControl preset={preset} onApply={setPreset} />
           <DateRangeSelect preset={preset} onChange={setPreset} />
+          <ExportButtons since={range.since} until={range.until} />
           <Button
             variant="outline"
             size="sm"

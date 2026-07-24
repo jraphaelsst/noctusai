@@ -13,7 +13,8 @@
  * via `@/lib/formatCurrency`. `since`/`until` are `YYYY-MM-DD` strings.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@noctusai/seed/infra";
+import { api, supabase } from "@noctusai/seed/infra";
+import { apiBase } from "@/lib/apiBase";
 
 // ─── qs (local copy — mirrors useMeta's helper) ─────────────────────────────
 function qs(
@@ -285,6 +286,34 @@ export function useAdsActivities(
       ),
     enabled: !!since && !!until,
   });
+}
+
+/** Download the per-campaign period report (CSV or PDF). The export
+ *  endpoint returns a file, not JSON, so it can't go through the `api`
+ *  client — this does an authenticated raw fetch (Bearer from the Supabase
+ *  session, same auth the api client uses) and triggers a browser
+ *  download. Throws on a non-2xx so callers can toast an error. */
+export async function downloadAdsExport(
+  format: "csv" | "pdf",
+  since: string,
+  until: string,
+): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token ?? null;
+  const url = `${apiBase()}/api/meta/ads/export${qs({ format, since, until })}`;
+  const resp = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) throw new Error(`Falha ao exportar (${resp.status})`);
+  const blob = await resp.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = `anuncios_${since}_${until}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(href);
 }
 
 /** Trigger a sync (incremental by default). Returns the job id; poll

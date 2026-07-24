@@ -45,6 +45,7 @@ import {
   AdsLoading,
   AdsNotConfigured,
   DateRangeSelect,
+  ExportButtons,
   useDateRange,
 } from "./adsShared";
 
@@ -95,6 +96,10 @@ export default function AdsFinanceiro() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">Financeiro</h2>
+        <ExportButtons since={range.since} until={range.until} />
+      </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <MetricCard icon={DollarSign} label="Gasto (histórico)"
           value={formatCents(account.amount_spent_cents, currency)} />

@@ -162,6 +162,7 @@ class TestAuthBoundary:
             "/api/meta/ads/insights/series?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/compare?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02",
+            "/api/meta/ads/export?format=csv&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/activities?since=2026-07-01&until=2026-07-02",
         ],
     )
@@ -448,6 +449,51 @@ class TestInsightsSeries:
         rows = resp.json()["rows"]
         by_plat = {r["breakdown"]["publisher_platform"]: r["spend_cents"] for r in rows}
         assert by_plat == {"instagram": 6000, "facebook": 4000}
+
+
+# ─── GET /export ──────────────────────────────────────────────────────
+class TestExport:
+    def _seed(self, caching):
+        caching.schema("social_wiring").set_table_data(
+            "ads_accounts",
+            [{"org_id": _ORG_A, "name": "One Consultoria", "currency": "BRL"}],
+        )
+        caching.schema("social_wiring").set_table_data(
+            "ads_objects",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "name": "Campanha Leads", "objective": "OUTCOME_LEADS",
+              "effective_status": "ACTIVE"}],
+        )
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 50000, "impressions": 2000, "reach": 1500,
+              "clicks": 80, "actions": {"lead": 20.0}, "action_values": {}}],
+        )
+
+    def test_csv_export(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        self._seed(caching)
+        resp = tc.get("/api/meta/ads/export?format=csv&since=2026-07-01&until=2026-07-01")
+        assert resp.status_code == 200, resp.text
+        assert "text/csv" in resp.headers["content-type"]
+        assert "attachment" in resp.headers["content-disposition"]
+        body = resp.text
+        assert "Campanha Leads" in body
+        assert "LEADS" in body  # objective stripped of OUTCOME_
+        assert "500.00" in body  # 50000 cents → reais
+        assert "TOTAL" in body
+
+    def test_pdf_export(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        self._seed(caching)
+        resp = tc.get("/api/meta/ads/export?format=pdf&since=2026-07-01&until=2026-07-01")
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:5] == b"%PDF-"  # a real PDF
 
 
 # ─── GET /activities ──────────────────────────────────────────────────
