@@ -14,9 +14,13 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.services.app_config_store import (
+    META_AD_ACCOUNT_ID_KEY,
+    META_ADS_ORG_ID_KEY,
     META_APP_ID_KEY,
     META_APP_SECRET_KEY,
+    META_SYSTEM_USER_TOKEN_KEY,
     build_app_config_store,
+    resolve_meta_ads_config,
     resolve_meta_app_creds,
 )
 from app.services.credential_vault import EncryptionNotConfigured
@@ -181,3 +185,42 @@ class TestResolveMetaAppCreds:
         app_id, app_secret = resolve_meta_app_creds(store=FakeAppConfigStore())
         assert app_id == "singleton-id"
         assert app_secret == "singleton-secret"
+
+
+# ─── resolve_meta_ads_config — DB-first, env-fallback (prod-from-DB model) ───
+class TestResolveMetaAdsConfig:
+    @staticmethod
+    def _settings(*, token="", account="", org=""):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            meta_system_user_token=token,
+            meta_ad_account_id=account,
+            meta_ads_org_id=org,
+        )
+
+    def test_env_fallback_when_db_empty(self):
+        token, account, org = resolve_meta_ads_config(
+            settings=self._settings(token="env-tok", account="act_1", org="org-1"),
+            store=FakeAppConfigStore(),
+        )
+        assert (token, account, org) == ("env-tok", "act_1", "org-1")
+
+    def test_db_wins_over_env_per_key(self):
+        store = FakeAppConfigStore()
+        store.put(META_SYSTEM_USER_TOKEN_KEY, "db-tok")
+        store.put(META_AD_ACCOUNT_ID_KEY, "act_db")
+        # org NOT in DB → env fallback for org only (per-key independence).
+        token, account, org = resolve_meta_ads_config(
+            settings=self._settings(token="env-tok", account="act_env", org="org-env"),
+            store=store,
+        )
+        assert token == "db-tok"
+        assert account == "act_db"
+        assert org == "org-env"
+
+    def test_none_when_neither(self):
+        token, account, org = resolve_meta_ads_config(
+            settings=self._settings(), store=FakeAppConfigStore()
+        )
+        assert (token, account, org) == (None, None, None)

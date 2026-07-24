@@ -99,7 +99,15 @@ def get_meta_adapter(
     same Graph version the OAuth router builds consent URLs against.
     """
     settings = settings or default_settings
-    system_user_token = getattr(settings, "meta_system_user_token", "") or None
+    # System-User token resolves DB-first (prod: Fernet-encrypted in
+    # `app_integration_config`) with env fallback (dev: root `.env`) — the
+    # `feedback_dev_prod_key_storage_model` contract. Prod carries NO Meta
+    # env vars, so an env-only read here would fall straight through to the
+    # per-org OAuth path / the Fake and the whole Meta integration would
+    # read as not-connected in prod.
+    from app.services.app_config_store import resolve_meta_ads_config
+
+    system_user_token, _acct, _org = resolve_meta_ads_config(settings=settings)
     graph_version = getattr(settings, "meta_graph_api_version", None) or None
     org_str = str(org_id) if org_id is not None else None
 

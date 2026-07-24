@@ -59,7 +59,9 @@ def _target_org_id() -> UUID | None:
     fan-out). Phase 4 (multi-org ad accounts) replaces this single value
     with a per-org ``integration_accounts`` mapping — additive, no
     behavior change for the single-account case."""
-    raw = getattr(settings, "meta_ads_org_id", "") or ""
+    from app.services.app_config_store import resolve_meta_ads_config
+
+    _token, _account, raw = resolve_meta_ads_config(settings=settings)
     if not raw:
         return None
     try:
@@ -76,12 +78,13 @@ def _sync_job_sync() -> None:
     """Body of the daily sync job. Runs in a worker thread
     (``asyncio.to_thread``) so a hung Supabase/Graph call doesn't freeze
     the event loop — same convention as ``youtube_daily_snapshot_job``."""
-    ad_account_id = getattr(settings, "meta_ad_account_id", "") or ""
-    system_user_token = getattr(settings, "meta_system_user_token", "") or ""
+    from app.services.app_config_store import resolve_meta_ads_config
+
+    system_user_token, ad_account_id, _org = resolve_meta_ads_config(settings=settings)
     if not ad_account_id or not system_user_token:
         logger.info(
             "meta_ads scheduler: not configured "
-            "(meta_ad_account_id=%r, meta_system_user_token %s) — skipping",
+            "(ad_account_id=%r, system_user_token %s) — skipping",
             ad_account_id, "set" if system_user_token else "unset",
         )
         return

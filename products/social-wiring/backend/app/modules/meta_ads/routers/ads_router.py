@@ -284,18 +284,21 @@ def _resolve_ads_adapter(
 
 
 def _require_ad_account_id() -> str:
-    """The configured ad account (``settings.meta_ad_account_id``,
-    ``META_AD_ACCOUNT_ID`` env). Distinct from the ``ads_read``-scope
-    gate (that's a ``MetaGraphError.requires_app_review`` the adapter
-    itself raises) — this is a LOCAL config gap: the operator hasn't
-    set ``META_AD_ACCOUNT_ID`` yet. 503, mirroring
-    ``_meta_common.build_store``'s ``EncryptionNotConfigured`` → 503
+    """The configured ad account — resolved DB-first (prod:
+    ``app_integration_config`` Fernet) with env fallback (dev: root
+    ``.env`` ``META_AD_ACCOUNT_ID``), per
+    ``feedback_dev_prod_key_storage_model``. Distinct from the
+    ``ads_read``-scope gate (a ``MetaGraphError.requires_app_review`` the
+    adapter raises) — this is a LOCAL config gap: the account isn't
+    configured. 503, mirroring the ``EncryptionNotConfigured`` → 503
     convention for an operator-actionable config gap."""
-    account_id = getattr(settings, "meta_ad_account_id", "") or ""
+    from app.services.app_config_store import resolve_meta_ads_config
+
+    _token, account_id, _org = resolve_meta_ads_config(settings=settings)
     if not account_id:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="meta ads not configured — set META_AD_ACCOUNT_ID",
+            detail="meta ads not configured — set the ad account (META_AD_ACCOUNT_ID / app config)",
         )
     return account_id
 
