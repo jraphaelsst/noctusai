@@ -22,15 +22,45 @@ layer, not part of the package's public surface.
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, TypeVar
 from urllib.parse import urlencode
 
 import httpx
 
+from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.meta.types import TokenBundle
+
+_T = TypeVar("_T")
+
+
+def _is_meta_rate_limited(exc: BaseException) -> bool:
+    """A Graph rate-limit signal (429 or a rate-limit error code) — the
+    ONLY thing `@_meta_paced_retry` retries. A rate-limit error means Meta
+    REJECTED the request (didn't process it), so retrying is safe even for
+    writes; timeouts (which might have landed) are NOT is_rate_limited and
+    so never auto-retried here."""
+    return isinstance(exc, MetaGraphError) and exc.is_rate_limited
+
+
+def _meta_paced_retry(fn: Callable[..., _T]) -> Callable[..., _T]:
+    """Wrap a `graph_*` function with backoff-on-throttle: on a Meta
+    rate-limit error, wait (exponential backoff + jitter, bounded) and
+    retry, up to the "meta" bucket's `max_retries`. Pacing itself lives in
+    `_graph_request` (acquired on every attempt, including retries)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> _T:
+        return rate_limit.retry_with_backoff(
+            lambda: fn(*args, **kwargs),
+            bucket="meta",
+            is_retryable=_is_meta_rate_limited,
+        )
+
+    return wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +260,12 @@ def _graph_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
     the endpoint). Timeouts and transport errors are the ONLY thing
     caught here — a Graph *error envelope* (even at HTTP 200) is still
     parsed + raised by the callers via ``_raise_for_graph_error``."""
+    # Pace every outbound Graph call against the shared "meta" bucket so a
+    # loop (e.g. the ads backfill) can't burst past Meta's user-level limit
+    # and get us throttled. Blocks only when we're going too fast; a single
+    # call at rest returns immediately. Backoff-on-throttle is layered on the
+    # `graph_*` functions via `@_meta_paced_retry`.
+    rate_limit.acquire("meta")
     # Dispatch to the per-method httpx functions (not httpx.request) so the
     # transport stays interceptable via `patch.object(httpx, "get")` etc. —
     # the shape every existing test double relies on.
@@ -250,6 +286,7 @@ def _graph_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
         ) from exc
 
 
+@_meta_paced_retry
 def graph_get(
     path: str,
     *,
@@ -281,6 +318,7 @@ def graph_get(
     return body
 
 
+@_meta_paced_retry
 def graph_paged(
     path: str,
     *,
@@ -319,6 +357,7 @@ def graph_paged(
     return rows
 
 
+@_meta_paced_retry
 def graph_post(
     path: str,
     *,
@@ -355,6 +394,7 @@ def graph_post(
     return body
 
 
+@_meta_paced_retry
 def graph_delete(
     path: str,
     *,

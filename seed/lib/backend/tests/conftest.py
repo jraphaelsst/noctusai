@@ -27,3 +27,24 @@ _spec = _ilu.spec_from_file_location(
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _virtual_rate_limit_clock():
+    """Run every test on a VIRTUAL clock for the outbound rate limiter, so
+    pacing/backoff LOGIC executes for real (tokens refill, retries count,
+    acquire is genuinely called) but a test never wall-clock-waits on the
+    3-req/s Meta pace. Without this the real-adapter Graph tests take ~50s
+    instead of ~2s. Reset the bucket registry so buckets rebuild on the
+    virtual clock, and restore the real clock on teardown."""
+    from noctusai_lib.integrations import rate_limit
+
+    rate_limit.set_default_clock(rate_limit.VirtualClock())
+    rate_limit._reset_all_buckets()
+    try:
+        yield
+    finally:
+        rate_limit.reset_default_clock()
+        rate_limit._reset_all_buckets()

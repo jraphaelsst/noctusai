@@ -21,6 +21,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
   - CONTEXT/PATTERNS/backend/chatbot-operational-readiness.md
   - CONTEXT/PATTERNS/backend/boundary-contract-tests.md
+  - CONTEXT/PATTERNS/common/outbound-rate-limiting.md
   - CONTEXT/backend/01-CORE.md
   - CONTEXT/backend/02-ERP.md
   - CONTEXT/backend/03-PF.md
@@ -56,6 +57,7 @@ Implement server-side slices to the architect's contracts — routers → servic
 - **Migrations mirror the file.** DDL applied = file committed same change; numbered `products/<p>/backend/migrations/NNN_*.sql`; forward-safe. Use `noctus.dev.scaffold_migration`. → `KB § PATTERNS/backend/database-rls.md`
 - **RLS scopes per org.** Every data-access path scoped by org; admin-endpoints never bypass via service role. → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md`
 - **Webhook verify-before-side-effect.** HMAC sha256 / hex / Svix via `noctusai_lib.security.webhook_signatures`; Stripe SDK is the carve-out. → `KB § PATTERNS/security/webhook-signatures.md` (security-owned; backend implements)
+- **Outbound rate limiting.** Every third-party call routes through `noctusai_lib.integrations.rate_limit` — `acquire`/`acquire_async` pacing (token bucket per provider) + `retry_with_backoff`/`_async` (honors `Retry-After`, else exp backoff). Bursting gets us banned (Meta ads-backfill throttle). Distinct from inbound slowapi limits. → `KB § PATTERNS/common/outbound-rate-limiting.md`
 - **No monkey-patching our own code (prod OR tests).** DI seam · `MockRequestBuilder.inserted_payloads` read-side · `patch.object` external services only. → `KB § PATTERNS/backend/di-test-seam.md` · `KB § PATTERNS/compliance/testing.md`
 - **Logging convention.** No `# silent-ok`; every `except` logs at the right level (`logger.debug` bootstrap-noise · `warning` recoverable · `error` failure). → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md`
 - **MCP path constants.** When touching the MCP toolkit: `from settings import REPO_ROOT, PRODUCTS_DIR` — never compute via `Path(__file__).parents[N]`. → `KB § PATTERNS/backend/backend.md`

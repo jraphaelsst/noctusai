@@ -24,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.mailchimp.mappers import (
     parse_server_prefix,
     raw_to_audience,
@@ -93,6 +94,10 @@ class HttpxMailchimpClient:
         All non-2xx responses are translated to the error hierarchy.
         """
         url = f"{self._base_url}/{path.lstrip('/')}"
+        # Pace every Mailchimp call against the shared "mailchimp" bucket so
+        # a campaign/segment/contact sync loop can't burst past Mailchimp's
+        # rate limit. Async-safe (never blocks the event loop).
+        await rate_limit.acquire_async("mailchimp")
         try:
             async with httpx.AsyncClient(transport=self._transport) as http:
                 kwargs: dict[str, Any] = {

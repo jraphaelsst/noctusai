@@ -91,6 +91,14 @@ def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, A
 
 
 class WahaClient:
+    # NOC-REMEDIATE[rate-limit]: this client opens a fresh httpx client
+    # per method (sync + async paths) rather than one chokepoint — pace
+    # each call site via `rate_limit.acquire("whatsapp")` (sync methods) /
+    # `await rate_limit.acquire_async("whatsapp")` (async methods), or
+    # refactor to a single `_request` helper first. Deferred: WAHA calls
+    # are largely user-paced today (chat sends), but the chat-history
+    # backfill loop is a burst risk. See
+    # KB § PATTERNS/common/outbound-rate-limiting.md.
     """WAHA HTTP client with both sync and async send paths.
 
     Vendor-URL rewrite (SESSION-NOTES §4.3, workspace commit ``fedd4cf``):

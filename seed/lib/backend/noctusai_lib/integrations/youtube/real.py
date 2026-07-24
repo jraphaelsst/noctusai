@@ -237,6 +237,13 @@ def _is_transient_network_error(exc: BaseException) -> bool:
 
 
 class RealYoutubeClient:
+    # NOC-REMEDIATE[rate-limit]: calls go through googleapiclient
+    # `.execute()` (not httpx), so pace by wrapping each `.execute()` with
+    # `rate_limit.acquire("youtube")` (sync) or a small `_execute` helper
+    # that acquires first. Deferred: YouTube also has a hard daily QUOTA
+    # (units/day) that a request-rate limiter does NOT model — the snapshot
+    # job is already low-frequency. See
+    # KB § PATTERNS/common/outbound-rate-limiting.md.
     """Real YouTube Data API v3 client.
 
     Pass either `api_key` (read-only public data — the common case) OR

@@ -144,6 +144,11 @@ class VistaClient:
         extra_params: Optional[dict] = None,
         showtotal: bool = False,
     ) -> VistaCallResult:
+        # NOC-REMEDIATE[rate-limit]: pace this async chokepoint via
+        # `await rate_limit.acquire_async("vista")` (mirror the Mailchimp
+        # wiring). Deferred: Vista call volume is low today, but a
+        # property-list sync loop should be paced before it grows. See
+        # KB § PATTERNS/common/outbound-rate-limiting.md.
         if not self.configured:
             raise VistaConfigError(
                 "Vista is not configured (VISTA_BASE_URL / VISTA_API_KEY missing)"
