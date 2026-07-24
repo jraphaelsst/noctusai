@@ -129,6 +129,11 @@ class AdsInsightsRowOut(BaseModel):
     ctr: float | None = None
     actions: dict[str, float] = {}
     action_values: dict[str, float] = {}
+    # The requested breakdown dimension values for THIS row (e.g.
+    # {"publisher_platform": "instagram"}) — populated only when a
+    # `breakdown=` was requested (the live path), empty otherwise. Carries
+    # the platform label the placement-split chart groups by.
+    breakdown: dict[str, str] = {}
 
 
 class AdsInsightsSeriesOut(BaseModel):
@@ -392,6 +397,7 @@ def _insights_row_out(row: Any) -> AdsInsightsRowOut:
         ctr=row.metrics.get("ctr"),
         actions=dict(row.actions),
         action_values=dict(row.action_values),
+        breakdown={str(k): str(v) for k, v in (row.breakdown or {}).items()},
     )
 
 
@@ -552,12 +558,18 @@ def _fetch_series_rows(
     campaign level reads the persisted daily-snapshot table (the W2.3
     backfill target); adset/ad level pulls LIVE from the adapter (never
     backfilled — roadmap's explicit campaign-only-backfill decision).
-    Propagates ``MetaGraphError`` on the live path — callers map it via
-    ``handle_meta_graph_error``."""
-    if level == "campaign":
+
+    🔴 A `breakdown=` request (e.g. `publisher_platform` for the
+    placement-split chart) ALWAYS goes live, even at campaign level: the
+    backfill stores only unbroken (breakdown-null) daily snapshots, so a
+    breakdown read from the snapshot table would be empty. The live
+    adapter returns the platform-split rows with `row.breakdown`
+    populated. Propagates ``MetaGraphError`` on the live path — callers
+    map it via ``handle_meta_graph_error``."""
+    if level == "campaign" and not breakdown:
         return _read_campaign_snapshots(
             org_id=org_id, object_id=object_id, since=since, until=until,
-            breakdown=breakdown,
+            breakdown=None,
         )
     breakdowns = [breakdown] if breakdown else None
     series = adapter.ad_insights_series(

@@ -92,6 +92,7 @@ export interface AdsInsightsRow {
   ctr: number | null;
   actions: Record<string, number>;
   action_values: Record<string, number>;
+  breakdown: Record<string, string>;
 }
 export interface AdsInsightsSeries {
   object_id: string;

@@ -116,8 +116,8 @@ export default function AdsHistorico() {
   const placementData = useMemo(() => {
     const byPlat = new Map<string, number>();
     for (const r of placementQ.data?.rows ?? []) {
-      const bd = (r as unknown as { breakdown?: Record<string, string> }).breakdown;
-      const key = bd?.publisher_platform ?? bd?.platform_position ?? null;
+      const bd = r.breakdown ?? {};
+      const key = bd.publisher_platform ?? bd.platform_position ?? null;
       if (!key) continue;
       byPlat.set(key, (byPlat.get(key) ?? 0) + (r.spend_cents ?? 0));
     }
@@ -213,7 +213,7 @@ export default function AdsHistorico() {
               <AdsLoading label="Carregando…" />
             ) : !placementAvailable ? (
               <p className="py-10 text-center text-sm text-muted-foreground">
-                A divisão por posicionamento estará disponível em breve.
+                Sem dados de posicionamento para esta campanha no período.
               </p>
             ) : (
               <div className="h-56 w-full">

@@ -402,6 +402,53 @@ class TestInsightsSeries:
         assert row["spend_cents"] == 10000
         assert row["actions"] == {"lead": 3.0}
 
+    def test_campaign_breakdown_goes_live_not_snapshots(self, client):
+        """A `breakdown=` request (placement-split chart) must fetch LIVE
+        from the adapter EVEN at campaign level — the backfill stores only
+        unbroken snapshots, so a breakdown read from the snapshot table
+        would be empty. Assert the response carries the adapter's
+        breakdown-split rows, not the (differing) snapshot."""
+        from noctusai_lib.integrations.meta import AdInsightsRow, AdInsightsSeries
+
+        tc, _mock_sb, caching = client
+        adapter = _seeded_adapter()
+        adapter.seed(
+            ad_insights_series={
+                "camp_1": AdInsightsSeries(
+                    object_id="camp_1", level="campaign",
+                    rows=[
+                        AdInsightsRow(
+                            date_start="2026-07-01",
+                            metrics={"spend": 60.0},
+                            breakdown={"publisher_platform": "instagram"},
+                        ),
+                        AdInsightsRow(
+                            date_start="2026-07-01",
+                            metrics={"spend": 40.0},
+                            breakdown={"publisher_platform": "facebook"},
+                        ),
+                    ],
+                )
+            }
+        )
+        _override_adapter(_ORG_A, adapter)
+        # A snapshot exists with DIFFERENT spend — if the code wrongly read
+        # snapshots, we'd see 99999, not the live 6000/4000.
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "date": "2026-07-01",
+              "breakdown_key": None, "spend_cents": 99999, "actions": {}, "action_values": {}}],
+        )
+
+        resp = tc.get(
+            "/api/meta/ads/insights/series?object_id=camp_1&level=campaign"
+            "&since=2026-07-01&until=2026-07-01&breakdown=publisher_platform"
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["rows"]
+        by_plat = {r["breakdown"]["publisher_platform"]: r["spend_cents"] for r in rows}
+        assert by_plat == {"instagram": 6000, "facebook": 4000}
+
 
 # ─── GET /activities ──────────────────────────────────────────────────
 class TestListActivities:
