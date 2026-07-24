@@ -184,3 +184,33 @@ def client():
 
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)
+
+
+@pytest.fixture
+def isolate_meta_config_db(monkeypatch):
+    """Force ENV-ONLY resolution of Meta app-config by making the
+    app-config store unbuildable (the exact degrade precondition
+    ``test_app_config_store`` exercises).
+
+    ``resolve_meta_ads_config`` / ``resolve_meta_app_creds`` read the Meta
+    System-User token + ad-account + org DB-first (prod reads its config
+    from the shared ``app_integration_config``). But UNIT tests that assert
+    adapter-SELECTION fallback (system_user → user_oauth → Fake) or
+    scheduler org-gating with explicit ``settings`` must NOT read the
+    AMBIENT shared DB — whose real config would override the test's intent
+    (surfaced once the real token was stored: 12 such tests flipped).
+
+    Apply with ``@pytest.mark.usefixtures("isolate_meta_config_db")`` on the
+    class, or ``pytestmark = pytest.mark.usefixtures("isolate_meta_config_db")``
+    at module scope. Prod behavior unchanged. self-patch-ok: substitutes the
+    store SOURCE to isolate from the real DB; the env-fallback path under
+    test is untouched. See feedback_dev_env_deprioritized_verify_prod_via_shared_db.
+    """
+    from app.services.credential_vault import EncryptionNotConfigured
+
+    def _no_ambient_store():
+        raise EncryptionNotConfigured("unit test: no ambient DB read")
+
+    monkeypatch.setattr(
+        "app.services.app_config_store.build_app_config_store", _no_ambient_store
+    )

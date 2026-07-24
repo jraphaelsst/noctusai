@@ -10,7 +10,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
+import pytest
+
 from app.modules.meta_ads import scheduler as sched
+
+# _target_org_id / _sync_job_sync resolve the org DB-first
+# (resolve_meta_ads_config); these tests drive the gating via a patched
+# `settings.meta_ads_org_id`, so isolate them from the ambient shared DB.
+pytestmark = pytest.mark.usefixtures("isolate_meta_config_db")
 
 _ORG = "6dd73140-74a4-41c6-aeff-bc94b5312b53"
 

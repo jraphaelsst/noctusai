@@ -420,6 +420,7 @@ class TestCaptureIgSnapshot:
         assert row["profile_views"] == 0
 
 
+@pytest.mark.usefixtures("isolate_meta_config_db")
 class TestCaptureAllIgSnapshots:
     def test_no_meta_connection_returns_empty_list(self):
         """No stored credential / system-user token configured in test

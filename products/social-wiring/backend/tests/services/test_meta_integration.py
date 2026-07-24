@@ -87,34 +87,8 @@ class _Store:
         return self._stored
 
 
+@pytest.mark.usefixtures("isolate_meta_config_db")
 class TestProductFactoryWrapper:
-    @pytest.fixture(autouse=True)
-    def _isolate_from_ambient_db(self, monkeypatch):
-        """``get_meta_adapter`` now resolves the System-User token DB-first
-        (``app_integration_config``) so prod, which carries no Meta env,
-        reads its config from the shared DB. These are UNIT tests of the
-        adapter-SELECTION fallback logic (system_user → user_oauth → Fake)
-        driven by explicit ``settings`` + a fake ``credential_store``; they
-        must NOT read the ambient shared DB, whose real token would
-        override every fallback and turn a Fake-expecting case into a live
-        adapter.
-
-        Force env-only resolution by making the app-config store
-        unbuildable — the EXACT degrade precondition
-        ``test_app_config_store.test_degrades_to_env_when_store_none_and_encryption_key_missing``
-        already exercises. self-patch-ok: substitutes the store SOURCE to
-        isolate from the real DB; the resolver's env-fallback path (the
-        behavior under test here) is untouched."""
-        from app.services.credential_vault import EncryptionNotConfigured
-
-        def _no_ambient_store():
-            raise EncryptionNotConfigured("unit test: no ambient DB read")
-
-        monkeypatch.setattr(
-            "app.services.app_config_store.build_app_config_store",
-            _no_ambient_store,
-        )
-
     def test_no_credentials_falls_back_to_fake(self):
         adapter = get_meta_adapter(settings=_Settings())
         assert isinstance(adapter, FakeMetaAdapter)
