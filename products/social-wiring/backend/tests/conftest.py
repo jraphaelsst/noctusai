@@ -206,6 +206,7 @@ def isolate_meta_config_db(monkeypatch):
     store SOURCE to isolate from the real DB; the env-fallback path under
     test is untouched. See feedback_dev_env_deprioritized_verify_prod_via_shared_db.
     """
+    from app.config import settings as _default_settings
     from app.services.credential_vault import EncryptionNotConfigured
 
     def _no_ambient_store():
@@ -214,3 +215,12 @@ def isolate_meta_config_db(monkeypatch):
     monkeypatch.setattr(
         "app.services.app_config_store.build_app_config_store", _no_ambient_store
     )
+    # Also clear the ENV-DEFAULT Meta config on the settings singleton:
+    # the developer's / CI's root `.env` may carry a real
+    # META_SYSTEM_USER_TOKEN (it does in this repo), which resolves via the
+    # env-fallback even with the DB isolated — a test asserting the
+    # "no connection" path (default_settings, no explicit token) would then
+    # get a LIVE adapter. Tests that WANT a token pass an explicit settings
+    # object (unaffected) or patch the field themselves AFTER this fixture.
+    for _field in ("meta_system_user_token", "meta_ad_account_id", "meta_ads_org_id"):
+        monkeypatch.setattr(_default_settings, _field, "", raising=False)
