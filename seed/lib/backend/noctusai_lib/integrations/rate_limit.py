@@ -78,6 +78,11 @@ _DEFAULTS: dict[str, BucketConfig] = {
     "mailchimp": BucketConfig(rate_per_sec=8.0, burst=10.0),
     "vista": BucketConfig(rate_per_sec=5.0, burst=10.0),
     "llm": BucketConfig(rate_per_sec=8.0, burst=16.0),
+    # OpenAI embeddings — the push-time cache refresh embeds many chunks in
+    # one burst; unpaced it 429s and the SDK's own retries storm until the
+    # push hangs (bless, 2026-07-24). A conservative sustained rate with a
+    # small burst keeps us under the account's embeddings RPM.
+    "openai_embed": BucketConfig(rate_per_sec=6.0, burst=6.0, max_retries=6),
 }
 
 

@@ -98,8 +98,14 @@ class OpenAIProvider:
         **kwargs: Any,
     ) -> list[float]:
         from ..usage import record_usage
+        from noctusai_lib.integrations import rate_limit
 
         client = self._client_for(api_key)
+        # Pace embeds through the shared "openai_embed" bucket so a
+        # cache-refresh loop can't burst into OpenAI's 429s (the SDK's own
+        # retries then storm until the caller hangs — the bless-hang of
+        # 2026-07-24). Async-safe; never blocks the event loop.
+        await rate_limit.acquire_async("openai_embed")
         try:
             response = await client.embeddings.create(
                 model=model,
