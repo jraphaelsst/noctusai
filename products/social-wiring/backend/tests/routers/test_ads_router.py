@@ -161,6 +161,7 @@ class TestAuthBoundary:
             "/api/meta/ads/campaigns/camp_1/children?level=adset",
             "/api/meta/ads/insights/series?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/compare?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
+            "/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/activities?since=2026-07-01&until=2026-07-02",
         ],
     )
@@ -270,6 +271,54 @@ class TestListCampaigns:
         settings.meta_ad_account_id = ""  # self-patch-ok: test config gap
         resp = tc.get("/api/meta/ads/campaigns")
         assert resp.status_code == 503, resp.text
+
+
+# ─── GET /insights/account ────────────────────────────────────────────
+class TestAccountInsights:
+    def test_sums_campaigns_server_side(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        # Two campaigns, overlapping day 07-01 + camp_1 also on 07-02.
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [
+                {"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+                 "date": "2026-07-01", "breakdown_key": None,
+                 "spend_cents": 10000, "impressions": 500, "reach": 400,
+                 "clicks": 20, "actions": {"lead": 5.0, "link_click": 15.0}},
+                {"org_id": _ORG_A, "object_id": "camp_2", "level": "campaign",
+                 "date": "2026-07-01", "breakdown_key": None,
+                 "spend_cents": 5000, "impressions": 250, "reach": 200,
+                 "clicks": 10, "actions": {"lead": 3.0}},
+                {"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+                 "date": "2026-07-02", "breakdown_key": None,
+                 "spend_cents": 8000, "impressions": 300, "reach": 250,
+                 "clicks": 12, "actions": {"lead": 4.0}},
+            ],
+        )
+
+        resp = tc.get("/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # Totals summed across both campaigns + both days.
+        assert body["totals"]["spend_cents"] == 23000
+        assert body["totals"]["leads"] == 12.0
+        assert body["actions"]["lead"] == 12.0
+        assert body["actions"]["link_click"] == 15.0
+        # Daily series merged by date: 07-01 sums camp_1 + camp_2.
+        by_date = {d["date"]: d for d in body["daily"]}
+        assert by_date["2026-07-01"]["spend_cents"] == 15000
+        assert by_date["2026-07-01"]["leads"] == 8.0
+        assert by_date["2026-07-02"]["spend_cents"] == 8000
+
+    def test_empty_is_zeros_not_error(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data("ads_insight_snapshots", [])
+        resp = tc.get("/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["totals"]["spend_cents"] == 0
+        assert resp.json()["daily"] == []
 
 
 # ─── GET /campaigns/{id}/children ─────────────────────────────────────

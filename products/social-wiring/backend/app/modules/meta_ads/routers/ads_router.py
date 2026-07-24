@@ -156,6 +156,31 @@ class AdsInsightsCompareOut(BaseModel):
     deltas: dict[str, DeltaOut]
 
 
+class AdsAccountDailyOut(BaseModel):
+    date: str
+    spend_cents: int = 0
+    impressions: int = 0
+    reach: int = 0
+    clicks: int = 0
+    leads: float = 0.0
+
+
+class AdsAccountInsightsOut(BaseModel):
+    """Account-level period aggregate — sums EVERY campaign's daily
+    snapshots server-side (one DB query), so the overview never fans out
+    one request per campaign. `actions` carries the summed Meta
+    action-type map (lead / link_click / messaging_* …) for the
+    objective-aware KPI row; `daily` is the merged per-day series for the
+    spend chart. Reach is summed across days (a v1 approximation — Meta
+    reach is unique-per-window, not additive; same caveat as `_sum_totals`)."""
+
+    since: str
+    until: str
+    totals: AdsTotalsOut
+    actions: dict[str, float]
+    daily: list[AdsAccountDailyOut]
+
+
 class AdsActivityOut(BaseModel):
     object_id: str | None = None
     object_level: str | None = None
@@ -441,6 +466,75 @@ def _read_campaign_snapshots(
     return [_snapshot_row_out(row) for row in (resp.data or [])]
 
 
+def _aggregate_account_snapshots(
+    *, org_id: UUID, since: date, until: date
+) -> AdsAccountInsightsOut:
+    """Sum every campaign's unbroken (no-breakdown) daily snapshots for the
+    window into account totals + a merged daily series — ONE DB query, no
+    per-campaign fan-out, no Meta call. Backs `GET /insights/account`."""
+    admin = get_admin_client()
+    resp = (
+        admin
+        .schema(_SCHEMA)
+        .table("ads_insight_snapshots")
+        .select("date,spend_cents,impressions,reach,clicks,actions")
+        .eq("org_id", str(org_id))
+        .eq("level", "campaign")
+        .is_("breakdown_key", "null")
+        .gte("date", since.isoformat())
+        .lte("date", until.isoformat())
+        .order("date", desc=False)
+        .execute()
+    )
+    by_date: dict[str, AdsAccountDailyOut] = {}
+    actions_total: dict[str, float] = {}
+    tot_spend = tot_impr = tot_reach = tot_clicks = 0
+    tot_leads = 0.0
+    for row in resp.data or []:
+        d = str(row.get("date"))
+        spend = int(row.get("spend_cents") or 0)
+        impr = int(row.get("impressions") or 0)
+        reach = int(row.get("reach") or 0)
+        clicks = int(row.get("clicks") or 0)
+        actions = row.get("actions") or {}
+        leads = float(actions.get("lead", 0.0) or 0.0)
+
+        tot_spend += spend
+        tot_impr += impr
+        tot_reach += reach
+        tot_clicks += clicks
+        tot_leads += leads
+        for k, v in actions.items():
+            try:
+                actions_total[k] = actions_total.get(k, 0.0) + float(v)
+            except (TypeError, ValueError):
+                continue
+
+        day = by_date.get(d)
+        if day is None:
+            by_date[d] = AdsAccountDailyOut(
+                date=d, spend_cents=spend, impressions=impr, reach=reach,
+                clicks=clicks, leads=leads,
+            )
+        else:
+            day.spend_cents += spend
+            day.impressions += impr
+            day.reach += reach
+            day.clicks += clicks
+            day.leads += leads
+
+    return AdsAccountInsightsOut(
+        since=since.isoformat(),
+        until=until.isoformat(),
+        totals=AdsTotalsOut(
+            spend_cents=tot_spend, impressions=tot_impr, reach=tot_reach,
+            clicks=tot_clicks, leads=tot_leads,
+        ),
+        actions=actions_total,
+        daily=[by_date[k] for k in sorted(by_date)],
+    )
+
+
 def _fetch_series_rows(
     *,
     org_id: UUID,
@@ -635,6 +729,21 @@ def get_insights_compare(
         previous=previous_totals,
         deltas=_compute_deltas(current_totals, previous_totals),
     )
+
+
+# ─── GET /insights/account ────────────────────────────────────────────────
+@router.get("/insights/account", response_model=AdsAccountInsightsOut)
+def get_account_insights(
+    since: date = Query(...),
+    until: date = Query(...),
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Account-level period aggregate for the overview — sums every
+    campaign's daily snapshots server-side in ONE query (no per-campaign
+    fan-out, no Meta call, so no rate-limit exposure). Call it twice
+    (current + previous window) for the period-comparison deltas."""
+    org_id, _adapter = org_and_adapter
+    return _aggregate_account_snapshots(org_id=org_id, since=since, until=until)
 
 
 # ─── GET /activities ──────────────────────────────────────────────────────

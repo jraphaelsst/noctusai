@@ -116,6 +116,22 @@ export interface AdsInsightsCompare {
   deltas: Record<string, AdsDelta>;
 }
 
+export interface AdsAccountDaily {
+  date: string;
+  spend_cents: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  leads: number;
+}
+export interface AdsAccountInsights {
+  since: string;
+  until: string;
+  totals: AdsTotals;
+  actions: Record<string, number>;
+  daily: AdsAccountDaily[];
+}
+
 export interface AdsActivity {
   object_id: string | null;
   object_level: string | null;
@@ -212,6 +228,19 @@ export function useAdsInsightsSeries(
         })}`,
       ),
     enabled: !!objectId && !!since && !!until,
+  });
+}
+
+/** Account-level period aggregate — ONE request, server-side sum across
+ *  all campaigns (replaces the per-campaign client fan-out). */
+export function useAdsAccountInsights(since: string, until: string) {
+  return useQuery<AdsAccountInsights>({
+    queryKey: ["meta-ads", "account-insights", since, until],
+    queryFn: () =>
+      api.get<AdsAccountInsights>(
+        `/api/meta/ads/insights/account${qs({ since, until })}`,
+      ),
+    enabled: !!since && !!until,
   });
 }
 

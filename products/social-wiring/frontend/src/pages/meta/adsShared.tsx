@@ -11,8 +11,6 @@
  * fan-out); until then this is correct, just chattier.
  */
 import { useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
-import { api } from "@noctusai/seed/infra";
 import { CircleAlert, Loader2, SlidersHorizontal } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +26,6 @@ import type {
   AdsActivity,
   AdsCampaign,
   AdsInsightsRow,
-  AdsInsightsSeries,
 } from "@/hooks/useMetaAds";
 
 // ─── activity change-log label ──────────────────────────────────────────────
@@ -226,104 +223,3 @@ export function dominantObjective(campaigns: AdsCampaign[]): Objective | null {
   return best;
 }
 
-// ─── Client-side account-period aggregation ─────────────────────────────────
-
-export interface PeriodTotals {
-  spend_cents: number;
-  impressions: number;
-  reach: number;
-  clicks: number;
-  leads: number;
-  link_clicks: number;
-  landing_page_views: number;
-  messaging_started: number;
-  days: number;
-  rows: AdsInsightsRow[]; // merged daily rows (summed across campaigns)
-}
-
-function emptyTotals(): PeriodTotals {
-  return {
-    spend_cents: 0,
-    impressions: 0,
-    reach: 0,
-    clicks: 0,
-    leads: 0,
-    link_clicks: 0,
-    landing_page_views: 0,
-    messaging_started: 0,
-    days: 0,
-    rows: [],
-  };
-}
-
-/**
- * Sum every campaign's series for the window into one account-level total,
- * plus a merged per-day series (rows summed by date) for the overview
- * spend chart. Runs one query per campaign (see file header note).
- */
-export function useAccountPeriodTotals(
-  campaigns: AdsCampaign[],
-  range: DateRange,
-) {
-  const queries = useQueries({
-    queries: campaigns.map((c) => ({
-      queryKey: [
-        "meta-ads",
-        "series",
-        c.object_id,
-        "campaign",
-        range.since,
-        range.until,
-        "",
-      ] as const,
-      queryFn: () =>
-        api.get<AdsInsightsSeries>(
-          `/api/meta/ads/insights/series?object_id=${encodeURIComponent(
-            c.object_id,
-          )}&level=campaign&since=${range.since}&until=${range.until}`,
-        ),
-      enabled: !!c.object_id && !!range.since && !!range.until,
-    })),
-  });
-
-  const isPending = queries.some((q) => q.isPending || q.isFetching);
-  const isError = queries.some((q) => q.isError);
-
-  const totals = useMemo(() => {
-    const t = emptyTotals();
-    const byDate = new Map<string, AdsInsightsRow>();
-    for (const q of queries) {
-      const rows = q.data?.rows ?? [];
-      for (const r of rows) {
-        t.spend_cents += r.spend_cents ?? 0;
-        t.impressions += r.impressions ?? 0;
-        t.reach += r.reach ?? 0;
-        t.clicks += r.clicks ?? 0;
-        t.leads += rowLeads(r);
-        t.link_clicks += rowAction(r, "link_click");
-        t.landing_page_views += rowAction(r, "landing_page_view");
-        t.messaging_started += rowAction(
-          r,
-          "onsite_conversion.messaging_conversation_started_7d",
-        );
-        const acc = byDate.get(r.date);
-        if (acc) {
-          acc.spend_cents = (acc.spend_cents ?? 0) + (r.spend_cents ?? 0);
-          acc.impressions = (acc.impressions ?? 0) + (r.impressions ?? 0);
-          acc.reach = (acc.reach ?? 0) + (r.reach ?? 0);
-          acc.clicks = (acc.clicks ?? 0) + (r.clicks ?? 0);
-        } else {
-          byDate.set(r.date, { ...r });
-        }
-      }
-    }
-    t.rows = Array.from(byDate.values()).sort((a, b) =>
-      a.date.localeCompare(b.date),
-    );
-    t.days = t.rows.length;
-    return t;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queries.map((q) => q.dataUpdatedAt).join(","), range.since, range.until]);
-
-  return { totals, isPending, isError };
-}

@@ -45,8 +45,10 @@ import { formatNumber } from "@/lib/formatNumber";
 import { formatCents, formatDelta } from "@/lib/formatCurrency";
 import {
   useAdsAccount,
+  useAdsAccountInsights,
   useAdsCampaigns,
   useAdsSync,
+  type AdsAccountInsights,
 } from "@/hooks/useMetaAds";
 import {
   AdsError,
@@ -54,12 +56,37 @@ import {
   AdsNotConfigured,
   DateRangeSelect,
   dominantObjective,
-  rangeForPreset,
-  useAccountPeriodTotals,
   useDateRange,
   type DateRange,
-  type PeriodTotals,
 } from "./adsShared";
+
+/** Normalized period totals the KPI builder consumes — derived from the
+ *  account aggregate (totals + summed actions map). */
+interface PeriodTotals {
+  spend_cents: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  leads: number;
+  link_clicks: number;
+  landing_page_views: number;
+  messaging_started: number;
+}
+
+function normTotals(ins: AdsAccountInsights | undefined): PeriodTotals {
+  const t = ins?.totals;
+  const a = ins?.actions ?? {};
+  return {
+    spend_cents: t?.spend_cents ?? 0,
+    impressions: t?.impressions ?? 0,
+    reach: t?.reach ?? 0,
+    clicks: t?.clicks ?? 0,
+    leads: t?.leads ?? 0,
+    link_clicks: a["link_click"] ?? 0,
+    landing_page_views: a["landing_page_view"] ?? 0,
+    messaging_started: a["onsite_conversion.messaging_conversation_started_7d"] ?? 0,
+  };
+}
 
 function prevRange(range: DateRange): DateRange {
   const since = new Date(range.since);
@@ -207,14 +234,20 @@ function buildTiles(
   return tiles;
 }
 
-function SpendChart({ totals, currency }: { totals: PeriodTotals; currency: string }) {
+function SpendChart({
+  daily,
+  currency,
+}: {
+  daily: AdsAccountInsights["daily"];
+  currency: string;
+}) {
   const data = useMemo(
     () =>
-      totals.rows.map((r) => ({
+      daily.map((r) => ({
         date: r.date.slice(5), // MM-DD
         spend: (r.spend_cents ?? 0) / 100,
       })),
-    [totals.rows],
+    [daily],
   );
   if (!data.length) return null;
   return (
@@ -262,8 +295,8 @@ export default function AdsVisaoGeral() {
   const campaigns = campaignsQ.data?.data ?? [];
 
   const objective = useMemo(() => dominantObjective(campaigns), [campaigns]);
-  const cur = useAccountPeriodTotals(campaigns, range);
-  const previous = useAccountPeriodTotals(campaigns, prev);
+  const curQ = useAdsAccountInsights(range.since, range.until);
+  const prevQ = useAdsAccountInsights(prev.since, prev.until);
   const sync = useAdsSync();
 
   // Account resolution gates first — never a zeros dashboard.
@@ -272,9 +305,11 @@ export default function AdsVisaoGeral() {
     return <AdsNotConfigured detail={(accountQ.error as Error)?.message} />;
   }
 
-  const tiles = buildTiles(objective, cur.totals, previous.totals, currency);
+  const curTotals = normTotals(curQ.data);
+  const prevTotals = normTotals(prevQ.data);
+  const tiles = buildTiles(objective, curTotals, prevTotals, currency);
   const loadingTotals =
-    campaignsQ.isPending || campaignsQ.isFetching || cur.isPending;
+    campaignsQ.isPending || campaignsQ.isFetching || curQ.isPending || curQ.isFetching;
 
   return (
     <div className="space-y-6">
@@ -304,8 +339,8 @@ export default function AdsVisaoGeral() {
         </div>
       </div>
 
-      {cur.isError ? (
-        <AdsError message="O Meta limitou as requisições ao agregar as campanhas. Os dados diários já sincronizados continuam disponíveis; tente novamente em alguns minutos." />
+      {curQ.isError ? (
+        <AdsError message="Não foi possível carregar o resumo do período." onRetry={() => curQ.refetch()} />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
@@ -345,7 +380,7 @@ export default function AdsVisaoGeral() {
             />
           </div>
 
-          <SpendChart totals={cur.totals} currency={currency} />
+          <SpendChart daily={curQ.data?.daily ?? []} currency={currency} />
         </>
       )}
     </div>
