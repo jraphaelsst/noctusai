@@ -184,6 +184,11 @@ class TestAuthBoundary:
         resp = tc.post("/api/meta/ads/sync", json={"mode": "incremental"})
         assert resp.status_code == 401, resp.text
 
+    def test_lead_sync_no_session_returns_strict_401(self, client):
+        tc, _mock_sb, _caching = client
+        resp = tc.post("/api/meta/ads/leads/sync", json={})
+        assert resp.status_code == 401, resp.text
+
 
 # ─── GET /accounts ────────────────────────────────────────────────────
 class TestListAccounts:
@@ -543,6 +548,79 @@ class TestLeadRecords:
         assert body["gated"] is True
         assert body["data"] == []
         assert "leads_retrieval" in (body["reason"] or "")
+
+
+# ─── DB-first persistence (migration 033) ─────────────────────────────
+def _seed_stored_leads(caching) -> None:
+    caching.schema("social_wiring").set_table_data(
+        "meta_ads_lead_forms",
+        [{
+            "id": "f1", "org_id": _ORG_A, "page_id": "P1", "name": "Form A",
+            "status": "ACTIVE", "locale": "pt_BR", "leads_count": 83,
+            "questions": [{"key": "email", "label": "Email", "type": "EMAIL", "options": []}],
+            "created_time": "2026-05-12T00:00:00+00:00",
+            "synced_at": "2026-07-27T12:00:00+00:00",
+        }],
+    )
+    caching.schema("social_wiring").set_table_data(
+        "meta_ads_leads",
+        [{
+            "id": "l1", "org_id": _ORG_A, "form_id": "f1", "form_name": "Form A",
+            "campaign_name": "C10023", "platform": "ig", "is_organic": False,
+            "created_time": "2026-07-16T15:01:58+00:00",
+            "full_name": "Maria", "email": "m@e.com", "phone": "+55",
+            "answers": {"email": "m@e.com", "REF": "ONE10023"},
+            "raw": [
+                {"name": "email", "values": ["m@e.com"]},
+                {"name": "REF", "values": ["ONE10023"]},
+            ],
+        }],
+    )
+
+
+class TestLeadsPersistence:
+    def test_forms_served_from_db_when_synced(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _lead_forms_adapter())  # live path must NOT win
+        _seed_stored_leads(caching)
+        resp = tc.get("/api/meta/ads/leads/forms")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source"] == "db"
+        assert body["forms_count"] == 1
+        assert body["total_leads"] == 83
+        assert body["stored_leads"] == 1
+        assert body["records_available"] is True
+        assert body["last_synced_at"] == "2026-07-27T12:00:00+00:00"
+        assert body["forms"][0]["questions"][0]["type"] == "EMAIL"
+
+    def test_forms_live_fallback_before_first_sync(self, client):
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _lead_forms_adapter())
+        resp = tc.get("/api/meta/ads/leads/forms")  # DB empty → live
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "live"
+
+    def test_records_served_from_db_when_stored(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _GatedLeadsAdapter())  # live would gate; DB must win
+        _seed_stored_leads(caching)
+        resp = tc.get("/api/meta/ads/leads/records?form_id=f1")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source"] == "db"
+        assert body["gated"] is False
+        assert len(body["data"]) == 1
+        fields = {f["name"]: f["values"] for f in body["data"][0]["field_data"]}
+        assert fields["email"] == ["m@e.com"]
+        assert fields["REF"] == ["ONE10023"]
+
+    def test_sync_returns_202_and_job_id(self, client):
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _lead_forms_adapter())
+        resp = tc.post("/api/meta/ads/leads/sync", json={})
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["job_id"]
 
 
 # ─── GET /campaigns/{id}/children ─────────────────────────────────────

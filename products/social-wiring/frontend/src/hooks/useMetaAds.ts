@@ -185,6 +185,9 @@ export interface LeadFormsSummary {
   pages: { id: string; name: string }[];
   records_available: boolean;
   forms: LeadgenForm[];
+  source: "db" | "live";
+  stored_leads: number;
+  last_synced_at: string | null;
 }
 export interface LeadField {
   name: string | null;
@@ -206,6 +209,7 @@ export interface LeadRecords {
   gated: boolean;
   reason: string | null;
   data: LeadRecord[];
+  source: "db" | "live";
 }
 
 export interface AdsSyncStarted {
@@ -414,6 +418,27 @@ export function useLeadRecords(
         `/api/meta/ads/leads/records${qs({ form_id: formId, page_id: pageId })}`,
       ),
     enabled: enabled && !!formId,
+  });
+}
+
+/** Trigger a lead ingest (pull forms + records from Meta → upsert to the
+ *  DB). Background job — returns a `job_id` to poll via `useSyncJob`. */
+export function useLeadSync() {
+  return useMutation<AdsSyncStarted, Error, void>({
+    mutationFn: () => api.post<AdsSyncStarted>("/api/meta/ads/leads/sync", {}),
+  });
+}
+
+/** Poll a sync job's status. Auto-refetches every 2s while `running`;
+ *  enabled only while a `jobId` is set. Shared by ads + lead syncs (same
+ *  `/sync/{job_id}` status endpoint). */
+export function useSyncJob(jobId: string | null) {
+  return useQuery<AdsSyncStatus>({
+    queryKey: ["meta-ads", "sync-job", jobId ?? ""],
+    queryFn: () => api.get<AdsSyncStatus>(`/api/meta/ads/sync/${jobId}`),
+    enabled: !!jobId,
+    refetchInterval: (q) =>
+      q.state.data && q.state.data.status !== "running" ? false : 2000,
   });
 }
 

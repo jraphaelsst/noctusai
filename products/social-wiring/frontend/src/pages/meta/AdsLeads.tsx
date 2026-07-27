@@ -12,13 +12,16 @@
  *     an actionable banner explains how to unlock; the moment it is, the
  *     records panel fills in with no code change.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ClipboardList,
   FileText,
   Info,
   Layers,
+  Loader2,
+  RefreshCw,
   Users,
 } from "lucide-react";
 
@@ -41,10 +44,18 @@ import { formatNumber } from "@/lib/formatNumber";
 import {
   useLeadForms,
   useLeadRecords,
+  useLeadSync,
+  useSyncJob,
   type LeadgenForm,
   type LeadgenQuestion,
 } from "@/hooks/useMetaAds";
 import { AdsError, AdsLoading, AdsNotConfigured } from "./adsShared";
+
+function syncedLabel(iso: string | null): string {
+  if (!iso) return "nunca sincronizado";
+  const d = new Date(iso);
+  return `sincronizado ${d.toLocaleDateString("pt-BR")} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
 
 const FIELD_TYPE_LABEL: Record<string, string> = {
   FULL_NAME: "Nome",
@@ -247,7 +258,25 @@ function RecordsPanel({
 }
 
 export default function AdsLeads() {
+  const qc = useQueryClient();
   const formsQ = useLeadForms();
+
+  // Lead ingest — fire the background job, poll it, refetch on completion.
+  const sync = useLeadSync();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const jobQ = useSyncJob(jobId);
+  const jobStatus = jobQ.data?.status;
+  const syncing = sync.isPending || jobStatus === "running";
+  useEffect(() => {
+    if (jobId && jobStatus && jobStatus !== "running") {
+      qc.invalidateQueries({ queryKey: ["meta-ads", "lead-forms"] });
+      qc.invalidateQueries({ queryKey: ["meta-ads", "lead-records"] });
+      setJobId(null);
+    }
+  }, [jobId, jobStatus, qc]);
+
+  const onSync = () =>
+    sync.mutate(undefined, { onSuccess: (r) => setJobId(r.job_id) });
 
   if (formsQ.isPending || formsQ.isFetching) return <AdsLoading />;
   if (formsQ.isError) {
@@ -265,12 +294,24 @@ export default function AdsLeads() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold">Leads</h2>
-        <p className="text-sm text-muted-foreground">
-          Formulários de cadastro (Instant Forms) das campanhas Meta — ao vivo,
-          sem banco de dados ainda.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Leads</h2>
+          <p className="text-sm text-muted-foreground">
+            Formulários de cadastro (Instant Forms) das campanhas Meta.
+            {s.source === "db"
+              ? ` Armazenados no banco · ${syncedLabel(s.last_synced_at)}.`
+              : " Ao vivo — clique em Sincronizar para armazenar."}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
+          {syncing ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-2 h-4 w-4" />
+          )}
+          {syncing ? "Sincronizando…" : "Sincronizar leads"}
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

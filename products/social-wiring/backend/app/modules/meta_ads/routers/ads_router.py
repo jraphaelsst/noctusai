@@ -240,11 +240,13 @@ class LeadgenFormOut(BaseModel):
 
 
 class LeadFormsSummaryOut(BaseModel):
-    """Everything accessible WITHOUT the ``leads_retrieval`` scope: the
-    form inventory, each form's field schema, and volume metrics rolled
-    up across the workspace's Pages. ``records_available`` is a live
-    capability probe — True only when the token can actually read the
-    per-lead RECORDS (i.e. ``leads_retrieval`` is granted)."""
+    """Form inventory + field schema + volume metrics. ``source`` is
+    ``"db"`` when served from the persisted ``meta_ads_lead_forms`` table
+    (the norm after a sync) or ``"live"`` on the pre-sync fallback read.
+    ``records_available`` is True when the per-lead RECORDS are reachable —
+    stored records exist (db) or the live ``leads_retrieval`` probe passed
+    (live). ``stored_leads`` / ``last_synced_at`` describe the persisted
+    state (both null/0 on a live read)."""
 
     total_leads: int
     forms_count: int
@@ -253,6 +255,9 @@ class LeadFormsSummaryOut(BaseModel):
     pages: list[dict[str, str]]
     records_available: bool
     forms: list[LeadgenFormOut]
+    source: Literal["db", "live"] = "live"
+    stored_leads: int = 0
+    last_synced_at: str | None = None
 
 
 class LeadFieldOut(BaseModel):
@@ -273,14 +278,17 @@ class LeadRecordOut(BaseModel):
 
 
 class LeadRecordsOut(BaseModel):
-    """Per-form lead RECORDS. ``gated`` is True (with ``data: []`` + a
-    ``reason``) when the token lacks ``leads_retrieval`` — surfaced as a
-    clean, actionable state, never a 500 or a faked-empty success."""
+    """Per-form lead RECORDS. ``source`` is ``"db"`` when served from the
+    persisted ``meta_ads_leads`` table, ``"live"`` on fallback. ``gated``
+    is True (with ``data: []`` + a ``reason``) when a LIVE read hits the
+    missing ``leads_retrieval`` scope — surfaced, never a 500 or faked
+    empty."""
 
     form_id: str
     gated: bool = False
     reason: str | None = None
     data: list[LeadRecordOut] = []
+    source: Literal["db", "live"] = "live"
 
 
 class AdsSyncIn(StrictHttpModel):
@@ -1068,34 +1076,85 @@ _LEADS_RETRIEVAL_HINT = (
 )
 
 
-@router.get("/leads/forms", response_model=LeadFormsSummaryOut)
-def list_lead_forms(
-    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
-):
-    """Lead-gen (Instant Form) inventory + field schema + volume metrics
-    across the workspace's Pages. All of this is accessible WITHOUT
-    ``leads_retrieval`` (form-level data only). ``records_available`` is a
-    live 1-lead capability probe: True only when the token can actually
-    read the per-lead RECORDS. No DB — a live read, like the rest of the
-    console."""
-    _org_id, adapter = org_and_adapter
-    try:
-        pages = adapter.list_facebook_pages()
-        page_name_by_id = {p.id: p.name for p in pages}
-        forms: list[Any] = []
-        for p in pages:
-            forms.extend(adapter.list_leadgen_forms(p.id, with_questions=True))
-    except MetaGraphError as exc:
-        logger.warning("meta ads: lead forms fetch failed: %s", exc)
-        return handle_meta_graph_error(exc)
+# ─── DB reads (persisted lead tables, migration 033) ─────────────────────
+def _read_lead_forms_db(org_id: UUID) -> list[dict[str, Any]]:
+    admin = get_admin_client()
+    resp = (
+        admin.schema(_SCHEMA)
+        .table("meta_ads_lead_forms")
+        .select(
+            "id,page_id,name,status,locale,leads_count,questions,"
+            "created_time,synced_at"
+        )
+        .eq("org_id", str(org_id))
+        .order("leads_count", desc=True)
+        .execute()
+    )
+    return resp.data or []
 
+
+def _count_stored_leads(org_id: UUID) -> int:
+    # Select ids and count — id-only rows are cheap even at this account's
+    # ~1k leads, and it works identically on the real client and the test
+    # mock (avoids relying on PostgREST `count='exact'` header support).
+    admin = get_admin_client()
+    resp = (
+        admin.schema(_SCHEMA)
+        .table("meta_ads_leads")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .execute()
+    )
+    return len(resp.data or [])
+
+
+def _db_form_out(row: dict[str, Any]) -> LeadgenFormOut:
+    return LeadgenFormOut(
+        form_id=row["id"],
+        name=row.get("name"),
+        status=row.get("status"),
+        locale=row.get("locale"),
+        leads_count=row.get("leads_count"),
+        created_time=row.get("created_time"),
+        page_id=row.get("page_id"),
+        page_name=None,
+        questions=[
+            LeadgenQuestionOut(
+                key=q.get("key"), label=q.get("label"),
+                type=q.get("type"), options=list(q.get("options") or []),
+            )
+            for q in (row.get("questions") or [])
+        ],
+    )
+
+
+def _db_record_out(row: dict[str, Any]) -> LeadRecordOut:
+    raw = row.get("raw") or []
+    return LeadRecordOut(
+        id=row["id"],
+        created_time=row.get("created_time"),
+        ad_id=row.get("ad_id"),
+        campaign_id=row.get("campaign_id"),
+        campaign_name=row.get("campaign_name"),
+        platform=row.get("platform"),
+        is_organic=row.get("is_organic"),
+        field_data=[
+            LeadFieldOut(name=fd.get("name"), values=list(fd.get("values") or []))
+            for fd in raw
+        ],
+    )
+
+
+def _live_lead_forms_summary(adapter: MetaAdapter) -> LeadFormsSummaryOut:
+    """Pre-sync fallback: read forms + schema + metrics LIVE, probe records
+    availability. Used only when nothing has been synced to the DB yet."""
+    pages = adapter.list_facebook_pages()
+    page_name_by_id = {p.id: p.name for p in pages}
+    forms: list[Any] = []
+    for p in pages:
+        forms.extend(adapter.list_leadgen_forms(p.id, with_questions=True))
     forms.sort(key=lambda f: (f.leads_count or 0), reverse=True)
-    total_leads = sum(int(f.leads_count or 0) for f in forms)
     with_leads = [f for f in forms if int(f.leads_count or 0) > 0]
-
-    # Live capability probe — can we actually read the RECORDS? Only worth
-    # probing when at least one form has leads. A permission error here is
-    # the expected "leads_retrieval not granted" state, not a failure.
     records_available = False
     if with_leads:
         top = with_leads[0]
@@ -1105,10 +1164,8 @@ def list_lead_forms(
         except MetaGraphError as exc:
             if not exc.is_permission:
                 logger.warning("meta ads: lead-records probe non-permission error: %s", exc)
-            records_available = False
-
     return LeadFormsSummaryOut(
-        total_leads=total_leads,
+        total_leads=sum(int(f.leads_count or 0) for f in forms),
         forms_count=len(forms),
         active_forms=sum(1 for f in forms if f.status == "ACTIVE"),
         forms_with_leads=len(with_leads),
@@ -1116,6 +1173,43 @@ def list_lead_forms(
         records_available=records_available,
         forms=[_leadgen_form_out(f, page_name=page_name_by_id.get(f.page_id))
                for f in forms],
+        source="live",
+    )
+
+
+@router.get("/leads/forms", response_model=LeadFormsSummaryOut)
+def list_lead_forms(
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Lead-gen inventory + field schema + volume metrics. **DB-first**:
+    served from the persisted ``meta_ads_lead_forms`` (migration 033) once
+    a sync has run; falls back to a LIVE read before the first sync so the
+    tab is never blank. ``records_available`` = stored records exist (db) OR
+    the live ``leads_retrieval`` probe passed (live)."""
+    org_id, adapter = org_and_adapter
+    db_forms = _read_lead_forms_db(org_id)
+    if not db_forms:
+        try:
+            return _live_lead_forms_summary(adapter)
+        except MetaGraphError as exc:
+            logger.warning("meta ads: live lead forms fetch failed: %s", exc)
+            return handle_meta_graph_error(exc)
+
+    stored = _count_stored_leads(org_id)
+    with_leads = [f for f in db_forms if int(f.get("leads_count") or 0) > 0]
+    synced_times = [f.get("synced_at") for f in db_forms if f.get("synced_at")]
+    page_ids = {f.get("page_id") for f in db_forms if f.get("page_id")}
+    return LeadFormsSummaryOut(
+        total_leads=sum(int(f.get("leads_count") or 0) for f in db_forms),
+        forms_count=len(db_forms),
+        active_forms=sum(1 for f in db_forms if f.get("status") == "ACTIVE"),
+        forms_with_leads=len(with_leads),
+        pages=[{"id": pid, "name": ""} for pid in sorted(page_ids)],
+        records_available=stored > 0,
+        forms=[_db_form_out(f) for f in db_forms],
+        source="db",
+        stored_leads=stored,
+        last_synced_at=max(synced_times) if synced_times else None,
     )
 
 
@@ -1123,28 +1217,88 @@ def list_lead_forms(
 def list_lead_records(
     form_id: str = Query(...),
     page_id: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=200, ge=1, le=500),
     org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
 ):
-    """The per-lead RECORDS for one form (name/phone/email + qualifying
-    answers, with ad/campaign attribution). **Gated on ``leads_retrieval``**
-    — when the token lacks it, returns a clean ``{gated: true, reason}``
-    (200) so the UI shows an actionable banner rather than an error. No
-    DB — live read."""
-    _org_id, adapter = org_and_adapter
+    """The per-lead RECORDS for one form. **DB-first**: served from the
+    persisted ``meta_ads_leads`` once synced; falls back to a LIVE read for
+    a form with no stored records. On the live path a missing
+    ``leads_retrieval`` scope returns a clean ``{gated:true, reason}`` (200)
+    so the UI shows an actionable banner, never an error."""
+    org_id, adapter = org_and_adapter
+    admin = get_admin_client()
+    resp = (
+        admin.schema(_SCHEMA)
+        .table("meta_ads_leads")
+        .select(
+            "id,created_time,ad_id,campaign_id,campaign_name,platform,"
+            "is_organic,raw"
+        )
+        .eq("org_id", str(org_id))
+        .eq("form_id", form_id)
+        .order("created_time", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = resp.data or []
+    if rows:
+        return LeadRecordsOut(
+            form_id=form_id, source="db",
+            data=[_db_record_out(r) for r in rows],
+        )
+
+    # Live fallback — nothing stored for this form yet.
     try:
         leads = adapter.list_leads(form_id, page_id=page_id, limit=limit)
     except MetaGraphError as exc:
         if exc.is_permission:
             return LeadRecordsOut(
-                form_id=form_id, gated=True, reason=_LEADS_RETRIEVAL_HINT
+                form_id=form_id, gated=True, reason=_LEADS_RETRIEVAL_HINT,
+                source="live",
             )
         logger.warning("meta ads: lead records fetch failed: %s", exc)
         return handle_meta_graph_error(exc)
     return LeadRecordsOut(
-        form_id=form_id, gated=False,
+        form_id=form_id, gated=False, source="live",
         data=[_lead_record_out(lead) for lead in leads],
     )
+
+
+def _run_lead_sync_job(job_id: str, *, org_id: UUID, adapter: MetaAdapter) -> None:
+    from app.modules.meta_ads.services.leads_sync_service import LeadsSyncService
+    try:
+        svc = LeadsSyncService(admin_supabase=get_admin_client())
+        result = svc.sync_all(org_id=org_id, adapter=adapter)
+        detail = (
+            f"forms={result['forms_upserted']} leads={result['leads_upserted']}"
+            + (" (records gated: leads_retrieval)" if result["records_gated"] else "")
+        )
+        _set_job(job_id, status_="done", detail=detail)
+    except MetaGraphError as exc:
+        _set_job(job_id, status_="error", detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - job thread: never lose the error
+        logger.exception("meta ads: lead sync job failed")
+        _set_job(job_id, status_="error", detail=str(exc))
+
+
+@router.post("/leads/sync", response_model=AdsSyncStartedOut, status_code=status.HTTP_202_ACCEPTED)
+def start_lead_sync(
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Pull forms + leads from Meta and upsert them into the persisted lead
+    tables (background job — the ingest makes ~70 rate-limit-paced Graph
+    calls, too slow for a synchronous request). Returns a ``job_id``; poll
+    ``GET /sync/{job_id}``. Records are skipped (surfaced in the job detail)
+    when ``leads_retrieval`` is not granted — forms still sync."""
+    org_id, adapter = org_and_adapter
+    job_id = str(uuid.uuid4())
+    _set_job(job_id, status_="running")
+    threading.Thread(
+        target=_run_lead_sync_job,
+        kwargs={"job_id": job_id, "org_id": org_id, "adapter": adapter},
+        daemon=True,
+    ).start()
+    return AdsSyncStartedOut(job_id=job_id)
 
 
 # ─── POST /sync · GET /sync/{job_id} ──────────────────────────────────────
