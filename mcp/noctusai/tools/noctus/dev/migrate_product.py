@@ -25,11 +25,13 @@ The ``mcp/supabase`` connector uses the same endpoint; we reuse the urllib-based
 pattern from ``sso_smoke`` (stdlib only, no extra dep) rather than importing
 the ``mcp/supabase`` connector's private ``api.py``.
 
-**Credential:** ``SUPABASE_ACCESS_TOKEN`` — a Supabase Personal Access Token
-(PAT). Read from the MCP server's environment (the same ``.env`` that holds
-``SUPABASE_URL``, ``SUPABASE_SERVICE_ROLE_KEY``, etc.). If absent, the tool
-returns ``status='not_configured'`` with a ``NOC-REMEDIATE`` block — the tech-
-lead wires the credential; the tool is fully testable via the Fake seam.
+**Credential:** the Supabase Personal Access Token (PAT), resolved DB-first via
+the seed ``resolve_credential`` seam (dev=.env / prod=DB): DB
+``platform_settings['supabase_access_token']`` (global scope) → env
+``SUPABASE_ACCESS_TOKEN`` (Tier 3, same ``.env`` that holds ``SUPABASE_URL`` /
+``SUPABASE_SERVICE_ROLE_KEY``). If none resolves, the tool returns
+``status='not_configured'`` with a ``NOC-REMEDIATE`` block; the tool is fully
+testable via the Fake seam.
 
 **IO SEAM (Protocol + Fake + Real)**
 We follow ``KB § PATTERNS/backend/seed-fake-real-adapter.md``:
@@ -242,6 +244,44 @@ class SupabaseMgmtExecutor:
             return {"ok": False, "rows": None, "error": str(exc)}
 
 
+def _resolve_access_token(access_token: str | None = None) -> str:
+    """Resolve the Supabase Management-API PAT DB-first (dev=.env / prod=DB).
+
+    Order (via the seed ``resolve_credential`` seam): explicit arg → DB
+    ``platform_settings['supabase_access_token']`` (global/platform scope) → env
+    ``SUPABASE_ACCESS_TOKEN`` (Tier 3). The DB tiers require the resolver to be
+    bootstrapped with the MCP's own service-role creds (already in the MCP
+    ``.env`` as SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY); we do that once here.
+    Any failure degrades to the plain env read so the dev path never regresses.
+    """
+    if access_token:
+        return access_token
+    try:
+        from noctusai_lib.config.credentials import (
+            configure_credentials,
+            resolve_credential,
+        )
+        from settings import get_settings
+
+        s = get_settings()
+        if s.supabase_url and s.supabase_service_role_key:
+            configure_credentials(
+                supabase_url=s.supabase_url,
+                supabase_anon_key=s.supabase_anon_key or "",
+                supabase_service_role_key=s.supabase_service_role_key,
+            )
+        # org_id=None → skips per-org Tier 1, reads platform_settings (Tier 2),
+        # then env SUPABASE_ACCESS_TOKEN (Tier 3) for free.
+        token = resolve_credential("supabase_access_token")
+        if token:
+            return token
+    except Exception as exc:  # pragma: no cover — defensive bootstrap
+        logger.debug(
+            "DB-first supabase_access_token resolution failed; env fallback: %s", exc
+        )
+    return os.environ.get(_ACCESS_TOKEN_VAR, "")
+
+
 def make_sql_executor(
     *,
     access_token: str | None = None,
@@ -249,10 +289,11 @@ def make_sql_executor(
 ) -> SqlExecutor | None:
     """Factory — returns the Real executor when credentials are present.
 
-    Returns ``None`` when ``access_token`` is absent; callers surface the
-    ``not_configured`` shape with a ``NOC-REMEDIATE`` message.
+    The PAT is resolved DB-first via :func:`_resolve_access_token` (DB
+    ``platform_settings`` → env). Returns ``None`` when no token resolves;
+    callers surface the ``not_configured`` shape with a ``NOC-REMEDIATE`` message.
     """
-    token = access_token or os.environ.get(_ACCESS_TOKEN_VAR, "")
+    token = _resolve_access_token(access_token)
     if not token:
         return None
     return SupabaseMgmtExecutor(access_token=token, project_ref=project_ref)
@@ -332,9 +373,9 @@ def migrate_product(
     if executor is None:
         executor = make_sql_executor(project_ref=project_ref)
     if executor is None:
-        # NOC-REMEDIATE[credentials]: SUPABASE_ACCESS_TOKEN not set.
-        # Add SUPABASE_ACCESS_TOKEN=<personal-access-token> to the noctusai
-        # MCP server's environment (.env or Claude Desktop config.json).
+        # NOC-REMEDIATE[credentials]: no supabase_access_token resolved.
+        # Store it DB-first (preferred): platform_settings['supabase_access_token']
+        # (global scope) — or set env SUPABASE_ACCESS_TOKEN in the MCP .env.
         # Create the PAT at: https://supabase.com/dashboard/account/tokens
         return {
             "status": "not_configured",
@@ -345,10 +386,10 @@ def migrate_product(
             "skipped_already_applied": [],
             "pending": [],
             "error": (
-                f"NOC-REMEDIATE[credentials]: {_ACCESS_TOKEN_VAR} is not set. "
-                "Add a Supabase Personal Access Token to the MCP server environment "
-                "(.env or Claude Desktop config.json env block). "
-                "Create it at: https://supabase.com/dashboard/account/tokens"
+                "NOC-REMEDIATE[credentials]: no supabase_access_token resolved. "
+                "Store it DB-first in platform_settings (key='supabase_access_token', "
+                "global scope) — or set env SUPABASE_ACCESS_TOKEN in the MCP .env. "
+                "Create the PAT at: https://supabase.com/dashboard/account/tokens"
             ),
         }
 
@@ -548,8 +589,9 @@ def register(server) -> None:
             "DRY-RUN by default (confirm=False — lists pending vs applied). "
             "Pass confirm=True to actually apply. "
             "Idempotent: re-running skips already-applied files. "
-            "Requires SUPABASE_ACCESS_TOKEN in the MCP server env (a Supabase "
-            "Personal Access Token from https://supabase.com/dashboard/account/tokens). "
+            "Requires a Supabase Personal Access Token, resolved DB-first via "
+            "resolve_credential (platform_settings['supabase_access_token'] → env "
+            "SUPABASE_ACCESS_TOKEN; PAT from https://supabase.com/dashboard/account/tokens). "
             "Returns {status, product, schema, project_ref, applied, "
             "skipped_already_applied, pending, error}. "
             "KB § PATTERNS/backend/migrate-product-mcp-tool.md."

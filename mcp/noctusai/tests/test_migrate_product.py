@@ -420,6 +420,11 @@ class TestEdgeCases:
             products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
         )
         monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        # Neutralize the DB-first tier so this stays hermetic (no real DB read).
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
 
         result = migrate_product("orbity", products_dir=products)  # no executor
 
@@ -486,13 +491,35 @@ class TestEdgeCases:
 class TestMakeSqlExecutor:
     def test_returns_none_when_no_token(self, monkeypatch):
         monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        # No DB row either — neutralize the DB-first tier deterministically.
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
         result = make_sql_executor()
         assert result is None
 
-    def test_returns_executor_when_token_set(self, monkeypatch):
+    def test_returns_executor_when_env_token_set(self, monkeypatch):
+        # DB tier misses → falls back to the env token (Tier 3).
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
         monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "test-token-abc")
         result = make_sql_executor()
         assert result is not None
+        assert isinstance(result, SupabaseMgmtExecutor)
+
+    def test_db_first_token_resolution(self, monkeypatch):
+        """No env token, but resolve_credential (DB platform_settings) provides one."""
+        monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda key, org_id=None: (
+                "db-token-xyz" if key == "supabase_access_token" else None
+            ),
+        )
+        result = make_sql_executor()
         assert isinstance(result, SupabaseMgmtExecutor)
 
     def test_explicit_token_wins(self, monkeypatch):
