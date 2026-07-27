@@ -136,6 +136,25 @@ async def generate_copy(
     return success_response(data)
 
 
+@router.post("/{post_id}/score")
+async def score_post(
+    post_id: str,
+    gen_svc: GenerationService = Depends(get_generation_service),
+    post_svc: PostService = Depends(get_post_service),
+):
+    """Audit the post against the Método Audience rubric (8 criteria).
+
+    Returns ``{score, verdict, strengths, corrections, criteria, rationale}``
+    and persists it to the post. Requires a storyboard.
+    """
+    post = _require_post(post_svc, post_id)
+    try:
+        data = await gen_svc.score_post(post)
+    except GenerationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return success_response(data)
+
+
 @router.post("/{post_id}/render")
 async def render_post(
     post_id: str,

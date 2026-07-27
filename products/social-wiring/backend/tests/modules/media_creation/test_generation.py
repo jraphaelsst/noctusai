@@ -243,3 +243,85 @@ class TestRender:
         body = resp.json()["data"]
         assert body["mode"] == "svg_fallback"
         assert body["slides"][0]["image_url"].startswith("data:image/png;base64,")
+
+
+class TestScore:
+    """The score stage audits a finished post against the 8-criteria rubric."""
+
+    def _seed_post_with_storyboard(self, client, kit_id: str) -> None:
+        client.mock_supabase.from_("mc_posts").insert(
+            {
+                "id": "post-1",
+                "org_id": "test-org-123",
+                "brand_kit_id": kit_id,
+                "title": "Por que sua casa não vende",
+                "idea": "quebrar a crença do preço",
+                "format": "reels",
+                "variant": "premium",
+                "slide_count": 2,
+                "status": "draft",
+                "storyboard": {
+                    "trigger_dominant": "Crença",
+                    "templates": ["28 Reenquadramento"],
+                    "arc_pattern": "Myth vs Truth",
+                },
+                "copy_caption": "Pra quem tá vendendo: não é o preço.",
+            }
+        ).execute()
+        client.mock_supabase.from_("mc_post_slides").insert([
+            {
+                "id": "slide-1", "org_id": "test-org-123", "post_id": "post-1",
+                "slide_n": 1, "role": "capa", "headline": "Não é o preço",
+                "body": "", "visual_brief": "casa",
+            },
+            {
+                "id": "slide-2", "org_id": "test-org-123", "post_id": "post-1",
+                "slide_n": 2, "role": "cta", "headline": "Salva e manda",
+                "body": "marca alguém", "visual_brief": "cta",
+            },
+        ]).execute()
+
+    _CANNED = {
+        "score": 8,
+        "verdict": "pronto para publicar",
+        "strengths": ["gancho específico"],
+        "corrections": ["deixar a prova mais concreta"],
+        "criteria": [
+            {"name": "gancho_especifico", "pass": True, "note": "ok"},
+        ],
+        "rationale": "Boa aderência ao método.",
+    }
+
+    def test_404_when_post_missing(self, client):
+        resp = client.post("/api/media-creation/posts/ghost/score")
+        assert resp.status_code == 404, resp.text
+
+    def test_422_when_storyboard_missing(self, client, seeded_kit):
+        client.mock_supabase.from_("mc_posts").insert(
+            {
+                "id": "post-1", "org_id": "test-org-123", "brand_kit_id": seeded_kit,
+                "title": "X", "idea": "Y", "format": "carousel",
+                "variant": "premium", "slide_count": 2, "status": "draft",
+            }
+        ).execute()
+        resp = client.post("/api/media-creation/posts/post-1/score")
+        assert resp.status_code == 422, resp.text
+        assert "storyboard_missing" in resp.text
+
+    def test_happy_path_returns_and_persists_score(self, client, seeded_kit):
+        self._seed_post_with_storyboard(client, seeded_kit)
+        with patch(
+            "app.modules.media_creation.services.generation_service.chat_completion",
+            new=AsyncMock(return_value=json.dumps(self._CANNED)),
+        ):
+            resp = client.post("/api/media-creation/posts/post-1/score")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body["score"] == 8
+        assert body["verdict"] == "pronto para publicar"
+        # persisted onto the post
+        row = (
+            client.mock_supabase.from_("mc_posts")
+            .select("*").eq("id", "post-1").execute()
+        )
+        assert row.data[0]["score"]["score"] == 8

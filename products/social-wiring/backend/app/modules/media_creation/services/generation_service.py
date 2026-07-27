@@ -40,6 +40,7 @@ from app.modules.media_creation.design import build_slide_svg, resolve_tokens
 from app.modules.media_creation.prompts import (
     COPY_SYSTEM_PROMPT,
     IMAGE_PROMPTS_SYSTEM_PROMPT,
+    SCORE_SYSTEM_PROMPT,
     STORYBOARD_SYSTEM_PROMPT,
 )
 
@@ -198,6 +199,42 @@ class GenerationService:
                     "copy_first_comment": data.get("first_comment"),
                 }
             )
+            .eq("id", post["id"])
+            .eq("org_id", self.org_id)
+            .execute()
+        )
+        return data
+
+    # ── Stage 3b: score (methodology audit) ─────────────────────────────
+
+    async def score_post(self, post: dict[str, Any]) -> dict[str, Any]:
+        """Audit a finished post against the Método Audience rubric (8 criteria).
+
+        Returns ``{score, verdict, strengths, corrections, criteria, rationale}``
+        and persists it to ``mc_posts.score`` (JSONB) so it survives reload.
+        Requires a storyboard (the minimum gradeable artifact); caption is
+        graded when present.
+        """
+        if not post.get("storyboard"):
+            raise GenerationError("storyboard_missing — run generate_storyboard first")
+
+        slides = (
+            self.db.table("mc_post_slides")
+            .select("*")
+            .eq("post_id", post["id"])
+            .eq("org_id", self.org_id)
+            .order("slide_n")
+            .execute()
+        )
+        user_message = self._compose_score_user_message(post, slides.data or [])
+        reply = await self._call_llm(SCORE_SYSTEM_PROMPT, user_message)
+        data = self._parse_json(reply)
+        if "error" in data:
+            raise GenerationError(data["error"])
+
+        (
+            self.db.table("mc_posts")
+            .update({"score": data})
             .eq("id", post["id"])
             .eq("org_id", self.org_id)
             .execute()
@@ -613,3 +650,39 @@ Produce one prompt set per slide. Output the JSON object now."""
 {kit.get('default_lang') or 'pt-BR'}
 
 Produce the JSON copy object now."""
+
+    @staticmethod
+    def _compose_score_user_message(
+        post: dict[str, Any], slides: list[dict[str, Any]]
+    ) -> str:
+        storyboard = post.get("storyboard") or {}
+        slide_lines = "\n".join(
+            f"- [{s.get('role')}] {s.get('headline') or ''}"
+            + (f" — {s.get('body')}" if s.get("body") else "")
+            for s in slides
+        ) or "(no slides persisted)"
+        hashtags = post.get("copy_hashtags") or []
+        return f"""# Post to audit
+
+## Format
+{post.get('format')}
+
+## Declared methodology (from the storyboard — VERIFY, do not trust)
+- Dominant trigger: {storyboard.get('trigger_dominant') or '(none declared)'}
+- Embedded triggers: {', '.join(storyboard.get('triggers_embedded') or []) or '(none)'}
+- Templates: {', '.join(storyboard.get('templates') or []) or '(none)'}
+- Arc: {storyboard.get('arc_pattern') or '(none)'}
+
+## Slides (role → headline — body)
+{slide_lines}
+
+## Caption
+{post.get('copy_caption') or '(not generated yet)'}
+
+## Hashtags
+{' '.join(hashtags) if hashtags else '(none)'}
+
+## First comment
+{post.get('copy_first_comment') or '(none)'}
+
+Grade all 8 criteria and output the JSON verdict object now."""

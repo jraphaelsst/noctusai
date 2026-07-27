@@ -63,6 +63,23 @@ export type SlideRole =
   | "develop"
   | "insight";
 
+/** One graded criterion in a post audit. */
+export interface ScoreCriterion {
+  name: string;
+  pass: boolean;
+  note?: string;
+}
+
+/** Método Audience audit result persisted on the post. */
+export interface PostScore {
+  score: number;
+  verdict: string;
+  strengths?: string[];
+  corrections?: string[];
+  criteria?: ScoreCriterion[];
+  rationale?: string;
+}
+
 /** Storyboard JSON blob persisted on the post (Método Audience metadata). */
 export interface Storyboard {
   title?: string;
@@ -107,6 +124,7 @@ export interface Post {
   key_message?: string | null;
   status: PostStatus;
   storyboard?: Storyboard | null;
+  score?: PostScore | null;
   copy_caption?: string | null;
   copy_hashtags?: string[] | null;
   copy_alt_text?: string | null;
@@ -349,7 +367,7 @@ export function usePost(postId: string | null) {
 }
 
 export function usePostGeneration(postId: string | null, onUpdate?: () => void) {
-  const [pending, setPending] = useState<null | "storyboard" | "prompts" | "copy" | "render">(null);
+  const [pending, setPending] = useState<null | "storyboard" | "prompts" | "copy" | "render" | "score">(null);
 
   const run = useCallback(
     async (stage: "storyboard" | "prompts" | "copy"): Promise<boolean> => {
@@ -401,7 +419,26 @@ export function usePostGeneration(postId: string | null, onUpdate?: () => void) 
     [postId, onUpdate],
   );
 
-  return { run, render, pending };
+  const score = useCallback(async (): Promise<PostScore | null> => {
+    if (!postId) return null;
+    setPending("score");
+    try {
+      const r = await api.post<Envelope<PostScore>>(
+        `/api/media-creation/posts/${postId}/score`,
+      );
+      const data = r.data;
+      toast.success(`Avaliação: ${data.score}/10 — ${data.verdict}`);
+      onUpdate?.();
+      return data;
+    } catch (err: any) {
+      toast.error(err?.message ?? "Falha ao avaliar o post");
+      return null;
+    } finally {
+      setPending(null);
+    }
+  }, [postId, onUpdate]);
+
+  return { run, render, score, pending };
 }
 
 function stageLabel(s: "storyboard" | "prompts" | "copy"): string {

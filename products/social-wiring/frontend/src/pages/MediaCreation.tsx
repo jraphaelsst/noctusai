@@ -15,6 +15,8 @@
  */
 import { useMemo, useState } from "react";
 import {
+  CheckCircle2,
+  ClipboardCheck,
   ImagePlus,
   Library,
   Loader2,
@@ -23,6 +25,7 @@ import {
   Sparkles,
   Trash2,
   Wand2,
+  XCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -45,6 +48,7 @@ import {
   type BrandReference,
   type Post,
   type PostFormat,
+  type PostScore,
   type ReferenceKind,
   useBrandKits,
   useBrandReferences,
@@ -229,7 +233,7 @@ function PostDetail({
   onDeleted: () => void;
 }) {
   const { post, loading, refresh } = usePost(postId);
-  const { run, render, pending } = usePostGeneration(postId, refresh);
+  const { run, render, score, pending } = usePostGeneration(postId, refresh);
 
   if (loading || !post) {
     return (
@@ -321,8 +325,23 @@ function PostDetail({
                 ? "Renderizar novamente"
                 : "4. Renderizar imagens"}
             </Button>
+            <Button
+              onClick={() => void score()}
+              disabled={pending !== null || !post.storyboard}
+              size="sm"
+              variant={post.score ? "outline" : "secondary"}
+            >
+              {pending === "score" ? (
+                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+              ) : (
+                <ClipboardCheck className="mr-2 h-3 w-3" />
+              )}
+              {post.score ? "Reavaliar post" : "5. Avaliar post"}
+            </Button>
           </div>
         </section>
+
+        {post.score && <ScoreCard score={post.score} />}
 
         {post.storyboard &&
           (post.storyboard.trigger_dominant ||
@@ -462,6 +481,77 @@ function PostDetail({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ScoreCard({ score }: { score: PostScore }) {
+  const verdict = (score.verdict || "").toLowerCase();
+  const verdictVariant: "default" | "secondary" | "destructive" =
+    verdict.includes("pronto")
+      ? "default"
+      : verdict.includes("refazer")
+        ? "destructive"
+        : "secondary";
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold">Avaliação (Método Audience)</h3>
+      <Card className="bg-muted/30">
+        <CardContent className="space-y-3 p-4 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-2xl font-semibold">{score.score}/10</span>
+            {score.verdict && (
+              <Badge variant={verdictVariant} className="text-[11px]">
+                {score.verdict}
+              </Badge>
+            )}
+          </div>
+          {score.rationale && (
+            <p className="break-words text-xs italic text-muted-foreground">
+              {score.rationale}
+            </p>
+          )}
+          {score.strengths && score.strengths.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-muted-foreground">Forças</div>
+              <ul className="mt-1 space-y-0.5">
+                {score.strengths.map((s, i) => (
+                  <li key={i} className="text-xs">✓ {s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {score.corrections && score.corrections.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-muted-foreground">
+                Correções prioritárias
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {score.corrections.map((c, i) => (
+                  <li key={i} className="text-xs">→ {c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {score.criteria && score.criteria.length > 0 && (
+            <div className="grid gap-1 sm:grid-cols-2">
+              {score.criteria.map((c) => (
+                <div key={c.name} className="flex items-start gap-1.5 text-xs">
+                  {c.pass ? (
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+                  ) : (
+                    <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+                  )}
+                  <span className="min-w-0 break-words">
+                    <span className="font-medium">{c.name}</span>
+                    {c.note ? ` — ${c.note}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
