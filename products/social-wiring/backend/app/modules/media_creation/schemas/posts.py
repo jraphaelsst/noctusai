@@ -5,7 +5,7 @@ from typing import Literal, Optional
 
 from noctusai_lib.api import StrictHttpModel
 
-PostFormat = Literal["carousel", "single", "video"]
+PostFormat = Literal["carousel", "single", "reels", "video"]
 PostStatus = Literal["draft", "ready", "published"]
 
 

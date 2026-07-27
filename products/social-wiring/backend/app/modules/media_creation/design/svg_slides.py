@@ -1,11 +1,11 @@
 """Deterministic SVG slide builders — one per layout role.
 
-Ports the locked structural skeleton proven by the sibling
-``media-creator/`` repo (DESIGN-SYSTEM.md: canvas 1080×1350, safe-area
-margins, the 4 slide roles cover/develop/insight/cta, gold accent rules,
-brand handle) into token-driven Python builders. The palette / typography
-are NOT baked here — they come from :class:`DesignTokens` (preset or
-per-brand ``design_tokens``). Only the *structure* is fixed.
+The in-home locked structural skeleton (canvas 1080×1350, safe-area margins,
+the base layout roles cover/develop/insight/cta with the Método Audience
+roles aliased onto them, gold accent rules, brand handle) as token-driven
+Python builders. The palette / typography are NOT baked here — they come
+from :class:`DesignTokens` (preset or per-brand ``design_tokens``). Only the
+*structure* is fixed.
 
 Output is a complete self-contained ``<svg>`` string. Fonts are referenced
 by family name (``Cormorant Garamond`` / ``Inter``) matching the seed
@@ -231,8 +231,24 @@ def build_slide_svg(
     *,
     cta_word: str | None = None,
 ) -> str:
-    """Dispatch to the role builder. Unknown role → cover layout (safe default)."""
+    """Dispatch to the role builder. Unknown role → cover layout (safe default).
+
+    Método Audience roles (capa/identificacao/virada/nome/prova/valor/cta) map
+    onto the four base layouts: capa→cover, virada→insight (the reframe/
+    punchline), cta→cta, and the body beats (identificacao/nome/prova/valor)→
+    develop. Legacy roles (cover/develop/insight/cta) still dispatch directly.
+    """
     role = (role or "cover").lower()
+    _ALIAS = {
+        "capa": "cover",
+        "identificacao": "develop",
+        "identificação": "develop",
+        "nome": "develop",
+        "prova": "develop",
+        "valor": "develop",
+        "virada": "insight",
+    }
+    role = _ALIAS.get(role, role)
     if role == "develop":
         return build_develop(slide, tokens)
     if role == "insight":

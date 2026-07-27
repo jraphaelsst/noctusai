@@ -1,7 +1,6 @@
 """LLM-driven generation pipeline — storyboard / image prompts / copy.
 
-The three skill stages ported from the sibling ``media-creator/`` repo, run
-as idempotent service methods. Each method:
+The three generation stages, run as idempotent service methods. Each method:
 
 1. Reads the post + brand kit + references from the DB.
 2. Calls ``noctusai_lib.integrations.llm.chat_completion`` with the
@@ -62,7 +61,7 @@ def _slide_aspect_ratio(slide: dict[str, Any], post: dict[str, Any]) -> str:
     video → 9:16 (story). Anything else → 1:1 default.
     """
     fmt = (post.get("format") or "carousel").lower()
-    if fmt == "video":
+    if fmt in ("video", "reels"):
         return "9:16"
     return "1:1"
 
@@ -77,9 +76,10 @@ class GenerationService:
     ``image_gen_adapter`` is constructor-injectable for tests. In production
     it defaults to ``get_image_gen_adapter(_default_gemini_key_provider,
     org_id=self.org_id)`` — which returns ``FakeImageGenAdapter`` when no
-    Gemini key is resolved for the org (the Fake's ``fake-image-gen.noctusai.local``
-    URL is the loud "not configured" signal per
-    ``feedback_gated_capability_honesty``).
+    Gemini key is resolved for the org. In that Fake case :meth:`render_post`
+    routes to the deterministic SVG render (a visible, brand-locked placeholder)
+    and flags ``configured=False`` — the loud "not configured" signal per
+    ``feedback_gated_capability_honesty`` (never a broken image, never a 503).
     """
 
     def __init__(
@@ -224,16 +224,40 @@ class GenerationService:
         palette / typography / layout from the brand kit's design tokens;
         AI is NOT used for the slide text/layout) → rasterized to PNG via
         the seed ``svg_render`` primitive. See :meth:`_render_post_svg`.
+
+        **Raster fallback:** when ``mode="raster"`` but no Gemini key is
+        resolved for the org (the adapter is the Fake), we do NOT persist the
+        Fake's non-resolvable sentinel URL (it renders as a broken image).
+        Instead we fall back to the deterministic SVG render so the pipeline
+        always yields a visible, brand-locked placeholder slide — flagged
+        ``configured=False`` + ``mode="svg_fallback"`` so the FE can invite the
+        operator to configure Gemini for AI imagery.
         """
         if mode == "svg":
             return self._render_post_svg(post, variant=variant)
-        return self._render_post_raster(post, renderer=renderer)
+        # Validate the raster renderer up front so bad input is rejected even
+        # when we take the Fake→SVG fallback below.
+        if renderer not in ("nano_banana", "galilai", "midjourney"):
+            raise GenerationError(
+                f"unsupported_renderer: {renderer!r} "
+                "(supported: nano_banana, galilai, midjourney)"
+            )
+        adapter = self._resolve_image_gen_adapter()
+        if isinstance(adapter, FakeImageGenAdapter):
+            result = self._render_post_svg(post, variant=variant or post.get("variant"))
+            result["configured"] = False
+            result["mode"] = "svg_fallback"
+            result["placeholder"] = True
+            result["requested_renderer"] = renderer
+            return result
+        return self._render_post_raster(post, renderer=renderer, adapter=adapter)
 
     def _render_post_raster(
         self,
         post: dict[str, Any],
         *,
         renderer: str = "nano_banana",
+        adapter: ImageGenAdapter | None = None,
     ) -> dict[str, Any]:
         """Storyboard prompts → real images via the seed image-gen adapter.
 
@@ -250,10 +274,11 @@ class GenerationService:
         URL hosts.
 
         Per ``feedback_gated_capability_honesty``: the endpoint ALWAYS
-        executes; the Fake's deterministic ``fake-image-gen.noctusai.local``
-        URL is the loud "not configured" signal, not a 503.
+        executes. When the resolved adapter is the Fake, :meth:`render_post`
+        routes to the SVG fallback instead of calling this method — so this
+        path only runs with a real (configured) adapter.
         """
-        adapter = self._resolve_image_gen_adapter()
+        adapter = adapter or self._resolve_image_gen_adapter()
         configured = not isinstance(adapter, FakeImageGenAdapter)
 
         slides = (
@@ -553,8 +578,20 @@ Produce the storyboard JSON now."""
         post: dict[str, Any], kit: dict[str, Any]
     ) -> str:
         storyboard = post.get("storyboard") or {}
-        return f"""# Design system
+        brand_name = (kit.get("name") or "").strip()
+        brand_line = (
+            f"Brand name (use verbatim in the GalilAI 'Brand:' clause): {brand_name}"
+            if brand_name
+            else "Brand name: (none — omit the 'Brand:' clause, never emit a placeholder)"
+        )
+        return f"""# Brand
+{brand_line}
+
+# Design system
 {kit.get('design_system') or '(empty)'}
+
+# Persona
+{kit.get('persona') or '(empty)'}
 
 # Storyboard (already approved)
 {json.dumps(storyboard, ensure_ascii=False, indent=2)}

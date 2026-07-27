@@ -5,9 +5,11 @@ the W2.1 base distributes media (YouTube upload, WhatsApp chatbot, intake),
 W2.2 distributes email campaigns, W2.3 schedules real-estate appointments,
 W2.4 PRODUCES the media that the rest of the product distributes.
 
-Ports the abstraction proven by the sibling ``media-creator/`` repo (an
-agent-driven, file-based, single-tenant prototype) into a multi-tenant,
-API-driven, DB-backed module under the ``social_wiring`` schema.
+A multi-tenant, API-driven, DB-backed content studio under the
+``social_wiring`` schema. Every post is built on the in-home Método Audience
+methodology (see :mod:`.prompts.methodology`) — a dominant attention trigger,
+named headline template(s), and the capa→identificacao→virada→nome→prova→
+valor→cta role skeleton. Fully self-contained: no external folder dependency.
 
 Seam contract
 ─────────────
@@ -39,19 +41,20 @@ Seed primitives consumed
 * ``app.dependencies.{get_current_user_org,get_org_id,get_admin_client}`` —
   the social-wiring seed-factory auth/db seam.
 
-What is NOT here (phase-2 / future)
-───────────────────────────────────
-* Image rendering — needs a new seed adapter
-  (``noctusai_lib.integrations.image_gen``). The ``POST /render`` endpoint
-  ships a typed ``gate=image_generation_not_configured`` signal per
-  ``feedback_gated_capability_honesty`` until that adapter lands. Filed as
-  the follow-up project ``image-gen-seed-adapter``.
-* Video generation — schema accepts ``format=video`` for forward
-  compatibility; no logic.
+What ships
+──────────
+* Image rendering — ``POST /render`` produces AI images via
+  ``noctusai_lib.integrations.image_gen`` (Gemini) when an org Gemini key is
+  configured, else falls back to a visible brand-locked SVG placeholder
+  (``mode=svg_fallback``, ``configured=False``) per
+  ``feedback_gated_capability_honesty`` — never a broken image.
+* Formats — ``carousel`` / ``single`` / ``reels`` (9:16 script). ``video``
+  remains accepted for forward compatibility.
+
+What is NOT here (future)
+─────────────────────────
 * Direct publish to Meta / Instagram / Facebook write — out of scope of the
   current ``noctusai_lib.integrations.meta`` (read-only-v1).
-* Eval loop — media-creator's ``evals/`` is empty; we don't pre-build what
-  upstream hasn't validated yet.
 
 Migrations
 ──────────

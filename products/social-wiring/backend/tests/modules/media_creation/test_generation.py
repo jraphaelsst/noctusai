@@ -97,9 +97,10 @@ class TestRender:
     """The render stage exercises the seed image-gen adapter.
 
     With no GEMINI_API_KEY resolved, ``get_image_gen_adapter`` returns the
-    Fake adapter — the test asserts ``configured=False`` + deterministic
-    fake-host URLs (the loud "not configured" signal per
-    feedback_gated_capability_honesty), not a 503.
+    Fake adapter — ``render_post`` then falls back to the deterministic SVG
+    render (a visible, brand-locked placeholder as a ``data:`` URL) and flags
+    ``configured=False`` + ``mode="svg_fallback"`` (the loud "not configured"
+    signal per feedback_gated_capability_honesty), never a broken image or 503.
     """
 
     def _seed_post_with_slides(self, client, kit_id: str) -> None:
@@ -149,7 +150,7 @@ class TestRender:
         resp = client.post("/api/media-creation/posts/ghost/render")
         assert resp.status_code == 404, resp.text
 
-    def test_render_with_no_gemini_key_uses_fake_and_flags_configured_false(
+    def test_render_with_no_gemini_key_falls_back_to_svg_and_flags_configured_false(
         self, client, seeded_kit
     ):
         self._seed_post_with_slides(client, seeded_kit)
@@ -157,14 +158,14 @@ class TestRender:
         assert resp.status_code == 200, resp.text
         body = resp.json()["data"]
         assert body["configured"] is False
-        assert body["backend"] == "fake"
-        assert body["renderer"] == "nano_banana"
+        assert body["mode"] == "svg_fallback"
+        assert body["placeholder"] is True
+        assert body["requested_renderer"] == "nano_banana"
         assert len(body["slides"]) == 2
         for slide in body["slides"]:
-            assert slide["image_url"].startswith(
-                "https://fake-image-gen.noctusai.local/"
-            )
-            assert slide["renderer"] == "nano_banana"
+            # A visible, inline placeholder — NOT the old broken sentinel URL.
+            assert slide["image_url"].startswith("data:image/png;base64,")
+            assert slide["renderer"] == "svg"
 
     def test_render_422_when_slides_missing(self, client, seeded_kit):
         client.mock_supabase.from_("mc_posts").insert(
@@ -206,12 +207,13 @@ class TestRender:
         )
         assert len(slides.data) == 2
         for slide in slides.data:
-            assert slide["image_url"].startswith(
-                "https://fake-image-gen.noctusai.local/"
-            )
-            assert slide["image_renderer"] == "nano_banana"
+            assert slide["image_url"].startswith("data:image/png;base64,")
+            assert slide["image_renderer"] == "svg"
 
-    def test_render_skips_slides_without_prompt(self, client, seeded_kit):
+    def test_render_fake_mode_renders_svg_even_without_prompt(self, client, seeded_kit):
+        # The SVG fallback composes slides from headline/body — it does NOT need
+        # the per-renderer image prompts, so a slide rendered before generate/
+        # prompts still gets a visible placeholder (never skipped/blank).
         client.mock_supabase.from_("mc_posts").insert(
             {
                 "id": "post-1",
@@ -230,7 +232,7 @@ class TestRender:
             "org_id": "test-org-123",
             "post_id": "post-1",
             "slide_n": 1,
-            "role": "cover",
+            "role": "capa",
             "headline": "H",
             "body": "",
             "visual_brief": "VB",
@@ -239,5 +241,5 @@ class TestRender:
         resp = client.post("/api/media-creation/posts/post-1/render")
         assert resp.status_code == 200, resp.text
         body = resp.json()["data"]
-        assert body["slides"][0]["skipped_reason"] == "prompt_missing"
-        assert body["slides"][0]["image_url"] is None
+        assert body["mode"] == "svg_fallback"
+        assert body["slides"][0]["image_url"].startswith("data:image/png;base64,")

@@ -48,9 +48,35 @@ export interface ReferenceInput {
   notes?: string;
 }
 
-export type PostFormat = "carousel" | "single" | "video";
+export type PostFormat = "carousel" | "single" | "reels" | "video";
 export type PostStatus = "draft" | "ready" | "published";
-export type SlideRole = "cover" | "develop" | "insight" | "cta";
+// Método Audience role skeleton + legacy roles (back-compat).
+export type SlideRole =
+  | "capa"
+  | "identificacao"
+  | "virada"
+  | "nome"
+  | "prova"
+  | "valor"
+  | "cta"
+  | "cover"
+  | "develop"
+  | "insight";
+
+/** Storyboard JSON blob persisted on the post (Método Audience metadata). */
+export interface Storyboard {
+  title?: string;
+  audience?: string;
+  key_message?: string;
+  cta?: string;
+  format?: string;
+  trigger_dominant?: string;
+  triggers_embedded?: string[];
+  templates?: string[];
+  arc_pattern?: string;
+  rationale?: string;
+  slides?: unknown[];
+}
 
 export interface PostSlide {
   id: string;
@@ -80,7 +106,7 @@ export interface Post {
   audience?: string | null;
   key_message?: string | null;
   status: PostStatus;
-  storyboard?: Record<string, unknown> | null;
+  storyboard?: Storyboard | null;
   copy_caption?: string | null;
   copy_hashtags?: string[] | null;
   copy_alt_text?: string | null;
@@ -120,9 +146,13 @@ export interface RenderSlideResult {
 
 export interface RenderResult {
   configured: boolean;
-  backend: string;
+  backend?: string;
   renderer: string;
   slides: RenderSlideResult[];
+  /** "svg_fallback" when Gemini is not configured (visible placeholder). */
+  mode?: string;
+  placeholder?: boolean;
+  requested_renderer?: string;
 }
 
 // ─── Brand kits ──────────────────────────────────────────────────────
@@ -352,8 +382,8 @@ export function usePostGeneration(postId: string | null, onUpdate?: () => void) 
         const data = r.data;
         if (!data.configured) {
           toast.info(
-            "Imagens geradas com placeholder (Fake). " +
-            "Configure GEMINI_API_KEY para a sua organização para imagens reais.",
+            "Placeholders de marca (SVG) gerados. " +
+            "Configure a chave Gemini da organização para gerar imagens por IA.",
           );
         } else {
           const ok = data.slides.filter((s) => s.image_url).length;

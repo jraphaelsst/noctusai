@@ -200,12 +200,15 @@ class TestSvgRenderModeHttp:
             assert slide["svg_markup"].startswith("<svg")
 
     def test_raster_mode_still_default(self, client, seeded_kit):
-        """Default (no mode) → raster path, Fake image-gen fires (configured False)."""
+        """Default (no mode) → raster path. With no Gemini key it falls back to
+        the SVG render (a visible placeholder), flagged mode='svg_fallback'
+        (distinct from an explicit mode='svg' request) + configured False.
+        """
         self._seed(client, seeded_kit)
-        # raster path needs prompts; with none it skips — assert it took the
-        # raster branch (renderer nano_banana, not svg).
         resp = client.post("/api/media-creation/posts/post-1/render")
         assert resp.status_code == 200, resp.text
         body = resp.json()["data"]
-        assert body["renderer"] == "nano_banana"
-        assert body.get("mode") != "svg"
+        # raster was requested (not explicit svg): the fallback marker proves it.
+        assert body["mode"] == "svg_fallback"
+        assert body["configured"] is False
+        assert body["requested_renderer"] == "nano_banana"

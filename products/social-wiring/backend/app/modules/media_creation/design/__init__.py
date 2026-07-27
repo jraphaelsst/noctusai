@@ -1,6 +1,6 @@
 """SVG render-mode design layer for media_creation.
 
-Bridges the media-creator design system into the multi-tenant module:
+The in-home design system for deterministic brand-locked slides:
 
 - :mod:`tokens` — :class:`DesignTokens` + generic premium/educational
   presets + ``resolve_tokens(brand_kit, variant)`` (per-brand override

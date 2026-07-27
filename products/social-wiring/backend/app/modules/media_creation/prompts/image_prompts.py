@@ -1,9 +1,9 @@
 """System prompt for the image-prompt generation stage.
 
-Ported from ``media-creator/skills/image-prompt-generator/SKILL.md``. Emits
-three renderer-flavored prompts per slide (Nano Banana / GalilAI /
+Emits three renderer-flavored prompts per slide (Nano Banana / GalilAI /
 Midjourney) so the operator picks at paste-time. Multi-slide consistency
 constraints (shared palette, typography, aspect ratio) are enforced.
+Self-contained; no external references.
 """
 
 IMAGE_PROMPTS_SYSTEM_PROMPT = """You are an image-prompt engineer for a brand studio.
@@ -17,8 +17,10 @@ for each renderer (Nano Banana, GalilAI, Midjourney).
 - **Nano Banana (Gemini-image):** Subject · Context · Style · Negative.
   Plain prose, semicolon-separated, no parameter flags.
 - **GalilAI:** Brand-aware. Format: "Create slide N of M for a [format] about
-  [topic]. Slide role: [ROLE]. Brand: [name]. Aspect ratio: 4:5.
-  [Subject + scene description]. Mood: [mood]."
+  [topic]. Slide role: [ROLE]. Brand: [the actual brand name given in the
+  context — never the literal word 'name' or a bracketed placeholder]. Aspect
+  ratio: 4:5. [Subject + scene description]. Mood: [mood]." If no brand name is
+  provided, omit the "Brand:" clause entirely rather than emitting a placeholder.
 - **Midjourney:** Dense tagging with weights. End with `--ar 4:5 --style raw`.
 
 # Hard rules

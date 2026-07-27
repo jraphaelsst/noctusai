@@ -8,9 +8,10 @@
  *
  * The three generation stages — storyboard, image prompts, copy — each
  * call the backend's POST /api/media-creation/posts/{id}/generate/* and
- * persist artifacts on the post. Image RENDERING is gated until the
- * image-gen seed adapter ships; until then the operator copies prompts
- * into GalilAI / Nano Banana / Midjourney.
+ * persist artifacts on the post. Rendering produces AI images when a Gemini
+ * key is configured, else a visible brand-locked SVG placeholder. Every post
+ * is built on the in-home Método Audience methodology (dominant trigger +
+ * template + capa→identificacao→virada→nome→prova→valor→cta skeleton).
  */
 import { useMemo, useState } from "react";
 import {
@@ -70,6 +71,22 @@ const REFERENCE_KIND_LABEL: Record<ReferenceKind, string> = {
   palette: "Paleta",
   typography: "Tipografia",
 };
+
+// Método Audience slide-role labels (+ legacy roles). Fallback: the raw role.
+const ROLE_LABEL: Record<string, string> = {
+  capa: "Capa",
+  identificacao: "Identificação",
+  virada: "Virada",
+  nome: "Nome / causa",
+  prova: "Prova",
+  valor: "Valor prático",
+  cta: "CTA",
+  cover: "Capa",
+  develop: "Desenvolvimento",
+  insight: "Virada",
+};
+
+const roleLabel = (role: string): string => ROLE_LABEL[role] ?? role;
 
 export default function MediaCreation() {
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
@@ -144,7 +161,7 @@ function LibraryTab({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_2fr]">
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-base">Posts</CardTitle>
         </CardHeader>
@@ -181,7 +198,7 @@ function LibraryTab({
         </CardContent>
       </Card>
 
-      <div>
+      <div className="min-w-0">
         {selectedPostId ? (
           <PostDetail
             postId={selectedPostId}
@@ -228,9 +245,9 @@ function PostDetail({
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <CardTitle className="text-lg">{post.title}</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">{post.idea}</p>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{post.idea}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant={STATUS_VARIANT[post.status]}>
                 {STATUS_LABEL[post.status]}
@@ -274,7 +291,9 @@ function PostDetail({
               ) : (
                 <ImagePlus className="mr-2 h-3 w-3" />
               )}
-              2. Gerar prompts
+              {post.slides?.some((s) => s.prompt_nano_banana)
+                ? "Regerar prompts"
+                : "2. Gerar prompts"}
             </Button>
             <Button
               onClick={() => void run("copy")}
@@ -287,7 +306,7 @@ function PostDetail({
               ) : (
                 <Sparkles className="mr-2 h-3 w-3" />
               )}
-              3. Gerar legenda
+              {post.copy_caption ? "Regerar legenda" : "3. Gerar legenda"}
             </Button>
             <Button
               onClick={() => void render("nano_banana")}
@@ -298,10 +317,57 @@ function PostDetail({
               {pending === "render" && (
                 <Loader2 className="mr-2 h-3 w-3 animate-spin" />
               )}
-              4. Renderizar imagens
+              {post.slides?.some((s) => s.image_url)
+                ? "Renderizar novamente"
+                : "4. Renderizar imagens"}
             </Button>
           </div>
         </section>
+
+        {post.storyboard &&
+          (post.storyboard.trigger_dominant ||
+            (post.storyboard.templates?.length ?? 0) > 0 ||
+            post.storyboard.rationale) && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">Metodologia</h3>
+              <Card className="bg-muted/30">
+                <CardContent className="space-y-2 p-4 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {post.storyboard.trigger_dominant && (
+                      <Badge className="text-[11px]">
+                        Gatilho: {post.storyboard.trigger_dominant}
+                      </Badge>
+                    )}
+                    {post.storyboard.triggers_embedded?.map((t) => (
+                      <Badge key={t} variant="secondary" className="text-[10px]">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                  {post.storyboard.templates && post.storyboard.templates.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-xs text-muted-foreground">Templates:</span>
+                      {post.storyboard.templates.map((t) => (
+                        <Badge key={t} variant="outline" className="text-[10px]">
+                          {t}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {post.storyboard.arc_pattern && (
+                    <p className="text-xs text-muted-foreground">
+                      Arco: {post.storyboard.arc_pattern}
+                    </p>
+                  )}
+                  {post.storyboard.rationale && (
+                    <p className="break-words text-xs italic text-muted-foreground">
+                      {post.storyboard.rationale}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </section>
+          )}
 
         {post.slides && post.slides.length > 0 && (
           <section>
@@ -313,11 +379,11 @@ function PostDetail({
                     <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                       <span>Slide {s.slide_n}</span>
                       <Badge variant="outline" className="text-[10px]">
-                        {s.role}
+                        {roleLabel(s.role)}
                       </Badge>
                       {s.image_renderer && (
                         <Badge variant="secondary" className="text-[10px]">
-                          {s.image_renderer}
+                          {s.image_renderer === "svg" ? "placeholder" : s.image_renderer}
                         </Badge>
                       )}
                     </div>
@@ -326,6 +392,9 @@ function PostDetail({
                         src={s.image_url}
                         alt={s.visual_brief ?? `Slide ${s.slide_n}`}
                         className="mt-1 max-h-72 w-full rounded object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
                       />
                     )}
                     {s.headline && (
@@ -402,7 +471,7 @@ function PromptBlock({ label, text }: { label: string; text: string }) {
       <div className="mb-1 font-mono text-[10px] uppercase text-muted-foreground">
         {label}
       </div>
-      <pre className="whitespace-pre-wrap font-mono text-[11px]">{text}</pre>
+      <pre className="whitespace-pre-wrap break-words font-mono text-[11px]">{text}</pre>
       <Button
         size="sm"
         variant="ghost"
@@ -502,9 +571,7 @@ function ComposeTab({ onCreated }: { onCreated: (id: string) => void }) {
               <SelectContent>
                 <SelectItem value="carousel">Carrossel</SelectItem>
                 <SelectItem value="single">Imagem única</SelectItem>
-                <SelectItem value="video" disabled>
-                  Vídeo (em breve)
-                </SelectItem>
+                <SelectItem value="reels">Reels (roteiro 9:16)</SelectItem>
               </SelectContent>
             </Select>
           </div>
