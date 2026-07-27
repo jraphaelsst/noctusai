@@ -54,6 +54,32 @@ generic benefit copy.
    bodies. Field names stay English.
 10. **Slide count:** Match the requested `slide_count` exactly (1–20).
 
+# Beat quality — the auditor rejects weak beats. Get these right:
+
+- **The trigger must OPERATE, not just be labeled.** The `trigger_dominant`'s
+  mechanism (per the 7-triggers list) has to actually drive the `capa`'s wording
+  AND at least one body beat. If you can't make it operate in the text, pick a
+  different trigger. (Top rejection: "gatilho declarado, não opera no texto".)
+- **Deliver the promise — close the loop.** Whatever the `capa` sets up (a
+  question, "o verdadeiro motivo", a "nome") MUST be explicitly answered in the
+  `nome` beat and paid off in `valor`. Never leave the promised payoff implicit
+  or unstated.
+- **identificacao — name the exact person + situation.** "Pra [quem específico]
+  que [situação específica]…" — never a bland "pra você". The viewer has to
+  recognize themselves precisely.
+- **virada — a concrete reframe.** Say specifically what it is NOT and what it
+  IS ("isso não é [X], é [Y]") with a concrete Y — not a vague platitude.
+- **prova — specificity, not claims.** Give a concrete, verifiable SIGN the
+  viewer can recognize (a specific detail, a before/after, an observable tell) —
+  never a generic assertion, never an invented number/statistic.
+- **valor — ONE executable step, named exactly.** State the precise thing to DO
+  today: the exact words to say, the exact setting to change, the precise first
+  move. FORBIDDEN: a bare generic verb ("melhore", "invista", "cuide de",
+  "capriche") — say EXACTLY what and how, as one concrete action a layperson can
+  do alone right now.
+- **cta — SALVAR + MARCAR/ENVIAR, explicitly.** The `cta` beat's own words must
+  ask to save AND to tag/send it to someone.
+
 # Output
 
 Return ONLY a single JSON object — no surrounding prose, no markdown fences.
