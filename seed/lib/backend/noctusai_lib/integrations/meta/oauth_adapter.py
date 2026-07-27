@@ -78,6 +78,8 @@ from noctusai_lib.integrations.meta.mappers import (
     ig_media_from_body,
     instagram_comment_from_body,
     insights_from_body,
+    lead_from_body,
+    leadgen_form_from_body,
     page_from_body,
     post_from_body,
 )
@@ -102,6 +104,8 @@ from noctusai_lib.integrations.meta.types import (
     InstagramAccount,
     InstagramComment,
     InstagramMedia,
+    Lead,
+    LeadgenForm,
     MetaConnectionStatus,
     PostInsights,
     PublishedMedia,
@@ -140,6 +144,17 @@ _AD_FIELDS = (
 _AD_ACTIVITY_FIELDS = (
     "event_type,event_time,object_id,object_type,object_name,"
     "actor_id,actor_name,translated_event_type,extra_data"
+)
+# Lead-ads (Instant Form) read surface. Form-level fields need only a
+# Page token; `questions` (the field schema) is likewise ungated. The
+# per-lead RECORD fields below need the distinct `leads_retrieval` scope.
+_LEADGEN_FORM_FIELDS = (
+    "id,name,status,locale,leads_count,created_time"
+)
+_LEADGEN_FORM_DETAIL_FIELDS = _LEADGEN_FORM_FIELDS + ",questions"
+_LEAD_FIELDS = (
+    "id,created_time,ad_id,ad_name,adset_id,adset_name,"
+    "campaign_id,campaign_name,form_id,platform,is_organic,field_data"
 )
 
 logger = logging.getLogger(__name__)
@@ -1270,6 +1285,87 @@ class MetaOAuthAdapter:
             version=self._version,
         )
         return [ad_activity_from_body(r) for r in rows if isinstance(r, dict)]
+
+    # ─── Lead-ads read surface (additive — Page-scoped). Form list +
+    #     schema need only a Page token; the per-lead RECORDS need the
+    #     distinct ``leads_retrieval`` scope. ─────────────────────────
+
+    def list_leadgen_forms(
+        self, page_id: str, *, with_questions: bool = False
+    ) -> list[LeadgenForm]:
+        """List a Page's lead-gen (Instant Form) forms
+        (`{page_id}/leadgen_forms`). `with_questions=True` also pulls
+        each form's field schema (the `questions` array) in the same
+        paged call. Uses the Page token (`pages_show_list` /
+        `pages_read_engagement`); `leads_count` is a form-level metric
+        returned WITHOUT `leads_retrieval` — only the per-lead RECORDS
+        (`list_leads`) need that scope."""
+
+        fields = (
+            _LEADGEN_FORM_DETAIL_FIELDS if with_questions else _LEADGEN_FORM_FIELDS
+        )
+        rows = _meta_api.graph_paged(
+            f"{page_id}/leadgen_forms",
+            access_token=self._page_token(page_id),
+            params={"fields": fields, "limit": 100},
+            version=self._version,
+        )
+        forms = []
+        for r in rows:
+            if not isinstance(r, dict) or not r.get("id"):
+                continue
+            r = {**r, "_page_id": page_id}
+            forms.append(leadgen_form_from_body(r))
+        return forms
+
+    def get_leadgen_form(
+        self, form_id: str, *, page_id: str | None = None
+    ) -> LeadgenForm:
+        """One lead-gen form by id WITH its field schema (`questions`).
+        Uses the owning Page's token when `page_id` is given (the
+        reliable path); otherwise falls back to the user/system-user
+        token. No `leads_retrieval` needed — this is the form schema,
+        not lead PII."""
+
+        token = self._page_token(page_id) if page_id else self._user_token()
+        body = _meta_api.graph_get(
+            form_id,
+            access_token=token,
+            params={"fields": _LEADGEN_FORM_DETAIL_FIELDS},
+            version=self._version,
+        )
+        if not body.get("id"):
+            body = {**body, "id": form_id}
+        if page_id:
+            body = {**body, "_page_id": page_id}
+        return leadgen_form_from_body(body)
+
+    def list_leads(
+        self, form_id: str, *, page_id: str | None = None, limit: int = 100
+    ) -> list[Lead]:
+        """The submitted lead RECORDS for a form (`{form_id}/leads`).
+
+        **Production gate:** requires the `leads_retrieval` scope
+        (DISTINCT from `ads_read`/`pages_*`). Absent it, Graph returns
+        `(#200) Requires leads_retrieval permission to manage the
+        object` and `graph_paged` raises `MetaGraphError` — surfaced,
+        never a faked empty list (an empty list must mean "no leads",
+        not "not permitted"). Uses the owning Page's token when
+        `page_id` is given."""
+
+        token = self._page_token(page_id) if page_id else self._user_token()
+        rows = _meta_api.graph_paged(
+            f"{form_id}/leads",
+            access_token=token,
+            params={"fields": _LEAD_FIELDS, "limit": min(limit, 100)},
+            version=self._version,
+            limit=limit,  # truncate the accumulated list to `limit`
+        )
+        return [
+            lead_from_body({**r, "form_id": r.get("form_id") or form_id})
+            for r in rows
+            if isinstance(r, dict) and r.get("id")
+        ]
 
     # ─── Ads management surface (additive — read/insights/posting
     #     unchanged; mutations use the App-Review-gated

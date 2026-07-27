@@ -219,6 +219,70 @@ class AdsActivitiesListOut(BaseModel):
     data: list[AdsActivityOut]
 
 
+# ─── Lead-ads (Instant Form) DTOs ─────────────────────────────────────────
+class LeadgenQuestionOut(BaseModel):
+    key: str | None = None
+    label: str | None = None
+    type: str | None = None
+    options: list[dict[str, str]] = []
+
+
+class LeadgenFormOut(BaseModel):
+    form_id: str
+    name: str | None = None
+    status: str | None = None
+    locale: str | None = None
+    leads_count: int | None = None
+    created_time: str | None = None
+    page_id: str | None = None
+    page_name: str | None = None
+    questions: list[LeadgenQuestionOut] = []
+
+
+class LeadFormsSummaryOut(BaseModel):
+    """Everything accessible WITHOUT the ``leads_retrieval`` scope: the
+    form inventory, each form's field schema, and volume metrics rolled
+    up across the workspace's Pages. ``records_available`` is a live
+    capability probe — True only when the token can actually read the
+    per-lead RECORDS (i.e. ``leads_retrieval`` is granted)."""
+
+    total_leads: int
+    forms_count: int
+    active_forms: int
+    forms_with_leads: int
+    pages: list[dict[str, str]]
+    records_available: bool
+    forms: list[LeadgenFormOut]
+
+
+class LeadFieldOut(BaseModel):
+    name: str | None = None
+    values: list[str] = []
+
+
+class LeadRecordOut(BaseModel):
+    id: str
+    created_time: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    platform: str | None = None
+    is_organic: bool | None = None
+    field_data: list[LeadFieldOut] = []
+
+
+class LeadRecordsOut(BaseModel):
+    """Per-form lead RECORDS. ``gated`` is True (with ``data: []`` + a
+    ``reason``) when the token lacks ``leads_retrieval`` — surfaced as a
+    clean, actionable state, never a 500 or a faked-empty success."""
+
+    form_id: str
+    gated: bool = False
+    reason: str | None = None
+    data: list[LeadRecordOut] = []
+
+
 class AdsSyncIn(StrictHttpModel):
     mode: Literal["incremental", "backfill"] = "incremental"
 
@@ -951,6 +1015,135 @@ def list_activities(
     resp = q.order("occurred_at", desc=True).execute()
     return AdsActivitiesListOut(
         data=[AdsActivityOut(**row) for row in (resp.data or [])]
+    )
+
+
+# ─── GET /leads/forms · GET /leads/records (Instant Form leads) ───────────
+def _iso(dt: Any) -> str | None:
+    return dt.isoformat() if isinstance(dt, datetime) else None
+
+
+def _leadgen_form_out(form: Any, *, page_name: str | None) -> LeadgenFormOut:
+    return LeadgenFormOut(
+        form_id=form.id,
+        name=form.name,
+        status=form.status,
+        locale=form.locale,
+        leads_count=form.leads_count,
+        created_time=_iso(form.created_time),
+        page_id=form.page_id,
+        page_name=page_name,
+        questions=[
+            LeadgenQuestionOut(
+                key=q.key, label=q.label, type=q.type, options=list(q.options)
+            )
+            for q in form.questions
+        ],
+    )
+
+
+def _lead_record_out(lead: Any) -> LeadRecordOut:
+    return LeadRecordOut(
+        id=lead.id,
+        created_time=_iso(lead.created_time),
+        ad_id=lead.ad_id,
+        ad_name=lead.ad_name,
+        campaign_id=lead.campaign_id,
+        campaign_name=lead.campaign_name,
+        platform=lead.platform,
+        is_organic=lead.is_organic,
+        field_data=[
+            LeadFieldOut(name=fd.name, values=list(fd.values))
+            for fd in lead.field_data
+        ],
+    )
+
+
+_LEADS_RETRIEVAL_HINT = (
+    "O acesso aos registros de leads (nome/telefone/e-mail) exige a "
+    "permissão 'leads_retrieval', que este token ainda não possui. "
+    "Gere um novo token do Usuário do Sistema com 'leads_retrieval' "
+    "marcada (Configurações do Negócio → Usuários do Sistema) e "
+    "atualize a credencial. Formulários e contagens já funcionam sem ela."
+)
+
+
+@router.get("/leads/forms", response_model=LeadFormsSummaryOut)
+def list_lead_forms(
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Lead-gen (Instant Form) inventory + field schema + volume metrics
+    across the workspace's Pages. All of this is accessible WITHOUT
+    ``leads_retrieval`` (form-level data only). ``records_available`` is a
+    live 1-lead capability probe: True only when the token can actually
+    read the per-lead RECORDS. No DB — a live read, like the rest of the
+    console."""
+    _org_id, adapter = org_and_adapter
+    try:
+        pages = adapter.list_facebook_pages()
+        page_name_by_id = {p.id: p.name for p in pages}
+        forms: list[Any] = []
+        for p in pages:
+            forms.extend(adapter.list_leadgen_forms(p.id, with_questions=True))
+    except MetaGraphError as exc:
+        logger.warning("meta ads: lead forms fetch failed: %s", exc)
+        return handle_meta_graph_error(exc)
+
+    forms.sort(key=lambda f: (f.leads_count or 0), reverse=True)
+    total_leads = sum(int(f.leads_count or 0) for f in forms)
+    with_leads = [f for f in forms if int(f.leads_count or 0) > 0]
+
+    # Live capability probe — can we actually read the RECORDS? Only worth
+    # probing when at least one form has leads. A permission error here is
+    # the expected "leads_retrieval not granted" state, not a failure.
+    records_available = False
+    if with_leads:
+        top = with_leads[0]
+        try:
+            adapter.list_leads(top.id, page_id=top.page_id, limit=1)
+            records_available = True
+        except MetaGraphError as exc:
+            if not exc.is_permission:
+                logger.warning("meta ads: lead-records probe non-permission error: %s", exc)
+            records_available = False
+
+    return LeadFormsSummaryOut(
+        total_leads=total_leads,
+        forms_count=len(forms),
+        active_forms=sum(1 for f in forms if f.status == "ACTIVE"),
+        forms_with_leads=len(with_leads),
+        pages=[{"id": p.id, "name": p.name or ""} for p in pages],
+        records_available=records_available,
+        forms=[_leadgen_form_out(f, page_name=page_name_by_id.get(f.page_id))
+               for f in forms],
+    )
+
+
+@router.get("/leads/records", response_model=LeadRecordsOut)
+def list_lead_records(
+    form_id: str = Query(...),
+    page_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """The per-lead RECORDS for one form (name/phone/email + qualifying
+    answers, with ad/campaign attribution). **Gated on ``leads_retrieval``**
+    — when the token lacks it, returns a clean ``{gated: true, reason}``
+    (200) so the UI shows an actionable banner rather than an error. No
+    DB — live read."""
+    _org_id, adapter = org_and_adapter
+    try:
+        leads = adapter.list_leads(form_id, page_id=page_id, limit=limit)
+    except MetaGraphError as exc:
+        if exc.is_permission:
+            return LeadRecordsOut(
+                form_id=form_id, gated=True, reason=_LEADS_RETRIEVAL_HINT
+            )
+        logger.warning("meta ads: lead records fetch failed: %s", exc)
+        return handle_meta_graph_error(exc)
+    return LeadRecordsOut(
+        form_id=form_id, gated=False,
+        data=[_lead_record_out(lead) for lead in leads],
     )
 
 

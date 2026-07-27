@@ -715,6 +715,51 @@ class TestPriorSurfaceRegression:
         assert by_id["abo1"].daily_budget is None  # never a silent 0
         assert by_id["abo1"].lifetime_budget is None
 
+    def test_leadgen_forms_and_leads_parse_and_gate(self):
+        """Form list + schema parse from a Page-token call; the per-lead
+        RECORDS raise the distinct `leads_retrieval` permission error
+        (surfaced, never a faked empty list)."""
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        # list_facebook_pages populates the page-token cache (me/accounts).
+        pages_body = {
+            "data": [{"id": "P1", "name": "One", "access_token": "PTOK"}],
+            "paging": {},
+        }
+        forms_body = {
+            "data": [{
+                "id": "f1", "name": "Form A", "status": "ACTIVE",
+                "leads_count": "83", "locale": "pt_BR",
+                "questions": [
+                    {"key": "email", "type": "EMAIL", "label": "Email"},
+                    {"key": "budget", "type": "CUSTOM",
+                     "options": [{"key": "k", "value": "Até R$700 Mil"}]},
+                ],
+            }],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(pages_body)):
+            a.list_facebook_pages()
+        with patch.object(httpx, "get", return_value=_FakeResponse(forms_body)):
+            forms = a.list_leadgen_forms("P1", with_questions=True)
+        assert len(forms) == 1
+        f = forms[0]
+        assert f.leads_count == 83 and isinstance(f.leads_count, int)
+        assert f.page_id == "P1"
+        assert [q.type for q in f.questions] == ["EMAIL", "CUSTOM"]
+        assert f.questions[1].options[0]["value"] == "Até R$700 Mil"
+
+        # The RECORDS path is scope-gated — a (#200) permission error.
+        err_body = {"error": {
+            "message": "(#200) Requires leads_retrieval permission to manage the object",
+            "code": 200,
+        }}
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(err_body, status_code=403)
+        ):
+            with pytest.raises(MetaGraphError) as ei:
+                a.list_leads("f1", page_id="P1", limit=5)
+        assert ei.value.is_permission
+
     def test_factory_default_fake_carries_ads_read_contract(self):
         impl = get_meta_adapter()
         assert isinstance(impl, FakeMetaAdapter)

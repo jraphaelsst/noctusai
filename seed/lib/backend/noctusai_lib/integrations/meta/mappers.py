@@ -28,6 +28,10 @@ from noctusai_lib.integrations.meta.types import (
     InstagramAccount,
     InstagramComment,
     InstagramMedia,
+    Lead,
+    LeadFieldEntry,
+    LeadgenForm,
+    LeadgenQuestion,
     PostInsights,
 )
 
@@ -517,6 +521,72 @@ def campaign_from_body(body: dict[str, Any]) -> AdCampaign:
     )
 
 
+def leadgen_question_from_body(body: dict[str, Any]) -> LeadgenQuestion:
+    """Map one entry of a form's `questions` array to `LeadgenQuestion`.
+    Graph echoes the answer key back on a lead's `field_data[].name`; we
+    fall back to `type` when `key` is absent so a `CUSTOM` question is
+    never keyless."""
+    return LeadgenQuestion(
+        key=body.get("key") or body.get("type"),
+        label=body.get("label"),
+        type=body.get("type"),
+        options=[
+            {"key": str(o.get("key", "")), "value": str(o.get("value", ""))}
+            for o in (body.get("options") or [])
+            if isinstance(o, dict)
+        ],
+    )
+
+
+def leadgen_form_from_body(body: dict[str, Any]) -> LeadgenForm:
+    """Map one row of `{page_id}/leadgen_forms` (or a single-form read
+    with `questions`) to `LeadgenForm`. `leads_count` is a form-level
+    metric available without `leads_retrieval`; `questions` is populated
+    only when the caller requested that field."""
+    return LeadgenForm(
+        id=str(body["id"]),
+        name=body.get("name"),
+        status=body.get("status"),
+        locale=body.get("locale"),
+        leads_count=_safe_int(body.get("leads_count")),
+        created_time=parse_graph_datetime(body.get("created_time")),
+        page_id=body.get("_page_id"),
+        questions=[
+            leadgen_question_from_body(q)
+            for q in (body.get("questions") or [])
+            if isinstance(q, dict)
+        ],
+    )
+
+
+def lead_from_body(body: dict[str, Any]) -> Lead:
+    """Map one row of `{form_id}/leads` (or `{ad_id}/leads`) to `Lead`.
+    Requires the `leads_retrieval` scope upstream — this mapper only
+    shapes the already-fetched body. `field_data` is Graph's
+    `[{name, values:[...]}, ...]` answer list."""
+    return Lead(
+        id=str(body["id"]),
+        created_time=parse_graph_datetime(body.get("created_time")),
+        form_id=body.get("form_id"),
+        ad_id=body.get("ad_id"),
+        ad_name=body.get("ad_name"),
+        adset_id=body.get("adset_id"),
+        adset_name=body.get("adset_name"),
+        campaign_id=body.get("campaign_id"),
+        campaign_name=body.get("campaign_name"),
+        platform=body.get("platform"),
+        is_organic=body.get("is_organic"),
+        field_data=[
+            LeadFieldEntry(
+                name=fd.get("name"),
+                values=[str(v) for v in (fd.get("values") or [])],
+            )
+            for fd in (body.get("field_data") or [])
+            if isinstance(fd, dict)
+        ],
+    )
+
+
 def ad_set_from_body(body: dict[str, Any]) -> AdSet:
     """Map one row of `GET act_{id}/adsets` to `AdSet`. `daily_budget`
     arrives as a Graph numeric-as-string field; coerced via
@@ -703,6 +773,9 @@ __all__ = [
     "ig_media_from_body",
     "instagram_comment_from_body",
     "insights_from_body",
+    "lead_from_body",
+    "leadgen_form_from_body",
+    "leadgen_question_from_body",
     "page_from_body",
     "parse_graph_datetime",
     "post_from_body",

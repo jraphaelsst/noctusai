@@ -37,6 +37,8 @@ from noctusai_lib.integrations.meta.types import (
     InstagramAccount,
     InstagramComment,
     InstagramMedia,
+    Lead,
+    LeadgenForm,
     MetaConnectionStatus,
     PostInsights,
     PublishedMedia,
@@ -73,6 +75,8 @@ class FakeMetaAdapter:
         self._ads_by_account: dict[str, list[Ad]] = {}
         self._ad_insights_series: dict[str, AdInsightsSeries] = {}
         self._activities_by_account: dict[str, list[AdActivity]] = {}
+        self._leadgen_forms_by_page: dict[str, list[LeadgenForm]] = {}
+        self._leads_by_form: dict[str, list[Lead]] = {}
         self._post_seq = 0
         self._media_seq = 0
         # Ads-management recorders — deterministic in-memory CRUD so
@@ -131,6 +135,8 @@ class FakeMetaAdapter:
         ads_by_account: dict[str, list[Ad]] | None = None,
         ad_insights_series: dict[str, AdInsightsSeries] | None = None,
         activities_by_account: dict[str, list[AdActivity]] | None = None,
+        leadgen_forms_by_page: dict[str, list[LeadgenForm]] | None = None,
+        leads_by_form: dict[str, list[Lead]] | None = None,
         ig_comments_by_media: dict[str, list[InstagramComment]] | None = None,
         fb_comments_by_post: dict[str, list[FacebookComment]] | None = None,
         conversations_by_page: dict[str, list[Conversation]] | None = None,
@@ -177,6 +183,14 @@ class FakeMetaAdapter:
         if activities_by_account is not None:
             self._activities_by_account = {
                 k: list(v) for k, v in activities_by_account.items()
+            }
+        if leadgen_forms_by_page is not None:
+            self._leadgen_forms_by_page = {
+                k: list(v) for k, v in leadgen_forms_by_page.items()
+            }
+        if leads_by_form is not None:
+            self._leads_by_form = {
+                k: list(v) for k, v in leads_by_form.items()
             }
         if ig_comments_by_media is not None:
             self._ig_comments_by_media = {
@@ -492,6 +506,31 @@ class FakeMetaAdapter:
                 acct, self._activities_by_account.get(ad_account_id, [])
             )
         )
+
+    def list_leadgen_forms(
+        self, page_id: str, *, with_questions: bool = False
+    ) -> list[LeadgenForm]:
+        # `with_questions` accepted for Protocol parity; the Fake serves
+        # whatever forms were seeded (a seeded form may already carry its
+        # questions). Deterministic, never raises the leads_retrieval gate.
+        return list(self._leadgen_forms_by_page.get(page_id, []))
+
+    def get_leadgen_form(
+        self, form_id: str, *, page_id: str | None = None
+    ) -> LeadgenForm:
+        for forms in self._leadgen_forms_by_page.values():
+            for f in forms:
+                if f.id == form_id:
+                    return f
+        return LeadgenForm(id=form_id)
+
+    def list_leads(
+        self, form_id: str, *, page_id: str | None = None, limit: int = 100
+    ) -> list[Lead]:
+        # The Fake is the "scope already granted" path — it NEVER raises
+        # the leads_retrieval gate (that lives on the live adapter only),
+        # so consumer/endpoint tests can exercise the records path.
+        return list(self._leads_by_form.get(form_id, []))[:limit]
 
     def create_ad_campaign(self, ad_account_id, spec):
         self._camp_seq += 1

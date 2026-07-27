@@ -159,6 +159,55 @@ export interface AdsActivitiesList {
   data: AdsActivity[];
 }
 
+// ─── Lead-ads (Instant Form) ────────────────────────────────────────────
+export interface LeadgenQuestion {
+  key: string | null;
+  label: string | null;
+  type: string | null;
+  options: { key: string; value: string }[];
+}
+export interface LeadgenForm {
+  form_id: string;
+  name: string | null;
+  status: string | null;
+  locale: string | null;
+  leads_count: number | null;
+  created_time: string | null;
+  page_id: string | null;
+  page_name: string | null;
+  questions: LeadgenQuestion[];
+}
+export interface LeadFormsSummary {
+  total_leads: number;
+  forms_count: number;
+  active_forms: number;
+  forms_with_leads: number;
+  pages: { id: string; name: string }[];
+  records_available: boolean;
+  forms: LeadgenForm[];
+}
+export interface LeadField {
+  name: string | null;
+  values: string[];
+}
+export interface LeadRecord {
+  id: string;
+  created_time: string | null;
+  ad_id: string | null;
+  ad_name: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  platform: string | null;
+  is_organic: boolean | null;
+  field_data: LeadField[];
+}
+export interface LeadRecords {
+  form_id: string;
+  gated: boolean;
+  reason: string | null;
+  data: LeadRecord[];
+}
+
 export interface AdsSyncStarted {
   job_id: string;
 }
@@ -337,6 +386,35 @@ export async function downloadAdsExport(
   a.click();
   a.remove();
   URL.revokeObjectURL(href);
+}
+
+/** Lead-gen (Instant Form) inventory + field schema + volume metrics —
+ *  all accessible WITHOUT `leads_retrieval`. `records_available` tells the
+ *  UI whether the per-lead records path is unlocked. */
+export function useLeadForms() {
+  return useQuery<LeadFormsSummary>({
+    queryKey: ["meta-ads", "lead-forms"],
+    queryFn: () => api.get<LeadFormsSummary>("/api/meta/ads/leads/forms"),
+  });
+}
+
+/** The per-lead RECORDS for one form — gated on `leads_retrieval`. When
+ *  locked the response carries `{gated:true, reason}` (still a 200), so the
+ *  UI renders an actionable banner rather than an error. Enabled only when
+ *  a form is selected AND records are known to be available. */
+export function useLeadRecords(
+  formId: string | null,
+  pageId: string | null,
+  enabled: boolean,
+) {
+  return useQuery<LeadRecords>({
+    queryKey: ["meta-ads", "lead-records", formId ?? "", pageId ?? ""],
+    queryFn: () =>
+      api.get<LeadRecords>(
+        `/api/meta/ads/leads/records${qs({ form_id: formId, page_id: pageId })}`,
+      ),
+    enabled: enabled && !!formId,
+  });
 }
 
 /** Trigger a sync (incremental by default). Returns the job id; poll

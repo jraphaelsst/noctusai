@@ -485,6 +485,86 @@ class AdActivity:
 
 
 @dataclass(frozen=True)
+class LeadgenQuestion:
+    """One question on a lead-gen (Instant Form) form — the FIELD SCHEMA
+    a lead's `field_data` answers map onto.
+
+    `key` is the stable answer key Graph echoes back in a lead's
+    `field_data[].name` (e.g. `full_name`, `phone_number`, `email`, or
+    the raw custom-question text). `type` is Graph's field type
+    (`FULL_NAME` / `PHONE` / `EMAIL` / `CUSTOM` / `CITY` / …). `options`
+    is populated only for choice-type CUSTOM questions (each a
+    `{"key","value"}` pair). Reading the form + its questions needs only
+    a Page token (`pages_show_list`/`pages_read_engagement`) — NOT the
+    `leads_retrieval` scope the actual lead RECORDS require; so the
+    schema is knowable even when the answers are still gated."""
+
+    key: str | None = None
+    label: str | None = None
+    type: str | None = None
+    options: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class LeadgenForm:
+    """A Page's lead-gen (Instant Form) form (`{page_id}/leadgen_forms`).
+
+    `leads_count` is Graph's cumulative submitted-lead counter for the
+    form (accessible WITHOUT `leads_retrieval` — it is a form-level
+    metric, not lead PII). `questions` is the field schema (see
+    `LeadgenQuestion`). Reading forms needs a Page token; reading the
+    per-form lead RECORDS additionally needs `leads_retrieval` (a
+    distinct, separately-granted scope — a form list can succeed while
+    `list_leads` raises a `(#200) Requires leads_retrieval` error)."""
+
+    id: str
+    name: str | None = None
+    status: str | None = None
+    locale: str | None = None
+    leads_count: int | None = None
+    created_time: datetime | None = None
+    page_id: str | None = None
+    questions: list[LeadgenQuestion] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class LeadFieldEntry:
+    """One answered field on a lead — a `{name, values}` pair from a
+    lead's `field_data`. `name` matches a `LeadgenQuestion.key`;
+    `values` is Graph's list (usually one element)."""
+
+    name: str | None = None
+    values: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Lead:
+    """One submitted lead record (`{form_id}/leads` or `{ad_id}/leads`).
+
+    **Production gate:** reading leads needs the `leads_retrieval` scope
+    (distinct from `ads_read`/`pages_*`); absent it Graph raises
+    `MetaGraphError` `(#200) Requires leads_retrieval permission`. The
+    ad/campaign attribution (`ad_id`/`campaign_id`/…) ties a lead back to
+    the spend surfaced in the ads console. `field_data` carries the
+    answers (PII: name/phone/email + the qualifying-question responses);
+    `is_organic` is True for a lead that came through the form outside a
+    paid ad. `created_time` is the submission timestamp."""
+
+    id: str
+    created_time: datetime | None = None
+    form_id: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    platform: str | None = None
+    is_organic: bool | None = None
+    field_data: list[LeadFieldEntry] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class CampaignSpec:
     """Input spec for `create_ad_campaign`.
 
@@ -770,6 +850,22 @@ class MetaAdapter(Protocol):
         self, ad_account_id: str, since: int, until: int
     ) -> list[AdActivity]: ...
 
+    # ─── Lead-ads read surface (additive — Page-scoped; form list +
+    #    schema need only a Page token, lead RECORDS need the distinct
+    #    ``leads_retrieval`` scope) ──────────────────────────────────
+
+    def list_leadgen_forms(
+        self, page_id: str, *, with_questions: bool = False
+    ) -> list[LeadgenForm]: ...
+
+    def get_leadgen_form(
+        self, form_id: str, *, page_id: str | None = None
+    ) -> LeadgenForm: ...
+
+    def list_leads(
+        self, form_id: str, *, page_id: str | None = None, limit: int = 100
+    ) -> list[Lead]: ...
+
     # ─── Ads management surface (additive — read/insights/posting
     #    callers unaffected; distinct ``ads_management`` scope) ──────
 
@@ -885,6 +981,10 @@ __all__ = [
     "InstagramAccount",
     "InstagramComment",
     "InstagramMedia",
+    "Lead",
+    "LeadFieldEntry",
+    "LeadgenForm",
+    "LeadgenQuestion",
     "MediaProcessingStatus",
     "MetaAdapter",
     "MetaConnectionStatus",

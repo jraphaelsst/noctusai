@@ -31,7 +31,12 @@ from noctusai_lib.integrations.meta import (
     AdAccount,
     AdCampaign,
     AdSet,
+    FacebookPage,
     FakeMetaAdapter,
+    Lead,
+    LeadFieldEntry,
+    LeadgenForm,
+    LeadgenQuestion,
     MetaGraphError,
 )
 from noctusai_lib.testing import MockSupabaseClient, bind_consent_module_to_mock
@@ -163,6 +168,8 @@ class TestAuthBoundary:
             "/api/meta/ads/insights/compare?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/pacing",
+            "/api/meta/ads/leads/forms",
+            "/api/meta/ads/leads/records?form_id=f1",
             "/api/meta/ads/export?format=csv&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/activities?since=2026-07-01&until=2026-07-02",
         ],
@@ -427,6 +434,115 @@ class TestBudgetPacingEndpoint:
         resp = tc.get("/api/meta/ads/insights/pacing")
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"] == []
+
+
+# ─── GET /leads/forms · GET /leads/records ────────────────────────────
+_PAGE_ID = "204862512706377"
+
+
+def _lead_forms_adapter() -> FakeMetaAdapter:
+    adapter = FakeMetaAdapter()
+    adapter.seed(
+        pages=[FacebookPage(id=_PAGE_ID, name="One Consultoria", access_token="PTOK")],
+        leadgen_forms_by_page={
+            _PAGE_ID: [
+                LeadgenForm(
+                    id="f1", name="[Senseys] ONE10023", status="ACTIVE",
+                    locale="pt_BR", leads_count=83, page_id=_PAGE_ID,
+                    questions=[
+                        LeadgenQuestion(key="Até qual valor?", type="CUSTOM",
+                                        options=[{"key": "A", "value": "Até R$700 Mil"}]),
+                        LeadgenQuestion(key="full_name", label="Full name", type="FULL_NAME"),
+                        LeadgenQuestion(key="phone_number", label="Phone", type="PHONE"),
+                        LeadgenQuestion(key="email", label="Email", type="EMAIL"),
+                    ],
+                ),
+                LeadgenForm(id="f2", name="Paused form", status="ARCHIVED",
+                            leads_count=0, page_id=_PAGE_ID),
+            ]
+        },
+        leads_by_form={
+            "f1": [
+                Lead(id="lead1", campaign_name="ONE10023", platform="fb",
+                     field_data=[
+                         LeadFieldEntry(name="full_name", values=["Maria Silva"]),
+                         LeadFieldEntry(name="phone_number", values=["+5511999998888"]),
+                         LeadFieldEntry(name="email", values=["maria@example.com"]),
+                     ]),
+            ]
+        },
+    )
+    return adapter
+
+
+class _GatedLeadsAdapter(FakeMetaAdapter):
+    """Simulates the live token WITHOUT `leads_retrieval`: forms list fine,
+    lead RECORDS raise the (#200) permission error."""
+
+    def list_leads(self, form_id, *, page_id=None, limit=100):
+        raise MetaGraphError("(#200) Requires leads_retrieval permission", code=200)
+
+
+class TestLeadForms:
+    def test_returns_inventory_schema_and_metrics(self, client):
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _lead_forms_adapter())
+        resp = tc.get("/api/meta/ads/leads/forms")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_leads"] == 83
+        assert body["forms_count"] == 2
+        assert body["active_forms"] == 1
+        assert body["forms_with_leads"] == 1
+        assert body["pages"] == [{"id": _PAGE_ID, "name": "One Consultoria"}]
+        # Fake is the "scope granted" path → records probe succeeds.
+        assert body["records_available"] is True
+        top = body["forms"][0]  # sorted by leads_count desc
+        assert top["form_id"] == "f1"
+        assert top["leads_count"] == 83
+        assert [q["type"] for q in top["questions"]] == [
+            "CUSTOM", "FULL_NAME", "PHONE", "EMAIL",
+        ]
+        assert top["questions"][0]["options"][0]["value"] == "Até R$700 Mil"
+
+    def test_records_available_false_when_scope_gated(self, client):
+        tc, _mock_sb, _caching = client
+        gated = _GatedLeadsAdapter()
+        gated.seed(
+            pages=[FacebookPage(id=_PAGE_ID, name="One", access_token="PTOK")],
+            leadgen_forms_by_page={
+                _PAGE_ID: [LeadgenForm(id="f1", status="ACTIVE",
+                                       leads_count=5, page_id=_PAGE_ID)]
+            },
+        )
+        _override_adapter(_ORG_A, gated)
+        resp = tc.get("/api/meta/ads/leads/forms")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["records_available"] is False
+
+
+class TestLeadRecords:
+    def test_returns_records_when_available(self, client):
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _lead_forms_adapter())
+        resp = tc.get(f"/api/meta/ads/leads/records?form_id=f1&page_id={_PAGE_ID}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["gated"] is False
+        assert len(body["data"]) == 1
+        fields = {f["name"]: f["values"] for f in body["data"][0]["field_data"]}
+        assert fields["email"] == ["maria@example.com"]
+        assert body["data"][0]["campaign_name"] == "ONE10023"
+
+    def test_gated_returns_clean_200_not_error(self, client):
+        tc, _mock_sb, _caching = client
+        _override_adapter(_ORG_A, _GatedLeadsAdapter())
+        resp = tc.get("/api/meta/ads/leads/records?form_id=f1")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["gated"] is True
+        assert body["data"] == []
+        assert "leads_retrieval" in (body["reason"] or "")
 
 
 # ─── GET /campaigns/{id}/children ─────────────────────────────────────

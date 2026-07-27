@@ -30,6 +30,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Table2,
+  UserPlus,
 } from "lucide-react";
 
 import {
@@ -51,6 +52,7 @@ const AdsVisaoGeral = lazy(() => import("@/pages/meta/AdsVisaoGeral"));
 const AdsCampanhas = lazy(() => import("@/pages/meta/AdsCampanhas"));
 const AdsHistorico = lazy(() => import("@/pages/meta/AdsHistorico"));
 const AdsFinanceiro = lazy(() => import("@/pages/meta/AdsFinanceiro"));
+const AdsLeads = lazy(() => import("@/pages/meta/AdsLeads"));
 
 function PanelFallback() {
   return (
@@ -89,6 +91,7 @@ const ADS_SUBTABS: SocialDashboardSubtab[] = [
   { key: "campaigns", label: "Campanhas", icon: Table2, render: lazyPanel(AdsCampanhas) },
   { key: "history", label: "Histórico", icon: History, render: lazyPanel(AdsHistorico) },
   { key: "financial", label: "Financeiro", icon: DollarSign, render: lazyPanel(AdsFinanceiro) },
+  { key: "leads", label: "Leads", icon: UserPlus, render: lazyPanel(AdsLeads) },
 ];
 
 export default function MetaDashboard() {
