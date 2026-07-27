@@ -58,8 +58,16 @@ function resolveFromProductDir(productDir: string) {
 }
 
 /**
- * Packages imported by the seed framework and lib that need to resolve
- * from the product's node_modules. Listed here ONCE — never in products.
+ * Packages imported by the seed FRAMEWORK (`@noctusai/seed`) that need to
+ * resolve from the product's node_modules. Listed here ONCE — never in
+ * products.
+ *
+ * This hand-curated list is the FLOOR, not the whole requirement set: seed
+ * ORGAN peer deps are derived at config time by
+ * `deriveOrganTransitiveDeps` and unioned in (see `resolveFrameworkDeps`).
+ * Mirrors the same two-part shape as the Python audit tool
+ * `mcp/noctusai/tools/noctus/dev/check_framework_deps.py` — keep the two in
+ * step.
  */
 const FRAMEWORK_DEPS = [
   "react",
@@ -76,6 +84,97 @@ const FRAMEWORK_DEPS = [
   "clsx",
   "tailwind-merge",
 ];
+
+/**
+ * Specifiers that are NOT installable npm packages: relative paths, the
+ * product's own `@/...` source alias, and the seed's self-referencing
+ * `@noctusai/...` aliases.
+ */
+const LOCAL_SPECIFIER_PREFIXES = [".", "@/", "@noctusai/"];
+
+/** `@scope/name/sub/path` → `@scope/name`; `name/sub/path` → `name`. */
+function packageNameFromSpecifier(spec: string): string | null {
+  if (LOCAL_SPECIFIER_PREFIXES.some((p) => spec.startsWith(p))) {
+    return null;
+  }
+  const parts = spec.split("/");
+  if (spec.startsWith("@")) {
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+  }
+  return parts[0] || null;
+}
+
+/** Best-effort `/* *\/` + `//` comment stripper — run BEFORE import matching
+ * so prose containing the word "import" inside a JSDoc block can't act as a
+ * false anchor for the non-greedy `from "spec"` match. */
+function stripComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, "");
+}
+
+function walkSourceFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkSourceFiles(full, acc);
+    } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
+/**
+ * Statically derive the external packages `@noctusai/lib` ORGANS import.
+ *
+ * `FRAMEWORK_DEPS` is a hand-curated literal, and hand-maintained lists
+ * drift (`KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`). It
+ * drifted exactly once already: the `KanbanBoard` organ brought
+ * `@dnd-kit/core` + `/sortable` + `/utilities`, nobody edited the list, and
+ * the organ's copy of dnd-kit was therefore NOT deduped against the
+ * product's — two `DndContext` module instances, so a consumer's drag
+ * silently no-ops (the provider the card's `useDraggable` reads is not the
+ * one the board rendered). The Python audit tool grew the same derivation on
+ * 2026-07-20 for the package.json-parity leg; this is its build-time twin
+ * for the `resolve.dedupe` / `optimizeDeps` leg.
+ *
+ * Scope, honestly stated: only `seed/lib/frontend/src` (`@noctusai/lib`) is
+ * scanned. `seed/framework/frontend/src` (`@noctusai/seed`) is NOT — its
+ * deps remain covered by the hand-curated floor above. That is the named
+ * manual remainder.
+ *
+ * Excludes `*.test.ts*` (test-only deps never reach a product build) and
+ * whole-declaration `import type` / `export type` (erased before bundling).
+ * Best-effort regex scan, not a TS parser: it does not follow dynamic
+ * `import()`. A false negative falls back to the `FRAMEWORK_DEPS` floor —
+ * it cannot under-report below it.
+ */
+function deriveOrganTransitiveDeps(seedLibDir: string): string[] {
+  if (!fs.existsSync(seedLibDir)) {
+    return [];
+  }
+  const found = new Set<string>();
+  // Captures an optional leading `type` keyword + the module specifier.
+  // `[^;]*?` is non-greedy and spans newlines so multi-line named imports
+  // match too.
+  const importRe = /\b(?:import|export)\s+(type\s+)?[^;]*?\bfrom\s+['"]([^'"]+)['"]/g;
+
+  for (const file of walkSourceFiles(seedLibDir)) {
+    const text = stripComments(fs.readFileSync(file, "utf-8"));
+    let match: RegExpExecArray | null;
+    importRe.lastIndex = 0;
+    while ((match = importRe.exec(text)) !== null) {
+      if (match[1]) continue; // `import type ...` — erased at build time
+      const pkg = packageNameFromSpecifier(match[2]);
+      if (pkg) found.add(pkg);
+    }
+  }
+  return [...found].sort();
+}
+
+/** The hand-curated framework floor UNIONed with derived organ peer deps. */
+function resolveFrameworkDeps(seedLib: string): string[] {
+  return [...new Set([...FRAMEWORK_DEPS, ...deriveOrganTransitiveDeps(seedLib)])];
+}
 
 /**
  * Parse `start.sh PRODUCTS` registry → `frontend_port → backend_port` map.
@@ -157,6 +256,11 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   const productDir = process.cwd();
   const { repoRoot, seedLib, seedFramework, nodeModules } = resolveFromProductDir(productDir);
 
+  // Framework floor + organ peer deps derived from the seed lib source.
+  // Computed once per config load (the factory already reads the filesystem
+  // at this point — see parseProductsRegistry).
+  const frameworkDeps = resolveFrameworkDeps(seedLib);
+
   // Watch mode (the dev `runtime-watch` container runs `vite build --watch`).
   // In watch mode we must NOT empty dist/ before each rebuild: emptying creates
   // a window where dist/index.html is absent, and if the watcher dies mid-pass
@@ -236,10 +340,10 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
         "@noctusai/lib": seedLib,
         "@noctusai/seed": seedFramework,
       },
-      dedupe: FRAMEWORK_DEPS,
+      dedupe: frameworkDeps,
     },
     optimizeDeps: {
-      include: FRAMEWORK_DEPS.map((dep) => `@noctusai/lib > ${dep}`),
+      include: frameworkDeps.map((dep) => `@noctusai/lib > ${dep}`),
     },
   };
 
