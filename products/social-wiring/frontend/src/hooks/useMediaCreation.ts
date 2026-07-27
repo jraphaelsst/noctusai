@@ -80,6 +80,17 @@ export interface PostScore {
   rationale?: string;
 }
 
+/** One beat as emitted in the storyboard JSON (superset of the DB slide row). */
+export interface StoryboardSlide {
+  n?: number;
+  role?: string;
+  headline?: string;
+  body?: string;
+  /** reels only — the exact words said aloud on camera for this beat. */
+  spoken?: string;
+  visual_brief?: string;
+}
+
 /** Storyboard JSON blob persisted on the post (Método Audience metadata). */
 export interface Storyboard {
   title?: string;
@@ -92,7 +103,7 @@ export interface Storyboard {
   templates?: string[];
   arc_pattern?: string;
   rationale?: string;
-  slides?: unknown[];
+  slides?: StoryboardSlide[];
 }
 
 export interface PostSlide {

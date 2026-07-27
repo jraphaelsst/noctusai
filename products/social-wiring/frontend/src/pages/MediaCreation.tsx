@@ -388,6 +388,45 @@ function PostDetail({
             </section>
           )}
 
+        {post.format === "reels" &&
+          post.storyboard?.slides?.some((s) => s.spoken) && (
+            <section>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">
+                  Roteiro (fala) — o que você grava
+                </h3>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 shrink-0 text-[10px]"
+                  onClick={() => {
+                    const script = (post.storyboard?.slides ?? [])
+                      .filter((s) => s.spoken)
+                      .map((s) => s.spoken)
+                      .join("\n\n");
+                    void navigator.clipboard.writeText(script);
+                  }}
+                >
+                  Copiar roteiro
+                </Button>
+              </div>
+              <Card className="bg-muted/30">
+                <CardContent className="space-y-3 p-4 text-sm">
+                  {post.storyboard.slides
+                    .filter((s) => s.spoken)
+                    .map((s, i) => (
+                      <div key={s.n ?? i} className="min-w-0">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {roleLabel(s.role ?? "")}
+                        </div>
+                        <p className="break-words">{s.spoken}</p>
+                      </div>
+                    ))}
+                </CardContent>
+              </Card>
+            </section>
+          )}
+
         {post.slides && post.slides.length > 0 && (
           <section>
             <h3 className="mb-2 text-sm font-semibold">Slides</h3>

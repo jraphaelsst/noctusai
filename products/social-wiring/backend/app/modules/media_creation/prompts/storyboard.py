@@ -33,10 +33,15 @@ generic benefit copy.
    `virada`, `nome`, `prova`, `valor`, `cta`. capa is always slide 1, cta always
    last; virada and prova are priority beats. Fit the ordered subset to
    `slide_count`; merge beats when slides are few, never drop capa or cta.
-5. **Reels (format=reels):** each slide is a beat of the script. `headline` = the
-   ON-SCREEN text (short — shorter than the spoken line); `body` = the SPOKEN
-   voiceover for that beat (the verbal hook on the capa). `visual_brief` frames
-   the shot for 9:16 vertical video.
+5. **Reels (format=reels):** each slide is a beat of the script and MUST include
+   a `spoken` field — the exact words the creator SAYS ALOUD on camera for that
+   beat: first person, conversational, contractions, ready to read from a
+   teleprompter (this is the recorded narration / "roteiro de fala"). Keep
+   `headline` = the short ON-SCREEN text overlay (shorter than the spoken line);
+   `body` = optional short on-screen supporting caption (may be empty).
+   `visual_brief` frames the shot for 9:16 vertical video. The `spoken` lines
+   read end-to-end as ONE natural, flowing script (each beat continues the last).
+   For `carousel`/`single` there is nothing to record — OMIT `spoken` entirely.
 6. **Deliver the promise.** Whatever the capa promises (the "name", the first
    step) must be paid off in a later slide. No bait without delivery.
 7. **Reference fidelity > novelty.** If the brand kit has persona or
@@ -70,8 +75,9 @@ Schema:
     {{
       "n": 1,
       "role": "capa",
-      "headline": "string ≤ 7 words (on-screen text for reels)",
-      "body": "string or empty (spoken voiceover for reels)",
+      "headline": "string ≤ 7 words (on-screen text overlay)",
+      "body": "string or empty (optional on-screen supporting caption)",
+      "spoken": "reels ONLY — the exact words said aloud on camera for this beat; omit for carousel/single",
       "visual_brief": "1-2 sentences describing the image/shot to render"
     }}
   ]

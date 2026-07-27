@@ -661,6 +661,19 @@ Produce the JSON copy object now."""
             + (f" — {s.get('body')}" if s.get("body") else "")
             for s in slides
         ) or "(no slides persisted)"
+        # Reels carry a spoken narration ("roteiro de fala") in the storyboard
+        # JSON — include it so the audit grades the recorded script + the
+        # textual-vs-verbal-headline rule.
+        spoken_lines = "\n".join(
+            f"- [{s.get('role')}] {s.get('spoken')}"
+            for s in (storyboard.get("slides") or [])
+            if s.get("spoken")
+        )
+        spoken_block = (
+            f"\n\n## Roteiro de fala (spoken narration — reels)\n{spoken_lines}"
+            if spoken_lines
+            else ""
+        )
         hashtags = post.get("copy_hashtags") or []
         return f"""# Post to audit
 
@@ -674,7 +687,7 @@ Produce the JSON copy object now."""
 - Arc: {storyboard.get('arc_pattern') or '(none)'}
 
 ## Slides (role → headline — body)
-{slide_lines}
+{slide_lines}{spoken_block}
 
 ## Caption
 {post.get('copy_caption') or '(not generated yet)'}
