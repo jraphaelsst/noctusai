@@ -40,6 +40,7 @@ import {
   useAdsAccount,
   useAdsCampaigns,
   useAdsInsightsSeries,
+  useAdsPacing,
 } from "@/hooks/useMetaAds";
 import {
   AdsLoading,
@@ -76,19 +77,26 @@ export default function AdsFinanceiro() {
     [seriesQ.data],
   );
 
-  // Budget vs actual pacing — active campaigns with a daily budget.
+  // Budget vs actual pacing — the server resolves each active campaign's
+  // EFFECTIVE daily budget (campaign-level for CBO, or a summed
+  // active-ad-set rollup for ABO), so this populates for ad-set-budget
+  // accounts too. Server already sorts hottest-ratio first.
+  const pacingQ = useAdsPacing();
   const pacing = useMemo(
     () =>
-      campaigns
-        .filter((c) => c.daily_budget_cents && c.effective_status === "ACTIVE")
-        .map((c) => {
-          const budget = c.daily_budget_cents ?? 0;
-          const spent = c.latest?.spend_cents ?? 0;
-          const ratio = budget ? spent / budget : 0;
-          return { id: c.object_id, name: c.name ?? c.object_id, budget, spent, ratio };
-        })
-        .sort((a, b) => b.ratio - a.ratio),
-    [campaigns],
+      (pacingQ.data?.data ?? []).map((p) => {
+        const budget = p.effective_daily_budget_cents;
+        const spent = p.latest_spend_cents ?? 0;
+        return {
+          id: p.object_id,
+          name: p.name ?? p.object_id,
+          budget,
+          spent,
+          ratio: budget ? spent / budget : 0,
+          bySet: p.budget_source === "adset_rollup",
+        };
+      }),
+    [pacingQ.data],
   );
 
   if (accountQ.isPending || accountQ.isFetching) return <AdsLoading />;
@@ -119,7 +127,9 @@ export default function AdsFinanceiro() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {!pacing.length ? (
+          {pacingQ.isPending || pacingQ.isFetching ? (
+            <AdsLoading label="Carregando…" />
+          ) : !pacing.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               Nenhuma campanha ativa com orçamento diário definido.
             </p>
@@ -131,7 +141,14 @@ export default function AdsFinanceiro() {
                 return (
                   <div key={p.id}>
                     <div className="mb-1 flex items-center justify-between text-sm">
-                      <span className="truncate pr-2">{p.name}</span>
+                      <span className="flex min-w-0 items-center gap-1.5 pr-2">
+                        <span className="truncate">{p.name}</span>
+                        {p.bySet && (
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            · por conjunto
+                          </span>
+                        )}
+                      </span>
                       <span className="flex items-center gap-2 tabular-nums">
                         {formatCents(p.spent, currency)} / {formatCents(p.budget, currency)}
                         <Badge variant="outline"

@@ -17,6 +17,7 @@ from noctusai_lib.integrations.meta.types import (
     Ad,
     AdAccount,
     AdActivity,
+    AdCampaign,
     AdInsightsRow,
     AdSet,
     Conversation,
@@ -496,6 +497,26 @@ def ad_account_from_body(body: dict[str, Any]) -> AdAccount:
     )
 
 
+def campaign_from_body(body: dict[str, Any]) -> AdCampaign:
+    """Map one row of `GET act_{id}/campaigns` (or a single-campaign
+    read) to `AdCampaign`. `daily_budget`/`lifetime_budget` arrive as
+    Graph numeric-as-string fields and are present ONLY for
+    CBO/Advantage-campaign-budget campaigns; coerced via `_safe_int`
+    (`None` on a missing/unparseable value, never a silent 0 — an
+    ABO campaign genuinely has no campaign-level budget, and 0 would
+    misread as "R$0,00 budget")."""
+
+    return AdCampaign(
+        id=str(body["id"]),
+        name=body.get("name"),
+        objective=body.get("objective"),
+        status=body.get("status"),
+        effective_status=body.get("effective_status"),
+        daily_budget=_safe_int(body.get("daily_budget")),
+        lifetime_budget=_safe_int(body.get("lifetime_budget")),
+    )
+
+
 def ad_set_from_body(body: dict[str, Any]) -> AdSet:
     """Map one row of `GET act_{id}/adsets` to `AdSet`. `daily_budget`
     arrives as a Graph numeric-as-string field; coerced via
@@ -674,6 +695,7 @@ __all__ = [
     "ad_from_body",
     "ad_insights_row_from_body",
     "ad_set_from_body",
+    "campaign_from_body",
     "conversation_from_body",
     "direct_message_from_body",
     "facebook_comment_from_body",

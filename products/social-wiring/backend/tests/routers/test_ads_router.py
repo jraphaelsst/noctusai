@@ -162,6 +162,7 @@ class TestAuthBoundary:
             "/api/meta/ads/insights/series?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/compare?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-02",
+            "/api/meta/ads/insights/pacing",
             "/api/meta/ads/export?format=csv&since=2026-07-01&until=2026-07-02",
             "/api/meta/ads/activities?since=2026-07-01&until=2026-07-02",
         ],
@@ -320,6 +321,112 @@ class TestAccountInsights:
         assert resp.status_code == 200, resp.text
         assert resp.json()["totals"]["spend_cents"] == 0
         assert resp.json()["daily"] == []
+
+
+# ─── GET /insights/pacing ─────────────────────────────────────────────
+class TestBudgetPacingHelper:
+    """Pure rollup logic — no HTTP, no adapter."""
+
+    def test_cbo_uses_campaign_budget(self):
+        from app.modules.meta_ads.routers.ads_router import _effective_daily_budget
+
+        camp = AdCampaign(id="c", effective_status="ACTIVE", daily_budget=15000)
+        assert _effective_daily_budget(camp, {}) == (15000, "campaign")
+
+    def test_abo_sums_active_adset_budgets(self):
+        from app.modules.meta_ads.routers.ads_router import _effective_daily_budget
+
+        camp = AdCampaign(id="c", effective_status="ACTIVE")  # no campaign budget
+        sets = {
+            "c": [
+                AdSet(id="a1", effective_status="ACTIVE", campaign_id="c", daily_budget=3000),
+                AdSet(id="a2", effective_status="ACTIVE", campaign_id="c", daily_budget=2000),
+                # paused ad set — must NOT count toward the daily pace
+                AdSet(id="a3", effective_status="PAUSED", campaign_id="c", daily_budget=9999),
+            ]
+        }
+        assert _effective_daily_budget(camp, sets) == (5000, "adset_rollup")
+
+    def test_unbudgeted_campaign_excluded(self):
+        from app.modules.meta_ads.routers.ads_router import _effective_daily_budget
+
+        camp = AdCampaign(id="c", effective_status="ACTIVE")
+        # only a paused ad set with a budget → no active pacing target
+        sets = {"c": [AdSet(id="a", effective_status="PAUSED", campaign_id="c", daily_budget=1000)]}
+        assert _effective_daily_budget(camp, sets) is None
+
+
+class TestBudgetPacingEndpoint:
+    def test_abo_rollup_populates_pacing(self, client):
+        """The real-estate account shape: campaigns budget at the ad-set
+        level (ABO), so the pacing card must roll ad-set budgets up per
+        campaign — the gap the campaign-level-only read left empty."""
+        tc, _mock_sb, caching = client
+        adapter = FakeMetaAdapter()
+        acct = f"act_{_ACT_ID}"
+        adapter.seed(
+            ad_accounts=[_account()],
+            ad_campaigns_by_account={acct: [_campaign("camp_1")]},  # no campaign budget
+            ad_sets_by_account={
+                acct: [
+                    AdSet(id="s1", effective_status="ACTIVE", campaign_id="camp_1", daily_budget=3000),
+                    AdSet(id="s2", effective_status="ACTIVE", campaign_id="camp_1", daily_budget=2000),
+                ]
+            },
+        )
+        _override_adapter(_ORG_A, adapter)
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{
+                "org_id": _ORG_A, "object_id": "camp_1", "date": "2026-07-20",
+                "spend_cents": 4200, "impressions": 500, "clicks": 20, "reach": 400,
+                "actions": {"lead": 3.0},
+            }],
+        )
+        resp = tc.get("/api/meta/ads/insights/pacing")
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["data"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["object_id"] == "camp_1"
+        assert row["effective_daily_budget_cents"] == 5000
+        assert row["budget_source"] == "adset_rollup"
+        assert row["latest_spend_cents"] == 4200
+
+    def test_cbo_skips_adset_rollup(self, client):
+        tc, _mock_sb, caching = client
+        adapter = FakeMetaAdapter()
+        acct = f"act_{_ACT_ID}"
+        adapter.seed(
+            ad_accounts=[_account()],
+            ad_campaigns_by_account={
+                acct: [AdCampaign(
+                    id="cbo_1", name="CBO", effective_status="ACTIVE", daily_budget=25000,
+                )]
+            },
+        )
+        _override_adapter(_ORG_A, adapter)
+        caching.schema("social_wiring").set_table_data("ads_insight_snapshots", [])
+        resp = tc.get("/api/meta/ads/insights/pacing")
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["data"]
+        assert rows[0]["effective_daily_budget_cents"] == 25000
+        assert rows[0]["budget_source"] == "campaign"
+
+    def test_unbudgeted_account_returns_empty(self, client):
+        tc, _mock_sb, caching = client
+        adapter = FakeMetaAdapter()
+        acct = f"act_{_ACT_ID}"
+        adapter.seed(
+            ad_accounts=[_account()],
+            ad_campaigns_by_account={acct: [_campaign("camp_1")]},
+            ad_sets_by_account={acct: []},  # no ad-set budgets anywhere
+        )
+        _override_adapter(_ORG_A, adapter)
+        caching.schema("social_wiring").set_table_data("ads_insight_snapshots", [])
+        resp = tc.get("/api/meta/ads/insights/pacing")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == []
 
 
 # ─── GET /campaigns/{id}/children ─────────────────────────────────────

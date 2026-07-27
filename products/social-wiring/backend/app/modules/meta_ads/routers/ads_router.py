@@ -101,6 +101,25 @@ class AdsCampaignsListOut(BaseModel):
     data: list[AdsCampaignOut]
 
 
+class AdsPacingRowOut(BaseModel):
+    """One active campaign's budget-pacing row: the EFFECTIVE daily
+    budget (campaign-level for CBO, or the summed active-ad-set budget
+    for ABO) against the most recent day's spend. `budget_source` makes
+    the rollup explicit so the UI can say "orçamento por conjunto" when
+    it summed ad sets. All money is minor-unit (cents)."""
+
+    object_id: str
+    name: str | None = None
+    effective_daily_budget_cents: int
+    budget_source: Literal["campaign", "adset_rollup"]
+    latest_spend_cents: int | None = None
+    latest_date: str | None = None
+
+
+class AdsPacingListOut(BaseModel):
+    data: list[AdsPacingRowOut]
+
+
 class AdsObjectOut(BaseModel):
     object_id: str
     level: str
@@ -342,13 +361,41 @@ def _campaign_out(
         objective=camp.objective,
         status=camp.status,
         effective_status=camp.effective_status,
-        # The live `AdCampaign` type carries no campaign-level budget
-        # field (see `ads_sync_service._campaign_row`'s docstring) —
-        # None here too, for the same honest reason.
-        daily_budget_cents=None,
-        lifetime_budget_cents=None,
+        # Campaign-level budget is populated ONLY for CBO/Advantage
+        # campaigns (the budget lives on the campaign). ABO campaigns
+        # leave these `None` and carry the budget on their child ad
+        # sets instead — the `/insights/pacing` endpoint sums those.
+        # Both are already minor-unit (cents), like `AdSet.daily_budget`
+        # — no major-unit conversion (contrast the insights money path).
+        daily_budget_cents=camp.daily_budget,
+        lifetime_budget_cents=camp.lifetime_budget,
         latest=latest,
     )
+
+
+def _effective_daily_budget(
+    camp: Any, ad_sets_by_campaign: dict[str, list[Any]]
+) -> tuple[int, str] | None:
+    """Resolve a campaign's EFFECTIVE daily budget (minor unit) +
+    its source, or ``None`` when the campaign is genuinely unbudgeted.
+
+    CBO/Advantage campaigns carry the budget on the campaign itself
+    (``camp.daily_budget``) → source ``"campaign"``. ABO campaigns leave
+    that ``None`` and put the budget on each child ad set → sum the
+    daily budgets of the campaign's ACTIVE ad sets → source
+    ``"adset_rollup"``. A paused ad set contributes nothing (its budget
+    is not spending today). If neither yields a positive budget the
+    campaign has no daily-pacing target and is excluded (``None``) —
+    never surfaced as a misleading ``R$0,00`` budget."""
+    if camp.daily_budget:
+        return (int(camp.daily_budget), "campaign")
+    rollup = 0
+    for aset in ad_sets_by_campaign.get(camp.id, []):
+        if aset.effective_status == "ACTIVE" and aset.daily_budget:
+            rollup += int(aset.daily_budget)
+    if rollup > 0:
+        return (rollup, "adset_rollup")
+    return None
 
 
 def _adset_out(aset: Any, *, parent_id: str) -> AdsObjectOut:
@@ -677,6 +724,69 @@ def list_children(
         )
         return handle_meta_graph_error(exc)
     return AdsObjectsListOut(data=data)
+
+
+# ─── GET /insights/pacing ─────────────────────────────────────────────────
+@router.get("/insights/pacing", response_model=AdsPacingListOut)
+def get_budget_pacing(
+    org_and_adapter: tuple[UUID, MetaAdapter] = Depends(_resolve_ads_adapter),
+):
+    """Budget pacing for ACTIVE campaigns: effective daily budget vs. the
+    latest day's spend. Resolves the effective budget per campaign
+    (campaign-level for CBO, or a one-call account-wide ad-set rollup for
+    ABO — the common real-estate/lead-gen setup where the budget lives on
+    the ad set, not the campaign). At most two live Graph calls (campaigns
+    + all ad sets), both rate-limit-paced; the ad-set call is skipped
+    entirely when every active campaign already has a campaign-level
+    budget. Spend comes from the persisted daily snapshots (same source as
+    the overview), so pacing never triggers a per-campaign insights fan-out."""
+    org_id, adapter = org_and_adapter
+    ad_account_id = _require_ad_account_id()
+    try:
+        campaigns = adapter.list_ad_campaigns(ad_account_id)
+        active = [c for c in campaigns if c.effective_status == "ACTIVE"]
+
+        # Only pull ad sets if at least one active campaign lacks a
+        # campaign-level budget (ABO) — CBO-only accounts skip the call.
+        ad_sets_by_campaign: dict[str, list[Any]] = {}
+        if any(not c.daily_budget for c in active):
+            for aset in adapter.list_ad_sets(ad_account_id):
+                if aset.campaign_id:
+                    ad_sets_by_campaign.setdefault(aset.campaign_id, []).append(aset)
+    except MetaGraphError as exc:
+        logger.warning("meta ads: pacing fetch failed: %s", exc)
+        return handle_meta_graph_error(exc)
+
+    latest_by_object = _latest_snapshot_by_object(
+        org_id=org_id, object_ids=[c.id for c in active]
+    )
+
+    rows: list[AdsPacingRowOut] = []
+    for camp in active:
+        resolved = _effective_daily_budget(camp, ad_sets_by_campaign)
+        if resolved is None:
+            continue  # genuinely unbudgeted — not a R$0 pacing row
+        budget_cents, source = resolved
+        snap = latest_by_object.get(camp.id)
+        rows.append(
+            AdsPacingRowOut(
+                object_id=camp.id,
+                name=camp.name,
+                effective_daily_budget_cents=budget_cents,
+                budget_source=source,
+                latest_spend_cents=(snap or {}).get("spend_cents"),
+                latest_date=(snap or {}).get("date"),
+            )
+        )
+
+    # Hottest pacing first: highest spend-vs-budget ratio at the top.
+    rows.sort(
+        key=lambda r: (
+            (r.latest_spend_cents or 0) / r.effective_daily_budget_cents
+        ),
+        reverse=True,
+    )
+    return AdsPacingListOut(data=rows)
 
 
 # ─── GET /insights/series ─────────────────────────────────────────────────

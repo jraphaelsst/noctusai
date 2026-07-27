@@ -687,6 +687,34 @@ class TestPriorSurfaceRegression:
             ins = a.ad_insights("c1", "campaign")
         assert ins.metrics["impressions"] == 1000.0
 
+    def test_list_ad_campaigns_parses_cbo_budget(self):
+        """CBO campaigns carry a campaign-level daily/lifetime budget
+        (minor unit, coerced to int); ABO campaigns omit it → None,
+        never a silent 0 (the pacing rollup relies on that distinction)."""
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        body = {
+            "data": [
+                {
+                    "id": "cbo1", "name": "CBO", "status": "ACTIVE",
+                    "effective_status": "ACTIVE", "daily_budget": "15000",
+                    "lifetime_budget": "300000",
+                },
+                {  # ABO — no campaign-level budget field at all
+                    "id": "abo1", "name": "ABO", "status": "ACTIVE",
+                    "effective_status": "ACTIVE",
+                },
+            ],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            camps = a.list_ad_campaigns("123")
+        by_id = {c.id: c for c in camps}
+        assert by_id["cbo1"].daily_budget == 15000
+        assert isinstance(by_id["cbo1"].daily_budget, int)
+        assert by_id["cbo1"].lifetime_budget == 300000
+        assert by_id["abo1"].daily_budget is None  # never a silent 0
+        assert by_id["abo1"].lifetime_budget is None
+
     def test_factory_default_fake_carries_ads_read_contract(self):
         impl = get_meta_adapter()
         assert isinstance(impl, FakeMetaAdapter)

@@ -70,6 +70,7 @@ from noctusai_lib.integrations.meta.mappers import (
     ad_from_body,
     ad_insights_row_from_body,
     ad_set_from_body,
+    campaign_from_body,
     conversation_from_body,
     direct_message_from_body,
     facebook_comment_from_body,
@@ -118,7 +119,10 @@ _AD_INSIGHTS_SERIES_FIELDS = (
     "date_start,date_stop,impressions,reach,spend,clicks,cpc,cpm,ctr,"
     "actions,action_values"
 )
-_AD_CAMPAIGN_FIELDS = "id,name,objective,status,effective_status"
+_AD_CAMPAIGN_FIELDS = (
+    "id,name,objective,status,effective_status,"
+    "daily_budget,lifetime_budget"
+)
 _AD_SET_FIELDS = (
     "id,name,status,effective_status,campaign_id,"
     "daily_budget,billing_event,optimization_goal,targeting"
@@ -986,17 +990,7 @@ class MetaOAuthAdapter:
             params={"fields": _AD_CAMPAIGN_FIELDS, "limit": 100},
             version=self._version,
         )
-        return [
-            AdCampaign(
-                id=str(r.get("id")),
-                name=r.get("name"),
-                objective=r.get("objective"),
-                status=r.get("status"),
-                effective_status=r.get("effective_status"),
-            )
-            for r in rows
-            if r.get("id")
-        ]
+        return [campaign_from_body(r) for r in rows if r.get("id")]
 
     def ad_insights(
         self,
@@ -1474,13 +1468,9 @@ class MetaOAuthAdapter:
             params={"fields": _AD_CAMPAIGN_FIELDS},
             version=self._version,
         )
-        return AdCampaign(
-            id=str(body.get("id") or campaign_id),
-            name=body.get("name"),
-            objective=body.get("objective"),
-            status=body.get("status"),
-            effective_status=body.get("effective_status"),
-        )
+        if not body.get("id"):
+            body = {**body, "id": campaign_id}
+        return campaign_from_body(body)
 
     def update_ad_set_budget(
         self, ad_set_id: str, daily_budget: int

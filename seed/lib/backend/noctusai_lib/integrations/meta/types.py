@@ -232,14 +232,27 @@ class AdCampaign:
     """A Marketing-API ad campaign under an ad account.
 
     `act_{ad_account_id}/campaigns` returns id / name / objective /
-    status / effective_status. Reading campaigns needs the `ads_read`
-    scope (App-Review-gated for production)."""
+    status / effective_status plus the OPTIONAL campaign-level budget
+    fields. Reading campaigns needs the `ads_read` scope
+    (App-Review-gated for production).
+
+    `daily_budget` / `lifetime_budget` are populated ONLY for campaigns
+    that use Campaign-Budget-Optimization (CBO, a.k.a. Advantage
+    campaign budget) — the budget lives on the campaign itself. For
+    ad-set-budget-optimization campaigns (ABO) these are `None` and the
+    budget lives on each child `AdSet.daily_budget` instead; a consumer
+    computing an effective campaign budget must fall back to summing the
+    active ad sets. Both are the account's MINOR currency unit (cents),
+    the same convention as `AdSet.daily_budget` — coerced to `int` via
+    `_safe_int` (never a silent 0 on a missing/unset budget)."""
 
     id: str
     name: str | None = None
     objective: str | None = None
     status: str | None = None
     effective_status: str | None = None
+    daily_budget: int | None = None
+    lifetime_budget: int | None = None
 
 
 @dataclass(frozen=True)

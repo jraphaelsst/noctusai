@@ -134,6 +134,18 @@ export interface AdsAccountInsights {
   daily: AdsAccountDaily[];
 }
 
+export interface AdsPacingRow {
+  object_id: string;
+  name: string | null;
+  effective_daily_budget_cents: number;
+  budget_source: "campaign" | "adset_rollup";
+  latest_spend_cents: number | null;
+  latest_date: string | null;
+}
+export interface AdsPacingList {
+  data: AdsPacingRow[];
+}
+
 export interface AdsActivity {
   object_id: string | null;
   object_level: string | null;
@@ -230,6 +242,17 @@ export function useAdsInsightsSeries(
         })}`,
       ),
     enabled: !!objectId && !!since && !!until,
+  });
+}
+
+/** Budget pacing for active campaigns — server resolves the EFFECTIVE
+ *  daily budget (campaign-level for CBO, or a summed active-ad-set
+ *  rollup for ABO) so the card populates even when the budget lives on
+ *  the ad set, not the campaign. */
+export function useAdsPacing() {
+  return useQuery<AdsPacingList>({
+    queryKey: ["meta-ads", "pacing"],
+    queryFn: () => api.get<AdsPacingList>("/api/meta/ads/insights/pacing"),
   });
 }
 
