@@ -13,10 +13,13 @@ interface PlatformSetting {
 
 const SUGGESTED_KEYS = [
   'openai_api_key',
+  'supabase_access_token',
   'stripe_secret_key',
   'sentry_dsn',
   'redis_url',
 ];
+
+const PAT_KEY = 'supabase_access_token';
 
 export function AdminSettings() {
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
@@ -27,6 +30,33 @@ export function AdminSettings() {
   const [editDescription, setEditDescription] = useState('');
   const [editIsSecret, setEditIsSecret] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Dedicated "Supabase Management PAT" field (writes platform_settings via the
+  // same generic endpoint as every other key; is_secret=true so it's masked).
+  const [patValue, setPatValue] = useState('');
+  const [patReveal, setPatReveal] = useState(false);
+  const [patSaving, setPatSaving] = useState(false);
+  const patConfigured = settings.some((s) => s.key === PAT_KEY);
+
+  async function savePat(e: React.FormEvent) {
+    e.preventDefault();
+    if (!patValue.trim()) return;
+    setPatSaving(true);
+    try {
+      await api.put(`/api/settings/platform/${PAT_KEY}`, {
+        value: patValue.trim(),
+        description: 'Supabase Management API PAT — usado por noctus.dev.migrate_product',
+        is_secret: true,
+      });
+      setPatValue('');
+      setPatReveal(false);
+      fetchSettings();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setPatSaving(false);
+    }
+  }
 
   async function fetchSettings() {
     try {
@@ -108,6 +138,50 @@ export function AdminSettings() {
           + Nova Configuracao
         </button>
       </div>
+
+      {/* Supabase Management PAT — dedicated labeled field. Same store as every
+          other key (platform_settings + is_secret via the generic endpoint). */}
+      <form onSubmit={savePat} className="bg-card rounded-lg border border-border shadow-sm p-4 mb-6">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <h2 className="text-sm font-semibold text-foreground">Supabase Management PAT</h2>
+          {patConfigured && (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">
+              configurado (secreto)
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">
+          Personal Access Token da API de gerenciamento do Supabase. Usado por{' '}
+          <code className="bg-muted px-1 rounded">noctus.dev.migrate_product</code> para aplicar
+          migrações. Guardado como segredo em{' '}
+          <code className="bg-muted px-1 rounded">platform_settings.{PAT_KEY}</code>.
+        </p>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type={patReveal ? 'text' : 'password'}
+              value={patValue}
+              onChange={(e) => setPatValue(e.target.value)}
+              placeholder={patConfigured ? 'Substituir token…' : 'sbp_…'}
+              className="w-full h-10 rounded-md border border-border bg-background px-3 pr-16 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <button
+              type="button"
+              onClick={() => setPatReveal((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {patReveal ? 'ocultar' : 'mostrar'}
+            </button>
+          </div>
+          <button
+            type="submit"
+            disabled={patSaving || !patValue.trim()}
+            className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {patSaving ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </form>
 
       <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
         <table className="w-full text-sm">
