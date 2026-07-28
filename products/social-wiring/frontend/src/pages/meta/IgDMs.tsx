@@ -22,6 +22,7 @@
  * never a fake success.
  */
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system";
 
 import {
@@ -33,7 +34,16 @@ import {
   useSendIgMessage,
 } from "@/hooks/useMeta";
 import { AppReviewNotice } from "./AppReviewNotice";
+import { demoDMAdapter } from "./demoDMAdapter";
 import { MetaSetupNotice } from "./MetaSetupNotice";
+
+/** `?demo=1` swaps the live Meta-DM adapter for a seeded in-memory one — the
+ *  App-Review screencast surface (see `demoDMAdapter`). Demo-only: never on the
+ *  live data path, makes no network calls. */
+function isDemoMode(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("demo") === "1";
+}
 
 // ─── Meta DM adapter ──────────────────────────────────────────────────────────
 
@@ -106,6 +116,28 @@ const metaDMAdapter: ChatWindowAdapter = {
 
 export default function IgDMs() {
   const accountId = useActiveMetaAccountId();
+
+  // App-Review screencast surface — `?demo=1` renders the exact live DMs UX
+  // (thread list → open → read → compose + send) from seeded data, since
+  // Standard Access blocks the real inbox until Advanced Access is granted.
+  if (isDemoMode()) {
+    return (
+      <Card className="overflow-hidden" data-testid="ig-dm-demo">
+        <div className="flex items-center justify-between border-b px-4 py-2">
+          <span className="text-sm font-medium">Mensagens diretas</span>
+          <Badge variant="outline" className="text-xs">Demonstração</Badge>
+        </div>
+        <div className="h-[520px]">
+          <ChatWindow
+            scopeId="demo"
+            adapter={demoDMAdapter}
+            emptyThreadsLabel="Nenhuma conversa por enquanto."
+            emptySelectionLabel="Selecione uma conversa para ver as mensagens."
+          />
+        </div>
+      </Card>
+    );
+  }
   // Shares the TanStack cache entry with the ChatWindow adapters (same
   // queryKey) — no extra request. Intercepts the "needs Meta setup" gate
   // (Graph #3) so the tab shows an actionable card instead of an empty

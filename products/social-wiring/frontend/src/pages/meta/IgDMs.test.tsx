@@ -91,6 +91,23 @@ describe("IgDMs — Meta setup gate", () => {
   });
 });
 
+describe("IgDMs — demo mode (App-Review screencast)", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("`?demo=1` renders the seeded demo ChatWindow (no live account/gate needed)", async () => {
+    window.history.pushState({}, "", "/?demo=1");
+    // No account, and the conversations hook would gate — demo mode must
+    // bypass both and drive ChatWindow from the seeded in-memory adapter.
+    mockUseActiveMetaAccountId.mockReturnValue(null);
+    const { getByTestId } = await renderPage();
+    expect(getByTestId("ig-dm-demo")).toBeTruthy();
+    expect(lastProps.scopeId).toBe("demo");
+    expect(typeof lastProps.adapter.useThreads).toBe("function");
+  });
+});
+
 describe("IgDMs — Advanced Access gate", () => {
   it("renders the App-Review notice (not ChatWindow) when the conversations read is advanced-access-gated", async () => {
     // Standard-Access `instagram_manage_messages` on a busy inbox → the
