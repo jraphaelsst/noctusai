@@ -33,12 +33,15 @@ def _create_profile(erp_db, core_db, test_org, cleanup):
     })
     user = user_resp.user
 
-    profile = erp_db.table("profiles").insert({
-        "id": user.id,
+    # The `on_auth_user_created` trigger on `auth.users` runs
+    # `public.handle_new_user()`, which ALREADY inserted the `erp.profiles`
+    # row for this user. Inserting it again collides on `profiles_pkey`
+    # (23505) — the profile is created BY the auth user, not alongside it.
+    # Update the auto-created row into the shape the tests expect instead.
+    profile = erp_db.table("profiles").update({
         "nome": f"Test User {email}",
-        "email": email,
         "telefone": "(11) 99999-0000",
-    }).execute().data[0]
+    }).eq("id", user.id).execute().data[0]
 
     cleanup.append(("profiles", profile["id"]))
     return user, profile
@@ -85,7 +88,7 @@ class TestAtivoCRUD:
 
     def test_ativo_crud(self, erp_db, core_db, test_org, test_user, cleanup):
         ativo = erp_db.table("ativos").insert({
-            "owner_id": test_user.id,
+            "owner_id": test_user["id"],
             "natureza": "imovel",
             "valor": 500000,
             "tipo_imovel": "casa",
@@ -135,7 +138,7 @@ class TestAtivoPaginationRange:
         tag = uuid.uuid4().hex[:6]
         for i in range(5):
             a = erp_db.table("ativos").insert({
-                "owner_id": test_user.id,
+                "owner_id": test_user["id"],
                 "natureza": "imovel",
                 "valor": (i + 1) * 100000,
                 "ref": f"range-{tag}-{i}",
@@ -144,7 +147,7 @@ class TestAtivoPaginationRange:
 
         page = erp_db.table("ativos") \
             .select("*") \
-            .eq("owner_id", test_user.id) \
+            .eq("owner_id", test_user["id"]) \
             .ilike("ref", f"range-{tag}%") \
             .range(0, 1) \
             .execute().data
@@ -192,7 +195,7 @@ class TestContratoFKIntegrity:
 
         # Create ativo
         ativo = erp_db.table("ativos").insert({
-            "owner_id": test_user.id,
+            "owner_id": test_user["id"],
             "natureza": "imovel",
             "valor": 300000,
         }).execute().data[0]
@@ -257,12 +260,11 @@ class TestRLSOrgIsolation:
             })
             users.append({"user": user_resp.user, "email": email, "password": password})
 
-            erp_db.table("profiles").insert({
-                "id": user_resp.user.id,
+            # Auto-created by `handle_new_user` — see `_create_profile`.
+            erp_db.table("profiles").update({
                 "nome": f"RLS User {i}",
-                "email": email,
                 "telefone": "(11) 90000-0000",
-            }).execute()
+            }).eq("id", user_resp.user.id).execute()
 
         yield orgs, users
 

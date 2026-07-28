@@ -65,7 +65,11 @@ def test_user(core_db, test_org):
         "user_metadata": {"org_id": test_org["id"]},
     })
     user = user_resp.user
-    yield user
+    # Yield a MAPPING, not the raw `User` object: every consumer indexes it as
+    # `test_user["id"]` (matching the sibling `test_org` fixture, which is a
+    # dict straight off `.execute().data[0]`). Yielding the object made all of
+    # them fail with `TypeError: 'User' object is not subscriptable`.
+    yield {"id": user.id, "email": email, "user": user}
     try:
         core_db.auth.admin.delete_user(user.id)
     except Exception:
