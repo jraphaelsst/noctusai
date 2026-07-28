@@ -34,11 +34,16 @@ STATUS_ACEITA = "aceita"
 STATUS_PERDIDA = "perdida"
 STATUS_NEGOCIACAO = (STATUS_ABERTA, STATUS_ACEITA, STATUS_PERDIDA)
 
-# The single seeded "Agência" profile — the default corretor for an
-# unassigned deal. Mirrors `erp.agency_profile_id()` (migration 040); the DB
-# function stays the source of truth for RLS, this constant is its
-# application-side twin for defaulting + display.
-AGENCY_PROFILE_ID = "00000000-0000-0000-0000-0000000a6e0c"
+# NOTE: there is deliberately NO `AGENCY_PROFILE_ID` constant here.
+#
+# The "Agência" default corretor is PER-ORGANIZATION (migration 040), resolved
+# by `erp.agency_profile_id()` from the caller's `erp.current_org_id()`. A
+# module-level UUID would be a cross-tenant bug waiting to happen: it could only
+# ever name ONE org's agency, and would silently attach another tenant's deals
+# to it.
+#
+# To leave a deal unassigned, omit `corretor_id` on INSERT and let the column
+# DEFAULT resolve it in the caller's own org context.
 
 # The nested-join projection used by every read path. Kept in ONE place so a
 # join rename can't drift between the list, board and detail queries.

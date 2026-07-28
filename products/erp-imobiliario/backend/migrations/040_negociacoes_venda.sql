@@ -21,8 +21,8 @@
 --      (roadmap Q2: cycle-time statistics need a real closed state, not
 --      "absent from the board").
 --   2. `erp.negociacoes_venda` table + RLS + indexes.
---   3. The seeded "Agência" profile -- the default corretor for an
---      unassigned deal (roadmap Q7).
+--   3. A seeded "Agência" profile PER ORGANIZATION -- the default corretor for
+--      an unassigned deal (roadmap Q7), plus a trigger so future orgs get one.
 --   4. Widens `erp.clientes` INSERT RLS so the agency default is actually
 --      insertable (see AGENCY DEFAULT ⇄ RLS COLLISION below).
 --   5. `erp.funil_movimentos.negociacao_venda_id` -- the stage-transition
@@ -42,20 +42,22 @@
 --   the live policy are in direct conflict. Step 4 widens that policy to also
 --   admit the agency sentinel. Nothing else about the policy changes.
 --
--- 🔴 SINGLE-AGENCY / MULTI-ORG CAVEAT -- READ BEFORE EXTENDING
---   This seeds ONE global agency profile with `org_id IS NULL`, not one per
---   org. That is coherent with TODAY's schema and no wider than it:
---   `erp.clientes` carries NO org_id and its RLS is
---   `has_role(uid,'admin') OR uid = usuario_id` -- i.e. clientes are ALREADY
---   cross-org for any admin (pre-existing; migration 039 names
---   `erp.clientes` as out-of-scope for the org fan-out and defers it to an
---   `erp-rls-org-scope-redesign` follow-up). `negociacoes_venda` deliberately
---   mirrors its parent's scoping rather than inventing tighter-but-false
---   guarantees (roadmap anti-goal: "No org_id on a child table unless
---   erp.clientes gets one" -- a child scoped tighter than its parent is a
---   false guarantee).
---   WHEN `erp.clientes` GAINS `org_id`, this agency singleton must become
---   per-org in the SAME slice, or unassigned deals will pool across tenants.
+-- AGENCY IS PER-ORG (user decision, 2026-07-27)
+--   One "Agência" profile per row of `public.organizations` (25 live), created
+--   by `erp.ensure_agency_profile` and kept in step for future orgs by an
+--   AFTER INSERT trigger on `public.organizations`. `erp.agency_profile_id()`
+--   resolves the CALLER's org agency via `erp.current_org_id()`.
+--
+--   Note the asymmetry this leaves, deliberately: the AGENCY is org-scoped but
+--   `erp.clientes` / `erp.negociacoes_venda` still are NOT -- clientes carries
+--   no `org_id` and its RLS is `has_role(uid,'admin') OR uid = usuario_id`, so
+--   clientes are already cross-org for any admin (pre-existing; migration 039
+--   names `erp.clientes` out-of-scope for the org fan-out and defers it to an
+--   `erp-rls-org-scope-redesign` follow-up). We did NOT give the child tables
+--   an `org_id` here: a child scoped tighter than its parent is a false
+--   guarantee (roadmap anti-goal). Per-org agencies are strictly better than a
+--   singleton and cost nothing today; full org-scoping of the deal tables lands
+--   with the clientes redesign.
 --
 -- IDEMPOTENT: IF NOT EXISTS / ON CONFLICT DO NOTHING / DROP POLICY IF EXISTS
 -- throughout. Safe to re-run.
@@ -84,45 +86,139 @@ END
 $$;
 
 -- ----------------------------------------------------------------------------
--- 2. The seeded "Agência" profile (roadmap Q7 -- RESOLVED)
+-- 2. The "Agência" profile — ONE PER ORGANIZATION (roadmap Q7 -- RESOLVED)
 -- ----------------------------------------------------------------------------
--- `erp.profiles.id` is an FK to `auth.users(id)`, so the agency needs a real
--- auth.users row. It is a SYNTHETIC NON-LOGIN identity: no password, no
--- confirmed email, never issued a token. Deterministic UUID so every
--- environment (and every re-run) resolves the same row.
+-- The default corretor for an unassigned deal. PER-ORG, not a global singleton
+-- (user decision 2026-07-27): this product has 25 live organizations, and one
+-- shared agency row would pool every tenant's unassigned deals into a single
+-- bucket that belongs to no one.
 --
--- The profile row itself is created by the EXISTING `on_auth_user_created`
--- trigger (`public.handle_new_user`, migration 025), which reads
--- `raw_user_meta_data->>'nome'` and `NEW.email` -- both are supplied below
--- because `erp.profiles.nome`/`email`/`telefone` are NOT NULL. We deliberately
--- do NOT insert the profile directly: duplicating the trigger's job is how the
--- two drift apart.
-INSERT INTO auth.users (id, email, raw_user_meta_data)
-VALUES (
-  '00000000-0000-0000-0000-0000000a6e0c',
-  'agencia@sistema.interno',
-  '{"nome": "Agência", "telefone": ""}'::jsonb
-)
-ON CONFLICT (id) DO NOTHING;
+-- `erp.profiles.id` is an FK to `auth.users(id)`, so each agency needs a real
+-- auth.users row. It is a SYNTHETIC NON-LOGIN identity: no password, no
+-- confirmed email, never issued a token. The id is DERIVED from the org id
+-- (`md5('noc:erp:agency:'||org_id)::uuid`) so it is stable across environments
+-- and re-runs without needing a mapping table.
+--
+-- `is_agency` (not a hardcoded UUID) is what marks the row, so the resolver is
+-- a lookup rather than a literal that would have to be duplicated in SQL, in
+-- Python and in TypeScript.
+ALTER TABLE erp.profiles
+  ADD COLUMN IF NOT EXISTS is_agency BOOLEAN NOT NULL DEFAULT false;
 
--- Backstop: if the trigger were ever absent/altered, the profile still exists.
--- `ON CONFLICT DO NOTHING` makes this a no-op in the normal (trigger-ran) path.
-INSERT INTO erp.profiles (id, nome, email, telefone)
-VALUES (
-  '00000000-0000-0000-0000-0000000a6e0c',
-  'Agência',
-  'agencia@sistema.interno',
-  ''
-)
-ON CONFLICT (id) DO NOTHING;
+-- An agency without an org is the exact bug this phase is avoiding. The CHECK
+-- is load-bearing for the unique index below: a partial UNIQUE over a NULLable
+-- column does NOT dedupe NULLs, so without this two org-less agencies could
+-- coexist and the resolver would silently pick one.
+ALTER TABLE erp.profiles
+  DROP CONSTRAINT IF EXISTS profiles_agency_requires_org;
+ALTER TABLE erp.profiles
+  ADD CONSTRAINT profiles_agency_requires_org
+  CHECK (NOT is_agency OR org_id IS NOT NULL);
 
--- Resolver so application code and RLS never hardcode the UUID twice.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_one_agency_per_org
+  ON erp.profiles (org_id) WHERE is_agency;
+
+-- Idempotent creator, shared by the backfill below AND the new-org trigger —
+-- one implementation, so a future org can never get a differently-shaped
+-- agency than the ones seeded today.
+CREATE OR REPLACE FUNCTION erp.ensure_agency_profile(p_org_id uuid)
+  RETURNS uuid
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'erp', 'public'
+AS $$
+DECLARE
+  v_id uuid;
+  v_email text;
+BEGIN
+  IF p_org_id IS NULL THEN
+    RAISE EXCEPTION 'ensure_agency_profile: org_id is required';
+  END IF;
+
+  SELECT id INTO v_id FROM erp.profiles WHERE is_agency AND org_id = p_org_id;
+  IF v_id IS NOT NULL THEN
+    RETURN v_id;
+  END IF;
+
+  v_id := (md5('noc:erp:agency:' || p_org_id::text))::uuid;
+  v_email := 'agencia+' || p_org_id::text || '@sistema.interno';
+
+  -- The profile row is normally created by the EXISTING `on_auth_user_created`
+  -- trigger (`public.handle_new_user`, migration 025), which reads
+  -- `raw_user_meta_data->>'nome'` / `->>'org_id'` and `NEW.email` — all supplied
+  -- here because `erp.profiles.nome`/`email`/`telefone` are NOT NULL.
+  INSERT INTO auth.users (id, email, raw_user_meta_data)
+  VALUES (
+    v_id,
+    v_email,
+    jsonb_build_object('nome', 'Agência', 'telefone', '', 'org_id', p_org_id::text)
+  )
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Backstop if that trigger is ever absent/altered. No-op on the normal path.
+  INSERT INTO erp.profiles (id, nome, email, telefone, org_id)
+  VALUES (v_id, 'Agência', v_email, '', p_org_id)
+  ON CONFLICT (id) DO NOTHING;
+
+  -- The trigger cannot know about `is_agency`; stamp it here.
+  UPDATE erp.profiles
+     SET is_agency = true, org_id = p_org_id, nome = 'Agência'
+   WHERE id = v_id;
+
+  RETURN v_id;
+END
+$$;
+
+-- Seed one agency per EXISTING organization.
+DO $$
+DECLARE
+  o record;
+BEGIN
+  FOR o IN SELECT id FROM public.organizations LOOP
+    PERFORM erp.ensure_agency_profile(o.id);
+  END LOOP;
+END
+$$;
+
+-- ...and one per FUTURE organization. Without this, an org created tomorrow
+-- has no agency, `agency_profile_id()` returns NULL, and the NOT NULL default
+-- fails on its first unassigned deal — a bug that would surface weeks later
+-- for one tenant only.
+CREATE OR REPLACE FUNCTION erp.create_agency_for_new_org()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'erp', 'public'
+AS $$
+BEGIN
+  PERFORM erp.ensure_agency_profile(NEW.id);
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS create_agency_profile_trigger ON public.organizations;
+CREATE TRIGGER create_agency_profile_trigger
+  AFTER INSERT ON public.organizations
+  FOR EACH ROW EXECUTE FUNCTION erp.create_agency_for_new_org();
+
+-- The resolver: the agency belonging to the CALLER's org. STABLE (not
+-- IMMUTABLE) because it reads tables and the auth context; SECURITY DEFINER so
+-- it resolves regardless of the caller's visibility into `erp.profiles`.
+--
+-- Returns NULL when the caller has no org context (e.g. a service-role import).
+-- That is deliberate and LOUD: `corretor_id` is NOT NULL, so such an insert
+-- fails rather than silently attaching the deal to another tenant's agency.
 CREATE OR REPLACE FUNCTION erp.agency_profile_id()
   RETURNS uuid
   LANGUAGE sql
-  IMMUTABLE
+  STABLE
+  SECURITY DEFINER
   SET search_path TO 'erp', 'public'
-AS $$ SELECT '00000000-0000-0000-0000-0000000a6e0c'::uuid $$;
+AS $$
+  SELECT id FROM erp.profiles
+   WHERE is_agency AND org_id = erp.current_org_id()
+   LIMIT 1
+$$;
 
 -- ----------------------------------------------------------------------------
 -- 3. erp.negociacoes_venda
