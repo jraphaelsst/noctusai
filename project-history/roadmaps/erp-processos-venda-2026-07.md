@@ -46,21 +46,27 @@ shape. On that reading a local Processos board would be the **third** instance a
 **Status (2026-07-27)**: T1 **FIRED** — the organ landed, is registered, and the erp Funil is repointed onto
 it (`da265a9f`). T2 retired as false. **T3 FIRED and is RESOLVED** — the negociação-level `mover-etapa` now
 writes to `erp.funil_movimentos` (with a new `negociacao_venda_id`), so the funnel finally has an audit
-trail. Phases 1.5 and 2 are BUILT (code + tests green); the migrations are **written and dry-run-verified
-but NOT applied** — see "Awaiting user decision" below.
+trail. Phases 1.5 and 2 are SHIPPED — code on `dev`, tests green, and migrations 040 + 041 APPLIED to the
+live database. Every phase of this roadmap has landed; only the deferred Phase 3 (orbity fan-out) remains.
 
-> ### ⛔ Awaiting user decision (2026-07-27) — the ONE thing blocking "done"
+> ### ✅ APPLIED TO PRODUCTION 2026-07-27 — the roadmap is COMPLETE
 >
-> Migrations 040 + 041 have **not been applied**. dev and prod share ONE Supabase project
-> (`nyplttplcoyiiqjrvtiw`), so applying them is a **production schema + data change** — an agent's call to
-> make only with consent. Both were verified by applying inside `BEGIN … ROLLBACK` against the LIVE prod
-> schema: clean apply, zero-loss backfill (1 cliente → 1 negociação), agency profile created, page row
-> seeded, double-accept yielding exactly ONE processo; post-rollback probes confirm zero persistence.
+> Migrations 040 + 041 were applied to `nyplttplcoyiiqjrvtiw` (the shared dev/prod project) in a SINGLE
+> transaction, after the user authorised it. Post-apply verification against the live DB:
+> `negociacoes=1, clientes=1, orphaned_clientes=0` (zero-loss backfill) · `orgs=25, agencies=25,
+> orgless_agencies=0` · `processos=0` (correct — nothing accepted yet) · `status_pagina` row present ·
+> `funil_movimentos.negociacao_venda_id` present · 10 RLS policies across the two new tables ·
+> `NOTIFY pgrst, 'reload schema'` issued so PostgREST picks the new tables up.
 >
-> Also for the user: this seeds **ONE global agency profile** (`org_id IS NULL`), not one per org, in a
-> product with 25 live organizations. That is coherent with today's schema — `erp.clientes` has no `org_id`
-> and its RLS is already cross-org for any admin — but it is a fork worth ratifying, and it MUST become
-> per-org in the same slice that gives `erp.clientes` an `org_id`. See migration 040's header caveat.
+> **The agency is PER-ORGANIZATION** (user decision, taken before apply — cheap then, expensive after).
+> `erp.profiles.is_agency` + `erp.ensure_agency_profile(org_id)` + an AFTER INSERT trigger on
+> `public.organizations` so future orgs get one automatically. `erp.agency_profile_id()` resolves the
+> caller's org agency via `erp.current_org_id()`.
+>
+> Residual, deliberately NOT done here: `erp.clientes` / `erp.negociacoes_venda` are still not org-scoped
+> (clientes has no `org_id`; its RLS is already cross-org for admins — migration 039 defers this to an
+> `erp-rls-org-scope-redesign`). Giving the child tables an org_id before their parent would be a
+> tighter-than-parent false guarantee.
 
 > **Every slice carries TWO recipes, not one.** A *test-recipe* (unit/CI proof, green at the module
 > boundary) is **not** a *verify-recipe* (proof against LIVE state — the page renders real rows, the
@@ -102,7 +108,7 @@ twice and repointing twice. The organ is cheapest before the third consumer exis
 
 | # | Title | Files | Trigger | Verify recipe (write it now, run it when it ships) |
 |---|---|---|---|---|
-| P2.1 | Migration: `etapa_processo` enum + `processos_venda` table (FK → `clientes` **+ `negociacoes_venda`**) + `status_pagina` row + index | `migrations/041_processos_venda.sql` | **written, dry-run green, NOT applied** | Apply to a real DB; `\d erp.processos_venda`; confirm the `status_pagina` row exists (without it the nav item silently never renders) |
+| P2.1 | Migration: `etapa_processo` enum + `processos_venda` table (FK → `clientes` **+ `negociacoes_venda`**) + `status_pagina` row + index | `migrations/041_processos_venda.sql` | **shipped + APPLIED** | Apply to a real DB; `\d erp.processos_venda`; confirm the `status_pagina` row exists (without it the nav item silently never renders) |
 | P2.2 | Backend router + DTO service | `routers/processos_venda.py`, `services/processos_venda_service.py`, mounted in `main.py` | **shipped** | `curl /api/processos-venda` on a live ERP container → real grouped columns, not `[]` |
 | P2.3 | Accept-proposal seam | `POST /api/negociacoes-venda/{id}/aceitar-proposta` | **shipped** | Accept a proposal on a real negociação in `proposta`; assert exactly one `processos_venda` row spawns at `elaboracao_contrato`, the negociação leaves the Funil board, and a double-click yields ONE row (idempotency) |
 | P2.4 | Frontend page on the organ + nav + route | `pages/ProcessosVenda.tsx`, `components/processos/ProcessoCard.tsx`, `types/processos.ts`, `lib/etapasProcessoConfig.ts`, `hooks/useProcessos.ts`, `App.tsx` | **shipped** | Page shows real rows; drag persists; sidebar entry renders under Funil de Vendas |
@@ -159,7 +165,7 @@ would be a category error. Hence a NEW sibling entity, permuta table untouched.
 
 | # | Title | Files | Status | Verify recipe (live-state proof) |
 |---|---|---|---|---|
-| P1.5.1 | Migration: `erp.negociacoes_venda` + agency profile seed + backfill | `migrations/040_negociacoes_venda.sql` | **written, dry-run green, NOT applied** | Apply to a real DB; assert every pre-existing `clientes` row backfilled to exactly ONE `negociacoes_venda` row carrying its old `etapa_atual` — a zero-loss backfill is the whole gate |
+| P1.5.1 | Migration: `erp.negociacoes_venda` + agency profile seed + backfill | `migrations/040_negociacoes_venda.sql` | **shipped + APPLIED** | Apply to a real DB; assert every pre-existing `clientes` row backfilled to exactly ONE `negociacoes_venda` row carrying its old `etapa_atual` — a zero-loss backfill is the whole gate |
 | P1.5.2 | Corretor swappable + agency default | EDIT `backend/app/routers/clientes.py` | **shipped (with a deliberate deviation — see below)** | Create a cliente with no corretor → lands on the agency profile; PATCH the corretor → Funil `responsavel_id` filter reflects it |
 | P1.5.3 | Stage-transition log (the statistics substrate) | REUSE `erp.funil_movimentos` + `negociacao_venda_id`; written by the negociação `mover-etapa` | **shipped** | Move a negociação across 3 stages; assert 3 logged rows with corretor + timestamps |
 | P1.5.4 | Funil reshape: cards = negociações | EDIT `routers/funil.py`, `pages/Funil.tsx`, `pages/ClienteDetalhes.tsx`, `hooks/useFunil.ts`; `ClienteCard.tsx` → `NegociacaoCard.tsx` | **shipped** | Give ONE cliente two negociações at different stages; assert the board shows TWO cards in TWO columns — this is the acceptance test for the whole phase |
