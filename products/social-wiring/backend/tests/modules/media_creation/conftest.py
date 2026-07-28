@@ -33,6 +33,27 @@ from noctusai_lib.testing import (  # noqa: E402,F401
 )
 
 
+@pytest.fixture(autouse=True)
+def _unconfigured_meta(monkeypatch):
+    """Pin the Meta adapter to the UNCONFIGURED (Fake) shape for this module.
+
+    `PublishService._resolve_meta_adapter` reads `META_SYSTEM_USER_TOKEN`
+    straight off the process environment, so whether these tests exercise
+    `FakeMetaAdapter` or the real Graph adapter depended on whether the RUNNER
+    happened to have Meta credentials exported. They pass locally (no creds)
+    and fail under the pre-deploy gate (creds inherited from the MCP server's
+    env) — a test whose outcome tracks ambient credentials is a false-green
+    generator in one direction and a false-red in the other.
+
+    The publish tests assert the unconfigured contract explicitly
+    (`configured is False`, `media_id` prefixed `IG1_carousel_`), so removing
+    the variable makes the precondition they already assume EXPLICIT rather
+    than ambient. Tests that want the configured shape inject an adapter
+    directly, which takes precedence over this.
+    """
+    monkeypatch.delenv("META_SYSTEM_USER_TOKEN", raising=False)
+
+
 @pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()

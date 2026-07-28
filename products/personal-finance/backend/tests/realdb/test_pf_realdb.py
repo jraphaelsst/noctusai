@@ -183,7 +183,11 @@ class TestCarteiraAndAtivoCRUD:
         }).execute().data[0]
         cleanup.append(("carteiras", carteira["id"]))
 
-        ativo = pf_db.table("ativos_carteira").insert({
+        # The table is `ativos` — there has never been an `ativos_carteira` in
+        # any migration or in the live schema. Its columns already match this
+        # payload exactly (carteira_id, org_id, ticker, nome, tipo, quantidade,
+        # preco_medio), so only the name was wrong.
+        ativo = pf_db.table("ativos").insert({
             "carteira_id": carteira["id"],
             "org_id": test_org["id"],
             "ticker": "PETR4",
@@ -192,7 +196,7 @@ class TestCarteiraAndAtivoCRUD:
             "quantidade": 100,
             "preco_medio": 35.50,
         }).execute().data[0]
-        cleanup.append(("ativos_carteira", ativo["id"]))
+        cleanup.append(("ativos", ativo["id"]))
 
         assert ativo["ticker"] == "PETR4"
         assert float(ativo["quantidade"]) == 100
@@ -214,9 +218,11 @@ class TestOrcamentoCascadeDelete:
         assert len(cats) > 0, "Need at least one system category for this test"
         cat_id = cats[0]["id"]
 
+        # No `org_id` here: `orcamento_itens` is scoped THROUGH its parent
+        # `orcamentos` and has no org column of its own — which is also why
+        # deleting the parent cascades, the behaviour this test exists to prove.
         item = pf_db.table("orcamento_itens").insert({
             "orcamento_id": orcamento["id"],
-            "org_id": test_org["id"],
             "categoria_id": cat_id,
             "valor_planejado": 500.00,
             "periodo_mes": "2026-03",
