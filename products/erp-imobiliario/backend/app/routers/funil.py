@@ -1,16 +1,36 @@
 """
 Funil (Pipeline) Router — Kanban pipeline data.
+
+RESHAPED (roadmap P1.5.4): cards are NEGOCIAÇÕES, not clientes.
+
+A cliente can have several deals in flight at different stages, and
+`erp.clientes.etapa_atual` holds exactly one stage — so grouping clientes by
+that column could never show the second deal. Cards are now
+`erp.negociacoes_venda` rows carrying their cliente as a nested join.
+
+Behaviour guarantee: a cliente with exactly one deal (every row post-backfill)
+renders identically to before. The reshape is only visible for multi-deal
+clientes — which previously could not be represented at all.
 """
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, Query
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response
+from app.services.negociacoes_venda_service import (
+    ETAPAS_FUNIL,
+    NEGOCIACAO_SELECT,
+    STATUS_ABERTA,
+    group_into_colunas,
+    search_negociacoes,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funil", tags=["Funil"])
 
-ETAPAS = ["qualificacao", "visitas", "proposta", "negociacao", "fechado"]
+# Retained for import compatibility; the stage vocabulary now lives in the
+# service alongside the DTO so the two cannot drift.
+ETAPAS = list(ETAPAS_FUNIL)
 
 
 @router.get("")
@@ -22,46 +42,39 @@ async def obter_funil(
     incluir_arquivados: bool = Query(False),
     auth = Depends(get_current_user)):
     """
-    Returns kanban columns with clients grouped by pipeline stage.
+    Returns kanban columns with NEGOCIAÇÕES grouped by pipeline stage.
     All filtering and grouping done server-side.
     """
     user, token = auth
     db = get_user_client(token)
 
-    query = db.table("clientes").select(
-        "*, usuario:profiles!clientes_usuario_id_fkey(id, nome, email)"
-    ).order("kanban_pos", desc=False)
+    query = db.table("negociacoes_venda").select(NEGOCIACAO_SELECT).order(
+        "kanban_pos", desc=False
+    )
+
+    # Only OPEN deals are on the board. An accepted deal has moved to Processos
+    # de Venda and a lost one is closed — both are retained for statistics, and
+    # neither is still being worked.
+    query = query.eq("status", STATUS_ABERTA)
 
     if not incluir_arquivados:
         query = query.eq("arquivado", False)
     if etapa:
-        query = query.eq("etapa_atual", etapa)
-    if origem and origem != "todas":
-        query = query.eq("origem", origem)
+        query = query.eq("etapa", etapa)
     if responsavel_id and responsavel_id != "todos":
-        query = query.eq("usuario_id", responsavel_id)
+        query = query.eq("corretor_id", responsavel_id)
 
-    result = query.execute()
-    clientes = result.data or []
+    negociacoes = query.execute().data or []
 
-    # Server-side search
+    # `origem` lives on the CLIENTE, not the deal, so it filters on the nested
+    # join rather than a column of this table.
+    if origem and origem != "todas":
+        negociacoes = [
+            n for n in negociacoes if (n.get("cliente") or {}).get("origem") == origem
+        ]
+
+    # Server-side search — across the deal title AND its cliente's identity.
     if busca:
-        q = busca.lower()
-        clientes = [c for c in clientes if any(
-            q in str(c.get(f, "") or "").lower()
-            for f in ["nome", "email", "telefone"]
-        )]
+        negociacoes = search_negociacoes(negociacoes, busca)
 
-    # Group by etapa (server-side)
-    colunas = []
-    for etapa_name in ETAPAS:
-        cards = [c for c in clientes if c.get("etapa_atual") == etapa_name]
-        cards.sort(key=lambda c: c.get("kanban_pos", 0))
-        colunas.append({
-            "etapa": etapa_name,
-            "total": len(cards),
-            "valorTotal": sum(float(c.get("valor_estimado", 0) or 0) for c in cards),
-            "cards": cards,
-        })
-
-    return success_response(colunas)
+    return success_response(group_into_colunas(negociacoes))

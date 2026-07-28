@@ -91,17 +91,33 @@ export const mockFunilColunas = [
     valorTotal: 450000,
     cards: [
       {
-        id: 'cli-001',
-        nome: 'João Santos',
-        email: 'joao@email.com',
-        telefone: '(11) 91234-5678',
-        etapa_atual: 'qualificacao',
+        id: 'neg-001',
+        cliente_id: 'cli-001',
+        corretor_id: 'user-001',
+        titulo: 'Apartamento Vila Mariana',
+        etapa: 'qualificacao',
+        status: 'aberta',
         probabilidade: 30,
         valor_estimado: 450000,
-        origem: 'site',
+        kanban_pos: 0,
         arquivado: false,
+        closed_at: null,
+        cliente: {
+          id: 'cli-001',
+          nome: 'João Santos',
+          email: 'joao@email.com',
+          telefone: '(11) 91234-5678',
+          origem: 'site',
+        },
+        corretor: { id: 'user-001', nome: 'Corretor Teste', email: 'corretor@email.com' },
       },
     ],
+  },
+  {
+    etapa: 'visitas',
+    total: 0,
+    valorTotal: 0,
+    cards: [],
   },
   {
     etapa: 'proposta',
@@ -109,15 +125,25 @@ export const mockFunilColunas = [
     valorTotal: 780000,
     cards: [
       {
-        id: 'cli-002',
-        nome: 'Maria Ferreira',
-        email: 'maria@email.com',
-        telefone: '(11) 99876-5432',
-        etapa_atual: 'proposta',
+        id: 'neg-002',
+        cliente_id: 'cli-002',
+        corretor_id: 'user-001',
+        titulo: 'Casa Alto de Pinheiros',
+        etapa: 'proposta',
+        status: 'aberta',
         probabilidade: 60,
         valor_estimado: 780000,
-        origem: 'indicacao',
+        kanban_pos: 0,
         arquivado: false,
+        closed_at: null,
+        cliente: {
+          id: 'cli-002',
+          nome: 'Maria Ferreira',
+          email: 'maria@email.com',
+          telefone: '(11) 99876-5432',
+          origem: 'indicacao',
+        },
+        corretor: { id: 'user-001', nome: 'Corretor Teste', email: 'corretor@email.com' },
       },
     ],
   },
@@ -128,26 +154,30 @@ export const mockFunilColunas = [
     cards: [],
   },
   {
-    etapa: 'visitas',
-    total: 0,
-    valorTotal: 0,
-    cards: [],
-  },
-  {
     etapa: 'fechado',
     total: 1,
     valorTotal: 1200000,
     cards: [
       {
-        id: 'cli-003',
-        nome: 'Pedro Almeida',
-        email: 'pedro@email.com',
-        telefone: '(11) 97654-3210',
-        etapa_atual: 'fechado',
-        probabilidade: 100,
+        id: 'neg-003',
+        cliente_id: 'cli-003',
+        corretor_id: 'user-001',
+        titulo: 'Cobertura Itaim',
+        etapa: 'fechado',
+        status: 'aberta',
+        probabilidade: 90,
         valor_estimado: 1200000,
-        origem: 'portais',
+        kanban_pos: 0,
         arquivado: false,
+        closed_at: null,
+        cliente: {
+          id: 'cli-003',
+          nome: 'Pedro Almeida',
+          email: 'pedro@email.com',
+          telefone: '(11) 97654-3210',
+          origem: 'site',
+        },
+        corretor: { id: 'user-001', nome: 'Corretor Teste', email: 'corretor@email.com' },
       },
     ],
   },
@@ -318,6 +348,8 @@ export const mockStatusPaginas = [
   { id: 4, nome_pagina: 'metas', status: 'producao' },
   { id: 5, nome_pagina: 'imoveis', status: 'producao' },
   { id: 6, nome_pagina: 'matching', status: 'desenvolvimento' },
+  // Mirrors the row seeded by migration 041 — the nav item is gated on it.
+  { id: 10, nome_pagina: 'processos-venda', status: 'producao' },
 ];
 
 export const mockAdminStatusPaginas = [
@@ -333,4 +365,79 @@ export const mockUserRoles = [
 
 export const mockAdminUserRoles = [
   { id: 'ur-001', user_id: 'user-001', role: 'admin' },
+];
+
+/**
+ * Processos de Venda board fixture (roadmap P2.4).
+ * All 8 execution stages are present — the board always emits every column.
+ */
+export const mockProcessosColunas = [
+  {
+    etapa: 'elaboracao_contrato',
+    total: 1,
+    valorTotal: 780000,
+    cards: [
+      {
+        id: 'proc-001',
+        cliente_id: 'cli-002',
+        negociacao_venda_id: 'neg-002',
+        corretor_id: 'user-001',
+        etapa: 'elaboracao_contrato',
+        valor: 780000,
+        observacoes: null,
+        kanban_pos: 0,
+        arquivado: false,
+        cliente: {
+          id: 'cli-002',
+          nome: 'Maria Ferreira',
+          email: 'maria@email.com',
+          telefone: '(11) 99876-5432',
+        },
+        corretor: { id: 'user-001', nome: 'Corretor Teste', email: 'corretor@email.com' },
+        negociacao: {
+          id: 'neg-002',
+          titulo: 'Casa Alto de Pinheiros',
+          valor_estimado: 780000,
+          closed_at: '2026-07-27T12:00:00Z',
+        },
+      },
+    ],
+  },
+  { etapa: 'analise_partes', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'revisao_contrato', total: 0, valorTotal: 0, cards: [] },
+  {
+    etapa: 'assinatura',
+    total: 1,
+    valorTotal: 1200000,
+    cards: [
+      {
+        id: 'proc-002',
+        cliente_id: 'cli-003',
+        negociacao_venda_id: 'neg-003',
+        corretor_id: 'user-001',
+        etapa: 'assinatura',
+        valor: 1200000,
+        observacoes: null,
+        kanban_pos: 0,
+        arquivado: false,
+        cliente: {
+          id: 'cli-003',
+          nome: 'Pedro Almeida',
+          email: 'pedro@email.com',
+          telefone: '(11) 97654-3210',
+        },
+        corretor: { id: 'user-001', nome: 'Corretor Teste', email: 'corretor@email.com' },
+        negociacao: {
+          id: 'neg-003',
+          titulo: 'Cobertura Itaim',
+          valor_estimado: 1200000,
+          closed_at: '2026-07-26T12:00:00Z',
+        },
+      },
+    ],
+  },
+  { etapa: 'financiamento_escritura', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'finalizacao', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'entrega_chaves', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'nota_fiscal', total: 0, valorTotal: 0, cards: [] },
 ];

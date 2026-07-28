@@ -3,6 +3,7 @@ import { jsonResponse, paginatedResponse, successResponse, okResponse } from './
 import {
   mockMetas,
   mockFunilColunas,
+  mockProcessosColunas,
   mockClientes,
   mockImoveis,
   mockMatches,
@@ -14,7 +15,38 @@ export async function mockDashboardAPIs(page: Page) {
 
 export async function mockFunilAPIs(page: Page) {
   await page.route('**/api/funil**', jsonResponse({ data: mockFunilColunas }));
-  await page.route('**/api/clientes/*/mover-etapa', okResponse());
+  // Stage moves go through the NEGOCIAÇÃO now (roadmap P1.5.4) — the
+  // cliente-level endpoint no longer drives the board.
+  await page.route('**/api/negociacoes-venda/*/mover-etapa', okResponse());
+  await page.route(
+    '**/api/negociacoes-venda/*/aceitar-proposta',
+    jsonResponse({
+      data: {
+        negociacao: { id: 'neg-002', status: 'aceita' },
+        processo: { id: 'proc-001', etapa: 'elaboracao_contrato' },
+        already_accepted: false,
+      },
+    }),
+  );
+  // The cliente-detail page asks for a cliente's open deals.
+  await page.route(/\/api\/negociacoes-venda(\?.*)?$/, jsonResponse({ data: [] }));
+}
+
+export async function mockProcessosAPIs(page: Page) {
+  await page.route('**/api/processos-venda**', (route) => {
+    if (route.request().method() === 'POST') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { id: 'proc-001', etapa: 'assinatura' } }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: mockProcessosColunas }),
+    });
+  });
 }
 
 export async function mockClientesAPIs(page: Page) {

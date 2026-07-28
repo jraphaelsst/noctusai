@@ -6,7 +6,7 @@ import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import { useCliente, useToggleArquivarCliente } from '@/hooks/useClientes';
-import { useMoverClienteEtapa } from '@/hooks/useFunil';
+import { useMoverNegociacaoEtapa, useNegociacoesDoCliente } from '@/hooks/useFunil';
 import { LeadScoreBadge } from '@/components/clientes/LeadScoreBadge';
 import { AIIndicator } from '@noctusai/lib/design-system';
 import { ClienteResumo } from '@/components/clientes/ClienteResumo';
@@ -30,7 +30,8 @@ export default function ClienteDetalhes() {
 
   const { data: cliente, isLoading } = useCliente(id);
   const { mutate: toggleArquivar } = useToggleArquivarCliente();
-  const { mutate: moverEtapa } = useMoverClienteEtapa();
+  const { mutate: moverNegociacao } = useMoverNegociacaoEtapa();
+  const { data: negociacoesAbertas } = useNegociacoesDoCliente(id);
 
   if (isLoading) return <DetailPageSkeleton />;
 
@@ -46,12 +47,23 @@ export default function ClienteDetalhes() {
     );
   }
 
-  const etapaConfig = ETAPAS_CONFIG[cliente.etapa_atual];
+  // The stage lives on the DEAL, not the cliente (roadmap P1.5.4).
+  // `clientes.etapa_atual` is written-but-ignored for one release, so reading
+  // it here would show a stage the Funil no longer honours.
+  //
+  // A cliente can hold several concurrent deals, and this page has no way to
+  // know which one the user means — so the control acts on the deal only when
+  // there is exactly ONE open. With none, or with several, it goes read-only
+  // and points at the Funil rather than guessing.
+  const negociacoes = negociacoesAbertas ?? [];
+  const negociacaoUnica = negociacoes.length === 1 ? negociacoes[0] : null;
+  const etapaExibida = negociacaoUnica?.etapa;
+  const etapaConfig = etapaExibida ? ETAPAS_CONFIG[etapaExibida] : null;
 
   const handleMoverEtapa = (novaEtapa: string) => {
-    if (novaEtapa === cliente.etapa_atual) return;
-    moverEtapa({
-      cliente_id: cliente.id,
+    if (!negociacaoUnica || novaEtapa === negociacaoUnica.etapa) return;
+    moverNegociacao({
+      negociacao_id: negociacaoUnica.id,
       para_etapa: novaEtapa as EtapaFunil,
     });
   };
@@ -69,7 +81,13 @@ export default function ClienteDetalhes() {
           <div className="flex-1 min-w-0 w-full">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
               <h1 className="text-2xl sm:text-3xl font-bold truncate">{cliente.nome}</h1>
-              <Badge className={etapaConfig.bgColor}>{etapaConfig.label}</Badge>
+              {etapaConfig ? (
+                <Badge className={etapaConfig.bgColor}>{etapaConfig.label}</Badge>
+              ) : negociacoes.length > 1 ? (
+                <Badge variant="secondary">{negociacoes.length} negociações abertas</Badge>
+              ) : (
+                <Badge variant="outline">Sem negociação aberta</Badge>
+              )}
               {cliente.arquivado && <Badge variant="secondary">Arquivado</Badge>}
               <LeadScoreBadge cliente={cliente} />
               <AIIndicator refType="cliente" refId={cliente.id} showAll enableFeedback />
@@ -82,9 +100,22 @@ export default function ClienteDetalhes() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <Select value={cliente.etapa_atual} onValueChange={handleMoverEtapa}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue />
+            <Select
+              value={negociacaoUnica?.etapa ?? ''}
+              onValueChange={handleMoverEtapa}
+              disabled={!negociacaoUnica}
+            >
+              <SelectTrigger
+                className="w-[180px]"
+                title={
+                  negociacaoUnica
+                    ? undefined
+                    : negociacoes.length > 1
+                      ? 'Este cliente tem várias negociações abertas — mova a etapa no Funil de Vendas.'
+                      : 'Este cliente não tem negociação aberta.'
+                }
+              >
+                <SelectValue placeholder="Sem negociação aberta" />
               </SelectTrigger>
               <SelectContent>
                 {ETAPAS.map(([value, config]) => (

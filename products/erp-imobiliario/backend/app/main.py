@@ -28,6 +28,7 @@ from app.routers import (
     metas_equipe, meta_fechamentos, meta_rankings, metas_digest, meta_eventos,
     vista_showcase,
     negociacoes,
+    negociacoes_venda, processos_venda,
 )
 
 
@@ -51,6 +52,8 @@ app = create_product_app(
         atividades.router,
         action_log.router,
         funil.router,
+        negociacoes_venda.router,
+        processos_venda.router,
         matching.router,
         condominios.router,
         comissoes.router,

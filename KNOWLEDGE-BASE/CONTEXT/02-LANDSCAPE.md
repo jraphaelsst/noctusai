@@ -34,7 +34,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
 | Core | 29 | 14 | 29 | 0 | 50 | 539 |
-| Erp Imobiliario | 60 | 54 | 67 | 68 | 128 | 1,816 |
+| Erp Imobiliario | 62 | 56 | 68 | 69 | 130 | 1,847 |
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 6 | 19 |
@@ -44,14 +44,14 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Social Wiring | 16 | 24 | 79 | 43 | 96 | 1,250 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 19 | 19 | 31 | 654 |
-| **Total** | **191** | **200** | **343** | **196** | **506** | **6,505** |
+| **Total** | **193** | **202** | **344** | **197** | **508** | **6,536** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 364** distributed across the schemas.
+- **Tables: 365** distributed across the schemas.
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.

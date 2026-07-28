@@ -20,7 +20,7 @@ import {
   Hammer, Key, MapPin, ShieldCheck, Megaphone, Mail, MessageSquare,
   Instagram, BellRing, FileBox, FileSignature, Globe, Users, Store,
   BarChart3, Sparkles, Trophy, GitBranch, Settings, Briefcase,
-  Archive, Settings2, Brain, Scale, PlugZap,
+  Archive, Settings2, Brain, Scale, PlugZap, Workflow,
 } from "lucide-react";
 
 // ── Pages ────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Funil = lazy(() => import("@/pages/Funil"));
+const ProcessosVenda = lazy(() => import("@/pages/ProcessosVenda"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const ClienteDetalhes = lazy(() => import("@/pages/ClienteDetalhes"));
 const Imoveis = lazy(() => import("@/pages/Imoveis"));
@@ -100,6 +101,10 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Dashboard", href: "/dashboard", icon: Home, route: "dashboard" },
       { name: "Funil de Vendas", href: "/funil", icon: LayoutDashboard, route: "funil" },
+      // `route` must match the `nome_pagina` seeded by migration 041 exactly —
+      // status_pagina gates every nav entry, and a missing row means the item
+      // silently never renders with no error anywhere.
+      { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos-venda" },
       { name: "Clientes", href: "/clientes", icon: UserCircle, route: "clientes" },
     ],
   },
@@ -223,6 +228,7 @@ export default createProductApp({
   routes: [
     { path: "/dashboard", component: Dashboard },
     { path: "/funil", component: Funil },
+    { path: "/processos-venda", component: ProcessosVenda },
     { path: "/clientes", component: Clientes },
     { path: "/clientes/:id", component: ClienteDetalhes },
     { path: "/imoveis", component: Imoveis },

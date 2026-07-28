@@ -10,6 +10,10 @@ test.describe('Sidebar Navigation', () => {
 
     await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Funil de Vendas' })).toBeVisible();
+    // Gated by the `processos-venda` status_pagina row (migration 041) — if
+    // that row is missing the item silently never renders, so this assertion
+    // is the only thing that would catch it.
+    await expect(page.getByRole('link', { name: 'Processos de Venda' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Clientes' })).toBeVisible();
     // Nav now distinguishes "Metas individuais" from "Metas da Empresa" — use
     // the exact item name to avoid a strict-mode multi-match on "Metas".

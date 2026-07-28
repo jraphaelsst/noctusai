@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { FiltrosFunil } from '@/components/clientes/FiltrosFunil';
 import { NovoClienteDialog } from '@/components/clientes/NovoClienteDialog';
-import { useFunil, useMoverClienteEtapa } from '@/hooks/useFunil';
-import { useToggleArquivarCliente } from '@/hooks/useClientes';
+import {
+  useFunil,
+  useMoverNegociacaoEtapa,
+  useAceitarProposta,
+  useArquivarNegociacao,
+} from '@/hooks/useFunil';
 import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
-import { ClienteCard } from '@/components/clientes/ClienteCard';
+import { NegociacaoCard } from '@/components/clientes/NegociacaoCard';
 import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
 import { formatCurrency } from '@/lib/utils';
 import { Badge } from '@noctusai/seed/components/ui/badge';
@@ -16,14 +20,26 @@ export default function Funil() {
   const [atividadeClienteId, setAtividadeClienteId] = useState<string | null>(null);
 
   const filtrosStore = useFunilFiltrosStore();
-  const { data: colunas, isLoading } = useFunil({
-    ...filtrosStore,
+  // Pass ONLY the filter fields. Spreading the whole store also hands over its
+  // setter functions, which the filter type does not describe — an excess-
+  // property error that went unseen while `tsc --noEmit` checked zero files.
+  const { data: colunas, isPending, isFetching } = useFunil({
+    busca: filtrosStore.busca,
+    responsavelId: filtrosStore.responsavelId,
+    origem: filtrosStore.origem,
+    incluirArquivados: filtrosStore.incluirArquivados,
+    dataInicio: filtrosStore.dataInicio,
+    dataFim: filtrosStore.dataFim,
     etapa: filtrosStore.etapa === 'todas' ? undefined : filtrosStore.etapa,
   });
-  const { mutate: moverCliente } = useMoverClienteEtapa();
-  const { mutate: toggleArquivar } = useToggleArquivarCliente();
+  const { mutate: moverNegociacao } = useMoverNegociacaoEtapa();
+  const { mutate: aceitarProposta, isPending: aceitando } = useAceitarProposta();
+  const { mutate: arquivarNegociacao } = useArquivarNegociacao();
 
-  if (isLoading) {
+  // Gate on `isPending || isFetching`, never `isLoading`: TanStack v5's
+  // `isLoading` is false during a background refetch, so a filter change would
+  // flash the skeleton logic over data that already exists.
+  if (isPending || isFetching) {
     return (
       <div className="container mx-auto p-4 sm:p-6">
         <Skeleton className="h-12 w-64 mb-6" />
@@ -45,14 +61,16 @@ export default function Funil() {
           stage: { id: coluna.etapa, label: ETAPAS_CONFIG[coluna.etapa].label },
           cards: coluna.cards,
         }))}
-        getCardId={(cliente) => cliente.id}
-        getCardStage={(cliente) => cliente.etapa_atual}
-        renderCard={(cliente, { isDragging }) => (
-          <ClienteCard
-            cliente={cliente}
+        getCardId={(negociacao) => negociacao.id}
+        getCardStage={(negociacao) => negociacao.etapa}
+        renderCard={(negociacao, { isDragging }) => (
+          <NegociacaoCard
+            negociacao={negociacao}
             isDragging={isDragging}
             onRegistrarAtividade={setAtividadeClienteId}
-            onArquivar={toggleArquivar}
+            onArquivar={arquivarNegociacao}
+            onAceitarProposta={aceitarProposta}
+            aceitandoProposta={aceitando}
           />
         )}
         renderColumnHeader={(stage, cards) => {
@@ -70,14 +88,18 @@ export default function Funil() {
         }}
         columnEmptyState={() => (
           <div className="text-center text-muted-foreground text-sm py-8">
-            Nenhum cliente nesta etapa
+            Nenhuma negociação nesta etapa
           </div>
         )}
         onMove={(cardId, fromStage, toStage, toIndex) => {
           // Mirrors the pre-organ behavior: only cross-stage drops mutate.
           // Reordering within the same column is a client-side no-op.
           if (fromStage === toStage) return;
-          moverCliente({ cliente_id: cardId, para_etapa: toStage, novo_indice: toIndex });
+          moverNegociacao({
+            negociacao_id: cardId,
+            para_etapa: toStage,
+            novo_indice: toIndex,
+          });
         }}
         columnClassName="flex-shrink-0 w-80 rounded-lg border bg-card text-card-foreground shadow-sm h-full flex flex-col overflow-hidden [&>[data-kanban-column-id]]:flex-1 [&>[data-kanban-column-id]]:p-3 [&>[data-kanban-column-id]]:overflow-y-auto"
       />

@@ -53,7 +53,7 @@ test.describe('Funil (Sales Pipeline)', () => {
     await mockClientesAPIs(page);
     await page.goto('/funil');
 
-    // cli-001 (João Santos) starts in "qualificacao"; drop it onto the
+    // neg-001 (João Santos) starts in "qualificacao"; drop it onto the
     // immediately-ADJACENT "proposta" column (mockFunilColunas in
     // e2e/fixtures/mock-data.ts) — a real cross-column move, the KanbanBoard
     // organ's core behavior guarantee. Deliberately NOT targeting a farther
@@ -63,7 +63,7 @@ test.describe('Funil (Sales Pipeline)', () => {
     // the container auto-scrolls — an observed flake unrelated to the organ
     // repoint itself, worth a `NOC-REMEDIATE` note if this pattern recurs in
     // other kanban-consumer e2e specs.
-    const card = page.locator('[data-kanban-card-id="cli-001"]');
+    const card = page.locator('[data-kanban-card-id="neg-001"]');
     const targetColumn = page.locator('[data-kanban-column-id="proposta"]');
 
     await expect(card).toBeVisible();
@@ -74,7 +74,7 @@ test.describe('Funil (Sales Pipeline)', () => {
     if (!cardBox || !targetBox) throw new Error('Could not measure drag source/target');
 
     const moveRequest = page.waitForRequest(
-      (req) => req.url().includes('/api/clientes/cli-001/mover-etapa') && req.method() === 'POST',
+      (req) => req.url().includes('/api/negociacoes-venda/neg-001/mover-etapa') && req.method() === 'POST',
     );
 
     // dnd-kit's PointerSensor needs real incremental pointer moves past its
@@ -93,5 +93,58 @@ test.describe('Funil (Sales Pipeline)', () => {
     const request = await moveRequest;
     const body = request.postDataJSON();
     expect(body.para_etapa).toBe('proposta');
+  });
+});
+
+test.describe('Funil — Aceitar Proposta seam', () => {
+  test('the button appears ONLY on cards in the proposta column', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockSupabaseQueries(page);
+    await mockFunilAPIs(page);
+    await mockClientesAPIs(page);
+    await page.goto('/funil');
+
+    // neg-002 (Maria Ferreira) sits in "proposta" — it gets the button.
+    const propostaCard = page.locator('[data-kanban-card-id="neg-002"]');
+    await expect(propostaCard.getByRole('button', { name: /Aceitar Proposta/i })).toBeVisible();
+
+    // neg-001 sits in "qualificacao" — accepting is what ENDS a negotiation,
+    // so it must not be offered where no proposal is on the table.
+    const qualificacaoCard = page.locator('[data-kanban-card-id="neg-001"]');
+    await expect(
+      qualificacaoCard.getByRole('button', { name: /Aceitar Proposta/i }),
+    ).toHaveCount(0);
+
+    // `fechado` is a Funil-INTERNAL terminal column, explicitly NOT the trigger.
+    const fechadoCard = page.locator('[data-kanban-card-id="neg-003"]');
+    await expect(
+      fechadoCard.getByRole('button', { name: /Aceitar Proposta/i }),
+    ).toHaveCount(0);
+  });
+
+  test('clicking Aceitar Proposta calls the seam and does not start a drag', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockSupabaseQueries(page);
+    await mockFunilAPIs(page);
+    await mockClientesAPIs(page);
+    await page.goto('/funil');
+
+    const acceptRequest = page.waitForRequest(
+      (req) =>
+        req.url().includes('/api/negociacoes-venda/neg-002/aceitar-proposta') &&
+        req.method() === 'POST',
+    );
+
+    // The card body carries the organ's dnd-kit drag listeners; without
+    // `e.stopPropagation()` in the handler this click is swallowed as a drag
+    // start and no request is ever made. This test is that guarantee.
+    await page
+      .locator('[data-kanban-card-id="neg-002"]')
+      .getByRole('button', { name: /Aceitar Proposta/i })
+      .click();
+
+    await acceptRequest;
   });
 });

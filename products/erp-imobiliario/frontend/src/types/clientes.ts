@@ -58,9 +58,3 @@ export interface Atividade {
   };
 }
 
-export interface ColunaFunil {
-  etapa: EtapaFunil;
-  total: number;
-  valorTotal: number;
-  cards: Cliente[];
-}

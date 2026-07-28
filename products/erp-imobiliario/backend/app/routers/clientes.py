@@ -25,6 +25,12 @@ class ClienteCreate(StrictHttpModel):
     observacoes: Optional[str] = None
     probabilidade: Optional[int] = Field(default=None, ge=0, le=100)
     valor_estimado: Optional[float] = Field(default=None, ge=0)
+    # The corretor. `erp.clientes.usuario_id` was ALWAYS the corretor (NOT NULL
+    # FK to profiles, joined in the funil query, filterable as
+    # `responsavel_id`) — what it lacked was assignability at creation and a
+    # default for unassigned clients. Adding a second corretor column would
+    # have forked an existing field (explicit roadmap anti-goal).
+    usuario_id: Optional[str] = None
 
 
 class ClienteUpdate(StrictHttpModel):
@@ -37,6 +43,8 @@ class ClienteUpdate(StrictHttpModel):
     probabilidade: Optional[int] = Field(default=None, ge=0, le=100)
     valor_estimado: Optional[float] = Field(default=None, ge=0)
     etapa_atual: Optional[str] = None
+    # Reassigning the corretor — the "swappable" half of roadmap P1.5.2.
+    usuario_id: Optional[str] = None
 
 
 class MoverEtapaRequest(StrictHttpModel):
@@ -124,7 +132,20 @@ async def criar_cliente(body: ClienteCreate, auth = Depends(get_current_user)):
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
-    data["usuario_id"] = user.id
+    # Corretor resolution (roadmap P1.5.2). Explicit assignment wins —
+    # including an explicit assignment TO the agency, which is how a client is
+    # deliberately left unassigned. Absent that, the CREATOR owns it.
+    #
+    # Deliberate deviation from the roadmap's literal recipe ("create with no
+    # corretor → lands on the agency"), forced by the live RLS shape: clientes'
+    # SELECT policy is `has_role(admin) OR auth.uid() = usuario_id`. Defaulting
+    # an API-created client to the agency would make it INVISIBLE to the
+    # corretor who just created it — they'd fill in the form and watch the
+    # client vanish. The agency remains the DB-level DEFAULT (so the NOT NULL
+    # column is always satisfiable for service-role/import paths that genuinely
+    # have no corretor) and the explicit unassign target; it is not the default
+    # for a request made by a real, identifiable user.
+    data.setdefault("usuario_id", user.id)
 
     result = db.table("clientes").insert(data).execute()
     row = first_or_none(result)

@@ -43,9 +43,24 @@ shape. On that reading a local Processos board would be the **third** instance a
 | T2′ | **A 3rd genuine board consumer appears** | any new `@dnd-kit` import under `products/` (i.e. outside `@noctusai/lib`) | At N=3 the DRY rule genuinely compels formalization — which the organ already satisfies, so this trigger now means "a consumer forked instead of consuming", i.e. an organ-consumption failure |
 | T3 | **Funil↔Processos handoff needs an audit trail** | user asks "who accepted this proposal and when" | `erp.funil_movimentos` exists but `mover_etapa` never writes to it — a pre-existing gap this roadmap must not silently inherit |
 
-**Today's status (2026-07-16)**: T1 **partially** fired — the organ landed (`6b092514`) and is registered, but
-erp Funil is NOT yet repointed, so T1 has NOT fully fired and Phase 2 stays gated. T2 retired as false.
-T3 not fired.
+**Status (2026-07-27)**: T1 **FIRED** — the organ landed, is registered, and the erp Funil is repointed onto
+it (`da265a9f`). T2 retired as false. **T3 FIRED and is RESOLVED** — the negociação-level `mover-etapa` now
+writes to `erp.funil_movimentos` (with a new `negociacao_venda_id`), so the funnel finally has an audit
+trail. Phases 1.5 and 2 are BUILT (code + tests green); the migrations are **written and dry-run-verified
+but NOT applied** — see "Awaiting user decision" below.
+
+> ### ⛔ Awaiting user decision (2026-07-27) — the ONE thing blocking "done"
+>
+> Migrations 040 + 041 have **not been applied**. dev and prod share ONE Supabase project
+> (`nyplttplcoyiiqjrvtiw`), so applying them is a **production schema + data change** — an agent's call to
+> make only with consent. Both were verified by applying inside `BEGIN … ROLLBACK` against the LIVE prod
+> schema: clean apply, zero-loss backfill (1 cliente → 1 negociação), agency profile created, page row
+> seeded, double-accept yielding exactly ONE processo; post-rollback probes confirm zero persistence.
+>
+> Also for the user: this seeds **ONE global agency profile** (`org_id IS NULL`), not one per org, in a
+> product with 25 live organizations. That is coherent with today's schema — `erp.clientes` has no `org_id`
+> and its RLS is already cross-org for any admin — but it is a fork worth ratifying, and it MUST become
+> per-org in the same slice that gives `erp.clientes` an `org_id`. See migration 040's header caveat.
 
 > **Every slice carries TWO recipes, not one.** A *test-recipe* (unit/CI proof, green at the module
 > boundary) is **not** a *verify-recipe* (proof against LIVE state — the page renders real rows, the
@@ -58,13 +73,18 @@ T3 not fired.
 |---|---|---|---|---|
 | P1.1 | Extract `KanbanBoard` / `KanbanColumn` / `KanbanCard` organ | `seed/lib/frontend/src/components/kanban/` + `components/index.ts` barrel | **shipped** `6b092514` | ⏳ **NOT yet verified against live state** — no consumer exists, so no browser drag has ever exercised it. tsc clean + 142/142 vitest is the TEST-recipe, not the verify-recipe. First real proof lands at P1.3. |
 | P1.2 | Register the organ in the canonical catalog | `noctus.dev.register_organ` | **shipped** (post-merge, `source_sha=012b639a`) | ✅ `register_organ("KanbanBoard")` → `registered, rows_written=1` from the primary tree at dev `06d6f945`. NOTE: this leg CANNOT complete in-dispatch — `register_organ` has no `worktree_path` param and resolves `REPO_ROOT` to the MCP server's startup workspace, so it never sees worktree-only files (s1 logged against `mcp/noctusai/settings.py`). Tech-lead must re-run post-merge every time. |
-| P1.3 | Repoint erp Funil onto the organ (pilot #1) | EDIT `products/erp-imobiliario/frontend/src/pages/Funil.tsx`, `components/clientes/ColunaFunil.tsx`, `ClienteCard.tsx` | planned | Load `/funil` against a real ERP backend: columns show real counts + `valorTotal`, drag persists across reload (`POST /api/clientes/{id}/mover-etapa`) |
+| P1.3 | Repoint erp Funil onto the organ (pilot #1) | EDIT `products/erp-imobiliario/frontend/src/pages/Funil.tsx`, `components/clientes/ColunaFunil.tsx`, `ClienteCard.tsx` | **shipped** `da265a9f` | ✅ Playwright drives a REAL browser drag across columns and asserts the move POST fires (`e2e/tests/funil.spec.ts`) — this is the first real exercise of the organ's INTERACTION, closing P1.1's honesty note. 18/18 e2e green. |
 
-**⚠️ P1.3 blocking follow-up inherited from P1.1**: the `@dnd-kit` triple was added to
-`seed/lib/frontend/package.json` `devDependencies` (mirroring the `@radix-ui` precedent), but it must ALSO
-be added to `FRAMEWORK_DEPS` in `seed/framework/frontend/vite.config.factory.ts` **and** its Python mirror
-in `check_framework_deps.py`. Those were outside P1.1's scope. **A consumer will fail vite dedupe without
-it** — this is the first thing P1.3 must do, not a nicety.
+**✅ P1.3 blocking follow-up — RESOLVED (2026-07-27), and resolved one level up.** The `@dnd-kit` triple was
+missing from `FRAMEWORK_DEPS`. Rather than hand-add three entries to a list that had *already* proven it
+drifts, the factory now DERIVES organ peer deps by scanning `seed/lib/frontend/src` at config time —
+mirroring the derivation the Python audit tool grew on 2026-07-20 (`_derive_organ_transitive_deps`) as its
+build-time twin. Verified identical to the Python side's 16 entries. The derivation also surfaced
+`@radix-ui/react-tabs` + `recharts` as previously un-deduped organ deps nobody had noticed.
+
+The failure mode this prevents is silent, not loud: without `resolve.dedupe` the organ's dnd-kit and the
+product's resolve to two module instances, so a card's `useDraggable` reads a different `DndContext` than
+the board rendered and the drag simply no-ops.
 
 **Honesty note on P1.1's test coverage**: real pointer/keyboard `@dnd-kit` event simulation was NOT
 attempted — jsdom doesn't compute the `getBoundingClientRect` layout math the sensors need. The drag
@@ -82,12 +102,12 @@ twice and repointing twice. The organ is cheapest before the third consumer exis
 
 | # | Title | Files | Trigger | Verify recipe (write it now, run it when it ships) |
 |---|---|---|---|---|
-| P2.1 | Migration: `etapa_processo` enum + `processos_venda` table (FK → `clientes` **+ `negociacoes_venda`**) + `status_pagina` row + index | NEW `products/erp-imobiliario/backend/migrations/0NN_processos_venda.sql` | T1 ∧ P1.5 | Apply to a real DB; `\d erp.processos_venda`; confirm the `status_pagina` row exists (without it the nav item silently never renders) |
-| P2.2 | Backend router + DTO service | NEW `backend/app/routers/processos_venda.py`, `app/services/processos_venda_service.py`; EDIT `main.py` `routers=[...]` | T1 ∧ P1.5 | `curl /api/processos-venda` on a live ERP container → real grouped columns, not `[]` |
-| P2.3 | Accept-proposal seam | EDIT the negociação router (P1.5) — `POST /{negociacao_id}/aceitar-proposta` | T1 ∧ P1.5 | Accept a proposal on a real negociação in `proposta`; assert exactly one `processos_venda` row spawns at `elaboracao_contrato`, the negociação leaves the Funil board, and a double-click yields ONE row (idempotency) |
-| P2.4 | Frontend page on the organ + nav + route | NEW `pages/ProcessosVenda.tsx`, `types/processos.ts`, `lib/etapasProcessoConfig.ts`, `hooks/useProcessos.ts`; EDIT `App.tsx` (nav + route + lazy) | T1 ∧ P1.5 | Page shows real rows; drag persists; sidebar entry renders under Funil de Vendas |
-| P2.5 | "Aceitar Proposta" button on the Funil card, `proposta` column only | EDIT the Funil card component (post-P1.5.4 it renders a negociação) | T1 ∧ P1.5 | Click the button on a `proposta` card in a browser → card leaves Funil, appears on Processos. Handler MUST `e.stopPropagation()` — the card body carries dnd-kit drag listeners |
-| P2.6 | Tests | NEW `backend/tests/routers/test_processos_venda_router.py`, `frontend/e2e/tests/processos-venda.spec.ts`; EDIT `e2e/tests/sidebar.spec.ts` | T1 ∧ P1.5 | — (this row IS the test-recipe; its verify-recipe is P2.1–P2.5's) |
+| P2.1 | Migration: `etapa_processo` enum + `processos_venda` table (FK → `clientes` **+ `negociacoes_venda`**) + `status_pagina` row + index | `migrations/041_processos_venda.sql` | **written, dry-run green, NOT applied** | Apply to a real DB; `\d erp.processos_venda`; confirm the `status_pagina` row exists (without it the nav item silently never renders) |
+| P2.2 | Backend router + DTO service | `routers/processos_venda.py`, `services/processos_venda_service.py`, mounted in `main.py` | **shipped** | `curl /api/processos-venda` on a live ERP container → real grouped columns, not `[]` |
+| P2.3 | Accept-proposal seam | `POST /api/negociacoes-venda/{id}/aceitar-proposta` | **shipped** | Accept a proposal on a real negociação in `proposta`; assert exactly one `processos_venda` row spawns at `elaboracao_contrato`, the negociação leaves the Funil board, and a double-click yields ONE row (idempotency) |
+| P2.4 | Frontend page on the organ + nav + route | `pages/ProcessosVenda.tsx`, `components/processos/ProcessoCard.tsx`, `types/processos.ts`, `lib/etapasProcessoConfig.ts`, `hooks/useProcessos.ts`, `App.tsx` | **shipped** | Page shows real rows; drag persists; sidebar entry renders under Funil de Vendas |
+| P2.5 | "Aceitar Proposta" button on the Funil card, `proposta` column only | `components/clientes/NegociacaoCard.tsx` | **shipped** | Click the button on a `proposta` card in a browser → card leaves Funil, appears on Processos. Handler MUST `e.stopPropagation()` — the card body carries dnd-kit drag listeners |
+| P2.6 | Tests | `test_processos_venda_router.py`, `test_negociacoes_venda_router.py`, `e2e/tests/processos-venda.spec.ts`, EDIT `funil.spec.ts` + `sidebar.spec.ts` | **shipped** | — (this row IS the test-recipe; its verify-recipe is P2.1–P2.5's) |
 
 **Trigger**: T1 (organ green on the Funil pilot) **and** Phase 1.5 landed — `processos_venda.negociacao_venda_id`
 has nothing to reference until the entity exists.
@@ -139,10 +159,10 @@ would be a category error. Hence a NEW sibling entity, permuta table untouched.
 
 | # | Title | Files | Status | Verify recipe (live-state proof) |
 |---|---|---|---|---|
-| P1.5.1 | Migration: `erp.negociacoes_venda` + agency profile seed + backfill | NEW `migrations/0NN_negociacoes_venda.sql` | planned | Apply to a real DB; assert every pre-existing `clientes` row backfilled to exactly ONE `negociacoes_venda` row carrying its old `etapa_atual` — a zero-loss backfill is the whole gate |
-| P1.5.2 | Corretor swappable + agency default | EDIT `backend/app/routers/clientes.py` (`ClienteCreate`/`ClienteUpdate` + line 127) | planned | Create a cliente with no corretor → lands on the agency profile; PATCH the corretor → Funil `responsavel_id` filter reflects it |
-| P1.5.3 | Stage-transition log (the statistics substrate) | NEW table or reuse `erp.funil_movimentos` | planned | Move a negociação across 3 stages; assert 3 logged rows with corretor + timestamps |
-| P1.5.4 | Funil reshape: cards = negociações | EDIT `backend/app/routers/funil.py`, `frontend/src/pages/Funil.tsx`, `ClienteCard.tsx`, `types/clientes.ts` | planned | Give ONE cliente two negociações at different stages; assert the board shows TWO cards in TWO columns — this is the acceptance test for the whole phase |
+| P1.5.1 | Migration: `erp.negociacoes_venda` + agency profile seed + backfill | `migrations/040_negociacoes_venda.sql` | **written, dry-run green, NOT applied** | Apply to a real DB; assert every pre-existing `clientes` row backfilled to exactly ONE `negociacoes_venda` row carrying its old `etapa_atual` — a zero-loss backfill is the whole gate |
+| P1.5.2 | Corretor swappable + agency default | EDIT `backend/app/routers/clientes.py` | **shipped (with a deliberate deviation — see below)** | Create a cliente with no corretor → lands on the agency profile; PATCH the corretor → Funil `responsavel_id` filter reflects it |
+| P1.5.3 | Stage-transition log (the statistics substrate) | REUSE `erp.funil_movimentos` + `negociacao_venda_id`; written by the negociação `mover-etapa` | **shipped** | Move a negociação across 3 stages; assert 3 logged rows with corretor + timestamps |
+| P1.5.4 | Funil reshape: cards = negociações | EDIT `routers/funil.py`, `pages/Funil.tsx`, `pages/ClienteDetalhes.tsx`, `hooks/useFunil.ts`; `ClienteCard.tsx` → `NegociacaoCard.tsx` | **shipped** | Give ONE cliente two negociações at different stages; assert the board shows TWO cards in TWO columns — this is the acceptance test for the whole phase |
 
 **Behavior guarantee**: a cliente with exactly one deal (every row today, post-backfill) renders and
 behaves identically to today's board. The reshape is only visible for multi-deal clients.
@@ -167,17 +187,30 @@ release so a rollback has somewhere to land. Removal is its own later slice.
 - **Q2**: ~~What happens to the Funil card on acceptance?~~ **RESOLVED 2026-07-16** — it leaves the Funil
   entirely. Open sub-question: does the negociação get a terminal `aceita`/`fechado` state + `closed_at`
   (needed for cycle-time stats), or is "absent from the board" the only record? Stats need the former.
-- **Q3**: Is `nota_fiscal` (stage 8) terminal, or does a processo archive after it? No `arquivado` column
-  is planned — mirror `clientes.arquivado` if the board needs to stay finite.
-- **Q4**: Does the organ own the dnd-kit dependency, or does each consumer keep it? Owning it in
-  `@noctusai/lib` is the DRY answer but changes the lib's dep surface.
-- **Q5**: `negociacoes_venda.etapa` — reuse `erp.etapa_funil`, or a new enum? Reuse couples the two
-  boards' stage vocabularies; a new enum duplicates five values. Lean reuse until they diverge.
+- **Q3**: ~~Is `nota_fiscal` terminal, or does a processo archive after it?~~ **RESOLVED 2026-07-27** —
+  terminal, plus an `arquivado` flag mirroring `clientes.arquivado`. Without it the last column grows
+  without bound and the board stops being readable within a year.
+- **Q4**: ~~Does the organ own the dnd-kit dependency, or does each consumer keep it?~~ **RESOLVED
+  2026-07-27** — both, correctly: the organ declares it, every product already lists it, and the vite
+  factory now DERIVES the dedupe set from the organ source so the two can't drift.
+- **Q5**: ~~`negociacoes_venda.etapa` — reuse `erp.etapa_funil`, or a new enum?~~ **RESOLVED 2026-07-27** —
+  reuse, as the roadmap leaned. A parallel enum would duplicate five values on day one.
 - **Q6**: Does the per-corretor statistics surface need its own page, or is it a Metas/Dashboard widget?
-  The stats are the *stated motive* for Phase 1.5 but no consumer is specced — Phase 1.5 builds the
-  substrate (entity + transition log), not the reporting UI. Name the consumer before building it.
-- **Q7**: What is the agency profile row's identity? It needs an `auth.users` row (profiles FK to
-  `auth.users(id)`) — a synthetic non-login user, or a real service account? Affects the seed migration.
+  **STILL OPEN — deliberately.** Phase 1.5 built the SUBSTRATE (negociação entity + `closed_at` +
+  `funil_movimentos` transitions carrying corretor + timestamps). No reporting UI was built: no consumer is
+  specced, and the anti-goal says name the consumer first. The data now exists to build it whenever you want.
+- **Q7**: ~~What is the agency profile row's identity?~~ **RESOLVED 2026-07-27** — a synthetic non-login
+  `auth.users` row at a deterministic UUID (`…0a6e0c`), with the profile created by the existing
+  `handle_new_user` trigger rather than duplicated. Resolver: `erp.agency_profile_id()`.
+  **NEW sub-question for the user**: ONE global agency vs one per org, in a 25-org product — see
+  "Awaiting user decision" at the top.
+- **Q8 (NEW, 2026-07-27)**: `erp.clientes.etapa_atual` is now written-but-ignored. Its removal is a
+  deliberate later slice (the rollback landing zone). **Trigger**: after one release with 040 applied and
+  the board stable.
+- **Q9 (NEW, 2026-07-27)**: 89 pre-existing TypeScript errors across 53 files in erp-imobiliario are
+  currently unguarded — `tsc --noEmit` checks ZERO files because `tsconfig.json` is solution-style
+  (`"files": []` + references). See the decision log entry. **Trigger**: before any "the types are clean"
+  claim is made about this product.
 
 ## Decision log
 
@@ -197,13 +230,65 @@ release so a rollback has somewhere to land. Removal is its own later slice.
   against the live schema). New sibling `erp.negociacoes_venda` chosen (user decision) over repurposing.
 - **2026-07-16**: Agency default = **a real seeded `erp.profiles` row** (user decision), not the org
   owner, not a synthetic null. Corretor stays `NOT NULL`; unassigned clients point at the agency.
+- **2026-07-27**: `FRAMEWORK_DEPS` fixed by DERIVATION, not by adding three entries — the list had already
+  drifted once, so patching the instance would have left the class alive.
+- **2026-07-27**: **Deliberate deviation from the P1.5.2 recipe.** The roadmap said "create a cliente with no
+  corretor → lands on the agency". Implemented as: explicit assignment wins (including explicitly TO the
+  agency, which is how you unassign); otherwise the CREATOR owns it. Reason, found only by reading the live
+  policies: `clientes`/`negociacoes_venda` SELECT RLS is `has_role(admin) OR auth.uid() = <owner>`, so an
+  agency-owned row is INVISIBLE to the corretor who just created it — they would fill in the form and watch
+  the record vanish. The agency remains the DB-level DEFAULT (satisfying NOT NULL for service-role/import
+  paths with no real corretor) and the explicit unassign target.
+- **2026-07-27**: `clientes` INSERT RLS widened by exactly one alternative to admit the agency sentinel —
+  the decided default was otherwise structurally un-insertable.
+- **2026-07-27**: Q2 resolved with a CHECK tying `closed_at` to `status`, so a closed deal cannot exist
+  without its timestamp (which would read as cycle-time zero in the very statistics the phase exists for).
+- **2026-07-27**: Accept-proposal idempotency placed in a UNIQUE CONSTRAINT
+  (`processos_venda.negociacao_venda_id`), not a router check — a check-then-insert races under concurrent
+  double-clicks. The second call returns the existing processo with 200, not an error.
+- **2026-07-27**: `ClienteDetalhes`' stage control now acts on the cliente's single OPEN negociação, and goes
+  read-only (pointing at the Funil) when there are zero or several. Leaving it writing `clientes.etapa_atual`
+  would have been a silent no-op — the user changes the stage and the board never moves.
+- **2026-07-27**: **Did NOT mirror 040/041 into `001_erp_imobiliario.sql`.** The single-001 convention says
+  live-DB patches are `002+` AND mirrored back. Migrations 030-039 were never mirrored, so mirroring only
+  mine would leave 001 half-current — which reads as more trustworthy than it is. Surfaced as pre-existing
+  drift rather than silently half-fixed.
+- **2026-07-27**: **`tsc --noEmit` on this product checks ZERO files** (solution-style `tsconfig.json`:
+  `"files": []` + `references`). The real invocation is `tsc -p tsconfig.app.json --noEmit`, which reports 90
+  pre-existing errors across 54 files. This slice's own broken import (a deleted export still imported by
+  `ClienteDetalhes`) passed the "type check" and was caught only by the vite build. Fixed the one error in a
+  file this slice touched (90 → 89); the remaining 89 are pre-existing and logged as Q9. **The gate itself is
+  unfixed** — changing the npm script / CI invocation would surface 89 failures fleet-wide and is the user's
+  scoping call, not an agent's.
 
-## Retrospective (filled at first trigger fire)
+## Retrospective (2026-07-27 — Phases 1.3 / 1.5 / 2 built)
 
-*To be filled when Phase 2 fires. Capture:*
-- *Was the organ's API sufficient for a second, differently-shaped board, or did Processos force a change?*
-- *Did the erp Funil repoint stay behavior-identical, or did the pilot leak regressions?*
-- *Lessons absorbed back to KB / MEMORY.md.*
+**Was the organ's API sufficient for a second, differently-shaped board?** Yes — unchanged. Processos has a
+different card type, a different stage-id union (8 values vs 5), a different value field (`valor` vs
+`valor_estimado`) and a different empty-state, and all of it went through `getCardId` / `getCardStage` /
+`renderCard` / `renderColumnHeader` without touching `@noctusai/lib`. The genericity was real, not asserted.
+The organ's `isLoading`/`error`/`loadingState` props were used by Processos and not by Funil — worth noting
+the two consumers diverged on which states they delegate.
+
+**Did the repoint stay behavior-identical?** The organ repoint (P1.3) did. The Phase 1.5 RESHAPE deliberately
+did not — that was the point — but the single-deal case renders identically, which is the guarantee that was
+promised.
+
+**Lessons worth carrying (candidates for KB / MEMORY absorption):**
+1. **A hand-maintained list that has drifted once will drift again — derive it instead.** `FRAMEWORK_DEPS`
+   had already been patched reactively on the Python side; the TS side was still hand-maintained and still
+   wrong. Fixing the instance would have left the class alive.
+2. **Verify the gate before trusting the green.** `tsc --noEmit` on a solution-style `tsconfig.json`
+   type-checks ZERO files and exits 0 — a permanently-green gate. It hid 90 real errors and would have hidden
+   this slice's own broken import; the vite build caught what the "type check" did not. Every prior
+   "tsc clean" claim about this product, including in this roadmap's P1.1 row, was vacuous.
+3. **Read the RLS before designing a default.** The decided agency-default was in direct conflict with
+   `clientes`' live INSERT policy, and defaulting a deal to the agency would have made it invisible to its
+   own creator. Neither is visible from the schema alone — only from the policies.
+4. **Idempotency belongs in a constraint, not a check-then-insert.** `UNIQUE(negociacao_venda_id)` makes the
+   double-click impossible rather than unlikely; the router's pre-check is an ergonomics layer on top.
+5. **`BEGIN … <migration> … probe … ROLLBACK` is a real verify-recipe for a migration** against a shared
+   dev/prod DB — it proves the apply against the LIVE schema while persisting nothing.
 
 ## Composes with
 
