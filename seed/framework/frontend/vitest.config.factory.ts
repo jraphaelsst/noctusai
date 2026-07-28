@@ -9,6 +9,30 @@
  *   - Seed lib + framework alias resolution (mirrors `vite.config.factory.ts`).
  *   - `@noctusai/seed/infra` subpath alias so `vi.mock(...)` can stub the
  *     api at the seed boundary in product hook tests.
+ *   - **React single-instance guard** (see below) so a product test can RENDER
+ *     a seed organ, not just call its hooks.
+ *
+ * --- Dual-React guard ---
+ * A product's `react-dom` lives in `products/<slug>/frontend/node_modules`,
+ * while a seed ORGAN's `react` resolves from `seed/lib/frontend/node_modules`.
+ * Two physical React copies ⇒ the renderer's dispatcher comes from one and the
+ * organ's hooks from the other ⇒ `Cannot read properties of null (reading
+ * 'useState')` the moment a product test renders anything out of
+ * `@noctusai/lib/components`.
+ *
+ * `vite.config.factory.ts` never had this problem: its `resolve.dedupe` list
+ * already carries `react`/`react-dom`, so the BUILD collapses them. This
+ * factory claimed to mirror it but omitted the dedupe — a silent drift that
+ * only surfaced when a product first tried to render an organ under vitest
+ * (orbity `Funil.test.tsx`, 2026-07-28). Same two root causes, same fix as
+ * `seed/lib/frontend/vitest.config.ts` solved for the lib's own colocated
+ * tests on 2026-05-29: `resolve.dedupe` PLUS explicit SUBPATH aliases —
+ * `@testing-library/react` imports `react-dom/client` and JSX-transformed
+ * components import `react/jsx-runtime`, and Vite treats every subpath
+ * specifier as an independent module entry unless it is aliased by name.
+ *
+ * Everything collapses onto the PRODUCT's copy (the one `react-dom` already
+ * renders with). Alias order is longest-prefix-first: subpaths before bare.
  *
  * Mirrors the pattern established by `vite.config.factory.ts` —
  * config-time code lives at this literal path because the vitest/vite
@@ -26,8 +50,10 @@
  *     aliasExtra: { "@my-pkg": path.resolve(__dirname, "./libs/my-pkg") },
  *   });
  */
+import fs from "fs";
 import path from "path";
 import type { UserConfig } from "vitest/config";
+import { resolveFrameworkDeps } from "./vite.config.factory";
 
 export interface ProductVitestConfigOptions {
   /** Extra excludes layered ON TOP of defaults (`node_modules`, `dist`, `e2e/**`). */
@@ -73,6 +99,11 @@ export function createProductVitestConfig(
 
   const productDir = process.cwd();
   const { repoRoot, seedLib, seedFramework, seedInfra } = resolveFromProductDir(productDir);
+  // The product's own React copy — the one its `react-dom` renders with, and
+  // therefore the one every seed organ must be collapsed onto (dual-React
+  // guard in the header docstring).
+  const productReact = path.resolve(productDir, "node_modules/react");
+  const productReactDom = path.resolve(productDir, "node_modules/react-dom");
   // Shared setup file lives beside this factory (seed/framework/frontend/).
   // Resolved absolutely because config-time code runs before alias wiring.
   const seedSetup = path.resolve(seedFramework, "../vitest.setup.ts");
@@ -100,13 +131,49 @@ export function createProductVitestConfig(
       ],
     },
     resolve: {
+      // Collapse every framework / organ peer dep onto ONE physical copy,
+      // resolved from the product root. Same list the BUILD dedupes — reused
+      // from `vite.config.factory.ts` rather than restated, so an organ that
+      // brings a new peer dep is covered in both places at once.
+      //
+      // react/react-dom are the hook-dispatcher case; the rest matter for the
+      // same reason `@dnd-kit` did at build time — a second `DndContext`
+      // module is a second provider, and the card's `useDraggable` then reads
+      // a context the board never wrote to.
+      //
+      // FILTERED to what the product actually installed. `dedupe` means
+      // "resolve this bare specifier from the project root", so listing a
+      // package the product does NOT have turns a previously-working fallback
+      // (resolve it from the seed lib's node_modules) into a hard resolution
+      // error — personal-finance has no `@dnd-kit/*` and its whole suite went
+      // red on the unfiltered list. A dep the product doesn't own has no
+      // second copy to collapse, so filtering costs nothing.
+      dedupe: resolveFrameworkDeps(seedLib).filter((dep) =>
+        fs.existsSync(path.join(productDir, "node_modules", dep))
+      ),
+      // Object form, deliberately: `extend` callers spread this as a record
+      // (`{...peerAlias, ...config.resolve.alias}` — products/dev-team), and
+      // spreading an ARRAY into an object silently yields `{0:…,1:…}`, which
+      // drops every alias including `@`. Key ORDER still matters — Vite tries
+      // entries in insertion order and matches on `id === key || id.startsWith(key + "/")`,
+      // so every subpath key must precede its bare prefix.
       alias: {
+        // React subpaths, explicitly. `dedupe` above handles BARE specifiers;
+        // a subpath like `react-dom/client` (what `@testing-library/react`
+        // imports) or `react/jsx-runtime` (what the JSX transform emits) is a
+        // separate module entry that dedupe does NOT collapse — the exact hole
+        // `seed/lib/frontend/vitest.config.ts` documented on 2026-05-29.
+        "react-dom/client": path.join(productReactDom, "client.js"),
+        "react-dom/test-utils": path.join(productReactDom, "test-utils.js"),
+        "react/jsx-runtime": path.join(productReact, "jsx-runtime.js"),
+        "react/jsx-dev-runtime": path.join(productReact, "jsx-dev-runtime.js"),
+
         "@": path.resolve(productDir, "./src"),
         "@noctusai/lib": seedLib,
-        "@noctusai/seed": seedFramework,
         // Subpath alias — products' tests typically `vi.mock("@noctusai/seed/infra", ...)`
-        // to stub the api at the seed boundary.
+        // to stub the api at the seed boundary. Before its bare prefix.
         "@noctusai/seed/infra": seedInfra,
+        "@noctusai/seed": seedFramework,
         ...aliasExtra,
       },
     },

@@ -5,8 +5,19 @@
  * with name, company, value, temperature badge, and score. Moving a card
  * between columns calls PATCH /api/crm/leads/{id}/stage.
  *
- * Lead detail/edit slides in as an inline dialog (no separate route).
- * Create lead uses a modal form.
+ * The board itself is the canonical `<KanbanBoard/>` organ from
+ * `@noctusai/lib/components` — this page owns only the DATA SHAPE (columns
+ * derived from `FunilStage[]`), the CARD rendering, and the mutation. Drag
+ * sensors, droppable columns, the drag overlay and the move computation all
+ * live in the organ (`KB § PATTERNS/architect/products-consume-canonical-organs.md`).
+ * Pilot #2 of the organ, after the ERP Funil — and the real generality test,
+ * because Orbity's vocabulary is `leads`/`stage_id` (free-form, org-owned
+ * stage rows) rather than the ERP's `clientes`/`etapa` DB enum.
+ *
+ * Drag-and-drop is an UPGRADE here: before the organ, the only way to move a
+ * card was the per-card "mover para etapa" dropdown. That dropdown is KEPT —
+ * it is a precise, pointer-cheap affordance on a wide board, and removing a
+ * working control is not part of repointing onto the organ.
  *
  * All 4 states (loading / empty / error / success) are explicit.
  *
@@ -34,6 +45,7 @@ import { Button } from "@noctusai/lib/design-system";
 import { Dialog, DialogHeader, DialogBody, DialogFooter } from "@noctusai/lib/design-system";
 import { Badge } from "@noctusai/lib/design-system";
 import { Input } from "@noctusai/lib/design-system";
+import { KanbanBoard } from "@noctusai/lib/components";
 import {
   Plus,
   Trash2,
@@ -84,9 +96,16 @@ interface LeadCardProps {
   onEdit: (lead: Lead) => void;
   onDelete: (id: string) => void;
   onMoveStage: (id: string, stageId: string) => void;
+  /**
+   * True for the copy rendered inside the organ's `<DragOverlay/>`. That copy
+   * is a visual ghost: it is not in the document flow, receives no hover, and
+   * its buttons can never be reached — so the action cluster and the move menu
+   * are dropped rather than rendered dead.
+   */
+  isDragging?: boolean;
 }
 
-function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage }: LeadCardProps) {
+function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = false }: LeadCardProps) {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
   return (
@@ -96,7 +115,9 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage }: LeadCardProps
         <span className="font-medium text-sm text-gray-900 leading-tight line-clamp-2">
           {lead.name}
         </span>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <div
+          className={`flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ${isDragging ? "hidden" : ""}`}
+        >
           <button
             type="button"
             onClick={() => onEdit(lead)}
@@ -153,8 +174,8 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage }: LeadCardProps
           )}
         </div>
 
-        {/* Move to stage */}
-        <div className="relative">
+        {/* Move to stage — the pointer-cheap alternative to dragging. */}
+        <div className={`relative ${isDragging ? "hidden" : ""}`}>
           <button
             type="button"
             onClick={() => setShowMoveMenu((v) => !v)}
@@ -564,43 +585,46 @@ function LeadDetailPanel({ lead, stages, onClose, onEdit }: LeadDetailPanelProps
   );
 }
 
-// ─── Kanban column ───────────────────────────────────────────────────────────
+// ─── Column presentation ─────────────────────────────────────────────────────
+//
+// The column CONTAINER is the organ's (`KanbanColumn`, which owns the
+// droppable zone). Everything below is the consumer's presentation, injected
+// through the organ's `renderColumnHeader` / `columnEmptyState` /
+// `columnClassName` seams — no local column component, no second dnd-kit tree.
 
-interface KanbanColumnProps {
-  funilStage: FunilStage;
-  allStages: FunilStage[];
-  onAddLead: (stageId: string) => void;
-  onEditLead: (lead: Lead) => void;
-  onDeleteLead: (id: string) => void;
-  onMoveLead: (id: string, stageId: string) => void;
-  onSelectLead: (lead: Lead) => void;
-}
-
-function KanbanColumn({
-  funilStage,
-  allStages,
+/**
+ * Column chrome: colour dot + stage name + lead count + "add lead", followed
+ * by the column's pipeline subtotal. Identical markup to the pre-organ
+ * `KanbanColumn` header so the board looks the same after the repoint.
+ */
+function ColumnHeader({
+  stageId,
+  name,
+  color,
+  leads,
   onAddLead,
-  onEditLead,
-  onDeleteLead,
-  onMoveLead,
-  onSelectLead,
-}: KanbanColumnProps) {
-  const { stage, leads } = funilStage;
+}: {
+  stageId: string;
+  name: string;
+  /** The org's own stage colour — `KanbanStage` carries id + label only. */
+  color: string | null;
+  leads: Lead[];
+  onAddLead: (stageId: string) => void;
+}) {
   const totalValue = leads.reduce((sum, l) => sum + (l.value ?? 0), 0);
 
   return (
-    <div className="flex flex-col w-64 flex-shrink-0 bg-gray-50 rounded-xl border border-gray-200">
-      {/* Column header */}
+    <>
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-200">
         <div className="flex items-center gap-2 min-w-0">
-          {stage.color && (
+          {color && (
             <span
               className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: stage.color }}
+              style={{ backgroundColor: color }}
             />
           )}
           <span className="font-medium text-sm text-gray-800 truncate">
-            {stage.name}
+            {name}
           </span>
           <span className="ml-1 inline-flex items-center justify-center rounded-full bg-gray-200 text-gray-600 text-xs font-medium h-5 w-5 flex-shrink-0">
             {leads.length}
@@ -608,7 +632,7 @@ function KanbanColumn({
         </div>
         <button
           type="button"
-          onClick={() => onAddLead(stage.id)}
+          onClick={() => onAddLead(stageId)}
           title="Adicionar lead"
           className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex-shrink-0"
         >
@@ -616,44 +640,33 @@ function KanbanColumn({
         </button>
       </div>
 
-      {/* Total value */}
       {totalValue > 0 && (
         <div className="px-3 py-1 text-xs text-emerald-600 font-medium border-b border-gray-100">
           {formatCurrency(totalValue)}
         </div>
       )}
-
-      {/* Cards */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px]">
-        {leads.length === 0 && (
-          <p className="text-center text-xs text-gray-400 py-4 italic">
-            Nenhum lead
-          </p>
-        )}
-        {leads.map((lead) => (
-          <div
-            key={lead.id}
-            onClick={() => onSelectLead(lead)}
-            className="cursor-pointer"
-          >
-            <LeadCard
-              lead={lead}
-              stages={allStages}
-              onEdit={onEditLead}
-              onDelete={onDeleteLead}
-              onMoveStage={onMoveLead}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   );
 }
+
+/**
+ * The pre-organ column was `w-64 … bg-gray-50 rounded-xl border` on the
+ * outside with `flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px]` on the
+ * card area. The organ hands the consumer the OUTER element via
+ * `columnClassName` and tags its card area `data-kanban-column-id`, so the
+ * inner half is restyled through arbitrary-child variants — the same seam the
+ * ERP Funil uses. Card spacing moves to `cardClassName` (`space-y-2` cannot
+ * apply: the organ renders an empty-state sibling next to the cards).
+ */
+const COLUMN_CLASS =
+  "flex flex-col w-64 flex-shrink-0 bg-gray-50 rounded-xl border border-gray-200 overflow-hidden " +
+  "[&>[data-kanban-column-id]]:flex-1 [&>[data-kanban-column-id]]:overflow-y-auto " +
+  "[&>[data-kanban-column-id]]:p-2 [&>[data-kanban-column-id]]:min-h-[120px]";
 
 // ─── Funil page ──────────────────────────────────────────────────────────────
 
 export default function Funil() {
-  const { data: funilData, isLoading, isError, error, refetch } = useFunil();
+  const { data: funilData, isPending, isFetching, isError, error, refetch } = useFunil();
   const createLead = useCreateLead();
   const updateLead = useUpdateLead();
   const deleteLead = useDeleteLead();
@@ -715,7 +728,17 @@ export default function Funil() {
 
   // ── render ──
 
-  if (isLoading) {
+  const stages = funilData ?? [];
+
+  // Gate on `isPending || isFetching`, never `isLoading`
+  // (`KB § PATTERNS/frontend/lying-loading-state.md`). TanStack v5's
+  // `isLoading` is FALSE mid-refetch, so after `seed-defaults` invalidates the
+  // funil the "Nenhuma etapa configurada" branch below would win over stages
+  // that are already on the wire — offering "Criar etapas padrão" for a funnel
+  // that now has stages. `isFetching` is scoped to the empty case on purpose:
+  // once data exists it stays on screen through a background refetch instead
+  // of flashing the whole board back to a skeleton.
+  if (isPending || (isFetching && stages.length === 0)) {
     return (
       <div className="flex flex-col gap-4 p-6">
         <div className="flex items-center justify-between">
@@ -748,8 +771,6 @@ export default function Funil() {
     );
   }
 
-  const stages = funilData ?? [];
-
   if (stages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3 p-6 text-center">
@@ -768,6 +789,12 @@ export default function Funil() {
       </div>
     );
   }
+
+  // Stage colour by id — the organ's `KanbanStage` is deliberately id+label
+  // only, so anything else the header wants is resolved from the source rows.
+  const colorByStageId: Record<string, string | null> = Object.fromEntries(
+    stages.map((s) => [s.stage.id, s.stage.color])
+  );
 
   const totalLeads = stages.reduce((sum, s) => sum + s.leads.length, 0);
   const totalValue = stages.reduce(
@@ -796,24 +823,60 @@ export default function Funil() {
         </Button>
       </div>
 
-      {/* Kanban board */}
+      {/* Kanban board — the canonical organ. */}
       <div className="flex-1 overflow-x-auto">
-        <div className="flex gap-4 p-6 h-full min-h-[500px]">
-          {stages.map((s) => (
-            <KanbanColumn
-              key={s.stage.id}
-              funilStage={s}
-              allStages={stages}
-              onAddLead={openCreateDialog}
-              onEditLead={openEditDialog}
-              onDeleteLead={handleDelete}
-              onMoveLead={handleMove}
-              onSelectLead={(lead) =>
+        <KanbanBoard<Lead>
+          className="flex gap-4 p-6 h-full min-h-[500px]"
+          columns={stages.map((s) => ({
+            stage: { id: s.stage.id, label: s.stage.name },
+            cards: s.leads,
+          }))}
+          getCardId={(lead) => lead.id}
+          // A lead with no stage is not returned inside any funil column, so
+          // this fallback is unreachable through the board's own data — it
+          // exists because `Lead.stage_id` is nullable at the type level.
+          getCardStage={(lead) => lead.stage_id ?? ""}
+          renderCard={(lead, { isDragging }) => (
+            <div
+              onClick={() =>
                 setSelectedLead((prev) => (prev?.id === lead.id ? null : lead))
               }
+              className="cursor-pointer"
+            >
+              <LeadCard
+                lead={lead}
+                stages={stages}
+                onEdit={openEditDialog}
+                onDelete={handleDelete}
+                onMoveStage={handleMove}
+                isDragging={isDragging}
+              />
+            </div>
+          )}
+          renderColumnHeader={(stage, leads) => (
+            <ColumnHeader
+              stageId={stage.id}
+              name={stage.label}
+              color={colorByStageId[stage.id] ?? null}
+              leads={leads}
+              onAddLead={openCreateDialog}
             />
-          ))}
-        </div>
+          )}
+          columnEmptyState={() => (
+            <p className="text-center text-xs text-gray-400 py-4 italic">
+              Nenhum lead
+            </p>
+          )}
+          onMove={(leadId, fromStage, toStage) => {
+            // Cross-column drops only. Leads have no per-column ordering
+            // column in the CRM schema, so a same-stage reorder has nothing
+            // to persist — firing the mutation would be a no-op PATCH.
+            if (fromStage === toStage) return;
+            handleMove(leadId, toStage);
+          }}
+          columnClassName={COLUMN_CLASS}
+          cardClassName="mb-2 last:mb-0"
+        />
       </div>
 
       {/* Create lead dialog */}

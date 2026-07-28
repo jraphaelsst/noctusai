@@ -47,7 +47,8 @@ shape. On that reading a local Processos board would be the **third** instance a
 it (`da265a9f`). T2 retired as false. **T3 FIRED and is RESOLVED** — the negociação-level `mover-etapa` now
 writes to `erp.funil_movimentos` (with a new `negociacao_venda_id`), so the funnel finally has an audit
 trail. Phases 1.5 and 2 are SHIPPED — code on `dev`, tests green, and migrations 040 + 041 APPLIED to the
-live database. Every phase of this roadmap has landed; only the deferred Phase 3 (orbity fan-out) remains.
+live database. **Phase 3 (orbity fan-out) SHIPPED 2026-07-28** on the user's explicit go-ahead — every
+phase of this roadmap has now landed.
 
 > ### ✅ APPLIED TO PRODUCTION 2026-07-27 — the roadmap is COMPLETE
 >
@@ -121,15 +122,58 @@ has nothing to reference until the entity exists.
 **Why not now**: a Processos board written before the organ is the third fork the DRY rule forbids; and
 built before Phase 1.5 it would hang off `cliente_id` alone and need re-migrating once negociações exist.
 
-## Phase 3 — orbity Funil fan-out (DEFERRED — fires when T2, or opportunistically)
+## Phase 3 — orbity Funil fan-out (SHIPPED 2026-07-28, on user's go-ahead)
 
-| # | Title | Files | Trigger | Verify recipe |
+| # | Title | Files | Status | Verify recipe (live-state proof, not unit tests) |
 |---|---|---|---|---|
-| P3.1 | Repoint orbity Funil onto the organ (pilot #2) | EDIT `products/orbity/frontend/src/pages/Funil.tsx` + its `useCrm.ts` hooks | T2 | Orbity `/funil` drag persists via `PATCH /api/crm/leads/{id}/stage` |
+| P3.1 | Repoint orbity Funil onto the organ (pilot #2) | EDIT `products/orbity/frontend/src/pages/Funil.tsx`; NEW `src/pages/__tests__/Funil.test.tsx` | **shipped** | Orbity `/funil` drag persists via `PATCH /api/crm/leads/{id}/stage` — see the browser leg below |
+| P3.2 | Product vitest harness can render an organ at all | EDIT `seed/framework/frontend/vitest.config.factory.ts` + export `resolveFrameworkDeps` from `vite.config.factory.ts` | **shipped** | 11 product suites re-run: dev-team 11/11, personal-finance 30/30, social-wiring 409/409 — identical to their pre-change baselines |
 
-**Why not now**: pilot-products-first cadence — prove the organ on erp + Processos (2 consumers)
-before fanning out. Orbity's board is stage-named differently (`leads`/`stage`, not `clientes`/`etapa_atual`),
-so it's the real generality test, not a copy.
+**The generality test passed.** Orbity's vocabulary really is different — `leads`/`stage_id` with free-form,
+org-owned stage ROWS (name + colour + position), against the ERP's `clientes`/`etapa` DB enum. The organ
+needed **no change**: `getCardStage` absorbed the nullable `stage_id`, `renderColumnHeader` absorbed the
+colour dot the organ's id+label `KanbanStage` deliberately doesn't carry, and the `data-kanban-column-id`
+child selector absorbed a completely different column skin. The one seam that felt thin — the organ hard-codes
+its column BODY className — was already solved by the ERP pilot via a Tailwind arbitrary-child variant, so
+pilot #2 reused it instead of growing a `columnBodyClassName` prop. Zero organ edits across two consumers
+with disjoint vocabularies is the actual evidence that the extraction was right.
+
+**Drag is an UPGRADE here, not a repoint.** Pre-organ, orbity's only way to move a card was a per-card
+"mover para etapa" dropdown; there was no dnd-kit tree at all (this is the PREMISE CORRECTION that retired
+T2). The dropdown is KEPT — it is a precise, pointer-cheap affordance on a wide board, and deleting a
+working control is not part of adopting an organ.
+
+**Fixed on contact, one level up (P3.2).** The first attempt to render the organ in a product vitest died on
+`Cannot read properties of null (reading 'useState')` — the classic dual-React. `vite.config.factory.ts`
+has carried `resolve.dedupe` since forever, so the BUILD was always fine; `vitest.config.factory.ts`
+claimed in its own docstring to "mirror" it but had no dedupe at all. No product had ever rendered an organ
+under vitest, so the hole was invisible. Fixed by EXPORTING `resolveFrameworkDeps` from the vite factory and
+reusing it — one derivation, two factories, rather than a second hand-maintained list
+(`KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`).
+
+Two self-inflicted regressions were caught by re-running the whole fleet rather than just orbity, and both
+are now encoded in the factory's comments:
+- **Deduping a dep the product doesn't own is a hard error, not a no-op.** `dedupe` means "resolve from the
+  project root"; personal-finance has no `@dnd-kit/*`, so the unfiltered list turned a working fallback into
+  `Failed to resolve import`. The list is now filtered by what the product actually installed.
+- **`resolve.alias` must stay an OBJECT.** Switching it to Vite's array form broke `products/dev-team`,
+  whose `extend` hook does `{...peerAlias, ...config.resolve.alias}` — spreading an array into an object
+  yields `{0:…,1:…}` and silently drops every alias, including `@`. Key ORDER carries the subpath-before-bare
+  requirement instead.
+
+**Also fixed on contact:** orbity's loading gate was `if (isLoading)`, with `stages.length === 0` →
+"Nenhuma etapa configurada" right behind it — the lying-loading shape
+(`KB § PATTERNS/frontend/lying-loading-state.md`). After `seed-defaults` invalidates the funil, `isLoading`
+is false mid-refetch, so the page would offer "Criar etapas padrão" for a funnel whose stages are already on
+the wire. Now `isPending || (isFetching && stages.length === 0)`: `isFetching` is scoped to the EMPTY case
+on purpose, so resolved data stays on screen through a background refetch instead of flashing back to a
+skeleton. Regression-tested three ways (first load / mid-refetch / settled-and-genuinely-empty).
+
+**⏳ The browser leg is the one thing NOT proven here.** jsdom has no layout, so dnd-kit's collision
+detection has nothing to measure — a page test can prove the organ is mounted and its drag wiring attached
+(`data-kanban-card-id` / `data-kanban-column-id` are emitted only by the organ), and that card clicks still
+reach the detail panel, but it cannot prove a drag lands. The ERP pilot closed this with Playwright;
+**orbity has no e2e harness**. See the decision log for why that was not installed in this slice.
 
 ## Anti-goals (explicit non-goals)
 
@@ -266,6 +310,33 @@ release so a rollback has somewhere to land. Removal is its own later slice.
   file this slice touched (90 → 89); the remaining 89 are pre-existing and logged as Q9. **The gate itself is
   unfixed** — changing the npm script / CI invocation would surface 89 failures fleet-wide and is the user's
   scoping call, not an agent's.
+- **2026-07-28**: Orbity's **"mover para etapa" dropdown is KEPT** alongside drag. Drag is additive here
+  (orbity had no dnd-kit at all); removing a working control is not part of adopting an organ, and the
+  dropdown remains the cheaper affordance on a wide board.
+- **2026-07-28**: The organ was **not extended** for pilot #2. The one candidate — a `columnBodyClassName`
+  prop, since the organ hard-codes its column body's className — was rejected because the ERP pilot already
+  solved it through the `data-kanban-column-id` attribute + a Tailwind arbitrary-child variant. Adding a
+  prop for a need an existing seam already covers is how an organ's API bloats.
+- **2026-07-28**: `resolveFrameworkDeps` **exported** from `vite.config.factory.ts` and consumed by
+  `vitest.config.factory.ts` rather than restated. The vitest factory's docstring had claimed to "mirror"
+  the vite one while missing its `resolve.dedupe` entirely — the mirror was aspirational, and a second
+  hand-maintained list would have re-created the exact drift the derivation was built to kill.
+- **2026-07-28**: `dedupe` is **filtered to deps the product actually installed**. Deduping means "resolve
+  from the project root", so naming a package the product lacks converts a working fallback into a hard
+  resolution failure (personal-finance, no `@dnd-kit/*`, whole suite red). Discovered only by re-running all
+  11 consumer suites — orbity alone was green throughout.
+- **2026-07-28**: `resolve.alias` **stays an object map** in the vitest factory. Vite's array form is the
+  more correct shape for ordered matching, but it is a BREAKING change to the factory's contract:
+  `products/dev-team`'s `extend` hook spreads `config.resolve.alias` as a record, and spreading an array
+  into an object silently produces `{0:…,1:…}` — dropping every alias including `@`. Ordered object keys
+  carry the subpath-before-bare requirement instead.
+- **2026-07-28**: **No Playwright harness installed for orbity.** The drag-lands proof is browser-only and
+  orbity has no e2e setup; installing one means a new dev dependency, browser binaries, a config, and a
+  mock layer — a harness slice in its own right, not a rider on a page repoint. The page tests instead
+  assert the organ's own drag-wiring attributes plus a click-not-swallowed case, and the gap is stated
+  rather than papered over. Named destination: a `orbity-e2e-harness` slice, or the fleet-wide e2e-per-organ
+  leg that `KB § PATTERNS/common/agent-context-architecture.md`'s sibling organ-knowledge work already
+  contemplates.
 
 ## Retrospective (2026-07-27 — Phases 1.3 / 1.5 / 2 built)
 

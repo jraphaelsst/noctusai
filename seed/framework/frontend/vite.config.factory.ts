@@ -171,8 +171,15 @@ function deriveOrganTransitiveDeps(seedLibDir: string): string[] {
   return [...found].sort();
 }
 
-/** The hand-curated framework floor UNIONed with derived organ peer deps. */
-function resolveFrameworkDeps(seedLib: string): string[] {
+/**
+ * The hand-curated framework floor UNIONed with derived organ peer deps.
+ *
+ * Exported because `vitest.config.factory.ts` needs the IDENTICAL set: a
+ * product test that renders a seed organ has the same single-instance
+ * requirement the build does (one React, one `DndContext` module). Deriving
+ * it twice would be the hand-maintained-list failure mode one level up.
+ */
+export function resolveFrameworkDeps(seedLib: string): string[] {
   return [...new Set([...FRAMEWORK_DEPS, ...deriveOrganTransitiveDeps(seedLib)])];
 }
 
