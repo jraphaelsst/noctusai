@@ -131,6 +131,34 @@ class TestConversations:
         resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
         assert resp.status_code == 502, resp.text
 
+    def test_list_conversations_advanced_access_timeout_returns_app_review_gate(
+        self, client
+    ):
+        # Standard-Access `instagram_manage_messages` on a busy inbox makes
+        # Graph EXPIRE the conversations query (code -2 / subcode 2534084;
+        # in prod the httpx read-timeout → http_status 504 fires first). It
+        # is a cacheable Advanced-Access (App Review) gate — the DMs read
+        # must fail fast into a structured 200 `{requires_app_review: true}`
+        # with an actionable message, never a 30s skeleton → raw 502.
+        for err in (
+            MetaGraphError(
+                "Timeout", code=-2, error_subcode=2534084, http_status=400
+            ),
+            MetaGraphError("Graph API request timed out", http_status=504),
+        ):
+            gated = _GatedAdapter(error=err)
+            gated.seed(
+                ig_accounts=[
+                    InstagramAccount(id=_IG_USER, username="one", page_id=_PAGE)
+                ]
+            )
+            _override(gated)  # re-override replaces the prior binding
+            resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["requires_app_review"] is True
+            assert "instagram_manage_messages" in body["error"]
+
     def test_list_conversations_capability_gate_returns_200_structured(self, client):
         # Graph #3 ("Application does not have the capability") is a
         # Meta-side SETUP gate (Messenger/IG-messaging product not wired up),

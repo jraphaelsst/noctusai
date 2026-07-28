@@ -91,6 +91,26 @@ describe("IgDMs — Meta setup gate", () => {
   });
 });
 
+describe("IgDMs — Advanced Access gate", () => {
+  it("renders the App-Review notice (not ChatWindow) when the conversations read is advanced-access-gated", async () => {
+    // Standard-Access `instagram_manage_messages` on a busy inbox → the
+    // backend maps the expired query to `{requires_app_review: true}` (200).
+    // The tab must show the actionable notice, NOT an infinite ChatWindow
+    // skeleton that would misread as "no conversations".
+    mockUseIgConversations.mockReturnValue({
+      data: {
+        requires_app_review: true,
+        error: "As mensagens diretas do Instagram exigem Acesso Avançado à permissão instagram_manage_messages",
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderPage();
+    expect(getByTestId("meta-app-review-gate")).toBeTruthy();
+    expect(lastProps).toBeNull(); // ChatWindow never rendered
+  });
+});
+
 describe("IgDMs — ChatWindow wiring", () => {
   it("forwards scopeId + a Meta-DM-specific empty label", async () => {
     await renderPage();

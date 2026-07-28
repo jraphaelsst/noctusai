@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
@@ -37,6 +38,42 @@ from app.services.meta import MetaAdapter, MetaGraphError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["meta-dms"])
+
+# Meta's "query expired" signal for the IG conversations edge. On an account
+# that holds `instagram_manage_messages` only at STANDARD access, Graph will
+# only return DM threads with users who have a role on the app. A real
+# business inbox (thousands of ordinary followers) makes Graph scan
+# conversations it is allowed to return NONE of, and the query expires:
+# error code -2 / subcode 2534084 ("solicite acesso avançado à permissão
+# instagram_manage_messages"). In practice the httpx read timeout (30s) fires
+# BEFORE Meta's own -2 lands, so the transport wrapper surfaces it as
+# http_status 504. Either way it is a structural, cacheable ADVANCED-ACCESS
+# gate — the remedy is Meta App Review, not a retry — so the DMs tab must
+# render the honest App-Review notice, never a 30s skeleton → scary 502.
+_ADVANCED_ACCESS_SUBCODE = 2534084
+
+
+def _is_dm_advanced_access_gate(exc: MetaGraphError) -> bool:
+    """True when a conversations-list failure is the Standard-Access
+    "too many non-role conversations → query expired" symptom (Meta's
+    -2/2534084) OR the httpx read-timeout that precedes it (504). Kept
+    LOCAL to the DMs conversations read: a timeout on any OTHER Meta edge
+    still maps through `handle_meta_graph_error` (→ 502), so this never
+    mislabels unrelated Graph slowness fleet-wide."""
+    return (
+        exc.error_subcode == _ADVANCED_ACCESS_SUBCODE
+        or exc.code == -2
+        or exc.http_status == 504
+    )
+
+
+_DM_ADVANCED_ACCESS_MESSAGE = (
+    "As mensagens diretas do Instagram exigem Acesso Avançado à permissão "
+    "instagram_manage_messages (Revisão do app da Meta). Em Acesso Padrão, a "
+    "consulta expira em contas com muitas conversas de seguidores. Envie o "
+    "caso de uso de mensagens do Instagram para análise no Painel de Apps da "
+    "Meta para ativar as DMs."
+)
 
 
 # ─── Response shapes ────────────────────────────────────────────────────
@@ -127,6 +164,16 @@ def list_conversations(
         conversations = adapter.list_instagram_conversations(page_id, limit)
     except MetaGraphError as exc:
         logger.warning("meta dms: conversations list failed: %s", exc)
+        if _is_dm_advanced_access_gate(exc):
+            # Fail fast into an honest, actionable App-Review state (a 200,
+            # cached by the FE) instead of a raw 502 the tab can't explain.
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "requires_app_review": True,
+                    "error": _DM_ADVANCED_ACCESS_MESSAGE,
+                },
+            )
         return handle_meta_graph_error(exc)
 
     return MetaConversationsListOut(

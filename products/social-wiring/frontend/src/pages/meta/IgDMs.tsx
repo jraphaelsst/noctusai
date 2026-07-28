@@ -32,6 +32,7 @@ import {
   useIgMessages,
   useSendIgMessage,
 } from "@/hooks/useMeta";
+import { AppReviewNotice } from "./AppReviewNotice";
 import { MetaSetupNotice } from "./MetaSetupNotice";
 
 // ─── Meta DM adapter ──────────────────────────────────────────────────────────
@@ -126,6 +127,15 @@ export default function IgDMs() {
 
   if (isMetaSetupGate(conversationsData)) {
     return <MetaSetupNotice error={conversationsData.error} />;
+  }
+
+  // Advanced-Access gate: the conversations edge structurally times out on an
+  // account whose `instagram_manage_messages` is still Standard Access (the
+  // backend maps that to `requires_app_review` rather than hanging). Render
+  // the App-Review notice with Meta's actionable remedy instead of an
+  // infinite ChatWindow skeleton that would misread as "no conversations".
+  if (isAppReviewGate(conversationsData)) {
+    return <AppReviewNotice error={conversationsData.error} />;
   }
 
   return (
