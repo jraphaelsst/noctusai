@@ -34,6 +34,7 @@ def move_card(
     motivo: str | None = None,
     log_action: Callable[..., Any] | None = None,
     extra_updates: dict[str, Any] | None = None,
+    org_id: str | None = None,
 ) -> dict:
     """Move one card to `to_stage_id`, recording the transition.
 
@@ -49,23 +50,22 @@ def move_card(
         log_action: Optional product audit-log hook.
         extra_updates: Additional columns the consumer wants written in the
             same update (e.g. keeping a legacy enum column in sync).
+        org_id: Required by consumers whose client does not enforce tenancy
+            (see `list_stages`). Also stamped onto the history row when the
+            history table is org-scoped.
 
     Returns:
         The updated card row.
     """
-    stage = get_stage(db, cfg, to_stage_id)
+    stage = get_stage(db, cfg, to_stage_id, org_id=org_id)
 
     select_cols = ["id", "etapa_id", "kanban_pos"]
     if cfg.cliente_field:
         select_cols.append(cfg.cliente_field)
-    current_rows = (
-        db.table(cfg.card_table)
-        .select(", ".join(select_cols))
-        .eq("id", card_id)
-        .execute()
-        .data
-        or []
-    )
+    card_query = db.table(cfg.card_table).select(", ".join(select_cols)).eq("id", card_id)
+    if org_id:
+        card_query = card_query.eq("org_id", org_id)
+    current_rows = card_query.execute().data or []
     if not current_rows:
         raise NotFoundError(cfg.entity_label.capitalize(), card_id)
     current = current_rows[0]
@@ -97,6 +97,8 @@ def move_card(
         }
         if cfg.cliente_field:
             history["cliente_id"] = current.get(cfg.cliente_field)
+        if org_id:
+            history["org_id"] = org_id
         db.table(cfg.history_table).insert(history).execute()
 
         if log_action:
@@ -120,7 +122,7 @@ def move_card(
     return row
 
 
-def resolve_initial_stage(db, cfg: PipelineConfig) -> dict:
+def resolve_initial_stage(db, cfg: PipelineConfig, *, org_id: str | None = None) -> dict:
     """The stage a card enters the board at — the first in configured order.
 
     Derived from `posicao` rather than a hardcoded slug, because "the first
@@ -128,7 +130,7 @@ def resolve_initial_stage(db, cfg: PipelineConfig) -> dict:
     """
     from .stages import list_stages
 
-    stages = list_stages(db, cfg)
+    stages = list_stages(db, cfg, org_id=org_id)
     if not stages:
         raise ValidationError_(
             f"O funil '{cfg.pipeline}' não tem nenhuma etapa configurada. "

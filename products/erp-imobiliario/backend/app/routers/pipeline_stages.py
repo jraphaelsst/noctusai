@@ -17,24 +17,28 @@ from __future__ import annotations
 from app.dependencies import get_current_user, get_org_id, get_user_client, log_action
 from app.responses import success_response
 from app.services.pipelines import PIPELINE_FUNIL, PIPELINE_PROCESSOS
-from noctusai_lib.domain.pipeline import pipeline_stages_router
+from noctusai_lib.domain.pipeline import PipelineContext, pipeline_stages_router
 
 
-def _resolve_org_id(_db, user):
-    """Seed signature is `(db, user)`; the ERP resolves org from the user alone.
+def _context(auth) -> PipelineContext:
+    """Map this product's `(user, token)` auth to the seed's context triple.
 
-    `get_org_id` reads `public.noctus_users` — the SAME row RLS's
+    The client is RLS-scoped (`get_user_client(token)`), so `org_id` is passed
+    only for the INSERT path, which needs a value RLS can check but cannot
+    supply. `get_org_id` reads `public.noctus_users` — the SAME row
     `current_org_id()` reads — so the app's notion of org cannot drift from the
-    policy that will accept or reject the insert.
+    policy that will accept or reject the write.
     """
-    return get_org_id(user)
+    user, token = auth
+    return PipelineContext(
+        db=get_user_client(token), org_id=get_org_id(user), user_id=user.id
+    )
 
 
 funil_stages_router = pipeline_stages_router(
     PIPELINE_FUNIL,
-    get_current_user=get_current_user,
-    get_user_client=get_user_client,
-    resolve_org_id=_resolve_org_id,
+    auth_dependency=get_current_user,
+    resolve_context=_context,
     success_response=success_response,
     log_action=log_action,
     prefix="/api/funil/etapas",
@@ -43,9 +47,8 @@ funil_stages_router = pipeline_stages_router(
 
 processos_stages_router = pipeline_stages_router(
     PIPELINE_PROCESSOS,
-    get_current_user=get_current_user,
-    get_user_client=get_user_client,
-    resolve_org_id=_resolve_org_id,
+    auth_dependency=get_current_user,
+    resolve_context=_context,
     success_response=success_response,
     log_action=log_action,
     prefix="/api/processos-venda/etapas",

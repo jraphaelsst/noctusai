@@ -176,6 +176,7 @@ from app.modules.leads import register as _leads
 from app.modules.mailchimp import register as _mailchimp
 from app.modules.media_creation import register as _register_media_creation
 from app.modules.meta_ads import register as _meta_ads
+from app.modules.pipeline import register as _pipeline
 from app.modules.scheduling import register as _scheduling
 from app.modules.youtube import register as _youtube
 
@@ -192,6 +193,7 @@ MODULES = [
     _mailchimp,
     _leads,
     _meta_ads,
+    _pipeline,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

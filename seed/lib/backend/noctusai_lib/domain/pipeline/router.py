@@ -25,6 +25,7 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.primitives.exceptions import ValidationError_
 
 from .config import PipelineConfig
+from dataclasses import dataclass
 from .stages import (
     STAGE_COLORS,
     STAGE_ROLES,
@@ -59,12 +60,38 @@ class StageReorder(StrictHttpModel):
     ordem: list[str] = Field(..., min_length=1)
 
 
+@dataclass(frozen=True)
+class PipelineContext:
+    """What every handler actually needs, however the product supplies it.
+
+    Products differ in BOTH the shape of their auth dependency and how they
+    reach the database, and the difference is not cosmetic:
+
+    * erp-imobiliario: auth yields `(user, token)`, and the client is
+      `get_user_client(token)` — RLS-scoped, so the database enforces tenancy.
+    * social-wiring: auth yields `(user, token, org)`, and the client is a
+      schema-scoped ADMIN client — RLS is defense-in-depth and org filtering is
+      explicit in every query.
+
+    The first version of this factory took `get_current_user` + `get_user_client`
+    + `resolve_org_id` because that is exactly how consumer #1 was built. That
+    made the seed's shape a coincidence of erp rather than the canonical answer
+    (`KB § PATTERNS/architect/seed-canonical-defaults.md`), and consumer #2
+    could not have adopted it without contorting its own auth. Resolving to
+    this triple instead is shape-agnostic: a product maps its own dependency to
+    it however it likes.
+    """
+
+    db: Any
+    org_id: str | None
+    user_id: Any
+
+
 def pipeline_stages_router(
     cfg: PipelineConfig,
     *,
-    get_current_user: Callable[..., Any],
-    get_user_client: Callable[[str], Any],
-    resolve_org_id: Callable[[Any, Any], str | None],
+    auth_dependency: Callable[..., Any],
+    resolve_context: Callable[[Any], PipelineContext],
     success_response: Callable[[Any], Any],
     log_action: Callable[..., Any] | None = None,
     prefix: str = "",
@@ -74,10 +101,9 @@ def pipeline_stages_router(
 
     Args:
         cfg: The pipeline these stages belong to.
-        get_current_user: Product auth dependency returning `(user, token)`.
-        get_user_client: Product factory turning a token into a scoped client.
-        resolve_org_id: `(db, user) -> org_id`. Creating a stage needs the
-            caller's org, which RLS enforces but does not supply.
+        auth_dependency: The product's FastAPI auth dependency, whatever it
+            returns.
+        resolve_context: Maps that dependency's value to a `PipelineContext`.
         success_response: Product envelope wrapper.
         log_action: Optional audit-log sink.
         prefix: Router prefix.
@@ -86,15 +112,14 @@ def pipeline_stages_router(
     router = APIRouter(prefix=prefix, tags=tags or ["pipeline-stages"])
 
     @router.get("")
-    async def listar_etapas(auth=Depends(get_current_user)):
+    async def listar_etapas(auth=Depends(auth_dependency)):
         """Stage definitions for this pipeline, in display order."""
-        _user, token = auth
-        db = get_user_client(token)
-        stages = list_stages(db, cfg, incluir_inativas=True)
+        ctx = resolve_context(auth)
+        stages = list_stages(ctx.db, cfg, incluir_inativas=True, org_id=ctx.org_id)
         return success_response(stages)
 
     @router.get("/opcoes")
-    async def opcoes(auth=Depends(get_current_user)):
+    async def opcoes(auth=Depends(auth_dependency)):
         """The valid colour tokens + roles, so the UI never guesses them.
 
         Serving these keeps the editor's dropdowns in step with the CHECK
@@ -104,10 +129,9 @@ def pipeline_stages_router(
         return success_response({"cores": list(STAGE_COLORS), "papeis": list(STAGE_ROLES)})
 
     @router.post("")
-    async def criar_etapa(body: StageCreate, auth=Depends(get_current_user)):
-        user, token = auth
-        db = get_user_client(token)
-        org_id = resolve_org_id(db, user)
+    async def criar_etapa(body: StageCreate, auth=Depends(auth_dependency)):
+        ctx = resolve_context(auth)
+        db, org_id = ctx.db, ctx.org_id
         if not org_id:
             raise ValidationError_(
                 "Não foi possível identificar a organização do usuário. "
@@ -118,21 +142,22 @@ def pipeline_stages_router(
         )
         if log_action:
             log_action(
-                user.id, "criar", "pipeline_stage", stage["id"],
+                ctx.user_id, "criar", "pipeline_stage", stage["id"],
                 f"Criou a etapa '{stage['label']}' no funil {cfg.pipeline}",
                 {"pipeline": cfg.pipeline, "slug": stage.get("slug")},
             )
         return success_response(stage)
 
     @router.patch("/{stage_id}")
-    async def editar_etapa(stage_id: str, body: StageUpdate, auth=Depends(get_current_user)):
+    async def editar_etapa(stage_id: str, body: StageUpdate, auth=Depends(auth_dependency)):
         """Edit a stage. Renaming here re-labels every card that references it."""
-        user, token = auth
-        db = get_user_client(token)
-        stage = update_stage(db, cfg, stage_id, body.model_dump(exclude_unset=True))
+        ctx = resolve_context(auth)
+        stage = update_stage(
+            ctx.db, cfg, stage_id, body.model_dump(exclude_unset=True), org_id=ctx.org_id
+        )
         if log_action:
             log_action(
-                user.id, "editar", "pipeline_stage", stage_id,
+                ctx.user_id, "editar", "pipeline_stage", stage_id,
                 f"Editou a etapa '{stage['label']}' no funil {cfg.pipeline}",
                 {"pipeline": cfg.pipeline, "campos": list(body.model_dump(exclude_unset=True))},
             )
@@ -142,27 +167,27 @@ def pipeline_stages_router(
     async def excluir_etapa(
         stage_id: str,
         reassign_to: str | None = None,
-        auth=Depends(get_current_user),
+        auth=Depends(auth_dependency),
     ):
-        user, token = auth
-        db = get_user_client(token)
-        result = delete_stage(db, cfg, stage_id, reassign_to=reassign_to)
+        ctx = resolve_context(auth)
+        result = delete_stage(
+            ctx.db, cfg, stage_id, reassign_to=reassign_to, org_id=ctx.org_id
+        )
         if log_action:
             log_action(
-                user.id, "excluir", "pipeline_stage", stage_id,
+                ctx.user_id, "excluir", "pipeline_stage", stage_id,
                 f"Excluiu uma etapa do funil {cfg.pipeline}",
                 {"pipeline": cfg.pipeline, **result},
             )
         return success_response(result)
 
     @router.post("/reordenar")
-    async def reordenar_etapas(body: StageReorder, auth=Depends(get_current_user)):
-        user, token = auth
-        db = get_user_client(token)
-        stages = reorder_stages(db, cfg, body.ordem)
+    async def reordenar_etapas(body: StageReorder, auth=Depends(auth_dependency)):
+        ctx = resolve_context(auth)
+        stages = reorder_stages(ctx.db, cfg, body.ordem, org_id=ctx.org_id)
         if log_action:
             log_action(
-                user.id, "editar", "pipeline_stage", None,
+                ctx.user_id, "editar", "pipeline_stage", None,
                 f"Reordenou as etapas do funil {cfg.pipeline}",
                 {"pipeline": cfg.pipeline, "ordem": body.ordem},
             )

@@ -96,9 +96,25 @@ def _validate(payload: dict[str, Any], *, partial: bool) -> None:
         )
 
 
-def list_stages(db, cfg: PipelineConfig, *, incluir_inativas: bool = False) -> list[dict]:
-    """Ordered stages for this pipeline. RLS scopes them to the caller's org."""
+def list_stages(
+    db,
+    cfg: PipelineConfig,
+    *,
+    incluir_inativas: bool = False,
+    org_id: str | None = None,
+) -> list[dict]:
+    """Ordered stages for this pipeline.
+
+    `org_id` is OPTIONAL and must be passed by any consumer whose client does
+    not enforce tenancy itself. The ERP hands in an RLS-scoped user client, so
+    the database filters for it; social-wiring uses a schema-scoped ADMIN
+    client (RLS as defense-in-depth, org filtering explicit in the query), and
+    for that caller omitting `org_id` would read EVERY tenant's stages. Making
+    it a parameter rather than assuming RLS keeps both shapes honest.
+    """
     query = db.table(cfg.stages_table).select("*").eq("pipeline", cfg.pipeline)
+    if org_id:
+        query = query.eq("org_id", org_id)
     if not incluir_inativas:
         query = query.eq("ativo", True)
     rows = query.execute().data or []
@@ -109,37 +125,39 @@ def list_stages(db, cfg: PipelineConfig, *, incluir_inativas: bool = False) -> l
     return rows
 
 
-def get_stage(db, cfg: PipelineConfig, stage_id: str) -> dict:
-    rows = (
+def get_stage(db, cfg: PipelineConfig, stage_id: str, *, org_id: str | None = None) -> dict:
+    query = (
         db.table(cfg.stages_table)
         .select("*")
         .eq("id", stage_id)
         .eq("pipeline", cfg.pipeline)
-        .execute()
-        .data
-        or []
     )
+    if org_id:
+        query = query.eq("org_id", org_id)
+    rows = query.execute().data or []
     if not rows:
         raise NotFoundError("Etapa", stage_id)
     return rows[0]
 
 
-def stage_by_role(db, cfg: PipelineConfig, papel: str) -> dict | None:
+def stage_by_role(
+    db, cfg: PipelineConfig, papel: str, *, org_id: str | None = None
+) -> dict | None:
     """The stage carrying a semantic role, or None.
 
     This is how features find the stage they depend on. `aceitar_proposta` asks
     for `proposta_aceite` instead of comparing against the literal string
     'proposta', so the user may rename or reposition that column freely.
     """
-    rows = (
+    query = (
         db.table(cfg.stages_table)
         .select("*")
         .eq("pipeline", cfg.pipeline)
         .eq("papel", papel)
-        .execute()
-        .data
-        or []
     )
+    if org_id:
+        query = query.eq("org_id", org_id)
+    rows = query.execute().data or []
     return rows[0] if rows else None
 
 
@@ -149,7 +167,7 @@ def create_stage(db, cfg: PipelineConfig, payload: dict[str, Any], *, org_id: st
     label = payload["label"].strip()
     slug = (payload.get("slug") or slugify(label)).strip().lower()
 
-    existing = list_stages(db, cfg, incluir_inativas=True)
+    existing = list_stages(db, cfg, incluir_inativas=True, org_id=org_id)
     if any(s.get("slug") == slug for s in existing):
         raise ValidationError_(
             f"Já existe uma etapa com o identificador '{slug}'. Escolha outro nome.",
@@ -188,14 +206,17 @@ def create_stage(db, cfg: PipelineConfig, payload: dict[str, Any], *, org_id: st
     return created[0]
 
 
-def update_stage(db, cfg: PipelineConfig, stage_id: str, payload: dict[str, Any]) -> dict:
+def update_stage(
+    db, cfg: PipelineConfig, stage_id: str, payload: dict[str, Any],
+    *, org_id: str | None = None,
+) -> dict:
     """Edit a stage. Renaming is just this — no card is touched.
 
     That is the whole design: cards reference the stage by id, so changing
     `label` re-labels every past and present card in one write. Nothing is
     copied, so nothing can drift out of sync.
     """
-    get_stage(db, cfg, stage_id)  # 404s before we validate a no-op edit
+    get_stage(db, cfg, stage_id, org_id=org_id)  # 404s before validating a no-op edit
     _validate(payload, partial=True)
 
     updates = {k: payload[k] for k in _UPDATABLE if k in payload}
@@ -205,7 +226,7 @@ def update_stage(db, cfg: PipelineConfig, stage_id: str, payload: dict[str, Any]
         raise ValidationError_("Nenhum campo editável foi enviado.")
 
     if updates.get("papel"):
-        conflict = stage_by_role(db, cfg, updates["papel"])
+        conflict = stage_by_role(db, cfg, updates["papel"], org_id=org_id)
         if conflict and conflict["id"] != stage_id:
             raise ValidationError_(
                 f"A etapa '{conflict['label']}' já tem o papel '{updates['papel']}'. "
@@ -221,11 +242,13 @@ def update_stage(db, cfg: PipelineConfig, stage_id: str, payload: dict[str, Any]
     return rows[0]
 
 
-def count_cards_in_stage(db, cfg: PipelineConfig, stage_id: str) -> int:
-    rows = (
-        db.table(cfg.card_table).select("id").eq("etapa_id", stage_id).execute().data or []
-    )
-    return len(rows)
+def count_cards_in_stage(
+    db, cfg: PipelineConfig, stage_id: str, *, org_id: str | None = None
+) -> int:
+    query = db.table(cfg.card_table).select("id").eq("etapa_id", stage_id)
+    if org_id:
+        query = query.eq("org_id", org_id)
+    return len(query.execute().data or [])
 
 
 def delete_stage(
@@ -234,6 +257,7 @@ def delete_stage(
     stage_id: str,
     *,
     reassign_to: str | None = None,
+    org_id: str | None = None,
 ) -> dict:
     """Delete a stage, refusing the two cases that would lose data or break a feature.
 
@@ -242,7 +266,7 @@ def delete_stage(
     cards with the column — is the kind of "obvious" cascade that quietly
     destroys a user's pipeline.
     """
-    stage = get_stage(db, cfg, stage_id)
+    stage = get_stage(db, cfg, stage_id, org_id=org_id)
 
     if stage.get("papel"):
         raise ValidationError_(
@@ -252,11 +276,14 @@ def delete_stage(
             field="papel",
         )
 
-    remaining = [s for s in list_stages(db, cfg, incluir_inativas=True) if s["id"] != stage_id]
+    remaining = [
+        s for s in list_stages(db, cfg, incluir_inativas=True, org_id=org_id)
+        if s["id"] != stage_id
+    ]
     if not remaining:
         raise ValidationError_("Um funil precisa de pelo menos uma etapa.")
 
-    total = count_cards_in_stage(db, cfg, stage_id)
+    total = count_cards_in_stage(db, cfg, stage_id, org_id=org_id)
     if total:
         if not reassign_to:
             raise ValidationError_(
@@ -265,7 +292,7 @@ def delete_stage(
                 "Escolha para qual etapa mover antes de excluir.",
                 field="reassign_to",
             )
-        destino = get_stage(db, cfg, reassign_to)
+        destino = get_stage(db, cfg, reassign_to, org_id=org_id)
         if destino["id"] == stage_id:
             raise ValidationError_("Não é possível mover as cartas para a própria etapa.")
         db.table(cfg.card_table).update({"etapa_id": destino["id"]}).eq(
@@ -276,7 +303,9 @@ def delete_stage(
     return {"id": stage_id, "cards_movidos": total, "movidos_para": reassign_to}
 
 
-def reorder_stages(db, cfg: PipelineConfig, ordered_ids: list[str]) -> list[dict]:
+def reorder_stages(
+    db, cfg: PipelineConfig, ordered_ids: list[str], *, org_id: str | None = None
+) -> list[dict]:
     """Rewrite `posicao` from an ordered id list.
 
     Takes the FULL order rather than a (id, new_index) pair: a partial reorder
@@ -286,7 +315,7 @@ def reorder_stages(db, cfg: PipelineConfig, ordered_ids: list[str]) -> list[dict
     if not ordered_ids:
         raise ValidationError_("Envie a ordem completa das etapas.")
 
-    known = {s["id"]: s for s in list_stages(db, cfg, incluir_inativas=True)}
+    known = {s["id"]: s for s in list_stages(db, cfg, incluir_inativas=True, org_id=org_id)}
     unknown = [sid for sid in ordered_ids if sid not in known]
     if unknown:
         raise ValidationError_(
@@ -304,4 +333,4 @@ def reorder_stages(db, cfg: PipelineConfig, ordered_ids: list[str]) -> list[dict
     for posicao, stage_id in enumerate(ordered_ids):
         db.table(cfg.stages_table).update({"posicao": posicao}).eq("id", stage_id).execute()
 
-    return list_stages(db, cfg, incluir_inativas=True)
+    return list_stages(db, cfg, incluir_inativas=True, org_id=org_id)

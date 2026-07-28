@@ -48,6 +48,8 @@ import {
   Send,
   Building2,
   Target,
+  KanbanSquare,
+  Workflow,
 } from "lucide-react";
 
 // Pages
@@ -76,6 +78,8 @@ const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const MetaDashboard = lazy(() => import("@/pages/MetaDashboard"));
 const Leads = lazy(() => import("@/pages/leads/Leads"));
+const FunilVendas = lazy(() => import("@/pages/funil/FunilVendas"));
+const ProcessosVenda = lazy(() => import("@/pages/funil/ProcessosVenda"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -88,10 +92,25 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
-      { name: "Leads", href: "/leads", icon: Target, route: "leads" },
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
+    ],
+  },
+  {
+    // Leads is a GROUP, not a single item: the base surface and the two boards
+    // that consume it belong together, and a lead flows Leads → Funil →
+    // Processos. Each item is nav-gated by its own `status_pagina` row
+    // (migration 034 seeds `funil` + `processos_venda`), so an unlisted route
+    // stays hidden rather than 404-ing.
+    key: "leads",
+    label: "Leads",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { name: "Leads", href: "/leads", icon: Target, route: "leads" },
+      { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
+      { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
     ],
   },
   {
@@ -139,10 +158,20 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Contatos", href: "/contatos", icon: UserRound },
-      { name: "Leads", href: "/leads", icon: Target },
       { name: "YouTube", href: "/youtube", icon: Youtube },
       { name: "Meta", href: "/meta", icon: Instagram },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
+    ],
+  },
+  {
+    key: "leads",
+    label: "Leads",
+    icon: Target,
+    defaultOpen: true,
+    items: [
+      { name: "Leads", href: "/leads", icon: Target },
+      { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare },
+      { name: "Processos de Venda", href: "/processos-venda", icon: Workflow },
     ],
   },
   {
@@ -198,6 +227,8 @@ export default createProductApp({
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
     { path: "/leads", component: Leads },
+    { path: "/funil", component: FunilVendas },
+    { path: "/processos-venda", component: ProcessosVenda },
     { path: "/email-marketing/listas", component: EmailListas },
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },

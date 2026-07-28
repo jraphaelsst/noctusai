@@ -33,7 +33,7 @@ Schema: `products/erp-imobiliario/backend/migrations/042_pipeline_stages.sql`.
 from .board import group_into_colunas, orphan_cards, stage_to_dto
 from .config import PipelineConfig
 from .moves import move_card, resolve_initial_stage
-from .router import pipeline_stages_router
+from .router import PipelineContext, pipeline_stages_router
 from .stages import (
     STAGE_COLORS,
     STAGE_ROLE_ACCEPT,
@@ -52,6 +52,7 @@ from .stages import (
 
 __all__ = [
     "PipelineConfig",
+    "PipelineContext",
     "STAGE_COLORS",
     "STAGE_ROLES",
     "STAGE_ROLE_ACCEPT",
