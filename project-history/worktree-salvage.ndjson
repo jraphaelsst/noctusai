@@ -307,3 +307,4 @@
 {"ts": "2026-07-28", "event": "worktree-sweep", "path": ".claude/worktrees/erp-funil-organ-repoint", "branch": "feat/erp-funil-organ-repoint", "sha": "da265a9f5fd1d9f25097ad56e95309b03bf84bc3", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-28", "event": "worktree-sweep", "path": ".claude/worktrees/erp-processos-venda", "branch": "feat/erp-processos-venda", "sha": "097794e29aefec2901106575a37ae8ac8abc3899", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-28", "event": "worktree-sweep", "path": ".claude/worktrees/erp-agency-per-org", "branch": "feat/erp-agency-per-org", "sha": "490a7fa2500a27986ef64257eec5166399223885", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-28", "event": "worktree-sweep", "path": ".claude/worktrees/erp-processos-closeout", "branch": "feat/erp-processos-closeout", "sha": "47b1c1d7e9eebfc12d2c343ac291b90c46188a8b", "reason": "task_branch cleanup (learn-before-delete)"}
