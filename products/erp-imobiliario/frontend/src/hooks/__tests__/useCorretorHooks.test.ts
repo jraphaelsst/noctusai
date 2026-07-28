@@ -2,7 +2,7 @@
  * Corretor-tier hook golden-path smoke tests — Phase 5 (erp-wiring 2026-05-20).
  *
  * One smoke test per corretor-surface hook:
- *   useAtividades / useFunil / useDistribuicaoConfig / useEventos /
+ *   useAtividades / funilPipeline.useBoard / useDistribuicaoConfig / useEventos /
  *   useCheckins / useComissoes / useCampanhas / useDashboardResumo
  *
  * Pattern mirrors hooks/__tests__/useAI.test.ts (Tier 1.5 G2).
@@ -54,12 +54,17 @@ describe('Corretor-tier hook smoke tests', () => {
     expect(result.current.data).toEqual([{ id: 'a1', descricao: 'call' }]);
   });
 
-  it('useFunil fetches /api/funil with provided filters', async () => {
+  it('the funil pipeline board query fetches /api/funil with provided filters', async () => {
+    // Columns are keyed by stage ID now; `stage` carries the definition.
     mockGet.mockResolvedValue({
-      data: [{ etapa: 'qualificacao', total: 0, valorTotal: 0, cards: [] }],
+      data: [{
+        etapa: 'fs0', total: 0, valorTotal: 0, cards: [],
+        stage: { id: 'fs0', slug: 'qualificacao', label: 'Qualificação',
+                 cor: 'secondary', posicao: 0, papel: null, ativo: true },
+      }],
     });
-    const { useFunil } = await import('@/hooks/useFunil');
-    const { result } = renderHook(() => useFunil({ busca: 'joão', responsavelId: 'r1' }), {
+    const { funilPipeline } = await import('@/lib/pipelines');
+    const { result } = renderHook(() => funilPipeline.useBoard({ busca: 'joão', responsavel_id: 'r1' }), {
       wrapper: withQueryClient(),
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -67,7 +72,8 @@ describe('Corretor-tier hook smoke tests', () => {
       busca: 'joão',
       responsavel_id: 'r1',
     }));
-    expect(result.current.data?.[0].etapa).toBe('qualificacao');
+    expect(result.current.data?.[0].etapa).toBe('fs0');
+    expect(result.current.data?.[0].stage.slug).toBe('qualificacao');
   });
 
   it('useDistribuicaoConfig fetches /api/distribuicao/config', async () => {

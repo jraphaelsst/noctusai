@@ -56,12 +56,17 @@ export function NegociacaoCard({
       })
     : null;
 
-  // The accept-proposal seam is available ONLY from the `proposta` column
+  // The accept-proposal seam is keyed on the stage's ROLE, never its name.
+  // Stages are user-editable, so renaming "Proposta" or moving it in the order
+  // must not break the seam between the two boards — comparing to the literal
+  // slug 'proposta' would break on the first rename.
   // (user decision): accepting is what ends the negotiation, so it cannot fire
   // where no proposal is on the table. `fechado` is a Funil-internal terminal
   // state, explicitly NOT the trigger.
   const podeAceitarProposta =
-    negociacao.etapa === 'proposta' && negociacao.status === 'aberta' && !!onAceitarProposta;
+    negociacao.etapa_rel?.papel === 'proposta_aceite' &&
+    negociacao.status === 'aberta' &&
+    !!onAceitarProposta;
 
   return (
     <Card

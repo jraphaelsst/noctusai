@@ -6,7 +6,9 @@ import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@noctusai/seed/components/ui/tabs';
 import { useCliente, useToggleArquivarCliente } from '@/hooks/useClientes';
-import { useMoverNegociacaoEtapa, useNegociacoesDoCliente } from '@/hooks/useFunil';
+import { useNegociacoesDoCliente } from '@/hooks/useFunil';
+import { funilPipeline } from '@/lib/pipelines';
+import { stageColorClasses } from '@noctusai/lib/components';
 import { LeadScoreBadge } from '@/components/clientes/LeadScoreBadge';
 import { AIIndicator } from '@noctusai/lib/design-system';
 import { ClienteResumo } from '@/components/clientes/ClienteResumo';
@@ -17,11 +19,8 @@ import { ClienteHistorico } from '@/components/clientes/ClienteHistorico';
 import { PageBreadcrumb } from '@/components/ui/page-breadcrumb';
 import { DetailPageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
-import { EtapaFunil } from '@/types/clientes';
 import { Archive, UserX } from 'lucide-react';
 
-const ETAPAS = Object.entries(ETAPAS_CONFIG) as [EtapaFunil, (typeof ETAPAS_CONFIG)[EtapaFunil]][];
 
 export default function ClienteDetalhes() {
   const { id } = useParams();
@@ -30,7 +29,8 @@ export default function ClienteDetalhes() {
 
   const { data: cliente, isLoading } = useCliente(id);
   const { mutate: toggleArquivar } = useToggleArquivarCliente();
-  const { mutate: moverNegociacao } = useMoverNegociacaoEtapa();
+  const { mutate: moverNegociacao } = funilPipeline.useMoveCard();
+  const { data: etapasFunil } = funilPipeline.useStages();
   const { data: negociacoesAbertas } = useNegociacoesDoCliente(id);
 
   if (isLoading) return <DetailPageSkeleton />;
@@ -57,15 +57,16 @@ export default function ClienteDetalhes() {
   // and points at the Funil rather than guessing.
   const negociacoes = negociacoesAbertas ?? [];
   const negociacaoUnica = negociacoes.length === 1 ? negociacoes[0] : null;
-  const etapaExibida = negociacaoUnica?.etapa;
-  const etapaConfig = etapaExibida ? ETAPAS_CONFIG[etapaExibida] : null;
+  // The stage comes from the joined stage row, not a hardcoded config map —
+  // stages are user-editable, so the label and colour must be read, not looked
+  // up by slug.
+  const etapaAtual = negociacaoUnica?.etapa_rel ?? null;
+  const etapaClasses = etapaAtual ? stageColorClasses(etapaAtual.cor) : null;
+  const etapasOrdenadas = [...(etapasFunil ?? [])].sort((a, b) => a.posicao - b.posicao);
 
-  const handleMoverEtapa = (novaEtapa: string) => {
-    if (!negociacaoUnica || novaEtapa === negociacaoUnica.etapa) return;
-    moverNegociacao({
-      negociacao_id: negociacaoUnica.id,
-      para_etapa: novaEtapa as EtapaFunil,
-    });
+  const handleMoverEtapa = (novaEtapaId: string) => {
+    if (!negociacaoUnica || novaEtapaId === negociacaoUnica.etapa_id) return;
+    moverNegociacao({ cardId: negociacaoUnica.id, toStageId: novaEtapaId });
   };
 
   return (
@@ -81,8 +82,8 @@ export default function ClienteDetalhes() {
           <div className="flex-1 min-w-0 w-full">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
               <h1 className="text-2xl sm:text-3xl font-bold truncate">{cliente.nome}</h1>
-              {etapaConfig ? (
-                <Badge className={etapaConfig.bgColor}>{etapaConfig.label}</Badge>
+              {etapaAtual ? (
+                <Badge className={etapaClasses!.bgColor}>{etapaAtual.label}</Badge>
               ) : negociacoes.length > 1 ? (
                 <Badge variant="secondary">{negociacoes.length} negociações abertas</Badge>
               ) : (
@@ -101,7 +102,7 @@ export default function ClienteDetalhes() {
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <Select
-              value={negociacaoUnica?.etapa ?? ''}
+              value={negociacaoUnica?.etapa_id ?? ''}
               onValueChange={handleMoverEtapa}
               disabled={!negociacaoUnica}
             >
@@ -118,9 +119,9 @@ export default function ClienteDetalhes() {
                 <SelectValue placeholder="Sem negociação aberta" />
               </SelectTrigger>
               <SelectContent>
-                {ETAPAS.map(([value, config]) => (
-                  <SelectItem key={value} value={value}>
-                    {config.label}
+                {etapasOrdenadas.map((etapa) => (
+                  <SelectItem key={etapa.id} value={etapa.id}>
+                    {etapa.label}
                   </SelectItem>
                 ))}
               </SelectContent>

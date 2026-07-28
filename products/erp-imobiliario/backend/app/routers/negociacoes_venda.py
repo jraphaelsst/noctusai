@@ -14,7 +14,6 @@ from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import success_response
 from app.services.negociacoes_venda_service import (
-    ETAPAS_FUNIL,
     NEGOCIACAO_SELECT,
     STATUS_ABERTA,
     STATUS_ACEITA,
@@ -24,11 +23,20 @@ from app.services.negociacoes_venda_service import (
     negociacao_rows_to_dto,
     search_negociacoes,
 )
-from app.services.processos_venda_service import (
-    ETAPA_PROCESSO_INICIAL,
-    processo_row_to_dto,
+from app.services.processos_venda_service import processo_row_to_dto
+from app.services.pipelines import (
+    PIPELINE_FUNIL,
+    PIPELINE_PROCESSOS,
+    legacy_etapa_update,
 )
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.domain.pipeline import (
+    STAGE_ROLE_ACCEPT,
+    get_stage,
+    move_card,
+    resolve_initial_stage,
+    stage_by_role,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/negociacoes-venda", tags=["Negociações de Venda"])
@@ -41,7 +49,7 @@ class NegociacaoCreate(StrictHttpModel):
     # is swappable by design; `erp.clientes.usuario_id` was already the corretor,
     # what was missing was reassignment + a default for unassigned deals.
     corretor_id: Optional[str] = None
-    etapa: Optional[str] = None
+    etapa_id: Optional[str] = None
     valor_estimado: Optional[float] = Field(default=None, ge=0)
     probabilidade: Optional[int] = Field(default=None, ge=0, le=100)
 
@@ -49,14 +57,17 @@ class NegociacaoCreate(StrictHttpModel):
 class NegociacaoUpdate(StrictHttpModel):
     titulo: Optional[str] = Field(default=None, max_length=255)
     corretor_id: Optional[str] = None
-    etapa: Optional[str] = None
+    etapa_id: Optional[str] = None
     valor_estimado: Optional[float] = Field(default=None, ge=0)
     probabilidade: Optional[int] = Field(default=None, ge=0, le=100)
     arquivado: Optional[bool] = None
 
 
 class MoverEtapaRequest(StrictHttpModel):
-    para_etapa: str
+    # A stage ID, not a name. Stages are user-editable rows since migration
+    # 042, so the destination must be identified by something a rename cannot
+    # change.
+    para_etapa_id: str
     motivo: Optional[str] = None
     novo_indice: Optional[int] = None
 
@@ -65,19 +76,21 @@ class PerderNegociacaoRequest(StrictHttpModel):
     motivo: Optional[str] = None
 
 
-def _validate_etapa(etapa: str) -> None:
-    if etapa not in ETAPAS_FUNIL:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Etapa inválida. Use uma de: {', '.join(ETAPAS_FUNIL)}",
-        )
+def _resolve_etapa_id(db, etapa_id: str) -> dict:
+    """Validate a stage ID against THIS pipeline's configured stages.
+
+    Replaces a membership test against the `erp.etapa_funil` enum: since
+    migration 042 the stage vocabulary is per-organization rows, so the enum is
+    no longer the authority on what is a legal stage.
+    """
+    return get_stage(db, PIPELINE_FUNIL, etapa_id)
 
 
 @router.get("")
 async def listar_negociacoes(
     busca: Optional[str] = Query(None),
     corretor_id: Optional[str] = Query(None),
-    etapa: Optional[str] = Query(None),
+    etapa_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     cliente_id: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
@@ -92,8 +105,8 @@ async def listar_negociacoes(
     )
     if not incluir_arquivados:
         query = query.eq("arquivado", False)
-    if etapa:
-        query = query.eq("etapa", etapa)
+    if etapa_id:
+        query = query.eq("etapa_id", etapa_id)
     if status:
         query = query.eq("status", status)
     if cliente_id:
@@ -114,8 +127,12 @@ async def criar_negociacao(body: NegociacaoCreate, auth=Depends(get_current_user
     db = get_user_client(token)
 
     data = body.model_dump(exclude_none=True)
-    if "etapa" in data:
-        _validate_etapa(data["etapa"])
+    # A deal with no explicit stage enters at the FIRST configured stage —
+    # derived from the user's own order, not a hardcoded 'qualificacao'.
+    etapa_id = data.pop("etapa_id", None)
+    stage = _resolve_etapa_id(db, etapa_id) if etapa_id else resolve_initial_stage(db, PIPELINE_FUNIL)
+    data["etapa_id"] = stage["id"]
+    data.update(legacy_etapa_update(PIPELINE_FUNIL, stage))
 
     # Corretor resolution — same rule as clientes, deliberately. Explicit
     # assignment wins (including an explicit `AGENCY_PROFILE_ID`, which is how
@@ -134,7 +151,7 @@ async def criar_negociacao(body: NegociacaoCreate, auth=Depends(get_current_user
         raise HTTPException(status_code=500, detail="Erro ao criar negociação")
 
     log_action(
-        user.id, "criar", "cliente", row["id"],
+        user.id, "criar", "negociacao_venda", row["id"],
         f"Criou negociação para cliente {body.cliente_id}",
     )
     return success_response(negociacao_row_to_dto(row))
@@ -163,8 +180,9 @@ async def atualizar_negociacao(
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-    if "etapa" in data:
-        _validate_etapa(data["etapa"])
+    if "etapa_id" in data:
+        stage = _resolve_etapa_id(db, data["etapa_id"])
+        data.update(legacy_etapa_update(PIPELINE_FUNIL, stage))
 
     row = first_or_none(
         db.table("negociacoes_venda").update(data).eq("id", negociacao_id).execute()
@@ -172,7 +190,7 @@ async def atualizar_negociacao(
     if not row:
         raise HTTPException(status_code=404, detail="Negociação não encontrada")
 
-    log_action(user.id, "editar", "cliente", negociacao_id,
+    log_action(user.id, "editar", "negociacao_venda", negociacao_id,
                f"Editou negociação {negociacao_id}")
     return success_response(negociacao_row_to_dto(row))
 
@@ -183,18 +201,16 @@ async def mover_etapa(
 ):
     """Move a negociação across Funil stages, writing the transition to history.
 
-    The history write is the point: `erp.funil_movimentos` existed from
-    migration 001 but the cliente-level `mover-etapa` never wrote to it, so the
-    funnel had no audit trail and per-corretor cycle-time was unknowable
-    (roadmap trigger T3). This path does not inherit that gap.
+    The move mechanic (validate → update → record → log) now lives in
+    `noctusai_lib.domain.pipeline.move_card`, shared with Processos de Venda.
+    It used to be duplicated here, and the duplicate had already lost the
+    history write on the other board.
     """
     user, token = auth
     db = get_user_client(token)
 
-    _validate_etapa(body.para_etapa)
-
     current = db.table("negociacoes_venda").select(
-        "id, cliente_id, corretor_id, etapa, status"
+        "id, status"
     ).eq("id", negociacao_id).single().execute()
     if not current.data:
         raise HTTPException(status_code=404, detail="Negociação não encontrada")
@@ -208,34 +224,18 @@ async def mover_etapa(
             detail=f"Negociação não está aberta (status: {current.data['status']})",
         )
 
-    de_etapa = current.data["etapa"]
+    destino = get_stage(db, PIPELINE_FUNIL, body.para_etapa_id)
 
-    update_data = {"etapa": body.para_etapa}
-    if body.novo_indice is not None:
-        update_data["kanban_pos"] = body.novo_indice
-
-    row = first_or_none(
-        db.table("negociacoes_venda").update(update_data).eq("id", negociacao_id).execute()
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Negociação não encontrada")
-
-    # Only a real stage CHANGE is history. A within-column reorder carries the
-    # same etapa and would otherwise flood the log with non-events.
-    if de_etapa != body.para_etapa:
-        db.table("funil_movimentos").insert({
-            "cliente_id": current.data["cliente_id"],
-            "negociacao_venda_id": negociacao_id,
-            "de_etapa": de_etapa,
-            "para_etapa": body.para_etapa,
-            "responsavel_id": user.id,
-            "motivo": body.motivo,
-        }).execute()
-
-    log_action(
-        user.id, "mover", "cliente", negociacao_id,
-        f"Moveu negociação para etapa {body.para_etapa}",
-        {"de_etapa": de_etapa, "para_etapa": body.para_etapa, "motivo": body.motivo},
+    row = move_card(
+        db,
+        PIPELINE_FUNIL,
+        card_id=negociacao_id,
+        to_stage_id=body.para_etapa_id,
+        user_id=user.id,
+        novo_indice=body.novo_indice,
+        motivo=body.motivo,
+        log_action=log_action,
+        extra_updates=legacy_etapa_update(PIPELINE_FUNIL, destino),
     )
     return success_response(negociacao_row_to_dto(row))
 
@@ -248,17 +248,18 @@ async def aceitar_proposta(negociacao_id: str, auth=Depends(get_current_user)):
     `proposta` stage — accepting is what ENDS the negotiation, so it cannot be
     triggered from a stage where no proposal is on the table.
 
-    IDEMPOTENT BY CONSTRAINT, not by check-then-insert:
-    `processos_venda.negociacao_venda_id` is UNIQUE, so a double-clicked button
-    cannot mint a second processo even under concurrent requests. On the second
-    call we return the EXISTING processo with 200 rather than an error — the
-    caller asked for this deal to be in execution, and it is.
+    IDEMPOTENT: `processos_venda.negociacao_venda_id` is UNIQUE, so a second
+    processo is impossible rather than merely unlikely. A repeat click short-
+    circuits on the pre-check; a genuinely CONCURRENT one loses the insert race
+    and is caught below, re-reading the winner's row. Either way the caller gets
+    200 and the existing processo — the deal is in execution, which is what was
+    asked for.
     """
     user, token = auth
     db = get_user_client(token)
 
     current = db.table("negociacoes_venda").select(
-        "id, cliente_id, corretor_id, etapa, status, valor_estimado"
+        "id, cliente_id, corretor_id, etapa, etapa_id, status, valor_estimado"
     ).eq("id", negociacao_id).single().execute()
     if not current.data:
         raise HTTPException(status_code=404, detail="Negociação não encontrada")
@@ -281,22 +282,68 @@ async def aceitar_proposta(negociacao_id: str, auth=Depends(get_current_user)):
             status_code=409,
             detail=f"Negociação não está aberta (status: {negociacao['status']})",
         )
-    if negociacao["etapa"] != "proposta":
+
+    # Resolve the gate stage by ROLE, never by name. Stages are user-editable
+    # since migration 042: renaming "Proposta" to "Em Proposta", recolouring it
+    # or moving it to the front of the board must not break this seam, and
+    # comparing against the literal slug 'proposta' would break all three.
+    stage_aceite = stage_by_role(db, PIPELINE_FUNIL, STAGE_ROLE_ACCEPT)
+    if not stage_aceite:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Nenhuma etapa do funil está marcada como etapa de aceite de "
+                "proposta. Defina o papel 'proposta_aceite' em uma etapa nas "
+                "configurações do funil."
+            ),
+        )
+    if negociacao.get("etapa_id") != stage_aceite["id"]:
         raise HTTPException(
             status_code=409,
             detail=(
                 "Só é possível aceitar a proposta de uma negociação na etapa "
-                f"'proposta' (etapa atual: {negociacao['etapa']})"
+                f"'{stage_aceite['label']}'"
             ),
         )
 
-    processo = first_or_none(db.table("processos_venda").insert({
-        "cliente_id": negociacao["cliente_id"],
-        "negociacao_venda_id": negociacao_id,
-        "corretor_id": negociacao["corretor_id"],
-        "etapa": ETAPA_PROCESSO_INICIAL,
-        "valor": negociacao.get("valor_estimado") or 0,
-    }).execute())
+    etapa_inicial = resolve_initial_stage(db, PIPELINE_PROCESSOS)
+
+    try:
+        processo = first_or_none(db.table("processos_venda").insert({
+            "cliente_id": negociacao["cliente_id"],
+            "negociacao_venda_id": negociacao_id,
+            "corretor_id": negociacao["corretor_id"],
+            "etapa_id": etapa_inicial["id"],
+            "valor": negociacao.get("valor_estimado") or 0,
+            **legacy_etapa_update(PIPELINE_PROCESSOS, etapa_inicial),
+        }).execute())
+    except Exception as exc:
+        # The select-then-insert above is not atomic. Two concurrent clicks can
+        # both pass the `existing_row` check, and the second insert then
+        # violates the UNIQUE constraint on `negociacao_venda_id`.
+        #
+        # That constraint is the real idempotency guarantee — it makes a second
+        # processo impossible rather than merely unlikely — but the loser of the
+        # race previously surfaced as a 500. Re-reading and returning the
+        # winner's row honours what the caller actually asked for: this deal is
+        # in execution.
+        existing_row = first_or_none(
+            db.table("processos_venda").select("*").eq(
+                "negociacao_venda_id", negociacao_id
+            ).execute()
+        )
+        if not existing_row:
+            raise
+        logger.info(
+            "aceitar_proposta: concurrent accept for negociacao=%s resolved to "
+            "the existing processo (%s)", negociacao_id, exc,
+        )
+        return success_response({
+            "negociacao": negociacao_row_to_dto(negociacao),
+            "processo": processo_row_to_dto(existing_row),
+            "already_accepted": True,
+        })
+
     if not processo:
         raise HTTPException(status_code=500, detail="Erro ao criar processo de venda")
 
@@ -311,7 +358,7 @@ async def aceitar_proposta(negociacao_id: str, auth=Depends(get_current_user)):
     )
 
     log_action(
-        user.id, "editar", "cliente", negociacao_id,
+        user.id, "editar", "negociacao_venda", negociacao_id,
         "Aceitou proposta — negociação movida para Processos de Venda",
         {"processo_id": processo["id"]},
     )
@@ -354,7 +401,7 @@ async def perder_negociacao(
     if not row:
         raise HTTPException(status_code=404, detail="Negociação não encontrada")
 
-    log_action(user.id, "editar", "cliente", negociacao_id,
+    log_action(user.id, "editar", "negociacao_venda", negociacao_id,
                "Marcou negociação como perdida", {"motivo": body.motivo})
     return success_response(negociacao_row_to_dto(row))
 
@@ -371,6 +418,6 @@ async def excluir_negociacao(negociacao_id: str, auth=Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Negociação não encontrada")
 
     db.table("negociacoes_venda").delete().eq("id", negociacao_id).execute()
-    log_action(user.id, "excluir", "cliente", negociacao_id,
+    log_action(user.id, "excluir", "negociacao_venda", negociacao_id,
                f"Excluiu negociação {negociacao_id}")
     return success_response({"id": negociacao_id})

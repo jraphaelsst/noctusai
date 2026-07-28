@@ -14,14 +14,19 @@ from pydantic import Field
 from app.dependencies import get_current_user, get_user_client, log_action, first_or_none
 from app.responses import success_response
 from app.services.processos_venda_service import (
-    ETAPAS_PROCESSO,
     PROCESSO_SELECT,
-    group_into_colunas,
     processo_row_to_dto,
     processo_rows_to_dto,
     search_processos,
 )
+from app.services.pipelines import PIPELINE_PROCESSOS, legacy_etapa_update
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.domain.pipeline import (
+    get_stage,
+    group_into_colunas,
+    list_stages,
+    move_card,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/processos-venda", tags=["Processos de Venda"])
@@ -36,41 +41,39 @@ class ProcessoUpdate(StrictHttpModel):
 
 
 class MoverEtapaProcessoRequest(StrictHttpModel):
-    para_etapa: str
+    # A stage ID — stages are user-editable rows since migration 042.
+    para_etapa_id: str
     novo_indice: Optional[int] = None
-
-
-def _validate_etapa(etapa: str) -> None:
-    if etapa not in ETAPAS_PROCESSO:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Etapa inválida. Use uma de: {', '.join(ETAPAS_PROCESSO)}",
-        )
 
 
 @router.get("")
 async def obter_board(
     busca: Optional[str] = Query(None),
     corretor_id: Optional[str] = Query(None),
-    etapa: Optional[str] = Query(None),
+    etapa_id: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
     auth=Depends(get_current_user),
 ):
     """Kanban columns of processos grouped by execution stage.
 
-    Returns all 8 columns always, so the board never loses a stage just
-    because it happens to be empty.
+    Columns come from the org's configured stages, so the board reflects
+    whatever the user has set up — renamed, reordered, added or removed —
+    rather than a hardcoded 8. Every configured stage is emitted even when
+    empty; a column that disappears with its last card reshapes the board
+    under the user.
     """
     _user, token = auth
     db = get_user_client(token)
+
+    stages = list_stages(db, PIPELINE_PROCESSOS)
 
     query = db.table("processos_venda").select(PROCESSO_SELECT).order(
         "kanban_pos", desc=False
     )
     if not incluir_arquivados:
         query = query.eq("arquivado", False)
-    if etapa:
-        query = query.eq("etapa", etapa)
+    if etapa_id:
+        query = query.eq("etapa_id", etapa_id)
     if corretor_id and corretor_id != "todos":
         query = query.eq("corretor_id", corretor_id)
 
@@ -78,7 +81,11 @@ async def obter_board(
     if busca:
         rows = search_processos(rows, busca)
 
-    return success_response(group_into_colunas(rows))
+    return success_response(
+        group_into_colunas(
+            PIPELINE_PROCESSOS, stages, rows, row_to_dto=processo_row_to_dto
+        )
+    )
 
 
 @router.get("/lista")
@@ -131,7 +138,7 @@ async def atualizar_processo(
     if not row:
         raise HTTPException(status_code=404, detail="Processo não encontrado")
 
-    log_action(user.id, "editar", "cliente", processo_id,
+    log_action(user.id, "editar", "processo_venda", processo_id,
                f"Editou processo de venda {processo_id}")
     return success_response(processo_row_to_dto(row))
 
@@ -140,33 +147,28 @@ async def atualizar_processo(
 async def mover_etapa(
     processo_id: str, body: MoverEtapaProcessoRequest, auth=Depends(get_current_user)
 ):
+    """Move a processo across execution stages.
+
+    Delegates to `noctusai_lib.domain.pipeline.move_card`, the same function the
+    Funil uses. That is the point of the extraction: this board previously had
+    its own copy of the handler which never wrote a stage-transition row, so
+    "how long did this sit in Assinatura?" was unanswerable. It is answerable
+    now without this file knowing anything about history.
+    """
     user, token = auth
     db = get_user_client(token)
 
-    _validate_etapa(body.para_etapa)
+    destino = get_stage(db, PIPELINE_PROCESSOS, body.para_etapa_id)
 
-    current = db.table("processos_venda").select("id, etapa").eq(
-        "id", processo_id
-    ).single().execute()
-    if not current.data:
-        raise HTTPException(status_code=404, detail="Processo não encontrado")
-
-    de_etapa = current.data["etapa"]
-
-    update_data = {"etapa": body.para_etapa}
-    if body.novo_indice is not None:
-        update_data["kanban_pos"] = body.novo_indice
-
-    row = first_or_none(
-        db.table("processos_venda").update(update_data).eq("id", processo_id).execute()
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Processo não encontrado")
-
-    log_action(
-        user.id, "mover", "cliente", processo_id,
-        f"Moveu processo para etapa {body.para_etapa}",
-        {"de_etapa": de_etapa, "para_etapa": body.para_etapa},
+    row = move_card(
+        db,
+        PIPELINE_PROCESSOS,
+        card_id=processo_id,
+        to_stage_id=body.para_etapa_id,
+        user_id=user.id,
+        novo_indice=body.novo_indice,
+        log_action=log_action,
+        extra_updates=legacy_etapa_update(PIPELINE_PROCESSOS, destino),
     )
     return success_response(processo_row_to_dto(row))
 
@@ -197,7 +199,7 @@ async def arquivar_processo(processo_id: str, auth=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Processo não encontrado")
 
     log_action(
-        user.id, "arquivar" if novo_estado else "desarquivar", "cliente", processo_id,
+        user.id, "arquivar" if novo_estado else "desarquivar", "processo_venda", processo_id,
         f"{'Arquivou' if novo_estado else 'Desarquivou'} processo {processo_id}",
     )
     return success_response(processo_row_to_dto(row))

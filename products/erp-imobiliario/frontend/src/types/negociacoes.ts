@@ -1,3 +1,4 @@
+import type { PipelineStage } from '@noctusai/lib/components';
 /**
  * Negociação de Venda — the Funil board's card entity.
  *
@@ -18,7 +19,12 @@ export interface NegociacaoVenda {
   cliente_id: string;
   corretor_id: string;
   titulo?: string | null;
-  etapa: EtapaFunil;
+  /** Legacy enum column — retained for rollback, NOT authoritative. */
+  etapa?: EtapaFunil | null;
+  /** The stage row this card points at. */
+  etapa_id: string;
+  /** The stage itself, joined in — carries `papel` for role-keyed UI. */
+  etapa_rel?: PipelineStage | null;
   status: StatusNegociacao;
   valor_estimado: number;
   probabilidade: number;
@@ -46,7 +52,12 @@ export interface NegociacaoVenda {
 
 /** One kanban column of the Funil board. */
 export interface ColunaNegociacoes {
-  etapa: EtapaFunil;
+  /** Legacy enum column — retained for rollback, NOT authoritative. */
+  etapa?: EtapaFunil | null;
+  /** The stage row this card points at. */
+  etapa_id: string;
+  /** The stage itself, joined in — carries `papel` for role-keyed UI. */
+  etapa_rel?: PipelineStage | null;
   total: number;
   valorTotal: number;
   cards: NegociacaoVenda[];

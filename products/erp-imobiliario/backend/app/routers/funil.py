@@ -18,19 +18,19 @@ from fastapi import APIRouter, Depends, Header, Query
 from app.dependencies import get_current_user, get_user_client
 from app.responses import success_response
 from app.services.negociacoes_venda_service import (
-    ETAPAS_FUNIL,
     NEGOCIACAO_SELECT,
     STATUS_ABERTA,
-    group_into_colunas,
+    negociacao_row_to_dto,
     search_negociacoes,
 )
+from app.services.pipelines import PIPELINE_FUNIL
+from noctusai_lib.domain.pipeline import group_into_colunas, list_stages
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funil", tags=["Funil"])
 
-# Retained for import compatibility; the stage vocabulary now lives in the
-# service alongside the DTO so the two cannot drift.
-ETAPAS = list(ETAPAS_FUNIL)
+# The stage vocabulary is no longer a constant anywhere: since migration 042 it
+# is per-organization rows the user edits, read fresh on every board request.
 
 
 @router.get("")
@@ -38,15 +38,20 @@ async def obter_funil(
     busca: Optional[str] = Query(None),
     responsavel_id: Optional[str] = Query(None),
     origem: Optional[str] = Query(None),
-    etapa: Optional[str] = Query(None),
+    etapa_id: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
     auth = Depends(get_current_user)):
     """
     Returns kanban columns with NEGOCIAÇÕES grouped by pipeline stage.
     All filtering and grouping done server-side.
+
+    Columns are the caller org's configured stages — read per request, so a
+    rename or reorder is visible on the next refresh with no deploy.
     """
     user, token = auth
     db = get_user_client(token)
+
+    stages = list_stages(db, PIPELINE_FUNIL)
 
     query = db.table("negociacoes_venda").select(NEGOCIACAO_SELECT).order(
         "kanban_pos", desc=False
@@ -59,8 +64,8 @@ async def obter_funil(
 
     if not incluir_arquivados:
         query = query.eq("arquivado", False)
-    if etapa:
-        query = query.eq("etapa", etapa)
+    if etapa_id:
+        query = query.eq("etapa_id", etapa_id)
     if responsavel_id and responsavel_id != "todos":
         query = query.eq("corretor_id", responsavel_id)
 
@@ -77,4 +82,8 @@ async def obter_funil(
     if busca:
         negociacoes = search_negociacoes(negociacoes, busca)
 
-    return success_response(group_into_colunas(negociacoes))
+    return success_response(
+        group_into_colunas(
+            PIPELINE_FUNIL, stages, negociacoes, row_to_dto=negociacao_row_to_dto
+        )
+    )

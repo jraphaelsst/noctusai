@@ -37,7 +37,9 @@ PROCESSO_SELECT = (
     "cliente:clientes!processos_venda_cliente_id_fkey(id, nome, email, telefone),"
     "corretor:profiles!processos_venda_corretor_id_fkey(id, nome, email),"
     "negociacao:negociacoes_venda!processos_venda_negociacao_venda_id_fkey"
-    "(id, titulo, valor_estimado, closed_at)"
+    "(id, titulo, valor_estimado, closed_at),"
+    "etapa_rel:pipeline_stages!processos_venda_etapa_id_fkey"
+    "(id, slug, label, cor, papel, posicao)"
 )
 
 # Whitelist mirrors `frontend/src/types/processos.ts → interface ProcessoVenda`.
@@ -46,7 +48,8 @@ _PROCESSO_DTO_FIELDS: Tuple[str, ...] = (
     "cliente_id",
     "negociacao_venda_id",
     "corretor_id",
-    "etapa",
+    "etapa",     # legacy enum column — retained for rollback, not authoritative
+    "etapa_id",  # the stage row this card points at
     "valor",
     "observacoes",
     "kanban_pos",
@@ -56,6 +59,7 @@ _PROCESSO_DTO_FIELDS: Tuple[str, ...] = (
     "cliente",
     "corretor",
     "negociacao",
+    "etapa_rel",
 )
 
 

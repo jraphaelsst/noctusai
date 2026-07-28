@@ -1,3 +1,4 @@
+import type { PipelineStage } from '@noctusai/lib/components';
 /**
  * Processo de Venda — the post-proposal execution board's card entity.
  *
@@ -25,7 +26,10 @@ export interface ProcessoVenda {
   cliente_id: string;
   negociacao_venda_id: string;
   corretor_id: string;
-  etapa: EtapaProcesso;
+  /** Legacy enum column — retained for rollback, NOT authoritative. */
+  etapa?: EtapaProcesso | null;
+  etapa_id: string;
+  etapa_rel?: PipelineStage | null;
   valor: number;
   observacoes?: string | null;
   kanban_pos: number;
@@ -54,7 +58,10 @@ export interface ProcessoVenda {
 
 /** One kanban column of the Processos board. */
 export interface ColunaProcessos {
-  etapa: EtapaProcesso;
+  /** Legacy enum column — retained for rollback, NOT authoritative. */
+  etapa?: EtapaProcesso | null;
+  etapa_id: string;
+  etapa_rel?: PipelineStage | null;
   total: number;
   valorTotal: number;
   cards: ProcessoVenda[];

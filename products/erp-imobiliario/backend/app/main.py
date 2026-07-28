@@ -28,7 +28,7 @@ from app.routers import (
     metas_equipe, meta_fechamentos, meta_rankings, metas_digest, meta_eventos,
     vista_showcase,
     negociacoes,
-    negociacoes_venda, processos_venda,
+    negociacoes_venda, processos_venda, pipeline_stages,
 )
 
 
@@ -52,6 +52,12 @@ app = create_product_app(
         atividades.router,
         action_log.router,
         funil.router,
+        # ORDER MATTERS: these must precede `processos_venda.router`, whose
+        # `GET /{processo_id}` would otherwise match `/api/processos-venda/etapas`
+        # and try to load a processo with the id "etapas". FastAPI resolves in
+        # registration order, so the literal path has to be registered first.
+        pipeline_stages.funil_stages_router,
+        pipeline_stages.processos_stages_router,
         negociacoes_venda.router,
         processos_venda.router,
         matching.router,

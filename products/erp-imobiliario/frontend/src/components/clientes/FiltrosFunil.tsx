@@ -7,7 +7,7 @@ import { X, Plus } from 'lucide-react';
 import { useFunilFiltrosStore } from '@/store/funilFiltrosStore';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useIsAdminOrCoordenador } from '@/hooks/useIsAdminOrCoordenador';
-import { ETAPAS_CONFIG } from '@/lib/etapasConfig';
+import { funilPipeline } from '@/lib/pipelines';
 import { EtapaFunil } from '@/types/clientes';
 
 interface FiltrosFunilProps {
@@ -33,10 +33,12 @@ export function FiltrosFunil({ onNovoCliente }: FiltrosFunilProps) {
   const { isAdminOrCoordenador } = useIsAdminOrCoordenador();
 
   const origens = ['Indicação', 'Site', 'Redes Sociais', 'Telefone', 'Email', 'Evento', 'Outros'];
-  const etapas = Object.entries(ETAPAS_CONFIG).map(([key, config]) => ({
-    value: key,
-    label: config.label,
-  }));
+  // Stages come from the DB, not a hardcoded map — the filter must offer
+  // exactly the columns the board renders, including ones the user added.
+  const { data: etapasFunil } = funilPipeline.useStages();
+  const etapas = [...(etapasFunil ?? [])]
+    .sort((a, b) => a.posicao - b.posicao)
+    .map((e) => ({ value: e.id, label: e.label }));
 
   return (
     <div className="flex flex-col gap-4 mb-6">

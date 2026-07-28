@@ -9,6 +9,34 @@ NOT `/api/negociacoes` — that is the permuta router (`test_negociacoes_router`
 import pytest
 
 
+# Stages are DB rows since migration 042. The seeded defaults reuse the old
+# enum vocabulary as `slug`, but cards reference stage IDs.
+FUNIL_STAGES = [
+    {"id": f"fs{i}", "org_id": "org-1", "pipeline": "funil", "slug": slug,
+     "label": label, "cor": "secondary", "posicao": i, "papel": papel, "ativo": True}
+    for i, (slug, label, papel) in enumerate([
+        ("qualificacao", "Qualificação", None),
+        ("visitas", "Visitas", None),
+        ("proposta", "Proposta", "proposta_aceite"),
+        ("negociacao", "Negociação", None),
+        ("fechado", "Fechado", "final"),
+    ])
+]
+PROC_STAGES = [
+    {"id": "ps0", "org_id": "org-1", "pipeline": "processos_venda",
+     "slug": "elaboracao_contrato", "label": "Elaboração do Contrato",
+     "cor": "secondary", "posicao": 0, "papel": None, "ativo": True},
+]
+STAGE_ID = {s["slug"]: s["id"] for s in FUNIL_STAGES}
+
+
+@pytest.fixture(autouse=True)
+def _seed_stages(client):
+    client._mock_supabase.set_table_data("pipeline_stages", FUNIL_STAGES + PROC_STAGES)
+    client._mock_supabase.set_table_data("pipeline_movimentos", [])
+    return client
+
+
 def _negociacao(nid="n1", etapa="proposta", status="aberta", **over):
     row = {
         "id": nid,
@@ -16,6 +44,7 @@ def _negociacao(nid="n1", etapa="proposta", status="aberta", **over):
         "corretor_id": "user-1",
         "titulo": "Apartamento Centro",
         "etapa": etapa,
+        "etapa_id": STAGE_ID[etapa],
         "status": status,
         "valor_estimado": 250000,
         "probabilidade": 60,
@@ -55,11 +84,13 @@ class TestCriarNegociacao:
         resp = client.post("/api/negociacoes-venda", json={"cliente_id": "cli-1"})
         assert resp.status_code == 200
 
-    def test_create_rejects_invalid_etapa(self, client):
+    def test_create_rejects_unknown_stage(self, client):
+        """404, not 400: a stage is a ROW now, so naming one that does not
+        exist is a missing resource rather than a value outside an enum."""
         resp = client.post("/api/negociacoes-venda", json={
-            "cliente_id": "cli-1", "etapa": "etapa-que-nao-existe",
+            "cliente_id": "cli-1", "etapa_id": "etapa-que-nao-existe",
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_create_rejects_unknown_field(self, client):
         """StrictHttpModel must refuse silently-dropped fields."""
@@ -73,16 +104,16 @@ class TestMoverEtapa:
     def test_move_writes_history(self, client):
         client._mock_supabase.set_table_data(
             "negociacoes_venda", _negociacao("n1", etapa="qualificacao"))
-        client._mock_supabase.set_table_data("funil_movimentos", [])
         resp = client.post("/api/negociacoes-venda/n1/mover-etapa",
-                           json={"para_etapa": "visitas"})
+                           json={"para_etapa_id": STAGE_ID["visitas"]})
         assert resp.status_code == 200
 
-    def test_move_rejects_invalid_etapa(self, client):
+    def test_move_rejects_unknown_stage(self, client):
+        """404 for the same reason as the create case — see above."""
         client._mock_supabase.set_table_data("negociacoes_venda", _negociacao("n1"))
         resp = client.post("/api/negociacoes-venda/n1/mover-etapa",
-                           json={"para_etapa": "nao-existe"})
-        assert resp.status_code == 400
+                           json={"para_etapa_id": "nao-existe"})
+        assert resp.status_code == 404
 
     def test_move_refuses_closed_deal(self, client):
         """A closed deal is off the board; moving it would resurrect it into a
@@ -91,7 +122,7 @@ class TestMoverEtapa:
             "negociacoes_venda",
             _negociacao("n1", status="aceita", closed_at="2026-07-27T00:00:00Z"))
         resp = client.post("/api/negociacoes-venda/n1/mover-etapa",
-                           json={"para_etapa": "visitas"})
+                           json={"para_etapa_id": STAGE_ID["visitas"]})
         assert resp.status_code == 409
 
 
@@ -133,7 +164,7 @@ class TestAceitarProposta:
             "negociacoes_venda", _negociacao("n1", etapa="proposta"))
         client._mock_supabase.set_table_data("processos_venda", [{
             "id": "p1", "cliente_id": "cli-1", "negociacao_venda_id": "n1",
-            "corretor_id": "user-1", "etapa": "elaboracao_contrato",
+            "corretor_id": "user-1", "etapa_id": "ps0",
             "valor": 250000, "kanban_pos": 0, "arquivado": False,
         }])
         resp = client.post("/api/negociacoes-venda/n1/aceitar-proposta")
@@ -170,7 +201,12 @@ class TestNoAuth:
         ("post", "/api/negociacoes-venda", {"cliente_id": "cli-1"}),
         ("get", "/api/negociacoes-venda/n1", None),
         ("patch", "/api/negociacoes-venda/n1", {"titulo": "x"}),
-        ("post", "/api/negociacoes-venda/n1/mover-etapa", {"para_etapa": "visitas"}),
+        ("post", "/api/negociacoes-venda/n1/mover-etapa", {"para_etapa_id": "fs1"}),
+        ("get", "/api/funil/etapas", None),
+        ("post", "/api/funil/etapas", {"label": "Nova"}),
+        ("patch", "/api/funil/etapas/fs1", {"label": "Nova"}),
+        ("delete", "/api/funil/etapas/fs1", None),
+        ("post", "/api/funil/etapas/reordenar", {"ordem": ["fs1"]}),
         ("post", "/api/negociacoes-venda/n1/aceitar-proposta", None),
         ("post", "/api/negociacoes-venda/n1/perder", {}),
         ("delete", "/api/negociacoes-venda/n1", None),

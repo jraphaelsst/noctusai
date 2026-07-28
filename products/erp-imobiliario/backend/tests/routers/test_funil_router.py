@@ -14,6 +14,28 @@ and `status='aberta'` by default, and the mock predicate evaluator compares
 """
 import pytest
 
+# Stages are per-org DB rows since migration 042; the seeded defaults keep the
+# old vocabulary as `slug`. Columns are keyed by stage ID, so these tests read
+# `c["stage"]["slug"]` where they used to read `c["etapa"]`.
+FUNIL_STAGES = [
+    {"id": f"fs{i}", "org_id": "org-1", "pipeline": "funil", "slug": slug,
+     "label": label, "cor": "secondary", "posicao": i, "papel": papel, "ativo": True}
+    for i, (slug, label, papel) in enumerate([
+        ("qualificacao", "Qualificação", None),
+        ("visitas", "Visitas", None),
+        ("proposta", "Proposta", "proposta_aceite"),
+        ("negociacao", "Negociação", None),
+        ("fechado", "Fechado", "final"),
+    ])
+]
+STAGE_ID = {s["slug"]: s["id"] for s in FUNIL_STAGES}
+
+
+@pytest.fixture(autouse=True)
+def _seed_stages(client):
+    client._mock_supabase.set_table_data("pipeline_stages", FUNIL_STAGES)
+    return client
+
 
 def _negociacao(
     nid, cliente_nome, etapa="qualificacao", valor=0, pos=0,
@@ -26,6 +48,7 @@ def _negociacao(
         "corretor_id": "user-1",
         "titulo": titulo,
         "etapa": etapa,
+        "etapa_id": STAGE_ID[etapa],
         "status": status,
         "valor_estimado": valor,
         "probabilidade": 10,
@@ -50,7 +73,7 @@ class TestGetFunil:
         assert resp.status_code == 200
         colunas = resp.json()["data"]
         assert len(colunas) == 5  # 5 etapas
-        etapas = [c["etapa"] for c in colunas]
+        etapas = [c["stage"]["slug"] for c in colunas]
         assert "qualificacao" in etapas
         assert "proposta" in etapas
 
@@ -69,7 +92,7 @@ class TestGetFunil:
         resp = client.get("/api/funil")
         assert resp.status_code == 200
         colunas = resp.json()["data"]
-        assert [c["etapa"] for c in colunas] == [
+        assert [c["stage"]["slug"] for c in colunas] == [
             "qualificacao", "visitas", "proposta", "negociacao", "fechado",
         ]
 
@@ -83,7 +106,7 @@ class TestFunilGrouping:
         resp = client.get("/api/funil")
         assert resp.status_code == 200
         colunas = resp.json()["data"]
-        qualificacao = next(c for c in colunas if c["etapa"] == "qualificacao")
+        qualificacao = next(c for c in colunas if c["stage"]["slug"] == "qualificacao")
         assert qualificacao["total"] == 2
         assert qualificacao["valorTotal"] == 150000
 
@@ -109,7 +132,7 @@ class TestFunilGrouping:
 
         resp = client.get("/api/funil")
         assert resp.status_code == 200
-        colunas = {c["etapa"]: c for c in resp.json()["data"]}
+        colunas = {c["stage"]["slug"]: c for c in resp.json()["data"]}
         assert colunas["qualificacao"]["total"] == 1
         assert colunas["proposta"]["total"] == 1
         assert colunas["qualificacao"]["cards"][0]["cliente_id"] == "cli-shared"

@@ -29,3 +29,31 @@ export type {
   KanbanCardRenderState,
   KanbanOnMove,
 } from './kanban';
+
+// Pipeline — the data half of the kanban organ (DB-driven, editable stages).
+// `KanbanBoard` renders columns you hand it; `PipelineBoard` fetches them,
+// moves cards, and ships the stage editor.
+export {
+  PipelineBoard,
+  PipelineStagesManager,
+  createPipelineHooks,
+  STAGE_COLOR_CLASSES,
+  STAGE_COLOR_OPTIONS,
+  STAGE_ROLE_LABELS,
+  stageColorClasses,
+} from './pipeline';
+export type {
+  PipelineBoardProps,
+  PipelineStagesManagerProps,
+  PipelineHooks,
+  PipelineApi,
+  PipelineColumn,
+  PipelineDescriptor,
+  PipelineStage,
+  StageColor,
+  StageColorClasses,
+  StageRole,
+  MoveVariables,
+  StageCreateInput,
+  StageUpdateInput,
+} from './pipeline';

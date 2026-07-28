@@ -50,7 +50,12 @@ STATUS_NEGOCIACAO = (STATUS_ABERTA, STATUS_ACEITA, STATUS_PERDIDA)
 NEGOCIACAO_SELECT = (
     "*,"
     "cliente:clientes!negociacoes_venda_cliente_id_fkey(id, nome, email, telefone, origem),"
-    "corretor:profiles!negociacoes_venda_corretor_id_fkey(id, nome, email)"
+    "corretor:profiles!negociacoes_venda_corretor_id_fkey(id, nome, email),"
+    # The card's own stage, joined in. The card UI needs the stage's `papel` to
+    # decide whether "Aceitar Proposta" applies, and joining beats having every
+    # card component subscribe to a separate stages query.
+    "etapa_rel:pipeline_stages!negociacoes_venda_etapa_id_fkey"
+    "(id, slug, label, cor, papel, posicao)"
 )
 
 # Whitelist mirrors `frontend/src/types/negociacoes.ts → interface Negociacao`.
@@ -61,7 +66,8 @@ _NEGOCIACAO_DTO_FIELDS: Tuple[str, ...] = (
     "cliente_id",
     "corretor_id",
     "titulo",
-    "etapa",
+    "etapa",     # legacy enum column — retained for rollback, not authoritative
+    "etapa_id",  # the stage row this card points at
     "status",
     "valor_estimado",
     "probabilidade",
@@ -72,6 +78,7 @@ _NEGOCIACAO_DTO_FIELDS: Tuple[str, ...] = (
     "updated_at",
     "cliente",   # nested join object — projected by NEGOCIACAO_SELECT
     "corretor",  # nested join object — projected by NEGOCIACAO_SELECT
+    "etapa_rel", # nested stage object — carries `papel` for role-keyed UI
 )
 
 
