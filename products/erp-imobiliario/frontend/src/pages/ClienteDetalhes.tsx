@@ -83,7 +83,12 @@ export default function ClienteDetalhes() {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
               <h1 className="text-2xl sm:text-3xl font-bold truncate">{cliente.nome}</h1>
               {etapaAtual ? (
-                <Badge className={etapaClasses!.bgColor}>{etapaAtual.label}</Badge>
+                <Badge
+                  variant="outline"
+                  className={`${etapaClasses!.bgColor} ${etapaClasses!.color} ${etapaClasses!.borderColor}`}
+                >
+                  {etapaAtual.label}
+                </Badge>
               ) : negociacoes.length > 1 ? (
                 <Badge variant="secondary">{negociacoes.length} negociações abertas</Badge>
               ) : (

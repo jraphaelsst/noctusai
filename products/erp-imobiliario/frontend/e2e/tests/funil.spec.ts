@@ -64,7 +64,9 @@ test.describe('Funil (Sales Pipeline)', () => {
     // repoint itself, worth a `NOC-REMEDIATE` note if this pattern recurs in
     // other kanban-consumer e2e specs.
     const card = page.locator('[data-kanban-card-id="neg-001"]');
-    const targetColumn = page.locator('[data-kanban-column-id="proposta"]');
+    // Columns are keyed by STAGE ID since migration 042 — stages are
+    // user-editable rows, so an id is the only handle a rename cannot break.
+    const targetColumn = page.locator('[data-kanban-column-id="fstage-2"]');
 
     await expect(card).toBeVisible();
     await expect(targetColumn).toBeVisible();
@@ -92,7 +94,7 @@ test.describe('Funil (Sales Pipeline)', () => {
 
     const request = await moveRequest;
     const body = request.postDataJSON();
-    expect(body.para_etapa).toBe('proposta');
+    expect(body.para_etapa_id).toBe('fstage-2');
   });
 });
 

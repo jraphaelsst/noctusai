@@ -48,13 +48,16 @@ test.describe('Processos de Venda (post-proposal execution board)', () => {
     await mockProcessosAPIs(page);
     await page.goto('/processos-venda');
 
-    // proc-001 starts in "elaboracao_contrato"; drop onto the ADJACENT
-    // "analise_partes" column. Deliberately adjacent — dnd-kit auto-scrolls
+    // proc-001 starts in "Elaboração do Contrato" (pstage-0); drop onto the
+    // ADJACENT "Análise das Partes" (pstage-1). Columns are keyed by STAGE ID
+    // now, not by slug — stages are user-editable rows since migration 042, so
+    // an id is the only handle a rename cannot break.
+    // Deliberately adjacent — dnd-kit auto-scrolls
     // the horizontally-scrollable board near its edges, and a farther column
     // drifts out from under a stationary pointer (the same flake documented
     // in funil.spec.ts).
     const card = page.locator('[data-kanban-card-id="proc-001"]');
-    const targetColumn = page.locator('[data-kanban-column-id="analise_partes"]');
+    const targetColumn = page.locator('[data-kanban-column-id="pstage-1"]');
 
     await expect(card).toBeVisible();
     await expect(targetColumn).toBeVisible();
@@ -82,6 +85,10 @@ test.describe('Processos de Venda (post-proposal execution board)', () => {
     await page.mouse.move(endX, endY, { steps: 15 });
     await page.mouse.up();
 
-    await moveRequest;
+    const req = await moveRequest;
+    // The payload must carry the stage ID. A slug here would mean the frontend
+    // is still thinking in fixed vocabulary, and would 404 on any user-created
+    // stage.
+    expect(req.postDataJSON()).toMatchObject({ para_etapa_id: 'pstage-1' });
   });
 });

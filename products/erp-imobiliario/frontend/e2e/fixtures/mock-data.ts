@@ -84,9 +84,48 @@ export const mockMetas = [
   },
 ];
 
+/**
+ * Stage rows — since migration 042 the boards read these from the DB instead of
+ * a hardcoded config. `mockProcessosColunas` embeds them per column, and
+ * `/api/processos-venda/etapas` serves the list to the stage editor.
+ */
+export const mockProcessoStages = [
+  ['elaboracao_contrato', 'Elaboração do Contrato', 'secondary', null],
+  ['analise_partes', 'Análise das Partes', 'secondary', null],
+  ['revisao_contrato', 'Revisão do Contrato', 'warning', null],
+  ['assinatura', 'Assinatura', 'warning', null],
+  ['financiamento_escritura', 'Financiamento & Escritura', 'primary', null],
+  ['finalizacao', 'Finalização', 'primary', null],
+  ['entrega_chaves', 'Entrega das Chaves', 'success', null],
+  ['nota_fiscal', 'Nota Fiscal', 'success', 'final'],
+].map(([slug, label, cor, papel], i) => ({
+  id: `pstage-${i}`,
+  org_id: 'org-001',
+  pipeline: 'processos_venda',
+  slug, label, cor, papel,
+  posicao: i,
+  ativo: true,
+}));
+
+export const mockFunilStages = [
+  ['qualificacao', 'Qualificação', 'secondary', null],
+  ['visitas', 'Visitas', 'warning', null],
+  ['proposta', 'Proposta', 'primary', 'proposta_aceite'],
+  ['negociacao', 'Negociação', 'muted', null],
+  ['fechado', 'Fechado', 'success', 'final'],
+].map(([slug, label, cor, papel], i) => ({
+  id: `fstage-${i}`,
+  org_id: 'org-001',
+  pipeline: 'funil',
+  slug, label, cor, papel,
+  posicao: i,
+  ativo: true,
+}));
+
 export const mockFunilColunas = [
   {
-    etapa: 'qualificacao',
+    etapa: 'fstage-0',
+    stage: mockFunilStages[0],
     total: 1,
     valorTotal: 450000,
     cards: [
@@ -96,6 +135,8 @@ export const mockFunilColunas = [
         corretor_id: 'user-001',
         titulo: 'Apartamento Vila Mariana',
         etapa: 'qualificacao',
+        etapa_id: 'fstage-0',
+        etapa_rel: mockFunilStages[0],
         status: 'aberta',
         probabilidade: 30,
         valor_estimado: 450000,
@@ -114,13 +155,15 @@ export const mockFunilColunas = [
     ],
   },
   {
-    etapa: 'visitas',
+    etapa: 'fstage-1',
+    stage: mockFunilStages[1],
     total: 0,
     valorTotal: 0,
     cards: [],
   },
   {
-    etapa: 'proposta',
+    etapa: 'fstage-2',
+    stage: mockFunilStages[2],
     total: 1,
     valorTotal: 780000,
     cards: [
@@ -130,6 +173,8 @@ export const mockFunilColunas = [
         corretor_id: 'user-001',
         titulo: 'Casa Alto de Pinheiros',
         etapa: 'proposta',
+        etapa_id: 'fstage-2',
+        etapa_rel: mockFunilStages[2],
         status: 'aberta',
         probabilidade: 60,
         valor_estimado: 780000,
@@ -148,13 +193,15 @@ export const mockFunilColunas = [
     ],
   },
   {
-    etapa: 'negociacao',
+    etapa: 'fstage-3',
+    stage: mockFunilStages[3],
     total: 0,
     valorTotal: 0,
     cards: [],
   },
   {
-    etapa: 'fechado',
+    etapa: 'fstage-4',
+    stage: mockFunilStages[4],
     total: 1,
     valorTotal: 1200000,
     cards: [
@@ -164,6 +211,8 @@ export const mockFunilColunas = [
         corretor_id: 'user-001',
         titulo: 'Cobertura Itaim',
         etapa: 'fechado',
+        etapa_id: 'fstage-4',
+        etapa_rel: mockFunilStages[4],
         status: 'aberta',
         probabilidade: 90,
         valor_estimado: 1200000,
@@ -371,9 +420,11 @@ export const mockAdminUserRoles = [
  * Processos de Venda board fixture (roadmap P2.4).
  * All 8 execution stages are present — the board always emits every column.
  */
+
 export const mockProcessosColunas = [
   {
-    etapa: 'elaboracao_contrato',
+    etapa: 'pstage-0',
+    stage: mockProcessoStages[0],
     total: 1,
     valorTotal: 780000,
     cards: [
@@ -383,6 +434,8 @@ export const mockProcessosColunas = [
         negociacao_venda_id: 'neg-002',
         corretor_id: 'user-001',
         etapa: 'elaboracao_contrato',
+        etapa_id: 'pstage-0',
+        etapa_rel: mockProcessoStages[0],
         valor: 780000,
         observacoes: null,
         kanban_pos: 0,
@@ -403,10 +456,11 @@ export const mockProcessosColunas = [
       },
     ],
   },
-  { etapa: 'analise_partes', total: 0, valorTotal: 0, cards: [] },
-  { etapa: 'revisao_contrato', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-1', stage: mockProcessoStages[1], total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-2', stage: mockProcessoStages[2], total: 0, valorTotal: 0, cards: [] },
   {
-    etapa: 'assinatura',
+    etapa: 'pstage-3',
+    stage: mockProcessoStages[3],
     total: 1,
     valorTotal: 1200000,
     cards: [
@@ -416,6 +470,8 @@ export const mockProcessosColunas = [
         negociacao_venda_id: 'neg-003',
         corretor_id: 'user-001',
         etapa: 'assinatura',
+        etapa_id: 'pstage-3',
+        etapa_rel: mockProcessoStages[3],
         valor: 1200000,
         observacoes: null,
         kanban_pos: 0,
@@ -436,8 +492,8 @@ export const mockProcessosColunas = [
       },
     ],
   },
-  { etapa: 'financiamento_escritura', total: 0, valorTotal: 0, cards: [] },
-  { etapa: 'finalizacao', total: 0, valorTotal: 0, cards: [] },
-  { etapa: 'entrega_chaves', total: 0, valorTotal: 0, cards: [] },
-  { etapa: 'nota_fiscal', total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-4', stage: mockProcessoStages[4], total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-5', stage: mockProcessoStages[5], total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-6', stage: mockProcessoStages[6], total: 0, valorTotal: 0, cards: [] },
+  { etapa: 'pstage-7', stage: mockProcessoStages[7], total: 0, valorTotal: 0, cards: [] },
 ];
