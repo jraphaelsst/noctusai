@@ -7,7 +7,15 @@
  * (`AppReviewNotice`, never a fake success).
  */
 import { useState } from "react";
-import { CircleAlert, CircleCheck, Loader2, Send } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  Film,
+  Image as ImageIcon,
+  Images,
+  Loader2,
+  Send,
+} from "lucide-react";
 
 import {
   Card,
@@ -160,19 +168,40 @@ function PublishForm({ accountId }: { accountId: string }) {
   );
 }
 
+/** Faint media-type placeholder for tiles Meta returns without a thumbnail
+ *  URL (expired asset, some reels/stories). Beats bare "Sem miniatura" text. */
+function MediaTypeFallback({ mediaType }: { mediaType?: string | null }) {
+  const t = (mediaType ?? "").toUpperCase();
+  const { Icon, label } =
+    t === "VIDEO"
+      ? { Icon: Film, label: "Vídeo" }
+      : t === "CAROUSEL_ALBUM"
+        ? { Icon: Images, label: "Carrossel" }
+        : { Icon: ImageIcon, label: "Sem miniatura" };
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted-foreground/60">
+      <Icon className="h-7 w-7" strokeWidth={1.5} />
+      <span className="text-xs">{label}</span>
+    </div>
+  );
+}
+
 function MediaGrid({ accountId }: { accountId: string }) {
   const { data, isLoading, isError } = useIgMedia(accountId, 24);
   const media = data?.media ?? [];
 
   if (isLoading) {
     return (
-      <div
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
-        data-testid="ig-content-grid-loading"
-      >
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="aspect-square rounded-md" />
-        ))}
+      <div data-testid="ig-content-grid-loading">
+        <p className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Carregando mídias recentes…
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="aspect-square rounded-md" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -219,9 +248,7 @@ function MediaGrid({ accountId }: { accountId: string }) {
               className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
-              Sem miniatura
-            </div>
+            <MediaTypeFallback mediaType={item.media_type} />
           )}
         </a>
       ))}

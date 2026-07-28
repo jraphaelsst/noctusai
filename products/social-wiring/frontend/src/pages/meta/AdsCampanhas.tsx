@@ -269,8 +269,8 @@ export default function AdsCampanhas() {
                     <th className="px-4 py-2 font-medium">Objetivo</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium">Gasto (último dia)</th>
-                    <th className="px-4 py-2 font-medium">Leads</th>
-                    <th className="px-4 py-2 font-medium">Custo/lead</th>
+                    <th className="px-4 py-2 font-medium">Leads (último dia)</th>
+                    <th className="px-4 py-2 font-medium">Custo/lead (último dia)</th>
                   </tr>
                 </thead>
                 <tbody>

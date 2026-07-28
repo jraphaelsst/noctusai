@@ -89,19 +89,32 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
     );
   }
 
-  if (chartData.length === 0) {
+  // A single point draws no visible line (dot={false}), so anything under two
+  // snapshots reads as "broken" on a fresh account. Show an explicit
+  // still-collecting note instead of an empty-looking chart.
+  if (chartData.length < 2) {
     return (
       <div
-        className="flex h-64 items-center justify-center rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground"
+        className="flex h-64 flex-col items-center justify-center gap-1.5 rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground"
         data-testid="ig-trend-empty"
       >
-        Sem histórico ainda — clique em "Capturar agora" para começar a
-        acumular snapshots.
+        {chartData.length === 0 ? (
+          <span>
+            Sem histórico ainda — clique em "Capturar agora" para começar a
+            acumular snapshots.
+          </span>
+        ) : (
+          <span>
+            Coletando histórico — 1 snapshot até agora. Volte em alguns dias
+            para ver a tendência de seguidores.
+          </span>
+        )}
       </div>
     );
   }
 
   return (
+    <>
     <div className="h-64 w-full" data-testid="ig-trend-chart">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
@@ -133,6 +146,13 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
         </LineChart>
       </ResponsiveContainer>
     </div>
+    {chartData.length < 4 && (
+      <p className="mt-2 text-center text-xs text-muted-foreground">
+        Coletando histórico — a tendência fica mais nítida conforme os
+        snapshots diários acumulam.
+      </p>
+    )}
+    </>
   );
 }
 

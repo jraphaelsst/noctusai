@@ -128,7 +128,7 @@ export default function AdsFinanceiro() {
         </CardHeader>
         <CardContent>
           {pacingQ.isPending || pacingQ.isFetching ? (
-            <AdsLoading label="Carregando…" />
+            <AdsLoading label="Resolvendo orçamentos das campanhas ativas…" />
           ) : !pacing.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               Nenhuma campanha ativa com orçamento diário definido.
