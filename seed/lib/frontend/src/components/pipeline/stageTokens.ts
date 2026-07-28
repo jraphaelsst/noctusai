@@ -27,9 +27,22 @@ export interface StageColorClasses {
   swatch: string;
 }
 
+// TEXT COLOUR: `text-<token>`, never `text-<token>-foreground`.
+//
+// `-foreground` tokens are the colour meant to sit ON a SOLID fill of that
+// token — light text for a solid primary button. These labels sit on a 10%
+// TINT, which is nearly white, so `text-primary-foreground` rendered
+// light-on-light and the stage name was effectively invisible. Confirmed in
+// the browser on 2026-07-28: the "Proposta" and "Fechado" column headers and
+// the cliente-detail stage badge were all unreadable.
+//
+// The solid token (`text-primary`) is the brand colour itself, which has real
+// contrast against its own tint — and still differentiates the stages.
+// Inherited from the ERP's old `ETAPAS_CONFIG`, so the bug predates the
+// extraction; it is fixed here because the seed now owns it for every consumer.
 export const STAGE_COLOR_CLASSES: Record<StageColor, StageColorClasses> = {
   primary: {
-    color: 'text-primary-foreground',
+    color: 'text-primary',
     bgColor: 'bg-primary/10',
     borderColor: 'border-primary',
     swatch: 'bg-primary',
@@ -41,23 +54,26 @@ export const STAGE_COLOR_CLASSES: Record<StageColor, StageColorClasses> = {
     swatch: 'bg-secondary',
   },
   success: {
-    color: 'text-success-foreground',
+    color: 'text-success',
     bgColor: 'bg-success/10',
     borderColor: 'border-success',
     swatch: 'bg-success',
   },
   warning: {
-    color: 'text-warning-foreground',
+    color: 'text-warning',
     bgColor: 'bg-warning/10',
     borderColor: 'border-warning',
     swatch: 'bg-warning',
   },
   destructive: {
-    color: 'text-destructive-foreground',
+    color: 'text-destructive',
     bgColor: 'bg-destructive/10',
     borderColor: 'border-destructive',
     swatch: 'bg-destructive',
   },
+  // `secondary-foreground` and `muted-foreground` are the exceptions that are
+  // already correct: both are DARK readable text tokens, not on-solid-fill
+  // pairs.
   muted: {
     color: 'text-muted-foreground',
     bgColor: 'bg-muted/50',

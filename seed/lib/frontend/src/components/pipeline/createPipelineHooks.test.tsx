@@ -203,6 +203,40 @@ describe('useMoveCard — optimistic update', () => {
     });
   });
 
+  it('invalidates every configured sibling key on settle', async () => {
+    // A board is never the only surface showing a card's stage. The ERP's
+    // cliente-detail page reads the same deal under `negociacoes-venda` and
+    // renders its stage badge + selector from it; when that key was missing
+    // from the list, moving a deal left that page showing the OLD stage, which
+    // is indistinguishable from "the move didn't save".
+    const spy = vi.spyOn(queryClient, 'invalidateQueries');
+    (api.post as any).mockResolvedValue({ data: { id: 'c1', valor: 100 } });
+
+    const hooks = createPipelineHooks<Card>(
+      {
+        queryKey: 'testboard',
+        boardEndpoint: '/api/board',
+        moveEndpoint: '/api/cards',
+        getCardId: (c) => c.id,
+        getCardValue: (c) => c.valor,
+        entityLabel: 'carta',
+        invalidateOnSettle: ['siblingA', 'siblingB'],
+      },
+      api,
+    );
+    const { result } = renderHook(() => hooks.useMoveCard(), { wrapper });
+
+    act(() => {
+      result.current.mutate({ cardId: 'c1', toStageId: STAGE_B });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const keys = spy.mock.calls.map((c) => JSON.stringify((c[0] as any).queryKey));
+    expect(keys).toContain(JSON.stringify(['testboard']));
+    expect(keys).toContain(JSON.stringify(['siblingA']));
+    expect(keys).toContain(JSON.stringify(['siblingB']));
+  });
+
   it('is a no-op on the cache when the card is not present', async () => {
     queryClient.setQueryData(['testboard', {}], board());
     (api.post as any).mockImplementation(() => new Promise(() => {}));

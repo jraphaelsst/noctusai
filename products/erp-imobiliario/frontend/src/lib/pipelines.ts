@@ -36,7 +36,15 @@ export const funilPipeline = createPipelineHooks<NegociacaoVenda>(
     entityLabel: 'negociação',
     // A deal accepted from the Funil becomes a processo; the other board is
     // stale the moment this one changes.
-    invalidateOnSettle: ['clientes', 'processos-venda'],
+    //
+    // `negociacoes-venda` is here because the board is NOT the only surface
+    // showing a deal's stage: `ClienteDetalhes` reads the cliente's open deals
+    // under that key and renders both the stage badge and the stage selector
+    // from it. Without this, moving a deal (from either surface) left that page
+    // displaying the OLD stage until something unrelated happened to refetch —
+    // observed live on 2026-07-28, and indistinguishable from "the move didn't
+    // save" to anyone looking at it.
+    invalidateOnSettle: ['clientes', 'processos-venda', 'negociacoes-venda'],
   },
   api,
 );
