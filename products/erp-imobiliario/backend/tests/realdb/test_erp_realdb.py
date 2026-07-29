@@ -219,10 +219,46 @@ class TestContratoFKIntegrity:
 class TestFKViolation:
     """Insert with a bad FK should raise a PostgREST error."""
 
-    def test_fk_violation_on_invalid_reference(self, erp_db, test_org):
+    # NOC-REMEDIATE[erp-contratos-missing-fks]: `erp.contratos` declares ZERO
+    # foreign keys — verified against live `pg_constraint` 2026-07-29 (contype
+    # 'f' → 0 rows). `cliente_id` / `imovel_id` / `proposta_id` are all NOT NULL
+    # but reference nothing, so a contract can point at a client or property
+    # that does not exist. This is NOT a regression: canonical migration
+    # `001_erp_imobiliario.sql` never declared them, so this test has been
+    # asserting an intent the schema never implemented.
+    #
+    # strict=True is deliberate and self-closing: the day the FKs land, this
+    # XPASSes, strict turns that into a FAILURE, and whoever adds them is forced
+    # to delete this marker. It documents a known gap without ever going quiet.
+    #
+    # Two live consequences found while proving this out:
+    #   · Because nothing rejected the insert AND this test had no `cleanup`
+    #     fixture, it wrote a junk contrato into PRODUCTION on every run since
+    #     2026-03-14 — 38 rows, all with `cliente_id == imovel_id` and this
+    #     method's exact fixture shape (valor_total=100000, tipo='venda'), one
+    #     per throwaway test org. Those were purged and `cleanup` added below,
+    #     so the pollution stops regardless of when the FKs arrive.
+    #   · The ready migration is `044_contratos_fks.sql` (authored, NOT applied)
+    #     — adding constraints to a live table is a schema-design call, not a
+    #     test-harness one.
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "erp.contratos has no FK constraints (migration 001 never declared "
+            "them), so a bad reference cannot be rejected. See "
+            "NOC-REMEDIATE[erp-contratos-missing-fks] + migration 044."
+        ),
+    )
+    def test_fk_violation_on_invalid_reference(self, erp_db, test_org, cleanup):
         fake_id = str(uuid.uuid4())
+        contrato_id = str(uuid.uuid4())
+        # Registered for cleanup BEFORE the insert: while the FKs are missing
+        # the insert SUCCEEDS, and an unregistered row is exactly how 38 of
+        # them leaked into prod.
+        cleanup.append(("contratos", contrato_id))
         with pytest.raises(APIError):
             erp_db.table("contratos").insert({
+                "id": contrato_id,
                 "org_id": test_org["id"],
                 "tipo": "venda",
                 "cliente_id": fake_id,

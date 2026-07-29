@@ -120,6 +120,23 @@ def test_cliente(erp_db, test_user, cleanup):
 
 
 @pytest.fixture
+def test_imovel(erp_db, test_user, cleanup):
+    """A minimal `erp.ativos` row of natureza='imovel' — `contratos.imovel_id`
+    is NOT NULL and semantically points at an ativo."""
+    ativo_id = str(uuid.uuid4())
+    erp_db.table("ativos").insert({
+        "id": ativo_id,
+        "owner_id": test_user["id"],
+        "captador_id": test_user["id"],
+        "natureza": "imovel",
+        "valor": 250000,
+        "status": "disponivel",
+    }).execute()
+    cleanup.append(("ativos", ativo_id))
+    return {"id": ativo_id}
+
+
+@pytest.fixture
 def cleanup(erp_db):
     """Collects (table, id) tuples and deletes them in reverse order after the test."""
     records: list[tuple[str, str]] = []

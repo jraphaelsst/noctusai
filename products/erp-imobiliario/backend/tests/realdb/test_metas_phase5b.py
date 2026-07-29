@@ -130,18 +130,37 @@ def test_visita_multi_participantes_mirrors_meta_evento_per_participant(
     }).execute()
     cleanup.append(("evento_participantes", part_id))
 
-    eventos_pontuados = _all_meta_eventos(erp_db, ref_tipo="evento", ref_id=evento_id)
-    # Expect at least the main + the bridge participant
-    assert len(eventos_pontuados) >= 2
-    corretor_ids = {e["corretor_id"] for e in eventos_pontuados}
-    assert test_user["id"] in corretor_ids
-    assert segundo_user_id in corretor_ids
+    # The two triggers file into SEPARATE reference namespaces — verified
+    # against the live functions:
+    #   fn_meta_eventos_from_evento       → ('evento',              evento.id)
+    #   fn_meta_eventos_from_participante → ('evento_participante', participante.id)
+    # The previous assertion counted `>= 2` rows under ('evento', evento_id)
+    # alone, which CANNOT hold by design — exactly one row ever lands there.
+    # It read as a missing-trigger regression; the trigger was correct all along
+    # and the query was looking in the wrong place.
+    principal = _all_meta_eventos(erp_db, ref_tipo="evento", ref_id=evento_id)
+    assert len(principal) == 1, "the evento trigger files exactly one meta_evento"
+    assert principal[0]["corretor_id"] == test_user["id"]
+
+    adicional = _all_meta_eventos(
+        erp_db, ref_tipo="evento_participante", ref_id=part_id
+    )
+    assert len(adicional) == 1, (
+        "the participante trigger must mirror the visita to the bridge corretor"
+    )
+    assert adicional[0]["corretor_id"] == segundo_user_id
+    # Both corretores scored for the same visita — the property the test exists
+    # to protect, now asserted across both namespaces instead of one.
+    assert {principal[0]["corretor_id"], adicional[0]["corretor_id"]} == {
+        test_user["id"],
+        segundo_user_id,
+    }
 
 
 # ── Locação detection via comissao.contrato_id ──────────────────
 
 def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
-    erp_db, test_user, test_org, test_cliente, cleanup,
+    erp_db, test_user, test_org, test_cliente, test_imovel, cleanup,
 ):
     """When `comissoes.contrato_id` points at a contract with `tipo_contrato=
     'locacao'`, the split trigger should emit evento_tipo='locacao'
@@ -155,8 +174,12 @@ def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
         "org_id": test_org["id"],
         # cliente_id is NOT NULL on contratos.
         "cliente_id": test_cliente["id"],
+        # imovel_id is NOT NULL too.
+        "imovel_id": test_imovel["id"],
         "tipo": "locacao",
         "valor_total": 50000,
+        # data_inicio is NOT NULL as well.
+        "data_inicio": "2026-04-01",
     }).execute()
     cleanup.append(("contratos", contrato_id))
 
