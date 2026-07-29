@@ -223,4 +223,13 @@ def isolate_meta_config_db(monkeypatch):
     # get a LIVE adapter. Tests that WANT a token pass an explicit settings
     # object (unaffected) or patch the field themselves AFTER this fixture.
     for _field in ("meta_system_user_token", "meta_ad_account_id", "meta_ads_org_id"):
-        monkeypatch.setattr(_default_settings, _field, "", raising=False)
+        # Clears AMBIENT ENVIRONMENT, not our logic. These three fields are
+        # populated from the developer's / CI's root `.env`, which in this repo
+        # carries a REAL META_SYSTEM_USER_TOKEN; a test asserting the "not
+        # connected" path would otherwise resolve a LIVE adapter through the
+        # env-fallback. The resolution code under test is untouched — only the
+        # environment it reads is neutralised. Tests that need a value pass an
+        # explicit settings object through the `cfg` DI seam instead.
+        monkeypatch.setattr(  # self-patch-ok: neutralises ambient .env, not our logic
+            _default_settings, _field, "", raising=False
+        )

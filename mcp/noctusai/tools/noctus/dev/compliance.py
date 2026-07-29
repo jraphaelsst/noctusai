@@ -7804,6 +7804,144 @@ def check_auth_session_mutation_on_shared_client(product_path: Path) -> list[dic
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# `check_status_pagina_role_parity` — the dev-page visibility gate is TWO
+# halves that must agree: an RLS policy (`dev_veem_desenvolvimento`, which
+# decides whether the row is RETURNED at all) and a frontend const
+# (`DEV_ROLES`, which decides whether the returned row is RENDERED). They live
+# in different languages, in N+1 files, with no shared source. Diverge and you
+# get split-brain: RLS hands back a row the FE hides, or the FE would render a
+# row RLS never returns — and both failure modes look like "the page is just
+# missing", the exact symptom that hid `meta`/`instagram_insights` in prod for
+# months (2026-07-17 → 2026-07-29).
+#
+# The original author flagged this as "a manual contract until a keeper
+# enforces it"; the fan-out to 5 migrations is what makes hand-syncing
+# untenable, so the keeper ships with the fan-out (gate↔methodology sync).
+#
+# Parsing note: neither SQL nor TS has an AST parser in this toolkit (the
+# TS "outliner" is itself line-based), so this uses tightly-anchored regexes.
+# A MISSING anchor is reported as an issue, never a silent pass — an
+# unparseable role list is exactly the state where drift hides.
+# Per KB § PATTERNS/frontend/status-pagina-dev-visibility.md.
+# ---------------------------------------------------------------------------
+
+_DEV_ROLES_TS_RE = re.compile(
+    r"export\s+const\s+DEV_ROLES\s*:\s*OrgRole\[\]\s*=\s*\[([^\]]*)\]"
+)
+_DEV_POLICY_ROLES_SQL_RE = re.compile(
+    r"current_org_role\(\)\s*=\s*ANY\s*\(\s*ARRAY\s*\[([^\]]*)\]",
+    re.IGNORECASE,
+)
+_QUOTED_RE = re.compile(r"""['"]([a-z_]+)['"]""")
+
+
+def _parse_role_list(blob: str) -> set[str]:
+    """Quoted lowercase identifiers inside an array literal → a set.
+
+    Shared by both halves so a formatting difference (single vs double
+    quotes, trailing comma, line wrapping) can never read as a role
+    difference — only the role NAMES are compared.
+    """
+    return set(_QUOTED_RE.findall(blob))
+
+
+def check_status_pagina_role_parity(repo_root: Path | None = None) -> list[dict]:
+    """Flag any `status_pagina` dev-visibility RLS policy whose role array
+    disagrees with the seed frontend's `DEV_ROLES`.
+
+    The FE const is the reference (it is the single one); every
+    `*_status_pagina_dev_visibility.sql` migration must match it exactly.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    roles_ts = root / "seed" / "lib" / "frontend" / "src" / "roles.ts"
+    migrations = sorted(root.glob("**/migrations/*status_pagina_dev_visibility.sql"))
+    if not migrations:
+        # Nothing to compare against — not a violation (a fresh clone before
+        # the fan-out, or the files were renamed). Silent only because there
+        # is genuinely no contract in the tree to break.
+        return issues
+
+    if not roles_ts.exists():
+        return [{
+            "product": "<seed-lib>",
+            "file": "seed/lib/frontend/src/roles.ts",
+            "issue": (
+                f"{len(migrations)} `status_pagina` dev-visibility migration(s) "
+                f"encode a role array, but `seed/lib/frontend/src/roles.ts` is "
+                f"missing — the frontend half of the parity contract cannot be "
+                f"checked. Per `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`."
+            ),
+            "severity": "high",
+        }]
+
+    ts_match = _DEV_ROLES_TS_RE.search(roles_ts.read_text(encoding="utf-8"))
+    if ts_match is None:
+        return [{
+            "product": "<seed-lib>",
+            "file": "seed/lib/frontend/src/roles.ts",
+            "issue": (
+                "cannot locate `export const DEV_ROLES: OrgRole[] = [...]` — the "
+                "parity contract with the `dev_veem_desenvolvimento` RLS policies "
+                "cannot be verified. Restore the declaration or update "
+                "`check_status_pagina_role_parity`. Per "
+                "`KB § PATTERNS/frontend/status-pagina-dev-visibility.md`."
+            ),
+            "severity": "high",
+        }]
+
+    fe_roles = _parse_role_list(ts_match.group(1))
+
+    for path in migrations:
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+        product = (
+            relative.split("/", 2)[1] if relative.startswith("products/") else "<seed-lib>"
+        )
+        sql_match = _DEV_POLICY_ROLES_SQL_RE.search(path.read_text(encoding="utf-8"))
+        if sql_match is None:
+            issues.append({
+                "product": product,
+                "file": relative,
+                "issue": (
+                    f"`{relative}` is a status_pagina dev-visibility migration but "
+                    f"no `current_org_role() = ANY (ARRAY[...])` predicate was "
+                    f"found — the role list cannot be compared to the frontend "
+                    f"`DEV_ROLES` ({sorted(fe_roles)}). An unparseable role list is "
+                    f"where split-brain hides. Per "
+                    f"`KB § PATTERNS/frontend/status-pagina-dev-visibility.md`."
+                ),
+                "severity": "high",
+            })
+            continue
+
+        sql_roles = _parse_role_list(sql_match.group(1))
+        if sql_roles != fe_roles:
+            issues.append({
+                "product": product,
+                "file": relative,
+                "issue": (
+                    f"`{relative}` grants dev-page visibility to {sorted(sql_roles)} "
+                    f"but the frontend `DEV_ROLES` is {sorted(fe_roles)} "
+                    f"(only-in-SQL={sorted(sql_roles - fe_roles)}, "
+                    f"only-in-FE={sorted(fe_roles - sql_roles)}). Split-brain: RLS "
+                    f"and the sidebar disagree on who sees an in-development page, "
+                    f"and both failure modes look like 'the page is just missing'. "
+                    f"Keep the two in lockstep in the SAME commit. Per "
+                    f"`KB § PATTERNS/frontend/status-pagina-dev-visibility.md`."
+                ),
+                "severity": "high",
+            })
+
+    return issues
+
+
 def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
     """Flag products with `app/rate_limit.py` whose `tests/conftest.py`
     does NOT reference the seed `reset_rate_limiter` autouse fixture.
@@ -9059,6 +9197,13 @@ def check_all_products() -> tuple[int, list]:
     # branch over live data. Severity warning (observe-first on a brand-new
     # detector). KB § PATTERNS/frontend/lying-loading-state.md.
     all_issues.extend(check_lying_loading_state())
+    # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
+    # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
+    # halves of one contract in two languages across N+1 files. Divergence is
+    # invisible (both modes look like "the page is missing") and that exact
+    # gap hid `meta`/`instagram_insights` in prod.
+    # KB § PATTERNS/frontend/status-pagina-dev-visibility.md.
+    all_issues.extend(check_status_pagina_role_parity())
     # fleet-limiter-conftest-adoption Stage-4 (2026-05-23) — products with
     # app/rate_limit.py must import the seed `reset_rate_limiter` autouse
     # fixture into tests/conftest.py, else the in-memory slowapi limiter

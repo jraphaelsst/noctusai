@@ -45,9 +45,15 @@ from app.dependencies import get_admin_client
 logger = logging.getLogger(__name__)
 
 
-def _target_org_id() -> UUID | None:
+def _target_org_id(*, cfg=None) -> UUID | None:
     """The SINGLE org the workspace-global ad account syncs into —
     ``settings.meta_ads_org_id``.
+
+    ``cfg`` is the settings DI seam (Class-A,
+    ``KB § PATTERNS/backend/di-test-seam.md``): defaults to the product
+    singleton, and tests pass an explicit object instead of mutating it.
+    Driving the gating by patching ``settings`` meant the test no longer
+    exercised the resolution it was asserting.
 
     🔴 Safe-by-default: the token + ``meta_ad_account_id`` are workspace-
     global (ONE Business-Portfolio account) but the ``ads_*`` tables are
@@ -61,7 +67,7 @@ def _target_org_id() -> UUID | None:
     behavior change for the single-account case."""
     from app.services.app_config_store import resolve_meta_ads_config
 
-    _token, _account, raw = resolve_meta_ads_config(settings=settings)
+    _token, _account, raw = resolve_meta_ads_config(settings=cfg or settings)
     if not raw:
         return None
     try:
@@ -74,13 +80,29 @@ def _target_org_id() -> UUID | None:
         return None
 
 
-def _sync_job_sync() -> None:
+def _sync_job_sync(
+    *,
+    cfg=None,
+    admin_client_factory=None,
+    service_factory=None,
+    adapter_factory=None,
+) -> None:
     """Body of the daily sync job. Runs in a worker thread
     (``asyncio.to_thread``) so a hung Supabase/Graph call doesn't freeze
-    the event loop — same convention as ``youtube_daily_snapshot_job``."""
+    the event loop — same convention as ``youtube_daily_snapshot_job``.
+
+    The four keyword seams are the DI-test-seam (Class-A) surface: settings,
+    the admin client, the sync service and the Meta adapter. All default to
+    the production collaborators, so the scheduler's own call site is
+    unchanged (``asyncio.to_thread(_sync_job_sync)``). They exist because the
+    org-scoping tests below assert a SAFETY property — "never fan out across
+    tenants" — and were doing it by patching this module's own ``settings``
+    and ``AdsSyncService``, which stops exercising the very resolution under
+    test (``KB § PATTERNS/compliance/testing.md``)."""
     from app.services.app_config_store import resolve_meta_ads_config
 
-    system_user_token, ad_account_id, _org = resolve_meta_ads_config(settings=settings)
+    cfg = cfg or settings
+    system_user_token, ad_account_id, _org = resolve_meta_ads_config(settings=cfg)
     if not ad_account_id or not system_user_token:
         logger.info(
             "meta_ads scheduler: not configured "
@@ -89,7 +111,7 @@ def _sync_job_sync() -> None:
         )
         return
 
-    admin = get_admin_client()
+    admin = (admin_client_factory or get_admin_client)()
     if admin is None:
         logger.warning("meta_ads scheduler: no admin client — skipping sync run")
         return
@@ -97,7 +119,10 @@ def _sync_job_sync() -> None:
     from app.modules.meta_ads.services.ads_sync_service import AdsSyncService
     from app.services.meta import MetaGraphError, get_meta_adapter
 
-    org_id = _target_org_id()
+    make_service = service_factory or AdsSyncService
+    make_adapter = adapter_factory or get_meta_adapter
+
+    org_id = _target_org_id(cfg=cfg)
     if org_id is None:
         logger.info(
             "meta_ads scheduler: meta_ads_org_id not configured — skipping "
@@ -106,7 +131,7 @@ def _sync_job_sync() -> None:
         )
         return
 
-    svc = AdsSyncService(admin_supabase=admin)
+    svc = make_service(admin_supabase=admin)
     today = datetime.now(timezone.utc).date()
     yesterday = today - timedelta(days=1)
     activities_since = datetime.now(timezone.utc) - timedelta(days=2)
@@ -114,7 +139,7 @@ def _sync_job_sync() -> None:
 
     logger.info("meta_ads scheduler: running daily sync for org=%s", org_id)
     try:
-        adapter = get_meta_adapter(org_id=str(org_id))
+        adapter = make_adapter(org_id=str(org_id))
         svc.sync_accounts(org_id=org_id, adapter=adapter)
         svc.sync_hierarchy(org_id=org_id, adapter=adapter, ad_account_id=ad_account_id)
         snapshot_count = svc.snapshot_campaign_insights(

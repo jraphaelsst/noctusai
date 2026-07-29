@@ -150,6 +150,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── product-icon-registry.md
 │   │   │   ├── product-internal-wiring.md
 │   │   │   ├── spa-cache-and-service-worker.md
+│   │   │   ├── status-pagina-dev-visibility.md
 │   │   │   └── svg-render-mode.md
 │   │   ├── devops/
 │   │   │   ├── base-image-dep-freshness.md

@@ -10,6 +10,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/product-internal-wiring.md
   - CONTEXT/PATTERNS/frontend/product-icon-registry.md
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
+  - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
   - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/frontend/01-CORE.md
@@ -33,6 +34,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **Core URL resolution via env.** `env.CORE_URL` / `env.CORE_API_URL` — NEVER hand-roll `import.meta.env.VITE_CORE_* || "literal"` (the `check_handrolled_core_url` keeper fires). → `KB § PATTERNS/frontend/core-url-routing.md`
 - **Cross-product nav.** Core dashboard tiles env-driven via `resolve_product_url`; product `url_base = HOUSE port` (not the vestigial frontend port). → `KB § PATTERNS/frontend/core-url-routing.md`
 - **Status_pagina-gated nav.** A nav entry needs a `status_pagina` row OR it's silently HIDDEN by `filterNavByPageStatus` / `isPageVisible`. → `KB § PATTERNS/frontend/product-internal-wiring.md`
+- **`desenvolvimento` needs an RLS policy too — and the roles must match on both sides.** Without `dev_veem_desenvolvimento` the row is returned to NOBODY, so the FE's dev/owner branch is dead code; the SQL role array and `DEV_ROLES` must stay identical. `check_status_pagina_role_parity` enforces. → `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`
 - **Product icon must render.** A product's `icone` must register as a REAL icon — empty/missing fails `check_product_icon_registered`. → `KB § PATTERNS/frontend/product-icon-registry.md`
 - **Never gate loading UI on `.isLoading` alone.** TanStack Query v5 `isLoading` is FALSE mid-refetch; use `isPending || isFetching` or the empty branch wins over live data. `check_lying_loading_state` enforces (warning). → `KB § PATTERNS/frontend/lying-loading-state.md`
 - **SVG via seed primitive.** Use `svg_render` (the media-creator residual) — not hand-rolled `<svg>` strings in components. → `KB § PATTERNS/frontend/svg-render-mode.md`

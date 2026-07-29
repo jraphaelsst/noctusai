@@ -11,33 +11,15 @@
  */
 import { useState } from "react";
 import { Search } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import { PipelineBoard } from "@noctusai/lib/components";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@/lib/api";
+import { useArquivarProcesso } from "@/hooks/useProcessosVenda";
 import { formatValor } from "./formatValor";
 import { processosPipeline } from "@/lib/pipelines";
 import { ProcessoCard } from "./components/ProcessoCard";
-
-function useArquivarProcesso() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (processoId: string) => {
-      const result: any = await api.post(`/api/processos-venda/${processoId}/arquivar`);
-      return result?.data ?? result;
-    },
-    onSuccess: (processo: any) => {
-      toast.success(processo?.arquivado ? "Processo arquivado" : "Processo restaurado");
-    },
-    onError: (error: Error) =>
-      toast.error("Erro ao arquivar processo", { description: error.message }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sw-processos"] }),
-  });
-}
 
 export default function ProcessosVenda() {
   const [busca, setBusca] = useState("");
