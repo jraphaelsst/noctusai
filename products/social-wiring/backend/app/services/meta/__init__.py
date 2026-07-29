@@ -41,6 +41,9 @@ from noctusai_lib.integrations.meta import (
     PostInsights,
 )
 from noctusai_lib.integrations.meta import get_meta_adapter as _seed_get_meta_adapter
+from noctusai_lib.integrations.meta.instagram_login_adapter import (
+    InstagramLoginOAuthAdapter,
+)
 from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
 from app.config import settings as default_settings
@@ -62,9 +65,19 @@ __all__ = [
     "MetaGraphError",
     "MetaOAuthAdapter",
     "PostInsights",
+    "INSTAGRAM_LOGIN_PROVIDER",
+    "InstagramLoginOAuthAdapter",
+    "get_dm_adapter_for_account",
+    "get_instagram_login_adapter_for_account",
     "get_meta_adapter",
     "get_meta_adapter_for_account",
 ]
+
+# The credential-vault storage key for an Instagram-Login-model account —
+# the sibling of ``META_PROVIDER`` ("meta", the Facebook-Login model). One
+# ``integration_accounts`` row is EITHER model; the provider column is what
+# says which, and it is what the DM gateway routes on.
+INSTAGRAM_LOGIN_PROVIDER = "instagram"
 
 
 def get_meta_adapter(
@@ -204,6 +217,126 @@ def get_meta_adapter_for_account(
         credential_store=store,
         org_id=str(org_uuid),
         graph_version=graph_version,
+    )
+
+
+def get_instagram_login_adapter_for_account(
+    account_id: "UUID | str",
+    org_id: "UUID | str",
+    *,
+    svc=None,
+) -> InstagramLoginOAuthAdapter:
+    """Build an :class:`InstagramLoginOAuthAdapter` bound to ONE
+    ``provider="instagram"`` ``integration_accounts`` row.
+
+    The Instagram-Login twin of :func:`get_meta_adapter_for_account`. Same
+    org-scoped lookup, same decrypt seam, same fail-loud contract — the
+    difference is the model: an IG **User** access token against
+    ``graph.instagram.com`` with no Facebook Page in the chain (roadmap
+    ``ig-login-messaging-migration-2026-07`` S2 stores the row; this resolves
+    it).
+
+    Raises ``IntegrationAccountNotFound`` when the row doesn't exist for that
+    org, ``ValueError`` when it exists but is not an ``"instagram"`` row, and
+    ``ValueError`` when the stored credential carries no ``access_token`` —
+    never a silently-degraded Fake, and never an adapter holding an empty
+    token (which would fail later as an opaque Graph 190 instead of here as a
+    named config gap).
+    """
+    from app.services.account_credentials import MultiAccountCredentialStore
+    from app.services.integration_account_service import (
+        build_integration_account_service,
+    )
+
+    account_uuid = account_id if isinstance(account_id, UUID) else UUID(str(account_id))
+    org_uuid = org_id if isinstance(org_id, UUID) else UUID(str(org_id))
+
+    if svc is None:
+        svc = build_integration_account_service(
+            get_admin_client(), encryption_key=default_settings.encryption_key
+        )
+
+    account = svc.get_account(account_uuid, org_uuid)
+    if account is None:
+        raise IntegrationAccountNotFound(
+            f"integration account {account_uuid} not found for org {org_uuid}"
+        )
+    if account.provider != INSTAGRAM_LOGIN_PROVIDER:
+        raise ValueError(
+            f"integration account {account_uuid} is provider={account.provider!r}, "
+            f"expected {INSTAGRAM_LOGIN_PROVIDER!r}"
+        )
+
+    store = MultiAccountCredentialStore(
+        svc, INSTAGRAM_LOGIN_PROVIDER, account_id=account_uuid
+    )
+    stored = store.get(str(org_uuid), INSTAGRAM_LOGIN_PROVIDER)
+    token = (stored.tokens or {}).get("access_token") if stored else None
+    if not token:
+        raise ValueError(
+            f"integration account {account_uuid} has no stored access_token "
+            "— reconnect the Instagram account"
+        )
+
+    graph_version = getattr(default_settings, "meta_graph_api_version", None) or None
+    if graph_version:
+        return InstagramLoginOAuthAdapter(str(token), version=graph_version)
+    return InstagramLoginOAuthAdapter(str(token))
+
+
+def get_dm_adapter_for_account(
+    account_id: "UUID | str",
+    org_id: "UUID | str",
+    *,
+    svc=None,
+) -> "tuple[str, object]":
+    """Resolve ONE account to ``(model, adapter)`` — the messaging-model
+    dispatcher behind the DMs router (roadmap S3).
+
+    Reads the row's ``provider`` ONCE and dispatches on it, rather than
+    trying one factory and catching its rejection: a single lookup, a single
+    decision point, and an error message that names the actual provider
+    instead of the last model tried.
+
+    ``model`` is ``"facebook_login"`` (Page token, ``provider="meta"``) or
+    ``"instagram_login"`` (IG User token, ``provider="instagram"``). Any other
+    provider raises ``ValueError`` — a ``provider="google"`` row is not an
+    inbox, and answering with an empty thread list would be a lie about an
+    account that structurally cannot do DMs. A missing row raises
+    ``IntegrationAccountNotFound``. The caller maps both to HTTP.
+    """
+    from app.services.integration_account_service import (
+        build_integration_account_service,
+    )
+
+    account_uuid = account_id if isinstance(account_id, UUID) else UUID(str(account_id))
+    org_uuid = org_id if isinstance(org_id, UUID) else UUID(str(org_id))
+
+    if svc is None:
+        svc = build_integration_account_service(
+            get_admin_client(), encryption_key=default_settings.encryption_key
+        )
+
+    account = svc.get_account(account_uuid, org_uuid)
+    if account is None:
+        raise IntegrationAccountNotFound(
+            f"integration account {account_uuid} not found for org {org_uuid}"
+        )
+
+    if account.provider == META_PROVIDER:
+        return (
+            "facebook_login",
+            get_meta_adapter_for_account(account_uuid, org_uuid, svc=svc),
+        )
+    if account.provider == INSTAGRAM_LOGIN_PROVIDER:
+        return (
+            "instagram_login",
+            get_instagram_login_adapter_for_account(account_uuid, org_uuid, svc=svc),
+        )
+    raise ValueError(
+        f"integration account {account_uuid} is provider={account.provider!r}, "
+        f"which carries no Instagram Direct inbox (expected "
+        f"{META_PROVIDER!r} or {INSTAGRAM_LOGIN_PROVIDER!r})"
     )
 
 

@@ -142,6 +142,56 @@ def get_account_adapter(
         ) from exc
 
 
+def get_dm_gateway(
+    account_id: str = Query(..., description="integration_accounts row id"),
+    auth: tuple = Depends(get_current_user_org),
+):
+    """FastAPI dependency: resolve ONE account to its Instagram Direct
+    gateway, whichever messaging model it was connected under (roadmap
+    ``ig-login-messaging-migration-2026-07`` S3).
+
+    The messaging sibling of :func:`get_account_adapter`, and it exists
+    because ``get_account_adapter`` is Facebook-Login-only BY CONTRACT — it
+    404s any row that is not ``provider="meta"``, which is correct for the
+    insights/content/comments routers (those genuinely need a Page) and wrong
+    for DMs, where an Instagram-Login account is a first-class inbox.
+
+    Same auth boundary as its sibling: ``org_id`` comes from the AUTHENTICATED
+    session, never a caller-supplied param. Same failure mapping: malformed id
+    → 400; absent for this org, or a provider that carries no inbox → 404.
+
+    Overridden in tests via
+    ``app.dependency_overrides[get_dm_gateway]`` with a gateway built over a
+    seeded Fake (DI seam, Class-B — ``KB § PATTERNS/backend/di-test-seam.md``).
+    """
+    # Imported lazily: `_dm_gateway` imports the page/account resolvers from
+    # THIS module, so a module-level import here would close the cycle.
+    from app.routers._dm_gateway import build_dm_gateway
+
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
+    try:
+        account_uuid = UUID(account_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid account_id",
+        ) from exc
+
+    try:
+        return build_dm_gateway(account_uuid, resolved_org)
+    except IntegrationAccountNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
 def resolve_primary_ig_account(adapter: MetaAdapter) -> InstagramAccount:
     """The primary Instagram Business/Creator account this Meta
     connection sees — every account-scoped IG endpoint resolves it this

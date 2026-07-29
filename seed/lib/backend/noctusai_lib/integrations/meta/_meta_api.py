@@ -365,14 +365,18 @@ def graph_post(
     data: dict[str, Any] | None = None,
     version: str = DEFAULT_GRAPH_VERSION,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    base: str = GRAPH_BASE,
 ) -> dict[str, Any]:
-    """POST `{GRAPH_BASE}/{version}/{path}` with the token in the body.
+    """POST `{base}/{version}/{path}` with the token in the body.
 
     The write twin of `graph_get`. `path` is version-relative (e.g.
     `"{page_id}/feed"`, `"{ig_user_id}/media"`,
     `"{ig_user_id}/media_publish"`, `"act_{id}/campaigns"`). The
     token + form fields go in the POST body (Graph accepts
-    form-encoded writes).
+    form-encoded writes). `base` defaults to the Facebook-Login host
+    (`GRAPH_BASE`); pass `IG_GRAPH_BASE` for the Instagram-Login model
+    (`me/messages` on an IG User token) — same seam `graph_get` already
+    carries, so the two models never need a second transport.
 
     Raises `MetaGraphError` on a Graph error envelope (even at HTTP
     200) or a non-JSON body. A permission / unapproved-scope failure
@@ -382,7 +386,7 @@ def graph_post(
 
     form: dict[str, Any] = dict(data or {})
     form["access_token"] = access_token
-    url = f"{GRAPH_BASE}/{version}/{path.lstrip('/')}"
+    url = f"{base}/{version}/{path.lstrip('/')}"
     resp = _graph_request("POST", url, data=form, timeout=timeout)
     body = _parse_json(resp)
     _raise_for_graph_error(body, http_status=resp.status_code)

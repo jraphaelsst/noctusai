@@ -27,13 +27,9 @@ from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from app.routers._meta_common import (
-    get_account_adapter,
-    handle_meta_graph_error,
-    resolve_primary_ig_account,
-    resolve_primary_ig_page_id,
-)
-from app.services.meta import MetaAdapter, MetaGraphError
+from app.routers._dm_gateway import DmGateway
+from app.routers._meta_common import get_dm_gateway, handle_meta_graph_error
+from app.services.meta import MetaGraphError
 
 logger = logging.getLogger(__name__)
 
@@ -156,12 +152,11 @@ def list_conversations(
     # when the page size + participant expansion get too heavy. 10 keeps the
     # first page cheap; callers can page for more.
     limit: int = Query(default=10, ge=1, le=50),
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    gateway: DmGateway = Depends(get_dm_gateway),
 ):
     try:
-        account = resolve_primary_ig_account(adapter)
-        page_id = resolve_primary_ig_page_id(adapter)
-        conversations = adapter.list_instagram_conversations(page_id, limit)
+        self_id = gateway.self_id()
+        conversations = gateway.list_conversations(limit)
     except MetaGraphError as exc:
         logger.warning("meta dms: conversations list failed: %s", exc)
         if _is_dm_advanced_access_gate(exc):
@@ -177,9 +172,7 @@ def list_conversations(
         return handle_meta_graph_error(exc)
 
     return MetaConversationsListOut(
-        conversations=[
-            _conversation_out(c, self_id=account.id) for c in conversations
-        ]
+        conversations=[_conversation_out(c, self_id=self_id) for c in conversations]
     )
 
 
@@ -188,12 +181,11 @@ def list_conversations(
 def list_messages(
     conversation_id: str = Query(...),
     limit: int = Query(default=25, ge=1, le=100),
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    gateway: DmGateway = Depends(get_dm_gateway),
 ):
     try:
-        account = resolve_primary_ig_account(adapter)
-        page_id = resolve_primary_ig_page_id(adapter)
-        messages = adapter.list_instagram_messages(conversation_id, page_id, limit)
+        self_id = gateway.self_id()
+        messages = gateway.list_messages(conversation_id, limit)
     except MetaGraphError as exc:
         logger.warning(
             "meta dms: messages list failed for %s: %s", conversation_id, exc
@@ -201,7 +193,7 @@ def list_messages(
         return handle_meta_graph_error(exc)
 
     return MetaMessagesListOut(
-        messages=[_message_out(m, self_id=account.id) for m in messages]
+        messages=[_message_out(m, self_id=self_id) for m in messages]
     )
 
 
@@ -209,19 +201,16 @@ def list_messages(
 @router.post("/api/meta/instagram/messages", response_model=MetaMessageOut)
 def send_message(
     payload: MetaSendMessageIn,
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    gateway: DmGateway = Depends(get_dm_gateway),
 ):
     try:
-        account = resolve_primary_ig_account(adapter)
-        page_id = resolve_primary_ig_page_id(adapter)
-        sent = adapter.send_instagram_message(
-            page_id, payload.recipient_id, payload.text
-        )
+        self_id = gateway.self_id()
+        sent = gateway.send(payload.recipient_id, payload.text)
     except MetaGraphError as exc:
         logger.warning("meta dms: send failed to %s: %s", payload.recipient_id, exc)
         return handle_meta_graph_error(exc)
 
-    return _message_out(sent, self_id=account.id, direction="outbound")
+    return _message_out(sent, self_id=self_id, direction="outbound")
 
 
 __all__ = ["router"]

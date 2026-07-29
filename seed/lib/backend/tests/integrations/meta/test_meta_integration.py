@@ -13,6 +13,7 @@ Graph response bodies.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -654,6 +655,68 @@ class TestInstagramLoginOAuthAdapterMe:
                 adapter.me()
 
 
+class TestInstagramLoginOAuthAdapterSend:
+    """``send_instagram_message`` on the Instagram-Login model — roadmap S4.
+
+    The FB-Login twin posts to ``/{PAGE-ID}/messages`` on graph.facebook.com;
+    this one posts to ``/me/messages`` on graph.instagram.com with the IG User
+    token. Crossing the two hosts is the failure this class pins."""
+
+    def test_posts_to_me_messages_on_ig_graph_base(self):
+        adapter = InstagramLoginOAuthAdapter("IG-LONG60D")
+        captured = {}
+
+        def _post(url, **kw):
+            captured["url"] = url
+            captured["data"] = kw.get("data")
+            return _FakeResponse({"message_id": "MID-IG-1"})
+
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"id": "IGUSER1"})
+        ):
+            with patch.object(httpx, "post", side_effect=_post):
+                out = adapter.send_instagram_message("U1", "olá")
+
+        assert captured["url"] == "https://graph.instagram.com/v21.0/me/messages"
+        assert captured["data"]["access_token"] == "IG-LONG60D"
+        assert json.loads(captured["data"]["recipient"]) == {"id": "U1"}
+        assert json.loads(captured["data"]["message"]) == {"text": "olá"}
+        assert out.id == "MID-IG-1"
+        # sender is the IG USER (from /me), never a page id on this model —
+        # this is what keeps the read path's outbound/inbound test true.
+        assert out.sender_id == "IGUSER1"
+        assert out.recipient_id == "U1"
+        assert out.text == "olá"
+
+    def test_me_resolved_before_send_so_a_bad_token_sends_nothing(self):
+        adapter = InstagramLoginOAuthAdapter("BAD-TOKEN")
+        body = {"error": {"message": "expired", "code": 190}}
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            with patch.object(httpx, "post") as mock_post:
+                with pytest.raises(MetaGraphError):
+                    adapter.send_instagram_message("U1", "olá")
+        mock_post.assert_not_called()
+
+    def test_missing_message_id_raises_never_fakes_success(self):
+        adapter = InstagramLoginOAuthAdapter("IG-LONG60D")
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"id": "IGUSER1"})
+        ):
+            with patch.object(httpx, "post", return_value=_FakeResponse({})):
+                with pytest.raises(MetaGraphError):
+                    adapter.send_instagram_message("U1", "olá")
+
+    def test_graph_error_propagates(self):
+        adapter = InstagramLoginOAuthAdapter("IG-LONG60D")
+        err = {"error": {"message": "no advanced access", "code": 200}}
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse({"id": "IGUSER1"})
+        ):
+            with patch.object(httpx, "post", return_value=_FakeResponse(err)):
+                with pytest.raises(MetaGraphError):
+                    adapter.send_instagram_message("U1", "olá")
+
+
 class TestFakeInstagramLoginAdapterMe:
     def test_default_me(self):
         fake = FakeInstagramLoginAdapter()
@@ -663,6 +726,22 @@ class TestFakeInstagramLoginAdapterMe:
     def test_seeded_me(self):
         fake = FakeInstagramLoginAdapter().seed(me={"id": "1", "username": "abc"})
         assert fake.me() == {"id": "1", "username": "abc"}
+
+    def test_send_appends_to_the_recipient_thread(self):
+        fake = FakeInstagramLoginAdapter().seed(me={"id": "IG1", "username": "u"})
+        sent = fake.send_instagram_message("U1", "oi")
+        assert sent.sender_id == "IG1"
+        assert sent.recipient_id == "U1"
+        assert sent.text == "oi"
+        # Round-trips: readable back through the read path, not just returned.
+        assert fake.list_instagram_messages("U1") == [sent]
+
+    def test_send_ids_are_unique(self):
+        fake = FakeInstagramLoginAdapter()
+        first = fake.send_instagram_message("U1", "a")
+        second = fake.send_instagram_message("U1", "b")
+        assert first.id != second.id
+        assert len(fake.list_instagram_messages("U1")) == 2
 
 
 # ─── TestScopeDiscovery ───────────────────────────────────────────────────

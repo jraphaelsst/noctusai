@@ -8,6 +8,7 @@ uniform ``MetaGraphError`` gate."""
 from __future__ import annotations
 
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from noctusai_lib.integrations.meta import (
     Conversation,
     DirectMessage,
+    FakeInstagramLoginAdapter,
     FakeMetaAdapter,
     InstagramAccount,
     MetaGraphError,
@@ -89,10 +91,29 @@ def _clear_overrides():
 
 
 def _override(adapter):
-    from app.main import app
-    from app.routers._meta_common import get_account_adapter
+    """Override the DM gateway with the FACEBOOK-LOGIN one over ``adapter``.
 
-    app.dependency_overrides[get_account_adapter] = lambda: adapter
+    Deliberately wraps the real ``FacebookLoginDmGateway`` rather than
+    overriding it away: every existing test below then exercises the gateway's
+    page/account resolution too (including the no-linked-page 404), so the S3
+    refactor is proven behaviour-identical instead of merely compiling."""
+    from app.main import app
+    from app.routers._dm_gateway import FacebookLoginDmGateway
+    from app.routers._meta_common import get_dm_gateway
+
+    gateway = FacebookLoginDmGateway(adapter)
+    app.dependency_overrides[get_dm_gateway] = lambda: gateway
+    return adapter
+
+
+def _override_ig_login(adapter):
+    """Override with the INSTAGRAM-LOGIN gateway over an IG-Login adapter."""
+    from app.main import app
+    from app.routers._dm_gateway import InstagramLoginDmGateway
+    from app.routers._meta_common import get_dm_gateway
+
+    gateway = InstagramLoginDmGateway(adapter)
+    app.dependency_overrides[get_dm_gateway] = lambda: gateway
     return adapter
 
 
@@ -227,3 +248,133 @@ class TestMessages:
             json={"recipient_id": _OTHER, "text": ""},
         )
         assert resp.status_code == 422, resp.text
+
+
+# ─── Instagram-Login model (roadmap S3) ─────────────────────────────────
+# The SAME three routes, served from an account connected through Instagram
+# Business Login: no Facebook Page anywhere in the chain. Before S3 this
+# model was unreachable — the router only spoke the Page-token shape, so an
+# account stored by S2's OAuth callback had no route that could read it.
+
+
+def _seeded_ig_login():
+    fake = FakeInstagramLoginAdapter()
+    fake.seed(
+        me={"id": _IG_USER, "username": "one"},
+        conversations=[Conversation(id="conv-1", participant_ids=[_IG_USER, _OTHER])],
+        messages_by_conversation={
+            "conv-1": [
+                DirectMessage(
+                    id="m1", conversation_id="conv-1",
+                    sender_id=_OTHER, recipient_id=_IG_USER, text="oi",
+                ),
+                DirectMessage(
+                    id="m2", conversation_id="conv-1",
+                    sender_id=_IG_USER, recipient_id=_OTHER, text="hello back",
+                ),
+            ]
+        },
+    )
+    return fake
+
+
+class TestInstagramLoginModel:
+    def test_list_conversations_without_any_page(self, client):
+        # The point of the model: no page_id is seeded, none is resolved,
+        # and the conversations still come back. On the Facebook-Login
+        # gateway this exact absence is a 404.
+        _override_ig_login(_seeded_ig_login())
+        resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["conversations"]) == 1
+        assert body["conversations"][0]["contact_id"] == _OTHER
+
+    def test_direction_derives_from_me_not_a_page(self, client):
+        # `self_id` comes from /me on this model. If the gateway resolved it
+        # from anything else, BOTH messages would read inbound.
+        _override_ig_login(_seeded_ig_login())
+        resp = client.get(
+            f"/api/meta/instagram/messages?{_QS}&conversation_id=conv-1"
+        )
+        assert resp.status_code == 200, resp.text
+        by_id = {m["id"]: m for m in resp.json()["messages"]}
+        assert by_id["m1"]["direction"] == "inbound"
+        assert by_id["m2"]["direction"] == "outbound"
+
+    def test_send_round_trips_through_the_ig_user_node(self, client):
+        adapter = _override_ig_login(_seeded_ig_login())
+        resp = client.post(
+            f"/api/meta/instagram/messages?{_QS}",
+            json={"recipient_id": _OTHER, "text": "enviando"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["direction"] == "outbound"
+        assert body["body"] == "enviando"
+        assert body["sender_id"] == _IG_USER
+        # Readable back through the read path, not just returned.
+        assert any(
+            m.text == "enviando"
+            for m in adapter.list_instagram_messages(_OTHER)
+        )
+
+    def test_graph_error_still_maps_to_502(self, client):
+        class _Gated(FakeInstagramLoginAdapter):
+            def list_instagram_conversations(self, *a, **kw):
+                raise MetaGraphError("boom", code=4, http_status=500)
+
+        _override_ig_login(_Gated().seed(me={"id": _IG_USER, "username": "one"}))
+        resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+        assert resp.status_code == 502, resp.text
+
+    def test_advanced_access_gate_maps_the_same_on_this_model(self, client):
+        # Advanced Access gates BOTH models (it is an App-Review gate, not a
+        # model artifact) — the honest notice must not regress to a raw 502
+        # just because the account was connected the other way.
+        class _Gated(FakeInstagramLoginAdapter):
+            def list_instagram_conversations(self, *a, **kw):
+                raise MetaGraphError(
+                    "Timeout", code=-2, error_subcode=2534084, http_status=400
+                )
+
+        _override_ig_login(_Gated().seed(me={"id": _IG_USER, "username": "one"}))
+        resp = client.get(f"/api/meta/instagram/conversations?{_QS}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["requires_app_review"] is True
+
+
+class TestGatewayModelResolution:
+    """``build_dm_gateway`` picks the model from the stored ``provider``."""
+
+    def test_meta_provider_yields_facebook_login_gateway(self):
+        from app.routers._dm_gateway import FacebookLoginDmGateway, build_dm_gateway
+
+        with patch(
+            "app.routers._dm_gateway.get_dm_adapter_for_account",
+            return_value=("facebook_login", FakeMetaAdapter()),
+        ):
+            gw = build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))
+        assert isinstance(gw, FacebookLoginDmGateway)
+        assert gw.model == "facebook_login"
+
+    def test_instagram_provider_yields_instagram_login_gateway(self):
+        from app.routers._dm_gateway import InstagramLoginDmGateway, build_dm_gateway
+
+        with patch(
+            "app.routers._dm_gateway.get_dm_adapter_for_account",
+            return_value=("instagram_login", FakeInstagramLoginAdapter()),
+        ):
+            gw = build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))
+        assert isinstance(gw, InstagramLoginDmGateway)
+        assert gw.model == "instagram_login"
+
+    def test_unknown_model_raises_rather_than_returning_none(self):
+        from app.routers._dm_gateway import build_dm_gateway
+
+        with patch(
+            "app.routers._dm_gateway.get_dm_adapter_for_account",
+            return_value=("carrier_pigeon", object()),
+        ):
+            with pytest.raises(ValueError):
+                build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))

@@ -36,17 +36,21 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
 )
 from app.services.meta import (
+    INSTAGRAM_LOGIN_PROVIDER,
     META_PROVIDER,
     FacebookPage,
     FacebookPost,
     FakeMetaAdapter,
     InstagramAccount,
+    InstagramLoginOAuthAdapter,
     InstagramMedia,
     MetaAdapter,
     MetaConnectionStatus,
     MetaGraphError,
     MetaOAuthAdapter,
     PostInsights,
+    get_dm_adapter_for_account,
+    get_instagram_login_adapter_for_account,
     get_meta_adapter,
     get_meta_adapter_for_account,
 )
@@ -254,7 +258,11 @@ _IA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS integration_accounts (
     id                  TEXT PRIMARY KEY,
     org_id              TEXT NOT NULL,
-    provider            TEXT NOT NULL CHECK (provider IN ('youtube', 'google_drive', 'gmail', 'meta', 'n8n')),
+    -- Mirrors migration 024's live CHECK, 'instagram' included. The fixture
+    -- had drifted behind it: an Instagram-Login row is exactly what the
+    -- IG-Login seam stores, so a stale CHECK here would fail the new tests
+    -- for a reason production does not have.
+    provider            TEXT NOT NULL CHECK (provider IN ('youtube', 'google_drive', 'gmail', 'meta', 'n8n', 'instagram')),
     account_label       TEXT NOT NULL,
     encrypted_credential TEXT NOT NULL,
     metadata            TEXT NOT NULL DEFAULT '{}',
@@ -346,3 +354,111 @@ class TestGetMetaAdapterForAccount:
 
         assert isinstance(adapter, MetaOAuthAdapter)
         assert adapter._user_token() == "USER-TOKEN-456"
+
+
+# ─── Instagram-Login model seam (roadmap S3) ────────────────────────────
+class TestGetInstagramLoginAdapterForAccount:
+    """``get_instagram_login_adapter_for_account`` — the Instagram-Login
+    twin of the seam above. Same lookup + decrypt path, different model:
+    an IG **User** token against graph.instagram.com, no Facebook Page."""
+
+    def test_builds_adapter_for_existing_instagram_account(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=INSTAGRAM_LOGIN_PROVIDER,
+            account_label="Cliente IG Login",
+            credential_dict={"access_token": "IG-USER-TOKEN"},
+        )
+
+        adapter = get_instagram_login_adapter_for_account(
+            account.id, _ORG, svc=ia_svc
+        )
+
+        assert isinstance(adapter, InstagramLoginOAuthAdapter)
+        assert adapter._token == "IG-USER-TOKEN"
+
+    def test_raises_not_found_for_wrong_org(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=INSTAGRAM_LOGIN_PROVIDER,
+            account_label="Cliente IG Login",
+            credential_dict={"access_token": "IG-USER-TOKEN"},
+        )
+
+        with pytest.raises(IntegrationAccountNotFound):
+            get_instagram_login_adapter_for_account(
+                account.id, _OTHER_ORG, svc=ia_svc
+            )
+
+    def test_raises_value_error_for_meta_provider(self, ia_svc):
+        """A Facebook-Login row is NOT an Instagram-Login row — crossing the
+        two would hand a Page token to graph.instagram.com and fail as an
+        opaque Graph 190 far from the cause."""
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=META_PROVIDER,
+            account_label="FB-login row",
+            credential_dict={"access_token": "PAGE-TOKEN"},
+        )
+
+        with pytest.raises(ValueError, match="expected 'instagram'"):
+            get_instagram_login_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+    def test_raises_when_stored_credential_has_no_token(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=INSTAGRAM_LOGIN_PROVIDER,
+            account_label="Tokenless",
+            credential_dict={"token_type": "bearer"},
+        )
+
+        with pytest.raises(ValueError, match="no stored access_token"):
+            get_instagram_login_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+
+class TestGetDmAdapterForAccount:
+    """``get_dm_adapter_for_account`` — the model dispatcher the DMs router
+    resolves through. One lookup, one decision, on the stored provider."""
+
+    def test_meta_row_resolves_to_the_facebook_login_model(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=META_PROVIDER,
+            account_label="FB",
+            credential_dict={"access_token": "PAGE-TOKEN"},
+        )
+
+        model, adapter = get_dm_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+        assert model == "facebook_login"
+        assert isinstance(adapter, MetaOAuthAdapter)
+
+    def test_instagram_row_resolves_to_the_instagram_login_model(self, ia_svc):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider=INSTAGRAM_LOGIN_PROVIDER,
+            account_label="IG",
+            credential_dict={"access_token": "IG-USER-TOKEN"},
+        )
+
+        model, adapter = get_dm_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+        assert model == "instagram_login"
+        assert isinstance(adapter, InstagramLoginOAuthAdapter)
+
+    def test_provider_without_an_inbox_raises_rather_than_answering_empty(
+        self, ia_svc
+    ):
+        account = ia_svc.create_account(
+            org_id=_ORG,
+            provider="youtube",
+            account_label="Not an inbox",
+            credential_dict={"access_token": "YT"},
+        )
+
+        with pytest.raises(ValueError, match="no Instagram Direct inbox"):
+            get_dm_adapter_for_account(account.id, _ORG, svc=ia_svc)
+
+    def test_unknown_account_raises_not_found(self, ia_svc):
+        with pytest.raises(IntegrationAccountNotFound):
+            get_dm_adapter_for_account(uuid4(), _ORG, svc=ia_svc)

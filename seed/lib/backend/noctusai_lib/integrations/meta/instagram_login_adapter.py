@@ -58,6 +58,10 @@ class InstagramLoginMessagingAdapter(Protocol):
         self, conversation_id: str, limit: int = ...
     ) -> list[DirectMessage]: ...
 
+    def send_instagram_message(
+        self, recipient_id: str, text: str
+    ) -> DirectMessage: ...
+
 
 class InstagramLoginOAuthAdapter:
     """Live Instagram-Login read adapter over ``graph.instagram.com``.
@@ -140,6 +144,57 @@ class InstagramLoginOAuthAdapter:
             )
         return messages
 
+    def send_instagram_message(self, recipient_id: str, text: str) -> DirectMessage:
+        """Send an IG Direct message — ``POST /me/messages`` on
+        ``graph.instagram.com`` with the IG User token.
+
+        The Instagram-Login twin of ``MetaOAuthAdapter.send_instagram_message``
+        (which posts to ``/{PAGE-ID}/messages`` with a Page token). Same Send-API
+        body shape — nested ``recipient``/``message`` objects are JSON-encoded
+        form fields — but there is **no page id**: ``/me`` IS the professional
+        account, which is the whole point of this model.
+
+        ``sender_id`` on the returned message is the IG user id resolved from
+        ``me()``, NOT a page id, so the read path's
+        ``direction = outbound if sender_id == self_id`` comparison stays true
+        for a just-sent message on this model.
+
+        **Production gate:** ``instagram_business_manage_messages`` needs
+        Advanced Access to message people who hold no role on the app. Absent
+        it, Graph returns a permission error and this raises ``MetaGraphError``
+        with ``requires_app_review`` true — never a faked success."""
+
+        import json
+
+        # Resolved BEFORE the send, deliberately. Graph's send response carries
+        # no sender, so the id has to come from `/me` — and doing that first
+        # means a token/permission failure raises with NOTHING sent, instead of
+        # leaving a delivered message behind an error the caller will retry.
+        sender_id = str(self.me().get("id") or "")
+
+        created = _meta_api.graph_post(
+            "me/messages",
+            access_token=self._token,
+            data={
+                "recipient": json.dumps({"id": recipient_id}),
+                "message": json.dumps({"text": text}),
+            },
+            version=self._version,
+            base=IG_GRAPH_BASE,
+        )
+        message_id = str(created.get("message_id") or created.get("id") or "")
+        if not message_id:
+            raise MetaGraphError(
+                f"IG Direct send to {recipient_id} returned no message id",
+                code=200,
+            )
+        return DirectMessage(
+            id=message_id,
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            text=text,
+        )
+
 
 class FakeInstagramLoginAdapter:
     """Deterministic in-memory Instagram-Login adapter (dev/test default).
@@ -152,6 +207,7 @@ class FakeInstagramLoginAdapter:
         self._conversations: list[Conversation] = []
         self._messages_by_conversation: dict[str, list[DirectMessage]] = {}
         self._me: dict[str, Any] = {"id": "FAKE_IG_USER", "username": "fake_ig_user"}
+        self._counter = 0
 
     def seed(
         self,
@@ -180,6 +236,24 @@ class FakeInstagramLoginAdapter:
         self, conversation_id: str, limit: int = 25
     ) -> list[DirectMessage]:
         return list(self._messages_by_conversation.get(conversation_id, []))[:limit]
+
+    def send_instagram_message(self, recipient_id: str, text: str) -> DirectMessage:
+        """Append an outbound message to the recipient's thread and return it.
+
+        The thread is keyed by ``recipient_id`` — on this model a conversation
+        IS the other participant, so a send with no prior thread creates one
+        (which is what Graph does too). Sent messages are readable back through
+        ``list_instagram_messages``, so a test can assert the round trip rather
+        than just the return value."""
+        self._counter += 1
+        message = DirectMessage(
+            id=f"FAKE_IG_SENT_{self._counter}",
+            sender_id=str(self._me.get("id") or ""),
+            recipient_id=recipient_id,
+            text=text,
+        )
+        self._messages_by_conversation.setdefault(recipient_id, []).append(message)
+        return message
 
 
 # Re-export MetaGraphError so consumers importing from this module have the
