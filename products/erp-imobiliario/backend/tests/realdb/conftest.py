@@ -76,6 +76,49 @@ def test_user(core_db, test_org):
         pass
 
 
+@pytest.fixture(scope="session")
+def segundo_user(core_db, test_org):
+    """A SECOND real auth user in test_org — for multi-participant scenarios.
+
+    Cannot be a throwaway UUID: `erp.profiles.id` carries an FK to
+    `auth.users`, and `erp.evento_participantes.corretor_id` in turn FKs
+    `erp.profiles`. So a bridge-table participant needs a real user all the way
+    down. Mirrors `test_user`'s create-yield-delete shape (the profile row is
+    created by the same trigger that backs `test_user`).
+    """
+    email = f"erp-test-2-{uuid.uuid4().hex[:8]}@realdb.test"
+    user_resp = core_db.auth.admin.create_user({
+        "email": email,
+        "password": f"TestPass!{uuid.uuid4().hex[:8]}",
+        "email_confirm": True,
+        "user_metadata": {"org_id": test_org["id"]},
+    })
+    user = user_resp.user
+    yield {"id": user.id, "email": email, "user": user}
+    try:
+        core_db.auth.admin.delete_user(user.id)
+    except Exception:
+        pass
+
+
+@pytest.fixture
+def test_cliente(erp_db, test_user, cleanup):
+    """A minimal `erp.clientes` row — `contratos.cliente_id` is NOT NULL.
+
+    `usuario_id` doubles as the owning corretor (see
+    `project_erp_processos_venda`: `clientes.usuario_id` ALREADY is the
+    corretor), so it points at `test_user`.
+    """
+    cliente_id = str(uuid.uuid4())
+    erp_db.table("clientes").insert({
+        "id": cliente_id,
+        "usuario_id": test_user["id"],
+        "nome": "Cliente de teste (realdb)",
+    }).execute()
+    cleanup.append(("clientes", cliente_id))
+    return {"id": cliente_id}
+
+
 @pytest.fixture
 def cleanup(erp_db):
     """Collects (table, id) tuples and deletes them in reverse order after the test."""

@@ -90,7 +90,7 @@ def test_ativo_without_exclusividade_captacao_is_padrao(erp_db, test_user, clean
 # ── Multi-participant propagation on visita ───────────────────────
 
 def test_visita_multi_participantes_mirrors_meta_evento_per_participant(
-    erp_db, test_org, test_user, cleanup,
+    erp_db, test_org, test_user, segundo_user, cleanup,
 ):
     """An evento with N entries in `evento_participantes` should produce
     one meta_evento per participant, each carrying fracao=1/N."""
@@ -99,6 +99,14 @@ def test_visita_multi_participantes_mirrors_meta_evento_per_participant(
     erp_db.table("eventos").insert({
         "titulo": "Evento de teste",
         "id": evento_id,
+        # org_id is explicit because this harness writes through the
+        # SERVICE-ROLE client: `eventos.org_id` is NOT NULL DEFAULT
+        # `erp.current_org_id()` (org-SoT migrations 038/039), and
+        # `current_org_id()` resolves from `auth.uid()` — which is NULL for
+        # service-role. The DEFAULT therefore yields NULL and the insert trips
+        # 23502. Prod is unaffected (real callers are authenticated users);
+        # only the admin-client test path has to name the org itself.
+        "org_id": test_org["id"],
         "corretor_id": test_user["id"],
         "tipo": "visita",
         "data_inicio": "2026-04-15T10:00:00Z",
@@ -107,7 +115,13 @@ def test_visita_multi_participantes_mirrors_meta_evento_per_participant(
     cleanup.append(("eventos", evento_id))
 
     # Add a second participant via the bridge table.
-    segundo_user_id = str(uuid.uuid4())  # dummy UUID is fine — trigger only needs corretor_id
+    # A REAL user is required all the way down: `evento_participantes.
+    # corretor_id` FKs `erp.profiles`, whose `id` in turn FKs `auth.users`.
+    # The previous "dummy UUID is fine — trigger only needs corretor_id"
+    # assumption became a 23503 once those FKs landed, hence the
+    # `segundo_user` fixture.
+    segundo_user_id = segundo_user["id"]
+
     part_id = str(uuid.uuid4())
     erp_db.table("evento_participantes").insert({
         "id": part_id,
@@ -127,7 +141,7 @@ def test_visita_multi_participantes_mirrors_meta_evento_per_participant(
 # ── Locação detection via comissao.contrato_id ──────────────────
 
 def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
-    erp_db, test_user, test_org, cleanup,
+    erp_db, test_user, test_org, test_cliente, cleanup,
 ):
     """When `comissoes.contrato_id` points at a contract with `tipo_contrato=
     'locacao'`, the split trigger should emit evento_tipo='locacao'
@@ -136,6 +150,11 @@ def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
     contrato_id = str(uuid.uuid4())
     erp_db.table("contratos").insert({
         "id": contrato_id,
+        # Explicit org_id — service-role writes get NULL from the
+        # `current_org_id()` DEFAULT (see the eventos insert above).
+        "org_id": test_org["id"],
+        # cliente_id is NOT NULL on contratos.
+        "cliente_id": test_cliente["id"],
         "tipo": "locacao",
         "valor_total": 50000,
     }).execute()
@@ -144,6 +163,9 @@ def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
     com_id = str(uuid.uuid4())
     erp_db.table("comissoes").insert({
         "id": com_id,
+        # Explicit org_id — service-role writes get NULL from the
+        # `current_org_id()` DEFAULT (see the eventos insert above).
+        "org_id": test_org["id"],
         "contrato_id": contrato_id,
         "valor_venda": 50000,
         "percentual_comissao": 10,
@@ -155,6 +177,9 @@ def test_comissao_linked_to_locacao_contrato_produces_locacao_evento(
     split_id = str(uuid.uuid4())
     erp_db.table("comissoes_splits").insert({
         "percentual": 100,
+        # Explicit org_id — service-role writes get NULL from the
+        # `current_org_id()` DEFAULT (see the eventos insert above).
+        "org_id": test_org["id"],
         "id": split_id,
         "comissao_id": com_id,
         "corretor_id": test_user["id"],
