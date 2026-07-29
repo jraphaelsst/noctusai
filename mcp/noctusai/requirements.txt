@@ -1,4 +1,11 @@
-mcp>=1.0.0
+# Capped BELOW 2.0: the 2.x SDK drops `mcp.server.fastmcp`, which server.py,
+# settings.py and every `tools/**` module import as their entry point. The old
+# unbounded `>=1.0.0` meant CI resolved whatever was newest — it installed
+# mcp-2.0.0 and the toolkit suite died at collection with
+# `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`, red since
+# 2026-07-28 while every developer venv stayed green on a long-installed 1.27.
+# Lifting the cap is a real migration (233 tool registrations), not a bump.
+mcp>=1.0.0,<2.0.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 openai>=1.0.0  # keeper headless/evaluate review path (tools/ai_brain.py)
