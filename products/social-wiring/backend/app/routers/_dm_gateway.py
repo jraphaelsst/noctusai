@@ -48,6 +48,7 @@ __all__ = [
     "FacebookLoginDmGateway",
     "InstagramLoginDmGateway",
     "build_dm_gateway",
+    "gateway_for",
 ]
 
 
@@ -145,6 +146,26 @@ _GATEWAY_BY_MODEL = {
 }
 
 
+def gateway_for(model: str, adapter) -> DmGateway:
+    """Wrap ``adapter`` in the gateway registered for ``model``.
+
+    Split out from :func:`build_dm_gateway` as a PURE function so the
+    model→gateway mapping is testable directly — passing a model string and an
+    adapter — instead of by patching the credential lookup out of the
+    composition below. Tests that patch our own seams stop exercising them
+    (`KB § PATTERNS/compliance/testing.md`); this keeps the mapping honest.
+
+    An unregistered model raises rather than returning ``None``: unreachable
+    through the service today (it returns one of the two models or raises), so
+    this is a wiring assertion — a third model added there without a gateway
+    here fails loudly instead of 500ing on a ``None`` call.
+    """
+    gateway_cls = _GATEWAY_BY_MODEL.get(model)
+    if gateway_cls is None:
+        raise ValueError(f"no DM gateway registered for model {model!r}")
+    return gateway_cls(adapter)
+
+
 def build_dm_gateway(account_id: UUID, org_id: UUID, *, svc=None) -> DmGateway:
     """Resolve ``account_id`` to the gateway for its stored messaging model.
 
@@ -155,13 +176,10 @@ def build_dm_gateway(account_id: UUID, org_id: UUID, *, svc=None) -> DmGateway:
     Propagates ``IntegrationAccountNotFound`` / ``ValueError`` from the service
     unchanged; the router maps them to 404 exactly as it already does for the
     Facebook-Login path.
+
+    Composition only — the two halves are tested independently: the provider→
+    model half in ``TestGetDmAdapterForAccount`` (against a REAL
+    ``IntegrationAccountService`` over SQLite), the model→gateway half in
+    ``TestGatewayModelResolution`` via :func:`gateway_for`.
     """
-    model, adapter = get_dm_adapter_for_account(account_id, org_id, svc=svc)
-    gateway_cls = _GATEWAY_BY_MODEL.get(model)
-    if gateway_cls is None:
-        # Unreachable via the service (it returns one of the two models or
-        # raises), so this is a wiring assertion: a new model added there
-        # without a gateway here fails loudly instead of silently 500ing on a
-        # `None` call.
-        raise ValueError(f"no DM gateway registered for model {model!r}")
-    return gateway_cls(adapter)
+    return gateway_for(*get_dm_adapter_for_account(account_id, org_id, svc=svc))

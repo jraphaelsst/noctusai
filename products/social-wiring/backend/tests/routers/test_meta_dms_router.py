@@ -8,7 +8,6 @@ uniform ``MetaGraphError`` gate."""
 from __future__ import annotations
 
 from unittest.mock import patch
-from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -345,36 +344,32 @@ class TestInstagramLoginModel:
 
 
 class TestGatewayModelResolution:
-    """``build_dm_gateway`` picks the model from the stored ``provider``."""
+    """The model→gateway half of the dispatch, tested through the pure
+    ``gateway_for`` rather than by patching the credential lookup out of
+    ``build_dm_gateway`` (patching our own seam would stop exercising it —
+    ``KB § PATTERNS/compliance/testing.md``).
 
-    def test_meta_provider_yields_facebook_login_gateway(self):
-        from app.routers._dm_gateway import FacebookLoginDmGateway, build_dm_gateway
+    The provider→model half is covered against a REAL
+    ``IntegrationAccountService`` in
+    ``tests/services/test_meta_integration.py::TestGetDmAdapterForAccount``;
+    ``build_dm_gateway`` is the composition of the two."""
 
-        with patch(
-            "app.routers._dm_gateway.get_dm_adapter_for_account",
-            return_value=("facebook_login", FakeMetaAdapter()),
-        ):
-            gw = build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))
+    def test_facebook_login_model_yields_the_page_token_gateway(self):
+        from app.routers._dm_gateway import FacebookLoginDmGateway, gateway_for
+
+        gw = gateway_for("facebook_login", FakeMetaAdapter())
         assert isinstance(gw, FacebookLoginDmGateway)
         assert gw.model == "facebook_login"
 
-    def test_instagram_provider_yields_instagram_login_gateway(self):
-        from app.routers._dm_gateway import InstagramLoginDmGateway, build_dm_gateway
+    def test_instagram_login_model_yields_the_ig_user_gateway(self):
+        from app.routers._dm_gateway import InstagramLoginDmGateway, gateway_for
 
-        with patch(
-            "app.routers._dm_gateway.get_dm_adapter_for_account",
-            return_value=("instagram_login", FakeInstagramLoginAdapter()),
-        ):
-            gw = build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))
+        gw = gateway_for("instagram_login", FakeInstagramLoginAdapter())
         assert isinstance(gw, InstagramLoginDmGateway)
         assert gw.model == "instagram_login"
 
     def test_unknown_model_raises_rather_than_returning_none(self):
-        from app.routers._dm_gateway import build_dm_gateway
+        from app.routers._dm_gateway import gateway_for
 
-        with patch(
-            "app.routers._dm_gateway.get_dm_adapter_for_account",
-            return_value=("carrier_pigeon", object()),
-        ):
-            with pytest.raises(ValueError):
-                build_dm_gateway(UUID(_ACCOUNT), UUID(_ORG))
+        with pytest.raises(ValueError, match="no DM gateway registered"):
+            gateway_for("carrier_pigeon", object())
