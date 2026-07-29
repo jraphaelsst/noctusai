@@ -41,7 +41,7 @@ Key facts (see memory `reference_meta_ig_dm_facebook_login_model`):
 | **S1** | Seed **read adapter** — `InstagramLoginAdapter` (graph.instagram.com): list conversations / list messages via IG user token. Fake+Real+tests. Pure code, fully unit-testable. | ✅ shipped (2026-07-21) |
 | S2 | **Instagram Business Login OAuth** — authorize URL + callback + code→IG-user-token exchange (`api.instagram.com/oauth/access_token` short → `graph.instagram.com/access_token` long-lived), store as `provider="instagram"`. + manual token-paste fallback endpoint. Contract-first parallel dispatch (BE: seed exchange helpers + start/callback/token endpoints + settings + provider-CHECK migration `024`; FE: instagram connect row + token-paste UI). | ✅ shipped (2026-07-21) — 3 routes register, app boots; seed 2228 / product 1063 / meta 186 / FE 291 green. Live OAuth pending user's IG app config + token. |
 | S3 | **Router wiring** — DMs router routes an IG-Login-model account to `InstagramLoginAdapter`; keep the Facebook-Login path for existing Page-linked connections. Model resolved from the stored account. | ✅ shipped (2026-07-29, `ceb1a0c0`) — `get_dm_adapter_for_account` dispatches on the stored `provider`; `FacebookLoginDmGateway` / `InstagramLoginDmGateway` behind one `DmGateway` protocol. The 9 pre-existing DM tests were re-pointed at the REAL FB gateway (not overridden away), so behaviour-identity is proven, not asserted. |
-| S4 | **Send** path on the IG-Login adapter (`POST /me/messages`) + FE connect flow ("Conectar Instagram (mensagens diretas)"). | 🟡 backend shipped (2026-07-29, `ceb1a0c0`) — `send_instagram_message` on `graph.instagram.com` + Fake parity + `graph_post` gained the `base` seam. Shipped WITH S3 deliberately: a gateway whose `send` raised NotImplemented is the half-built shape the seed rules forbid. **FE connect-flow row still ⬜** — the backend OAuth/token endpoints exist (S2), the "Conectar Instagram (mensagens diretas)" affordance does not. |
+| S4 | **Send** path on the IG-Login adapter (`POST /me/messages`) + FE connect flow ("Conectar Instagram (mensagens diretas)"). | 🟡 backend shipped (2026-07-29, `ceb1a0c0`) — `send_instagram_message` on `graph.instagram.com` + Fake parity + `graph_post` gained the `base` seam. Shipped WITH S3 deliberately: a gateway whose `send` raised NotImplemented is the half-built shape the seed rules forbid. **FE connect-flow row still ⬜ — deliberately deferred with S5, not forgotten.** Audited 2026-07-29: S2's row claims "FE: instagram connect row + token-paste UI" shipped, but the tree says otherwise — `useSubmitInstagramToken` exists in `hooks/useIntegrationAccounts.ts` with **zero consumers**, there is no `useStartInstagramOAuth` hook at all, and `Conexoes.tsx` has only a YouTube connect affordance. So S2's FE leg is dead code, a route-exists-≠-wired instance. Building the affordance is ~1 FE slice (start-OAuth hook + an Instagram section mirroring the YouTube one + token-paste fallback + tests), but it is downstream of the SAME Advanced-Access gate as S5: an operator could connect an account and still read nothing. Sequence it WITH the App-Review submission so the whole chain can be live-verified in one pass, rather than shipping UI that cannot be exercised. |
 | S5 | **App Review submission** — Advanced Access on `instagram_business_manage_messages` + Business Verification. USER/ops task, not code. Prereq for reading real client inboxes. | ⬜ user/ops |
 
 ## Decision log
@@ -67,13 +67,15 @@ Key facts (see memory `reference_meta_ig_dm_facebook_login_model`):
   authenticated product client, so a dev-status row is returned to no one and
   `isPageVisible`'s dev/owner branch is unreachable dead code. Migration 035 promotes
   `meta` + `instagram_insights` to `producao`, which is what the operator wanted anyway.
-  **The gate itself is still broken** and is a separate change: a second additive RLS
-  policy keyed on a server-owned role (`public.noctus_users.org_role`, NEVER
-  `user_metadata`) plus the seed FE `DEV_ROLES` const, fanned out across ~10 product
-  schemas. Prior art exists, stranded on the unmerged worktrees
-  `feat/status-pagina-dev-visibility` (`351ecba6`) and
-  `feat/status-pagina-dev-visibility-fanout` (`aa806fd5`) — both carry a migration
-  numbered `026`, which is now taken, so they need renumbering before they can land.
+  ✅ **The gate itself was then FIXED the same day** (`7368e3fe`): the stranded prior art
+  on `feat/status-pagina-dev-visibility` (`351ecba6`) + `-fanout` (`aa806fd5`) — unmergeable
+  because its migration was numbered `026`, since taken — was renumbered to social-wiring
+  **036** and landed with the fan-out it had deferred (orbity 015, personal-finance 012,
+  seed 005, template 005) plus the two live products that fan-out had missed (daily-life
+  008, therapy 016). `dev_veem_desenvolvimento` is now live in 6 schemas, verified via
+  `pg_policies`; erp already had its own equivalent. The role array ↔ `DEV_ROLES` parity
+  contract is enforced by the new `check_status_pagina_role_parity` keeper.
+  → `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`
 - 2026-07-21 — Chose Instagram-Login over Facebook-Login for the agency multi-tenant
   model (per-client friction + Meta's post-2024 direction). FB-Login path left intact
   for any already-connected Page-linked accounts (no forced migration).
