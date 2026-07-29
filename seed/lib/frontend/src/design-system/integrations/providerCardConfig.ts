@@ -11,7 +11,7 @@
  * The card component reads the registry; zero card-code changes needed.
  */
 import * as React from "react";
-import { Youtube, Facebook } from "lucide-react";
+import { Youtube, Facebook, Instagram } from "lucide-react";
 import { WhatsAppIcon } from "./WhatsAppIcon";
 import type { IntegrationAccount, SecondaryField, ModalSection } from "./types";
 
@@ -235,6 +235,86 @@ const metaConfig: ProviderCardConfig = {
   },
 };
 
+// ── Instagram (Instagram-Login model) ──────────────────────────────────────
+// 🔴 A DISTINCT provider from `meta`, not a sub-case of it. `meta` is the
+// Facebook-Login model (Page token, graph.facebook.com, needs a linked FB
+// Page); this is Instagram Business Login — its own Instagram App ID/Secret,
+// token chain through api.instagram.com → graph.instagram.com, and NO Facebook
+// Page anywhere. Crossing the two credential sets is the documented live
+// failure (memory `reference_meta_ig_dm_facebook_login_model`), so they get
+// separate cards with separate labels.
+//
+// `channel_info` carries `{channel_id, title}` written by the OAuth callback
+// from `/me` (`id`, `username`), plus `metadata.model = "instagram_login"`.
+
+const instagramConfig: ProviderCardConfig = {
+  provider: "instagram",
+  displayName: "Instagram",
+  icon: Instagram,
+  accent: "text-pink-600",
+  dashboardRoute: "/meta",
+
+  primary(account) {
+    const title = account.channel_info["title"];
+    return typeof title === "string" && title.trim()
+      ? title
+      : account.account_label;
+  },
+
+  secondary(account) {
+    const ci = account.channel_info;
+    const fields: SecondaryField[] = [];
+    if (typeof ci["channel_id"] === "string" && ci["channel_id"]) {
+      // The IG-scoped user id — the same identity the DM read path compares
+      // against a message's sender to derive inbound/outbound.
+      fields.push({ label: "ID da conta", value: str(ci["channel_id"]) });
+    }
+    return fields;
+  },
+
+  editableFields: [
+    {
+      key: "account_label",
+      label: "Rótulo da conta",
+      bag: "root",
+      placeholder: "Ex: @cliente_principal",
+    },
+  ],
+
+  modalSections(account) {
+    const ci = account.channel_info;
+    return [
+      {
+        title: "Conta do Instagram",
+        fields: [
+          { label: "Usuário", value: str(ci["title"]) },
+          { label: "ID da conta", value: str(ci["channel_id"]) },
+          {
+            label: "Modelo",
+            // Stated explicitly so an operator can tell at a glance which
+            // credential family this row belongs to.
+            value: "Instagram Login (sem página do Facebook)",
+          },
+        ],
+      },
+      {
+        title: "Conta",
+        fields: [
+          { label: "Rótulo", value: account.account_label },
+          { label: "Client ID", value: str(account.client_id) },
+          { label: "Padrão", value: account.is_default ? "Sim" : "Não" },
+          {
+            label: "Último sincronismo",
+            value: account.last_synced_at
+              ? new Date(account.last_synced_at).toLocaleString("pt-BR")
+              : "—",
+          },
+        ],
+      },
+    ];
+  },
+};
+
 // ── WhatsApp (WAHA) ────────────────────────────────────────────────────────
 // Structural config: compiles and renders WAHA fields.
 // Live session/QR data is wired by the social-wiring app slice on top.
@@ -324,6 +404,7 @@ export const PROVIDER_CARD_CONFIG: Record<string, ProviderCardConfig> = {
   youtube: youtubeConfig,
   whatsapp: whatsappConfig,
   meta: metaConfig,
+  instagram: instagramConfig,
 };
 
 /**

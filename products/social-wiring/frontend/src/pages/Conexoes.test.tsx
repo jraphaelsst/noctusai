@@ -38,6 +38,13 @@ const mockSyncAccount = vi.fn();
 const mockAdoptLegacy = vi.fn();
 const mockOAuthStart = vi.fn();
 
+// `useStartProviderOAuth` / `useSubmitInstagramToken` are consumed by the
+// Instagram section Conexoes now mounts. Omitting them here made all 11 tests
+// fail with "is not a function" — the module mock must cover every export the
+// page's tree reaches, not just the ones the assertions touch.
+const mockProviderOAuthStart = vi.fn();
+const mockSubmitInstagramToken = vi.fn();
+
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: mockIntegrationAccounts,
   useUpdateAccount: mockUpdateAccount,
@@ -46,6 +53,8 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useSyncAccount: mockSyncAccount,
   useAdoptLegacy: mockAdoptLegacy,
   useStartYouTubeOAuth: mockOAuthStart,
+  useStartProviderOAuth: mockProviderOAuthStart,
+  useSubmitInstagramToken: mockSubmitInstagramToken,
 }));
 
 const mockClients = vi.fn();
@@ -159,7 +168,17 @@ const makeAccount = (overrides: Partial<{
 // ─── Defaults per test ─────────────────────────────────────────────────────
 
 beforeEach(() => {
-  mockIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
+  // isPending/isFetching alongside isLoading: the YouTube section reads
+  // isLoading, the Instagram section reads `isPending || isFetching` (the
+  // non-lying gate). A mock missing the latter silently renders the Instagram
+  // empty state during what should be a loading frame.
+  setAccounts({
+    data: [],
+    isLoading: false,
+    isPending: false,
+    isFetching: false,
+    isError: false,
+  });
   mockClients.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUpdateAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockSetDefaultAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
@@ -167,10 +186,27 @@ beforeEach(() => {
   mockSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockAdoptLegacy.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockOAuthStart.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockProviderOAuthStart.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockSubmitInstagramToken.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockCreateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUpdateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockDeleteClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
+
+
+// ─── Provider-aware account mock ───────────────────────────────────────────
+// `useIntegrationAccounts(provider)` returns a DIFFERENT set per provider in
+// reality. The flat mockReturnValue used before this section existed handed the
+// YouTube dataset to every caller, so the Instagram section rendered YouTube's
+// cards and the global `integration-card` counts doubled. `setAccounts` keeps
+// the per-test dataset scoped to YouTube and answers other providers empty.
+function setAccounts(result: Record<string, unknown>) {
+  mockIntegrationAccounts.mockImplementation((provider?: string) =>
+    provider === undefined || provider === "youtube"
+      ? result
+      : { data: [], isLoading: false, isPending: false, isFetching: false, isError: false },
+  );
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -204,7 +240,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
       makeAccount({ id: "acc-1", account_label: "Canal 1" }),
       makeAccount({ id: "acc-2", account_label: "Canal 2" }),
     ];
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: accounts, isLoading: false, isError: false,
     });
 
@@ -226,7 +262,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
 
 describe("Conexoes — empty state", () => {
   it("shows empty state when no YouTube accounts", async () => {
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: [], isLoading: false, isError: false,
     });
     const { getByText } = await renderConexoes();
@@ -234,7 +270,7 @@ describe("Conexoes — empty state", () => {
   });
 
   it("shows loading spinner while accounts loading", async () => {
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: [], isLoading: true, isError: false,
     });
     const { getByText } = await renderConexoes();
@@ -242,7 +278,7 @@ describe("Conexoes — empty state", () => {
   });
 
   it("shows error state when accounts fail to load", async () => {
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: [], isLoading: false, isError: true,
     });
     const { getByText } = await renderConexoes();
@@ -256,7 +292,7 @@ describe("Conexoes — client grouping", () => {
       makeAccount({ id: "acc-1", client_id: "client-a", account_label: "Canal Acme" }),
       makeAccount({ id: "acc-2", client_id: null, account_label: "Canal Livre" }),
     ];
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: accounts, isLoading: false, isError: false,
     });
     mockClients.mockReturnValue({
@@ -276,7 +312,7 @@ describe("Conexoes — client grouping", () => {
       makeAccount({ id: "acc-1", client_id: "client-a", account_label: "Canal Acme" }),
       makeAccount({ id: "acc-2", client_id: null, account_label: "Canal Livre" }),
     ];
-    mockIntegrationAccounts.mockReturnValue({
+    setAccounts({
       data: accounts, isLoading: false, isError: false,
     });
     mockClients.mockReturnValue({

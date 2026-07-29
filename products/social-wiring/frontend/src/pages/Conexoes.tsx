@@ -66,6 +66,7 @@ import {
 } from "@/hooks/useIntegrationAccounts";
 import { useClients, type Client } from "@/hooks/useClients";
 import { ClientManagementModal } from "@/components/ClientManagementModal";
+import { InstagramCardSection } from "@/components/InstagramCardSection";
 
 // ─── Type bridge ──────────────────────────────────────────────────────────────
 // The lib's IntegrationAccount and the product's IntegrationAccount are
@@ -634,6 +635,15 @@ export default function Conexoes() {
       {/* YouTube card section */}
       <section className="space-y-4">
         <YouTubeCardSection clients={clients} />
+      </section>
+
+      <Separator />
+
+      {/* Instagram (Instagram-Login model) card section — DMs without a
+          Facebook Page. Distinct provider from `meta`; see
+          InstagramCardSection's header for why they are not merged. */}
+      <section className="space-y-4">
+        <InstagramCardSection clients={clients} />
       </section>
 
       {/* Client management modal */}
