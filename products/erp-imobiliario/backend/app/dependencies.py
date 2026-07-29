@@ -15,10 +15,12 @@ original reference adopter was the retired ``youtube-crawler`` product,
 consolidated into ``social-wiring`` 2026-05-16).
 """
 import logging
+from types import SimpleNamespace
 from typing import Optional
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from noctusai_seed import create_database_module, create_dependencies
+from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
 from noctusai_lib.domain.action_log import log_action as _shared_log_action
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
@@ -26,6 +28,12 @@ from noctusai_lib.api.auth import (
     make_get_current_user_org,
     make_require_role,
     make_resolve_platform_role,
+)
+from noctusai_lib.api.auth.session import (
+    AuthContext,
+    FakeApiTokenResolver,
+    make_get_auth_context,
+    make_token_exchanger,
 )
 from app.config import settings
 
@@ -253,3 +261,170 @@ def get_erp_user_role(user) -> str:
 # this product's `get_current_user` (Supabase-client-aware) and ERP role
 # resolver. Routers consume via `Depends(require_role("admin", "owner"))`.
 require_role = make_require_role(get_current_user, get_erp_user_role)
+
+
+# ─── Cookie-session auth infra (erp-httponly-cookie-session-2026-07 roadmap,
+# Slice 2) ───────────────────────────────────────────────────────────────
+#
+# ERP's existing `get_current_user_org` (raw Supabase JWT bearer, above) is
+# UNCHANGED and remains every one of the 61 existing routers' dep — this
+# section is ADDITIVE, mirroring `products/social-wiring/backend/app/
+# dependencies.py`'s Wave-2 auth infra: a parallel `get_current_user_org_
+# unified` dep any router can opt into for cookie-session support, the same
+# per-router opt-in rollout social-wiring used for its
+# youtube-drive-folder-fanout endpoints. No existing ERP router is migrated
+# by this slice — see the mount in `app/main.py` (`standard_routers=[...,
+# "auth"]`) for the `/api/auth/{login,me,logout}` + `/api/settings/
+# api-tokens` endpoints themselves, which do not need this dep at all
+# (`login`/`me`/`logout` never touch a per-request RLS client; the
+# api-token endpoints use `deps.get_admin_client()` / `get_core_client()`
+# service-role clients).
+
+
+def _get_session_store():
+    """Delegates to ``noctusai_seed.auth_router.get_session_store(settings)``
+    — the SAME process-local singleton the seed's ``create_auth_router``
+    mount (wired via ``standard_routers=["auth"]`` in ``app/main.py``) uses
+    internally. A second ``make_session_store(...)`` call here would
+    split-brain the in-memory Fake (dev/test, no ``redis_url``): a session
+    minted through the mounted router's own ``/login`` would be invisible
+    to a lookup running through a SEPARATE ``FakeSessionStore()`` instance.
+    See that factory's docstring for the full rationale — identical
+    reasoning to social-wiring's ``_get_session_store``.
+    """
+    return _seed_get_session_store(settings)
+
+
+_token_exchanger = None
+_token_exchanger_settings_id = None
+
+
+def _get_token_exchanger():
+    """Lazy singleton ``TokenExchanger`` (SEC-1/SEC-2) — the seam SEC-6
+    requires: a per-request RLS-scoped Supabase client for a cookie-session
+    caller MUST be built from the token this returns (a freshly-MINTED
+    Supabase access token), never the opaque ``nai_session`` cookie value /
+    session id itself. See ``get_current_user_org_unified`` below for the
+    consumer.
+
+    Real (``SupabaseTokenExchanger``) when ``settings.redis_url`` is set —
+    the per-session ``SET NX EX`` refresh lock (SEC-2) needs a live Redis
+    connection to serialize concurrent refreshes. The refresh itself always
+    runs through ``make_default_refresh_fn`` on a THROWAWAY anon
+    ``create_client(url, anon_key)`` (SEC-1 — never the shared admin
+    singleton; ``check_auth_session_mutation_on_shared_client`` guards this
+    class of regression, the 2026-05-23 core prod outage). Falls back to
+    the in-memory ``FakeTokenExchanger`` under local-dev/test (no Redis
+    configured) — mirrors ``_get_session_store``'s Fake fallback.
+
+    The lock client is a SEPARATE ``redis.asyncio`` connection from the
+    session store's — safe by construction (Redis IS the shared state, not
+    the Python object handle; ``make_session_store``'s docstring makes the
+    same argument for the store side).
+
+    Keyed by ``id(settings)`` (not memoized forever) so per-test suites
+    that construct a fresh ``Settings()`` per test get an isolated
+    exchanger instead of leaking state across tests — mirrors
+    ``noctusai_seed.auth_router.get_session_store``'s keying.
+    """
+    global _token_exchanger, _token_exchanger_settings_id
+    if _token_exchanger is None or _token_exchanger_settings_id != id(settings):
+        redis_url = getattr(settings, "redis_url", None) or None
+        lock_client = None
+        if redis_url:
+            from redis.asyncio import Redis
+
+            lock_client = Redis.from_url(redis_url, decode_responses=True)
+        _token_exchanger = make_token_exchanger(
+            _get_session_store(),
+            supabase_url=getattr(settings, "supabase_url", None) or None,
+            supabase_anon_key=getattr(settings, "supabase_anon_key", None) or None,
+            lock_client=lock_client,
+        )
+        _token_exchanger_settings_id = id(settings)
+    return _token_exchanger
+
+
+class _LazySessionStore:
+    """Defers to ``_get_session_store()`` on first method call — so wiring
+    ``get_auth_context`` at module-import time never touches Redis (test
+    collection / sqlite local-dev safety). Mirrors social-wiring's
+    ``_LazySessionStore``."""
+
+    async def create(self, **kwargs):
+        return await _get_session_store().create(**kwargs)
+
+    async def lookup(self, session_id):
+        return await _get_session_store().lookup(session_id)
+
+    async def refresh_ttl(self, session_id, ttl_seconds: int = 86400):
+        return await _get_session_store().refresh_ttl(session_id, ttl_seconds)
+
+    async def delete(self, session_id):
+        return await _get_session_store().delete(session_id)
+
+    async def read_tokens(self, session_id):
+        return await _get_session_store().read_tokens(session_id)
+
+    async def write_tokens(self, session_id, **kwargs):
+        return await _get_session_store().write_tokens(session_id, **kwargs)
+
+
+# Pure new-scheme dep (cookie + `pk_*` only — NO `legacy_jwt_resolver`). A
+# cookie-authenticated `caller_kind="user"` AuthContext's `raw_token` is
+# therefore GUARANTEED to be the session id (never a raw JWT), which is
+# exactly what `get_current_user_org_unified` below needs to call
+# `TokenExchanger.access_token_for(session_id)` unambiguously — mixing in a
+# legacy-JWT bridge here would make `raw_token` ambiguous between "session
+# id" and "raw JWT" for the SAME `caller_kind`, breaking that precondition.
+# No pk_* automation consumer is wired to ERP's business routers yet
+# (`FakeApiTokenResolver` never resolves a bearer), matching the "no
+# real-resolver need on day one" ERP-shaped choice `app/main.py`'s
+# `standard_routers=["auth"]` mount also makes.
+get_auth_context = make_get_auth_context(
+    session_store=_LazySessionStore(),
+    api_token_resolver=FakeApiTokenResolver(),
+    legacy_jwt_resolver=None,
+    session_cookie_name="nai_session",
+)
+
+
+async def get_current_user_org_unified(ctx: AuthContext = Depends(get_auth_context)):
+    """Cookie-session-aware sibling of ``get_current_user_org`` — SEC-6.
+
+    Exchanges the cookie session for a freshly-minted Supabase access token
+    (never the opaque session id) via ``TokenExchanger.access_token_for``,
+    so ``get_user_client(token)`` -> ``make_supabase_client(..., access_
+    token=...)`` -> ``client.auth.set_session(access_token, "")`` always
+    receives a REAL access token. ``check_auth_session_mutation_on_shared_
+    client`` guards the separate "which CLIENT" hazard (never the shared
+    admin singleton); this dep is the companion "which VALUE" invariant the
+    roadmap's SEC-6 line names explicitly — a cookie-derived AuthContext's
+    session id never reaches ``set_session`` as-is.
+
+    Returns the same ``(user, token, org_id)`` shape ``get_current_user_org``
+    does, so an opting-in router's existing ``db = get_user_client(token)``
+    call site needs NO change beyond the ``Depends(...)`` swap.
+
+    Not yet consumed by any existing ERP router (out of this slice's scope
+    — the 61 routers stay on ``get_current_user_org``/legacy JWT bearer,
+    unchanged); a future per-router migration opts in the same way
+    social-wiring's youtube-drive-folder-fanout endpoints did for its own
+    ``get_current_user_org_unified``.
+    """
+    if ctx.caller_kind != "user":
+        # No product/pk_* automation consumer is wired to ERP's business
+        # routers yet — `FakeApiTokenResolver` never resolves a `pk_*`
+        # bearer above, so this branch is unreachable today. Kept explicit
+        # (rather than silently coerced into a user-shaped tuple) so it
+        # fails loud instead of silently misrepresenting the caller if a
+        # real `ApiTokenResolver` is wired in later.
+        raise HTTPException(status_code=403, detail="Restricted to human users")
+
+    access_token = await _get_token_exchanger().access_token_for(ctx.raw_token)
+    user = SimpleNamespace(
+        id=str(ctx.user_id),
+        email=None,
+        user_metadata={"org_id": str(ctx.org_id)},
+    )
+    return user, access_token, str(ctx.org_id)

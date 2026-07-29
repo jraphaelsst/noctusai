@@ -36,6 +36,11 @@ sentry-sdk[fastapi]==1.45.1
 # Caching (optional)
 redis==5.0.1
 
+# Cookie-session encryption at rest (SEC-3, erp-httponly-cookie-session-2026-07
+# roadmap Slice 2) — noctusai_lib.security.encrypted_tokens (consumed by
+# RedisSessionStore) + this product's test-only Fernet key generation.
+cryptography>=42.0.0
+
 # Testing
 pytest-asyncio>=0.21.0
 # LLM provider SDKs (multi-provider via noctusai_lib.llm — monolithic install)

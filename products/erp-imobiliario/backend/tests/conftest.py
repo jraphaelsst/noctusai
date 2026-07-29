@@ -43,8 +43,29 @@ mock-supabase close. Same shape as therapy's schema drift (tracked by
 `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`).
 Once reconciled, flip this to `validate_schema=True, schema="erp"`.
 """
+import os as _os
 import sys
 from pathlib import Path
+
+from cryptography.fernet import Fernet as _Fernet
+
+# SEC-3 (erp-httponly-cookie-session-2026-07 roadmap, Slice 2) test-only key
+# — `ERPSettings.redis_url` reads the shared fleet `REDIS_URL` (root `.env`,
+# real + reachable), so `noctusai_seed.auth_router.get_session_store(settings)`
+# (called by BOTH the mounted `standard_routers=["auth"]` router AND
+# `app.dependencies._get_session_store`) runs
+# `make_session_store(require_encryption=True)`, which REFUSES to boot a
+# Redis-backed session store without `settings.session_encryption_key` set
+# — fail-loudly-on-misconfiguration is the intended SEC-3 behavior, NOT
+# something to bypass. Setting a per-session-run Fernet key here (BEFORE
+# `app.config`/`app.main` is first imported by any fixture/test) lets the
+# suite exercise the REAL Redis-backed + encrypted session store (dev-prod
+# parity — the roadmap's Slice 4 note warns "Fake store hides the
+# exchange"). Mirrors `products/social-wiring/backend/tests/conftest.py`'s
+# identical fix from Slice 1b. `setdefault` so a real `SESSION_ENCRYPTION_KEY`
+# already exported in the environment wins.
+_os.environ.setdefault("SESSION_ENCRYPTION_KEY", _Fernet.generate_key().decode())
+
 _REPO = Path(__file__).resolve().parents[4]
 _LIB = _REPO / "seed" / "lib" / "backend"
 _FRAMEWORK = _REPO / "seed" / "framework" / "backend"
