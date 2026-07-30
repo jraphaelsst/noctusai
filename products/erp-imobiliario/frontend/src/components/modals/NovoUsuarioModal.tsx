@@ -13,6 +13,7 @@ import { Label } from "@noctusai/seed/components/ui/label";
 import { UserPlus, Eye, EyeOff } from "lucide-react";
 import { useCreateProfile } from "@/hooks/useProfiles";
 import { corretorSchema } from "@/lib/validations";
+import { formatPhoneNumber, normalizePhone } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface NovoUsuarioModalProps {
@@ -55,7 +56,16 @@ export function NovoUsuarioModal({ onSuccess }: NovoUsuarioModalProps) {
     }
     
     setErrors({});
-    await createProfile.mutateAsync(formData);
+    // The masked value is for the EYE, never for storage: submitting
+    // "(11) 99999-9999" wrote a third phone format into the database, one that
+    // compares equal to neither the canonical form nor a WhatsApp id. Fall
+    // back to what was typed when it cannot be canonicalized — refusing a
+    // valid-looking number the user can see is worse than storing it for a
+    // human to correct.
+    await createProfile.mutateAsync({
+      ...formData,
+      telefone: normalizePhone(formData.telefone) ?? formData.telefone,
+    });
     
     setFormData({
       nome: "",
@@ -68,13 +78,6 @@ export function NovoUsuarioModal({ onSuccess }: NovoUsuarioModalProps) {
     setShowConfirmPassword(false);
     setOpen(false);
     onSuccess?.();
-  };
-
-  const formatPhoneNumber = (value: string) => {
-    const numbers = value.replace(/\D/g, "");
-    if (numbers.length <= 2) return numbers;
-    if (numbers.length <= 7) return `(${numbers.slice(0, 2)}) ${numbers.slice(2)}`;
-    return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 7)}-${numbers.slice(7, 11)}`;
   };
 
   const formatNome = (value: string) => {
