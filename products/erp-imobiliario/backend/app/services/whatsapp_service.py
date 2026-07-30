@@ -22,6 +22,8 @@ import logging
 import json
 from typing import Any, Dict, List, Optional
 
+from noctusai_lib.primitives.phone import phone_digits
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,24 +60,42 @@ class WhatsAppConfig:
         }
 
 
-def _normalize_phone(phone: str) -> str:
+def _normalize_phone(phone: str | None) -> str | None:
+    """WhatsApp identity digits for ``phone``, or ``None`` if it isn't one.
+
+    Delegates to ``noctusai_lib.primitives.phone`` — the platform's single
+    definition of a phone number — instead of the hand-rolled version that
+    stood here.
+
+    WHY THAT MATTERED, CONCRETELY
+    -----------------------------
+    The previous implementation stripped non-digits and prepended ``55`` to
+    anything with 11 digits or fewer. It could not fail, so it manufactured a
+    WhatsApp identity out of ANY input::
+
+        "não informado"  ->  "55"           -> sends to  55@c.us
+        "1199457"        ->  "551199457"    -> sends to  551199457@c.us
+        "11 9999-9999"   ->  "551199999999" -> a legacy 8-digit mobile,
+                                               silently turned into a number
+                                               that is not the customer's
+
+    Every one of those is a message about a client's business going to an
+    identity we invented. The seed primitive refuses all three: it never adds
+    a digit that was not there (Brazil's 2012 nine-digit migration means the
+    "missing" ninth digit of a legacy mobile is a GUESS, and a wrong guess
+    messages a stranger).
+
+    RETURNS BARE DIGITS, NOT E.164
+    ------------------------------
+    Deliberate, and not a deviation from the canon. This value is a WhatsApp
+    IDENTITY — it becomes ``<digits>@c.us`` and it is the key
+    ``erp.whatsapp_messages.phone`` is stored and queried by. The INBOUND
+    webhook writes that column from ``payload["from"].replace("@c.us", "")``,
+    i.e. bare digits; returning ``+``-prefixed here would file the outbound
+    half of a conversation under a different key than the inbound half and
+    split one thread into two. `phone_digits` is the seam for exactly this.
     """
-    Normalize a phone number to international format.
-
-    Strips non-numeric characters and ensures country code is present.
-    Defaults to Brazilian country code (55) if not provided.
-    """
-    digits = "".join(c for c in phone if c.isdigit())
-
-    # If starts with 0, remove it
-    if digits.startswith("0"):
-        digits = digits[1:]
-
-    # If doesn't start with country code, prepend Brazil's
-    if len(digits) <= 11:
-        digits = "55" + digits
-
-    return digits
+    return phone_digits(phone)
 
 
 def _format_currency(value: float) -> str:
@@ -197,6 +217,23 @@ async def send_message(
 
     normalized_phone = _normalize_phone(phone)
 
+    # REFUSE rather than send. There is no safe fallback here: any repair we
+    # could apply to an unresolvable number is a guess, and a guess that
+    # happens to be dialable delivers a client's message to a stranger.
+    # Returning the standard failure envelope keeps the router's error path
+    # working without an exception the callers do not expect.
+    if not normalized_phone:
+        logger.error("WhatsApp send refused — unresolvable phone: %r", phone)
+        return {
+            "message_id": None,
+            "status": "failed",
+            "phone": phone,
+            "error": (
+                "Número de telefone inválido — não foi possível determinar "
+                "o destinatário no WhatsApp. Corrija o cadastro."
+            ),
+        }
+
     if not config.is_configured:
         logger.info(
             f"[WhatsApp DRY-RUN] Would send to {normalized_phone}: "
@@ -278,7 +315,12 @@ def get_message_history(
     Returns:
         Dict with messages list and total count
     """
-    normalized = _normalize_phone(phone)
+    # A READ, so refusing would be the wrong shape — the caller asked for a
+    # conversation, and "no such conversation" is a legitimate answer. Fall
+    # back to the raw digits so an unresolvable number still queries something
+    # deterministic (and finds nothing, which is the truth) instead of raising
+    # at a caller that only knows how to render a message list.
+    normalized = _normalize_phone(phone) or "".join(c for c in (phone or "") if c.isdigit())
 
     # Count
     count_result = supabase.table("whatsapp_messages").select(
@@ -327,10 +369,21 @@ async def send_via_waha(db, phone: str, message: str) -> dict:
     if not waha_url:
         return {"message_id": f"dry_run_{phone}", "status": "sent", "phone": phone, "dry_run": True}
 
-    # Normalize phone for WAHA format (ERP-specific: CRM imports may omit country code).
-    digits = "".join(c for c in phone if c.isdigit())
-    if len(digits) <= 11:
-        digits = "55" + digits
+    # This used to be a THIRD hand-rolled normalization, inline and even more
+    # permissive than `_normalize_phone` (it did not even strip a leading 0).
+    # Same seam as every other phone on the platform now.
+    digits = _normalize_phone(phone)
+    if not digits:
+        logger.error("WAHA send refused — unresolvable phone: %r", phone)
+        return {
+            "message_id": None,
+            "status": "failed",
+            "phone": phone,
+            "error": (
+                "Número de telefone inválido — não foi possível determinar "
+                "o destinatário no WhatsApp. Corrija o cadastro."
+            ),
+        }
     chat_id = f"{digits}@c.us"
 
     from noctusai_lib.integrations.whatsapp import get_whatsapp_client

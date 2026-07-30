@@ -10,6 +10,8 @@ import re
 from datetime import date, datetime
 from typing import Any, Optional
 
+from noctusai_lib.primitives.phone import normalize_phone
+
 # ─── dates ──────────────────────────────────────────────────────────────
 
 _DATE_STR_RE = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s*$")
@@ -97,16 +99,40 @@ def parse_codigo(raw: Optional[str]) -> tuple[Optional[str], Optional[str], Opti
 
 def parse_contato(raw: Optional[str]) -> tuple[Optional[str], str]:
     """Returns ``(contato_norm, contato_tipo)``. ``contato_norm`` is
-    digits-only for a phone, lowercased for an email; ``contato_tipo`` in
-    ``{telefone, email, desconhecido}``."""
+    CANONICAL E.164 for a phone (``+5511994573387``), lowercased for an
+    email; ``contato_tipo`` in ``{telefone, email, desconhecido}``.
+
+    Phones go through ``noctusai_lib.primitives.phone`` — the platform's one
+    definition of the format. This used to return bare digits with no country
+    code (``"11994573387"``), which meant the same person imported from a
+    sheet and received from a Meta campaign (``"+5511994573387"``) were two
+    non-comparable strings.
+
+    An unparseable phone yields ``(None, "telefone")``: nothing may key on a
+    value we had to guess (``normalize_phone`` refuses to invent the ninth
+    digit of a legacy mobile), but it IS a phone, and a type of ``desconhecido``
+    would hide it from the very filter a human would use to find and fix it.
+    Nothing is lost either way — ``ParsedRow.contato`` keeps the original.
+
+    This mirrors ``social_wiring.canonicalize_lead_contato()`` (migration 037)
+    exactly. It has to: the trigger is BEFORE INSERT, so if the two disagreed
+    the API would echo one value and the DB would hold another.
+    """
     if not raw or not str(raw).strip():
         return None, "desconhecido"
     value = str(raw).strip()
     if "@" in value:
         return value.lower(), "email"
-    digits = re.sub(r"\D", "", value)
-    if len(digits) >= 8:
-        return digits, "telefone"
+
+    canonical = normalize_phone(value)
+    if canonical:
+        return canonical, "telefone"
+
+    # Not canonical — but does it even look like a phone? Below 8 digits there
+    # is nothing to keep: that is a stray note in the contact column, not a
+    # number, and tagging it `telefone` would poison every phone filter.
+    if len(re.sub(r"\D", "", value)) >= 8:
+        return None, "telefone"
     return None, "desconhecido"
 
 

@@ -9,9 +9,17 @@
  *   </Button>
  *
  * Variants:
- *   primary — filled, bg-primary / text-primary-foreground
- *   outline — bordered, bg-background
- *   ghost   — no background, hover:bg-accent (icon buttons)
+ *   primary     — filled, bg-primary / text-primary-foreground
+ *   outline     — bordered, bg-background
+ *   ghost       — no background, hover:bg-accent (icon buttons)
+ *   destructive — filled danger, for irreversible actions (delete, revoke)
+ *
+ * `destructive` is named after the token, matching the products' own
+ * shadcn Button so a component moving into the seed does not have to be
+ * renamed. It exists because destructive actions are a design-system
+ * concern, not a per-product one: without it every consumer hand-rolls
+ * `className="bg-destructive text-destructive-foreground hover:..."`,
+ * which is how a "delete" button ends up a different red on each page.
  *
  * Sizes:
  *   sm   — h-7 px-3 text-xs  (compact inline controls)
@@ -21,7 +29,7 @@
 import * as React from "react";
 import { cn } from "../../utils";
 
-export type ButtonVariant = "primary" | "outline" | "ghost";
+export type ButtonVariant = "primary" | "outline" | "ghost" | "destructive";
 export type ButtonSize = "sm" | "md" | "icon";
 
 export interface ButtonProps
@@ -37,6 +45,8 @@ const variantClass: Record<ButtonVariant, string> = {
     "border border-input bg-background hover:bg-accent",
   ghost:
     "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+  destructive:
+    "bg-destructive text-destructive-foreground hover:bg-destructive/90",
 };
 
 const sizeClass: Record<ButtonSize, string> = {

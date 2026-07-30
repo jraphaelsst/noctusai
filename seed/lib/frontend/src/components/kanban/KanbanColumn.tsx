@@ -19,6 +19,8 @@ export interface KanbanColumnProps<TCard, TStageId extends string = string> {
   renderHeader?: (stage: KanbanColumnData<TCard, TStageId>['stage'], cards: TCard[]) => ReactNode;
   /** Override the "no cards" message for this column. */
   emptyState?: ReactNode;
+  /** Genuine card click (not a drag). See `KanbanCard`'s `onActivate`. */
+  onCardActivate?: (card: TCard) => void;
   className?: string;
   cardClassName?: string;
 }
@@ -40,6 +42,7 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
   renderCard,
   renderHeader,
   emptyState,
+  onCardActivate,
   className,
   cardClassName,
 }: KanbanColumnProps<TCard, TStageId>) {
@@ -54,7 +57,12 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
       <div ref={setNodeRef} className="flex-1 min-h-[4rem]" data-kanban-column-id={stage.id}>
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
           {cards.map((card) => (
-            <KanbanCard key={getCardId(card)} id={getCardId(card)} className={cardClassName}>
+            <KanbanCard
+              key={getCardId(card)}
+              id={getCardId(card)}
+              className={cardClassName}
+              onActivate={onCardActivate ? () => onCardActivate(card) : undefined}
+            >
               {renderCard(card, { isDragging: false })}
             </KanbanCard>
           ))}

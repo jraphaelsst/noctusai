@@ -32,14 +32,48 @@ class TestNormalizePhone:
         from app.services.whatsapp_service import _normalize_phone
         assert _normalize_phone("(11) 91234-5678") == "5511912345678"
 
-    def test_short_number_gets_country_code(self):
-        from app.services.whatsapp_service import _normalize_phone
-        # 8-digit local number with DDD
-        assert _normalize_phone("1191234567") == "551191234567"
-
     def test_zero_only_prefix_stripped(self):
         from app.services.whatsapp_service import _normalize_phone
         assert _normalize_phone("021987654321") == "5521987654321"
+
+
+class TestNormalizePhoneRefusesRatherThanInventing:
+    """The old implementation could not fail, so it manufactured a WhatsApp
+    identity out of any input — and every one of those is a client's message
+    delivered to a number we made up.
+
+    `test_short_number_gets_country_code` used to live here asserting
+    `_normalize_phone("1191234567") == "551191234567"`. That input is a DDD
+    plus an EIGHT-digit subscriber starting with 9 — a pre-2012 São Paulo
+    mobile. The result was a 12-digit string that is not a valid Brazilian
+    number at all. The test was encoding the defect, so it is gone.
+    """
+
+    def test_text_cannot_become_a_chat_id(self):
+        from app.services.whatsapp_service import _normalize_phone
+        # Previously returned "55" — i.e. it would have messaged `55@c.us`.
+        assert _normalize_phone("não informado") is None
+
+    def test_a_truncated_number_is_refused(self):
+        from app.services.whatsapp_service import _normalize_phone
+        # Previously "551199457" — dialable-looking, and not the customer.
+        assert _normalize_phone("1199457") is None
+
+    def test_a_legacy_eight_digit_mobile_is_refused_not_padded(self):
+        from app.services.whatsapp_service import _normalize_phone
+        # Deciding WHICH 8-digit numbers gained a ninth digit in 2012 is a
+        # guess; a wrong guess messages a stranger.
+        assert _normalize_phone("11 9999-9999") is None
+
+    def test_empty_and_none_are_refused(self):
+        from app.services.whatsapp_service import _normalize_phone
+        assert _normalize_phone("") is None
+        assert _normalize_phone(None) is None
+
+    def test_a_valid_landline_still_resolves(self):
+        from app.services.whatsapp_service import _normalize_phone
+        # The guard must not become "refuse everything unfamiliar".
+        assert _normalize_phone("(11) 3216-5498") == "551132165498"
 
 
 # ---------------------------------------------------------------------------
@@ -521,4 +555,49 @@ class TestSendViaWaha:
         assert result["status"] == "failed"
         assert result["message_id"] is None
         assert "500" in result["error"]
+        assert result["phone"] == "5511912345678"
+
+
+# ---------------------------------------------------------------------------
+# The send paths must REFUSE, not just normalize to None
+# ---------------------------------------------------------------------------
+# A guard that resolves to None but still sends is not a guard. These assert
+# the message never leaves for an identity we could not determine.
+
+class TestSendRefusesAnUnresolvablePhone:
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["não informado", "1199457", "11 9999-9999", ""])
+    async def test_send_message_returns_failed_and_does_not_dispatch(self, bad, monkeypatch):
+        from app.services import whatsapp_service
+
+        dispatched = []
+
+        def _boom(*args, **kwargs):
+            dispatched.append(args)
+            raise AssertionError("a message was dispatched for an unresolvable phone")
+
+        monkeypatch.setattr(
+            "noctusai_lib.integrations.whatsapp.get_meta_cloud_client", _boom, raising=False
+        )
+
+        config = whatsapp_service.WhatsAppConfig(api_token="t", phone_number_id="p")
+        result = await whatsapp_service.send_message(bad, "olá", config)
+
+        assert result["status"] == "failed"
+        assert result["message_id"] is None
+        assert "inválido" in result["error"]
+        assert dispatched == []
+
+    @pytest.mark.asyncio
+    async def test_a_valid_number_is_not_blocked_by_the_guard(self, monkeypatch):
+        # The guard must not turn into "refuse everything".
+        from app.services import whatsapp_service
+
+        # Not configured -> dry-run path, so no network is touched.
+        config = whatsapp_service.WhatsAppConfig(api_token=None, phone_number_id=None)
+        result = await whatsapp_service.send_message("(11) 91234-5678", "olá", config)
+
+        assert result["status"] == "sent"
+        assert result["dry_run"] is True
         assert result["phone"] == "5511912345678"

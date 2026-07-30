@@ -124,10 +124,17 @@ class TestParseCodigo:
 
 
 class TestParseContato:
+    """`contato_norm` is CANONICAL E.164 since migration 037.
+
+    It used to be bare digits (`11998745536`), which never compared equal to
+    the same person's `+5511998745536` arriving from a Meta campaign — the
+    whole reason the platform now has one phone format.
+    """
+
     def test_phone_with_dots_and_spaces(self):
         norm, tipo = parse_contato(" 11 99874.5536")
         assert tipo == "telefone"
-        assert norm == "11998745536"
+        assert norm == "+5511998745536"
 
     def test_email(self):
         norm, tipo = parse_contato("gilbertospinelli@gmail.com")
@@ -137,7 +144,25 @@ class TestParseContato:
     def test_dash_formatted_phone(self):
         norm, tipo = parse_contato("11-99937.2647")
         assert tipo == "telefone"
-        assert norm == "11999372647"
+        assert norm == "+5511999372647"
+
+    def test_already_canonical_is_a_fixed_point(self):
+        # A re-import of a sheet the importer already normalized must not
+        # mutate the value a second time.
+        assert parse_contato("+5511999372647") == ("+5511999372647", "telefone")
+
+    def test_campaign_shape_matches_sheet_shape(self):
+        # THE point of the change: two intake paths, one string.
+        from_sheet, _ = parse_contato("11-99937.2647")
+        from_campaign, _ = parse_contato("+5511999372647")
+        assert from_sheet == from_campaign
+
+    def test_unparseable_phone_keeps_its_type_but_has_no_norm(self):
+        # 8-digit legacy mobile: `normalize_phone` refuses to invent the ninth
+        # digit, so nothing may key on it — but it IS a phone, and typing it
+        # `desconhecido` would hide it from the filter a human would use to
+        # find and fix it. The original survives in `ParsedRow.contato`.
+        assert parse_contato("11 9999-9999") == (None, "telefone")
 
     def test_blank_is_desconhecido(self):
         assert parse_contato("") == (None, "desconhecido")

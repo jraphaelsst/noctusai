@@ -36,7 +36,8 @@ import { leadsFiltersQueryKey, useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from "@/hooks/useLeads";
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
-import { LeadDetailDrawer } from "./components/LeadDetailDrawer";
+import { LeadDetailModal } from "@/components/LeadDetailModal";
+import { contatoValue } from "./leadDetailSections";
 import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { describeError } from "./utils";
 
@@ -255,7 +256,10 @@ export default function BaseDeLeads() {
                         <span className="font-medium">
                           {lead.cliente_nome || <span className="text-muted-foreground">—</span>}
                         </span>
-                        <p className="text-xs text-muted-foreground">{lead.contato ?? "—"}</p>
+                        {/* Through the SAME rule the detail modal and the board cards use —
+                            a table showing "11 98191.2534" beside a card showing
+                            "+5511981912534" is two formats for one number. */}
+                        <p className="text-xs text-muted-foreground">{contatoValue(lead) ?? "—"}</p>
                       </td>
                       <td className="px-4 py-3">
                         {lead.origem ? (
@@ -314,9 +318,17 @@ export default function BaseDeLeads() {
         </Card>
       )}
 
-      <LeadDetailDrawer
+      {/*
+        The SAME modal the Funil and Processos cards open. The table already
+        holds the whole row, so it passes `lead` and the modal opens with no
+        fetch; a board card passes `leadId` instead. Field list, layout and
+        actions all live in one place — change it once, it changes here and
+        on both boards.
+      */}
+      <LeadDetailModal
+        open={!!detailLead}
+        onClose={() => setDetailLead(null)}
         lead={detailLead}
-        onOpenChange={(open) => !open && setDetailLead(null)}
         onEdit={openEditFromDrawer}
         onDelete={(lead) => setDeleteTarget(lead)}
       />

@@ -1,6 +1,11 @@
 // Utilities
 export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from './utils';
 
+// Phone — THE canonical format (E.164). `formatPhone` is the single display
+// seam for every phone rendered anywhere on the platform; change it there and
+// all products follow. Mirrors `noctusai_lib.primitives.phone` case for case.
+export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneDigits } from './phone';
+
 // API client
 export { createApiClient, extractErrorMessage } from './api';
 export type { ApiClient, CreateApiClientOptions } from './api';

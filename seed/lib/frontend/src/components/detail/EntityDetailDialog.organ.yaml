@@ -1,0 +1,63 @@
+name: EntityDetailDialog
+path: seed/lib/frontend/src/components/detail/EntityDetailDialog.tsx
+phase: pilot-seed
+registered_at: '2026-07-30'
+validation_status: emerging
+known_facts:
+- THE one record-detail modal for the platform. Layout (chrome, field grid, loading /
+  error / not-found states, footer action layout) lives in the organ; CONTENT is a
+  `DetailSection[]` descriptor the consumer builds once per entity. A new field on the
+  record is one edit, visible on every surface that opens the modal.
+- Purely presentational — fires `onClick` callbacks and never mutates. Same contract as
+  IntegrationCard; the consuming product owns the mutations, the toasts and the
+  confirm dialogs.
+- Async by design. `isLoading` exists because a kanban card carries a PROJECTION of the
+  record (8 of a lead's 25 columns) and must fetch the rest on open; without it a card
+  click would render the missing columns as blank fields, asserting "these are empty"
+  about data that has not arrived.
+- Three distinct not-happy states, deliberately not collapsed into one - `error`
+  (fetch failed) wins over `isLoading`, which wins over `notFound` (fetch succeeded,
+  record gone). Collapsing them is how "deleted under us" reads as "network down".
+- Empty vs. non-applicable is a real distinction. `value` empty renders an em-dash (we
+  hold no value); `hidden: true` drops the row (the field does not apply to this record
+  — a campaign lead has no corretor). A section whose fields are all hidden is dropped
+  rather than rendering a bare heading over nothing.
+- Built on the seed Dialog primitive (no Radix). Escape and backdrop-click close;
+  clicks inside the panel do not propagate.
+- Pilot consumers (3, all social-wiring) — BaseDeLeads table row, Funil de Vendas
+  NegociacaoCard, Processos de Venda ProcessoCard. All three route through the product's
+  single `leadDetailSections()` descriptor builder, which is what makes "change the
+  modal once" literally true.
+errors_encountered:
+- '`@testing-library/user-event` is NOT a dependency of seed/lib/frontend — the suite
+  uses `fireEvent` from @testing-library/react instead. Adding the dep for one test
+  file was not worth a new devDependency on every product build.'
+drifts_surfaced:
+- 'The seed design-system Button had no destructive variant, so every consumer
+  hand-rolled `className="bg-destructive text-destructive-foreground hover:..."` for
+  delete actions (observed in social-wiring BaseDeLeads AlertDialogAction and in the
+  product-local shadcn Button, which DOES ship one). Fixed at the root in the same
+  commit: `variant="destructive"` added to seed/lib/frontend/src/design-system/ui/Button.tsx,
+  named after the token so a component moving into the seed needs no rename.'
+- 'social-wiring LeadDetailDrawer was a bespoke per-surface detail view and the Funil
+  board had none at all — it deep-linked back to the Leads table with `?q=<contato>`,
+  which is the UI equivalent of "go look it up yourself". This organ replaces both.'
+alternatives_considered:
+- 'Generic over the entity type (`EntityDetailDialog<T>` + a field-accessor map) —
+  rejected. It buys type-safety on `value` at the cost of making every renderer a
+  callback, and the consumer already has the typed record in hand when it builds the
+  descriptor.'
+- 'Promoting social-wiring LeadDetailDrawer verbatim into the seed — rejected: it hard-
+  codes the Lead shape (TIPO_LABEL, TIER_LABEL, needs_review reasoning), none of which
+  is platform-general. Those stay in the product descriptor; only the chrome is seeded.'
+- 'Fetching inside the organ (passing an id + an api client) — rejected. It would put
+  react-query and an endpoint convention into a presentational organ; the consumer
+  already owns `useLead(id)` and passing `isLoading` costs one prop.'
+manual_validation_log: []
+integration_test_status: unit-only
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

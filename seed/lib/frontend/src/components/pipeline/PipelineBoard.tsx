@@ -43,6 +43,13 @@ import type { PipelineColumn } from './types';
 export interface PipelineBoardProps<TCard> {
   hooks: PipelineHooks<TCard>;
   renderCard: (card: TCard, state: KanbanCardRenderState) => React.ReactNode;
+  /**
+   * A genuine card click — press and release without a drag. The usual
+   * consumer is "open this card's detail modal". Buttons rendered inside the
+   * card must still `stopPropagation`, since a button click is not a card
+   * click.
+   */
+  onCardClick?: (card: TCard) => void;
   /** Server-side filters, forwarded to the board endpoint and the query key. */
   filtros?: Record<string, any>;
   /** Format a column's monetary total. Defaults to a plain number. */
@@ -65,6 +72,7 @@ const DEFAULT_COLUMN_CLASS =
 export function PipelineBoard<TCard>({
   hooks,
   renderCard,
+  onCardClick,
   filtros,
   formatValue = (v) => String(v),
   emptyColumnLabel = 'Nenhuma carta nesta etapa',
@@ -147,6 +155,7 @@ export function PipelineBoard<TCard>({
             ?.etapa ?? ''
         }
         renderCard={renderCard}
+        onCardActivate={onCardClick}
         renderColumnHeader={(stage) => {
           const coluna = columns.find((c) => c.etapa === stage.id);
           const classes = stageColorClasses(coluna?.stage?.cor);

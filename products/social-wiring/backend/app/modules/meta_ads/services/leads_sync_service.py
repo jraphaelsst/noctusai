@@ -29,6 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from noctusai_lib.integrations.meta import MetaAdapter, MetaGraphError
+from noctusai_lib.primitives.phone import normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,14 @@ class LeadsSyncService:
             "created_time": _iso(lead.created_time),
             "full_name": promoted.get("full_name"),
             "email": promoted.get("email"),
-            "phone": promoted.get("phone"),
+            # Meta already delivers E.164 for ~92% of leads, which is exactly
+            # why that shape was chosen as the platform canon — so this is a
+            # no-op on the common path and a repair on the rest (missing
+            # country code, stray formatting). `normalize_phone` returns None
+            # rather than guessing at a malformed number, so fall back to what
+            # Meta sent: a number a human can see is a number a human can fix.
+            # The untouched original is in `raw` either way.
+            "phone": normalize_phone(promoted.get("phone")) or promoted.get("phone"),
             "answers": answers,
             "raw": [
                 {"name": fd.name, "values": list(fd.values)}

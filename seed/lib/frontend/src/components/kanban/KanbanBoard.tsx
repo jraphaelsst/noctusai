@@ -68,6 +68,12 @@ export interface KanbanBoardProps<TCard, TStageId extends string = string> {
   getCardStage: (card: TCard) => TStageId;
   renderCard: (card: TCard, state: KanbanCardRenderState) => ReactNode;
   onMove: KanbanOnMove<TStageId>;
+  /**
+   * A genuine card click — press and release without a drag. Omit and cards
+   * are drag-only. The drag/click discrimination lives in `KanbanCard`; see
+   * its header for why a naive `onClick` fires on every completed drag.
+   */
+  onCardActivate?: (card: TCard) => void;
 
   isLoading?: boolean;
   error?: unknown;
@@ -116,6 +122,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
   getCardStage,
   renderCard,
   onMove,
+  onCardActivate,
   isLoading = false,
   error,
   loadingState,
@@ -187,6 +194,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
             column={column}
             getCardId={getCardId}
             renderCard={renderCard}
+            onCardActivate={onCardActivate}
             renderHeader={renderColumnHeader}
             emptyState={columnEmptyState ? columnEmptyState(column.stage) : undefined}
             className={columnClassName}

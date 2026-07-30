@@ -234,12 +234,57 @@ def update_stage(
                 field="papel",
             )
 
+    # Deactivating is a SOFT DELETE and must honour the same invariants as the
+    # hard one. The board lists only active stages, so flipping `ativo` off is
+    # indistinguishable, from the user's seat, from deleting the column — the
+    # cards simply stop being on the board. `delete_stage` refuses all three of
+    # these cases; before this guard, `update_stage` refused none of them, so
+    # the careful path could be bypassed by editing instead of deleting.
+    if updates.get("ativo") is False:
+        _guard_deactivation(db, cfg, stage_id, org_id=org_id)
+
     rows = (
         db.table(cfg.stages_table).update(updates).eq("id", stage_id).execute().data or []
     )
     if not rows:
         raise NotFoundError("Etapa", stage_id)
     return rows[0]
+
+
+def _guard_deactivation(
+    db, cfg: PipelineConfig, stage_id: str, *, org_id: str | None = None
+) -> None:
+    """Refuse a deactivation that would strand cards or break a feature.
+
+    Mirrors `delete_stage`'s refusals, minus the reassignment escape hatch:
+    moving cards is what `delete_stage` is for, and offering two ways to do it
+    is how the two drift. A user who wants the column gone with its cards
+    rehomed deletes it; `ativo=false` is for retiring a stage that is already
+    empty so its history stays readable.
+    """
+    stage = get_stage(db, cfg, stage_id, org_id=org_id)
+
+    if stage.get("papel"):
+        raise ValidationError_(
+            f"A etapa '{stage['label']}' não pode ser desativada porque tem o papel "
+            f"'{stage['papel']}', do qual outras funcionalidades dependem. "
+            "Atribua o papel a outra etapa antes de desativá-la.",
+            field="papel",
+        )
+
+    others_active = [
+        s for s in list_stages(db, cfg, org_id=org_id) if s["id"] != stage_id
+    ]
+    if not others_active:
+        raise ValidationError_("Um funil precisa de pelo menos uma etapa ativa.")
+
+    total = count_cards_in_stage(db, cfg, stage_id, org_id=org_id)
+    if total:
+        raise ValidationError_(
+            f"A etapa '{stage['label']}' tem {cfg.count_label(total)} e sumiriam "
+            "do quadro ao desativá-la. Mova as cartas para outra etapa primeiro.",
+            field="ativo",
+        )
 
 
 def count_cards_in_stage(
@@ -287,8 +332,7 @@ def delete_stage(
     if total:
         if not reassign_to:
             raise ValidationError_(
-                f"A etapa '{stage['label']}' tem {total} "
-                f"{cfg.entity_label}{'s' if total != 1 else ''}. "
+                f"A etapa '{stage['label']}' tem {cfg.count_label(total)}. "
                 "Escolha para qual etapa mover antes de excluir.",
                 field="reassign_to",
             )
