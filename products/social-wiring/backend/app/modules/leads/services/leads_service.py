@@ -85,7 +85,7 @@ def _jsonify_payload(payload: dict) -> dict:
     return {k: _jsonify(v) for k, v in payload.items()}
 
 
-def _derive_contato_fields(payload: dict) -> dict:
+def _derive_contato_fields(payload: dict, *, require_defaults: bool = False) -> dict:
     """Fill ``contato_norm``/``contato_tipo`` from ``contato``.
 
     Migration 037 installs ``canonicalize_lead_contato_trigger`` to guarantee
@@ -107,6 +107,13 @@ def _derive_contato_fields(payload: dict) -> dict:
     would echo one value while the DB stored another.
     """
     if "contato" not in payload:
+        # On INSERT the trigger runs regardless and stamps 'desconhecido' for a
+        # row with no contact at all. `require_defaults` lets `create_lead` say
+        # so, keeping the mock's row shape identical to the real one — an UPDATE
+        # that does not touch `contato` must NOT re-derive (the trigger is
+        # `UPDATE OF contato`, so it would not fire either).
+        if require_defaults:
+            return {**payload, "contato_norm": None, "contato_tipo": "desconhecido"}
         return payload
 
     raw = payload.get("contato")
@@ -144,7 +151,7 @@ def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None,
     }
-    row.update(_derive_contato_fields(_jsonify_payload(payload)))
+    row.update(_derive_contato_fields(_jsonify_payload(payload), require_defaults=True))
     resp = _table(client, "leads").insert(row).execute()
     rows = list(resp.data or [])
     result = rows[0] if rows else row

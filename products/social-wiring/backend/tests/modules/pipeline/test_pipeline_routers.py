@@ -267,3 +267,59 @@ class TestStageEditor:
         data = r.json()["data"]
         assert "primary" in data["cores"]
         assert "proposta_aceite" in data["papeis"]
+
+
+class TestBoardSearchFindsTheNumberTheCardShows:
+    """The board card renders the CANONICAL number through the phone seam
+    while the row stores what arrived. Copying it off a card and pasting it
+    into the board's own search box must find that card."""
+
+    def _funil_row(self):
+        return {
+            "id": "n1",
+            "titulo": None,
+            "lead": {"cliente_nome": "Maria", "contato": "11 98191.2534"},
+            "campanha": None,
+        }
+
+    def _campanha_row(self):
+        return {
+            "id": "n2",
+            "titulo": None,
+            "lead": None,
+            "campanha": {"full_name": "Leonora", "phone": "+5511964540451"},
+        }
+
+    def test_funil_matches_the_displayed_canonical_number(self):
+        from app.modules.pipeline.configs import search_negociacoes
+
+        assert search_negociacoes([self._funil_row()], "+5511981912534")
+
+    def test_funil_matches_a_partial_digit_fragment(self):
+        from app.modules.pipeline.configs import search_negociacoes
+
+        assert search_negociacoes([self._funil_row()], "981912534")
+
+    def test_funil_name_search_still_works(self):
+        from app.modules.pipeline.configs import search_negociacoes
+
+        assert search_negociacoes([self._funil_row()], "maria")
+        assert not search_negociacoes([self._funil_row()], "joão")
+
+    def test_campaign_origin_matches_its_already_canonical_phone(self):
+        from app.modules.pipeline.configs import search_negociacoes
+
+        assert search_negociacoes([self._campanha_row()], "5511964540451")
+
+    def test_a_different_number_does_not_match(self):
+        from app.modules.pipeline.configs import search_negociacoes
+
+        assert not search_negociacoes([self._funil_row()], "+5511999999999")
+
+    def test_processos_reaches_the_phone_through_the_negociacao(self):
+        # The processo board must answer the same query the funil board does,
+        # or two boards showing the same deals disagree.
+        from app.modules.pipeline.configs import search_processos
+
+        processo = {"id": "p1", "observacoes": None, "negociacao": self._funil_row()}
+        assert search_processos([processo], "+5511981912534")

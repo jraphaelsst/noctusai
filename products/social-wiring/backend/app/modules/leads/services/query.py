@@ -57,6 +57,8 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.primitives.phone import phone_search_digits
+
 
 @dataclass
 class LeadFilters:
@@ -127,11 +129,27 @@ def backfill_generated_columns(row: dict) -> dict:
 
 _Q_COLUMNS = ("cliente_nome", "contato", "codigo_raw", "observacoes")
 
+#: Below this, a digit run is too short to be a phone fragment and matching on
+#: it would surface unrelated rows (a house number in `observacoes`, a year).
+_MIN_PHONE_FRAGMENT_DIGITS = 4
+
 
 def matches_free_text(row: dict, q: Optional[str]) -> bool:
     """``q`` matches when ANY of the 4 free-text columns contains it
     (case-insensitive substring), mirroring the SQL ``ILIKE %q%`` OR the
-    contract describes. Empty/None ``q`` always matches (no constraint)."""
+    contract describes. Empty/None ``q`` always matches (no constraint).
+
+    PLUS a phone-aware pass, which is a strict SUPERSET of the substring
+    behaviour — it only ever adds matches, never removes one.
+
+    It exists because canonicalizing the phone format (migration 037) changed
+    what the UI SHOWS without changing what a substring search matches: the
+    Funil card and the detail modal render ``+5511981912534`` while the row
+    stores ``11 98191.2534``. Copying the number you can see and pasting it
+    into the search box returned nothing — across ~11.6k leads. Comparing
+    canonical digit runs makes every spelling of one number find that number,
+    in either direction.
+    """
     if not q:
         return True
     needle = q.strip().lower()
@@ -141,7 +159,19 @@ def matches_free_text(row: dict, q: Optional[str]) -> bool:
         val = row.get(col)
         if isinstance(val, str) and needle in val.lower():
             return True
-    return False
+    return _matches_phone(row.get("contato"), needle)
+
+
+def _matches_phone(contato: Optional[str], needle: str) -> bool:
+    """Compare the CANONICAL digit run of the stored contact against the
+    needle's, so format differences stop hiding a match."""
+    if not isinstance(contato, str) or "@" in contato:
+        return False
+    needle_digits = phone_search_digits(needle)
+    if not needle_digits or len(needle_digits) < _MIN_PHONE_FRAGMENT_DIGITS:
+        return False
+    stored = phone_search_digits(contato)
+    return bool(stored) and needle_digits in stored
 
 
 def to_rpc_params(org_id: UUID, filters: LeadFilters) -> dict:

@@ -65,7 +65,7 @@ function OrigemChip({ cor, label }: { cor?: string | null; label: string }) {
  * returns it unchanged instead of blanking it. That is the point: a number
  * a human can see is a number a human can fix.
  */
-function contatoValue(lead: Lead): string | null {
+export function contatoValue(lead: Lead): string | null {
   if (lead.contato_tipo === 'email') return lead.contato?.toLowerCase() ?? null;
   return formatPhone(lead.contato);
 }

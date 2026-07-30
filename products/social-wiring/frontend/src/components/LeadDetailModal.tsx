@@ -115,7 +115,18 @@ export function LeadDetailModal({
       // Fetch finished, no record: the lead was deleted under us, or the card
       // points at an id that no longer exists. Distinct from "still loading",
       // and the user deserves to be told which.
-      notFound={!resolved && !fetched.isPending && !fetched.isFetching && !fetched.isError}
+      //
+      // `!shouldFetch` is part of the condition, not an oversight. A disabled
+      // TanStack v5 query reports `isPending: true` forever, so without it a
+      // card carrying NEITHER origin (no lead_id, no campanha — the join
+      // failed to load) would fall through every branch and render a modal
+      // with a title and nothing else: no fields, no spinner, no error. An
+      // empty modal that explains nothing is the silent-failure shape.
+      notFound={
+        !resolved &&
+        !fetched.isError &&
+        (!shouldFetch || (!fetched.isPending && !fetched.isFetching))
+      }
       actions={[
         ...actions,
         ...(resolved && onDelete

@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from noctusai_lib.domain.pipeline import PipelineConfig
+from noctusai_lib.primitives.phone import phone_search_digits
 
 PIPELINE_FUNIL = PipelineConfig(
     pipeline="funil",
@@ -40,9 +41,6 @@ PIPELINE_PROCESSOS = PipelineConfig(
     cliente_field=None,
 )
 
-# Nested joins. Both origins are projected so the board can render a card
-# without a second round trip, and so the UI can deep-link back to the Leads
-# page for whichever origin the card actually has.
 # The projections a card needs to (a) render itself and (b) open the shared
 # detail modal.
 #
@@ -111,6 +109,11 @@ def processo_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
     return {k: row.get(k) for k in _PROCESSO_FIELDS if k in row}
 
 
+#: Below this, a digit run is too short to be a phone fragment; matching on it
+#: would surface unrelated cards.
+_MIN_PHONE_FRAGMENT_DIGITS = 4
+
+
 def _origin_haystack(row: dict) -> tuple:
     """The searchable identity of a card, whichever origin it has."""
     lead = row.get("lead") or {}
@@ -122,13 +125,42 @@ def _origin_haystack(row: dict) -> tuple:
     )
 
 
+def _origin_phones(row: dict) -> tuple:
+    lead = row.get("lead") or {}
+    campanha = row.get("campanha") or {}
+    return (lead.get("contato"), campanha.get("phone"))
+
+
+def _matches_phone(row: dict, needle: str) -> bool:
+    """Compare CANONICAL digit runs, so the number the card DISPLAYS finds the
+    card.
+
+    The card renders `lead.contato` through the platform phone seam
+    (`+5511981912534`) while the row stores what arrived (`11 98191.2534`).
+    Without this, copying the number off a card and pasting it into the board's
+    own search box returned nothing. Strictly additive to the substring pass.
+    """
+    needle_digits = phone_search_digits(needle)
+    if not needle_digits or len(needle_digits) < _MIN_PHONE_FRAGMENT_DIGITS:
+        return False
+    for value in _origin_phones(row):
+        if not isinstance(value, str) or "@" in value:
+            continue
+        stored = phone_search_digits(value)
+        if stored and needle_digits in stored:
+            return True
+    return False
+
+
 def search_negociacoes(rows: list[dict], query: str) -> list[dict]:
     """Free-text filter across whichever origin the card has."""
     q = query.lower()
 
     def matches(row: dict) -> bool:
         haystack = (row.get("titulo"),) + _origin_haystack(row)
-        return any(q in str(v or "").lower() for v in haystack)
+        if any(q in str(v or "").lower() for v in haystack):
+            return True
+        return _matches_phone(row, q)
 
     return [r for r in rows if matches(r)]
 
@@ -147,6 +179,8 @@ def search_processos(rows: list[dict], query: str) -> list[dict]:
     def matches(row: dict) -> bool:
         neg = row.get("negociacao") or {}
         haystack = (neg.get("titulo"), row.get("observacoes")) + _origin_haystack(neg)
-        return any(q in str(v or "").lower() for v in haystack)
+        if any(q in str(v or "").lower() for v in haystack):
+            return True
+        return _matches_phone(neg, q)
 
     return [r for r in rows if matches(r)]

@@ -14,6 +14,7 @@ from noctusai_lib.primitives.phone import (
     is_valid_phone,
     normalize_phone,
     phone_digits,
+    phone_search_digits,
 )
 
 CANONICAL = "+5511994573387"
@@ -151,3 +152,39 @@ class TestIdempotence:
         once = normalize_phone(raw)
         assert once is not None
         assert normalize_phone(once) == once
+
+
+class TestSearchDigitsClosesTheFormatGap:
+    """Canonicalizing storage changed what the UI SHOWS without changing what
+    a substring search matches. These lock the fix.
+
+    The bug: a Funil card rendered "+5511981912534" while the row stored
+    "11 98191.2534", so copying the number a user could SEE and pasting it
+    into the search box returned nothing — across ~11.6k leads.
+    """
+
+    def test_every_spelling_yields_one_key(self) -> None:
+        keys = {
+            phone_search_digits(x)
+            for x in ("+5511981912534", "11 98191.2534", "(11) 98191-2534", "5511981912534")
+        }
+        assert keys == {"5511981912534"}
+
+    def test_the_displayed_value_finds_the_stored_value(self) -> None:
+        displayed = phone_search_digits("+5511981912534")
+        stored = phone_search_digits("11 98191.2534")
+        assert displayed is not None and stored is not None
+        assert displayed in stored
+
+    def test_a_partial_fragment_still_matches(self) -> None:
+        # Users type the middle of a number, not the whole E.164 form.
+        assert phone_search_digits("981912534") in phone_search_digits("11 98191.2534")
+
+    def test_unparseable_falls_back_to_raw_digits_not_none(self) -> None:
+        # A fragment is not a valid phone; returning None would make every
+        # partial search silently match nothing.
+        assert phone_search_digits("9819") == "9819"
+
+    def test_no_digits_is_none(self) -> None:
+        assert phone_search_digits("não informado") is None
+        assert phone_search_digits(None) is None

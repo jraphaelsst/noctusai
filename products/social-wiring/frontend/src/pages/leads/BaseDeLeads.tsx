@@ -37,6 +37,7 @@ import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from 
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
+import { contatoValue } from "./leadDetailSections";
 import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { describeError } from "./utils";
 
@@ -255,7 +256,10 @@ export default function BaseDeLeads() {
                         <span className="font-medium">
                           {lead.cliente_nome || <span className="text-muted-foreground">—</span>}
                         </span>
-                        <p className="text-xs text-muted-foreground">{lead.contato ?? "—"}</p>
+                        {/* Through the SAME rule the detail modal and the board cards use —
+                            a table showing "11 98191.2534" beside a card showing
+                            "+5511981912534" is two formats for one number. */}
+                        <p className="text-xs text-muted-foreground">{contatoValue(lead) ?? "—"}</p>
                       </td>
                       <td className="px-4 py-3">
                         {lead.origem ? (

@@ -186,6 +186,35 @@ def _validate_international(digits: str, default_country_code: str) -> str | Non
     return None
 
 
+def phone_search_digits(raw: str | None) -> str | None:
+    """The digit-run to COMPARE when searching for a phone.
+
+    Canonicalizing a stored number changes what the UI shows but not what a
+    substring search matches, and that gap is a real bug: the Funil card and
+    the detail modal render ``+5511981912534`` while the row still stores
+    ``11 98191.2534``, so a user who copies the number they can SEE and pastes
+    it into the search box gets zero results.
+
+    Comparing digit-runs closes it in both directions::
+
+        phone_search_digits("+5511981912534")  -> "5511981912534"
+        phone_search_digits("11 98191.2534")   -> "5511981912534"   (canonical)
+        phone_search_digits("981912534")       -> "981912534"       (raw fallback)
+
+    A parseable value yields its CANONICAL digits, so every spelling of one
+    number produces one key. An unparseable one falls back to its raw digits
+    rather than ``None`` — a partial fragment the user typed is not a valid
+    phone and must still be matchable.
+    """
+    if raw is None:
+        return None
+    canonical = normalize_phone(raw)
+    if canonical:
+        return canonical[1:]
+    digits = _NON_DIGITS.sub("", str(raw))
+    return digits or None
+
+
 def is_valid_phone(raw: str | None) -> bool:
     """``True`` when ``raw`` canonicalizes. Use to flag rows, not to reject
     them silently."""
@@ -214,4 +243,5 @@ __all__ = [
     "is_valid_phone",
     "normalize_phone",
     "phone_digits",
+    "phone_search_digits",
 ]
