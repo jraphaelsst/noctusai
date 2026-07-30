@@ -31,6 +31,17 @@ describe('normalizePhone — every observed spelling collapses to one string', (
     expect(normalizePhone('(11) 3216-5498')).toBe('+551132165498');
   });
 
+  it.each([
+    ['11995735128.0', '+5511995735128'], // live row, Excel float artifact
+    ['11995735128.00', '+5511995735128'],
+    ['+5511995735128.0', '+5511995735128'],
+  ])('strips the Excel float suffix: %s', (raw, expected) => {
+    // Excel reads the phone column as a number and stringifies it back with a
+    // fractional part. 547 live rows landed that way; ".0" is a spreadsheet
+    // artifact, not a digit.
+    expect(normalizePhone(raw)).toBe(expected);
+  });
+
   it('does not mistake area code 55 for the country code', () => {
     // DDD 55 is Santa Maria/RS. Reading the leading "55" as Brazil would
     // leave "32165498" behind, which is not a valid national number — so
@@ -53,6 +64,18 @@ describe('normalizePhone — refuses rather than guesses', () => {
   ])('%s -> null', (raw) => {
     expect(normalizePhone(raw as string | null | undefined)).toBeNull();
     expect(isValidPhone(raw as string | null | undefined)).toBe(false);
+  });
+
+  it('the float strip cannot rescue an invalid number', () => {
+    // Only accepted when what remains is VALID — an 8-digit legacy mobile
+    // with a float suffix is still an 8-digit legacy mobile.
+    expect(normalizePhone('11 9793.0')).toBeNull();
+  });
+
+  it('a separator dot is not a float suffix', () => {
+    // "11 99457.3387" uses the dot as a SEPARATOR: the digits already form a
+    // valid number, so the first reading wins and the second never runs.
+    expect(normalizePhone('11 99457.3387')).toBe(CANONICAL);
   });
 
   it('never prefixes a nine onto a legacy 8-digit mobile', () => {

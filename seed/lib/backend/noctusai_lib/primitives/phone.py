@@ -63,6 +63,14 @@ DEFAULT_COUNTRY_CODE = "55"
 
 _NON_DIGITS = re.compile(r"\D")
 
+# Excel reads a phone column as a NUMBER and stringifies it back with a
+# fractional part: "11995735128" becomes "11995735128.0". 547 rows in
+# social-wiring landed that way. The trailing ".0" is a spreadsheet artifact,
+# not a digit, and removing it is not a guess — it is only ever accepted when
+# what remains is a valid number, the same rule the country-code
+# disambiguation uses.
+_EXCEL_FLOAT_SUFFIX = re.compile(r"\.0+\s*$")
+
 # Brazil: 2-digit area code (DDD) 11–99, then an 8-digit landline or a
 # 9-digit mobile that MUST start with 9 (ANATEL reserves the leading 9 for
 # mobile). Anything else claiming +55 is malformed.
@@ -115,6 +123,20 @@ def normalize_phone(
     if not text:
         return None
 
+    result = _normalize_text(text, default_country_code)
+    if result is not None:
+        return result
+
+    # Second reading: strip a spreadsheet float suffix and try once more.
+    # Accepted ONLY when it yields a valid number, so a genuinely broken value
+    # cannot be rescued into a plausible-looking wrong one.
+    stripped = _EXCEL_FLOAT_SUFFIX.sub("", text)
+    if stripped != text:
+        return _normalize_text(stripped, default_country_code)
+    return None
+
+
+def _normalize_text(text: str, default_country_code: str) -> str | None:
     # An explicit "+" is an assertion by the source that what follows is a
     # full international number. Believe it — but still validate the shape
     # if it claims to be Brazilian, because that is the claim we can check.

@@ -42,6 +42,20 @@ class TestNormalizeEveryObservedSpelling:
     def test_landline_eight_digit_subscriber(self) -> None:
         assert normalize_phone("(11) 3216-5498") == "+551132165498"
 
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("11995735128.0", "+5511995735128"),   # live row, Excel float artifact
+            ("11995735128.00", "+5511995735128"),
+            ("+5511995735128.0", "+5511995735128"),
+        ],
+    )
+    def test_excel_float_suffix_is_stripped(self, raw: str, expected: str) -> None:
+        # Excel reads the phone column as a number and stringifies it back with
+        # a fractional part. 547 live rows landed that way; the ".0" is a
+        # spreadsheet artifact, not a digit.
+        assert normalize_phone(raw) == expected
+
     def test_area_code_55_is_not_mistaken_for_the_country_code(self) -> None:
         # DDD 55 is Santa Maria/RS. "5532165498" is a NATIONAL number, not
         # a country-coded one — reading the leading "55" as Brazil would
@@ -67,6 +81,18 @@ class TestRefusesRatherThanGuesses:
     def test_returns_none(self, raw: str | None) -> None:
         assert normalize_phone(raw) is None
         assert is_valid_phone(raw) is False
+
+    def test_float_suffix_does_not_rescue_an_invalid_number(self) -> None:
+        # The strip is only ever accepted when what remains is VALID. An
+        # 8-digit legacy mobile with a float suffix is still an 8-digit legacy
+        # mobile, and must not be rescued into a plausible-looking wrong one.
+        assert normalize_phone("11 9793.0") is None
+
+    def test_a_separator_dot_is_not_a_float_suffix(self) -> None:
+        # "11 99457.3387" uses the dot as a SEPARATOR — the digits already
+        # form a valid number, so the first reading wins and the second never
+        # runs.
+        assert normalize_phone("11 99457.3387") == CANONICAL
 
     def test_never_prefixes_a_nine_onto_a_legacy_mobile(self) -> None:
         # São Paulo's 2012 migration added a 9th digit. Deciding WHICH

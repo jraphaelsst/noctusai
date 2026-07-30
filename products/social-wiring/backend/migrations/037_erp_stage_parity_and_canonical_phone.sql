@@ -521,9 +521,9 @@ COMMENT ON COLUMN social_wiring.meta_ads_leads.phone IS
 --
 -- Returns NULL for anything it cannot resolve WITHOUT GUESSING. Never invents
 -- a digit -- see the header.
-CREATE OR REPLACE FUNCTION social_wiring.normalize_phone(
-  p_raw TEXT,
-  p_country_code TEXT DEFAULT '55'
+CREATE OR REPLACE FUNCTION social_wiring._normalize_phone_text(
+  p_text TEXT,
+  p_country_code TEXT
 ) RETURNS TEXT
   LANGUAGE plpgsql
   IMMUTABLE
@@ -538,9 +538,8 @@ DECLARE
   -- landline starting 2-5. ANATEL reserves the leading 9 for mobile.
   c_national CONSTANT TEXT := '^[1-9][0-9](9[0-9]{8}|[2-5][0-9]{7})$';
 BEGIN
-  IF p_raw IS NULL THEN RETURN NULL; END IF;
-  v_text := btrim(p_raw);
-  IF v_text = '' THEN RETURN NULL; END IF;
+  v_text := p_text;
+  IF v_text IS NULL OR v_text = '' THEN RETURN NULL; END IF;
 
   v_intl := left(v_text, 1) = '+';
   v_digits := regexp_replace(v_text, '\D', '', 'g');
@@ -579,6 +578,41 @@ BEGIN
 
   IF v_digits ~ c_national THEN
     RETURN '+' || p_country_code || v_digits;
+  END IF;
+
+  RETURN NULL;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION social_wiring.normalize_phone(
+  p_raw TEXT,
+  p_country_code TEXT DEFAULT '55'
+) RETURNS TEXT
+  LANGUAGE plpgsql
+  IMMUTABLE
+  SET search_path TO 'social_wiring', 'pg_catalog'
+AS $$
+DECLARE
+  v_text     TEXT;
+  v_stripped TEXT;
+  v_result   TEXT;
+BEGIN
+  IF p_raw IS NULL THEN RETURN NULL; END IF;
+  v_text := btrim(p_raw);
+  IF v_text = '' THEN RETURN NULL; END IF;
+
+  v_result := social_wiring._normalize_phone_text(v_text, p_country_code);
+  IF v_result IS NOT NULL THEN RETURN v_result; END IF;
+
+  -- Second reading: Excel reads a phone column as a NUMBER and stringifies it
+  -- back with a fractional part ("11995735128" -> "11995735128.0"; 547 rows in
+  -- this table landed that way). The trailing ".0" is a spreadsheet artifact,
+  -- not a digit. Stripping it is NOT a guess: the result is accepted only when
+  -- it is a valid number, the same rule the country-code disambiguation uses,
+  -- so a genuinely broken value cannot be rescued into a plausible wrong one.
+  v_stripped := regexp_replace(v_text, '\.0+\s*$', '');
+  IF v_stripped <> v_text THEN
+    RETURN social_wiring._normalize_phone_text(v_stripped, p_country_code);
   END IF;
 
   RETURN NULL;
@@ -706,6 +740,12 @@ BEGIN
       ('(11) 3216-5498',   '+551132165498'),
       -- DDD 55 is Santa Maria/RS, not the country code
       ('5532165498',       '+555532165498'),
+      -- Excel float artifact: 547 live rows arrived stringified from a number
+      ('11995735128.0',    '+5511995735128'),
+      ('11995735128.00',   '+5511995735128'),
+      ('+5511995735128.0', '+5511995735128'),
+      -- ...but the strip never rescues an otherwise-invalid number
+      ('11 9793.0',        NULL),
       -- refusals: never guess
       ('+55115072510',     NULL),
       ('1199457',          NULL),

@@ -36,6 +36,13 @@ const E164_MAX_DIGITS = 15;
 // mobile). Anything else claiming +55 is malformed.
 const BR_NATIONAL = /^([1-9][0-9])(9[0-9]{8}|[2-5][0-9]{7})$/;
 
+// Excel reads a phone column as a NUMBER and stringifies it back with a
+// fractional part: "11995735128" becomes "11995735128.0" (547 such rows in
+// social-wiring). The trailing ".0" is a spreadsheet artifact, not a digit,
+// and stripping it is not a guess — it is only ever accepted when what
+// remains is a valid number.
+const EXCEL_FLOAT_SUFFIX = /\.0+\s*$/;
+
 function digitsOf(text: string): string {
   return text.replace(/\D/g, '');
 }
@@ -84,6 +91,17 @@ export function normalizePhone(
   const text = String(raw).trim();
   if (!text) return null;
 
+  const first = normalizeText(text, countryCode);
+  if (first !== null) return first;
+
+  // Second reading: strip a spreadsheet float suffix and try once more.
+  // Accepted ONLY when it yields a valid number, so a genuinely broken value
+  // cannot be rescued into a plausible-looking wrong one.
+  const stripped = text.replace(EXCEL_FLOAT_SUFFIX, '');
+  return stripped !== text ? normalizeText(stripped, countryCode) : null;
+}
+
+function normalizeText(text: string, countryCode: string): string | null {
   // An explicit "+" is an assertion by the source that what follows is a
   // full international number. Believe it — but still shape-check a +55
   // claim, because that is the claim we can verify.
