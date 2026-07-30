@@ -1,28 +1,37 @@
 /**
  * A Processos de Venda card — one accepted deal in delivery.
  *
- * `Faturamento` is the terminal stage, so archiving is how a finished processo
- * leaves the last column instead of growing it without bound.
+ * Clicking the card opens the SAME `LeadDetailModal` the Funil board and
+ * the Leads table open, reached through the negociação this processo came
+ * from (`PROCESSO_SELECT` carries the origin joins for exactly that).
+ *
+ * ARCHIVING MOVED INTO THE MODAL
+ * ------------------------------
+ * The archive/restore control used to sit on the card face. It now lives in
+ * the modal footer: an irreversible-looking action one stray click away, on
+ * an element that is also a drag handle and now also opens a detail view, is
+ * a mis-click waiting to happen — and the card face is for identifying the
+ * deal, not for acting on it. `Nota Fiscal` is the terminal stage, so
+ * archiving is still how a finished processo leaves the last column instead
+ * of growing it without bound.
  */
-import { Archive, ArchiveRestore } from "lucide-react";
-
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { formatValor } from "../formatValor";
-import type { ProcessoVenda } from "@/types/pipeline";
+import { nomeDoProcesso, type ProcessoVenda } from "@/types/pipeline";
 
 export interface ProcessoCardProps {
   processo: ProcessoVenda;
   isDragging?: boolean;
-  onArquivar?: (processoId: string) => void;
 }
 
-export function ProcessoCard({ processo, isDragging, onArquivar }: ProcessoCardProps) {
-  const nome = processo.negociacao?.titulo || "Processo";
+export function ProcessoCard({ processo, isDragging }: ProcessoCardProps) {
+  const nome = nomeDoProcesso(processo);
 
   return (
     <div
-      className={`rounded-lg border bg-card p-3 shadow-sm ${isDragging ? "opacity-60" : ""}`}
+      className={`cursor-pointer rounded-lg border bg-card p-3 shadow-sm transition-colors hover:border-primary/40 ${
+        isDragging ? "opacity-60" : ""
+      }`}
       data-testid="processo-card"
     >
       <div className="flex items-start gap-3">
@@ -41,27 +50,6 @@ export function ProcessoCard({ processo, isDragging, onArquivar }: ProcessoCardP
           )}
         </div>
       </div>
-
-      {onArquivar && (
-        <div className="mt-3 flex gap-1 border-t pt-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            title={processo.arquivado ? "Restaurar processo" : "Arquivar processo"}
-            onClick={(e) => {
-              // The card body carries dnd-kit's drag listeners.
-              e.stopPropagation();
-              onArquivar(processo.id);
-            }}
-          >
-            {processo.arquivado ? (
-              <ArchiveRestore className="h-4 w-4" />
-            ) : (
-              <Archive className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

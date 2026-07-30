@@ -221,7 +221,9 @@ class TestCommit:
         rows = fetch_filtered(client, ORG, LeadFilters())
         bob = next(r for r in rows if r["cliente_nome"] == "Bob")
         assert bob["contato_tipo"] == "telefone"
-        assert bob["contato_norm"] == "11988887777"
+        # Canonical E.164 since migration 037 — the same string this number
+        # would have if it had arrived from a Meta campaign instead of a sheet.
+        assert bob["contato_norm"] == "+5511988887777"
         assert bob["anuncio_tier"] == "simples"
 
     def test_dd_mm_yy_date_parsed(self, workbook_bytes):

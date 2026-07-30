@@ -13,6 +13,7 @@
     ".": "./src/index.ts",
     "./api": "./src/api.ts",
     "./utils": "./src/utils.ts",
+    "./phone": "./src/phone.ts",
     "./auth": "./src/auth.ts",
     "./hooks": "./src/hooks.ts",
     "./stores": "./src/stores.ts",

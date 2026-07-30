@@ -36,7 +36,7 @@ import { leadsFiltersQueryKey, useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from "@/hooks/useLeads";
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
-import { LeadDetailDrawer } from "./components/LeadDetailDrawer";
+import { LeadDetailModal } from "@/components/LeadDetailModal";
 import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { describeError } from "./utils";
 
@@ -314,9 +314,17 @@ export default function BaseDeLeads() {
         </Card>
       )}
 
-      <LeadDetailDrawer
+      {/*
+        The SAME modal the Funil and Processos cards open. The table already
+        holds the whole row, so it passes `lead` and the modal opens with no
+        fetch; a board card passes `leadId` instead. Field list, layout and
+        actions all live in one place — change it once, it changes here and
+        on both boards.
+      */}
+      <LeadDetailModal
+        open={!!detailLead}
+        onClose={() => setDetailLead(null)}
         lead={detailLead}
-        onOpenChange={(open) => !open && setDetailLead(null)}
         onEdit={openEditFromDrawer}
         onDelete={(lead) => setDeleteTarget(lead)}
       />

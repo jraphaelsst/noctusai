@@ -37,10 +37,13 @@ page actually opens with by default (``data_entrada`` desc, no
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
+
+from noctusai_lib.primitives.phone import normalize_phone
 
 from app.modules.leads.services.query import (
     LeadFilters,
@@ -82,6 +85,48 @@ def _jsonify_payload(payload: dict) -> dict:
     return {k: _jsonify(v) for k, v in payload.items()}
 
 
+def _derive_contato_fields(payload: dict) -> dict:
+    """Fill ``contato_norm``/``contato_tipo`` from ``contato``.
+
+    Migration 037 installs ``canonicalize_lead_contato_trigger`` to guarantee
+    this at the DB, because leads arrive through three write paths and the next
+    one added would forget a service-layer call. So why do it HERE too?
+
+    Two reasons, and neither is belt-and-braces:
+
+    1. ``MockSupabaseClient`` has no triggers. Without this, every test would
+       assert against a shape production never produces — the fixture-vs-real
+       schema drift class.
+    2. This function is the one place ``contato_norm`` was NEVER derived
+       before: only the workbook importer set it, so a lead created through
+       ``POST /api/leads`` shipped with ``contato_norm``/``contato_tipo`` NULL
+       (15 and 2 live rows on 2026-07-30) and was invisible to every lookup
+       that keys on the normalized column.
+
+    Mirrors the trigger case for case; they must not disagree, or the API
+    would echo one value while the DB stored another.
+    """
+    if "contato" not in payload:
+        return payload
+
+    raw = payload.get("contato")
+    value = str(raw).strip() if raw is not None else ""
+
+    if not value:
+        return {**payload, "contato_norm": None, "contato_tipo": "desconhecido"}
+    if "@" in value:
+        return {**payload, "contato_norm": value.lower(), "contato_tipo": "email"}
+
+    canonical = normalize_phone(value)
+    if canonical:
+        return {**payload, "contato_norm": canonical, "contato_tipo": "telefone"}
+    # Looks like a phone but cannot be canonicalized without guessing: no
+    # `contato_norm` (nothing may key on a guess), but the type still says what
+    # it is, so a human filtering for phones can find and fix it.
+    tipo = "telefone" if len(re.sub(r"\D", "", value)) >= 8 else "desconhecido"
+    return {**payload, "contato_norm": None, "contato_tipo": tipo}
+
+
 def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
     # `id`/`created_at` are explicit here (not left to a DB DEFAULT) so
     # the returned row is deterministic across the real Supabase client
@@ -99,7 +144,7 @@ def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None,
     }
-    row.update(_jsonify_payload(payload))
+    row.update(_derive_contato_fields(_jsonify_payload(payload)))
     resp = _table(client, "leads").insert(row).execute()
     rows = list(resp.data or [])
     result = rows[0] if rows else row
@@ -156,7 +201,7 @@ def update_lead(client: Any, org_id: UUID, lead_id: UUID, payload: dict) -> Opti
         clean["needs_review"] = False
     if not clean:
         return existing
-    clean = _jsonify_payload(clean)
+    clean = _derive_contato_fields(_jsonify_payload(clean))
     now = datetime.now(timezone.utc).isoformat()
     clean["updated_at"] = now
     clean["edited_at"] = now

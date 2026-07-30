@@ -32,6 +32,14 @@ know about our domain, it goes here.
   "current period reference" so production + tests agree across
   UTC midnight. `now_utc_iso()` is the canonical ISO-string form,
   lifted from N=4 byte-identical product-local `_now_iso()` helpers.
+- `phone.py` — `normalize_phone()`, `format_phone()`, `phone_digits()`,
+  `is_valid_phone()`. THE canonical phone format for the platform
+  (E.164, `+5511994573387` — the shape Meta Lead-Ads already delivers
+  and one `+` away from the WhatsApp chat id). Lifted from N=4
+  disagreeing product-local helpers that stored, displayed, imported
+  and received the same number in four non-comparable spellings.
+  `format_phone` is the single display seam: change it here and every
+  product's UI follows. Mirrored 1:1 by `@noctusai/lib/phone`.
 - `tasks.py` — `schedule_coro(coro, *, logger=None, name=None)` +
   `NoRunningLoopError`. Canonical fire-and-forget helper that
   schedules a coroutine on the running loop and logs exceptions

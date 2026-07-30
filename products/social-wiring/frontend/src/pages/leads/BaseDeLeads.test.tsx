@@ -11,7 +11,7 @@
  * Mock strategy mirrors Origens.test.tsx / Corretores.test.tsx — hooks are
  * `vi.fn()`s configured per test; `@noctusai/lib/design-system` is stubbed
  * (the real barrel throws at module-load without VITE_SUPABASE_URL);
- * `LeadFormDialog`/`LeadDetailDrawer` are stubbed out entirely (irrelevant
+ * `LeadFormDialog`/`LeadDetailModal` are stubbed out entirely (irrelevant
  * to this slice).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -60,8 +60,8 @@ vi.mock("@noctusai/lib/design-system", () => ({
 vi.mock("./components/LeadFormDialog", () => ({
   LeadFormDialog: () => null,
 }));
-vi.mock("./components/LeadDetailDrawer", () => ({
-  LeadDetailDrawer: () => null,
+vi.mock("@/components/LeadDetailModal", () => ({
+  LeadDetailModal: () => null,
 }));
 
 function makeQuery(overrides: Partial<any> = {}) {

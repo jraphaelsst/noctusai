@@ -10,6 +10,8 @@
  *
  * Stages are per-organization DB rows the user edits via "Configurar etapas";
  * renaming one relabels every card and every history row that references it.
+ * The defaults are erp-imobiliario's, verbatim since migration 037
+ * (Qualificação → Visitas → Proposta → Negociação → Fechado).
  */
 import { useState } from "react";
 import { Search } from "lucide-react";
@@ -17,13 +19,19 @@ import { Search } from "lucide-react";
 import { PipelineBoard } from "@noctusai/lib/components";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LeadDetailModal } from "@/components/LeadDetailModal";
 import { formatValor } from "./formatValor";
 import { funilPipeline } from "@/lib/pipelines";
 import { useAceitarProposta } from "@/hooks/usePipelineSeam";
 import { NegociacaoCard } from "./components/NegociacaoCard";
+import { origemDaNegociacao, type CardOrigem } from "@/types/pipeline";
 
 export default function FunilVendas() {
   const [busca, setBusca] = useState("");
+  // The card that is open in the detail modal. Holds the ORIGIN rather than
+  // the card, because that is all the modal needs and it keeps a stale card
+  // object from outliving a refetch behind an open modal.
+  const [detalhe, setDetalhe] = useState<CardOrigem | null>(null);
   const { mutate: aceitarProposta, isPending: aceitando, variables } =
     useAceitarProposta();
 
@@ -60,6 +68,7 @@ export default function FunilVendas() {
             ))}
           </div>
         }
+        onCardClick={(negociacao) => setDetalhe(origemDaNegociacao(negociacao))}
         renderCard={(negociacao, { isDragging }) => (
           <NegociacaoCard
             negociacao={negociacao}
@@ -70,6 +79,14 @@ export default function FunilVendas() {
             aceitandoProposta={aceitando && variables === negociacao.id}
           />
         )}
+      />
+
+      {/* The same modal the Leads table and the Processos board open. */}
+      <LeadDetailModal
+        open={!!detalhe}
+        onClose={() => setDetalhe(null)}
+        leadId={detalhe?.leadId ?? null}
+        campanha={detalhe?.campanha ?? null}
       />
     </div>
   );

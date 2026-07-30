@@ -19,6 +19,19 @@ export type {
   StatusPaginaStatus,
 } from './StatusPaginaPanel';
 
+// Detail — THE one record-detail modal. Layout lives here; the field list
+// is a descriptor the consumer builds once per entity, so a table row, a
+// kanban card and a search result all open the SAME modal and a new field
+// is one edit rather than N.
+export { EntityDetailDialog } from './detail';
+export type {
+  DetailAction,
+  DetailField,
+  DetailSection,
+  EntityDetailBadge,
+  EntityDetailDialogProps,
+} from './detail';
+
 export { KanbanBoard, KanbanColumn, KanbanCard } from './kanban';
 export type {
   KanbanBoardProps,

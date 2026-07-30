@@ -1,19 +1,27 @@
 /**
  * A Funil card — one lead in the pipeline.
  *
- * Renders whichever origin the card has (a `leads` row or a `meta_ads_leads`
- * row) and deep-links back into the Leads page, which is where the lead is
- * actually managed. The card deliberately does NOT duplicate lead editing:
- * this board moves deals, the Leads module owns the lead.
+ * The card is a SUMMARY. Clicking it opens the lead's full record in the
+ * shared `LeadDetailModal` — the same modal the Leads table opens, so the
+ * two surfaces cannot drift.
+ *
+ * It used to end in a "Ver no Leads" link that navigated to
+ * `/leads?q=<contato>` and left the user to find the row themselves. That
+ * went with the modal: deep-linking into a filtered table is what you do
+ * when you have no detail view, not a feature.
+ *
+ * The click is wired by the board (`PipelineBoard onCardClick` →
+ * `KanbanCard onActivate`), which owns the drag-vs-click discrimination.
+ * Anything interactive in here must `stopPropagation` — a button click is
+ * not a card click.
  */
-import { ExternalLink, Megaphone, CheckCircle2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Megaphone, CheckCircle2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatPhone } from "@noctusai/lib/phone";
 import {
   contatoDaNegociacao,
-  linkParaLeads,
   nomeDaNegociacao,
   type NegociacaoVenda,
 } from "@/types/pipeline";
@@ -32,7 +40,11 @@ export function NegociacaoCard({
   aceitandoProposta,
 }: NegociacaoCardProps) {
   const nome = nomeDaNegociacao(negociacao);
-  const contato = contatoDaNegociacao(negociacao);
+  const contatoRaw = contatoDaNegociacao(negociacao);
+  // Through the platform's one phone seam, so the card shows the same string
+  // as the modal, the Leads table and a WhatsApp lookup. An e-mail passes
+  // through untouched — `formatPhone` returns what it cannot canonicalize.
+  const contato = contatoRaw?.includes("@") ? contatoRaw : formatPhone(contatoRaw);
   const deCampanha = !!negociacao.meta_ads_lead_id;
 
   // The accept seam is keyed on the stage's ROLE, never its name — stages are
@@ -44,7 +56,9 @@ export function NegociacaoCard({
 
   return (
     <div
-      className={`rounded-lg border bg-card p-3 shadow-sm ${isDragging ? "opacity-60" : ""}`}
+      className={`cursor-pointer rounded-lg border bg-card p-3 shadow-sm transition-colors hover:border-primary/40 ${
+        isDragging ? "opacity-60" : ""
+      }`}
       data-testid="negociacao-card"
     >
       <div className="flex items-start gap-3">
@@ -82,9 +96,10 @@ export function NegociacaoCard({
           className="mt-3 w-full"
           disabled={aceitandoProposta}
           onClick={(e) => {
-            // MUST stopPropagation: the card body carries the organ's dnd-kit
-            // drag listeners, and a click that reaches them starts a drag
-            // instead of firing this handler.
+            // MUST stopPropagation, now twice over: the card body carries the
+            // organ's dnd-kit drag listeners AND its click-to-open handler, so
+            // an un-stopped click would start a drag and open the detail modal
+            // on top of accepting the proposal.
             e.stopPropagation();
             onAceitarProposta?.(negociacao.id);
           }}
@@ -93,17 +108,6 @@ export function NegociacaoCard({
           {aceitandoProposta ? "Aceitando..." : "Aceitar Proposta"}
         </Button>
       )}
-
-      <div className="mt-3 flex items-center justify-between border-t pt-2">
-        <Link
-          to={linkParaLeads(negociacao)}
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ExternalLink className="h-3 w-3" />
-          Ver no Leads
-        </Link>
-      </div>
     </div>
   );
 }

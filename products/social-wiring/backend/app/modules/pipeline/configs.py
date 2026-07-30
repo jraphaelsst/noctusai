@@ -43,22 +43,46 @@ PIPELINE_PROCESSOS = PipelineConfig(
 # Nested joins. Both origins are projected so the board can render a card
 # without a second round trip, and so the UI can deep-link back to the Leads
 # page for whichever origin the card actually has.
+# The projections a card needs to (a) render itself and (b) open the shared
+# detail modal.
+#
+# A LEAD-origin card carries only the columns the CARD FACE shows; clicking it
+# opens `EntityDetailDialog`, which fetches the whole lead via `GET
+# /api/leads/{id}` — the exact same record the Leads table hands its own rows,
+# which is what makes the two surfaces show identical data by construction
+# rather than by two projections that have to be kept in step.
+#
+# A CAMPAIGN-origin card has no such endpoint: there IS no `leads` row for it,
+# so the modal renders straight from this projection. That is why `campanha` is
+# projected WIDER than `lead` here — it is the whole record, not a preview.
+_LEAD_CARD_FIELDS = (
+    "id, cliente_nome, contato, contato_tipo, empreendimento, regiao, "
+    "data_entrada, origem_raw"
+)
+_CAMPANHA_CARD_FIELDS = (
+    "id, full_name, email, phone, campaign_id, campaign_name, form_id, "
+    "form_name, ad_id, adset_id, platform, is_organic, created_time, answers"
+)
+_STAGE_FIELDS = "id, slug, label, cor, papel, posicao"
+
 NEGOCIACAO_SELECT = (
     "*,"
-    "lead:leads!negociacoes_venda_lead_id_fkey"
-    "(id, cliente_nome, contato, contato_tipo, empreendimento, regiao, data_entrada, origem_raw),"
-    "campanha:meta_ads_leads!negociacoes_venda_meta_ads_lead_id_fkey"
-    "(id, full_name, email, phone, campaign_id, form_id, created_time),"
-    "etapa_rel:pipeline_stages!negociacoes_venda_etapa_id_fkey"
-    "(id, slug, label, cor, papel, posicao)"
+    f"lead:leads!negociacoes_venda_lead_id_fkey({_LEAD_CARD_FIELDS}),"
+    f"campanha:meta_ads_leads!negociacoes_venda_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS}),"
+    f"etapa_rel:pipeline_stages!negociacoes_venda_etapa_id_fkey({_STAGE_FIELDS})"
 )
 
+# A processo card must open the SAME modal as the funil card it came from, so
+# it needs the same origin joins — one hop further out, through the negociação.
+# Without them the processo board could only offer a title, and "click the card
+# to see the lead" would be true on one board and false on the other.
 PROCESSO_SELECT = (
     "*,"
     "negociacao:negociacoes_venda!processos_venda_negociacao_venda_id_fkey"
-    "(id, titulo, valor_estimado, closed_at, lead_id, meta_ads_lead_id),"
-    "etapa_rel:pipeline_stages!processos_venda_etapa_id_fkey"
-    "(id, slug, label, cor, papel, posicao)"
+    "(id, titulo, valor_estimado, closed_at, lead_id, meta_ads_lead_id,"
+    f"lead:leads!negociacoes_venda_lead_id_fkey({_LEAD_CARD_FIELDS}),"
+    f"campanha:meta_ads_leads!negociacoes_venda_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS})),"
+    f"etapa_rel:pipeline_stages!processos_venda_etapa_id_fkey({_STAGE_FIELDS})"
 )
 
 # Whitelists mirror the frontend types. Anything not listed is stripped, so a
@@ -87,28 +111,42 @@ def processo_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
     return {k: row.get(k) for k in _PROCESSO_FIELDS if k in row}
 
 
+def _origin_haystack(row: dict) -> tuple:
+    """The searchable identity of a card, whichever origin it has."""
+    lead = row.get("lead") or {}
+    campanha = row.get("campanha") or {}
+    return (
+        lead.get("cliente_nome"), lead.get("contato"), lead.get("empreendimento"),
+        campanha.get("full_name"), campanha.get("email"), campanha.get("phone"),
+        campanha.get("campaign_name"),
+    )
+
+
 def search_negociacoes(rows: list[dict], query: str) -> list[dict]:
     """Free-text filter across whichever origin the card has."""
     q = query.lower()
 
     def matches(row: dict) -> bool:
-        lead = row.get("lead") or {}
-        campanha = row.get("campanha") or {}
-        haystack = (
-            row.get("titulo"),
-            lead.get("cliente_nome"), lead.get("contato"), lead.get("empreendimento"),
-            campanha.get("full_name"), campanha.get("email"), campanha.get("phone"),
-        )
+        haystack = (row.get("titulo"),) + _origin_haystack(row)
         return any(q in str(v or "").lower() for v in haystack)
 
     return [r for r in rows if matches(r)]
 
 
 def search_processos(rows: list[dict], query: str) -> list[dict]:
+    """Same identity fields as the funil, reached through the negociação.
+
+    Before the origin joins existed on `PROCESSO_SELECT` this could only match
+    `titulo` + `observacoes`, so searching a client's name on the Processos
+    board returned nothing while the identical search on the Funil worked —
+    the same query giving different answers on two boards showing the same
+    deals.
+    """
     q = query.lower()
 
     def matches(row: dict) -> bool:
         neg = row.get("negociacao") or {}
-        return any(q in str(v or "").lower() for v in (neg.get("titulo"), row.get("observacoes")))
+        haystack = (neg.get("titulo"), row.get("observacoes")) + _origin_haystack(neg)
+        return any(q in str(v or "").lower() for v in haystack)
 
     return [r for r in rows if matches(r)]

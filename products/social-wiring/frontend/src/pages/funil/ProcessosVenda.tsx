@@ -5,26 +5,37 @@
  * no create button, because a processo without the deal it came from has no
  * provenance.
  *
- * Stages are DB rows the user edits ("Configurar etapas"). The defaults
- * (Contrato → Onboarding → Briefing → Planejamento → Execução → Entrega →
- * Faturamento) are a first pass and are expected to be refined in the UI.
+ * Stages are DB rows the user edits ("Configurar etapas"). Since migration
+ * 037 the defaults are erp-imobiliario's, verbatim (Elaboração do Contrato →
+ * Análise das Partes → Revisão do Contrato → Assinatura → Financiamento &
+ * Escritura → Finalização → Entrega das Chaves → Nota Fiscal): the two
+ * products serve the same business, and two boards with different column
+ * names for the same deal is a reporting problem and a training problem.
  */
 import { useState } from "react";
-import { Search } from "lucide-react";
+import { Archive, ArchiveRestore, Search } from "lucide-react";
 
 import { PipelineBoard } from "@noctusai/lib/components";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LeadDetailModal } from "@/components/LeadDetailModal";
 import { useArquivarProcesso } from "@/hooks/useProcessosVenda";
 import { formatValor } from "./formatValor";
 import { processosPipeline } from "@/lib/pipelines";
 import { ProcessoCard } from "./components/ProcessoCard";
+import { origemDoProcesso, type ProcessoVenda } from "@/types/pipeline";
 
 export default function ProcessosVenda() {
   const [busca, setBusca] = useState("");
   const [incluirArquivados, setIncluirArquivados] = useState(false);
+  // The whole processo, not just its origin: unlike the Funil, this modal
+  // also offers "Arquivar", which needs the processo's own id and its
+  // current `arquivado` state to label the button.
+  const [detalhe, setDetalhe] = useState<ProcessoVenda | null>(null);
   const { mutate: arquivarProcesso } = useArquivarProcesso();
+
+  const origem = detalhe ? origemDoProcesso(detalhe) : null;
 
   return (
     <div className="container mx-auto p-4 sm:p-6">
@@ -67,13 +78,43 @@ export default function ProcessosVenda() {
             ))}
           </div>
         }
+        // Wrapped, not passed as `setDetalhe` directly: a bare setter reads a
+        // ProcessoVenda as a SetStateAction updater function.
+        onCardClick={(processo) => setDetalhe(processo)}
         renderCard={(processo, { isDragging }) => (
-          <ProcessoCard
-            processo={processo}
-            isDragging={isDragging}
-            onArquivar={arquivarProcesso}
-          />
+          <ProcessoCard processo={processo} isDragging={isDragging} />
         )}
+      />
+
+      {/*
+        The same modal the Leads table and the Funil board open — plus the
+        archive action, which moved off the card face to here.
+      */}
+      <LeadDetailModal
+        open={!!detalhe}
+        onClose={() => setDetalhe(null)}
+        leadId={origem?.leadId ?? null}
+        campanha={origem?.campanha ?? null}
+        actions={
+          detalhe
+            ? [
+                {
+                  label: detalhe.arquivado ? "Restaurar processo" : "Arquivar processo",
+                  variant: "outline",
+                  align: "start",
+                  icon: detalhe.arquivado ? (
+                    <ArchiveRestore className="mr-1 h-4 w-4" />
+                  ) : (
+                    <Archive className="mr-1 h-4 w-4" />
+                  ),
+                  onClick: () => {
+                    arquivarProcesso(detalhe.id);
+                    setDetalhe(null);
+                  },
+                },
+              ]
+            : []
+        }
       />
     </div>
   );
