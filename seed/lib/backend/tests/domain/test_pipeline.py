@@ -362,3 +362,138 @@ def test_list_stages_is_ordered_and_hides_inactive_by_default(db):
     assert [s["id"] for s in list_stages(db, FUNIL, incluir_inativas=True)] == [
         "a", "z", "b"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Deactivation is a SOFT DELETE — same invariants as the hard one
+# ---------------------------------------------------------------------------
+# The board lists only ACTIVE stages, so flipping `ativo` off is
+# indistinguishable, from the user's seat, from deleting the column: the cards
+# stop being on the board. `delete_stage` guards all three cases below;
+# `update_stage` guarded none of them, so the careful path could be bypassed by
+# editing a stage instead of deleting it.
+
+def test_deactivating_a_stage_holding_cards_is_refused(db):
+    # s2 is role-less, so the card guard is what must fire (the role guard is
+    # exercised separately below). Before this, these two cards silently
+    # vanished from the board.
+    db.set_table_data(
+        "negociacoes_venda",
+        [
+            {"id": "n1", "etapa_id": "s2", "kanban_pos": 0, "valor_estimado": 100},
+            {"id": "n2", "etapa_id": "s2", "kanban_pos": 1, "valor_estimado": 250},
+        ],
+    )
+    with pytest.raises(AppException) as exc:
+        update_stage(db, FUNIL, "s2", {"ativo": False})
+    assert "2 negociações" in str(exc.value)
+
+
+def test_the_role_guard_reads_the_STORED_stage_not_the_payload(db):
+    # Clearing the role in the same write must NOT unlock the deactivation:
+    # the payload is a request, the stored row is the fact. Same posture as
+    # `delete_stage`, which requires the role reassigned in a prior write.
+    with pytest.raises(AppException) as exc:
+        update_stage(db, FUNIL, "s3", {"ativo": False, "papel": None})
+    assert "papel" in str(exc.value)
+
+
+def test_the_refusal_names_the_stage_and_pluralises(db):
+    db.set_table_data(
+        "negociacoes_venda",
+        [{"id": "n1", "etapa_id": "s2", "kanban_pos": 0, "valor_estimado": 1}],
+    )
+    with pytest.raises(AppException) as exc:
+        update_stage(db, FUNIL, "s2", {"ativo": False})
+    message = str(exc.value)
+    assert "Visitas" in message and "1 negociação" in message
+
+
+def test_deactivating_a_role_carrying_stage_is_refused(db):
+    # Retiring "Proposta" would remove the accept seam exactly as deleting it
+    # would — features key on the ROLE, and the role does not care how the
+    # stage left the board.
+    db.set_table_data("negociacoes_venda", [])
+    with pytest.raises(AppException) as exc:
+        update_stage(db, FUNIL, "s3", {"ativo": False})
+    assert "papel" in str(exc.value)
+
+
+def test_deactivating_the_last_active_stage_is_refused(db):
+    db.set_table_data("negociacoes_venda", [])
+    db.set_table_data("pipeline_stages", [dict(DEFAULT_STAGES[0])])
+    with pytest.raises(AppException) as exc:
+        update_stage(db, FUNIL, "s1", {"ativo": False})
+    assert "pelo menos uma etapa ativa" in str(exc.value)
+
+
+def test_an_empty_roleless_stage_can_still_be_retired(db):
+    # The legitimate use: retire a stage that is already empty so its history
+    # stays readable. This is what social-wiring migration 037 did to the
+    # superseded "Qualificado" stage.
+    db.set_table_data("negociacoes_venda", [])
+    assert update_stage(db, FUNIL, "s2", {"ativo": False})["ativo"] is False
+
+
+def test_reactivating_is_never_guarded(db):
+    # Only the deactivation direction can strand a card.
+    db.set_table_data("negociacoes_venda", [])
+    update_stage(db, FUNIL, "s2", {"ativo": False})
+    assert update_stage(db, FUNIL, "s2", {"ativo": True})["ativo"] is True
+
+
+def test_orphan_cards_are_logged_by_the_board_not_just_computed(db, caplog):
+    """The net has to be WIRED. It was exported and unit-tested but called by
+    nothing, so the condition it exists to surface was in fact silent."""
+    import logging
+
+    rows = [{"id": "ghost", "etapa_id": "deleted-stage", "kanban_pos": 0}]
+    with caplog.at_level(logging.WARNING):
+        colunas = group_into_colunas(FUNIL, DEFAULT_STAGES, rows)
+
+    assert "ghost" in caplog.text
+    # ...and the board still renders. Failing it outright would turn one
+    # misplaced card into a total outage.
+    assert len(colunas) == len(DEFAULT_STAGES)
+
+
+# ---------------------------------------------------------------------------
+# pt-BR pluralisation in user-facing messages
+# ---------------------------------------------------------------------------
+# The organ appended a bare "s", so both boards told users they had
+# "2 negociaçãos". Correct for "processo", broken for the other one.
+
+@pytest.mark.parametrize(
+    "label,total,expected",
+    [
+        ("negociação", 1, "1 negociação"),
+        ("negociação", 2, "2 negociações"),
+        ("processo", 1, "1 processo"),
+        ("processo", 3, "3 processos"),
+        ("cliente", 2, "2 clientes"),
+        ("lead", 2, "2 leads"),
+        ("contrato", 0, "0 contratos"),
+    ],
+)
+def test_count_label_pluralises_pt_br(label, total, expected):
+    cfg = PipelineConfig(
+        pipeline="p", card_table="t", value_field="v",
+        entity_label=label, entity_kind="k",
+    )
+    assert cfg.count_label(total) == expected
+
+
+def test_an_explicit_plural_overrides_the_derivation():
+    cfg = PipelineConfig(
+        pipeline="p", card_table="t", value_field="v",
+        entity_label="proposta", entity_kind="k", entity_label_plural="propostas enviadas",
+    )
+    assert cfg.count_label(2) == "2 propostas enviadas"
+
+
+def test_the_delete_message_uses_it_too(db):
+    # The pre-existing bug this fixes lived in `delete_stage`, not only in the
+    # deactivation guard added alongside it.
+    with pytest.raises(AppException) as exc:
+        delete_stage(db, FUNIL, "s1")
+    assert "1 negociação" in str(exc.value) and "negociaçãos" not in str(exc.value)

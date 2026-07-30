@@ -11,9 +11,12 @@ its last card leaves is a board that reshapes itself under the user.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from .config import PipelineConfig
+
+logger = logging.getLogger(__name__)
 
 
 def stage_to_dto(stage: dict[str, Any]) -> dict[str, Any]:
@@ -48,6 +51,25 @@ def group_into_colunas(
         if bucket is not None:
             bucket.append(row)
 
+    # `orphan_cards` documented itself as making this condition "observable
+    # rather than presenting as 'a deal disappeared from the board'" — but it
+    # was exported, unit-tested, and called by NOTHING in production, so the
+    # condition was in fact silent. A net nobody wired is not a net.
+    #
+    # A WARNING, not an exception: the cards that DID resolve must still
+    # render. Failing the whole board because one card is misplaced turns a
+    # partial display problem into a total outage.
+    stranded = orphan_cards(stages, rows)
+    if stranded:
+        logger.warning(
+            "pipeline.%s: %d %s card(s) point at a stage this board does not "
+            "offer (deleted or deactivated) and are not rendered: %s",
+            cfg.pipeline,
+            len(stranded),
+            cfg.entity_label,
+            [r.get("id") for r in stranded[:20]],
+        )
+
     colunas = []
     for stage in stages:
         cards = by_stage[stage["id"]]
@@ -71,10 +93,14 @@ def orphan_cards(
 ) -> list[dict[str, Any]]:
     """Cards pointing at a stage this pipeline no longer offers.
 
-    Should always be empty: `delete_stage` reassigns cards before deleting, and
-    the backfill in migration 042 refuses to complete while any card is
-    unplaced. It is computed anyway so the condition is observable rather than
-    presenting as "a deal disappeared from the board".
+    Should always be empty: `delete_stage` reassigns cards before deleting,
+    `_guard_deactivation` refuses to retire a stage that still holds any, and
+    the backfill in migration 042 refuses to complete while a card is unplaced.
+
+    Called by `group_into_colunas` on every board render so the condition is
+    observable rather than presenting as "a deal disappeared from the board".
+    It previously was NOT — it was exported and unit-tested but wired to
+    nothing, which made this docstring's promise false in production.
     """
     known = {s["id"] for s in stages}
     return [r for r in rows if r.get("etapa_id") not in known]
