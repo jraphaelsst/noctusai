@@ -17,7 +17,9 @@
 - **`KB § CONTEXT/05-INFRASTRUCTURE.md`** → deployment + self-hosted services + the VPS fleet.
 - **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (197 tools) + Claude-side agents.
 - **`KB § INDEX.md`** → the full KB catalog; where depth lives (pull on-demand, never cover-to-cover).
-- **`MEMORY.md`** → working-agreement index (auto-loaded; one line each, expand the relevant ones).
+- **`MEMORY.md`** → working-agreement ROUTER (auto-loaded; one line per TOPIC). Open the
+  `MEMORY-<topic>.md` your task touches — they are not auto-loaded. Don't know the topic?
+  `noctus.dev.memory_search` is semantic and skips the index entirely. → `KB § PATTERNS/common/memory-index-topic-split.md`
 
 ## 2 · Universal patterns to recognize before editing anything
 

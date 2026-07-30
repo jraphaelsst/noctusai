@@ -9493,6 +9493,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/keeper-pattern-cache.md",
     "CONTEXT/PATTERNS/common/absorption-tracking.md",  # universal commons — 9th keeper-mirror cache (absorption-state ledger); methodology/cache infra, sibling of keeper-pattern-cache + scoped-auto-improvement, no single-agent ownership
     "CONTEXT/PATTERNS/common/claude-md-router-discipline.md",
+    "CONTEXT/PATTERNS/common/memory-index-topic-split.md",  # universal commons: MEMORY.md is a router of TOPICS (auto-loaded + read-capped ~24.4KB — past it recall returns NOTHING); every lens reads AND writes memory, so no single-agent ownership — sibling of claude-md-router-discipline (same principle, different always-on surface)
     "CONTEXT/PATTERNS/common/lenses-applied-trailer.md",  # universal commons: every lens/role applies
     "CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md",  # universal commons: every dispatch + inline-lens reads PROJECT.md + files notes
     "CONTEXT/PATTERNS/common/lossless-doc-refactor.md",
