@@ -8,10 +8,15 @@ server starts cleanly with no config — tools then return a typed,
 never-faked not-configured signal (gated-capability honesty) rather
 than a fabricated success.
 
-Tool surface (dotted naming, all via the n8n REST API):
+Tool surface (dotted naming, 16 tools total — see `README.md` for the
+full endpoint table):
 - n8n.workflow.list / get                      — READ-ONLY
 - n8n.workflow.activate / deactivate           — WRITE, confirm-gated (412)
+- n8n.workflow.update / create / delete        — WRITE, confirm-gated (412)
+- n8n.workflow.set_tags                        — WRITE, confirm-gated (412)
 - n8n.execution.list / get                     — READ-ONLY (failure diag)
+- n8n.execution.delete                         — WRITE, confirm-gated (412)
+- n8n.tag.list                                 — READ-ONLY
 - n8n.credential.schema                        — READ-ONLY (type discovery)
 - n8n.credential.create / delete               — WRITE, confirm-gated (412)
 - n8n.diagnostics.connection_status            — READ-ONLY, never-faked

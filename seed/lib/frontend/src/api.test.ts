@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { createApiClient, type CreateApiClientOptions } from './api';
+import { createApiClient, ApiError, type CreateApiClientOptions } from './api';
 
 function jsonResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -83,5 +83,37 @@ describe('createApiClient — onUnauthenticated on a dead session', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, { detail: 'Token ausente' }));
     const client = createApiClient({ getBaseUrl: () => 'http://x', getAuthToken: async () => null });
     await expect(client.get('/api/x')).rejects.toThrow('[401]');  // no throw from a missing callback
+  });
+});
+
+describe('ApiError — structured status', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('carries the HTTP status as a structured field, not just in the message', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(424, { error: { message: 'sem base_url' } }));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(424);           // consumers branch on this, no regex
+    expect(err.message).toBe('[424] sem base_url');  // backward-compat message shape preserved
+  });
+
+  it('preserves the [status] prefix so pre-existing message parsers keep working', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(409, { error: { message: 'nao executavel' } }));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    // the /^\[(\d+)\]/ shape products hand-rolled before .status existed
+    expect(err.message.match(/^\[(\d+)\]/)?.[1]).toBe('409');
+    expect(err.status).toBe(409);
+  });
+
+  it('reports status=null for a transport failure with no HTTP response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBeNull();          // honest "no status", never a fake 0
+    expect(err.message).not.toMatch(/^\[/); // no [status] prefix when there is none
   });
 });

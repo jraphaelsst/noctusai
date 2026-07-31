@@ -8,8 +8,10 @@ LEAF_MODULES: `workflow` (list/get/activate/deactivate/update/create/
 delete/set_tags), `execution` (history + failure diagnosis + delete),
 `tag` (tag catalog), `credential` (create/delete/schema — so workflows
 stop hard-coding secrets inline; no list/get by n8n design),
-`diagnostics` (config/reachability signal). All leaves talk to the n8n
-REST API via the single `n8n.api.request_json` HTTP seam.
+`diagnostics` (config/reachability signal). Every leaf builds its
+client through `mcp/n8n/client.get_client()` and talks to n8n via
+`noctusai_lib.integrations.n8n`'s `N8nClient` Protocol (Fake/Real,
+shared with every other seed consumer) — no connector-side HTTP.
 """
 from __future__ import annotations
 
