@@ -33,7 +33,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 
 // Mock useActiveAccount so hooks don't error on store init
 vi.mock("@/state/useActiveAccount", () => ({
-  useActiveAccountStore: vi.fn(() => null),
+  useActiveAccountId: vi.fn(() => null),
 }));
 
 // ─── UI primitive mocks ─────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Shared gate shape ───────────────────────────────────────────────────────
 
@@ -227,9 +227,11 @@ const FB_COMMENTS_KEY = (accountId: string | null, postId: string | null) =>
 
 // ─── Active-account convenience ─────────────────────────────────────────────
 
-/** Reads the shared store — call from a subtab to avoid prop-drilling. */
+/** Reads the Meta slot of the shared store — call from a subtab to avoid
+ * prop-drilling. Provider-scoped, so a YouTube or n8n selection made
+ * elsewhere can never surface here. */
 export function useActiveMetaAccountId(): string | null {
-  return useActiveAccountStore((s) => s.activeAccountId);
+  return useActiveAccountId("meta");
 }
 
 function qs(params: Record<string, string | number | boolean | null | undefined>): string {

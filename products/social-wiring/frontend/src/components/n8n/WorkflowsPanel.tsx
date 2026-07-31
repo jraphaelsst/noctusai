@@ -56,7 +56,7 @@ import {
   type N8nWorkflowOut,
 } from "@/hooks/useN8nWorkflows";
 import { useCreateFolder, useDeleteFolder, useUpdateFolder } from "@/hooks/useN8nFolders";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── id helpers ─────────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ function GenericErrorState({ message, onRetry }: { message: string; onRetry: () 
 // ─── Panel ────────────────────────────────────────────────────────────────
 
 export function WorkflowsPanel() {
-  const activeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const activeAccountId = useActiveAccountId("n8n");
   const [includeArchived, setIncludeArchived] = useState(false);
 
   const clientQuery = useN8nWorkflows({ scope: "client", includeArchived });

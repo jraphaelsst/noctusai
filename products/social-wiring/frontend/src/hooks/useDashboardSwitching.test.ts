@@ -24,10 +24,10 @@ import { useActiveAccountStore } from "@/state/useActiveAccount";
 beforeEach(() => {
   mockGet.mockReset();
   mockGet.mockResolvedValue([]);
-  useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
 });
 afterEach(() => {
-  useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
 });
 
 describe("active-account switching wires into the YT data hooks", () => {
@@ -38,14 +38,14 @@ describe("active-account switching wires into the YT data hooks", () => {
   });
 
   it("useDashboardStats threads the store's activeAccountId into the request", async () => {
-    useActiveAccountStore.setState({ activeAccountId: "acc-123" });
+    useActiveAccountStore.setState({ activeAccountIdByProvider: { youtube: "acc-123" } });
     renderHook(() => useDashboardStats());
     await waitFor(() => expect(mockGet).toHaveBeenCalled());
     expect(mockGet.mock.calls[0][0]).toContain("account_id=acc-123");
   });
 
   it("an explicit accountId arg overrides the store", async () => {
-    useActiveAccountStore.setState({ activeAccountId: "store-acc" });
+    useActiveAccountStore.setState({ activeAccountIdByProvider: { youtube: "store-acc" } });
     renderHook(() => useDashboardStats("explicit-acc"));
     await waitFor(() => expect(mockGet).toHaveBeenCalled());
     expect(mockGet.mock.calls[0][0]).toContain("account_id=explicit-acc");
@@ -53,7 +53,7 @@ describe("active-account switching wires into the YT data hooks", () => {
 
   it("useVideos threads the store's activeAccountId into the request", async () => {
     mockGet.mockResolvedValue({ items: [], next_cursor: null, total: 0 });
-    useActiveAccountStore.setState({ activeAccountId: "acc-789" });
+    useActiveAccountStore.setState({ activeAccountIdByProvider: { youtube: "acc-789" } });
     renderHook(() => useVideos());
     await waitFor(() => expect(mockGet).toHaveBeenCalled());
     expect(mockGet.mock.calls[0][0]).toContain("account_id=acc-789");

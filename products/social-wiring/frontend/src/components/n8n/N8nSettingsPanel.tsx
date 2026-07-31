@@ -27,7 +27,7 @@ import {
   useN8nTags,
   useUpdateN8nSettings,
 } from "@/hooks/useN8nSettings";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 const NEW_TAG_SENTINEL = "__new__";
 
@@ -57,7 +57,7 @@ function ReachabilityBadge({ status, reachable }: { status: string; reachable: b
 }
 
 export function N8nSettingsPanel() {
-  const activeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const activeAccountId = useActiveAccountId("n8n");
   const settingsQuery = useN8nSettings();
   const tagsQuery = useN8nTags();
   const updateSettings = useUpdateN8nSettings();

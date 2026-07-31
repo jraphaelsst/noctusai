@@ -51,7 +51,7 @@ import {
   useWhatsAppConnectionMutations,
   type WhatsAppConnectionLine,
 } from "@/hooks/useWhatsAppConnections";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Connection selector (accountSwitcher header slot) ───────────────────────
 /**
@@ -149,7 +149,7 @@ export default function WhatsAppChat() {
   const { data: connections = [], isLoading, isError } = useWhatsAppConnections();
   const { remove } = useWhatsAppConnectionMutations();
 
-  const activeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const activeAccountId = useActiveAccountId("whatsapp");
 
   const [selectedConnId, setSelectedConnId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WhatsAppConnectionLine | null>(null);

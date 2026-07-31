@@ -6,7 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 import type { N8nTagOut } from "@/hooks/useN8nWorkflows";
 
 export interface N8nSettingsOut {
@@ -27,7 +27,7 @@ const TAGS_KEY = (accountId: string | null) => ["sw", "n8n", "tags", accountId] 
 
 /** GET /api/n8n/settings?account_id= */
 export function useN8nSettings() {
-  const accountId = useActiveAccountStore((s) => s.activeAccountId);
+  const accountId = useActiveAccountId("n8n");
   return useQuery({
     queryKey: SETTINGS_KEY(accountId),
     queryFn: async (): Promise<N8nSettingsOut> => {
@@ -60,7 +60,7 @@ export interface N8nSettingsUpdateBody {
 /** PUT /api/n8n/settings */
 export function useUpdateN8nSettings() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: (body: N8nSettingsUpdateBody) => {
       return api.put<N8nSettingsOut>("/api/n8n/settings", {
@@ -80,7 +80,7 @@ export function useUpdateN8nSettings() {
 
 /** GET /api/n8n/tags?account_id= */
 export function useN8nTags() {
-  const accountId = useActiveAccountStore((s) => s.activeAccountId);
+  const accountId = useActiveAccountId("n8n");
   return useQuery({
     queryKey: TAGS_KEY(accountId),
     queryFn: async (): Promise<N8nTagOut[]> => {
@@ -96,7 +96,7 @@ export function useN8nTags() {
 /** POST /api/n8n/tags */
 export function useCreateN8nTag() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: (name: string) =>
       api.post<N8nTagOut>("/api/n8n/tags", { account_id: storeAccountId, name }),

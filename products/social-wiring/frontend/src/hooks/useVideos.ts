@@ -14,7 +14,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Types (mirror backend schemas) ────────────────────────────────────
 export type PrivacyStatus = "public" | "unlisted" | "private";
@@ -121,7 +121,7 @@ interface UseVideosOptions {
 
 export function useVideos(options: UseVideosOptions = {}) {
   const { pageSize = 50, uploadedViaApp, accountId, kind } = options;
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
   const effectiveAccountId = accountId ?? storeAccountId;
   const [items, setItems] = useState<Video[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -202,7 +202,7 @@ export interface VideoUpdateBody {
 export function useVideoSync(onComplete?: () => void) {
   const [pending, setPending] = useState(false);
   const [lastResult, setLastResult] = useState<VideoSyncResult | null>(null);
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
 
   const sync = useCallback(async () => {
     setPending(true);
@@ -242,7 +242,7 @@ export function useVideoSync(onComplete?: () => void) {
  *   updateVideo({ youtubeVideoId: "abc", body: { title: "New title" } });
  */
 export function useUpdateVideo(options?: { onSuccess?: (updated: Video) => void }) {
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
 
   return useMutation({
     mutationFn: async ({
@@ -298,7 +298,7 @@ export interface DeleteVideoOptions {
  *   deleteVideo({ youtubeVideoId: "dQw4w9WgXcQ", purgeRemote: true });
  */
 export function useDeleteVideo(options?: { onSuccess?: () => void }) {
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
 
   return useMutation({
     mutationFn: async ({ youtubeVideoId, purgeRemote = false }: DeleteVideoOptions): Promise<boolean> => {

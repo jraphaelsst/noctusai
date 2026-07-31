@@ -28,7 +28,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 afterEach(async () => {
   capturedUrls.length = 0;
   const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-  useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
   (await import("@testing-library/react")).cleanup();
   vi.clearAllMocks();
 });
@@ -51,7 +51,7 @@ async function mountHook(days = 30) {
 describe("useChannelTrend — URL construction", () => {
   it("omits account_id in URL when store is null", async () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+    useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
 
     await mountHook(30);
 
@@ -65,7 +65,10 @@ describe("useChannelTrend — URL construction", () => {
 
   it("includes account_id in URL when store has an active account", async () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountId: "acc-test-xyz", activeClientId: null });
+    useActiveAccountStore.setState({
+      activeAccountIdByProvider: { youtube: "acc-test-xyz" },
+      activeClientId: null,
+    });
 
     await mountHook(30);
 
@@ -76,7 +79,10 @@ describe("useChannelTrend — URL construction", () => {
 describe("useChannelTrend — account switching", () => {
   it("re-fetches with new account_id when store switches", async () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountId: "acc-first", activeClientId: null });
+    useActiveAccountStore.setState({
+      activeAccountIdByProvider: { youtube: "acc-first" },
+      activeClientId: null,
+    });
 
     const { renderHook, waitFor, act } = await import("@testing-library/react");
     const { useChannelTrend } = await import("./useChannelTrend");
@@ -87,7 +93,10 @@ describe("useChannelTrend — account switching", () => {
 
     // Switch account
     await act(async () => {
-      useActiveAccountStore.setState({ activeAccountId: "acc-second", activeClientId: null });
+      useActiveAccountStore.setState({
+        activeAccountIdByProvider: { youtube: "acc-second" },
+        activeClientId: null,
+      });
     });
 
     // Wait for re-fetch

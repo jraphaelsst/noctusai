@@ -22,9 +22,13 @@ vi.mock("@noctusai/seed/infra", () => ({
 }));
 
 const mockActiveAccountId = vi.hoisted(() => ({ current: "acc-123" as string | null }));
+// Provider-aware fake, mirroring the real store: the selection is keyed by
+// provider, so asking for anything other than "n8n" yields null. A hook that
+// regressed to reading another provider's slot would read null here rather
+// than silently picking up this test's id.
 vi.mock("@/state/useActiveAccount", () => ({
-  useActiveAccountStore: (selector: (s: { activeAccountId: string | null }) => unknown) =>
-    selector({ activeAccountId: mockActiveAccountId.current }),
+  useActiveAccountId: (provider: string) =>
+    provider === "n8n" ? mockActiveAccountId.current : null,
 }));
 
 vi.mock("@tanstack/react-query", () => {

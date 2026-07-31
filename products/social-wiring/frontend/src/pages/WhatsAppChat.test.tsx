@@ -51,10 +51,13 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionMutations: mockUseWhatsAppConnectionMutations,
 }));
 
+// The deep-link pre-selection is written under the "whatsapp" key (a WA
+// connection id is not an integration_accounts.id at all), so the fake
+// resolves that slot only.
 const mockActiveAccountState = { activeAccountId: null as string | null };
 vi.mock("@/state/useActiveAccount", () => ({
-  useActiveAccountStore: (selector: (s: typeof mockActiveAccountState) => unknown) =>
-    selector(mockActiveAccountState),
+  useActiveAccountId: (provider: string) =>
+    provider === "whatsapp" ? mockActiveAccountState.activeAccountId : null,
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

@@ -25,7 +25,7 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   // Reset the zustand active-account store between tests
   const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-  useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
 });
 
 // ─── Hook mocks ────────────────────────────────────────────────────────────
@@ -371,10 +371,14 @@ describe("AccountSwitcher", () => {
     expect(selects.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("account dropdown reflects activeAccountId from store", async () => {
-    // Pre-set store
+  it("account dropdown reflects this provider's selection from store", async () => {
+    // Pre-set store (the harness renders <AccountSwitcher> with no provider
+    // prop, so it reads and writes the default "youtube" slot).
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountId: "acc-1", activeClientId: null });
+    useActiveAccountStore.setState({
+      activeAccountIdByProvider: { youtube: "acc-1" },
+      activeClientId: null,
+    });
 
     const { getAllByRole } = await renderAccountSwitcher(accounts, [clientA]);
     const selects = getAllByRole("combobox");
@@ -383,9 +387,28 @@ describe("AccountSwitcher", () => {
     expect(accountSelect.value).toBe("acc-1");
   });
 
-  it("switching account updates store", async () => {
+  it("ignores a selection belonging to a different provider", async () => {
+    // A Meta selection must not render as this YouTube switcher's value —
+    // the display half of the cross-provider leak behind the live n8n 404
+    // on 2026-07-31.
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountId: null, activeClientId: null });
+    useActiveAccountStore.setState({
+      activeAccountIdByProvider: { meta: "acc-1" },
+      activeClientId: null,
+    });
+
+    const { getAllByRole } = await renderAccountSwitcher(accounts, [clientA]);
+    const selects = getAllByRole("combobox");
+    const accountSelect = selects[selects.length - 1] as HTMLSelectElement;
+    expect(accountSelect.value).toBe("");
+  });
+
+  it("switching account updates only this provider's slot", async () => {
+    const { useActiveAccountStore } = await import("@/state/useActiveAccount");
+    useActiveAccountStore.setState({
+      activeAccountIdByProvider: { n8n: "n8n-account" },
+      activeClientId: null,
+    });
 
     const { getAllByRole, fireEvent } = await renderAccountSwitcher(accounts, []);
     const selects = getAllByRole("combobox");
@@ -393,6 +416,8 @@ describe("AccountSwitcher", () => {
     fireEvent.change(accountSelect, { target: { value: "acc-2" } });
 
     const state = useActiveAccountStore.getState();
-    expect(state.activeAccountId).toBe("acc-2");
+    expect(state.activeAccountIdByProvider["youtube"]).toBe("acc-2");
+    // Picking a YouTube account leaves the n8n page pointed where it was.
+    expect(state.activeAccountIdByProvider["n8n"]).toBe("n8n-account");
   });
 });

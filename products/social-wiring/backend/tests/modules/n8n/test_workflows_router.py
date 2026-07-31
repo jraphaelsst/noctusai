@@ -58,6 +58,92 @@ class TestAccountResolution:
         assert resp.status_code == 404, resp.text
 
 
+# ─── rejection reasons reach the SERVER LOG, not only the browser ───────
+#
+# The three rejections above are deliberately indistinguishable to the
+# caller (two are the same 404 body, so an id's existence in another org
+# never leaks). That makes the log the ONLY place an operator can learn
+# which one fired. Diagnosing the live 404 on 2026-07-31 cost a manual
+# cross-reference against the accounts table for exactly this reason: the
+# request carried a `provider='meta'` id and nothing on the server said so.
+class TestResolutionFailuresAreLogged:
+    def test_unknown_account_logs_the_reason(self, n8n_env, caplog):
+        with caplog.at_level("WARNING"):
+            resp = n8n_env.client.get(
+                "/api/n8n/workflows",
+                params={
+                    "account_id": "00000000-0000-0000-0000-000000009999",
+                    "scope": "client",
+                },
+            )
+        assert resp.status_code == 404, resp.text
+        assert "no integration_accounts row" in caplog.text
+
+    def test_other_org_account_logs_both_org_ids(self, n8n_env, caplog):
+        account = make_n8n_account(n8n_env.svc, org_id=n8n_env.OTHER_ORG)
+        with caplog.at_level("WARNING"):
+            resp = n8n_env.client.get(
+                "/api/n8n/workflows",
+                params={"account_id": str(account.id), "scope": "client"},
+            )
+        assert resp.status_code == 403, resp.text
+        assert str(n8n_env.OTHER_ORG) in caplog.text
+        assert str(n8n_env.CALLER_ORG) in caplog.text
+
+    def test_wrong_provider_logs_the_offending_provider(self, n8n_env, caplog):
+        """The live 2026-07-31 shape: the FE sent another provider's
+        account id to an n8n route. The log must name that provider —
+        'account not found' alone sends the operator hunting for a
+        deleted row that was never deleted."""
+        other = n8n_env.svc.create_account(
+            org_id=n8n_env.CALLER_ORG,
+            provider="meta",
+            account_label="Meta, not n8n",
+            credential_dict={"access_token": "x"},
+        )
+        with caplog.at_level("WARNING"):
+            resp = n8n_env.client.get(
+                "/api/n8n/workflows",
+                params={"account_id": str(other.id), "scope": "client"},
+            )
+        assert resp.status_code == 404, resp.text
+        assert "'meta'" in caplog.text
+        assert "not 'n8n'" in caplog.text
+
+
+# ─── 502 upstream translation (+ its log) ───────────────────────────────
+#
+# This module's docstring has claimed "the 502 upstream-error translation"
+# as covered since the module shipped, but no test existed — and the
+# 2026-07-31 fix that made the 502 cause reachable in the log was verified
+# by hand and committed without one. Both are closed here.
+class TestUpstreamError:
+    def test_upstream_failure_is_502_and_logs_the_cause(self, n8n_env, caplog):
+        from noctusai_lib.integrations.n8n import N8nError
+
+        account = make_n8n_account(n8n_env.svc)
+
+        class _ExplodingClient:
+            async def list_workflows(self, *args, **kwargs):
+                raise N8nError("connect timeout to n8n.example.com")
+
+        # The factory hands back whatever `.client` holds, so swapping it
+        # here re-points only this test's upstream.
+        n8n_env.factory.client = _ExplodingClient()
+
+        with caplog.at_level("ERROR"):
+            resp = n8n_env.client.get(
+                "/api/n8n/workflows",
+                params={"account_id": str(account.id), "scope": "client"},
+            )
+
+        assert resp.status_code == 502, resp.text
+        # The cause must be in the LOG, not only in the response body the
+        # browser gets — that asymmetry is what made the live 502
+        # undiagnosable without lifting a session token out of a browser.
+        assert "connect timeout to n8n.example.com" in caplog.text
+
+
 # ─── 424 incomplete credential ───────────────────────────────────────────
 class TestIncompleteCredential:
     def test_missing_base_url_returns_424(self, n8n_env):

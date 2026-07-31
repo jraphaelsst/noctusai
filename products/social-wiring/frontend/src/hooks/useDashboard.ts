@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Types (mirror backend schemas) ────────────────────────────────────
 export interface KpiStats {
@@ -85,7 +85,7 @@ export function useDashboardStats(accountId?: string | null) {
   const [data, setData] = useState<KpiStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
   const effectiveAccountId = accountId ?? storeAccountId;
 
   const refresh = useCallback(async () => {
@@ -113,7 +113,7 @@ export function useDashboardStats(accountId?: string | null) {
 export function useTopVideos(limit = 5, accountId?: string | null) {
   const [data, setData] = useState<TopVideo[]>([]);
   const [loading, setLoading] = useState(true);
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
   const effectiveAccountId = accountId ?? storeAccountId;
 
   useEffect(() => {
@@ -138,7 +138,7 @@ export function useTopVideos(limit = 5, accountId?: string | null) {
 export function useRecentUploads(limit = 10, accountId?: string | null) {
   const [data, setData] = useState<RecentUpload[]>([]);
   const [loading, setLoading] = useState(true);
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
   const effectiveAccountId = accountId ?? storeAccountId;
 
   const refresh = useCallback(async () => {

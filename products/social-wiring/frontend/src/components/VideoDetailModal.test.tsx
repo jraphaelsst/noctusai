@@ -30,7 +30,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 }));
 
 vi.mock("@/state/useActiveAccount", () => ({
-  useActiveAccountStore: vi.fn(() => null),
+  useActiveAccountId: vi.fn(() => null),
 }));
 
 // ─── Hook mock ────────────────────────────────────────────────────────────────

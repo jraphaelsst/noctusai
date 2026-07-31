@@ -37,7 +37,7 @@ vi.mock("react-router-dom", () => ({
 const mockSetActiveClient = vi.fn();
 const mockSetActiveAccount = vi.fn();
 const activeAccountState = {
-  activeAccountId: null as string | null,
+  activeAccountIdByProvider: {} as Record<string, string | null>,
   activeClientId: null as string | null,
   setActiveAccount: mockSetActiveAccount,
   setActiveClient: mockSetActiveClient,
@@ -46,6 +46,8 @@ const activeAccountState = {
 vi.mock("@/state/useActiveAccount", () => ({
   useActiveAccountStore: (selector: (s: typeof activeAccountState) => unknown) =>
     selector(activeAccountState),
+  useActiveAccountId: (provider: string) =>
+    activeAccountState.activeAccountIdByProvider[provider] ?? null,
 }));
 
 // ─── Hook mocks ────────────────────────────────────────────────────────────
@@ -344,7 +346,8 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
     fireEvent.click(getByTestId("open-dashboard-acc-1"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
-    expect(mockSetActiveAccount).toHaveBeenCalledWith("acc-1");
+    // Keyed under the account's OWN provider — /youtube reads only that slot.
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("youtube", "acc-1");
     expect(mockNavigate).toHaveBeenCalledWith("/youtube");
     // The detail modal must NOT open — dashboardRoute takes the body click.
     expect(document.querySelector('[data-testid="integration-card-modal"]')).toBeNull();
@@ -361,7 +364,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
     fireEvent.click(getByTestId("open-dashboard-acc-2"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
-    expect(mockSetActiveAccount).toHaveBeenCalledWith("acc-2");
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("meta", "acc-2");
     expect(mockNavigate).toHaveBeenCalledWith("/meta");
   });
 
@@ -407,7 +410,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
     fireEvent.click(getByTestId("open-dashboard-wa-1"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
-    expect(mockSetActiveAccount).toHaveBeenCalledWith("wa-1");
+    expect(mockSetActiveAccount).toHaveBeenCalledWith("whatsapp", "wa-1");
     expect(mockNavigate).toHaveBeenCalledWith("/whatsapp-chat");
     expect(document.querySelector('[data-testid="connection-detail-dialog"]')).toBeNull();
   });

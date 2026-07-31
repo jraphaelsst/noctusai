@@ -5,12 +5,18 @@
  *   [Client dropdown] → [Account dropdown (filtered by client)] → current status badge
  *
  * Reads/writes the `useActiveAccountStore` so changes propagate to
- * Dashboard, Videos, and any other hook that reads `activeAccountId`.
+ * Dashboard, Videos, and any other hook reading this provider's selection.
+ *
+ * The selection is per-provider (see `state/useActiveAccount.ts`), so this
+ * component needs the provider SLUG — not just the display label — to read
+ * and write the right slot. Picking a YouTube account must not re-point the
+ * n8n page.
  *
  * Props:
  *   - accounts: all integration accounts for the provider (pre-fetched by parent)
  *   - clients: all clients (pre-fetched by parent)
- *   - provider: filter label shown in the account dropdown (e.g. "youtube")
+ *   - provider: provider slug the selection is keyed under (e.g. "youtube")
+ *   - providerLabel: human-readable name shown in the account dropdown
  *
  * Status badge uses `resolveStatusBadge` from @noctusai/lib for consistency.
  */
@@ -20,11 +26,13 @@ import { resolveStatusBadge } from "@noctusai/lib";
 
 import type { IntegrationAccount } from "@/hooks/useIntegrationAccounts";
 import type { Client } from "@/hooks/useClients";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId, useActiveAccountStore } from "@/state/useActiveAccount";
 
 interface AccountSwitcherProps {
   accounts: IntegrationAccount[];
   clients: Client[];
+  /** Provider slug the selection is keyed under (e.g. "youtube", "n8n"). */
+  provider?: string;
   /** Human-readable provider name used only for "All accounts" label. */
   providerLabel?: string;
   className?: string;
@@ -33,11 +41,14 @@ interface AccountSwitcherProps {
 export function AccountSwitcher({
   accounts,
   clients,
+  provider = "youtube",
   providerLabel = "YouTube",
   className = "",
 }: AccountSwitcherProps) {
-  const { activeClientId, activeAccountId, setActiveClient, setActiveAccount } =
-    useActiveAccountStore();
+  const activeClientId = useActiveAccountStore((s) => s.activeClientId);
+  const setActiveClient = useActiveAccountStore((s) => s.setActiveClient);
+  const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
+  const activeAccountId = useActiveAccountId(provider);
 
   // Accounts visible in the account dropdown: filtered by the active client
   const filteredAccounts = useMemo(() => {
@@ -104,7 +115,7 @@ export function AccountSwitcher({
           <select
             id="sw-account-select"
             value={resolvedAccountId ?? ""}
-            onChange={(e) => setActiveAccount(e.target.value || null)}
+            onChange={(e) => setActiveAccount(provider, e.target.value || null)}
             className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             aria-label={`Selecionar conta ${providerLabel}`}
             disabled={filteredAccounts.length === 0}

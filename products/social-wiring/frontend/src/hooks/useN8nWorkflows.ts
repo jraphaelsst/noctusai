@@ -26,7 +26,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 // ─── Types (mirror the FE↔BE contract verbatim) ─────────────────────────────
 
@@ -135,7 +135,7 @@ export function useN8nWorkflows(
   options: UseN8nWorkflowsOptions,
 ): UseQueryResult<N8nWorkflowListResponse, Error> {
   const { scope, includeArchived = false, accountId: accountIdOverride } = options;
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   const accountId = accountIdOverride !== undefined ? accountIdOverride : storeAccountId;
 
   return useQuery({
@@ -162,7 +162,7 @@ export function useN8nWorkflows(
  * client's tree (applies the client's n8n tag). */
 export function useAssignWorkflow() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
@@ -179,7 +179,7 @@ export function useAssignWorkflow() {
  * the workflow back to the "Sem cliente" bucket). */
 export function useUnassignWorkflow() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
@@ -204,7 +204,7 @@ export interface N8nWorkflowUpdateBody {
 /** PATCH /api/n8n/workflows/{id} */
 export function useUpdateWorkflow() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({
       workflowId,
@@ -230,7 +230,7 @@ export function useUpdateWorkflow() {
 /** DELETE /api/n8n/workflows/{id} — irreversible; caller must confirm first. */
 export function useDeleteWorkflow() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
@@ -249,7 +249,7 @@ export function useDeleteWorkflow() {
 /** POST /api/n8n/workflows/{id}/run — the caller MUST gate on `can_run`
  * before invoking (the UI never offers a clickable-looking disabled button). */
 export function useRunWorkflow() {
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({ workflowId, accountId }: { workflowId: string; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;
@@ -265,7 +265,7 @@ export function useRunWorkflow() {
 /** GET /api/n8n/workflows/{id}/executions — on-demand (enabled only while
  * the executions dialog for that workflow is open). */
 export function useWorkflowExecutions(workflowId: string | null, limit = 20) {
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useQuery({
     queryKey: EXECUTIONS_KEY(workflowId ?? "", storeAccountId),
     queryFn: async (): Promise<N8nExecutionListResponse> => {

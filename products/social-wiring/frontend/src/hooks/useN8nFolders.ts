@@ -7,7 +7,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 import type { N8nFolderOut } from "@/hooks/useN8nWorkflows";
 
 function invalidateAllWorkflowLists(qc: ReturnType<typeof useQueryClient>) {
@@ -24,7 +24,7 @@ export interface N8nFolderCreateBody {
 /** POST /api/n8n/folders */
 export function useCreateFolder() {
   const qc = useQueryClient();
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("n8n");
   return useMutation({
     mutationFn: ({ body, accountId }: { body: N8nFolderCreateBody; accountId?: string | null }) => {
       const effectiveAccountId = accountId ?? storeAccountId;

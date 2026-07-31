@@ -128,6 +128,22 @@ def resolve_n8n_account(
     narrow, ID-only probe via the ADMIN (service-role) client — bypasses
     RLS deliberately, exactly like every other admin-client call in this
     router family, and reveals nothing beyond `(id, org_id, provider)`.
+
+    Every rejection is LOGGED as well as returned. The three branches
+    below are indistinguishable from the outside — all the caller sees
+    is ``404 n8n account not found`` (deliberately: the response must
+    not leak whether an id exists in another org) — so without a log
+    line the operator cannot tell "the FE sent a stale id" from "the FE
+    sent another provider's id" from "the row was deleted", and those
+    have three different fixes. Diagnosing the live 404 on 2026-07-31
+    cost a manual DB cross-reference for exactly this reason: the
+    account id in the request belonged to ``provider='meta'``, and
+    nothing on the server said so. Same lesson as ``translate_n8n_error``
+    one layer down — the detail string reaching the browser is not an
+    operator-visible diagnosis.
+
+    WARNING, not exception(): these are client errors with a fully
+    known cause, not crashes. There is no traceback worth carrying.
     """
     account = svc.get_account(account_id, org_id)
     if account is not None and account.provider == _PROVIDER:
@@ -142,13 +158,34 @@ def resolve_n8n_account(
     )
     rows = resp.data or []
     if not rows:
+        logger.warning(
+            "n8n account resolve failed: no integration_accounts row with id=%s "
+            "(org=%s) — stale or deleted account id from the caller",
+            account_id,
+            org_id,
+        )
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="n8n account not found")
     if str(rows[0].get("org_id")) != str(org_id):
+        logger.warning(
+            "n8n account resolve rejected: account id=%s belongs to org=%s, "
+            "caller org=%s",
+            account_id,
+            rows[0].get("org_id"),
+            org_id,
+        )
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail="account does not belong to your organization",
         )
     # Belongs to the caller's org but isn't an n8n account (wrong provider).
+    logger.warning(
+        "n8n account resolve failed: account id=%s (org=%s) is provider=%r, not %r "
+        "— the caller sent another provider's account id to an n8n route",
+        account_id,
+        org_id,
+        rows[0].get("provider"),
+        _PROVIDER,
+    )
     raise HTTPException(status.HTTP_404_NOT_FOUND, detail="n8n account not found")
 
 

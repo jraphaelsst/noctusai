@@ -709,7 +709,10 @@ function ContasTab({ client }: { client: Client }) {
     const dashboardRoute = getProviderConfig(acc.provider)?.dashboardRoute;
     if (dashboardRoute) {
       setActiveClient(client.id);
-      setActiveAccount(acc.id);
+      // Key the pre-selection under the account's OWN provider — the page we
+      // are about to navigate to reads only its own slot. (setActiveClient
+      // clears every slot first, so the order here matters.)
+      setActiveAccount(acc.provider, acc.id);
       navigate(dashboardRoute);
     } else {
       setOpenIntAccount(acc);
@@ -745,7 +748,10 @@ function ContasTab({ client }: { client: Client }) {
     const dashboardRoute = getProviderConfig("whatsapp")?.dashboardRoute;
     if (dashboardRoute) {
       setActiveClient(client.id);
-      setActiveAccount(line.id);
+      // A WhatsApp connection id is not an integration_accounts.id at all —
+      // it keys `whatsapp` explicitly so WhatsAppChat can find it and no
+      // other page can mistake it for one of theirs.
+      setActiveAccount("whatsapp", line.id);
       navigate(dashboardRoute);
     } else {
       setOpenWaLine(line);

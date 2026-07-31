@@ -47,9 +47,11 @@ vi.mock("sonner", () => ({
   },
 }));
 
+// Provider-aware fake, mirroring the real store: these hooks are YouTube's,
+// so only the "youtube" slot resolves.
 vi.mock("@/state/useActiveAccount", () => ({
-  useActiveAccountStore: vi.fn((selector: (s: any) => any) =>
-    selector({ activeAccountId: mockActiveAccountId.value }),
+  useActiveAccountId: vi.fn((provider: string) =>
+    provider === "youtube" ? mockActiveAccountId.value : null,
   ),
 }));
 

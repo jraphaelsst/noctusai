@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@noctusai/seed/infra";
-import { useActiveAccountStore } from "@/state/useActiveAccount";
+import { useActiveAccountId } from "@/state/useActiveAccount";
 
 export interface VideoTrendPoint {
   snapshot_date: string;
@@ -23,7 +23,7 @@ export interface VideoTrendResponse {
 }
 
 export function useVideoTrend(videoId: string | null, accountId?: string | null) {
-  const storeAccountId = useActiveAccountStore((s) => s.activeAccountId);
+  const storeAccountId = useActiveAccountId("youtube");
   const effectiveAccountId = accountId ?? storeAccountId;
 
   const [data, setData] = useState<VideoTrendPoint[]>([]);
