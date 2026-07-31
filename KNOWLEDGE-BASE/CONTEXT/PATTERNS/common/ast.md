@@ -229,14 +229,15 @@ Code: AST. Prose: regex. The rule survives the inevitable edge cases — JSON co
 
 The MCP toolkit at `mcp/noctusai/` already ships AST-based tools and is the home of more AST tooling per `projects/mcp-server-expansion/PROJECT.md`:
 
-- **`mcp/noctusai/tools/outline_python.py`** — libcst-based structural outline (top-level symbols, signatures) for narrow-read-first discipline (`KB § PATTERNS/common/agent-reading-discipline.md`).
-- **`mcp/noctusai/tools/outline_typescript.py`** — ts-morph-based structural outline.
+- **`mcp/noctusai/tools/noctus/dev/outline_python.py`** — libcst-based structural outline (top-level symbols, signatures) for narrow-read-first discipline (`KB § PATTERNS/common/agent-reading-discipline.md`).
+- **`mcp/noctusai/tools/noctus/dev/outline_typescript.py`** — **regex-based** structural outline (read-only; a deliberate deviation documented in-module — the narrow-read use case only needs `{name, kind, line, end_line}`, not type-aware semantics, so a Node-spawn/Compiler-API cost wasn't worth it for reads). Do not confuse this with the ts-morph tool below — until `ts_ast_edit.py` shipped (2026-07-23, Finding #7 / `feedback_ast_first_rule_was_unenforced`), no ts-morph tooling existed anywhere in the repo, which meant the AST-first rule was unenforceable for TypeScript *writes* — regex-outline-for-reads happened to be safe, but every actual TS edit went through string-replace by accident, not by a real AST seam.
+- **`mcp/noctusai/tools/noctus/dev/ts_ast_edit.py`** (+ `mcp/noctusai/node/ts_ast_edit.mjs`) — the first **write-side** ts-morph tool: `noctus.dev.ts_ast_rename_symbol` does a real scope-aware rename of a top-level TS/TSX declaration and its references, leaving same-spelled string literals/comments untouched. ts-morph lives in a dedicated `mcp/noctusai/node/` helper dir (its own `package.json`, gitignored `node_modules/`) — not a product's `frontend/`, not `templates/product-seed/`.
 - **`noctusai_*` recurrence scans** (`refs`, `recurrence`, `service_line_recurrence`, `cross_product_helpers`) — these are intentionally string-line-based per `KB § 06-AGENTS.md`; the AST counterparts for code edits land in the broaden project.
 - **`noctus.dev.review_session`** *(detector ship 2026-05-03 — `session-review-baseline`)* — session-axis enforcement of this rule. Walks one Claude Code JSONL transcript and flags any `Bash` command that mutates a `.py` / `.ts` / `.tsx` file via `sed -i*` / `perl -*i*` / `s/.../` body / `> *.{py,ts,tsx}` redirect when the next touch on that path is an `Edit` or `Write`. The mutation predicate scopes around read-only `sed -n '…p'` inspection (which IS allowed). See `KB § 06-AGENTS.md § Session-axis review`.
 
 When you need to do a rename / find-callers / codemod across the repo, prefer:
 
-1. The MCP tool if it exists for the action (`outline_*` for read; future `ast_python` / `ast_typescript` rename/codemod for write — to be added per `projects/mcp-server-expansion/`).
+1. The MCP tool if it exists for the action (`outline_*` for read; `noctus.dev.ts_ast_rename_symbol` for a TS symbol rename; further `ast_python` / `ast_typescript` codemod ops land incrementally per `projects/mcp-server-expansion/`).
 2. Direct libcst / ts-morph from a one-shot script in `scripts/codemods/` if no MCP tool yet covers your action.
 3. Never sed/regex/awk on `.py` / `.ts` / `.tsx` source.
 

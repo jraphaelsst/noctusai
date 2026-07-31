@@ -122,6 +122,126 @@ class TestLegARouteExistence:
         assert result["missing_routes"] == [], result["missing_routes"]
 
 
+class TestLegADynamicPaths:
+    """Finding #6 — scan_wiring's blind spot on dynamically-built FE paths.
+
+    The old `_FE_API_CALL_RE` only captured the FIRST quoted/template-literal
+    token immediately after `api.<method>(` — a `+`-concatenation like
+    `'/api/n8n/folders/' + id` matched only the literal `'/api/n8n/folders/'`
+    piece, silently dropping the ` + id`. That shrinks the segment count (4
+    vs. the backend's 5-segment `/api/n8n/folders/{id}`), so `_route_matches`
+    (which compares segment-count) reports a FALSE POSITIVE: a route that
+    genuinely exists gets flagged `missing_routes` (a 404-class false alarm).
+    A fully-dynamic base (`api.post(basePath + '/run')` / `api.get(url)`)
+    went the other way — the regex never matched at all, so the call was
+    completely invisible (silent-drop, no finding of ANY kind).
+    """
+
+    _ROUTER_PY = (
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/{id}')\n"
+        "def get_folder(id: str):\n    return {}\n"
+    )
+    _MAIN_PY = (
+        "from fastapi import FastAPI\n"
+        "from app.routers import n8n\n"
+        "app = FastAPI()\n"
+        "app.include_router(n8n.router, prefix='/api/n8n/folders')\n"
+    )
+
+    def test_string_concat_matching_route_not_flagged(self, tmp_path: Path):
+        """THE repro: `'/api/n8n/folders/' + id` DOES match the backend's
+        `GET /{id}` (mounted under `/api/n8n/folders`) — must NOT be flagged.
+        """
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": (
+                "await api.get('/api/n8n/folders/' + id);\n"
+            ),
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+        assert result["indeterminate_routes"] == [], result["indeterminate_routes"]
+        assert result["fe_calls_found"] == 1
+
+    def test_string_concat_no_matching_route_still_flagged(self, tmp_path: Path):
+        # True positive preserved: concatenation to a path with NO backend
+        # route is still a genuine 404-class miss.
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": (
+                "await api.get('/api/n8n/subscriptions/' + id);\n"
+            ),
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert len(result["missing_routes"]) == 1
+        assert "subscriptions" in result["missing_routes"][0]["detail"]
+
+    def test_mid_segment_concat_fragment_matches_like_template_literal(self, tmp_path: Path):
+        # `'/api/n8n/folders/wf-' + id` (no trailing "/" before the var) is a
+        # mid-segment fragment merge — normalizes the SAME conservative way a
+        # `` `wf-${id}` `` template-literal fragment already does (whole
+        # segment treated as dynamic).
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": (
+                "await api.get('/api/n8n/folders/wf-' + id);\n"
+            ),
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+
+    def test_fully_dynamic_base_concat_marked_indeterminate(self, tmp_path: Path):
+        # `basePath + '/run'` — the FIRST term is itself dynamic, so the
+        # segment count is statically unknowable. Must NOT silently vanish
+        # (old behaviour: fe_calls_found stayed 0, zero findings of any
+        # kind) and must NOT be asserted as "missing" (we can't prove that
+        # either) — it comes back as an explicit indeterminate finding.
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": (
+                "await api.post(basePath + '/run');\n"
+            ),
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+        assert len(result["indeterminate_routes"]) == 1
+        finding = result["indeterminate_routes"][0]
+        assert finding["line"] == 1
+        assert finding["file"].endswith("Folders.tsx")
+
+    def test_bare_variable_arg_marked_indeterminate(self, tmp_path: Path):
+        # `api.get(url)` — no quotes at all; the old regex never matched
+        # this call (invisible). Now surfaced as indeterminate.
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": "await api.get(url);\n",
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert result["missing_routes"] == []
+        assert len(result["indeterminate_routes"]) == 1
+
+    def test_template_literal_base_variable_marked_indeterminate(self, tmp_path: Path):
+        # `` `${basePath}/run` `` — template literal whose FIRST segment is
+        # entirely dynamic; same unknowable-prefix class as concatenation.
+        repo = _mk_product(tmp_path, "social-wiring", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/n8n.py": self._ROUTER_PY,
+            "frontend/src/pages/Folders.tsx": (
+                "await api.get(`${basePath}/run`);\n"
+            ),
+        })
+        result = scan_wiring("social-wiring", repo_root=repo)
+        assert result["missing_routes"] == []
+        assert len(result["indeterminate_routes"]) == 1
+
+
 class TestNormalizePath:
     def test_dynamic_segments_normalize_equal(self):
         assert _normalize_path("/api/plans/${planId}") == _normalize_path("/api/plans/{plan_id}")

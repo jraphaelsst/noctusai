@@ -938,6 +938,162 @@ class TestCheckNoSelfMonkeypatch:
 
 
 # ---------------------------------------------------------------------------
+# `check_no_self_monkeypatch` — connector-namespace blind spot (Finding #10,
+# found `mcp/n8n/build`). Pre-fix, NO `mcp/<vendor>` connector namespace
+# (`n8n.*`, `waha.*`, `github.*`, ...) was ever "ours" — a test could
+# monkeypatch a connector's own business logic (e.g.
+# `n8n.tools.credential.credential_create`, bypassing the real adapter
+# seam) and the detector stayed silent. These pin the fix: the connector
+# namespace IS "ours" (patches to connector business logic flag), while the
+# per-connector HTTP/subprocess/env-config BOUNDARY accessors stay allowed
+# (the sanctioned "mock the network, not our logic" pattern every connector
+# docstring documents) — and the `mcp/supabase` / `mcp/google` collision
+# with the real external SDK top-level names is deliberately NOT swept in.
+# ---------------------------------------------------------------------------
+
+class TestCheckNoSelfMonkeypatchConnectorNamespaces:
+    def _mk_connector_repo(
+        self, vendor: str, content: str, filename: str = "test_x.py"
+    ) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="self_patch_connector_"))
+        (tmp / "mcp" / vendor).mkdir(parents=True)
+        (tmp / "mcp" / vendor / "__init__.py").write_text("")
+        (tmp / "mcp" / vendor / "tests").mkdir(parents=True)
+        (tmp / "mcp" / vendor / "tests" / filename).write_text(content)
+        return tmp
+
+    def test_flags_connector_business_logic_string_patch(self):
+        """Reproduces the blind spot: `n8n.tools.credential.credential_create`
+        is the connector's own tool implementation (not the HTTP boundary) —
+        patching it defeats the Fake/Real seam and must be flagged."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('n8n.tools.credential.credential_create'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("n8n", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert len(issues) == 1, f"connector business-logic patch must flag, got: {issues}"
+        assert "n8n.tools.credential.credential_create" in issues[0]["issue"]
+
+    def test_flags_connector_business_logic_monkeypatch_setattr_via_import_map(self):
+        """Same gap via `monkeypatch.setattr` + a local import alias — the
+        import-map resolution must also see the connector namespace as ours."""
+        content = (
+            "from n8n.tools import credential\n\n"
+            "def test_thing(monkeypatch):\n"
+            "    monkeypatch.setattr(credential, 'credential_create', lambda *a, **k: None)\n"
+        )
+        repo = self._mk_connector_repo("n8n", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert len(issues) == 1, f"must flag via import-map resolution too, got: {issues}"
+        assert "n8n.tools.credential.credential_create" in issues[0]["issue"]
+
+    def test_allows_n8n_http_boundary_request_json(self):
+        """`n8n.api.request_json` is the connector's single HTTP boundary
+        (every `mcp/<vendor>/api.py` docstring sanctions mocking it) — must
+        stay allowed even though `n8n.*` is now "ours"."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('n8n.api.request_json'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("n8n", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], f"request_json boundary patch should be allowed, got: {issues}"
+
+    def test_allows_cloudflare_request_envelope_boundary(self):
+        """`request_envelope` is cloudflare's sibling HTTP boundary (the
+        pagination-envelope variant of `request_json`)."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('cloudflare.api.request_envelope'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("cloudflare", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], f"request_envelope boundary patch should be allowed, got: {issues}"
+
+    def test_allows_connector_get_settings_boundary(self):
+        """`get_settings()` is the shared `_kit.settings.make_get_settings`
+        env/.env reader every connector's tools module imports — no business
+        logic, same category as `get_whatsapp_config_from_env`."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('waha.tools.message.get_settings'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("waha", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], f"get_settings boundary patch should be allowed, got: {issues}"
+
+    def test_allows_github_subprocess_boundary_run_gh(self):
+        """`github.gh.run_gh` is the GitHub connector's subprocess boundary
+        (shells out to the `gh` CLI instead of HTTP) — same sanctioned
+        external-service-mock category as `request_json`."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('github.gh.run_gh'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("github", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], f"run_gh boundary patch should be allowed, got: {issues}"
+
+    def test_allows_shared_kit_transport_urlopen_boundary(self):
+        """`_kit.transport.urlopen` — the raw stdlib `urlopen` call site one
+        level below the per-vendor `request_json` (patched directly by
+        `mcp/hostinger` + `mcp/supabase` test_smoke.py)."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('_kit.transport.urlopen'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("_kit", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], f"_kit.transport.urlopen boundary patch should be allowed, got: {issues}"
+
+    def test_does_not_treat_supabase_connector_dir_as_ours(self):
+        """`mcp/supabase` shares its top-level import name with the REAL
+        `supabase-py` SDK (already in `_EXTERNAL_LIB_NAMES`) — deliberately
+        excluded from the "ours" prefix set to avoid misrouting genuine
+        external-SDK patches into false-positive self-monkeypatch flags.
+        Pins the exclusion so a future edit doesn't silently widen the
+        connector-prefix discovery to a colliding name."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('supabase.some_internal_helper'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("supabase", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert issues == [], (
+            f"mcp/supabase must NOT be classified 'ours' (collides with the "
+            f"real supabase-py SDK import name), got: {issues}"
+        )
+
+    def test_new_connector_directory_is_picked_up_without_code_change(self):
+        """Derived-not-hand-maintained: a brand-new `mcp/<vendor>/` package
+        (no code change to the detector) is immediately covered."""
+        content = (
+            "from unittest.mock import patch\n\n"
+            "def test_thing():\n"
+            "    with patch('brandnewvendor.tools.widget.do_the_thing'):\n"
+            "        pass\n"
+        )
+        repo = self._mk_connector_repo("brandnewvendor", content)
+        issues = check_no_self_monkeypatch(repo)
+        assert len(issues) == 1, f"newly-added connector dir must be covered, got: {issues}"
+
+
+# ---------------------------------------------------------------------------
 # `check_silent_errors` — silent-failure detector
 # ---------------------------------------------------------------------------
 
