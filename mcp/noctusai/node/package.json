@@ -8,6 +8,6 @@
     "ts-ast-edit": "node ts_ast_edit.mjs"
   },
   "dependencies": {
-    "ts-morph": "^24.0.0"
+    "ts-morph": "^28.0.0"
   }
 }
