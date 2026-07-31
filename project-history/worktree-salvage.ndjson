@@ -323,3 +323,4 @@
 {"ts": "2026-07-29", "event": "worktree-sweep", "path": ".claude/worktrees/ig-connect-ui-and-erp-slice2", "branch": "feat/ig-connect-ui-and-erp-slice2", "sha": "47d367df4eb7d3becacee6494ab5c1c2c547fa5e", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-07-29T22:17:16.030151+00:00", "kind": "salvage-before-delete:branch", "target": "feat/erp-be-mount-auth-router", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-07-29", "event": "worktree-sweep", "path": ".claude/worktrees/erp-realdb-harness", "branch": "feat/erp-realdb-harness", "sha": "167d7ebf34a4850ed410669b87c48b75783eaf1b", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-07-31", "event": "worktree-sweep", "path": ".claude/worktrees/provider-scoped-active-account", "branch": "feat/provider-scoped-active-account", "sha": "9f0f19046afcf116724991fc2c0ce4c85aa7cb96", "reason": "task_branch cleanup (learn-before-delete)"}
