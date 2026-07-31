@@ -21,6 +21,8 @@ Every n8n route needs the same three things:
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Any, Optional
 from uuid import UUID
 
@@ -41,6 +43,8 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
     build_integration_account_service,
 )
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
 _ACCOUNTS_TABLE = "integration_accounts"
@@ -215,6 +219,17 @@ def translate_n8n_error(exc: N8nError) -> HTTPException:
         return HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
     if isinstance(exc, N8nNotFoundError):
         return HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    # LOG the cause, do not merely return it. The detail string reaches the
+    # browser, but nothing reached the server log — so a 502 was diagnosable
+    # only by someone holding a session token and reading a response body.
+    # Debugging a live upstream failure on 2026-07-31 stalled on exactly that:
+    # the access log showed `status_code=502` and no reason anywhere.
+    #
+    # `exception()` (not `error()`) so the adapter's traceback rides along —
+    # "n8n error: " on its own does not distinguish a DNS failure from a 401
+    # from a TLS mismatch, and those have different fixes.
+    logger.exception("n8n upstream call failed (%s): %s", type(exc).__name__, exc)
     return HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"n8n error: {exc}")
 
 
