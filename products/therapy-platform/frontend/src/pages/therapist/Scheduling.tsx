@@ -135,11 +135,24 @@ export default function Scheduling() {
         </label>
       </div>
 
+      {/* Gate BOTH branches on isPending || isFetching, never isLoading.
+          TanStack Query v5: isLoading === isPending && isFetching, so it is
+          FALSE during a background refetch — e.g. when the window dates or
+          patient id change and this query refetches with data already in
+          cache. On isLoading alone the spinner disappears AND the
+          empty-state opens while real slots are still in flight, telling the
+          therapist "nenhum horário disponível" over a window that has some.
+          Per `KB § PATTERNS/frontend/lying-loading-state.md`; keeper
+          `check_lying_loading_state`. */}
       <div data-testid="slot-list">
-        {candidatesQuery.isLoading && <p>Carregando horários…</p>}
-        {!candidatesQuery.isLoading && slots.length === 0 && (
-          <p>Nenhum horário disponível na janela selecionada.</p>
+        {(candidatesQuery.isPending || candidatesQuery.isFetching) && (
+          <p>Carregando horários…</p>
         )}
+        {!candidatesQuery.isPending &&
+          !candidatesQuery.isFetching &&
+          slots.length === 0 && (
+            <p>Nenhum horário disponível na janela selecionada.</p>
+          )}
         <ul className="grid gap-2 md:grid-cols-2">
           {slots.map((s, idx) => {
             const start = new Date(s.start_at);
