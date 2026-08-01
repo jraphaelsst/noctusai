@@ -331,3 +331,4 @@
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-card-reshape", "branch": "feat/n8n-card-reshape", "sha": "06388a4deff123ea4cd7417f4060a5fb70d15913", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-integration", "branch": "feat/n8n-integration", "sha": "6af5941ef1390b5fb8f6beb874f70c5794505e06", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/compliance-connector-monkeypatch", "branch": "feat/compliance-connector-monkeypatch", "sha": "9f82568f2d7abfe8df6f1777a3d31529720bdf02", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/mcp-hardening-batch", "branch": "feat/mcp-hardening-batch", "sha": "ef4e76f63abf35dabf0d23b2da2a88e226be9998", "reason": "task_branch cleanup (learn-before-delete)"}
