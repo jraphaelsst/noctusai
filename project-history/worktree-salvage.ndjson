@@ -327,3 +327,4 @@
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-workflows-page", "branch": "feat/n8n-workflows-page", "sha": "27002f70e50e5fbebd9fbad595a6be35fa273efa", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-seed-adapter", "branch": "feat/n8n-seed-adapter", "sha": "85d847ee851fcc9ece7f1f6a2ec88b4e7b35f2e7", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-page-ui", "branch": "feat/n8n-page-ui", "sha": "3ac27a7904eb141e2b5da102e10025acd29c7c8d", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-01", "event": "worktree-sweep", "path": ".claude/worktrees/n8n-folders-migration", "branch": "feat/n8n-folders-migration", "sha": "4684d9ec676b9b5e2823b4c8eb7fd8e3c2796747", "reason": "task_branch cleanup (learn-before-delete)"}
