@@ -72,6 +72,36 @@ interface ChatAsyncResult<T> {
   isError: boolean;
 }
 
+/**
+ * Older-page loader for the thread pane.
+ *
+ * Threads are windowed: the adapter returns the newest N messages and this is
+ * how the organ asks for what came before. Without it a conversation is
+ * permanently truncated at whatever the first page held.
+ */
+export interface ChatLoadMoreResult {
+  /** False once the adapter knows there is nothing older. */
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
+}
+
+/**
+ * Read-state seam.
+ *
+ * Kept OPTIONAL so a provider that has no concept of read receipts (or simply
+ * has not implemented one yet) drops it entirely and the organ renders exactly
+ * as before — same reason `useAutoReply` is optional.
+ *
+ * ⚠️ `markRead` may have side effects OUTSIDE this app: the WhatsApp adapter
+ * marks the conversation read on the user's real device. Providers must
+ * document that in their own adapter; the organ only guarantees it is called
+ * once per opened thread, never speculatively on hover or prefetch.
+ */
+export interface ChatReadStateResult {
+  markRead: (threadId: string) => void;
+}
+
 export interface ChatSendResult {
   mutateAsync: (input: { text: string }) => Promise<unknown>;
   isPending: boolean;
@@ -97,6 +127,16 @@ export interface ChatWindowAdapter {
   useSend: (scopeId: string | null, threadId: string | null) => ChatSendResult;
   /** Optional AI auto-reply toggle — omit entirely to hide the control (e.g. Instagram DMs). */
   useAutoReply?: (scopeId: string | null) => ChatAutoReplyResult;
+  /**
+   * Optional read-state. Omit ⇒ the organ never marks anything read and the
+   * unread badge is display-only (the pre-2026-08 behaviour).
+   */
+  useReadState?: (scopeId: string | null) => ChatReadStateResult;
+  /**
+   * Optional older-message pagination for the open thread. Omit ⇒ the thread
+   * shows only what `useMessages` returned, with no "load older" affordance.
+   */
+  useLoadMore?: (scopeId: string | null, threadId: string | null) => ChatLoadMoreResult;
 }
 
 export interface ChatWindowProps {
@@ -290,6 +330,21 @@ function ThreadPanel({
     adapter.useMessages(scopeId, thread.id);
   const sendMutation = adapter.useSend(scopeId, thread.id);
   const autoReply = adapter.useAutoReply?.(scopeId);
+  const readState = adapter.useReadState?.(scopeId);
+  const pagination = adapter.useLoadMore?.(scopeId, thread.id);
+
+  // Mark read exactly once per opened thread. ChatWindow mounts ThreadPanel
+  // with key={thread.id}, so this effect runs on open and never again for the
+  // same thread — which matters because the WhatsApp adapter's markRead also
+  // marks the conversation read on the user's real phone. Re-firing it on
+  // every render or every new message would be a stream of side effects on a
+  // live account.
+  const markReadRef = useRef(readState?.markRead);
+  markReadRef.current = readState?.markRead;
+  useEffect(() => {
+    if (!thread.id) return;
+    markReadRef.current?.(thread.id);
+  }, [thread.id]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -366,10 +421,36 @@ function ThreadPanel({
           <MessagesSkeleton />
         ) : errorMsgs ? (
           <ErrorState label="Erro ao carregar mensagens." fullHeight />
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && !pagination?.hasMore ? (
+          // Only a thread with nothing loaded AND nothing older is genuinely
+          // empty. If the newest page came back empty but the cursor says more
+          // exists, falling through to the empty state would strand the user:
+          // "Nenhuma mensagem ainda" with no way to reach the messages that
+          // do exist.
           <EmptyState icon={<MessageCircle className="h-8 w-8 opacity-30" />} label="Nenhuma mensagem ainda." fullHeight />
         ) : (
           <div className="p-3" data-testid="chat-messages">
+            {pagination?.hasMore && (
+              <div className="mb-3 flex justify-center">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={pagination.loadMore}
+                  disabled={pagination.isLoadingMore}
+                  data-testid="chat-load-more"
+                >
+                  {pagination.isLoadingMore ? (
+                    <>
+                      <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                      Carregando...
+                    </>
+                  ) : (
+                    "Carregar mensagens anteriores"
+                  )}
+                </Button>
+              </div>
+            )}
             {messages.map((m) => (
               <MessageBubble key={m.id} message={m} />
             ))}

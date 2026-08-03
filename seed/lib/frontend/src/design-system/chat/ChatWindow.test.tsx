@@ -218,3 +218,104 @@ describe("ChatWindow — auto-reply toggle", () => {
     expect(screen.queryByTestId("chat-auto-reply-toggle")).toBeNull();
   });
 });
+
+// ─── Read-state + pagination seams (added 2026-08 with the realtime inbox) ──
+describe("ChatWindow — read-state seam", () => {
+  it("marks a thread read exactly once when it is opened", async () => {
+    const markRead = vi.fn();
+    const adapter = makeAdapter({ useReadState: () => ({ markRead }) });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith("t1"));
+    // 🔴 The WhatsApp adapter's markRead marks the chat read on the user's REAL
+    // phone. Firing it more than once per open would be a stream of side
+    // effects on a live account, so the count is the assertion, not the call.
+    expect(markRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the newly-opened thread read when switching threads", async () => {
+    const markRead = vi.fn();
+    const adapter = makeAdapter({ useReadState: () => ({ markRead }) });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith("t1"));
+
+    fireEvent.click(screen.getByText("Maria Silva"));
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith("t2"));
+    expect(markRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("never marks anything read when the adapter omits useReadState", async () => {
+    // Providers without read receipts (e.g. IG DMs) must render unchanged.
+    const adapter = makeAdapter({
+      useMessages: () => ({ data: [makeMessage("m1", "inbound", "oi")], isLoading: false, isError: false }),
+    });
+    expect(adapter.useReadState).toBeUndefined();
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+    await waitFor(() => expect(screen.getByTestId("chat-messages")).toBeInTheDocument());
+  });
+});
+
+describe("ChatWindow — load-more seam", () => {
+  it("renders the load-older control and wires it when hasMore", async () => {
+    const loadMore = vi.fn();
+    const adapter = makeAdapter({
+      useLoadMore: () => ({ hasMore: true, isLoadingMore: false, loadMore }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const btn = await screen.findByTestId("chat-load-more");
+    fireEvent.click(btn);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the control once there is nothing older", async () => {
+    const adapter = makeAdapter({
+      useMessages: () => ({ data: [makeMessage("m1", "inbound", "oi")], isLoading: false, isError: false }),
+      useLoadMore: () => ({ hasMore: false, isLoadingMore: false, loadMore: vi.fn() }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    await waitFor(() => expect(screen.getByTestId("chat-messages")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-load-more")).not.toBeInTheDocument();
+  });
+
+  it("omitting useLoadMore leaves the thread with no pagination affordance", async () => {
+    const adapter = makeAdapter({
+      useMessages: () => ({ data: [makeMessage("m1", "inbound", "oi")], isLoading: false, isError: false }),
+    });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    await waitFor(() => expect(screen.getByTestId("chat-messages")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-load-more")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatWindow — empty thread with older history", () => {
+  it("still offers load-older when the newest page is empty but more exists", async () => {
+    // Regression pin: this combination previously fell through to the empty
+    // state, stranding the user with no way to reach messages that do exist.
+    const loadMore = vi.fn();
+    const adapter = makeAdapter({
+      useMessages: () => ({ data: [], isLoading: false, isError: false }),
+      useLoadMore: () => ({ hasMore: true, isLoadingMore: false, loadMore }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const btn = await screen.findByTestId("chat-load-more");
+    fireEvent.click(btn);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+});
