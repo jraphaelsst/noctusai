@@ -6,7 +6,15 @@
 > this checklist is its execution surface). Full rationale for every decision lives there and
 > in the approved plan; this file is the *what shipped* view.
 
-**Status:** 🟡 in progress · started 2026-08-03 · branch `feat/meta-leadgen-webhook`
+**Status:** 🟢 **all buildable slices complete** · 2026-08-03 · branch `feat/meta-leadgen-webhook`
+
+**What remains is not code.** Every open box below is one of: (a) a **live verification** that
+needs a prod deploy, (b) an **operator step** in the Meta App Dashboard that no code can perform,
+(c) **Slice 5b**, suspended by design until the peer's seed realtime work is assessed, or
+(d) **Slice 7**, conditional on whether off-platform lead exports exist.
+
+**Suite state at the tip:** social-wiring **1565** · erp-imobiliario **2161** · seed lib **2545** ·
+frontend **483** — all by exit code, all on the merged tip (per-branch green ≠ integration green).
 
 **Prod posture (operator, 2026-08-03):** ❌ **no prod deploy until everything is built and
 validated.** Slice 0 is on `dev` only. One promotion at the end, not a trickle.
@@ -140,17 +148,19 @@ A future "leads but not uploads" toggle is a `notify_on` column, not something t
 cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a generic
 `source_kind`/`source_id` pair. N=2 ⇒ triage now, mandatory at the third notification source.
 
-## Slice 5a — Webhook UI + ordering (C3) · **independent, build now**
+## Slice 5a — Webhook UI + ordering (C3) — ✅ merged `b301aa3d`
 
-- [ ] NEW `frontend/src/hooks/useMetaLeadgen.ts` (new file — keeps C3 disjoint from `useMetaAds.ts`)
-- [ ] Subscription-management card in `pages/meta/AdsLeads.tsx`:
+- [x] NEW `frontend/src/hooks/useMetaLeadgen.ts` (new file — keeps C3 disjoint from `useMetaAds.ts`)
+- [x] Subscription-management card in `pages/meta/AdsLeads.tsx`:
       per-Page subscribed/not-subscribed badges · "Assinar páginas" · "Cancelar" ·
       callback URL with copy · `verify_token_configured` warning · scope-missing banner
-- [ ] Webhook health panel — last delivery received, inbox counts by `status`
+- [x] Webhook health panel — `last_received_at === null` renders an explicit pt-BR diagnostic
+      ("Meta has never called us"), not a bare 0 — the single most useful signal in the feature
 - [x] Newest-first: default was already `data_entrada desc`, but that is a DATE — added a
       `created_at desc` tiebreaker so same-day leads order by real recency, not UUID
-- [ ] `loading` gated on `isPending || isFetching`, never `isLoading`
-- [ ] Complete loading / empty / error / not-configured states (no zeros-over-data)
+- [x] `loading` gated on `isPending || isFetching`, never `isLoading` (verified in the diff)
+- [x] Complete loading / empty / error / gated / not-configured states; partial bulk-subscribe
+      failure rendered per-page, never collapsed. 483 FE tests, tsc + vite build clean
 
 ## Slice 5b — Live push (C3) · 🔴 **SUSPENDED — do not build**
 
