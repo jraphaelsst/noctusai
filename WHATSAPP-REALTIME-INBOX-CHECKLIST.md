@@ -86,7 +86,9 @@ as the canonical instance every future chat UI consumes.
       *Requires explicit user go-ahead; not an agent's call.*
 - [ ] **0.2** Confirm `waha_session_get` → `SCAN_QR_CODE`, then `WORKING` with `me` populated after scan.
 
-## Slice 1 · Seed WAHA client completion  `[C1 · seed/lib/backend/.../integrations/whatsapp/]`
+## Slice 1 · Seed WAHA client completion  `[C1 · seed/lib/backend/.../integrations/whatsapp/]` — **DISPATCHED**
+
+> worktree `.claude/worktrees/wa-seed-client` · branch `feat/wa-seed-client`
 
 - [ ] **1.1** Fix `_session_config` casing — `client.py:86` sends `full_sync`, WAHA's key is
       `fullSync`. Live session reports `"fullSync": false`; NOWEB has therefore **never** backfilled
@@ -103,7 +105,9 @@ as the canonical instance every future chat UI consumes.
 - [ ] **1.6** `FakeWahaClient` parity for every new method (seed IO ships Fake+Real+factory).
 - [ ] **1.7** Tests green: `noctus.dev.pytest` on seed.
 
-## Slice 2 · Seed realtime bus + SSE  `[C1 · NEW seed/lib/backend/noctusai_lib/realtime/]`
+## Slice 2 · Seed realtime bus + SSE  `[C1 · NEW seed/lib/backend/noctusai_lib/realtime/]` — **DISPATCHED**
+
+> worktree `.claude/worktrees/wa-realtime-bus` · branch `feat/wa-realtime-bus`
 
 - [ ] **2.1** `bus.py` — `RealtimeBus` Protocol (`publish(scope, event, payload)` / `subscribe(scope)`),
       `RedisRealtimeBus`, `FakeRealtimeBus`, `get_realtime_bus(...)` factory.
@@ -115,7 +119,9 @@ as the canonical instance every future chat UI consumes.
       exists in the KB at all today.
 - [ ] **2.5** Tests: publish→subscribe roundtrip, reconnect replay, Fake parity.
 
-## Slice 3 · Schema  `[C2 · products/social-wiring/backend/migrations/040_*.sql]`
+## Slice 3 · Schema  `[C2 · products/social-wiring/backend/migrations/040_*.sql]` — **DISPATCHED**
+
+> worktree `.claude/worktrees/wa-inbox-schema` · branch `feat/wa-inbox-schema`
 
 - [ ] **3.1** `social_wiring.whatsapp_chats` — one row per conversation. PK `(connection_id, chat_id)`;
       `org_id`, `title`, `last_message_at`, `last_message_preview`, `last_direction`, `unread_count`,
@@ -225,6 +231,78 @@ as the canonical instance every future chat UI consumes.
 - `GET /chats/overview` availability on WAHA CORE 2026.6.1 is **unverified** — first task of Slice 1.
 - Single replica per product ⇒ APScheduler `max_instances=1` suffices, no distributed lock.
 - The three other chat forks stay untouched; social-wiring is the canonical proof first.
+
+## Appendix · The contract (authored 2026-08-03, BEFORE any endpoint or hook was written)
+
+Per `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` — both sides build to this. A change
+here is a contract bump: announce it, don't drift into it.
+
+### Realtime bus (seed, provider-neutral)
+
+```python
+@dataclass(frozen=True)
+class RealtimeEvent:
+    id: str          # monotonic, sortable: f"{unix_ms}-{seq}"
+    event: str
+    payload: dict
+
+class RealtimeBus(Protocol):
+    async def publish(self, scope: str, event: str, payload: dict) -> str: ...
+    def subscribe(self, scope: str, *, last_event_id: str | None = None) -> AsyncIterator[RealtimeEvent]: ...
+```
+
+Backed by a **Redis Stream, not bare pub/sub** — bare pub/sub drops anything published while a
+subscriber is disconnected, which would defeat the entire reconnect story. Stream capped via `MAXLEN`.
+
+### SSE endpoint
+
+`GET /api/whatsapp/connections/{connection_id}/stream` · same auth dependency as every other live op.
+
+Headers: `text/event-stream` · `Cache-Control: no-cache` · `Connection: keep-alive` ·
+**`X-Accel-Buffering: no`** (without it the proxy buffers the stream to death).
+Resume: `Last-Event-ID` request header, falling back to `?since=<event_id>`.
+Frame: `id: <event id>\nevent: <name>\ndata: <json>\n\n`. Heartbeat every ~20s.
+
+| Event | Payload |
+|---|---|
+| `message.new` | `{chat_id, message: MessageDTO}` |
+| `message.ack` | `{chat_id, provider_message_id, ack, acked_at}` |
+| `chat.read` | `{chat_id, unread_count, last_read_at}` |
+| `chat.upsert` | `ChatDTO` |
+| `session.status` | `{connection_id, status, paired, stage}` |
+| `heartbeat` | `{ts}` |
+
+`session.status` on the same stream is what lets the **QR screen stop polling** — it is told the
+moment the session reaches `SCAN_QR_CODE`.
+
+### DTOs
+
+```jsonc
+// ChatDTO
+{ "chat_id": "5511992694172@c.us", "title": "…", "last_message_at": "…",
+  "last_message_preview": "…", "last_direction": "inbound", "unread_count": 3,
+  "last_read_at": "…", "archived": false, "pinned": false }
+
+// MessageDTO
+{ "id": "uuid", "provider_message_id": "…", "chat_id": "…", "direction": "inbound",
+  "body": "…", "ack": 3, "acked_at": "…", "created_at": "…", "structured_payload": null }
+```
+
+### REST (all reads pure Postgres — WAHA is never on this path)
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/connections/{id}/chats?limit=30&before=<ISO>&archived=false` | `{items: ChatDTO[], next_before: ISO\|null}` |
+| `GET` | `/connections/{id}/chats/{chat_id:path}/messages?limit=50&before=<ISO>` | `{items: MessageDTO[], next_before: ISO\|null}` |
+| `POST` | `/connections/{id}/chats/{chat_id:path}/read` body `{up_to_message_id?}` | `{chat_id, unread_count: 0, last_read_at}` |
+| `POST` | `/connections/{id}/recover` | `{connection_id, status, paired, stage}` |
+
+⚠️ **Breaking change, deliberate:** the two GETs currently return bare arrays; they become paginated
+envelopes. The FE is updated in the same wave (Slice 7) — that is why this is contract-first rather
+than additive. `chat_id` is a JID containing `@` and **must** be `encodeURIComponent`'d by callers.
+
+`POST …/read` fires `send_seen` in the background — never on the response path, so a slow WAHA can
+never make the badge feel slow.
 
 ## Decision log
 
