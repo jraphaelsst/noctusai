@@ -52,20 +52,26 @@ upsert keyed on Meta's own lead id.
 - [ ] **Verify live:** `max(synced_at)` on `social_wiring.meta_ads_leads` advances after a run
       *(needs deploy + the 06:00 cron, or a manual job trigger)*
 
-## Slice 1 — Seed: leadgen webhook capability (C1)
+## Slice 1 — Seed: leadgen webhook capability (C1) — ✅ merged `10489508`
 
-- [ ] NEW `seed/lib/backend/noctusai_lib/integrations/meta/leadgen_webhook.py`
-  - [ ] `parse_leadgen_webhook(payload)` — **all** `entry[]` × **all** `changes[]`, never `[0]` only
-  - [ ] `leadgen_challenge_response(...)` — `hmac.compare_digest`, constant-time
-  - [ ] `LeadgenEvent` dataclass, `.raw` lossless, unix `created_time` → tz-aware UTC
-- [ ] `get_lead(leadgen_id, page_id=None)` — Protocol + Fake + Real (Fake **raises** on miss)
-- [ ] `subscribe_page_to_leadgen(page_id)` — ⚠️ `subscribed_fields` is a comma-joined **string**
-- [ ] `list_page_subscribed_apps(page_id)` + `PageSubscription` type + mapper
-- [ ] `unsubscribe_page_from_leadgen(page_id)`
-- [ ] Exports in `meta/__init__.py.__all__`
-- [ ] Tests: parser table-tests + adapter tests + Protocol-conformance (Fake ∧ Real)
-- [ ] KB `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md` §5 — flip webhook row to SHIPS
-- [ ] **Merge gate:** grep proves a consumer exists under `products/` (no orphan factory)
+- [x] NEW `seed/lib/backend/noctusai_lib/integrations/meta/leadgen_webhook.py`
+      — `LeadgenEvent` (:24), `parse_leadgen_webhook` (:74, all `entry[]`×`changes[]`),
+      `leadgen_challenge_response` (:135, `hmac.compare_digest`)
+- [x] `get_lead(leadgen_id, page_id=None)` — Protocol + Fake + Real; Fake **raises** on a miss
+      (an empty `Lead` would silently upsert a PII-less row)
+- [x] `subscribe_page_to_leadgen` — verified on the wire as `",".join(fields)`, the
+      comma-joined STRING `graph_post`'s form encoding needs, not a JSON list
+- [x] `list_page_subscribed_apps` + `PageSubscription` type + `page_subscription_from_body`
+- [x] `unsubscribe_page_from_leadgen` — reused the pre-existing `graph_delete`, no new helper
+- [x] Exports in `meta/__init__.py.__all__`
+- [x] Tests: parser table-tests + adapter coverage; **280** meta tests, full seed suite **2545**
+- [x] KB `INTEGRATIONS/meta.md` §5 flipped to shipped; engineer also backfilled the
+      previously-undocumented lead-ads READ surface while in the same tables
+- [x] **Merge gate satisfied** — Slice 2 consumes it, so no orphan factory
+
+> Engineer correctly overrode one brief instruction: `MetaAdapter` is a plain `Protocol`, not
+> `@runtime_checkable`, so `isinstance()` would `TypeError` at collection. They followed the
+> repo's existing structural-conformance precedent instead. My brief was wrong; the code is right.
 
 ## Slice 2 — Product: receiver + inbox (C2) — ✅ code complete (local)
 
@@ -86,38 +92,27 @@ upsert keyed on Meta's own lead id.
 - [x] `META-APP-VERIFICATION.md` §10 rewritten as the configuration runbook (was "optional / later")
 - [ ] **Verify live:** Lead Ads Testing Tool → inbox `processed` + lead row + one funnel card
 
-### Original spec (kept for reference)
+## Slice 3 — Unified leads base (C2) — ✅ integrated `ce985fdd`
 
-- [ ] Migration `products/social-wiring/backend/migrations/040_meta_webhook_events.sql`
-      (`id TEXT PK` · `payload JSONB` · `status`/`attempts`/`error` · RLS · `service_role_bypass`)
-- [ ] `config.py` — `meta_webhook_verify_token` + the two-secrets comment **in the code**
-- [ ] `app_config_store.py` — `resolve_meta_webhook_verify_token()` (DB-first, env fallback)
-- [ ] NEW `app/modules/meta_ads/routers/leadgen_router.py` (prefix `/api/meta/leadgen`)
-  - [ ] `GET /webhook` — handshake, `PlainTextResponse(challenge)`, **not** `int()`
-  - [ ] `POST /webhook` — HMAC via **App Secret** (`resolve_meta_app_creds()[1]`), `bypass_when_unset=False`
-  - [ ] `GET`/`POST`/`DELETE /subscriptions[/{page_id}]` — operator bootstrap + status
-- [ ] NEW `app/modules/meta_ads/services/leadgen_webhook_service.py`
-      (`record_event` / `process_event` / `drain_pending` / `purge_processed`)
-- [ ] Dedup: Redis SETNX (`get_webhook_dedup()`, TTL 24h) → inbox PK → `meta_ads_leads` PK
-- [ ] Rename `LeadsSyncService._upsert_lead` → public `upsert_lead` (keep alias)
-- [ ] Cold-form fallback — unknown `form_id` ⇒ `get_leadgen_form` + upsert, then proceed
-- [ ] Org ladder: `meta_ads_lead_forms.page_id → org_id` → `META_ADS_ORG_ID` → park as `unresolved`
-- [ ] Retry job `meta_leadgen_retry` (`*/15 * * * *`) + 90-day purge
-- [ ] Register router in `meta_ads/__init__.py`; add public routes to the auth-boundary allowlist
-- [ ] Status-code-pinned tests (200/401/403/duplicate/error/unresolved)
-- [ ] `.env.example` — add the whole `META_*` block (currently **zero** entries)
-- [ ] `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/webhook-signatures.md` — add to "Current adopters"
-- [ ] `META-APP-VERIFICATION.md` §10 — rewrite from "optional / later" to the shipped runbook
-- [ ] **Verify live:** Lead Ads Testing Tool → inbox `processed` + `meta_ads_leads` row with
-      non-NULL name/email/phone + exactly one `negociacoes_venda` card; replay ⇒ no second card
-
-## Slice 3 — Unified leads base (C2)
-
-- [ ] Canonical `lead_sources` row `slug='meta-lead-ads'` via `modules/leads/seed_data.py`
-- [ ] NEW `modules/leads/services/meta_ingest_service.py` — `meta_ads_leads` → `leads`
-- [ ] Migration: nullable `leads.meta_lead_id`, unique-when-present
-- [ ] Backfill the 958 stored leads (explicit, logged, idempotent)
+- [x] Canonical `lead_sources` row `slug='meta-lead-ads'`, `categoria='social'`
+      (`seed_data.py:64-89`, appended not interleaved so existing chart legends don't reorder)
+- [x] NEW `modules/leads/services/meta_ingest_service.py` — pure mapping + `ingest_meta_lead`
+      (single, idempotent, called by the receiver) + `backfill_meta_ads_leads` (paged, explicit)
+- [x] Migration `041_leads_meta_lead_id.sql` — nullable `meta_lead_id` + partial
+      `UNIQUE (org_id, meta_lead_id) WHERE meta_lead_id IS NOT NULL`. No new policy needed:
+      `leads`' existing RLS from 025 covers new columns
+- [x] `POST /api/leads/meta-ingest/backfill` as the explicit human-triggered entry point
+- [x] 27 new tests; full suite **1523 passed**
+- [x] 🔍 **Gap I caught on review:** the new backfill route was added without an entry in the
+      parametrized auth-boundary list. The route IS protected (verified 401), so this was a
+      test gap not a hole — but that list only works if every new route joins it. Fixed (`6a3d1b72`)
+- [ ] Run the backfill for the 958 stored leads (deliberate, post-deploy — not auto-run)
 - [ ] **Verify live:** test lead visible in `/api/leads` with origem "Meta Lead Ads"
+
+> Engineer flagged two judgement calls worth knowing: re-ingesting an already-ingested lead
+> returns the existing row unchanged (safe — a submitted Instant Form lead is immutable on
+> Meta's side), and the `corretor_id` resolution path is currently dead in practice because no
+> live form asks which corretor. Both left in place and surfaced rather than silently dropped.
 
 ## Slice 4 — Notification fan-out (C2) — ✅ integrated `3aced8ac`
 
