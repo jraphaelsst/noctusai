@@ -134,7 +134,25 @@ as the canonical instance every future chat UI consumes.
 - [ ] **3.3** RLS mirroring the existing pattern exactly: `current_org_id()` SELECT for `authenticated`
       + service-role ALL (template: `011_rls_current_org_id.sql:448`).
 - [ ] **3.4** No FK on `connection_id` — consistent with the deliberate choice at `014:30`.
-- [ ] **3.5** Migration applies clean; RLS asserted by test.
+- [~] **3.5** Verified STATICALLY, not live — reported honestly rather than claimed.
+      Legs: (a) `pglast` (real libpg_query parser) parses all 15 statements as valid DDL, exit 0, and
+      an AST walk confirms every statement carries an idempotency guard; (b) 12 new structural tests
+      in `test_migrations.py` — full suite **1502 passed / 0 failed**, root scoped to the worktree.
+      **Live apply deferred to the tech-lead after merge** (see blockers below).
+
+**Slice 3 delivered** — `040_whatsapp_inbox_realtime_schema.sql`, commit `b524b097` on `feat/wa-inbox-schema`.
+Index `idx_sw_whatsapp_chats_list (connection_id, archived, last_message_at DESC)` is the chat-list
+query. RLS mirrors `011:448-453` with deliberately **no** archived/unread predicate — filtering a
+category out of RLS makes every downstream FE branch on it dead (`status-pagina-dev-visibility`).
+
+**Two blockers surfaced by this slice (not silently skipped):**
+1. 🔴 `noctus.dev.migrate_product` has **no `worktree_path`** parameter, unlike `pytest` /
+   `vite_build` / `find_reusable_component`. It cannot see a worktree's migration, and a naive
+   `confirm=true` from a worktree would apply the **primary tree's** pending backlog — other
+   people's unvetted migrations. Logged `s1-emergent` to `auto-improvement.ndjson`.
+2. 🔴 Migrations **037–039 are pending unapplied** on the dev DB — outside this slice's territory,
+   owner unknown. Must be triaged before or alongside 040. `040` is order-independent regardless
+   (new table + additive columns only).
 
 ## Slice 4 · Ingest rewrite  `[C3 · whatsapp_router.py · after 1–3]`
 
