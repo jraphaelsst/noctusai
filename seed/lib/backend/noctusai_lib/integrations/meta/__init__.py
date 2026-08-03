@@ -14,18 +14,29 @@ account). Sibling to `google_calendar/`, `google_maps/`,
   `PublishedPost`, `PublishedMedia`, `MediaProcessingStatus`,
   `AdCampaign`, `AdAccount`, `AdSet`, `Ad`, `AdCreative`, `AdInsights`,
   `AdInsightsRow`, `AdInsightsSeries`, `AdActivity`, `InstagramComment`,
-  `FacebookComment`, `Conversation`, `DirectMessage`.
+  `FacebookComment`, `Conversation`, `DirectMessage`, `LeadgenForm`,
+  `LeadgenQuestion`, `Lead`, `LeadFieldEntry`, `PageSubscription`,
+  `LeadgenEvent` (the webhook-parsed shape — see `leadgen_webhook`
+  below).
 - Contract: `MetaAdapter` (Protocol) — read surface + ads-read surface
   (list ad accounts/campaigns/sets/ads, multi-row `ad_insights_series`
   with `actions`/`action_values` conversion metrics, ad-account change
-  log via `list_activities`) + write/ads surface (publish FB post / IG
-  media / IG carousel / IG Reel / FB video+Reel / ads-management
-  create/update graph) + comments/DMs/Stories surface (IG comment
-  list/reply/hide/delete, IG Direct conversations/messages/send, IG
-  Stories publish, FB comment list/reply/hide/delete). Video / Reel
-  publish uses the asynchronous resumable-upload + processing-status
-  poll contract (`poll_media_status`), distinct from the synchronous
-  image flow but with the same typed error model.
+  log via `list_activities`) + lead-ads read/webhook surface
+  (`list_leadgen_forms` / `get_leadgen_form` / `list_leads` /
+  `get_lead` / `subscribe_page_to_leadgen` /
+  `list_page_subscribed_apps` / `unsubscribe_page_from_leadgen`) +
+  write/ads surface (publish FB post / IG media / IG carousel / IG
+  Reel / FB video+Reel / ads-management create/update graph) +
+  comments/DMs/Stories surface (IG comment list/reply/hide/delete, IG
+  Direct conversations/messages/send, IG Stories publish, FB comment
+  list/reply/hide/delete). Video / Reel publish uses the asynchronous
+  resumable-upload + processing-status poll contract
+  (`poll_media_status`), distinct from the synchronous image flow but
+  with the same typed error model.
+- `leadgen_webhook` module — pure functions, zero IO:
+  `parse_leadgen_webhook(payload) -> list[LeadgenEvent]` (batched
+  `entry[]`×`changes[]`-safe) + `leadgen_challenge_response(...)` (the
+  `GET /webhooks` verification handshake, constant-time compare).
 - `FakeMetaAdapter` — deterministic in-memory; dev/test default.
 - `MetaOAuthAdapter` — live Graph, **dual auth**: System User Token
   (production; required for Business-Portfolio-owned assets) →
@@ -58,9 +69,18 @@ active token lacks a gated scope the live adapter raises
 faked success. The App Review is a deployment-activation gate, not a
 reason to defer the code (mirrors `youtube.upload_video` shipping
 real code behind a credential gate). Full ads *management* (campaign
-create / update) is a separate follow-up. TikTok + webhook
-subscriptions are separate future modules (`integrations/tiktok/`,
-`integrations/meta/webhooks/`).
+create / update) is a separate follow-up.
+
+Lead-ads webhook surface **SHIPS**: `leadgen_webhook.
+parse_leadgen_webhook` parses a (batched) `POST /webhooks` delivery
+into `LeadgenEvent`s (the webhook carries ONLY a `leadgen_id`, never
+PII); `leadgen_challenge_response` answers the `GET /webhooks`
+verification handshake (constant-time token compare). The receiver
+then calls back via `MetaAdapter.get_lead(leadgen_id)` for the actual
+record, and manages the Page-level subscription via
+`subscribe_page_to_leadgen` / `list_page_subscribed_apps` /
+`unsubscribe_page_from_leadgen`. TikTok is a separate future module
+(`integrations/tiktok/`).
 
 OAuth start/callback is the generic `noctusai_lib.security.oauth`
 router's job (consumed as-is — this package does not duplicate the
@@ -96,6 +116,11 @@ from noctusai_lib.integrations.meta.instagram_login_adapter import (
     InstagramLoginMessagingAdapter,
     InstagramLoginOAuthAdapter,
 )
+from noctusai_lib.integrations.meta.leadgen_webhook import (
+    LeadgenEvent,
+    leadgen_challenge_response,
+    parse_leadgen_webhook,
+)
 from noctusai_lib.integrations.meta.mappers import (
     ad_account_from_body,
     ad_activity_from_body,
@@ -110,6 +135,7 @@ from noctusai_lib.integrations.meta.mappers import (
     instagram_comment_from_body,
     insights_from_body,
     page_from_body,
+    page_subscription_from_body,
     parse_graph_datetime,
     post_from_body,
 )
@@ -142,6 +168,7 @@ from noctusai_lib.integrations.meta.types import (
     LeadgenQuestion,
     MediaProcessingStatus, MetaAdapter,
     MetaConnectionStatus,
+    PageSubscription,
     PostInsights,
     PublishedMedia,
     PublishedPost,
@@ -234,6 +261,7 @@ __all__ = [
     "InstagramMedia",
     "Lead",
     "LeadFieldEntry",
+    "LeadgenEvent",
     "LeadgenForm",
     "LeadgenQuestion",
     "META_KITCHEN_SINK_SCOPES",
@@ -242,6 +270,7 @@ __all__ = [
     "MetaCredentialResolver",
     "MetaGraphError",
     "OAuthMetaCredentials",
+    "PageSubscription",
     "PostInsights",
     "PublishedMedia",
     "PublishedPost",
@@ -267,9 +296,12 @@ __all__ = [
     "ig_media_from_body",
     "instagram_comment_from_body",
     "insights_from_body",
+    "leadgen_challenge_response",
     "make_meta_router",
     "page_from_body",
+    "page_subscription_from_body",
     "parse_graph_datetime",
+    "parse_leadgen_webhook",
     "post_from_body",
     "poll_media_status", "resolve_oauth_scopes",
 ]

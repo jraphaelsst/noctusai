@@ -32,6 +32,7 @@ from noctusai_lib.integrations.meta.types import (
     LeadFieldEntry,
     LeadgenForm,
     LeadgenQuestion,
+    PageSubscription,
     PostInsights,
 )
 
@@ -555,6 +556,21 @@ def leadgen_form_from_body(body: dict[str, Any]) -> LeadgenForm:
             leadgen_question_from_body(q)
             for q in (body.get("questions") or [])
             if isinstance(q, dict)
+        ],
+    )
+
+
+def page_subscription_from_body(body: dict[str, Any]) -> PageSubscription:
+    """Map one row of `GET /{page_id}/subscribed_apps` to
+    `PageSubscription`. Reads the `_page_id` injected by the caller the
+    same way `leadgen_form_from_body` reads it — Graph's row is
+    per-app, not per-page, so it never carries the page id itself."""
+    return PageSubscription(
+        app_id=str(body["id"]),
+        app_name=body.get("name"),
+        page_id=body.get("_page_id"),
+        subscribed_fields=[
+            str(f) for f in (body.get("subscribed_fields") or []) if f
         ],
     )
 

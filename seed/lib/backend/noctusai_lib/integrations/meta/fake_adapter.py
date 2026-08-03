@@ -16,6 +16,7 @@ is the "scope already approved" path."""
 
 from __future__ import annotations
 
+from noctusai_lib.integrations.meta._meta_api import MetaGraphError
 from noctusai_lib.integrations.meta.types import (
     Ad,
     AdAccount,
@@ -40,6 +41,7 @@ from noctusai_lib.integrations.meta.types import (
     Lead,
     LeadgenForm,
     MetaConnectionStatus,
+    PageSubscription,
     PostInsights,
     PublishedMedia,
     PublishedPost,
@@ -77,6 +79,16 @@ class FakeMetaAdapter:
         self._activities_by_account: dict[str, list[AdActivity]] = {}
         self._leadgen_forms_by_page: dict[str, list[LeadgenForm]] = {}
         self._leads_by_form: dict[str, list[Lead]] = {}
+        # Lead-ads webhook surface — `_leads_by_id` is the flattened
+        # `leads_by_form` index (rebuilt whenever `leads_by_form` is
+        # (re-)seeded) merged with any explicit `leads_by_id=` override;
+        # `get_lead` reads from here, never from `_leads_by_form`
+        # directly (a webhook delivers a bare `leadgen_id`, not a
+        # `form_id`, so the by-form index alone can't serve it).
+        self._leads_by_id: dict[str, Lead] = {}
+        self._page_subscribed_apps: dict[str, list[PageSubscription]] = {}
+        self.subscribed_pages: list[tuple[str, tuple[str, ...]]] = []
+        self.unsubscribed_pages: list[str] = []
         self._post_seq = 0
         self._media_seq = 0
         # Ads-management recorders — deterministic in-memory CRUD so
@@ -137,6 +149,8 @@ class FakeMetaAdapter:
         activities_by_account: dict[str, list[AdActivity]] | None = None,
         leadgen_forms_by_page: dict[str, list[LeadgenForm]] | None = None,
         leads_by_form: dict[str, list[Lead]] | None = None,
+        leads_by_id: dict[str, Lead] | None = None,
+        page_subscribed_apps: dict[str, list[PageSubscription]] | None = None,
         ig_comments_by_media: dict[str, list[InstagramComment]] | None = None,
         fb_comments_by_post: dict[str, list[FacebookComment]] | None = None,
         conversations_by_page: dict[str, list[Conversation]] | None = None,
@@ -191,6 +205,17 @@ class FakeMetaAdapter:
         if leads_by_form is not None:
             self._leads_by_form = {
                 k: list(v) for k, v in leads_by_form.items()
+            }
+            self._leads_by_id = {
+                lead.id: lead
+                for leads in self._leads_by_form.values()
+                for lead in leads
+            }
+        if leads_by_id is not None:
+            self._leads_by_id.update(dict(leads_by_id))
+        if page_subscribed_apps is not None:
+            self._page_subscribed_apps = {
+                k: list(v) for k, v in page_subscribed_apps.items()
             }
         if ig_comments_by_media is not None:
             self._ig_comments_by_media = {
@@ -531,6 +556,46 @@ class FakeMetaAdapter:
         # the leads_retrieval gate (that lives on the live adapter only),
         # so consumer/endpoint tests can exercise the records path.
         return list(self._leads_by_form.get(form_id, []))[:limit]
+
+    def get_lead(self, leadgen_id: str, *, page_id: str | None = None) -> Lead:
+        # Unlike `get_leadgen_form`'s return-empty-object-on-miss, a
+        # miss here MUST raise: an empty `Lead` would silently upsert a
+        # PII-less row into production (the caller can't tell "no such
+        # lead" from "here's an empty one"). Seeded via `leads_by_form`
+        # (flattened into `_leads_by_id`) or the explicit `leads_by_id=`
+        # kwarg.
+        lead = self._leads_by_id.get(leadgen_id)
+        if lead is None:
+            raise MetaGraphError(
+                f"No lead seeded for leadgen_id={leadgen_id!r} "
+                "(FakeMetaAdapter.seed(leads_by_form=...) or "
+                "seed(leads_by_id=...) first)",
+            )
+        return lead
+
+    def subscribe_page_to_leadgen(
+        self, page_id: str, *, fields: tuple[str, ...] = ("leadgen",)
+    ) -> bool:
+        # Deterministic in-memory record — the Fake never raises the
+        # App-Review gate (that lives on the live adapter only).
+        self.subscribed_pages.append((page_id, tuple(fields)))
+        self._page_subscribed_apps[page_id] = [
+            PageSubscription(
+                app_id="fake_app",
+                app_name="Fake App",
+                page_id=page_id,
+                subscribed_fields=list(fields),
+            )
+        ]
+        return True
+
+    def list_page_subscribed_apps(self, page_id: str) -> list[PageSubscription]:
+        return list(self._page_subscribed_apps.get(page_id, []))
+
+    def unsubscribe_page_from_leadgen(self, page_id: str) -> bool:
+        self.unsubscribed_pages.append(page_id)
+        self._page_subscribed_apps.pop(page_id, None)
+        return True
 
     def create_ad_campaign(self, ad_account_id, spec):
         self._camp_seq += 1

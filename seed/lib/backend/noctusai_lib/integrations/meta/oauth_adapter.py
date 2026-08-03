@@ -81,6 +81,7 @@ from noctusai_lib.integrations.meta.mappers import (
     lead_from_body,
     leadgen_form_from_body,
     page_from_body,
+    page_subscription_from_body,
     post_from_body,
 )
 from noctusai_lib.integrations.meta.types import (
@@ -107,6 +108,7 @@ from noctusai_lib.integrations.meta.types import (
     Lead,
     LeadgenForm,
     MetaConnectionStatus,
+    PageSubscription,
     PostInsights,
     PublishedMedia,
     PublishedPost,
@@ -1366,6 +1368,90 @@ class MetaOAuthAdapter:
             for r in rows
             if isinstance(r, dict) and r.get("id")
         ]
+
+    # ─── Lead-ads webhook surface (additive — Page-scoped subscription
+    #    management; parsing the actual webhook DELIVERY is a pure
+    #    function, `leadgen_webhook.parse_leadgen_webhook`, not an
+    #    adapter method) ────────────────────────────────────────────
+
+    def get_lead(self, leadgen_id: str, *, page_id: str | None = None) -> Lead:
+        """One submitted lead RECORD by its `leadgen_id`
+        (`GET /{leadgen_id}`) — the webhook-driven read-back: the
+        Lead-Ads webhook delivers ONLY a `leadgen_id`, never the lead's
+        answers, so a receiver calls back here for the actual record.
+
+        **Production gate:** the same `leads_retrieval` scope as
+        `list_leads` — Graph raises `MetaGraphError` `(#200) Requires
+        leads_retrieval permission` when the scope is absent, surfaced
+        never faked. Uses the owning Page's token when `page_id` is
+        given; otherwise the user/system-user token."""
+
+        token = self._page_token(page_id) if page_id else self._user_token()
+        body = _meta_api.graph_get(
+            leadgen_id,
+            access_token=token,
+            params={"fields": _LEAD_FIELDS},
+            version=self._version,
+        )
+        if not body.get("id"):
+            body = {**body, "id": leadgen_id}
+        return lead_from_body(body)
+
+    def subscribe_page_to_leadgen(
+        self, page_id: str, *, fields: tuple[str, ...] = ("leadgen",)
+    ) -> bool:
+        """Subscribe the app to a Page's webhook field(s)
+        (`POST /{page_id}/subscribed_apps`) — the Page-level opt-in
+        Meta requires before it will DELIVER webhook events for that
+        Page (distinct from the one-time app-level `/webhooks`
+        subscription made in the App Dashboard).
+
+        `graph_post` is **form-encoded**
+        (`_meta_api.py` `graph_post` sends `data=form`): `fields` MUST
+        be comma-joined into the STRING Graph's form parser expects —
+        sending a JSON list here silently 400s and is the single most
+        likely reason a webhook never fires. Returns Graph's `success`
+        bool."""
+
+        body = _meta_api.graph_post(
+            f"{page_id}/subscribed_apps",
+            access_token=self._page_token(page_id),
+            data={"subscribed_fields": ",".join(fields)},
+            version=self._version,
+        )
+        return bool(body.get("success"))
+
+    def list_page_subscribed_apps(self, page_id: str) -> list[PageSubscription]:
+        """List the apps currently subscribed to a Page's webhook
+        fields (`GET /{page_id}/subscribed_apps`) — the introspection
+        counterpart to `subscribe_page_to_leadgen` (confirm a
+        subscription actually took, or discover what's already wired
+        before writing more)."""
+
+        body = _meta_api.graph_get(
+            f"{page_id}/subscribed_apps",
+            access_token=self._page_token(page_id),
+            version=self._version,
+        )
+        rows = body.get("data") or []
+        return [
+            page_subscription_from_body({**r, "_page_id": page_id})
+            for r in rows
+            if isinstance(r, dict) and r.get("id")
+        ]
+
+    def unsubscribe_page_from_leadgen(self, page_id: str) -> bool:
+        """Remove the app's webhook subscription from a Page
+        (`DELETE /{page_id}/subscribed_apps`) — the inverse of
+        `subscribe_page_to_leadgen` (Page deletion / product teardown /
+        the scope being revoked)."""
+
+        body = _meta_api.graph_delete(
+            f"{page_id}/subscribed_apps",
+            access_token=self._page_token(page_id),
+            version=self._version,
+        )
+        return bool(body.get("success"))
 
     # ─── Ads management surface (additive — read/insights/posting
     #     unchanged; mutations use the App-Review-gated

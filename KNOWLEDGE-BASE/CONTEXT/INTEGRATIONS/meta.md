@@ -17,8 +17,9 @@
 > documents the OAuth dance / token-chain / scope-discovery theory;
 > THIS doc documents the adapter API a product actually calls).
 >
-> **Scope: read-only v1.** Posting (FB Page post, IG publish), ads,
-> and webhook subscriptions are out-of-scope-with-destination — see §5.
+> **Scope.** Posting (FB Page post, IG publish) and ads **SHIP**; the
+> Lead-Ads webhook parsing + subscription-management surface **SHIPS**
+> (§1, §5) — see `leadgen_webhook.py`.
 >
 > Provenance: lifted into seed 2026-05-16 (`social-wiring-absorption`
 > Wave 1.E4) from the live-validated `noctusai-youtube-crawler`
@@ -46,6 +47,10 @@ don't infer from the Protocol).
 | `MetaConnectionStatus` | `status()` return — `auth_mode` discriminator surfaced here |
 | `PublishedMedia` / `PublishedPost` | Publish results; `processing_duration_ms` populated on the video / Reel path |
 | `MediaProcessingStatus` | One reading of a video / Reel container's async processing state (`is_finished` / `is_error`); returned by `poll_media_status` |
+| `LeadgenForm` / `LeadgenQuestion` | A Page's lead-gen (Instant Form) form + its field schema (`list_leadgen_forms` / `get_leadgen_form`) |
+| `Lead` / `LeadFieldEntry` | A submitted lead record + one answered field (`list_leads` / `get_lead`) — PII, gated by `leads_retrieval` |
+| `PageSubscription` | One app's webhook subscription on a Page (`list_page_subscribed_apps`) |
+| `LeadgenEvent` | One `leadgen` webhook-delivery change entry (`leadgen_webhook.parse_leadgen_webhook`) — carries only `leadgen_id` + attribution ids, never PII |
 
 ### Contract + adapters
 | Symbol | Role |
@@ -98,6 +103,61 @@ When the active token lacks the gated scope, the live adapter raises
 faked success. The Fake does NOT raise the App-Review gate (it is the
 "scope already approved" path), so dev/test paths run end-to-end.
 
+**Lead-ads read + webhook surface on `MetaAdapter`** (`get_lead` +
+subscription management + the `leadgen_webhook` parsing module are the
+additions this doc revision documents; form list/schema/records
+predate it):
+- `list_leadgen_forms(page_id, *, with_questions=False)` →
+  `list[LeadgenForm]`. Form list + field schema — a Page token
+  (`pages_show_list`/`pages_read_engagement`) is enough; `leads_count`
+  is a form-level metric, NOT lead PII, so it's readable without the
+  `leads_retrieval` scope below.
+- `get_leadgen_form(form_id, *, page_id=None)` → `LeadgenForm` (with
+  `questions`).
+- `list_leads(form_id, *, page_id=None, limit=100)` → `list[Lead]` —
+  the submitted lead RECORDS. **Production gate:** the distinct
+  `leads_retrieval` scope; absent it Graph raises `MetaGraphError`
+  `(#200) Requires leads_retrieval permission`, surfaced never faked.
+- `get_lead(leadgen_id, *, page_id=None)` → `Lead` — the webhook-driven
+  read-back: the Lead-Ads webhook delivers ONLY a `leadgen_id`, never
+  the answers, so a receiver calls back here for the actual record.
+  Same `leads_retrieval` gate as `list_leads`. **`FakeMetaAdapter`
+  RAISES `MetaGraphError` on a miss** — the one exception to "the Fake
+  never raises" in this package, because an empty `Lead` on a miss
+  would silently upsert a PII-less row into production.
+- `subscribe_page_to_leadgen(page_id, *, fields=("leadgen",))` →
+  `bool` — `POST /{page_id}/subscribed_apps`, the Page-level opt-in
+  Meta requires before it will DELIVER webhook events for that Page.
+  **`graph_post` is form-encoded**: `fields` is sent as the
+  comma-joined STRING Graph's form parser expects, never a JSON list
+  (the single most likely silent Graph-400 / "webhook never fires"
+  bug).
+- `list_page_subscribed_apps(page_id)` → `list[PageSubscription]` —
+  introspection counterpart; confirm a subscription actually took.
+- `unsubscribe_page_from_leadgen(page_id)` → `bool` —
+  `DELETE /{page_id}/subscribed_apps`.
+
+`leadgen_webhook` module (`meta.leadgen_webhook`) — **pure functions,
+zero IO, zero FastAPI**, so any product's webhook router can consume
+them directly:
+- `parse_leadgen_webhook(payload) -> list[LeadgenEvent]` — parses a
+  (possibly batched) `POST /webhooks` delivery. Iterates **every**
+  `entry[]` × **every** `changes[]` (Meta batches multiple
+  entries/changes into one delivery — the anti-shape to avoid is
+  `products/erp-imobiliario/backend/app/services/meta_api_service.py:139`,
+  which reads `entry[0].changes[0]` only and silently drops the rest).
+  Returns `[]` (never raises) on `object != "page"`, a non-list
+  `entry`/`changes`, or any malformed row; skips a change whose
+  `field != "leadgen"` or whose `value.leadgen_id` is falsy.
+  `LeadgenEvent.raw` carries the `value` object verbatim (lossless —
+  the product persists it).
+- `leadgen_challenge_response(*, mode, verify_token, challenge,
+  expected_token) -> str | None` — the `GET /webhooks` verification
+  handshake. Returns `challenge` iff `mode == "subscribe"` AND
+  `expected_token` is configured AND `verify_token` matches it via
+  `hmac.compare_digest` (constant-time — this is a public
+  unauthenticated endpoint guarding a shared secret).
+
 > `MetaOAuthAdapter` (the live Graph adapter) is **not** in `__all__` —
 > it is constructed only by the factory (`get_meta_adapter`). Consumers
 > never import it directly; they depend on the `MetaAdapter` Protocol
@@ -127,7 +187,8 @@ faked success. The Fake does NOT raise the App-Review gate (it is the
 ### Pure mappers (`meta.mappers`)
 `page_from_body`, `ig_account_from_body`, `post_from_body`,
 `ig_media_from_body`, `insights_from_body`, `parse_graph_datetime`
-(handles the Graph `+0000` offset).
+(handles the Graph `+0000` offset), `page_subscription_from_body`
+(reads an injected `_page_id`, same seam as `leadgen_form_from_body`).
 
 ### FastAPI seam (`meta.router`)
 `make_meta_router(...)` -> mounts `/api/meta/{status,scopes}` (read-only
@@ -228,7 +289,8 @@ pattern, `CONTEXT/PATTERNS/backend/backend.md`).
 |---|---|---|
 | FB Page **post** / IG **publish** (write scopes) | **SHIPS** (`publish_facebook_post` / `publish_instagram_media` / `publish_instagram_carousel`) — live behind Meta App Review for production | First consumer: `products/social-wiring/backend/app/modules/media_creation/services/publish_service.py` (carousel + single + FB photo). Surfaces 422 + `meta_scope_pending_app_review` when the App Review gate trips at request time |
 | Ads / Insights beyond per-post `PostInsights` | **SHIPS** — read campaigns + ad-insights; full management surface (campaign create/update) ships separately via `meta.ads_management` | See `tests/integrations/meta/test_meta_ads_management.py` |
-| Webhook subscriptions (Page/IG change events) | out-of-scope | Separate future `integrations/meta/webhooks/` module |
+| Lead-Ads webhook (Page/IG change events, `leadgen` field) | **SHIPS** — `leadgen_webhook.parse_leadgen_webhook` (batched-delivery-safe parsing) + `leadgen_challenge_response` (verification handshake) + `MetaAdapter.get_lead`/`subscribe_page_to_leadgen`/`list_page_subscribed_apps`/`unsubscribe_page_from_leadgen` (subscription mgmt + webhook-driven read-back) | Router mounting (`POST`/`GET /webhooks` FastAPI endpoint) + persistence is a product-side consumer wiring step — this module ships the parsing + adapter surface only, no FastAPI route |
+| Webhook subscriptions for other change events (Page feed / IG comments / …) | out-of-scope | Separate future extension of `leadgen_webhook.py` (or a sibling module) if a non-leadgen field is ever needed |
 | Video / Reels publish | **SHIPS** (`publish_instagram_reel` / `publish_facebook_video` — async resumable-upload + `poll_media_status` processing poll) — same App Review scope as image publish (`instagram_content_publish` for IG Reels; `pages_manage_posts` + Reels capability for FB) | Seed extension shipped 2026-05-24 (`projects/meta-video-reels-publish`). **Consumer wiring is the remaining thin step**: `social-wiring/media_creation/services/publish_service.py` extends with `target='instagram_reel'` / `'facebook_video'` / `'facebook_reel'` + widens the `mc_posts.published_target` CHECK constraint — gated on a `format='video'` consumer surfacing |
 | TikTok | n/a — different vendor | Separate future `integrations/tiktok/` module |
 | OAuth start/callback router | **not duplicated by design** | Consume `noctusai_lib.security.oauth` as-is |

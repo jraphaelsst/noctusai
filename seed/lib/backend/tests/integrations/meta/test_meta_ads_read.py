@@ -42,7 +42,9 @@ from noctusai_lib.integrations.meta import (
     AdInsightsSeries,
     AdSet,
     FakeMetaAdapter,
+    Lead,
     MetaGraphError,
+    PageSubscription,
     get_meta_adapter,
 )
 from noctusai_lib.integrations.meta.mappers import (
@@ -786,3 +788,197 @@ class TestPriorSurfaceRegression:
                 assert callable(getattr(impl, name)), (
                     f"{type(impl).__name__} missing {name}"
                 )
+
+    def test_both_adapters_carry_leadgen_webhook_contract(self):
+        # `MetaAdapter` is a non-runtime_checkable Protocol (see
+        # `test_meta_integration.py`'s `test_both_adapters_carry_
+        # extended_contract`) — conformance is asserted structurally,
+        # every method present + callable on both concrete adapters,
+        # not via `isinstance`.
+        surface = (
+            "get_lead",
+            "subscribe_page_to_leadgen",
+            "list_page_subscribed_apps",
+            "unsubscribe_page_from_leadgen",
+        )
+        for impl in (FakeMetaAdapter(), MetaOAuthAdapter(system_user_token="X")):
+            for name in surface:
+                assert callable(getattr(impl, name)), (
+                    f"{type(impl).__name__} missing {name}"
+                )
+
+
+# ─── TestFakeLeadgenWebhookAdapter ──────────────────────────────────────────
+
+
+class TestFakeLeadgenWebhookAdapter:
+    """The Fake's lead-ads webhook surface: `get_lead` is the ONE
+    exception to "the Fake never raises" — a miss MUST raise
+    `MetaGraphError` (an empty `Lead` would silently upsert a
+    PII-less row); subscription management is deterministic in-memory
+    record-keeping, same posture as the rest of the write surface."""
+
+    def test_get_lead_returns_seeded_lead_from_leads_by_form_flattened(self):
+        fake = FakeMetaAdapter()
+        lead = Lead(id="LEAD1", form_id="f1")
+        fake.seed(leads_by_form={"f1": [lead]})
+        assert fake.get_lead("LEAD1") == lead
+
+    def test_get_lead_returns_seeded_lead_from_explicit_leads_by_id(self):
+        fake = FakeMetaAdapter()
+        lead = Lead(id="LEAD2")
+        fake.seed(leads_by_id={"LEAD2": lead})
+        assert fake.get_lead("LEAD2") == lead
+
+    def test_get_lead_miss_raises_never_returns_empty_lead(self):
+        fake = FakeMetaAdapter()
+        with pytest.raises(MetaGraphError):
+            fake.get_lead("NO_SUCH_LEAD")
+
+    def test_subscribe_list_unsubscribe_round_trip(self):
+        fake = FakeMetaAdapter()
+        assert fake.subscribe_page_to_leadgen("P1") is True
+        assert fake.subscribed_pages == [("P1", ("leadgen",))]
+        subs = fake.list_page_subscribed_apps("P1")
+        assert len(subs) == 1
+        assert subs[0].page_id == "P1"
+        assert subs[0].subscribed_fields == ["leadgen"]
+
+        assert fake.unsubscribe_page_from_leadgen("P1") is True
+        assert fake.unsubscribed_pages == ["P1"]
+        assert fake.list_page_subscribed_apps("P1") == []
+
+    def test_list_page_subscribed_apps_empty_when_unseeded(self):
+        fake = FakeMetaAdapter()
+        assert fake.list_page_subscribed_apps("NOPE") == []
+
+    def test_seeded_page_subscribed_apps(self):
+        fake = FakeMetaAdapter()
+        seeded = PageSubscription(
+            app_id="app1", app_name="Existing App", page_id="P1",
+            subscribed_fields=["leadgen", "feed"],
+        )
+        fake.seed(page_subscribed_apps={"P1": [seeded]})
+        assert fake.list_page_subscribed_apps("P1") == [seeded]
+
+
+# ─── TestRealLeadgenWebhookAdapter ──────────────────────────────────────────
+
+
+class TestRealLeadgenWebhookAdapter:
+    """The live adapter's lead-ads webhook surface — external Graph
+    boundary mocked (`httpx.get`/`post`/`delete`), same posture as
+    `TestRealAdsReadGraph`."""
+
+    def test_get_lead_parses_body_via_page_token(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        body = {
+            "id": "LEAD1",
+            "created_time": "2026-07-21T09:00:00+0000",
+            "form_id": "f1",
+            "field_data": [{"name": "email", "values": ["a@b.com"]}],
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            lead = a.get_lead("LEAD1", page_id="P1")
+        assert lead.id == "LEAD1"
+        assert lead.form_id == "f1"
+        assert lead.field_data[0].values == ["a@b.com"]
+
+    def test_get_lead_uses_user_token_when_no_page_id(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        captured = {}
+
+        def _get(url, **kw):
+            captured["params"] = kw.get("params")
+            return _FakeResponse({"id": "LEAD1"})
+
+        with patch.object(httpx, "get", side_effect=_get):
+            a.get_lead("LEAD1")
+        assert captured["params"]["access_token"] == "SYSTOK"
+
+    def test_get_lead_scope_absent_raises_permission_error(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        err_body = {"error": {
+            "message": "(#200) Requires leads_retrieval permission to manage the object",
+            "code": 200,
+        }}
+        with patch.object(
+            httpx, "get", return_value=_FakeResponse(err_body, status_code=403)
+        ):
+            with pytest.raises(MetaGraphError) as exc:
+                a.get_lead("LEAD1")
+        assert exc.value.is_permission
+
+    def test_subscribe_page_to_leadgen_sends_comma_joined_string_not_json_list(self):
+        # The single most likely silent Graph-400: `graph_post` is
+        # form-encoded, so `subscribed_fields` MUST arrive as the
+        # STRING "leadgen", never a JSON-encoded list.
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        captured = {}
+
+        def _post(url, **kw):
+            captured["data"] = kw.get("data")
+            return _FakeResponse({"success": True})
+
+        with patch.object(httpx, "post", side_effect=_post):
+            result = a.subscribe_page_to_leadgen("P1")
+        assert result is True
+        assert captured["data"]["subscribed_fields"] == "leadgen"
+        assert isinstance(captured["data"]["subscribed_fields"], str)
+
+    def test_subscribe_page_to_leadgen_multi_field_comma_joined(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        captured = {}
+
+        def _post(url, **kw):
+            captured["data"] = kw.get("data")
+            return _FakeResponse({"success": True})
+
+        with patch.object(httpx, "post", side_effect=_post):
+            a.subscribe_page_to_leadgen("P1", fields=("leadgen", "feed"))
+        assert captured["data"]["subscribed_fields"] == "leadgen,feed"
+
+    def test_subscribe_page_to_leadgen_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        with patch.object(httpx, "post", return_value=_FakeResponse(_PERM_ERR)):
+            with pytest.raises(MetaGraphError) as exc:
+                a.subscribe_page_to_leadgen("P1")
+        assert exc.value.requires_app_review is True
+
+    def test_list_page_subscribed_apps_parses_rows(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        body = {
+            "data": [
+                {"id": "app1", "name": "App One", "subscribed_fields": ["leadgen"]},
+            ],
+            "paging": {},
+        }
+        with patch.object(httpx, "get", return_value=_FakeResponse(body)):
+            subs = a.list_page_subscribed_apps("P1")
+        assert subs == [
+            PageSubscription(
+                app_id="app1", app_name="App One", page_id="P1",
+                subscribed_fields=["leadgen"],
+            )
+        ]
+
+    def test_unsubscribe_page_from_leadgen_calls_graph_delete(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        with patch.object(
+            httpx, "delete", return_value=_FakeResponse({"success": True})
+        ):
+            assert a.unsubscribe_page_from_leadgen("P1") is True
+
+    def test_unsubscribe_page_from_leadgen_scope_absent_raises_app_review(self):
+        a = MetaOAuthAdapter(system_user_token="SYSTOK")
+        a._page_token_cache["P1"] = "PTOK"
+        with patch.object(httpx, "delete", return_value=_FakeResponse(_PERM_ERR)):
+            with pytest.raises(MetaGraphError) as exc:
+                a.unsubscribe_page_from_leadgen("P1")
+        assert exc.value.requires_app_review is True
