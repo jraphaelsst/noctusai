@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
 from noctusai_lib.domain.chatbot import (
     ConversationBufferService,
     ConversationWorker,
@@ -76,7 +77,9 @@ logger = logging.getLogger(__name__)
 # inbounds before the worker fires, so either ordering joins to the same
 # blob).
 # ---------------------------------------------------------------------------
-_PRODUCT_CODE_RE = re.compile(r"\bONE\d{3,6}\b", re.IGNORECASE)
+# Canonical scanner — imported, never re-declared. Three hand-synced copies
+# of this pattern previously drifted; see the seed module's docstring.
+_PRODUCT_CODE_RE = PRODUCT_CODE_SCAN_PATTERN
 _DRIVE_URL_RE = re.compile(
     r"https?://(?:drive|docs)\.google\.com/[^\s]+",
     re.IGNORECASE,

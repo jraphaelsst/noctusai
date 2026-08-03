@@ -31,8 +31,21 @@ from typing import Any
 
 import httpx
 
-from noctusai_lib.domain.real_estate import PropertyData, validate_product_code
-from noctusai_lib.integrations.vista.client import VistaConfigError, VistaError
+from noctusai_lib.domain.real_estate import (
+    Imovel,
+    ImovelPage,
+    PropertyData,
+    validate_product_code,
+)
+from noctusai_lib.integrations.vista.calibration import calibrator
+from noctusai_lib.integrations.vista.client import (
+    VistaClient,
+    VistaConfigError,
+    VistaError,
+    VistaNotFound,
+    extract_items,
+)
+from noctusai_lib.integrations.vista.imovel_normalizer import vista_to_imovel
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +167,118 @@ class VistaRESTAdapter:
             )
 
         return self._map_response(code, data)
+
+    # ─── Canonical `Imovel` surface (roadmap P2.0b) ──────────────────────
+    #
+    # These compose `VistaClient` + the per-tenant `calibrator` rather than
+    # hand-rolling httpx and a hardcoded field list the way `get_property`
+    # above does. That is deliberate: a hardcoded field list is exactly the
+    # Phase-4.5 showcase incident (`KB § INTEGRATIONS/vista.md` § 6), and it
+    # is why `get_property` cannot see `BanheiroSocial`, `Caracteristicas`
+    # or any field the tenant enabled after that list was written.
+    #
+    # NOC-REMEDIATE[seed-fork]: `get_property` + `update_property_video_url`
+    # still use raw httpx with a frozen 16-field `pesquisa`. They should be
+    # re-based onto `VistaClient` + `calibrator` so the adapter has ONE
+    # transport. Deferred here rather than done in-flight because those two
+    # feed the live YouTube fan-out and a field-set change alters
+    # `PropertyData.description` — a behaviour change that wants its own
+    # slice, not a drive-by. Named destination: roadmap
+    # `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up.
+
+    def _client(self) -> VistaClient:
+        return VistaClient(self._base_url, self._api_key)
+
+    async def get_imovel(self, code: str) -> Imovel | None:
+        """Full canonical listing for one code.
+
+        Issues BOTH calls, because neither endpoint is a superset of the
+        other: `detalhes` carries `Caracteristicas`/`Numero`/`FinalidadeStatus`,
+        while `FotoDestaque`/`BanheiroSocial`/`CodigoImobiliaria` exist only
+        on `listar`. Fetching one and calling it complete is the bug this
+        method exists to prevent.
+        """
+        if not validate_product_code(code):
+            logger.warning("invalid product code format: %s", code)
+            return None
+
+        client = self._client()
+        listing = await self._fetch_listing_row(client, code)
+        detalhes: dict | None = None
+        try:
+            fields = await calibrator.get_imovel_detail_fields(client)
+            result = await client.detalhes_imovel(code, fields=fields)
+            if isinstance(result.data, dict):
+                detalhes = result.data
+        except VistaNotFound:
+            detalhes = None
+
+        if listing is None and detalhes is None:
+            return None
+        return vista_to_imovel(listing=listing, detalhes=detalhes)
+
+    async def _fetch_listing_row(
+        self, client: VistaClient, code: str
+    ) -> dict | None:
+        """The `listar` row for one code — carries the listar-only fields."""
+        fields = await calibrator.get_imovel_list_fields(client)
+        try:
+            result = await client.listar_imoveis(
+                fields=fields, filter_={"Codigo": [code]}, page=1, page_size=1
+            )
+        except VistaNotFound:
+            return None
+        items, _ = extract_items(result.data)
+        return items[0] if items else None
+
+    async def list_imoveis(
+        self, *, page: int = 1, page_size: int = 50, with_detalhes: bool = False
+    ) -> ImovelPage:
+        """One page of the catalog.
+
+        `with_detalhes=True` costs one extra HTTP call per imóvel. On this
+        tenant that is ~1919 extra calls for a full catalog walk — measured
+        at ~4–6 min end-to-end at concurrency 4–8. The caller decides;
+        the default stays cheap.
+        """
+        client = self._client()
+        fields = await calibrator.get_imovel_list_fields(client)
+        result = await client.listar_imoveis(
+            fields=fields, page=page, page_size=page_size
+        )
+        rows, pagination = extract_items(result.data)
+
+        imoveis: list[Imovel] = []
+        for row in rows:
+            detalhes = None
+            if with_detalhes:
+                codigo = row.get("Codigo")
+                if codigo:
+                    try:
+                        detail_fields = await calibrator.get_imovel_detail_fields(client)
+                        detail_result = await client.detalhes_imovel(
+                            codigo, fields=detail_fields
+                        )
+                        if isinstance(detail_result.data, dict):
+                            detalhes = detail_result.data
+                    except VistaError as exc:
+                        # One imóvel's detail failure must not abort the page —
+                        # but it is NOT swallowed: the imóvel is still yielded
+                        # from its listar row, and the gap is logged loudly so a
+                        # sync reporting "1919 synced" can be trusted.
+                        logger.warning(
+                            "vista: detalhes failed for %s (%s) — "
+                            "yielding listar-only imóvel without caracteristicas",
+                            codigo, type(exc).__name__,
+                        )
+            imoveis.append(vista_to_imovel(listing=row, detalhes=detalhes))
+
+        return ImovelPage(
+            items=imoveis,
+            total=int(pagination.get("total") or len(imoveis)),
+            page=int(pagination.get("pagina") or page),
+            pages=int(pagination.get("paginas") or 1),
+        )
 
     def _map_response(self, code: str, data: dict) -> PropertyData:
         """Map Vista's ``/imoveis/detalhes`` payload to PropertyData."""

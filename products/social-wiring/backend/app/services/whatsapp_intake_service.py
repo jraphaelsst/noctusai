@@ -37,8 +37,10 @@ from app.schemas.whatsapp import (
 from app.services import gdrive_service
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.domain.real_estate import (
+    PRODUCT_CODE_SCAN_PATTERN,
     PropertyData,
     build_youtube_metadata,
+    find_product_codes,
     validate_product_code,
 )
 from noctusai_lib.integrations.vista import (
@@ -52,11 +54,12 @@ from app.services.waha_response_registry import record_waha_sample
 logger = logging.getLogger(__name__)
 
 # Independent extractors — code and URL may appear in either order.
-# Keep tolerance aligned with conversation_module._regex_extract so the
+# Tolerance MUST stay aligned with conversation_module._regex_extract so the
 # fast-path gate and the state-machine handler agree on what counts as a
 # valid upload command (silent drops from order-mismatch caused user-
-# visible "no reply" incidents).
-_PRODUCT_CODE_RE = re.compile(r"\bONE\d{3,6}\b", re.IGNORECASE)
+# visible "no reply" incidents). That alignment is now structural rather than
+# a hand-sync instruction — both import the one canonical seed constant.
+_PRODUCT_CODE_RE = PRODUCT_CODE_SCAN_PATTERN
 _DRIVE_URL_RE = re.compile(
     r"https?://(?:drive\.google\.com|docs\.google\.com)\S+",
     re.IGNORECASE,
@@ -186,10 +189,11 @@ def _compute_content_stats(text: str, rendered_as: str) -> dict[str, Any]:
     canonical = translate_rendered_as(rendered_as, to="canonical")
     base = dict(_seed_compute_content_stats(text, rendered_as=canonical))
 
-    # Real-estate-specific: count ONE codes (the user's domain — kept
-    # per-product per the seed `content_stats.py` docstring).
-    code_pattern = re.compile(r"\bONE\d{3,6}\b")
-    matches = code_pattern.findall(text)
+    # Real-estate-specific: count product codes (the user's domain — kept
+    # per-product per the seed `content_stats.py` docstring). The stat keys
+    # keep their `one_*` names for wire compatibility, but they count every
+    # prefix the tenant uses, not just ONE.
+    matches = find_product_codes(text)
     if matches:
         unique = sorted(set(matches))
         base["one_code_count"] = len(matches)

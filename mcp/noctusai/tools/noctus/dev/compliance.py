@@ -8182,6 +8182,139 @@ def _hashlib_new_weak_name(node: "ast.Call") -> str | None:
     return None
 
 
+# Ratified historical duplicates — accept-with-rationale
+# (`KB § PATTERNS/common/accept-with-rationale.md`).
+#
+# These predate the detector and are ALREADY APPLIED in their historical
+# order. Renumbering an applied migration is strictly worse than the
+# duplicate: the runner would treat the renamed file as never-applied and
+# re-run it. They are recorded here rather than fixed, so the detector stays
+# meaningful for NEW collisions instead of being muted wholesale.
+#
+# Any entry added here needs a real reason. "It is inconvenient" is not one.
+_ACCEPTED_MIGRATION_DUPLICATES: set[tuple[str, str]] = {
+    ("erp-imobiliario", "017"),   # 017_llm_preferences + 017_metas_event_pipeline
+    ("social-wiring", "005"),     # 005_integration_accounts + 005_whatsapp_connection_webhook_token
+}
+
+
+def check_migration_number_collision(repo_root: Path | None = None) -> list[dict]:
+    """Flag two migrations claiming the same number — including on UNPUSHED branches.
+
+    **The failure.** Migration files are ordered by their numeric prefix, so
+    two files sharing one number have undefined apply-order. On 2026-08-03
+    three concurrent sessions each reserved a number by looking at
+    `ls migrations/` and `git log origin/dev` — both of which are blind to a
+    sibling branch that has not pushed yet. Two branches claimed `040`; a
+    third shipped a duplicate `041` to `dev` and only caught it when a peer
+    session's handoff doc named the hazard.
+
+    **Why this needs a detector rather than discipline.** The information
+    required to pick a safe number is not visible from the working tree. An
+    engineer doing exactly the right local check still collides. The only
+    reliable source is the set of migration files across every local branch:
+
+        git diff --name-only origin/dev...<branch> | grep backend/migrations/
+
+    Two legs:
+
+    - **Leg A (severity `high`)** — a duplicate number ON DISK in one
+      product. This is already broken; apply-order is undefined right now.
+    - **Leg B (severity `warning`)** — a number claimed by more than one
+      local branch. Not yet broken, but whichever branch merges second must
+      renumber. Warning rather than high because the collision is latent and
+      the fix belongs to the *second* merger, who may not be this commit.
+
+    Scans `products/*/backend/migrations/*.sql`.
+    """
+    import re
+    import subprocess
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+    num_re = re.compile(r"^(\d{3,4})_")
+
+    # ── Leg A — duplicates on disk ──
+    for product_dir in sorted((root / "products").glob("*")):
+        mig_dir = product_dir / "backend" / "migrations"
+        if not mig_dir.is_dir():
+            continue
+        by_number: dict[str, list[str]] = {}
+        for f in sorted(mig_dir.glob("*.sql")):
+            m = num_re.match(f.name)
+            if m:
+                by_number.setdefault(m.group(1), []).append(f.name)
+        for number, names in sorted(by_number.items()):
+            if len(names) > 1 and (product_dir.name, number) in _ACCEPTED_MIGRATION_DUPLICATES:
+                continue
+            if len(names) > 1:
+                findings.append({
+                    "product": product_dir.name,
+                    "file": f"products/{product_dir.name}/backend/migrations/",
+                    "issue": (
+                        f"migration number {number} is claimed by {len(names)} files "
+                        f"({', '.join(names)}) — apply-order is undefined. "
+                        "Renumber all but the earliest-merged one."
+                    ),
+                    "severity": "high",
+                })
+
+    # ── Leg B — same number claimed by multiple local branches ──
+    try:
+        branches = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)"],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        ).stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        # No git, or git is unhappy — Leg A already ran; do not fail the
+        # keeper over an unavailable branch list, but do not pretend it was
+        # checked either (the caller sees only Leg A findings).
+        return findings
+
+    # Key on (product, number) -> {filename: {branches}}. Comparing FILENAMES
+    # matters: a stack of sibling branches off one initiative all carry the
+    # SAME migration file, which is not a collision. Only two DIFFERENT
+    # filenames under one number are.
+    claims: dict[tuple[str, str], dict[str, set[str]]] = {}
+    for branch in branches:
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--name-only", f"origin/dev...{branch}"],
+                cwd=root, capture_output=True, text=True, timeout=30,
+            ).stdout.splitlines()
+        except (subprocess.SubprocessError, OSError):
+            continue
+        for path in out:
+            if "/backend/migrations/" not in path or not path.endswith(".sql"):
+                continue
+            parts = path.split("/")
+            product = parts[1] if len(parts) > 1 else "?"
+            name = parts[-1]
+            m = num_re.match(name)
+            if m:
+                claims.setdefault((product, m.group(1)), {}).setdefault(name, set()).add(branch)
+
+    for (product, number), by_name in sorted(claims.items()):
+        if len(by_name) > 1:
+            detail = "; ".join(
+                f"{name} on {', '.join(sorted(brs))}" for name, brs in sorted(by_name.items())
+            )
+            findings.append({
+                "product": product,
+                "file": f"products/{product}/backend/migrations/",
+                "issue": (
+                    f"migration number {number} is claimed by {len(by_name)} DIFFERENT "
+                    f"files across local branches ({detail}) — whichever merges SECOND "
+                    "must renumber the file and every reference to it."
+                ),
+                "severity": "warning",
+            })
+
+    return findings
+
+
 def check_hashlib_usedforsecurity(repo_root: Path | None = None) -> list[dict]:
     """Flag a weak-hash call missing `usedforsecurity=False` (Bandit B324).
 

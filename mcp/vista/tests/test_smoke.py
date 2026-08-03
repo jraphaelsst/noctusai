@@ -16,7 +16,7 @@ import pytest
 
 
 def test_package_imports():
-    from vista import types, calibration, settings  # noqa: F401
+    from vista import types, settings  # noqa: F401
     # Vista client + normalizers live in noctusai_lib.integrations.vista (FORMALIZED 2026-05-03)
     from noctusai_lib.integrations import vista as vista_seed  # noqa: F401
 
@@ -180,7 +180,7 @@ def test_detect_unavailable_field_handles_json_escaped_body():
 def test_calibrator_returns_floor_when_unconfigured():
     """No-config probe should fall back to FLOOR_FIELDS, not crash."""
     import asyncio
-    from vista.calibration import calibrator, FLOOR_FIELDS
+    from noctusai_lib.integrations.vista import calibrator, FLOOR_FIELDS
     from noctusai_lib.integrations.vista import VistaClient
 
     calibrator.reset()
