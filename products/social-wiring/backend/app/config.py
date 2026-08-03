@@ -99,6 +99,29 @@ class SocialWiringSettings(ProductSettings):
     waha_webhook_url: str = ""
     waha_webhook_hmac_secret: str = ""
 
+    # ─── WhatsApp inbox history backfill (whatsapp-realtime-inbox W4.6) ──
+    # Walks every connection's chats via the WAHA NOWEB store and persists
+    # history into Postgres so a reopened chat isn't empty until the next
+    # live message arrives. Runs on the shared seed APScheduler
+    # (`noctusai_lib.api.scheduler`), registered from
+    # `app.services.whatsapp_backfill.configure()`.
+    whatsapp_backfill_enabled: bool = True
+    # How far back to pull, in days. Combined with
+    # `whatsapp_backfill_max_messages_per_chat` below (90 days OR 500
+    # messages, whichever bound is hit first per chat).
+    whatsapp_backfill_days: int = 90
+    whatsapp_backfill_max_messages_per_chat: int = 500
+    # How many chats to scan per connection per run — bounds one run's WAHA
+    # call volume; a connection with more chats than this gets the rest on
+    # a later run (list_chats orders by recent activity, so the most
+    # relevant chats land first).
+    whatsapp_backfill_chat_limit: int = 50
+    # Interval between scheduled runs. A chat already backfilled once
+    # (`whatsapp_chats.synced_through IS NOT NULL`) is skipped on
+    # subsequent runs — see the module docstring for why this is a
+    # one-shot-per-chat backfill, not true incremental catch-up.
+    whatsapp_backfill_interval_hours: int = 6
+
     # ─── Redis (upload-job tracking, Phase 2+) ─────────────────────────
     redis_url: str = "redis://localhost:6379/0"
 
