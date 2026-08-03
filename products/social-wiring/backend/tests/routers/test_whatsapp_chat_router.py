@@ -738,7 +738,7 @@ class TestWahaLiveMergeChats:
         created = _create_connection(c)
         conn_id = created["id"]
 
-        # Seed the FakeWahaClient with a chat (simulates full_sync result).
+        # Seed the FakeWahaClient with a chat (simulates fullSync result).
         fake: FakeWahaClient = fakes["default"]
         fake.fake_chat_list = [
             {
@@ -795,7 +795,7 @@ class TestWahaLiveMergeChats:
         ])
 
         fake: FakeWahaClient = fakes["default"]
-        # WAHA has a newer message (full_sync result)
+        # WAHA has a newer message (fullSync result)
         fake.fake_chat_list = [
             {
                 "id": {"_serialized": "5577@c.us"},
@@ -1094,7 +1094,13 @@ class TestStartSessionNoweb:
         body = posted_bodies[0]
         noweb = body.get("config", {}).get("noweb", {}).get("store", {})
         assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
-        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"
+        assert noweb.get("fullSync") is True, f"noweb.store.fullSync missing in: {body}"
+        # 🔴 Regression pin. WAHA's key is camelCase `fullSync`. This assertion
+        # previously named the snake_case spelling, so it passed against a payload
+        # WAHA silently DROPPED — the live session reported `fullSync: false` for
+        # weeks while this test stayed green. Asserting the absence of the wrong
+        # key is what makes the false-green unrepeatable.
+        assert "full_sync" not in noweb, f"snake_case full_sync must never be sent: {body}"
 
     def test_real_client_restart_session_sends_noweb_payload(self, monkeypatch):
         """WahaClient.restart_session POSTs the noweb store config in the JSON body."""
@@ -1135,4 +1141,10 @@ class TestStartSessionNoweb:
         body = posted_bodies[0]
         noweb = body.get("config", {}).get("noweb", {}).get("store", {})
         assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
-        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"
+        assert noweb.get("fullSync") is True, f"noweb.store.fullSync missing in: {body}"
+        # 🔴 Regression pin. WAHA's key is camelCase `fullSync`. This assertion
+        # previously named the snake_case spelling, so it passed against a payload
+        # WAHA silently DROPPED — the live session reported `fullSync: false` for
+        # weeks while this test stayed green. Asserting the absence of the wrong
+        # key is what makes the false-green unrepeatable.
+        assert "full_sync" not in noweb, f"snake_case full_sync must never be sent: {body}"
