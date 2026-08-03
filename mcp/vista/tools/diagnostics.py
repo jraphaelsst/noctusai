@@ -6,7 +6,7 @@ from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import VistaClient
 
-from ..calibration import calibrator
+from noctusai_lib.integrations.vista import calibrator
 from ..settings import get_settings
 from ..types import CalibratedFieldsOutput, ProbeOutput
 

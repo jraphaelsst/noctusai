@@ -6,9 +6,18 @@ implement it — it uses hardcoded constants for `oneconsu-rest`. Phase 4.5
 of the showcase shipped a 422 surface for `VistaFieldNotAvailable` so
 drift is recoverable, but the constants don't auto-correct.
 
-This module is the in-repo MCP server's solution: an actual probe-based
-discovery routine that runs on first real call and caches the resulting
-safe field set per tenant key for the process lifetime.
+This module is the probe-based discovery routine that runs on first real
+call and caches the resulting safe field set per tenant key for the
+process lifetime.
+
+**Why it lives in the seed.** It was authored inside ``mcp/vista/`` and
+lifted here 2026-08-03 (roadmap ``social-wiring-imoveis-vista-2026-08``,
+P2.0a). The MCP server was its first consumer, not its only possible one:
+any product-side Vista sync needs the same per-tenant field set, and the
+alternative — a product hardcoding the field list — is precisely the
+Phase-4.5 showcase incident this module exists to prevent. A calibrator
+reachable only from the MCP host forces every backend consumer into that
+mistake, so it belongs beside the client it calibrates.
 
 **Algorithm (per vista.md § 6 sketch):**
 1. Start from a CANDIDATE set: public-doc full superset PLUS NoctusAI-known
@@ -33,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from noctusai_lib.integrations.vista import (
+from noctusai_lib.integrations.vista.client import (
     VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
