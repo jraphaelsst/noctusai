@@ -260,6 +260,29 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
 
 ---
 
+## 🔴 INTEGRATION BUG — found on the merged tip, invisible per-branch
+
+**Sent messages would vanish from their own thread, permanently.**
+
+Chain (all three links verified in the merged code, not inferred):
+1. `POST /chats/{id}/send` calls `MessageStore.record(...)` **without** a `chat_id`
+   (`whatsapp_connections_router.py:1031-1038`) — the parameter does not exist on `record()`.
+2. Slice 5's new thread query reads **by `chat_id` only** (no more JID-alias fan-out), so a row with
+   `chat_id IS NULL` never surfaces.
+3. The `message.any` echo webhook cannot repair it: the echo carries the **same
+   `provider_message_id`**, so `UNIQUE(provider_message_id)` drops it as a duplicate. The row never
+   gets a `chat_id` — not late, *never*.
+
+Why neither slice caught it: slice 5's suite (47 tests) and slice 4's suite are both green in
+isolation. The defect lives strictly in the seam between them — the exact failure mode
+`KB § PATTERNS/common/methodology-execution-discipline.md` warns about ("file-disjoint isn't
+effect-disjoint").
+
+- [ ] **FIX-1** `/send` must pass `chat_id` to `record()` (and `record()` must accept it).
+- [ ] **FIX-2** Regression test: send → the message appears in `GET /chats/{id}/messages`.
+- [ ] **FIX-3** Regression test: the `message.any` echo for an already-stored outbound is a no-op
+      that does **not** leave `chat_id` NULL.
+
 ## Verification (end-to-end, run before calling this done)
 
 - [ ] **V1 · QR** `waha_session_get` → `SCAN_QR_CODE`; QR renders; pairing completes → `WORKING` with
