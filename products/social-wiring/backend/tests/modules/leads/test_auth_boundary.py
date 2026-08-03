@@ -54,6 +54,11 @@ _ROUTES = [
     ("get", "/api/leads/import/batches", {}),
     ("post", "/api/leads/import/preview", {"files": {"file": ("x.xlsx", b"stub", "application/octet-stream")}}),
     ("post", "/api/leads/import/commit", {"files": {"file": ("x.xlsx", b"stub", "application/octet-stream")}}),
+    # Meta-ingest backfill: a bulk WRITE over every meta_ads_leads row for the
+    # caller's org. It resolves its org from the token, so an unauthenticated
+    # call has no org to scope to and must be refused at the boundary — not
+    # inside the service, where a missing org could be misread as "all orgs".
+    ("post", "/api/leads/meta-ingest/backfill", {}),
 ]
 
 
