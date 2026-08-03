@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -26,6 +27,18 @@ def _make_response(status_code: int = 200, json_body: dict | None = None) -> Mag
     else:
         response.raise_for_status = MagicMock()
     return response
+
+
+def _async_post_ctx(response: MagicMock) -> MagicMock:
+    """Build an ``httpx.AsyncClient`` context-manager mock whose ``post``
+    returns ``response`` — mirrors test_client_identity.py's `_async_ctx`
+    (that file scopes to identity-resolution GET calls; this is the POST
+    sibling for admin/action endpoints like `/api/sendSeen`)."""
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=response)
+    return mock_client
 
 
 # ---- send_text_sync ---------------------------------------------------------
@@ -91,6 +104,72 @@ def test_send_text_sync_propagates_network_timeout(monkeypatch: pytest.MonkeyPat
     client = WahaClient(base_url="https://waha.test", api_key="k")
     with pytest.raises(httpx.TimeoutException):
         client.send_text_sync("phone@c.us", "x")
+
+
+# ---- send_seen ---------------------------------------------------------------
+# WAHA's SendSeenRequest schema (POST /api/sendSeen, verified against the live
+# fleet's own OpenAPI spec): requires chatId + session; messageId + participant
+# optional. These tests pin the exact body shape.
+
+
+def test_send_seen_posts_full_body_when_message_id_and_participant_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resp = _make_response(201, {"success": True})
+    resp.content = b'{"success":true}'
+    ctx = _async_post_ctx(resp)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: ctx)
+
+    client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
+    result = asyncio.run(
+        client.send_seen(
+            "120363@g.us",
+            message_id="false_120363@g.us_ABCDEF",
+            participant="5511999999999@c.us",
+        )
+    )
+
+    assert result == {"success": True}
+    ctx.post.assert_called_once()
+    call = ctx.post.call_args
+    assert call.args[0] == "/api/sendSeen"
+    body = call.kwargs["json"]
+    assert body == {
+        "session": "default",
+        "chatId": "120363@g.us",
+        "messageId": "false_120363@g.us_ABCDEF",
+        "participant": "5511999999999@c.us",
+    }
+    assert call.kwargs["headers"]["Content-Type"] == "application/json"
+
+
+def test_send_seen_omits_optional_fields_when_not_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resp = _make_response(201, {})
+    resp.content = b""
+    ctx = _async_post_ctx(resp)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: ctx)
+
+    client = WahaClient(base_url="https://waha.test", api_key="k", session="default")
+    result = asyncio.run(client.send_seen("5511999999999@c.us"))
+
+    body = ctx.post.call_args.kwargs["json"]
+    assert body == {"session": "default", "chatId": "5511999999999@c.us"}
+    # An empty body (WAHA sometimes answers a bare 2xx) tolerates via _safe_json.
+    assert result == {}
+
+
+def test_send_seen_propagates_5xx_as_http_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resp = _make_response(503)
+    ctx = _async_post_ctx(resp)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: ctx)
+
+    client = WahaClient(base_url="https://waha.test", api_key="k")
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(client.send_seen("c@c.us"))
 
 
 # ---- Header behavior --------------------------------------------------------
@@ -210,7 +289,7 @@ from noctusai_lib.integrations.whatsapp.client import _session_config  # noqa: E
 def test_session_config_always_includes_noweb_store() -> None:
     cfg = _session_config()["config"]
     assert cfg["noweb"]["store"]["enabled"] is True
-    assert cfg["noweb"]["store"]["full_sync"] is True
+    assert cfg["noweb"]["store"]["fullSync"] is True
     assert "webhooks" not in cfg  # no webhooks unless asked
 
 
@@ -220,7 +299,7 @@ def test_session_config_with_webhooks_keeps_BOTH_webhooks_and_store() -> None:
     cfg = _session_config(webhooks=hooks)["config"]
     assert cfg["webhooks"] == hooks
     assert cfg["noweb"]["store"]["enabled"] is True
-    assert cfg["noweb"]["store"]["full_sync"] is True
+    assert cfg["noweb"]["store"]["fullSync"] is True
 
 
 def test_set_webhook_put_body_reasserts_noweb_store(
@@ -252,4 +331,18 @@ def test_set_webhook_put_body_reasserts_noweb_store(
     cfg = captured["json"]["config"]
     assert cfg["webhooks"][0]["url"] == "https://x/wh"
     assert cfg["noweb"]["store"]["enabled"] is True, "webhook PUT dropped the store!"
-    assert cfg["noweb"]["store"]["full_sync"] is True
+    assert cfg["noweb"]["store"]["fullSync"] is True
+
+
+def test_session_config_wire_key_is_camel_case_full_sync() -> None:
+    """Pins the exact wire-format key. WAHA's NOWEB config key is
+    camelCase ``fullSync`` — a prior snake_case ``full_sync`` typo was
+    silently dropped by WAHA (unrecognized key ⇒ its own `false` default
+    applied) and NOWEB never backfilled history. Nothing raised; this
+    test is the only thing that would have caught it, because it asserts
+    the exact emitted JSON key string rather than a Python-side alias.
+    """
+    payload = _session_config()
+    assert "fullSync" in payload["config"]["noweb"]["store"]
+    assert "full_sync" not in payload["config"]["noweb"]["store"]
+    assert payload["config"]["noweb"]["store"]["fullSync"] is True

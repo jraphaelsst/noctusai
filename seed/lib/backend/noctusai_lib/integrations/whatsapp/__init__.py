@@ -15,13 +15,18 @@ Public surface:
 - Parsing: `parse_waha_inbound_message`, `chat_id_for_phone`,
   `phone_from_chat_id`, `build_send_text_body`,
   `rewrite_vendor_media_url`.
-- HTTP: `WahaClient` (sync + async send_text + download_media;
-  async list_chats + fetch_chat_messages — require NOWEB store enabled;
-  start/restart_session include noweb store config by default;
-  external→internal media-URL rewrite).
+- HTTP: `WahaClient` (sync + async send_text + send_seen + download_media;
+  async list_chats + get_chats_overview + fetch_chat_messages — require
+  NOWEB store enabled; start/restart_session include noweb store config
+  by default (camelCase `fullSync`, WAHA's actual wire key);
+  external→internal media-URL rewrite; `recover_session` — the
+  start→restart→logout+start escalation ladder for a session stuck
+  outside `{SCAN_QR_CODE, WORKING}`).
 - Fake: `FakeWahaClient` — bi-directional in-memory deterministic
-  (records `sent_messages`, accepts `inject_text` / `inject_inbound`,
-  serves pre-populated `media_bytes`).
+  (records `sent_messages` / `seen_calls`, accepts `inject_text` /
+  `inject_inbound`, serves pre-populated `media_bytes` /
+  `fake_chats_overview`, `simulate_stuck_session()` drives
+  `recover_session`'s full ladder).
 - Factory: `get_whatsapp_client(base_url=, api_key=, session=,
   external_base_url=)` — returns `WahaClient` when `base_url` is set,
   `FakeWahaClient` otherwise. Mirrors
