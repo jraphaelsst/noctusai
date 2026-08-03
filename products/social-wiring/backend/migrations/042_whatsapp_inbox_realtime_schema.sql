@@ -1,4 +1,4 @@
--- 040_whatsapp_inbox_realtime_schema.sql — Postgres as the read source of
+-- 042_whatsapp_inbox_realtime_schema.sql — Postgres as the read source of
 -- truth for the WhatsApp chat inbox.
 --
 -- Project: whatsapp-realtime-inbox (2026-08-03), Slice 3.

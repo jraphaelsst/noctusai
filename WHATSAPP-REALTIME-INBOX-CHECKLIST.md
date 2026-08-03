@@ -162,7 +162,7 @@ as the canonical instance every future chat UI consumes.
       in `test_migrations.py` — full suite **1502 passed / 0 failed**, root scoped to the worktree.
       **Live apply deferred to the tech-lead after merge** (see blockers below).
 
-**Slice 3 delivered** — `040_whatsapp_inbox_realtime_schema.sql`, commit `b524b097` on `feat/wa-inbox-schema`.
+**Slice 3 delivered** — `042_whatsapp_inbox_realtime_schema.sql`, commit `b524b097` on `feat/wa-inbox-schema`.
 Index `idx_sw_whatsapp_chats_list (connection_id, archived, last_message_at DESC)` is the chat-list
 query. RLS mirrors `011:448-453` with deliberately **no** archived/unread predicate — filtering a
 category out of RLS makes every downstream FE branch on it dead (`status-pagina-dev-visibility`).
@@ -468,7 +468,7 @@ green on reflex.
 |---|---|
 | `037_erp_stage_parity_and_canonical_phone.sql` | **PENDING** on live dev — canonical-phone contract absent from the DB |
 | `038_n8n_folders.sql` · `039_n8n_nav_route.sql` | **PENDING** — the n8n feature is shipped in code with no schema behind it |
-| `040_whatsapp_inbox_realtime_schema.sql` | **THIS WORK. Authored, statically verified, NEVER APPLIED anywhere.** |
+| `042_whatsapp_inbox_realtime_schema.sql` | **THIS WORK. Authored, statically verified, NEVER APPLIED anywhere.** |
 | `041_leads_meta_lead_id.sql` | **PENDING** — a peer's, appeared during this session |
 
 - Apply 040 **alone**: `migrate_product(product="social-wiring", target="040_...", confirm=true)`.

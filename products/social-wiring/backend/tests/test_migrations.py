@@ -9,7 +9,7 @@ they hit a real Supabase instance.
 Coverage:
 - 001_social-wiring.sql: api_tokens table structure + RLS shape
 - 011_rls_current_org_id.sql: current_org_id() fix shape (no jwt() pattern)
-- 040_whatsapp_inbox_realtime_schema.sql: whatsapp_chats table + indexes +
+- 042_whatsapp_inbox_realtime_schema.sql: whatsapp_chats table + indexes +
   RLS shape, conversation_messages ack/chat_id columns + thread index
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ MIGRATION_011_PATH = (
 MIGRATION_040_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
-    / "040_whatsapp_inbox_realtime_schema.sql"
+    / "042_whatsapp_inbox_realtime_schema.sql"
 )
 
 
@@ -209,7 +209,7 @@ def test_001_no_broken_jwt_pattern(sql: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 040_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
+# 042_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
 # ack/chat_id (whatsapp-realtime-inbox, Slice 3, 2026-08-03)
 # ---------------------------------------------------------------------------
 
