@@ -528,6 +528,23 @@ class LeadgenForm:
 
 
 @dataclass(frozen=True)
+class PageSubscription:
+    """One app's webhook subscription on a Page (`GET
+    /{page_id}/subscribed_apps`). `subscribed_fields` is Graph's
+    per-app list of field names (e.g. `"leadgen"`) the Page is
+    currently subscribed to for that app — the introspection
+    counterpart to `subscribe_page_to_leadgen` (confirm a subscription
+    actually took, or discover what's already wired). `page_id` is
+    injected by the mapper (Graph's row doesn't itself carry it) — the
+    same seam `LeadgenForm.page_id` uses."""
+
+    app_id: str
+    app_name: str | None = None
+    page_id: str | None = None
+    subscribed_fields: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class LeadFieldEntry:
     """One answered field on a lead — a `{name, values}` pair from a
     lead's `field_data`. `name` matches a `LeadgenQuestion.key`;
@@ -866,6 +883,23 @@ class MetaAdapter(Protocol):
         self, form_id: str, *, page_id: str | None = None, limit: int = 100
     ) -> list[Lead]: ...
 
+    # ─── Lead-ads webhook surface (additive — Page-scoped subscription
+    #    management; parsing the actual webhook DELIVERY is a pure
+    #    function, `leadgen_webhook.parse_leadgen_webhook` — outside
+    #    this IO Protocol by design) ───────────────────────────────────
+
+    def get_lead(self, leadgen_id: str, *, page_id: str | None = None) -> Lead: ...
+
+    def subscribe_page_to_leadgen(
+        self, page_id: str, *, fields: tuple[str, ...] = ("leadgen",)
+    ) -> bool: ...
+
+    def list_page_subscribed_apps(
+        self, page_id: str
+    ) -> list[PageSubscription]: ...
+
+    def unsubscribe_page_from_leadgen(self, page_id: str) -> bool: ...
+
     # ─── Ads management surface (additive — read/insights/posting
     #    callers unaffected; distinct ``ads_management`` scope) ──────
 
@@ -988,6 +1022,7 @@ __all__ = [
     "MediaProcessingStatus",
     "MetaAdapter",
     "MetaConnectionStatus",
+    "PageSubscription",
     "PostInsights",
     "PublishedMedia",
     "PublishedPost",
