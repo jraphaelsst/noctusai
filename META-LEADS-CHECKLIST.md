@@ -6,7 +6,17 @@
 > this checklist is its execution surface). Full rationale for every decision lives there and
 > in the approved plan; this file is the *what shipped* view.
 
-**Status:** 🟡 in progress · started 2026-08-03
+**Status:** 🟡 in progress · started 2026-08-03 · branch `feat/meta-leadgen-webhook`
+
+**Prod posture (operator, 2026-08-03):** ❌ **no prod deploy until everything is built and
+validated.** Slice 0 is on `dev` only. One promotion at the end, not a trickle.
+
+**Build order right now:** Slices 1 · 2 · 3 · 4 · 5a · 6 (all independent of the peer branch) →
+then pause. Slice 5b (live push) stays suspended until the peer's seed realtime work is assessed.
+
+**Migration numbers claimed by this branch:** `040` (webhook inbox) · `041` (leads.meta_lead_id).
+🔴 Re-check the highest number on `origin/dev` immediately before writing either — the peer
+branch `feat/whatsapp-realtime-inbox` also declares `products/social-wiring/backend/migrations`.
 
 ---
 
@@ -95,15 +105,31 @@ upsert keyed on Meta's own lead id.
 - [ ] Fan-out runs **after** the 200 (never blocks the webhook response)
 - [ ] **Verify live:** test lead triggers a real WhatsApp message + email + in-app badge
 
-## Slice 5 — Live UI (C3)
+## Slice 5a — Webhook UI + ordering (C3) · **independent, build now**
 
-- [ ] Migration: `ALTER PUBLICATION supabase_realtime ADD TABLE ...meta_ads_leads, ...leads`
-- [ ] NEW seed organ `seed/lib/frontend/src/hooks/useRealtimeInserts.ts` (run `noc-organ-consume-check` first)
-- [ ] Consumers **prepend** via `queryClient.setQueryData` — no invalidate/refetch
-- [ ] `loading` gated on `isPending || isFetching`, never `isLoading`
+- [ ] NEW `frontend/src/hooks/useMetaLeadgen.ts` (new file — keeps C3 disjoint from `useMetaAds.ts`)
+- [ ] Subscription-management card in `pages/meta/AdsLeads.tsx`:
+      per-Page subscribed/not-subscribed badges · "Assinar páginas" · "Cancelar" ·
+      callback URL with copy · `verify_token_configured` warning · scope-missing banner
+- [ ] Webhook health panel — last delivery received, inbox counts by `status`
 - [ ] Newest-first: default sort → `data_entrada desc` (`leads_service.py`)
-- [ ] NEW `frontend/src/hooks/useMetaLeadgen.ts` + subscription-status card in `pages/meta/AdsLeads.tsx`
-- [ ] **Verify live:** lead appears with no refresh, no loading flash, newest on top
+- [ ] `loading` gated on `isPending || isFetching`, never `isLoading`
+- [ ] Complete loading / empty / error / not-configured states (no zeros-over-data)
+
+## Slice 5b — Live push (C3) · 🔴 **SUSPENDED — do not build**
+
+> Blocked by design, not by effort. The peer branch `feat/whatsapp-realtime-inbox` is building
+> `seed/lib/backend/noctusai_lib/realtime` (SSE + Redis bus) for the WhatsApp/WAHA inbox. That is a
+> **different live session** from this one (Meta Ads leads), but both would sit on the same seed
+> realtime primitive, and shipping a second one (Supabase Realtime) would fork the seed.
+> **Decision 2026-08-03 (operator):** finish all non-conflicting work first; once the peer lands,
+> evaluate their transport together and decide how to touch that seed. Nothing here gets built
+> until that assessment happens.
+
+- [ ] ⏸ Evaluate the peer's landed `noctusai_lib/realtime` transport
+- [ ] ⏸ Decide the Meta-leads live-session shape on top of it
+- [ ] ⏸ Live lead list prepends via `queryClient.setQueryData` — no refetch, no polling
+- [ ] ⏸ **Verify live:** lead appears with no refresh, no loading flash
 
 ## Slice 6 — erp-imobiliario consolidation (C2)
 
