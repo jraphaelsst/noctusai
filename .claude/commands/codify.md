@@ -6,7 +6,7 @@ description: Evaluate whether a rule / request / methodology surface should be c
 
 You are running the **codify** protocol. The user invoked `/codify $ARGUMENTS`.
 
-**Premise (do not skip):** codifiable discipline → a mechanical gate is cheaper (a keeper costs ~0 agent tokens/turn + removes the "did the agent remember?" failure mode) and more reliable. This is **Stage 4** of `KB § PATTERNS/methodology-codification-pipeline.md`. But **code does not replace prose** (code = WHAT/HOW the gate; prose = WHY/history/exceptions/when-to-override — keep both) and **not all discipline is codifiable** (judgment rules stay Stage 3). Your job is to find the *real* opportunities and say **honestly whether to apply or not**.
+**Premise (do not skip):** codifiable discipline → a mechanical gate is cheaper (a keeper costs ~0 agent tokens/turn + removes the "did the agent remember?" failure mode) and more reliable. This is **Stage 4** of `KB § PATTERNS/common/methodology-codification-pipeline.md`. But **code does not replace prose** (code = WHAT/HOW the gate; prose = WHY/history/exceptions/when-to-override — keep both) and **not all discipline is codifiable** (judgment rules stay Stage 3). Your job is to find the *real* opportunities and say **honestly whether to apply or not**.
 
 **This command's own *detection* half is now mechanical.** `check_codification_debt` (a keeper in the compliance gate) reads every `NOC-REMEDIATE[codify]` marker each run, so a deferred codification can never go silent in prose. `/codify` is the **DECISION layer over that always-on detector**: the keeper *surfaces* the backlog; you *judge* it (apply / defer / stays-prose). When you defer, you feed the detector — you leave a `[codify]` marker (step 5), never bury the deferral in free prose.
 
@@ -39,4 +39,4 @@ Judgment-dependent ("no quick fixes", "accept-vs-refactor", "right seam?", "real
 - A keeper that would false-positive across the seed/products is NOT ripe — design the predicate carefully or defer.
 - The compliance gate is **regression-semantics** (no NEW high/critical), not score==100 — a new keeper surfacing pre-existing debt goes in the baseline with cited triage, it doesn't break the gate. (`[codify]` markers are `warning`-severity — they surface without blocking.)
 
-Reference: `KB § PATTERNS/methodology-codification-pipeline.md` · `projects/codification-backlog-drain/PROJECT.md` (the standing audit + waves).
+Reference: `KB § PATTERNS/common/methodology-codification-pipeline.md` · `projects/codification-backlog-drain/PROJECT.md` (the standing audit + waves).

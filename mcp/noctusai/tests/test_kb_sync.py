@@ -491,3 +491,68 @@ def test_methodology_gap_real_repo_zero_gaps():
         f"real tree — these must be fixed before committing:\n"
         + "\n".join(f"  {g}" for g in gaps)
     )
+
+
+# ──────────────────────────────────────────────────────────────────
+# .claude/commands/ is a scanned methodology surface
+# (2026-08-03 harness-audit re-author)
+#
+# CLAUDE.md §1 names `.claude/commands/` as one of the eight first-class
+# methodology surfaces, but this gate scanned every surface EXCEPT that one.
+# The cost was not hypothetical: `.claude/commands/codify.md` carried two
+# unresolved `KB § PATTERNS/methodology-codification-pipeline.md` refs (the
+# real path is `PATTERNS/common/…`) and shipped green for weeks. A gate whose
+# coverage is narrower than the contract it enforces reports green for the
+# surface it never opened.
+# ──────────────────────────────────────────────────────────────────
+
+def _mk_command(root: Path, name: str, body: str) -> None:
+    d = root / ".claude" / "commands"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(body, encoding="utf-8")
+
+
+def test_broken_kb_ref_in_command_is_caught(tmp_path, monkeypatch):
+    """The exact regression: a bad `KB § …` ref inside .claude/commands/."""
+    _mk_tree(
+        tmp_path,
+        claude_md="Clean. See `KNOWLEDGE-BASE/CONTEXT/01-PHILOSOPHY.md`.\n",
+        index_md="# Index\n\n- 01-PHILOSOPHY.md\n\n"
+        + _LAYOUT.format(tree="CONTEXT/01-PHILOSOPHY.md"),
+        kb_docs={"CONTEXT/01-PHILOSOPHY.md": "# Philosophy\n"},
+    )
+    _mk_command(
+        tmp_path, "codify.md",
+        "Stage 4 of `KB § PATTERNS/methodology-codification-pipeline.md`.\n",
+    )
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    r = kb_sync.verify_kb_sync()
+    assert r["exit_code"] == 1, "a broken ref in a command must BLOCK"
+    assert "codify.md" in r["stderr"]
+    assert "methodology-codification-pipeline" in r["stderr"]
+
+
+def test_resolving_kb_ref_in_command_passes(tmp_path, monkeypatch):
+    """Guard the other direction — a correct ref must not false-positive."""
+    _mk_tree(
+        tmp_path,
+        claude_md="Clean.\n",
+        index_md="# Index\n\n- 01-PHILOSOPHY.md\n\n"
+        + _LAYOUT.format(tree="CONTEXT/01-PHILOSOPHY.md"),
+        kb_docs={"CONTEXT/01-PHILOSOPHY.md": "# Philosophy\n"},
+    )
+    _mk_command(tmp_path, "gc.md", "Depth: `KB § 01-PHILOSOPHY.md`.\n")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    r = kb_sync.verify_kb_sync()
+    assert r["exit_code"] == 0, r["stderr"]
+
+
+def test_commands_surface_is_in_scanned_set(tmp_path):
+    """`.claude/commands/*.md` reaches methodology_reference_gaps at all."""
+    from tools.kb_sync import methodology_reference_gaps
+    (tmp_path / "KNOWLEDGE-BASE").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "KNOWLEDGE-BASE" / "INDEX.md").write_text("# Index\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("clean\n", encoding="utf-8")
+    _mk_command(tmp_path, "x.md", "`KB § PATTERNS/common/does-not-exist.md`\n")
+    gaps = methodology_reference_gaps(tmp_path)
+    assert any("commands/x.md" in g for g in gaps), gaps

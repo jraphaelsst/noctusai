@@ -1,5 +1,7 @@
 # harness audit refit — re-author, don't merge — 2026-08
 
+> **✅ RESOLVED 2026-08-03** on `feat/harness-audit-reauthor`. Both slices landed; `feat/harness-audit-refit` (`1c8ff8ec`) is fully superseded and safe to delete. Retrospective at the bottom — including the three places where re-authoring produced a *different and better* answer than merging would have, and the one place where merging would have shipped a regression.
+
 ## Goal
 
 Land the useful half of `feat/harness-audit-refit` (authored ~2026-07-17, tip `1c8ff8ec`, **never merged**) by RE-AUTHORING it against the current methodology surfaces, rather than resolving a stale merge. This doc is the durable home so the work survives the branch — during the 2026-08-01 wrap-up every other unmerged branch turned out to be superseded and was closed; this is the only one carrying real, unlanded work.
@@ -52,3 +54,34 @@ git diff origin/dev...feat/harness-audit-refit
 ```
 
 Its sibling work (`feat/mcp-hardening-batch` — connector monkeypatch gate, `scan_wiring` paths, ts-morph AST tool) shipped separately on 2026-07-31 and is already on `dev`.
+
+---
+
+## Retrospective — what re-authoring bought (2026-08-03)
+
+Both slices landed in one commit-set (the rule-count gate had to ship with the consolidation that makes it pass — gate↔methodology-sync). The interesting part is not that it landed; it is the four places where re-authoring diverged from what a merge would have produced.
+
+**1. The diagnosis got worse while the branch sat.** The branch measured §1 at 72 rules. On re-audit it was **79** — and the word budget had been raised 2500→3500 on 2026-07-22 to accommodate the growth, with a comment naming "a real trim pass" as the deferred follow-up. This consolidation *is* that follow-up: §1 79→52 rules, CLAUDE.md 2727→2005 words, and the word cap was **restored to 2500** rather than left ratcheted. That produced a new invariant, now in the pattern doc: *budgets are restored after a consolidation, not ratcheted.*
+
+**2. The MEMORY.md recalibration would have been wrong.** The branch proposed 60 KB → 40 KB, reasoning that "the harness truncates ~50 KB". The real threshold is **~24.4 KB**, documented in `memory-index-topic-split.md` (landed 2026-07-30, *after* the branch forked), past which the read returns *nothing*. A 40 KB cap sits **above** that cliff — the gate would still have reported green through the exact silent failure it exists to prevent. Landed **20 KB**, with a test asserting the cap stays below the cliff. Merging would have shipped a less-wrong version of the same bug.
+
+**3. One "fix" on the branch was a regression.** It rewrote `orchestrator-operator.md`'s citation of `branching-and-merging.md § 17.6` to `§18/§21`. But §17.6 is real — *"Engineer-brief Write-authorization for findings.md"* — and is exactly what the orchestrator inherits; §18 is wave-based dispatch, an unrelated topic. **Not applied.** A merge would have taken it silently.
+
+**4. Losslessness was proven, not asserted.** The consolidation ran as a script that moves rule lines **byte-for-byte** into family docs and then asserts every one of the 79 originals survives exactly once (still in §1, or verbatim in exactly one family doc). Result: `79 originals · missing=0 · duplicated=0`. Per `lossless-doc-refactor.md`, that is the difference between a doc refactor and a doc rewrite.
+
+### What landed
+
+| Item | Outcome |
+|---|---|
+| Pointer-gate closure | `kb_sync` now scans `.claude/commands/` — the one 8-way surface it skipped. `codify.md`'s two broken refs (silent for weeks) fixed + regression-tested, including a negative test that reintroduces the exact bug. |
+| §1 rule-COUNT ceiling | `check_claude_md_router` gains invariant 4 (cap 55, target 50). Negative-tested with 10 *individually well-formed* rules — only the count fires, proving it catches accumulation rather than shape. |
+| §1 family consolidation | 79 → 52 rules across 5 family-index docs (cache 6 · orchestration 9 · knowledge-lifecycle 5 · doc-discipline 8 · learning-posture 4), members verbatim. |
+| MEMORY.md recalibration | 60 → 20 KB, entry cap 500 → 300, + a test asserting the cap stays below the 24.4 KB cliff. |
+| GC exhaust | `/gc` command + `methodology-gc.md`. |
+| 3 skills | `noc-contract-first`, `noc-mcp-tool`, `noc-archive-absorb` (the last re-authored — its memory guidance described the pre-split flat catalogue). |
+
+### Deliberately not carried
+
+- The `§17.6 → §18/§21` citation change (item 3 above — a regression).
+- The branch's `architect/orchestration-family-index.md` location; all five family docs live in `PATTERNS/common/` alongside `methodology-gc.md`.
+- Assorted agent/command prose trims that no longer apply cleanly to surfaces that have since been rewritten. They carried no gate and no rule — reproducing them would have been churn, not value.

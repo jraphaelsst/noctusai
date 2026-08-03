@@ -9365,8 +9365,21 @@ def check_all_products() -> tuple[int, list]:
 # reply. The contract: §1 carries PRINCIPLE + the MAP; PROCEDURE/bodies live in
 # `.claude/skills/` + the `KB § …` pointers. Re-bloating it back toward the verbose
 # v3.0 form is gated. Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
-_CLAUDE_MD_MAX_WORDS = 3500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat). Raised 2500→3500 2026-07-22 by user directive to unblock pending §1 rules; a real trim pass is the deferred follow-up, not a further raise.
+# Restored 2500 on 2026-08-03. The 2026-07-22 raise to 3500 was an explicit
+# stopgap whose own comment named the real fix — "a real trim pass is the
+# deferred follow-up, not a further raise". The §1 family consolidation IS that
+# trim pass: 79 rules → 52, 2727 words → 2005, so the stopgap is no longer
+# load-bearing and the tighter budget is restored rather than left ratcheted.
+_CLAUDE_MD_MAX_WORDS = 2500           # whole-file budget (live ~2.0k after consolidation; cap blocks re-bloat)
 _CLAUDE_MD_MAX_RULE_WORDS = 60        # a §1 bullet beyond this is an inlined body
+# Rule-COUNT ceiling (2026-08-03). The shape gates above bound each rule but not
+# their NUMBER — §1 grew monotonically to 79 always-on rules while every keeper
+# stayed green, because a green gate on SHAPE does not bound ACCUMULATION. Hard
+# cap 55; /gc's consolidation target is 50. Tripping this cap is the forcing
+# function for a family consolidation (one §1 line + a family-index KB doc
+# holding the members verbatim), NOT an invitation to trim words or raise it.
+# → `KB § PATTERNS/common/methodology-gc.md`
+_CLAUDE_MD_MAX_S1_RULES = 55
 _CLAUDE_MD_SECTION1_RE = re.compile(r"^##\s+1\s*[·.]")   # "## 1 · Universal rules"
 _CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …" header
 
@@ -9374,12 +9387,16 @@ _CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …" 
 def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
     """CLAUDE.md is the always-on router — keep it pointer-only.
 
-    Gates three deterministic invariants of the harness-agents-skills pattern:
+    Gates four deterministic invariants of the harness-agents-skills pattern:
       1. whole-file word budget (<= _CLAUDE_MD_MAX_WORDS),
       2. every §1 rule bullet is ONE line, carries a `→` pointer, and is
          <= _CLAUDE_MD_MAX_RULE_WORDS words,
       3. §1 contains NO prose body lines (only `- ` rule bullets + the section
-         header + blanks / `---` / `>`); an inlined body is the re-bloat tell.
+         header + blanks / `---` / `>`); an inlined body is the re-bloat tell,
+      4. §1 rule COUNT <= _CLAUDE_MD_MAX_S1_RULES — invariants 1-3 gate the
+         SHAPE of each rule and so stayed green while the count grew to 79
+         (2026-08-03 audit). Over-cap ⇒ consolidate a rule FAMILY into one
+         line + a family-index KB doc, don't trim words.
 
     Stage-4 codification of the v4.0 router refactor (2026-05-25).
     Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
@@ -9409,6 +9426,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
         })
 
     in_section1 = False
+    s1_rule_count = 0
     for line_no, raw in enumerate(text.splitlines(), start=1):
         if _CLAUDE_MD_SECTION1_RE.match(raw):
             in_section1 = True
@@ -9421,6 +9439,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
         if not stripped or stripped == "---" or stripped.startswith(">"):
             continue
         if stripped.startswith("- "):
+            s1_rule_count += 1
             words = len(stripped.split())
             if "→" not in stripped:
                 issues.append({
@@ -9451,6 +9470,20 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
                 ),
                 "severity": "high",
             })
+    if s1_rule_count > _CLAUDE_MD_MAX_S1_RULES:
+        issues.append({
+            "product": "<docs>",
+            "file": "CLAUDE.md",
+            "issue": (
+                f"CLAUDE.md §1 carries {s1_rule_count} always-on rules "
+                f"(cap {_CLAUDE_MD_MAX_S1_RULES}) — rule COUNT is a budget too. "
+                f"Consolidate a rule FAMILY into one §1 line + a family-index KB "
+                f"doc holding the members verbatim (a lossless move, `/gc` step 5); "
+                f"do NOT trim words or raise the cap. "
+                f"KB § PATTERNS/common/methodology-gc.md"
+            ),
+            "severity": "high",
+        })
     return issues
 
 
@@ -9466,8 +9499,24 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
 # edits). It gates at `validate` + the `--check-memory-md-index` CLI flag, and
 # is silently skipped if the per-project memory dir isn't configured (other
 # developers / forks). Optional true-auto-gate = a Claude Code Stop hook.
-_MEMORY_MD_MAX_KB = 60                    # whole-file budget (live ~47 KB; cap blocks regression toward 88 KB)
-_MEMORY_MD_MAX_ENTRY_CHARS = 500          # per-entry-line cap (worst pre-trim: 2,042 chars)
+# Recalibrated 2026-08-03 (harness-audit re-author). The old 60 KB cap was set
+# when MEMORY.md was a flat ~47 KB catalogue and the only known failure mode was
+# unbounded growth. Two things have since changed, and BOTH move the cap down:
+#
+#   1. The real failure threshold is ~24.4 KB, not "some large number" — past it
+#      the harness read returns NOTHING (not truncated-with-warning: nothing), so
+#      recall fails SILENTLY. A cap of 60 KB sat ABOVE that cliff, i.e. the gate
+#      would stay green through the exact failure it exists to prevent.
+#      → `KB § PATTERNS/common/memory-index-topic-split.md`
+#   2. MEMORY.md is now a TOPIC ROUTER, not a catalogue (the 2026-07-30 split);
+#      it is ~4 KB live and bounded by topic COUNT, so it only grows when the
+#      domain gains a topic.
+#
+# 20 KB therefore leaves ~5x the live router headroom while still failing well
+# BELOW the silent-read cliff. A cap above the cliff is worse than no cap: it
+# converts a loud gate into a false green.
+_MEMORY_MD_MAX_KB = 20
+_MEMORY_MD_MAX_ENTRY_CHARS = 300          # per-entry-line cap; router rows are one line per TOPIC now (worst live row ~120 chars)
 
 
 def _memory_md_path(repo_root: Path, home: Path | None = None) -> Path:
@@ -9517,7 +9566,11 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
                 f"MEMORY.md is {total_kb:.1f} KB (cap {_MEMORY_MD_MAX_KB} KB) — "
                 f"the auto-loaded memory index must stay tight; trim bloated "
                 f"entry lines to title + pointer + one recall hook (+ wikilinks). "
-                f"Sibling rule: KB § PATTERNS/common/claude-md-router-discipline.md."
+                f"The harness read returns NOTHING past ~24.4 KB — silently — so "
+                f"this cap sits deliberately BELOW that cliff; split a topic out "
+                f"to MEMORY-<topic>.md rather than trimming rows. "
+                f"KB § PATTERNS/common/memory-index-topic-split.md · sibling rule: "
+                f"KB § PATTERNS/common/claude-md-router-discipline.md."
             ),
             "severity": "high",
         })
@@ -9571,6 +9624,18 @@ _HARNESS_EXECUTOR_AGENTS = frozenset({"backend-engineer", "frontend-engineer", "
 # Procedure-doc carve-out: orchestrator-operator + engineer-seed own no KB
 # (they ARE protocols); skill-scout is a meta-scout (owns no KB).
 _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
+    # §1 family indexes + the GC pattern (2026-08-03 harness-audit re-author).
+    # Deliberately unowned: a family index is a ROUTER HOP off CLAUDE.md §1, so
+    # its audience is every lens that reads §1 — i.e. all of them. Assigning one
+    # to a single agent's `owns_kb:` would misrepresent a universal always-on
+    # rule as a specialist's domain. The member rules' own depth docs stay owned
+    # by whoever owned them before; only the index is commons.
+    "CONTEXT/PATTERNS/common/methodology-gc.md",  # universal commons: the retirement/exhaust leg of the capture pipeline — governs CLAUDE.md §1 + MEMORY.md budgets, which every lens loads
+    "CONTEXT/PATTERNS/common/cache-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/orchestration-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/01-PHILOSOPHY.md",
     "CONTEXT/02-LANDSCAPE.md",
     "CONTEXT/03-SEED-ARCHITECTURE.md",

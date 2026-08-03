@@ -56,11 +56,33 @@ class TestMemoryMdIndex:
         assert any("malformed" in i["issue"] for i in issues)
 
     def test_total_budget_flagged(self, tmp_path):
-        big = "# M\n" + "\n".join(f"- [t{i}](f{i}.md) — short" for i in range(3500)) + "\n"
-        assert len(big.encode("utf-8")) > 60 * 1024
+        # Derive the fixture size + expected cap from the live constant rather
+        # than pinning a literal — the cap moved 60 → 20 KB on 2026-08-03 and a
+        # hard-coded "cap 60 KB" would have gone stale silently. (Same lesson
+        # the router test records for its own word cap.)
+        from tools.noctus.dev.compliance import _MEMORY_MD_MAX_KB
+        rows = (_MEMORY_MD_MAX_KB * 1024 // 24) + 200
+        big = "# M\n" + "\n".join(f"- [t{i}](f{i}.md) — short" for i in range(rows)) + "\n"
+        assert len(big.encode("utf-8")) > _MEMORY_MD_MAX_KB * 1024
         repo_root, home = self._setup(tmp_path, big)
         issues = check_memory_md_index(repo_root=repo_root, home=home)
-        assert any("cap 60 KB" in i["issue"] for i in issues)
+        assert any(f"cap {_MEMORY_MD_MAX_KB} KB" in i["issue"] for i in issues)
+
+    def test_budget_cap_sits_below_the_silent_read_cliff(self, tmp_path):
+        """The cap must be BELOW ~24.4 KB, where the harness read returns nothing.
+
+        This is the one assertion that makes the keeper meaningful rather than
+        merely present. A cap ABOVE the cliff is worse than no cap: MEMORY.md
+        would sail past the point where recall silently returns NOTHING while
+        the gate still reported green — which is exactly what the old 60 KB cap
+        did. → `KB § PATTERNS/common/memory-index-topic-split.md`
+        """
+        from tools.noctus.dev.compliance import _MEMORY_MD_MAX_KB
+        assert _MEMORY_MD_MAX_KB < 24.4, (
+            f"cap {_MEMORY_MD_MAX_KB} KB is at or above the ~24.4 KB silent-read "
+            f"cliff — the gate would stay green through the failure it exists to "
+            f"prevent"
+        )
 
     def test_non_entry_lines_ignored(self, tmp_path):
         # Section headers, blanks, blockquotes, narrative prose: not entry lines.

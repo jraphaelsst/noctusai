@@ -298,7 +298,8 @@ def verify_kb_sync() -> KBSyncResult:
     # advisory only (forward-refs allowed per CLAUDE.md). Reports any
     # ref whose target does not resolve in the KB index.
     out.write("Checking methodology surfaces for broken KB doc refs "
-              "(KB § shorthand + literal + .claude/agents + KB→KB)...\n")
+              "(KB § shorthand + literal + .claude/{agents,skills,commands} "
+              "+ KB→KB)...\n")
     for gap in methodology_reference_gaps(root):
         err.write(
             f"  ✗ BROKEN: {gap} (methodology surface references a KB "
@@ -381,6 +382,8 @@ def methodology_reference_gaps(root: Path) -> list[str]:
       * ``CLAUDE.md``
       * ``CLAUDE/**/*.md``
       * ``.claude/agents/*.md``
+      * ``.claude/skills/*/SKILL.md``
+      * ``.claude/commands/*.md``
       * every ``KNOWLEDGE-BASE/**/*.md``
 
     Memory files are deliberately excluded — they live outside the repo
@@ -466,6 +469,18 @@ def methodology_reference_gaps(root: Path) -> list[str]:
     skills_dir = root / ".claude" / "skills"
     if skills_dir.is_dir():
         for p in sorted(skills_dir.glob("*/SKILL.md")):
+            if p.is_file():
+                surfaces.append(p)
+    # .claude/commands/*.md  (added 2026-08-03, harness-audit re-author: commands
+    # are a first-class 8-way-sync surface — CLAUDE.md §1 names them as one of the
+    # eight — but they were the ONE surface this gate skipped. `codify.md` shipped
+    # two unresolved `KB § PATTERNS/methodology-codification-pipeline.md` refs
+    # (correct path is `PATTERNS/common/...`) and no gate saw them for weeks. A
+    # gate whose coverage is narrower than the contract it enforces reports green
+    # for the surface it never opened.)
+    commands_dir = root / ".claude" / "commands"
+    if commands_dir.is_dir():
+        for p in sorted(commands_dir.glob("*.md")):
             if p.is_file():
                 surfaces.append(p)
     # KNOWLEDGE-BASE/**/*.md

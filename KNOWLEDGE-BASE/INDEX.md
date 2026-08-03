@@ -23,74 +23,157 @@ KNOWLEDGE-BASE/
 │   ├── 07-GAMIFICATION.md  ← cross-product UX philosophy
 │   ├── PATTERNS/           ← how-to technical patterns (organized by ownership 2026-05-26)
 │   │   ├── common/
+│   │   │   ├── absorbed-product-seed-shape-seam.md
 │   │   │   ├── absorption-ships-consume-docs.md
 │   │   │   ├── absorption-tracking.md
 │   │   │   ├── accept-with-rationale.md
 │   │   │   ├── agent-context-architecture.md
 │   │   │   ├── agent-reading-discipline.md
+│   │   ├── architect/
 │   │   │   ├── ast.md
+│   │   │   ├── auth-boundary-false-green.md
 │   │   │   ├── auto-author-scaffolds.md
 │   │   │   ├── auto-generated-merge-drivers.md
+│   │   │   ├── autonomous-operator-via-subagent.md
+│   │   │   ├── backend.md
+│   │   ├── backend/
+│   │   │   ├── background-engineer-safety-discipline.md
+│   │   │   ├── base-image-dep-freshness.md
+│   │   │   ├── boundary-contract-tests.md
+│   │   │   ├── branch-tree-tracking.md
+│   │   │   ├── branching-and-merging.md
+│   │   │   ├── branching-dispatch.md
+│   │   │   ├── branching.md
 │   │   │   ├── brief-similarity-radar.md
 │   │   │   ├── build-learn-cache-mindset.md
-│   │   │   ├── branching.md
-│   │   │   ├── background-engineer-safety-discipline.md
 │   │   │   ├── bypass-rationalization-anti-patterns.md
 │   │   │   ├── cache-as-agent-tool.md
 │   │   │   ├── cache-auto-freshness.md
+│   │   │   ├── cache-family-index.md
 │   │   │   ├── cache-locking-discipline.md
 │   │   │   ├── cache-portable-architecture.md
 │   │   │   ├── cache-telemetry.md
+│   │   │   ├── chatbot-operational-readiness.md
+│   │   │   ├── ci-deploy-prod.md
+│   │   │   ├── ci-embedding-cache-gate.md
+│   │   │   ├── ci-security-gates.md
 │   │   │   ├── claude-md-router-discipline.md
 │   │   │   ├── code-embeddings.md
-│   │   │   ├── corpus-embeddings.md
 │   │   │   ├── code-recurrence-baseline.md
+│   │   │   ├── compliance-regression-baseline.md
+│   │   ├── compliance/
+│   │   │   ├── component-bundle-tool.md
+│   │   │   ├── component-list-and-validation.md
+│   │   │   ├── consent-routes-mandate.md
+│   │   │   ├── container-sanitization.md
+│   │   │   ├── containerization-operations.md
+│   │   │   ├── containerization.md
+│   │   │   ├── core-url-routing.md
+│   │   │   ├── corpus-embeddings.md
+│   │   │   ├── database-rls.md
 │   │   │   ├── defer-is-not-resolve.md
+│   │   │   ├── deploy-config-contract.md
+│   │   │   ├── dev-main-ci-gates.md
+│   │   │   ├── dev-prod-parity.md
+│   │   │   ├── dev-team.md
+│   │   │   ├── dev-toolkit-scaffolders.md
+│   │   ├── devops/
+│   │   │   ├── di-test-seam.md
+│   │   │   ├── digest-seed.md
 │   │   │   ├── dispatch-budget-telemetry.md
+│   │   │   ├── dispatch-engineer-tuning.md
 │   │   │   ├── dispatch-token-log.md
 │   │   │   ├── dispatch-warmup.md
 │   │   │   ├── dispatch-with-project-and-notes.md
+│   │   │   ├── doc-discipline-family-index.md
+│   │   │   ├── doc-symbology.md
 │   │   │   ├── doc-to-code-drift.md
 │   │   │   ├── dont-block-on-background.md
-│   │   │   ├── engineer-output-linter.md
-│   │   │   ├── doc-symbology.md
 │   │   │   ├── drift-fix-on-contact.md
+│   │   │   ├── eight-way-sync.md
+│   │   │   ├── engineer-output-linter.md
+│   │   │   ├── environment.md
+│   │   │   ├── extractor-correctness-vs-mirror.md
+│   │   │   ├── fe-be-contract-first-dispatch.md
+│   │   │   ├── frontend.md
+│   │   ├── frontend/
 │   │   │   ├── funnel-self-satisfies-preconditions.md
+│   │   │   ├── gate-methodology-sync.md
+│   │   │   ├── git-branch-model.md
 │   │   │   ├── harness-overlay-worktree-divergence.md
 │   │   │   ├── kb-recurrence-radar.md
+│   │   │   ├── kb-vector-search.md
 │   │   │   ├── keeper-check-before-docing.md
 │   │   │   ├── keeper-pattern-cache.md
+│   │   │   ├── knowledge-lifecycle-family-index.md
+│   │   │   ├── learn-before-archive.md
+│   │   │   ├── learning-posture-family-index.md
 │   │   │   ├── lenses-applied-trailer.md
+│   │   │   ├── lgpd.md
+│   │   │   ├── llm-bot-security.md
+│   │   │   ├── llm-tool-audit.md
+│   │   │   ├── llm-usage.md
+│   │   │   ├── logging-at-except.md
+│   │   │   ├── logging.md
 │   │   │   ├── lossless-doc-refactor.md
+│   │   │   ├── lying-loading-state.md
+│   │   │   ├── master-tree-parallel-batches.md
+│   │   │   ├── mcp-first-scripts.md
+│   │   │   ├── mcp-tool-conventions.md
+│   │   │   ├── memory-embeddings.md
+│   │   │   ├── memory-index-topic-split.md
+│   │   │   ├── metas-seed.md
 │   │   │   ├── methodology-codification-pipeline.md
 │   │   │   ├── methodology-execution-discipline.md
-│   │   │   ├── learn-before-archive.md
-│   │   │   ├── orphan-branch-sweeper.md
-│   │   │   ├── product-centroid-drift.md
-│   │   │   ├── product-dev-learning-ground.md
+│   │   │   ├── methodology-gc.md
+│   │   │   ├── migrate-product-mcp-tool.md
 │   │   │   ├── minimum-viable-rebuild.md
+│   │   │   ├── noc-graph.md
+│   │   │   ├── notifications.md
+│   │   │   ├── orchestration-family-index.md
+│   │   │   ├── orphan-branch-sweeper.md
 │   │   │   ├── outbound-rate-limiting.md
+│   │   │   ├── parallelization-first-orchestration.md
 │   │   │   ├── persistent-files-absorption.md
 │   │   │   ├── phased-push-policy.md
+│   │   │   ├── prod-cache-container.md
+│   │   │   ├── prod-deploy-safety-gates.md
+│   │   │   ├── prod-exposure-consent.md
+│   │   │   ├── product-centroid-drift.md
+│   │   │   ├── product-dev-learning-ground.md
+│   │   │   ├── product-icon-registry.md
+│   │   │   ├── product-internal-wiring.md
+│   │   │   ├── product-lockfile-and-slug-drift.md
+│   │   │   ├── products-consume-canonical-organs.md
+│   │   │   ├── project-execution.md
 │   │   │   ├── proposals-and-improvements.md
 │   │   │   ├── push-time-embedding-gate.md
+│   │   │   ├── pydantic-strict-http.md
 │   │   │   ├── remediation-markers.md
 │   │   │   ├── repetitive-task-skill-codification.md
 │   │   │   ├── roadmap-tracking.md
 │   │   │   ├── scan-repetition-semantic.md
-│   │   │   ├── session-end-sweep.md
-│   │   │   ├── kb-vector-search.md
-│   │   │   ├── memory-embeddings.md
-│   │   │   ├── memory-index-topic-split.md
+│   │   │   ├── scheduling-seed.md
 │   │   │   ├── scoped-auto-improvement.md
+│   │   ├── security/
+│   │   │   ├── seed-absorption.md
+│   │   │   ├── seed-canonical-defaults.md
+│   │   │   ├── seed-fake-real-adapter.md
+│   │   │   ├── seed-lib-layout.md
+│   │   │   ├── seed-organ-canonical-set.md
+│   │   │   ├── seed-workspace.md
 │   │   │   ├── self-branching-mode.md
-│   │   │   ├── eight-way-sync.md
-│   │   │   ├── extractor-correctness-vs-mirror.md
-│   │   │   ├── gate-methodology-sync.md
+│   │   │   ├── session-end-sweep.md
+│   │   │   ├── shared-library-conventions.md
 │   │   │   ├── silent-test-failure-from-missing-dep.md
+│   │   │   ├── spa-cache-and-service-worker.md
+│   │   │   └── ssh-deploy-key-restrictions.md
+│   │   │   ├── status-pagina-dev-visibility.md
 │   │   │   ├── storage-hygiene.md
 │   │   │   ├── surface-and-resume-tooling.md
+│   │   │   └── svg-render-mode.md
 │   │   │   ├── tmp-artifact-cleanup.md
+│   │   │   └── two-session-architect-operator.md
 │   │   │   ├── unified-query.md
 │   │   │   ├── vector-baseline.md
 │   │   │   ├── vector-calibration.md
@@ -98,85 +181,8 @@ KNOWLEDGE-BASE/
 │   │   │   ├── vectorize-embed-cache-framework.md
 │   │   │   ├── verify-seed-on-fork-base.md
 │   │   │   └── versioning.md
-│   │   ├── architect/
-│   │   │   ├── absorbed-product-seed-shape-seam.md
-│   │   │   ├── autonomous-operator-via-subagent.md
-│   │   │   ├── branching-and-merging.md
-│   │   │   ├── branch-tree-tracking.md
-│   │   │   ├── component-list-and-validation.md
-│   │   │   ├── branching-dispatch.md
-│   │   │   ├── component-bundle-tool.md
-│   │   │   ├── dev-team.md
-│   │   │   ├── dev-toolkit-scaffolders.md
-│   │   │   ├── dispatch-engineer-tuning.md
-│   │   │   ├── fe-be-contract-first-dispatch.md
-│   │   │   ├── git-branch-model.md
-│   │   │   ├── master-tree-parallel-batches.md
-│   │   │   ├── mcp-first-scripts.md
-│   │   │   ├── mcp-tool-conventions.md
-│   │   │   ├── noc-graph.md
-│   │   │   ├── parallelization-first-orchestration.md
-│   │   │   ├── products-consume-canonical-organs.md
-│   │   │   ├── project-execution.md
-│   │   │   ├── seed-absorption.md
-│   │   │   ├── seed-canonical-defaults.md
-│   │   │   ├── seed-lib-layout.md
-│   │   │   ├── seed-organ-canonical-set.md
-│   │   │   ├── seed-workspace.md
-│   │   │   ├── shared-library-conventions.md
-│   │   │   └── two-session-architect-operator.md
-│   │   ├── backend/
-│   │   │   ├── backend.md
-│   │   │   ├── boundary-contract-tests.md
-│   │   │   ├── chatbot-operational-readiness.md
-│   │   │   ├── database-rls.md
-│   │   │   ├── di-test-seam.md
-│   │   │   ├── digest-seed.md
-│   │   │   ├── llm-tool-audit.md
-│   │   │   ├── llm-usage.md
-│   │   │   ├── logging-at-except.md
-│   │   │   ├── logging.md
-│   │   │   ├── metas-seed.md
-│   │   │   ├── migrate-product-mcp-tool.md
-│   │   │   ├── notifications.md
-│   │   │   ├── pydantic-strict-http.md
-│   │   │   ├── scheduling-seed.md
-│   │   │   ├── seed-fake-real-adapter.md
-│   │   │   └── whatsapp-chatbot-seed.md
-│   │   ├── frontend/
-│   │   │   ├── consent-routes-mandate.md
-│   │   │   ├── core-url-routing.md
-│   │   │   ├── frontend.md
-│   │   │   ├── lying-loading-state.md
-│   │   │   ├── product-icon-registry.md
-│   │   │   ├── product-internal-wiring.md
-│   │   │   ├── spa-cache-and-service-worker.md
-│   │   │   ├── status-pagina-dev-visibility.md
-│   │   │   └── svg-render-mode.md
-│   │   ├── devops/
-│   │   │   ├── base-image-dep-freshness.md
-│   │   │   ├── ci-deploy-prod.md
-│   │   │   ├── ci-embedding-cache-gate.md
-│   │   │   ├── ci-security-gates.md
-│   │   │   ├── dev-main-ci-gates.md
-│   │   │   ├── container-sanitization.md
-│   │   │   ├── containerization-operations.md
-│   │   │   ├── containerization.md
-│   │   │   ├── deploy-config-contract.md
-│   │   │   ├── dev-prod-parity.md
-│   │   │   ├── environment.md
-│   │   │   ├── prod-cache-container.md
-│   │   │   ├── prod-deploy-safety-gates.md
-│   │   │   ├── prod-exposure-consent.md
-│   │   │   ├── product-lockfile-and-slug-drift.md
-│   │   │   └── ssh-deploy-key-restrictions.md
-│   │   ├── security/
-│   │   │   ├── lgpd.md
-│   │   │   ├── llm-bot-security.md
 │   │   │   └── webhook-signatures.md
-│   │   ├── compliance/
-│   │   │   ├── auth-boundary-false-green.md
-│   │   │   ├── compliance-regression-baseline.md
+│   │   │   └── whatsapp-chatbot-seed.md
 │   │   │   └── testing.md
 │   ├── GUIDES/             ← task-oriented guides
 │   │   ├── setup.md
@@ -336,6 +342,12 @@ KNOWLEDGE-BASE/
 | Doc symbology — lossless compression glossary defining a fixed-meaning symbol set (logic `∧ ∨ ¬ ⇒ ↔ ∈ ⊂ ≡ ≠ ≈`; status icons `✅ ⏳ ❌ 🔒 📋 🗑 ⭐ ⚠️`; codification stages `s1/s2/s3/s4`; triage outcomes `[F]/[R]/[A]`; counts `N≥3 N=2 Δ Σ`; prose-word abbreviations `DB/auth/config/req/res/fn/impl`); contract = lossless-swap test (reader with glossary recovers exact semantic of prose); caveman-skill provenance (`github.com/JuliusBrussee/caveman`, validated ~61-75% token cut, retrieved 2026-05-18) — adopts caveman prose-discipline layer (§6a) + lite/full/ultra intensity ladder (§3a.1), explicitly rejects caveman `→`=causal mapping (our `→`=routes is locked; divergence register in §1/§4); where to use (MASTER-PROMPTs / CLAUDE.md / KB patterns / PROJECT.md §6+§11) vs NOT (error messages / first-paragraph context / quoted user instructions / bug-fix code comments / commit messages); anti-patterns (stacking, inventing new symbols without adding here, symbol-loading low-traffic docs); reference patterns codify codification pipeline + 3-way triage + doc-code coherence + recurrence rule + status legend in 1-line forms | `CONTEXT/PATTERNS/common/doc-symbology.md` |
 | Lossless doc-refactor — the standing framework for any change to the durable doc-set itself (CLAUDE.md / KB / MEMORY.md / `.claude/agents` / MASTER-PROMPTs); fires on "compact / token-optimize docs", "refactor doc/architecture structure", "merge/split rules", "fold in an external pattern"; prime directive = lossless **proven not asserted** via 5 diff gates (pointer-set / rule-section / line-structure / index-pointer / hook-grade — line-structure is a distinct gate per the 2026-05-18 newline-eaten-by-Edit lesson); gated-aggressiveness ladder (s-lossless no-approval · s-moderate show-diff-first · s-plan-only); source-of-truth trim rule (cut only what the pointer target provably carries; registers/catalogs/ledgers are data not prose); symbol-first caveman-aligned + `check_doc_symbology_drift` zero-drift enforcement; safe parallelization = strictly file-disjoint worktree off real-HEAD + architect true-disk 100%-certification before merge + inline-architect fallback if not disjoint; fix-on-contact during refactor; eight-way-sync close-out; the doc governs itself | `CONTEXT/PATTERNS/common/lossless-doc-refactor.md` |
 | CLAUDE.md router discipline — CLAUDE.md is the always-on auto-loaded router; §1 carries PRINCIPLE + MAP (rule + one-clause why + `→` pointer, one line each), PROCEDURE lives in `.claude/skills/noc-*`, depth in `KB § …`; the v4.0 **synthesis** = moderate §1 (why-based, higher quality) + aggressive §2 (shortlist + `→ INDEX.md`, no duplicated roster → drift-free); 3 deterministic invariants (whole-file word budget ≤2500 / each §1 rule one-line carrying `→` ≤60 words / no §1 prose bodies) gated by Stage-4 keeper `check_claude_md_router` (registered in `check_all_products` + `--check-claude-md-router` pre-commit block; mirrors `check_doc_symbology_drift`; colocated `TestClaudeMdRouter`); three poles preserved in `backup/` (original/aggressive/moderate); born `harness-agents-skills` 2026-05-25 | `CONTEXT/PATTERNS/common/claude-md-router-discipline.md` |
+| Methodology GC — retirement as a first-class leg; every capture pipeline needs an exhaust. A green gate on SHAPE does not bound ACCUMULATION: §1 grew 72→79 always-on rules while `check_claude_md_router` stayed green and the word cap was raised 2500→3500 to accommodate it. Two legs — `/codify` retires the promoted memory pointer by construction; `/gc` is the monthly backstop (measure budgets, retire strays, propose §1 family consolidation). §1 family consolidation = one family line + a family-index KB doc holding members VERBATIM, proven lossless (every original rule survives exactly once), never summarised. Budgets are RESTORED after a consolidation, not left ratcheted | `CONTEXT/PATTERNS/common/methodology-gc.md` |
+| §1 family index — cache platform (6 members, verbatim): KB vector search · noc-graph · cache-locking · auto-freshness · portability · vectorize→embed→cache. Cache-first search + keeper-check stay standalone in §1 (per-turn behavioral defaults, not platform mechanics) | `CONTEXT/PATTERNS/common/cache-family-index.md` |
+| §1 family index — orchestration & dispatch (9 members, verbatim): branching-first · parallelization-first · contract-first FE↔BE · don't-block-on-background · `task_branch` not Agent-isolation · inline-vs-dispatch cutoff · lenses trailer · wave/collision-class · dispatch-with-PROJECT. Git-workflow rules stay standalone | `CONTEXT/PATTERNS/common/orchestration-family-index.md` |
+| §1 family index — knowledge lifecycle (5 members, verbatim): durable findings · scoped-auto-improvement · persistent-files absorption · learn-before-archive · roadmap tracking. The capture→absorb→archive chain; the learning-POSTURE family is about noticing, this one about what happens to what you noticed | `CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md` |
+| §1 family index — doc discipline (8 members, verbatim): doc-propagation sync · keeper-check-before-doc'ing · durable-surfaces-self-contained · symbol-first · lossless doc-refactor · CLAUDE.md router · MEMORY.md topic-router · 8-way sync. Editing any of them is methodology surgery on a surface that loads every session | `CONTEXT/PATTERNS/common/doc-discipline-family-index.md` |
+| §1 family index — learning posture (4 members, verbatim): triage-at-decision-time · safety-nets-capture-failures · learn-from-friction-on-both-axes · always-hardening. The noticing-and-deciding loop | `CONTEXT/PATTERNS/common/learning-posture-family-index.md` |
 | Memory index — router + per-topic files (THE default memory shape) — `MEMORY.md` is auto-loaded AND read-capped at ~24.4KB, past which the read returns NOTHING (silent recall loss, not truncation); the flat index crossed it at 24,799B / 414 pointers on 2026-07-30 and trimming could never fix it because the filenames alone exceeded the target; split into a ~4KB ROUTER of topics + `MEMORY-<topic>.md` files (one line per memory) + the memory file — same three-level shape as `CLAUDE.md → CLAUDE/<topic>.md → KB`; router grows by TOPIC not by memory; save appends to the topic file, NEVER to `MEMORY.md`; split must be mechanical + proven lossless (LOST/DANGLING/UNREACHABLE all empty); sibling of `claude-md-router-discipline.md` | `CONTEXT/PATTERNS/common/memory-index-topic-split.md` |
 | Lenses-applied commit trailer — lightweight `Lenses: <name>[, <name>...]` convention recording which specialist lens(es) the architect inline-empersonated for a commit; valid lens names mirror `.claude/agents/` executor + advisor names + `tech-lead`; observability not enforcement (no keeper today, Stage 2 evaluation gated on N≥50 observed commits); composes with parallelization-first-orchestration `inline=empersonate` rule + Co-Authored-By trailer family; makes inline-empersonation auditable via `git log --grep "Lenses:"`; codified 2026-05-26 evening as the closure of the inline-empersonation lens observability gap | `CONTEXT/PATTERNS/common/lenses-applied-trailer.md` |
 | Compliance regression-baseline gate — why `score==100` is aspirational not a regression detector; the Option-A re-spec (no NEW high/critical vs a committed fingerprint baseline + absolute score informational); line-churn-robust fingerprint; env-artifact exclusions; the deterministic `refresh_compliance_baseline.py` contract; where the 2 gate tests / fixture / regenerator live | `CONTEXT/PATTERNS/compliance/compliance-regression-baseline.md` |
