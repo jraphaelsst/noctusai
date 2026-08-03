@@ -150,9 +150,14 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
    `vite_build` / `find_reusable_component`. It cannot see a worktree's migration, and a naive
    `confirm=true` from a worktree would apply the **primary tree's** pending backlog — other
    people's unvetted migrations. Logged `s1-emergent` to `auto-improvement.ndjson`.
-2. 🔴 Migrations **037–039 are pending unapplied** on the dev DB — outside this slice's territory,
-   owner unknown. Must be triaged before or alongside 040. `040` is order-independent regardless
-   (new table + additive columns only).
+2. 🔴 Migrations **037–039 are pending unapplied** on the live Supabase dev project
+   (`nyplttplcoyiiqjrvtiw`) — **independently confirmed by the tech-lead**, not taken on report:
+   `037_erp_stage_parity_and_canonical_phone` · `038_n8n_folders` · `039_n8n_nav_route`.
+   Implication beyond ordering: the canonical-phone contract (`normalize_phone`, the `contato_norm`
+   trigger) and the whole n8n folders + nav-route feature are **shipped in code but absent from the
+   dev database**. Outside this slice's territory and a parallel agent is live in social-wiring, so:
+   SURFACED, not acted on. `040` is order-independent (new table + additive columns only) and can be
+   applied alone via `migrate_product(target="040_…")`.
 
 ## Slice 4 · Ingest rewrite  `[C3 · whatsapp_router.py · after 1–3]`
 
