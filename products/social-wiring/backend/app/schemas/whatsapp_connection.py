@@ -237,7 +237,7 @@ class WhatsAppWebhookResultOut(BaseModel):
     status: Optional[str] = None
 
 
-# ── Per-connection chat inbox — pure Postgres (044_whatsapp_inbox_realtime) ──
+# ── Per-connection chat inbox — pure Postgres (042_whatsapp_inbox_realtime) ──
 # `ChatDTO` is the wire shape of `app.services.whatsapp_chat_store.ChatSummary`
 # (a dataclass — see its `.as_dict()`, which this model's field set mirrors
 # exactly; the two are the SAME wire contract realized twice, one per layer).

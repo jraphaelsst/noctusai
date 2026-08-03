@@ -3,7 +3,7 @@
 -- ⚠️ NUMBERED 043, NOT 041. `041_leads_meta_lead_id.sql` already occupied 041
 -- on `dev`, and this file briefly shipped as a duplicate 041 before being
 -- renumbered. 042 is claimed by `feat/meta-leadgen-webhook`
--- (`042_meta_webhook_events.sql`, unpushed at the time of writing).
+-- (`044_meta_webhook_events.sql`, unpushed at the time of writing).
 --
 -- Reserving a migration number requires checking UNPUSHED sibling branches —
 -- `ls migrations/` and `git log origin/dev` both miss them:

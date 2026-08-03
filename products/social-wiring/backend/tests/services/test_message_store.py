@@ -197,7 +197,7 @@ class TestListForSession:
 
 
 class TestChatId:
-    """044_whatsapp_inbox_realtime_schema — chat_id round-trips."""
+    """042_whatsapp_inbox_realtime_schema — chat_id round-trips."""
 
     def test_record_stores_and_returns_chat_id(self, sqlite_db):
         store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
@@ -225,7 +225,7 @@ class TestChatId:
 
 
 class TestApplyAck:
-    """044_whatsapp_inbox_realtime_schema — message.ack application."""
+    """042_whatsapp_inbox_realtime_schema — message.ack application."""
 
     def test_applies_ack_to_existing_message(self, sqlite_db):
         store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)

@@ -347,7 +347,7 @@ problem; those rows are re-driven automatically every 15 minutes by `meta_leadge
 
 > ⟦NOC⟧ Implementation: `app/modules/meta_ads/routers/leadgen_router.py` (receiver +
 > subscription management), `services/leadgen_webhook_service.py` (inbox → enrich → upsert),
-> migration `042_meta_webhook_events.sql`, seed
+> migration `044_meta_webhook_events.sql`, seed
 > `noctusai_lib.integrations.meta.leadgen_webhook`. Full record:
 > `META-LEADS-CHECKLIST.md` and `project-history/roadmaps/meta-ads-console-2026-07.md`.
 

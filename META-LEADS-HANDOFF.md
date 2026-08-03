@@ -31,7 +31,7 @@ Do not push or promote without re-confirming that instruction has been lifted.
 |---|---|---|
 | `feat/imoveis-phase2` | `040_imoveis.sql` | unpushed |
 | `feat/wa-inbox-schema` (+ `wa-ingest`, `wa-read-endpoints`, `whatsapp-realtime-inbox`) | `040_whatsapp_inbox_realtime_schema.sql` | unpushed |
-| `feat/meta-leadgen-webhook` (this work) | `042_meta_webhook_events.sql` | unpushed — **no conflict** |
+| `feat/meta-leadgen-webhook` (this work) | `044_meta_webhook_events.sql` | unpushed — **no conflict** |
 
 `origin/dev` currently holds `…039`, then **`041_leads_meta_lead_id.sql`** (mine, already landed).
 So the live sequence has a **gap at 040**, reserved by whichever of the two claimants merges first.
@@ -82,7 +82,7 @@ seed lib is shared and derived artifacts couple the slices.
 2. **Apply migrations** with explicit operator consent — `noctus.dev.migrate_product`.
    ⚠️ That tool has **no `worktree_path` parameter**: run it from the PRIMARY checkout, or it will
    apply whatever is pending *there* rather than your branch's file. (Logged as drift by a peer.)
-   - `042_meta_webhook_events.sql` (this work) · plus the WhatsApp and imoveis migrations.
+   - `044_meta_webhook_events.sql` (this work) · plus the WhatsApp and imoveis migrations.
 3. **Promote + deploy** `social-wiring` per skill `noc-ship`. **No new prod-exposure consent is
    needed** — `social-wiring` is already on all three gated surfaces, and
    `check_prod_exposure_consent` fires only on a slug's *first* arrival.

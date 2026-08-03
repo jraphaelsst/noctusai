@@ -22,7 +22,7 @@ validated.** Slice 0 is on `dev` only. One promotion at the end, not a trickle.
 **Build order right now:** Slices 1 · 2 · 3 · 4 · 5a · 6 (all independent of the peer branch) →
 then pause. Slice 5b (live push) stays suspended until the peer's seed realtime work is assessed.
 
-**Migration numbers:** `042` (webhook inbox, this branch) · `041` (leads.meta_lead_id, Slice 3).
+**Migration numbers:** `044` (webhook inbox, this branch) · `041` (leads.meta_lead_id, Slice 3).
 🔴 **040 was NOT free** — peer branch `feat/wa-inbox-schema` (commit `b524b097`) already holds
 `040_whatsapp_inbox_realtime_schema.sql` on an **unpushed local branch**. Neither
 `ls migrations/` (shows 039 as highest) nor `git log origin/dev` reveals it. The only check that
@@ -83,7 +83,7 @@ upsert keyed on Meta's own lead id.
 
 ## Slice 2 — Product: receiver + inbox (C2) — ✅ code complete (local)
 
-- [x] Migration `042_meta_webhook_events.sql` + 11 structural tests
+- [x] Migration `044_meta_webhook_events.sql` + 11 structural tests
 - [x] `meta_webhook_verify_token` config + `resolve_meta_webhook_verify_token()` vault key
 - [x] `services/leadgen_webhook_service.py` — `record_event` / `resolve_org` / `resolve_form`
       (with cold-form fallback) / `process_event` / `claim` / `drain_pending` / `purge_processed`

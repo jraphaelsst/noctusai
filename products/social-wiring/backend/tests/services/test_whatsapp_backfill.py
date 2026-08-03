@@ -48,7 +48,7 @@ _CHAT_ID = "chat-1@c.us"
 @pytest.fixture
 def sqlite_db(tmp_path: Path) -> SQLiteClient:
     """A fresh SQLite DB carrying whatsapp_connections + conversation_messages
-    (incl. the 044_whatsapp_inbox_realtime_schema additions) + whatsapp_chats,
+    (incl. the 042_whatsapp_inbox_realtime_schema additions) + whatsapp_chats,
     so MessageStore AND WhatsAppChatStore both round-trip for real. ``id`` on
     whatsapp_chats is a test-only accommodation for SQLiteClient's
     unconditional auto-id-on-insert behavior — the real Postgres table's PK

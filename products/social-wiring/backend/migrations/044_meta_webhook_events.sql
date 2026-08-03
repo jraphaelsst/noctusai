@@ -1,4 +1,4 @@
--- 042_meta_webhook_events.sql — durable inbox for inbound Meta Lead-Ads
+-- 044_meta_webhook_events.sql — durable inbox for inbound Meta Lead-Ads
 -- webhook deliveries (roadmap `meta-ads-console-2026-07`, Phase 3.2).
 --
 -- WHY AN INBOX AT ALL. Meta's delivery contract is unforgiving in both

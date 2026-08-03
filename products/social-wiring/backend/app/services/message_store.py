@@ -51,7 +51,7 @@ class StoredMessage:
     provider_message_id: str | None
     authorized: bool
     connection_id: UUID | None = None
-    # 044_whatsapp_inbox_realtime_schema — realtime-inbox fields. ``chat_id``
+    # 042_whatsapp_inbox_realtime_schema — realtime-inbox fields. ``chat_id``
     # mirrors ``whatsapp_chats.chat_id``; ``ack``/``acked_at`` are NULL until
     # a ``message.ack`` webhook lands (see ``apply_ack``); ``created_at`` and
     # ``structured_payload`` round-trip the row as written so callers can
@@ -114,7 +114,7 @@ class MessageStore:
         arrived on. NULL for pre-014 messages or when the webhook fires
         via the legacy global route (no connection context).
 
-        ``chat_id`` (044_whatsapp_inbox_realtime_schema) mirrors
+        ``chat_id`` (042_whatsapp_inbox_realtime_schema) mirrors
         ``whatsapp_chats.chat_id`` so the thread query is a direct index
         scan. Optional + NULL-safe: pre-040 callers (outbound sends in
         ``whatsapp_intake_service.py`` / the manual-send endpoint) that
