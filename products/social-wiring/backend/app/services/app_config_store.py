@@ -46,9 +46,11 @@ __all__ = [
     "resolve_instagram_app_creds",
     "resolve_meta_app_creds",
     "resolve_meta_ads_config",
+    "resolve_meta_webhook_verify_token",
     "META_SYSTEM_USER_TOKEN_KEY",
     "META_AD_ACCOUNT_ID_KEY",
     "META_ADS_ORG_ID_KEY",
+    "META_WEBHOOK_VERIFY_TOKEN_KEY",
 ]
 
 # Instagram Business Login app-config keys — product-local (not part of
@@ -69,6 +71,11 @@ INSTAGRAM_APP_SECRET_KEY = "instagram_app_secret"
 META_SYSTEM_USER_TOKEN_KEY = "meta_system_user_token"
 META_AD_ACCOUNT_ID_KEY = "meta_ad_account_id"
 META_ADS_ORG_ID_KEY = "meta_ads_org_id"
+
+# Lead-Ads webhook handshake token (`hub.verify_token`). Vaulted alongside
+# the keys above so prod needs zero Meta env vars. 🔴 NOT the HMAC secret —
+# see `resolve_meta_webhook_verify_token`'s docstring.
+META_WEBHOOK_VERIFY_TOKEN_KEY = "meta_webhook_verify_token"
 
 
 def build_app_config_store(
@@ -184,3 +191,33 @@ def resolve_meta_ads_config(
     account = store.get(META_AD_ACCOUNT_ID_KEY) or env_account
     org = store.get(META_ADS_ORG_ID_KEY) or env_org
     return token, account, org
+
+
+def resolve_meta_webhook_verify_token(
+    *,
+    settings=None,
+    store: Optional[AppConfigStore] = None,
+) -> Optional[str]:
+    """Resolve the Lead-Ads webhook ``hub.verify_token`` — DB-first, env
+    fallback, same shape + graceful degrade as
+    :func:`resolve_meta_ads_config`.
+
+    🔴 This is the HANDSHAKE token only. It is NOT the HMAC signing secret
+    — that is the Meta **App Secret**, resolved by
+    :func:`resolve_meta_app_creds`. Passing this value to a signature
+    verifier is the `erp-imobiliario` defect (`meta_api.py:70`), where it
+    makes every genuine Meta delivery fail its signature check.
+
+    Returns ``None`` when unset anywhere, which the handshake route must
+    treat as "refuse" — never as "accept anything". An empty configured
+    token compared against an empty supplied token would otherwise let any
+    caller register our endpoint as their webhook target.
+    """
+    settings = settings or default_settings
+    env_token = getattr(settings, "meta_webhook_verify_token", "") or None
+    if store is None:
+        try:
+            store = build_app_config_store()
+        except EncryptionNotConfigured:
+            return env_token
+    return store.get(META_WEBHOOK_VERIFY_TOKEN_KEY) or env_token

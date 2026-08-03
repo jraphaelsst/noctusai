@@ -9,6 +9,7 @@ they hit a real Supabase instance.
 Coverage:
 - 001_social-wiring.sql: api_tokens table structure + RLS shape
 - 011_rls_current_org_id.sql: current_org_id() fix shape (no jwt() pattern)
+- 042_meta_webhook_events.sql: Meta lead-ads webhook inbox structure + RLS
 """
 from __future__ import annotations
 
@@ -25,11 +26,21 @@ MIGRATION_011_PATH = (
     Path(__file__).resolve().parents[1] / "migrations" / "011_rls_current_org_id.sql"
 )
 
+MIGRATION_042_PATH = (
+    Path(__file__).resolve().parents[1] / "migrations" / "042_meta_webhook_events.sql"
+)
+
 
 @pytest.fixture(scope="module")
 def sql() -> str:
     assert MIGRATION_PATH.is_file(), f"Migration file missing at {MIGRATION_PATH}"
     return MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def sql_042() -> str:
+    assert MIGRATION_042_PATH.is_file(), f"Migration file missing at {MIGRATION_042_PATH}"
+    return MIGRATION_042_PATH.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -197,4 +208,129 @@ def test_001_no_broken_jwt_pattern(sql: str) -> None:
     assert "auth.jwt()" not in sql_no_comments, (
         "001_social-wiring.sql must NOT reference auth.jwt() in SQL — all org-scoped "
         "policies must use current_org_id(). See 011_rls_current_org_id.sql."
+    )
+
+
+# ---------------------------------------------------------------------------
+# social_wiring.meta_webhook_events — Meta Lead-Ads webhook inbox (042)
+#
+# This table is the reason a failed delivery is recoverable instead of lost:
+# Meta retries non-2xx and can disable the subscription, and never re-sends
+# after a 200, so the receiver persists-then-200s. These tests pin the
+# structural properties that guarantee is built on.
+# ---------------------------------------------------------------------------
+
+
+def test_042_table_is_created(sql_042: str) -> None:
+    assert re.search(
+        r"CREATE TABLE\s+IF NOT EXISTS\s+social_wiring\.meta_webhook_events\s*\(",
+        sql_042,
+    ), "Missing CREATE TABLE social_wiring.meta_webhook_events"
+
+
+def test_042_id_is_the_natural_primary_key(sql_042: str) -> None:
+    """`id` IS Meta's `leadgen_id`. The PK is the replay-dedup guarantee —
+    the layer that survives a restart and a Redis eviction. A surrogate key
+    here would silently allow duplicate leads."""
+    assert re.search(r"id\s+TEXT\s+PRIMARY KEY", sql_042), (
+        "meta_webhook_events.id must be TEXT PRIMARY KEY (Meta's leadgen_id)"
+    )
+
+
+def test_042_org_id_is_nullable(sql_042: str) -> None:
+    """NULLABLE ON PURPOSE: an unmappable page lands `status='unresolved'`
+    rather than being guessed into an org. Adding NOT NULL here would force
+    the receiver to invent an org_id, which is how one tenant's lead PII
+    ends up in another tenant's RLS scope."""
+    assert re.search(r"org_id\s+UUID\s*,", sql_042), (
+        "org_id must be nullable — 'unresolved' deliveries carry no org"
+    )
+    assert not re.search(r"org_id\s+UUID\s+NOT NULL", sql_042), (
+        "org_id must NOT be NOT NULL — see the org-misattribution guard"
+    )
+
+
+def test_042_payload_is_jsonb_not_null(sql_042: str) -> None:
+    assert re.search(r"payload\s+JSONB\s+NOT NULL", sql_042), (
+        "payload must be JSONB NOT NULL — the lossless verified delivery"
+    )
+
+
+def test_042_status_check_covers_the_full_lifecycle(sql_042: str) -> None:
+    """Every state the receiver and the retry job can write must be legal,
+    or a legitimate outcome becomes a constraint violation at runtime."""
+    match = re.search(r"status IN \(([^)]*)\)", sql_042)
+    assert match, "Missing status CHECK constraint"
+    allowed = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert allowed == {"received", "processed", "error", "unresolved", "ignored"}, (
+        f"status CHECK drifted from the receiver's lifecycle: {allowed}"
+    )
+
+
+def test_042_rls_is_enabled(sql_042: str) -> None:
+    assert re.search(
+        r"ALTER TABLE\s+social_wiring\.meta_webhook_events\s+ENABLE ROW LEVEL SECURITY",
+        sql_042,
+    ), "RLS must be enabled — this table holds lead PII"
+
+
+def test_042_select_policy_uses_current_org_id_not_jwt(sql_042: str) -> None:
+    """RLS must resolve the org through `public.current_org_id()`, never
+    `auth.jwt()` / `user_metadata` (memory: feedback_rls_never_key_on_user_metadata)."""
+    assert re.search(
+        r'CREATE POLICY\s+"meta_webhook_events_select_own_org".*?'
+        r"USING \(org_id = public\.current_org_id\(\)\)",
+        sql_042,
+        re.DOTALL,
+    ), "SELECT policy must key on public.current_org_id()"
+    # Comments are stripped first (same reason as `test_011_no_broken_jwt_org_id_pattern`):
+    # the header deliberately NAMES the forbidden patterns to explain why they
+    # are forbidden, and a naive substring check would flag that prose.
+    sql_no_comments = _strip_sql_comments(sql_042)
+    assert "auth.jwt()" not in sql_no_comments, "must not key RLS on auth.jwt()"
+    assert "user_metadata" not in sql_no_comments, "must not key RLS on user_metadata"
+
+
+def test_042_service_role_policy_exists(sql_042: str) -> None:
+    """The receiver writes through the admin (service-role) client, since a
+    public webhook has no JWT context to resolve an org from."""
+    assert re.search(
+        r'CREATE POLICY\s+"meta_webhook_events_service_role".*?FOR ALL\s+TO service_role',
+        sql_042,
+        re.DOTALL,
+    ), "Missing service_role ALL policy"
+
+
+def test_042_pending_index_matches_the_retry_job_predicate(sql_042: str) -> None:
+    """The partial index and the drain query must agree, or the retry job
+    silently sequential-scans a table that only grows."""
+    match = re.search(
+        r"idx_sw_meta_webhook_events_pending.*?WHERE status IN \(([^)]*)\)",
+        sql_042,
+        re.DOTALL,
+    )
+    assert match, "Missing partial pending index"
+    covered = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert covered == {"received", "error", "unresolved"}, (
+        f"pending index predicate drifted from the drain query: {covered}"
+    )
+
+
+def test_042_is_idempotent_and_forward_only(sql_042: str) -> None:
+    """Re-applying must be a no-op: every CREATE POLICY is preceded by a
+    DROP POLICY IF EXISTS, and every CREATE INDEX/TABLE is IF NOT EXISTS."""
+    created = set(re.findall(r'CREATE POLICY\s+"([^"]+)"', sql_042))
+    dropped = set(re.findall(r'DROP POLICY IF EXISTS\s+"([^"]+)"', sql_042))
+    assert created and created <= dropped, (
+        f"policies created without a preceding DROP IF EXISTS: {created - dropped}"
+    )
+    bare_index = re.findall(r"CREATE INDEX (?!IF NOT EXISTS)", sql_042)
+    assert not bare_index, "every CREATE INDEX must be IF NOT EXISTS"
+
+
+def test_042_carries_the_migration_file_only_banner(sql_042: str) -> None:
+    """The banner is what stops an agent applying this to prod as a side
+    effect — application is an explicitly consented, separate step."""
+    assert "MIGRATION FILE ONLY" in sql_042, (
+        "missing the 🔴 MIGRATION FILE ONLY banner (see migration 033)"
     )

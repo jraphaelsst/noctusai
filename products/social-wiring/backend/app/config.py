@@ -280,6 +280,24 @@ class SocialWiringSettings(ProductSettings):
     # The /api/meta/scopes endpoint shows what's configured, what
     # Graph reports, and (after consent) what the user granted.
     meta_oauth_scopes: str = "auto"
+    # Lead-Ads webhook handshake token. Meta GETs the callback URL once,
+    # synchronously, when the operator clicks "Verify and Save" in the App
+    # Dashboard: `?hub.mode=subscribe&hub.verify_token=<this>&hub.challenge=<x>`.
+    # We echo `hub.challenge` back as PLAIN TEXT iff this value matches.
+    #
+    # 🔴 THIS IS NOT THE HMAC SECRET. Two different secrets, two different
+    # jobs, and conflating them has already shipped as a bug once
+    # (`products/erp-imobiliario/backend/app/routers/meta_api.py:70` resolves
+    # the verify token as the signing secret, so that receiver can never
+    # validate real Meta traffic):
+    #   • THIS token   — invented by us, used ONCE on the GET handshake,
+    #                    proves to META that we own the endpoint.
+    #   • meta_app_secret — issued by Meta, used on EVERY POST, signs the raw
+    #                    body into `X-Hub-Signature-256`, proves to US that
+    #                    the POST really came from Meta.
+    # Empty ⇒ the handshake always 403s (never a permissive default: an
+    # empty-token match would let anyone register our endpoint).
+    meta_webhook_verify_token: str = ""
 
     # ─── Instagram Business Login (Instagram-Login model) ──────────────
     # A SEPARATE app credential pair from meta_app_id/meta_app_secret

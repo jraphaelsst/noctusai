@@ -14,9 +14,12 @@ validated.** Slice 0 is on `dev` only. One promotion at the end, not a trickle.
 **Build order right now:** Slices 1 · 2 · 3 · 4 · 5a · 6 (all independent of the peer branch) →
 then pause. Slice 5b (live push) stays suspended until the peer's seed realtime work is assessed.
 
-**Migration numbers claimed by this branch:** `040` (webhook inbox) · `041` (leads.meta_lead_id).
-🔴 Re-check the highest number on `origin/dev` immediately before writing either — the peer
-branch `feat/whatsapp-realtime-inbox` also declares `products/social-wiring/backend/migrations`.
+**Migration numbers:** `042` (webhook inbox, this branch) · `041` (leads.meta_lead_id, Slice 3).
+🔴 **040 was NOT free** — peer branch `feat/wa-inbox-schema` (commit `b524b097`) already holds
+`040_whatsapp_inbox_realtime_schema.sql` on an **unpushed local branch**. Neither
+`ls migrations/` (shows 039 as highest) nor `git log origin/dev` reveals it. The only check that
+works is `git diff --name-only origin/dev...<branch>` across **every local branch**, not just
+remote ones. Re-run that immediately before writing any migration here.
 
 ---
 
