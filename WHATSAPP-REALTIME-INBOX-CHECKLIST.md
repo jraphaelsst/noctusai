@@ -546,3 +546,49 @@ them, so re-merge `origin/dev` and re-run gates on the merged tip before pushing
   sits in 51 unused Docker volumes — **not** pruned, because that is where database data lives.
 - At close-out, move this file to `project-history/roadmaps/whatsapp-realtime-inbox-2026-08.md`
   per `KB § PATTERNS/common/roadmap-tracking.md`, and absorb the retrospective.
+
+---
+
+# 🚀 DEPLOY LOG — 2026-08-03 (same session, handover taken back)
+
+## Landed on `dev`
+
+| Step | Result |
+|---|---|
+| Merge `origin/dev` (20 peer commits) | clean, zero conflicts |
+| Gates on merged tip | social-wiring **1623**·1 skipped · seed **2619** · seed-FE **319** · product-FE **455** — all exit 0 |
+| Push to `dev` | `ad4eac96..2a7f836f`, then `..d4150aea`, then `..43e9e67f` |
+| Migration | **`042` applied to live dev** (`nyplttplcoyiiqjrvtiw`) |
+| Schema verified in-DB | `whatsapp_chats` ✓ · 3 new `conversation_messages` cols ✓ · 2 RLS policies ✓ · `idx_sw_whatsapp_chats_list` ✓ · RLS enabled ✓ |
+| `predeploy_check` | **ready**, exit 0, all 7 checks |
+| Dev container | restarted, **healthy**, `/api/health` 200 |
+| New routes live | `/chats` · `/chats/{id}/messages` · `/chats/{id}/read` · `/recover` · `/stream` — all registered and **401-guarded** |
+
+## 🔴 Migration renumbered 040 → 042 (collision)
+
+A peer landed `040_imoveis.sql` on `dev` while this branch was held unpushed, so two different
+`040_*` files existed — same class as the 2026-07 n8n renumber. **Mine moved, not theirs**, and the
+tiebreak was safety rather than authorship: neither was applied, but `040_imoveis` reached `dev`
+first, so renaming *it* would risk a double-apply for anyone who had already run it. `042` was the
+free slot. Every reference updated; suite re-verified.
+
+## 🔴 `predeploy_check` caught a real test defect the suite hid
+
+`test_whatsapp_router.py` reached a **real Redis** (`redis://noctus-redis:6379/0`, a docker-internal
+host unreachable from the host or CI). It looked green only because the FULL suite let another
+module's patching land first — run the file alone and 5 tests failed with `ConnectionError`.
+`predeploy_check` runs the suite differently and surfaced it. **A test that passes only under one
+ordering is not passing**; this would have gone red the first time CI ran in a different shape.
+Fixed with one shared `fakeredis` pinned for the module.
+
+## Still NOT done — and why
+
+- **V1 · QR / V2 · fullSync / V5 · realtime / V6 · read-unread** — all require **re-pairing the live
+  WhatsApp session**, which unlinks the user's real device. Explicit consent required; not an
+  agent's call. The session is still `FAILED`.
+- **V3 · latency / V4 · WAHA-off-read-path** — need a paired session with real chats to be meaningful.
+- **Prod promotion** — `main`/`prod` require explicit per-action user consent plus a prod-exposure
+  consent record an agent must never author. Not done.
+- `smoke_fleet` reports **degraded**, but 9 of 11 backends simply are not running locally (only
+  `social-wiring` and `erp-imobiliario` dev containers are up). Both running backends return 200.
+  Not a regression — recorded rather than presented as green.
