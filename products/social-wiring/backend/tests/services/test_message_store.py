@@ -46,6 +46,9 @@ def sqlite_db(tmp_path: Path) -> SQLiteClient:
         authorized INTEGER NOT NULL DEFAULT 0,
         structured_payload TEXT,
         connection_id TEXT,
+        ack INTEGER,
+        acked_at TEXT,
+        chat_id TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX idx_session ON conversation_messages(session_id, created_at DESC);
@@ -191,3 +194,106 @@ class TestListForSession:
             )
         rows = store.list_for_session(session_id="s1", limit=2)
         assert len(rows) == 2
+
+
+class TestChatId:
+    """040_whatsapp_inbox_realtime_schema — chat_id round-trips."""
+
+    def test_record_stores_and_returns_chat_id(self, sqlite_db):
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        msg = store.record(
+            session_id="+5511974693365",
+            direction="inbound",
+            body="oi",
+            provider_message_id="chat-id-001",
+            chat_id="5511974693365@c.us",
+        )
+        assert msg.chat_id == "5511974693365@c.us"
+
+    def test_record_without_chat_id_is_null_safe(self, sqlite_db):
+        """Pre-040 callers (outbound sends) that don't pass chat_id must
+        not break — the column stays NULL, same treatment the migration
+        gives historical rows."""
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        msg = store.record(
+            session_id="+5511974693365",
+            direction="outbound",
+            body="oi de volta",
+            provider_message_id="chat-id-002",
+        )
+        assert msg.chat_id is None
+
+
+class TestApplyAck:
+    """040_whatsapp_inbox_realtime_schema — message.ack application."""
+
+    def test_applies_ack_to_existing_message(self, sqlite_db):
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        store.record(
+            session_id="+5511974693365",
+            direction="inbound",
+            body="oi",
+            provider_message_id="ack-001",
+            chat_id="5511974693365@c.us",
+            connection_id=UUID("00000000-0000-4000-8000-0000000000c1"),
+        )
+        updated = store.apply_ack(
+            provider_message_id="ack-001", ack=3, acked_at="2026-08-03T12:00:00+00:00",
+        )
+        assert updated is not None
+        assert updated.ack == 3
+        assert updated.acked_at == "2026-08-03T12:00:00+00:00"
+        # The row's OWN connection_id/chat_id round-trip — the ack handler
+        # scopes its realtime publish off these, not the webhook route's
+        # connection context (see whatsapp_router._handle_message_ack).
+        assert updated.chat_id == "5511974693365@c.us"
+        assert updated.connection_id == UUID("00000000-0000-4000-8000-0000000000c1")
+
+    def test_ack_for_unknown_message_returns_none(self, sqlite_db):
+        """No row with this provider_message_id yet — a no-op, never an
+        error. See whatsapp_router._handle_message_ack's contract."""
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        updated = store.apply_ack(
+            provider_message_id="does-not-exist", ack=2, acked_at="2026-08-03T12:00:00+00:00",
+        )
+        assert updated is None
+
+    def test_ack_does_not_disturb_other_messages(self, sqlite_db):
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        store.record(
+            session_id="s1", direction="inbound", body="a", provider_message_id="ACK_A",
+        )
+        store.record(
+            session_id="s1", direction="inbound", body="b", provider_message_id="ACK_B",
+        )
+        store.apply_ack(provider_message_id="ACK_A", ack=1, acked_at="2026-08-03T00:00:00+00:00")
+        rows = store.list_for_session(session_id="s1")
+        by_id = {r["provider_message_id"]: r for r in rows}
+        assert by_id["ACK_A"]["ack"] == 1
+        assert by_id["ACK_B"]["ack"] is None
+
+
+class TestAsMessageDto:
+    """The realtime-bus MessageDTO shape — field names/order are the wire
+    contract the FE reducer matches exactly."""
+
+    def test_shape_matches_contract(self, sqlite_db):
+        store = MessageStore(admin_supabase=sqlite_db, org_id=_ORG_ID)
+        msg = store.record(
+            session_id="+5511974693365",
+            direction="inbound",
+            body="oi",
+            provider_message_id="dto-001",
+            chat_id="5511974693365@c.us",
+        )
+        dto = msg.as_message_dto()
+        assert set(dto.keys()) == {
+            "id", "provider_message_id", "chat_id", "direction", "body",
+            "ack", "acked_at", "created_at", "structured_payload",
+        }
+        assert dto["provider_message_id"] == "dto-001"
+        assert dto["chat_id"] == "5511974693365@c.us"
+        assert dto["direction"] == "inbound"
+        assert dto["body"] == "oi"
+        assert dto["ack"] is None
+        assert dto["acked_at"] is None
