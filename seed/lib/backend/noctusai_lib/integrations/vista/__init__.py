@@ -38,6 +38,17 @@ Public surface:
 from noctusai_lib.domain.real_estate import PropertyData
 
 from .adapter_factory import get_vista_adapter
+from .calibration import (
+    CANDIDATE_AGENCIA_FIELDS,
+    CANDIDATE_CONTEUDO_FIELDS,
+    CANDIDATE_IMOVEL_DETAIL_FIELDS,
+    CANDIDATE_IMOVEL_LIST_FIELDS,
+    CANDIDATE_USUARIO_FIELDS,
+    FLOOR_FIELDS,
+    CalibrationResult,
+    Calibrator,
+    calibrator,
+)
 from .client import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_TIMEOUT_SECONDS,
@@ -82,6 +93,18 @@ __all__ = [
     "make_vista_client",
     "VistaCallResult",
     "extract_items",
+    # Per-tenant field-set calibration (vista.md § 6). Lifted from
+    # `mcp/vista/calibration.py` 2026-08-03 so backend consumers can
+    # calibrate instead of hardcoding a field list.
+    "Calibrator",
+    "CalibrationResult",
+    "calibrator",
+    "FLOOR_FIELDS",
+    "CANDIDATE_IMOVEL_LIST_FIELDS",
+    "CANDIDATE_IMOVEL_DETAIL_FIELDS",
+    "CANDIDATE_USUARIO_FIELDS",
+    "CANDIDATE_AGENCIA_FIELDS",
+    "CANDIDATE_CONTEUDO_FIELDS",
     # 7-class error hierarchy (catch-order matters — leaves before parent)
     "VistaError",
     "VistaConfigError",

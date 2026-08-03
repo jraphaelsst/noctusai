@@ -22,12 +22,12 @@ from noctusai_lib.integrations.vista import (
     VistaPermissionDenied,
     VistaTimeout,
     VistaUpstreamError,
+    calibrator,
     extract_items,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
 )
 
-from ..calibration import calibrator
 from ..settings import get_settings
 from ..types import (
     GetImovelInput,

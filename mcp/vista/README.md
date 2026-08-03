@@ -118,7 +118,6 @@ mcp/vista/
 ├── __init__.py
 ├── settings.py        — VistaSettings + get_settings() (composes _kit.settings)
 ├── types.py           — Pydantic In/Out schemas for the tool surface
-├── calibration.py     — per-tenant field-set discovery (addresses vista.md § 6)
 ├── server.py          — stdio MCP entry point (composes _kit.bootstrap)
 ├── tools/
 │   ├── __init__.py    — aggregates HANDLERS + tool_descriptors() across leafs
@@ -138,7 +137,11 @@ mcp/vista/
 - `VistaClient` + the 7-class error hierarchy + `extract_items` → `noctusai_lib.integrations.vista.client`
 - `vista_*_to_showcase` normalizers → `noctusai_lib.integrations.vista.normalizers`
 - `Showcase*` DTOs → `noctusai_lib.integrations.vista.types`
+- `calibrator` + the CANDIDATE_* field sets → `noctusai_lib.integrations.vista.calibration`
 
-(They lived here in the original Phase 1 layout; commit `b3e0b10f` moved them to the
-seed as part of the shared `mcp/_kit` refactor. `calibration.py` is next — see the
-`social-wiring-imoveis-vista-2026-08` roadmap, P2.0a.)
+(`client.py` / `normalizers.py` lived here in the original Phase 1 layout; commit
+`b3e0b10f` moved them to the seed as part of the shared `mcp/_kit` refactor.
+`calibration.py` followed 2026-08-03 — P2.0a of the
+`social-wiring-imoveis-vista-2026-08` roadmap — because a product-side Vista sync
+needs the same per-tenant field set, and a calibrator reachable only from the MCP
+host forces every backend consumer to hardcode a field list instead.)

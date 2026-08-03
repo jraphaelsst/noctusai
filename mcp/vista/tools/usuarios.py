@@ -16,7 +16,7 @@ from noctusai_lib.integrations.vista import (
     vista_usuario_to_showcase,
 )
 
-from ..calibration import calibrator
+from noctusai_lib.integrations.vista import calibrator
 from ..settings import get_settings
 from ..types import ListUsuariosOutput
 
