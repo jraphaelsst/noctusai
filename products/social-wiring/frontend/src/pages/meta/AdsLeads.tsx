@@ -50,6 +50,7 @@ import {
   type LeadgenQuestion,
 } from "@/hooks/useMetaAds";
 import { AdsError, AdsLoading, AdsNotConfigured } from "./adsShared";
+import LeadgenWebhookCard from "./LeadgenWebhookCard";
 
 function syncedLabel(iso: string | null): string {
   if (!iso) return "nunca sincronizado";
@@ -313,6 +314,8 @@ export default function AdsLeads() {
           {syncing ? "Sincronizando…" : "Sincronizar leads"}
         </Button>
       </div>
+
+      <LeadgenWebhookCard />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <MetricCard icon={Users} label="Total de leads" value={formatNumber(s.total_leads)} />
