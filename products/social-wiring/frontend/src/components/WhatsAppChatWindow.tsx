@@ -14,15 +14,20 @@
  * toggle. Public props/behaviour are unchanged from the pre-extraction
  * version (connectionId / autoReplyEnabled / className).
  *
- * Data layer: same hooks as before (useWhatsAppChats, useWhatsAppChatMessages,
- * useSendWhatsAppMessage, useSetAutoReply) — the WS-v2 upgrade seam described
- * in those hooks is unaffected by this refactor.
+ * Data layer (realtime v2): reads are pure Postgres behind keyset pagination
+ * and updates arrive over ONE SSE stream per connection. `useWhatsAppRealtime`
+ * is mounted HERE, once, because this component owns the connection scope —
+ * mounting it deeper (per thread) would open a server-side stream reader per
+ * open conversation for identical data.
  */
+import { useMemo } from "react";
 import {
   useWhatsAppChats,
   useWhatsAppChatMessages,
   useSendWhatsAppMessage,
   useSetAutoReply,
+  useMarkChatRead,
+  useWhatsAppRealtime,
 } from "@/hooks/useWhatsAppChats";
 import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system";
 
@@ -30,35 +35,43 @@ import { ChatWindow, type ChatWindowAdapter } from "@noctusai/lib/design-system"
 
 /**
  * Resolve the display title for a chat.
- * The backend sets `contact` = resolved name (e.g. "João Raphael") when
- * available, otherwise the raw JID (e.g. "5511999998888@c.us"). Strip the
- * JID suffix only when the contact looks like a JID.
+ * The backend sets `title` = resolved contact name when available, otherwise
+ * the raw JID ("5511999998888@c.us"). Strip the JID suffix only when the title
+ * still looks like a JID — a real name must never be truncated at an "@".
  */
-function displayContact(contact: string): string {
-  if (contact.includes("@")) return contact.replace(/@.*$/, "");
-  return contact;
+function displayContact(title: string | null | undefined, chatId: string): string {
+  // Defensive: the backend guarantees a non-null title, but one malformed row
+  // must never take down the entire conversation list. Fall back through the
+  // JID to something renderable rather than throwing inside a .map().
+  const raw = title ?? chatId ?? "";
+  if (raw.includes("@")) return raw.replace(/@.*$/, "");
+  return raw;
 }
 
 // ─── WhatsApp adapter ─────────────────────────────────────────────────────────
 
 function useWhatsAppThreadsAdapter(connectionId: string | null) {
-  const { data: chats, isLoading, isError } = useWhatsAppChats(connectionId);
+  const { data: chats, isPending, isFetching, isError } = useWhatsAppChats(connectionId);
   return {
     data: (chats ?? []).map((chat) => ({
       id: chat.chat_id,
-      title: displayContact(chat.contact),
-      lastMessagePreview: chat.last_message,
+      title: displayContact(chat.title, chat.chat_id),
+      lastMessagePreview: chat.last_message_preview,
       lastMessageAt: chat.last_message_at,
       lastDirection: chat.last_direction,
-      unreadCount: chat.unread,
+      unreadCount: chat.unread_count,
     })),
-    isLoading,
+    // isPending || isFetching, never isLoading: in TanStack v5 isLoading is
+    // false during a background refetch, so an isEmpty branch would render
+    // "no conversations" over data that exists. (check_lying_loading_state)
+    isLoading: isPending || isFetching,
     isError,
   };
 }
 
 function useWhatsAppMessagesAdapter(connectionId: string | null, chatId: string | null) {
-  const { data: messages, isLoading, isError } = useWhatsAppChatMessages(connectionId, chatId);
+  const { data: messages, isPending, isFetching, isError } =
+    useWhatsAppChatMessages(connectionId, chatId);
   return {
     data: (messages ?? []).map((m) => ({
       id: m.id,
@@ -66,8 +79,31 @@ function useWhatsAppMessagesAdapter(connectionId: string | null, chatId: string 
       body: m.body || (m.structured_payload ? "[mídia]" : ""),
       created_at: m.created_at,
     })),
-    isLoading,
+    isLoading: isPending || isFetching,
     isError,
+  };
+}
+
+function useWhatsAppLoadMoreAdapter(connectionId: string | null, chatId: string | null) {
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useWhatsAppChatMessages(connectionId, chatId);
+  return {
+    hasMore: !!hasNextPage,
+    isLoadingMore: isFetchingNextPage,
+    loadMore: () => { void fetchNextPage(); },
+  };
+}
+
+/**
+ * ⚠️ markRead reaches the user's REAL phone: the backend fires WAHA `sendSeen`
+ * in the background, so opening a chat here marks it read on the device too.
+ * That is intended and user-approved. The organ calls this exactly once per
+ * opened thread — never on hover or prefetch.
+ */
+function useWhatsAppReadStateAdapter(connectionId: string | null) {
+  const markRead = useMarkChatRead(connectionId);
+  return {
+    markRead: (chatId: string) => markRead.mutate({ chatId }),
   };
 }
 
@@ -93,6 +129,8 @@ function buildWhatsAppAdapter(autoReplyEnabled: boolean): ChatWindowAdapter {
     useThreads: useWhatsAppThreadsAdapter,
     useMessages: useWhatsAppMessagesAdapter,
     useSend: useWhatsAppSendAdapter,
+    useLoadMore: useWhatsAppLoadMoreAdapter,
+    useReadState: useWhatsAppReadStateAdapter,
     useAutoReply: (connectionId) => useWhatsAppAutoReplyAdapter(connectionId, autoReplyEnabled),
   };
 }
@@ -112,10 +150,22 @@ export function WhatsAppChatWindow({
   autoReplyEnabled = false,
   className,
 }: WhatsAppChatWindowProps) {
+  // ONE stream per connection, owned here. Every hook in useWhatsAppChats reads
+  // the caches this maintains; nothing below needs to know a transport exists.
+  useWhatsAppRealtime(connectionId);
+
+  // Rebuilding the adapter each render would give ChatWindow a new object
+  // identity every time, which is exactly the kind of churn that makes hook
+  // identity in an adapter bag fragile.
+  const adapter = useMemo(
+    () => buildWhatsAppAdapter(autoReplyEnabled),
+    [autoReplyEnabled],
+  );
+
   return (
     <ChatWindow
       scopeId={connectionId}
-      adapter={buildWhatsAppAdapter(autoReplyEnabled)}
+      adapter={adapter}
       emptyThreadsLabel="Nenhuma conversa nesta conexão."
       className={className}
     />

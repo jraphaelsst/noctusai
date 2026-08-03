@@ -29,11 +29,16 @@ const mockUseWhatsAppChats = vi.fn();
 const mockUseWhatsAppChatMessages = vi.fn();
 const mockUseSendWhatsAppMessage = vi.fn();
 const mockUseSetAutoReply = vi.fn();
+const mockUseMarkChatRead = vi.fn();
+const mockUseWhatsAppRealtime = vi.fn();
+
 vi.mock("@/hooks/useWhatsAppChats", () => ({
   useWhatsAppChats: mockUseWhatsAppChats,
   useWhatsAppChatMessages: mockUseWhatsAppChatMessages,
   useSendWhatsAppMessage: mockUseSendWhatsAppMessage,
   useSetAutoReply: mockUseSetAutoReply,
+  useMarkChatRead: mockUseMarkChatRead,
+  useWhatsAppRealtime: mockUseWhatsAppRealtime,
 }));
 
 // ─── ChatWindow stub — captures props for adapter assertions ───────────────
@@ -52,6 +57,10 @@ beforeEach(() => {
   mockUseWhatsAppChatMessages.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseSendWhatsAppMessage.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
   mockUseSetAutoReply.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseMarkChatRead.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  // The realtime subscription is a side effect, not data — the adapter tests
+  // assert cache/DTO mapping, so a no-op stub keeps them transport-agnostic.
+  mockUseWhatsAppRealtime.mockReturnValue({ status: "open", lastEventId: null });
 });
 
 async function renderWindow(props: Partial<{ connectionId: string; autoReplyEnabled: boolean; className: string }> = {}) {
@@ -76,12 +85,14 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
       data: [
         {
           chat_id: "5511999998888@c.us",
-          contact: "5511999998888@c.us",
-          contact_id: null,
-          last_message: "Olá!",
+          title: "5511999998888@c.us",
+          last_message_preview: "Olá!",
           last_message_at: "2026-07-01T10:00:00Z",
           last_direction: "inbound",
-          unread: 3,
+          unread_count: 3,
+          last_read_at: null,
+          archived: false,
+          pinned: false,
         },
       ],
       isLoading: false,

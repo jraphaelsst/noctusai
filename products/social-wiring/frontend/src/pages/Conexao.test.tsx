@@ -34,6 +34,7 @@ const mockUseWhatsAppConnectionMutations = vi.fn();
 const mockUseWhatsAppConnectionStatus = vi.fn();
 const mockUseWhatsAppConnectionQr = vi.fn();
 const mockUseWhatsAppConnectionActions = vi.fn();
+const mockRecoverMutate = vi.fn();
 const mockUseRevealApiKey = vi.fn();
 const mockUseConnectionChats = vi.fn();
 const mockUseToggleAutoReply = vi.fn();
@@ -43,6 +44,7 @@ vi.mock("@/hooks/useWhatsAppConnections", () => ({
   useWhatsAppConnectionMutations: mockUseWhatsAppConnectionMutations,
   useWhatsAppConnectionStatus: mockUseWhatsAppConnectionStatus,
   useWhatsAppConnectionQr: mockUseWhatsAppConnectionQr,
+  useRecoverConnection: () => ({ mutate: mockRecoverMutate, isPending: false }),
   useWhatsAppConnectionActions: mockUseWhatsAppConnectionActions,
   useRevealApiKey: mockUseRevealApiKey,
   useConnectionChats: mockUseConnectionChats,
@@ -141,6 +143,7 @@ beforeEach(() => {
   mockUseWhatsAppConnectionStatus.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionActions.mockReturnValue(makeDefaultActions());
+  mockRecoverMutate.mockClear();
   mockUseRevealApiKey.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue({ connection_id: "c", api_key: "revealed-key" }),
     isPending: false,
@@ -289,7 +292,7 @@ describe("Create → QR auto-flow", () => {
     expect(getByTestId("dialog")).toBeTruthy();
   });
 
-  it("restart mutation is triggered on autoStart (auto-fires on render)", async () => {
+  it("recovery ladder is triggered on autoStart (auto-fires on render)", async () => {
     const restartMutate = vi.fn();
     mockUseWhatsAppConnectionActions.mockReturnValue({
       ...makeDefaultActions(),
@@ -333,7 +336,7 @@ describe("Create → QR auto-flow", () => {
     });
 
     // autoStart=true causes restart.mutate to be called with the new line's id
-    expect(restartMutate).toHaveBeenCalledWith("conn-new");
+    expect(mockRecoverMutate).toHaveBeenCalledWith("conn-new");
   });
 });
 
@@ -424,7 +427,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
 });
 
 describe("ConnectionDetailDialog — QR restart behavior", () => {
-  it("Gerar nova sessão / QR button triggers restart, not start", async () => {
+  it("Gerar nova sessão / QR button triggers the recovery ladder, not a bare restart", async () => {
     const restartMutate = vi.fn();
     const startMutate = vi.fn();
     mockUseWhatsAppConnectionActions.mockReturnValue({
@@ -454,11 +457,15 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
     // Click "Gerar nova sessão / QR"
     fireEvent.click(getByTestId("btn-start"));
 
-    expect(restartMutate).toHaveBeenCalledOnce();
+    // The ladder, never a bare restart: a FAILED session holding dead
+    // credentials hangs in STARTING on restart and is force-stopped by WAHA
+    // ~5min later, forever. Only logout+start yields a QR.
+    expect(mockRecoverMutate).toHaveBeenCalledOnce();
+    expect(restartMutate).not.toHaveBeenCalled();
     expect(startMutate).not.toHaveBeenCalled();
   });
 
-  it("auto-restart fires once on FAILED status and does not loop", async () => {
+  it("auto-recovery fires once on FAILED status and does not loop", async () => {
     const restartMutate = vi.fn();
     mockUseWhatsAppConnectionActions.mockReturnValue({
       ...makeDefaultActions(),
@@ -489,7 +496,7 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
     });
 
     // restart must be called exactly once (not in a loop)
-    expect(restartMutate).toHaveBeenCalledTimes(1);
-    expect(restartMutate).toHaveBeenCalledWith(line.id);
+    expect(mockRecoverMutate).toHaveBeenCalledTimes(1);
+    expect(mockRecoverMutate).toHaveBeenCalledWith(line.id);
   });
 });
