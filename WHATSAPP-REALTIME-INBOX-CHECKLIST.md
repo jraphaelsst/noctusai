@@ -303,7 +303,25 @@ effect-disjoint").
 - [x] **FIX-3** Regression test: the `message.any` echo for an already-stored outbound is a no-op
       that does **not** leave `chat_id` NULL.
 
-## Verification (end-to-end, run before calling this done)
+## Gate results — final merged tip (2026-08-03)
+
+| Gate | Result |
+|---|---|
+| social-wiring backend | **1556 passed**, exit 0 |
+| seed backend | **2565 passed**, exit 0 |
+| seed frontend | **319 passed** (28 files), exit 0 |
+| product frontend | **455 passed** (42 files), exit 0 |
+| `--verify-kb-sync` | exit 0 |
+| `--check-eight-way-sync` | exit 0 |
+| `check_lying_loading_state` | clean |
+| merge with `origin/dev` | clean, zero conflicts |
+
+⚠️ The product-FE suite failed **once** on `ClienteModal.test.tsx` (5.5s — a timeout under
+parallel load), then passed in isolation (23/23) and on a clean full re-run (455/455) with no code
+change. That is the already-logged flakiness, not a regression — recorded rather than quietly
+re-run until green.
+
+## Verification (end-to-end — REQUIRES A DEPLOY, hence still open)
 
 - [ ] **V1 · QR** `waha_session_get` → `SCAN_QR_CODE`; QR renders; pairing completes → `WORKING` with
       `me`. `Session stuck in STARTING` stops appearing in `noctus-services-waha-1`.
