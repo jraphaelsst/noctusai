@@ -108,6 +108,8 @@ from app.services.whatsapp_connection_store import (
 )
 from app.services.whatsapp_realtime import (
     EVENT_CHAT_READ,
+    EVENT_CHAT_UPSERT,
+    EVENT_MESSAGE_NEW,
     EVENT_SESSION_STATUS,
     get_whatsapp_bus,
     publish_whatsapp_event,
@@ -982,6 +984,8 @@ async def send_message(
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     waha_factory: Any = Depends(get_waha_client_factory),
     msg_store_factory: Any = Depends(get_message_store_factory),
+    chat_store_factory: Any = Depends(get_chat_store_factory),
+    settings: SocialWiringSettings = Depends(get_settings),
 ) -> MessageOut:
     """Send a text message on this connection to the given chatId.
 
@@ -1036,6 +1040,40 @@ async def send_message(
         provider_message_id=provider_message_id,
         authorized=True,
         connection_id=connection_id,
+        # 🔴 MUST be stamped HERE, at first write. The thread read path queries
+        # by chat_id alone, and this row is keyed by UNIQUE(provider_message_id)
+        # — so WAHA's own `message.any` echo of this same send is dropped as a
+        # duplicate and can never backfill the column. Omit it and the message
+        # the user just sent is invisible in its own thread permanently, not
+        # merely until the echo lands.
+        chat_id=chat_id,
+    )
+
+    # Fold the send into the conversation row + push it to subscribers, exactly
+    # as the inbound webhook does. Without this the sender's own list entry
+    # would not move until the echo webhook arrived — and on a connection whose
+    # webhook is misconfigured, never.
+    chat_store: WhatsAppChatStore = chat_store_factory(org_id)
+    summary = chat_store.record_message(
+        connection_id=connection_id,
+        chat_id=chat_id,
+        direction="outbound",
+        body=body.text,
+        created_at=sent_at,
+    )
+
+    bus = get_whatsapp_bus(settings.redis_url)
+    await publish_whatsapp_event(
+        bus,
+        connection_id=connection_id,
+        event=EVENT_MESSAGE_NEW,
+        payload={"chat_id": chat_id, "message": stored.as_message_dto()},
+    )
+    await publish_whatsapp_event(
+        bus,
+        connection_id=connection_id,
+        event=EVENT_CHAT_UPSERT,
+        payload=summary.as_dict(),
     )
     # Re-read the created_at from the store so the response timestamp is
     # accurate. We do a single list_messages call scoped to the just-inserted

@@ -165,8 +165,13 @@ class _SQLiteTableProxy:
 
     # ── chainable query-builder methods ──────────────────────────────────
 
-    def select(self, cols: str) -> "_SQLiteTableProxy":
+    def select(self, cols: str, *, count: str | None = None) -> "_SQLiteTableProxy":
+        # `count="exact"` mirrors PostgREST returning the row count out-of-band
+        # on `response.count`. WhatsAppChatStore._recount_unread relies on it,
+        # so the fake must surface it too — falling back to len(data) here
+        # would hide a real "driver did not supply a count" case.
         self._select_cols = cols
+        self._count_mode = count
         return self
 
     def eq(self, col: str, val: Any) -> "_SQLiteTableProxy":
@@ -196,6 +201,36 @@ class _SQLiteTableProxy:
             conn.execute(sql, vals)
         # Return proxy for execute() to re-read the inserted row.
         self._filters = [("=", "id", payload["id"])]
+        self._select_cols = "*"
+        return self
+
+    def upsert(self, payload: dict, *, on_conflict: str = "") -> "_SQLiteTableProxy":
+        """Real INSERT .. ON CONFLICT DO UPDATE, mirroring Supabase's upsert.
+
+        Implemented against actual SQL rather than stubbed because
+        ``WhatsAppChatStore.record_message`` relies on upsert semantics for its
+        idempotency guarantee — a fake that merely inserted would let a
+        replayed webhook raise instead of converging, and the test would be
+        proving the opposite of the production behaviour.
+        """
+        cols = ", ".join(f'"{k}"' for k in payload)
+        placeholders = ", ".join("?" for _ in payload)
+        vals = list(payload.values())
+        conflict_cols = [c.strip() for c in on_conflict.split(",") if c.strip()]
+        sql = f'INSERT INTO "{self._table}" ({cols}) VALUES ({placeholders})'
+        if conflict_cols:
+            targets = ", ".join(f'"{c}"' for c in conflict_cols)
+            updates = ", ".join(
+                f'"{k}" = excluded."{k}"' for k in payload if k not in conflict_cols
+            )
+            sql += (
+                f" ON CONFLICT({targets}) DO UPDATE SET {updates}"
+                if updates
+                else f" ON CONFLICT({targets}) DO NOTHING"
+            )
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(sql, vals)
+        self._filters = [("=", c, payload[c]) for c in conflict_cols if c in payload]
         self._select_cols = "*"
         return self
 
@@ -257,12 +292,20 @@ class _SQLiteTableProxy:
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, params).fetchall()
-        return _Response([dict(r) for r in rows])
+            exact_count: int | None = None
+            if getattr(self, "_count_mode", None) == "exact":
+                count_sql = f'SELECT COUNT(*) AS n FROM "{self._table}" {where}'
+                exact_count = conn.execute(count_sql, params).fetchone()["n"]
+        return _Response([dict(r) for r in rows], count=exact_count)
 
 
 class _Response:
-    def __init__(self, data: list[dict]):
+    def __init__(self, data: list[dict], *, count: int | None = None):
         self.data = data
+        # PostgREST exposes the exact row count out-of-band when the caller
+        # asked for it; None otherwise. Mirrored so a consumer that branches on
+        # "did the driver give me a count?" is exercised faithfully.
+        self.count = count
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -918,13 +961,20 @@ class TestSendMessage:
         body = resp.json()
         assert body["error"]["code"] == "waha_send_failed", f"unexpected body: {body}"
 
-    def test_send_does_not_require_a_preexisting_chats_row(self, chat_client):
-        """/send is unaffected by Slice 5: it still only touches
-        conversation_messages. Whether the sent message shows up in GET
-        /chats is now the INGEST path's job (the WAHA `message.any` echo
-        writing through `WhatsAppChatStore.record_message` — peer
-        territory, not exercised by this send-only test); a bare send
-        against a chat with no whatsapp_chats row yet must still 201."""
+    def test_send_creates_its_own_chat_row_and_is_visible_immediately(self, chat_client):
+        """🔴 REGRESSION PIN. A send must be visible in BOTH reads immediately.
+
+        This test previously asserted the opposite — that the inbox
+        "legitimately stays empty until ingest catches up" via WAHA's
+        `message.any` echo. That assumption is provably false: the echo carries
+        the SAME `provider_message_id`, so `UNIQUE(provider_message_id)` drops
+        it as a duplicate and it can never write the row or backfill `chat_id`.
+        The message would have been invisible in its own thread permanently,
+        not merely until the echo arrived.
+
+        Found on the merged tip of slices 4+5 — each branch was green alone;
+        the defect lived only in the seam between them.
+        """
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
@@ -935,11 +985,23 @@ class TestSendMessage:
         )
         assert resp.status_code == 201, resp.text
 
-        # No whatsapp_chats row exists yet (nothing echoed it back in this
-        # test) — the inbox legitimately stays empty until ingest catches up.
+        # 1. the conversation row exists, with the preview and direction set
         chats_resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
         assert chats_resp.status_code == 200, chats_resp.text
-        assert chats_resp.json() == {"items": [], "next_before": None}
+        items = chats_resp.json()["items"]
+        assert [i["chat_id"] for i in items] == ["5511@c.us"], chats_resp.text
+        assert items[0]["last_message_preview"] == "hello inbox"
+        assert items[0]["last_direction"] == "outbound"
+        # our own send must never make our own inbox look unread
+        assert items[0]["unread_count"] == 0
+
+        # 2. and the message is in its own thread — i.e. chat_id was stamped
+        msgs_resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511%40c.us/messages"
+        )
+        assert msgs_resp.status_code == 200, msgs_resp.text
+        bodies = [m["body"] for m in msgs_resp.json()["items"]]
+        assert "hello inbox" in bodies, msgs_resp.text
 
 
 # ── POST /recover (Slice 5, new) ──────────────────────────────────────────────

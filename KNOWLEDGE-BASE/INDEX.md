@@ -101,6 +101,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── gate-methodology-sync.md
 │   │   │   ├── git-branch-model.md
 │   │   │   ├── harness-overlay-worktree-divergence.md
+│   │   │   ├── inbox-chat-surface.md
 │   │   │   ├── kb-recurrence-radar.md
 │   │   │   ├── kb-vector-search.md
 │   │   │   ├── keeper-check-before-docing.md
@@ -269,6 +270,7 @@ KNOWLEDGE-BASE/
 | Gamification philosophy (ranks, points, subtle UX) | `CONTEXT/07-GAMIFICATION.md` |
 | Backend patterns (auth, SSO, RLS, N+1, services) | `CONTEXT/PATTERNS/backend/backend.md` |
 | Frontend patterns (mobile-first, TanStack Query, hooks) | `CONTEXT/PATTERNS/frontend/frontend.md` |
+| Inbox / chat surface — the canonical shape for ANY chat UI: consume the `ChatWindow` organ + a provider **adapter** (never a fork), **DB-first** reads (the vendor API is ingest+send only — vendor latency is latency you don't own; ~13s → ~10ms, and it survives a dead session), **one** realtime stream patching the query cache (never `refetchInterval`), and a read **cursor** (not an "inbound since my last reply" heuristic that silently degrades to 0). Born from the 2026-08 social-wiring realtime-inbox slice; documents why three forks shipped (a missing `.organ.yaml` made the catalog report the organ as shelfware, so `noc-organ-consume-check` told each engineer to build one — **a missing registration manufactures forks**), plus the non-obvious rules each of which cost something: `markRead` may reach the user's real phone so assert the call COUNT; `staleTime: Infinity` once a stream owns the cache; recount unread, never increment (vendors double-deliver); and an id-deduped write can never be repaired by a later echo | `CONTEXT/PATTERNS/frontend/inbox-chat-surface.md` |
 | Testing discipline (3 layers, mocking, auth boundary) | `CONTEXT/PATTERNS/compliance/testing.md` |
 | RLS + DB rules (`auth.uid()` subquery, search_path) | `CONTEXT/PATTERNS/backend/database-rls.md` |
 | Environment vars (single `.env`, VITE_ prefix, CORS) | `CONTEXT/PATTERNS/devops/environment.md` |

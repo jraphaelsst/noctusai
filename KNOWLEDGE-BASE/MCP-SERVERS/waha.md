@@ -40,9 +40,28 @@ key" into one error; this connector's diagnostic disambiguates them.
   ¬ side-effect. `send_text` = strongest gate (a sent WhatsApp message
   is irreversible); `logout` hard-to-reverse (re-pair needs a QR scan,
   a human dashboard action — ¬ an API call).
-- **Stuck-worker recipe**: `session.get` → `session.restart`
-  (confirm=true) → `session.get`. `SCAN_QR_CODE` ⇒ pairing lost ⇒
-  human QR scan in the WAHA dashboard.
+- **Stuck-session recipe — an ESCALATION LADDER, not a restart.** 🔴 Corrected
+  2026-08-03; the previous "`get` → `restart` → `get`" recipe **cannot recover
+  the most common failure** and will loop forever on it.
+  `start` → poll → still ¬`SCAN_QR_CODE|WORKING` → `restart` → poll → still
+  stuck → `logout` + `start`. Stop at the first rung that reaches
+  `SCAN_QR_CODE` ∨ `WORKING`. Shipped as `WahaClient.recover_session()`
+  (`noctusai_lib.integrations.whatsapp`) — prefer it over hand-rolling.
+  - **Why `restart` alone is insufficient.** A session whose stored credentials
+    WhatsApp has invalidated still *has* credentials, so NOWEB attempts a
+    reconnect instead of re-pairing, hangs in `STARTING`, and WAHA's own
+    watchdog force-stops it ~5 min later → `FAILED` → repeat. Observed on the
+    live fleet 2026-08-03: `restart` 17:44:14 → `session:default - Session
+    stuck in STARTING status, force stopping the session` 17:49:13; identically
+    again 17:57:46 → 18:02:50. Only `logout` clears the credentials, and only
+    then does a QR appear.
+  - `SCAN_QR_CODE` ⇒ pairing lost ⇒ a human must scan. The QR is served by
+    `GET /api/{session}/auth/qr?format=image`; note it **blocks ~10s** inside
+    WAHA's `waitUntilStatus` before 422-ing, so any poll interval must exceed
+    that or requests overlap.
+  - 🔒 `logout` unlinks the device from the user's real WhatsApp account. It is
+    hard-to-reverse and **never an agent's unilateral call** — it needs the
+    same explicit consent as any other prod-exposure action.
 
 ## Architecture
 
