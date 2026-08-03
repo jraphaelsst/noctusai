@@ -81,10 +81,11 @@ as the canonical instance every future chat UI consumes.
 
 ## Slice 0 · Immediate manual unblock (ops, no code)
 
-- [ ] **0.1** Run `logout` → `start` on WAHA session `default` to clear the dead credentials so NOWEB
-      enters `SCAN_QR_CODE`. ⚠️ Writes to the live account — unlinks the device; re-pair by scanning.
-      *Requires explicit user go-ahead; not an agent's call.*
-- [ ] **0.2** Confirm `waha_session_get` → `SCAN_QR_CODE`, then `WORKING` with `me` populated after scan.
+- [-] **0.1** ~~Run `logout` → `start` on WAHA session `default` now~~ — **DECLINED by user 2026-08-03.**
+      Decision: wait for the code fix rather than work around it, so recovery is proven end-to-end
+      through the product's own UI. No agent touches the live WhatsApp account.
+- [ ] **0.2** Recovery instead happens via Slice 1's `recover_session()` ladder + Slice 7's QR fix.
+      Verified under **V1**.
 
 ## Slice 1 · Seed WAHA client completion  `[C1 · seed/lib/backend/.../integrations/whatsapp/]` — **DISPATCHED**
 

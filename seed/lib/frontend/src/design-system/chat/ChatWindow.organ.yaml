@@ -1,0 +1,37 @@
+name: ChatWindow
+path: seed/lib/frontend/src/design-system/chat/ChatWindow.tsx
+phase: pilot-seed
+registered_at: "2026-08-03"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Canonical 2-pane chat organ: thread list (sidebar) + thread panel + composer. Provider-agnostic by construction — every data path arrives through an injected `adapter` bag of hooks, so the file itself never changes when a new provider is added."
+  - "Adapter contract (ChatWindowAdapter): useThreads(scopeId) / useMessages(scopeId, threadId) / useSend(scopeId, threadId) / optional useAutoReply(scopeId). Domain types ChatThread + ChatMessage. `useSend` MUST throw on failure — never fake success."
+  - "Renders loading / empty / error / success in BOTH panes independently. Self-contained: no shadcn dependency, own relative-time formatter (pt-BR, never emits 'Invalid Date'), unread badge caps at '99+'."
+  - "Colocated test exists: ChatWindow.test.tsx. Exported via chat/index.ts to @noctusai/lib/design-system."
+  - "Live consumers (verified on-tree 2026-08-03): products/social-wiring WhatsAppChatWindow.tsx (WAHA), pages/meta/IgDMs.tsx + demoDMAdapter.ts (Instagram DMs via Meta Graph), and ClienteModal.tsx. Two genuinely different providers on one organ is the proof the adapter seam holds."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "🔴 CATALOG DRIFT (the reason this sidecar exists). Until 2026-08-03 ChatWindow was the ONLY design-system organ without an .organ.yaml, so noctus.dev.component_list reported consumers_count: 0 / validation_status: shelfware despite 3+ live consumers. That actively misled noc-organ-consume-check into telling engineers to build a chat window from scratch — i.e. the missing sidecar was itself generating the forks below."
+  - "Three product-side forks re-implement this organ and should be migrated onto it: products/therapy-platform/frontend/src/components/messaging/ (7 files — ConversationList, ChatThread, MessageBubble, MessageInput, NewConversation, ConversationActions, AttachmentPreview), products/erp-imobiliario/frontend/src/pages/WhatsAppInbox.tsx, products/social-wiring/frontend/src/components/ChatPanel.tsx. Deliberately NOT migrated in this pass — social-wiring is the canonical proof first."
+  - "The adapter contract has no read-state seam yet (no useReadState / markRead / useLoadMore). Being added by the whatsapp-realtime-inbox slice; until then unreadCount is display-only and nothing can clear it."
+
+alternatives_considered:
+  - "Per-product chat components (what therapy-platform and erp actually did). Rejected: the two-pane + composer + async-state matrix is identical across providers; only the data source differs, which is exactly what an adapter seam is for."
+  - "Coupling the organ to TanStack Query directly instead of a hook-bag adapter. Rejected: it would weld the organ to one data layer; the ChatAsyncResult shape lets a consumer supply any async source."
+
+manual_validation_log:
+  - "2026-08-03 — consumer inventory re-verified directly against the tree (grep over products/*/frontend/src) rather than trusted from a report: 3 distinct consumer surfaces across 2 providers confirmed."
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
