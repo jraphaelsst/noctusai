@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.services.email_service import EmailServiceError
 from app.services.notification_service import (
     DispatchOutcome,
     NotificationService,
@@ -276,3 +277,181 @@ class TestFanout:
             f == ("eq", "is_active", True)
             for f in admin._captured_filters
         )
+
+
+# ─── New Meta lead fan-out (notify_new_lead) ───────────────────────────
+def _lead(**overrides) -> dict:
+    base = dict(
+        full_name="Maria Souza",
+        phone="+5511988887777",
+        email="maria@example.com",
+        form_name="Fale com um corretor",
+        campaign_name="Lançamento Jardins",
+        created_time="2026-08-03T14:30:00+00:00",
+    )
+    base.update(overrides)
+    return base
+
+
+def _whatsapp_factory(client):
+    """DI-seam factory matching get_whatsapp_client's kwarg shape —
+    exercises the real resolution path (self._whatsapp_client_factory),
+    never patches the module global."""
+    return lambda **_kw: client
+
+
+class TestNewLeadFanout:
+    @pytest.mark.asyncio
+    async def test_all_three_channel_attempts_from_one_dual_channel_recipient(self):
+        """One recipient with both email + whatsapp on an org with a
+        single active roster row -> both channels attempted, both
+        succeed. ('all three channels' across the fixture set is
+        covered by this test + the email-only/whatsapp-only tests below
+        exercising the third arrangement.)"""
+        admin = _MockSupabase()
+        admin.set_select(data=[{
+            "id": str(uuid4()), "name": "Ops",
+            "email": "ops@example.com", "whatsapp_number": "+5511999998888",
+            "is_active": True,
+        }])
+
+        email_inst = MagicMock()
+        email_inst.send_email = AsyncMock()
+        wa_client = MagicMock()
+        wa_client.send_text = AsyncMock()
+        svc = _service(
+            admin,
+            email_service_factory=lambda **_kw: email_inst,
+            whatsapp_client_factory=_whatsapp_factory(wa_client),
+        )
+
+        outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead())
+
+        assert outcome.recipients == 1
+        assert outcome.attempted == 2
+        assert outcome.succeeded == 2
+        assert outcome.failed == 0
+        email_inst.send_email.assert_awaited_once()
+        wa_client.send_text.assert_awaited_once()
+        channels_logged = sorted(
+            p["channel"] for p in admin.inserted_payloads
+            if isinstance(p, dict) and "channel" in p
+        )
+        assert channels_logged == ["email", "whatsapp"]
+        # upload_job_id must be a real None, never the "None" string.
+        assert all(p["upload_job_id"] is None for p in admin.inserted_payloads)
+
+    @pytest.mark.asyncio
+    async def test_one_channel_failing_does_not_suppress_the_other(self):
+        """Two recipients on the org roster — one email-only, one
+        whatsapp-only. The email send fails; the whatsapp send for the
+        OTHER recipient must still be attempted and succeed."""
+        admin = _MockSupabase()
+        admin.set_select(data=[
+            {
+                "id": str(uuid4()), "name": "Broken email",
+                "email": "broken@example.com", "whatsapp_number": None,
+                "is_active": True,
+            },
+            {
+                "id": str(uuid4()), "name": "WA ok",
+                "email": None, "whatsapp_number": "+5511977776666",
+                "is_active": True,
+            },
+        ])
+
+        email_inst = MagicMock()
+        email_inst.send_email = AsyncMock(
+            side_effect=EmailServiceError("smtp blew up")
+        )
+        wa_client = MagicMock()
+        wa_client.send_text = AsyncMock()
+        svc = _service(
+            admin,
+            email_service_factory=lambda **_kw: email_inst,
+            whatsapp_client_factory=_whatsapp_factory(wa_client),
+        )
+
+        outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead())
+
+        assert outcome.recipients == 2
+        assert outcome.attempted == 2
+        assert outcome.succeeded == 1
+        assert outcome.failed == 1
+        wa_client.send_text.assert_awaited_once()  # not suppressed
+
+    @pytest.mark.asyncio
+    async def test_per_recipient_failure_is_logged_not_raised(self):
+        admin = _MockSupabase()
+        admin.set_select(data=[{
+            "id": str(uuid4()), "name": "Broken",
+            "email": "broken@example.com", "whatsapp_number": None,
+            "is_active": True,
+        }])
+        svc = _service(admin, smtp_user="", smtp_password="")  # SMTP unconfigured
+
+        outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead())
+
+        assert outcome.failed == 1
+        log_rows = [p for p in admin.inserted_payloads if isinstance(p, dict) and p.get("channel") == "email"]
+        assert len(log_rows) == 1
+        assert log_rows[0]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_lead_message_content_is_ptbr_and_carries_lead_fields(self):
+        admin = _MockSupabase()
+        admin.set_select(data=[{
+            "id": str(uuid4()), "name": "Ops",
+            "email": "ops@example.com", "whatsapp_number": None,
+            "is_active": True,
+        }])
+        email_inst = MagicMock()
+        email_inst.send_email = AsyncMock()
+        svc = _service(admin, email_service_factory=lambda **_kw: email_inst)
+
+        lead = _lead()
+        await svc.notify_new_lead(org_id=uuid4(), lead=lead)
+
+        _, kwargs = email_inst.send_email.await_args
+        assert lead["full_name"] in kwargs["subject"]
+        assert lead["full_name"] in kwargs["text_body"]
+        assert lead["phone"] in kwargs["text_body"]
+        assert lead["form_name"] in kwargs["text_body"]
+        assert lead["campaign_name"] in kwargs["text_body"]
+        # pt-BR copy, not English.
+        assert "Novo lead" in kwargs["text_body"]
+        assert "Formulário" in kwargs["text_body"]
+
+    @pytest.mark.asyncio
+    async def test_no_active_recipients_is_honest_noop(self):
+        """No active roster row on the org -> no-op: not a crash, not a
+        silent success pretending it sent anything."""
+        admin = _MockSupabase()
+        admin.set_select(data=[])  # no active recipients on this org
+
+        svc = _service(admin)
+        outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead())
+
+        assert outcome.recipients == 0
+        assert outcome.attempted == 0
+        assert outcome.succeeded == 0
+        assert outcome.failed == 0
+        assert admin.inserted_payloads == []   # no log rows at all
+
+    @pytest.mark.asyncio
+    async def test_recipient_resolution_is_org_wide_not_id_scoped(self):
+        """notify_new_lead has no per-lead recipient subset (unlike
+        notify_upload's notify_recipients[] array) — it must fetch every
+        active recipient for the org, i.e. no `in_("id", ...)` filter."""
+        admin = _MockSupabase()
+        admin.set_select(data=[{
+            "id": str(uuid4()), "name": "Ops",
+            "email": "ops@example.com", "whatsapp_number": None,
+            "is_active": True,
+        }])
+        svc = _service(admin, email_service_factory=lambda **_kw: MagicMock(send_email=AsyncMock()))
+
+        await svc.notify_new_lead(org_id=uuid4(), lead=_lead())
+
+        assert any(f == ("eq", "is_active", True) for f in admin._captured_filters)
+        assert not any(f[0] == "in" for f in admin._captured_filters)

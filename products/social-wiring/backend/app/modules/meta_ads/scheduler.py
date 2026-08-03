@@ -86,13 +86,15 @@ def _sync_job_sync(
     admin_client_factory=None,
     service_factory=None,
     adapter_factory=None,
+    leads_service_factory=None,
 ) -> None:
     """Body of the daily sync job. Runs in a worker thread
     (``asyncio.to_thread``) so a hung Supabase/Graph call doesn't freeze
     the event loop — same convention as ``youtube_daily_snapshot_job``.
 
-    The four keyword seams are the DI-test-seam (Class-A) surface: settings,
-    the admin client, the sync service and the Meta adapter. All default to
+    The five keyword seams are the DI-test-seam (Class-A) surface: settings,
+    the admin client, the ads sync service, the Meta adapter and the leads
+    sync service. All default to
     the production collaborators, so the scheduler's own call site is
     unchanged (``asyncio.to_thread(_sync_job_sync)``). They exist because the
     org-scoping tests below assert a SAFETY property — "never fan out across
@@ -117,10 +119,12 @@ def _sync_job_sync(
         return
 
     from app.modules.meta_ads.services.ads_sync_service import AdsSyncService
+    from app.modules.meta_ads.services.leads_sync_service import LeadsSyncService
     from app.services.meta import MetaGraphError, get_meta_adapter
 
     make_service = service_factory or AdsSyncService
     make_adapter = adapter_factory or get_meta_adapter
+    make_leads_service = leads_service_factory or LeadsSyncService
 
     org_id = _target_org_id(cfg=cfg)
     if org_id is None:
@@ -150,9 +154,31 @@ def _sync_job_sync(
             org_id=org_id, adapter=adapter, ad_account_id=ad_account_id,
             since=activities_since, until=activities_until,
         )
+        # Lead ingest runs LAST, and through its own service: ``sync_all``
+        # walks Pages → forms → records, which is a Page-scoped axis, not the
+        # ad-account-scoped one every call above uses.
+        #
+        # 🔴 Without this call leads NEVER sync on a schedule. The only other
+        # consumer of ``LeadsSyncService`` is the manual ``POST /leads/sync``
+        # button, so lead ingest silently stalled for days at a time while the
+        # ads tables kept updating — the failure looked like "the Meta bridge
+        # is broken" rather than "nobody pressed the button."
+        #
+        # Ordering is deliberate: the ads writes are already committed by the
+        # time this runs, so a Graph failure here cannot undo them, and an ads
+        # failure cannot suppress leads. ``sync_all`` surfaces the
+        # ``leads_retrieval`` gate internally (``records_gated``) and keeps
+        # going — a missing scope skips RECORDS, never the whole run.
+        leads_result = make_leads_service(admin_supabase=admin).sync_all(
+            org_id=org_id, adapter=adapter,
+        )
         logger.info(
-            "meta_ads scheduler: org=%s done — snapshots=%d activities=%d",
+            "meta_ads scheduler: org=%s done — snapshots=%d activities=%d "
+            "forms=%d leads=%d%s",
             org_id, snapshot_count, activity_count,
+            leads_result["forms_upserted"], leads_result["leads_upserted"],
+            " (lead records gated: leads_retrieval)"
+            if leads_result["records_gated"] else "",
         )
     except MetaGraphError as exc:
         logger.warning(
