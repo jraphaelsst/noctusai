@@ -138,13 +138,25 @@ class MessageStore:
                 else None
             ),
             "connection_id": str(connection_id) if connection_id else None,
-            "chat_id": chat_id or None,
         }
         # Explicit created_at preserves the ORIGINAL time for backfilled WAHA
         # history (else the DB default now() would stamp old messages as "now"
         # and wreck thread ordering). Omitted ⇒ DB default now() for live sends.
         if created_at:
             payload["created_at"] = created_at
+        # chat_id is only added to the payload when a caller actually passes
+        # one — unlike connection_id (a pre-existing column every caller's
+        # mock/schema already knows about since migration 014), chat_id is
+        # NEW (migration 040). Sending the key unconditionally as NULL broke
+        # hand-maintained local SQLite test fixtures elsewhere in this suite
+        # that predate that migration and don't have the column yet
+        # (whatsapp_connections_router.py's /send path, exercised by
+        # test_whatsapp_chat_router.py). Omitting the key when unset is
+        # NULL-safe for every real backend (Postgres/MockSupabaseClient/the
+        # product's own SQLiteClient) and keeps pre-040 callers working
+        # unchanged until they're updated to pass chat_id themselves.
+        if chat_id:
+            payload["chat_id"] = chat_id
         try:
             response = (
                 self._admin
