@@ -426,3 +426,123 @@ never make the badge feel slow.
 | 2026-08-03 | SSE + Redis pub/sub over Supabase Realtime | backend sees writes first · zero new infra · semantic payloads · carries `session.status` · provider-neutral for future chat UIs |
 | 2026-08-03 | Read state mirrors real WhatsApp (`sendSeen`) | user's explicit choice, accepting the real-phone side effect |
 | 2026-08-03 | Seed-first, social-wiring as canonical proof | user directive: the mechanism serves every future chat UI |
+
+---
+
+# 🔻 HANDOVER — 2026-08-03, for the integrate + deploy session
+
+> This session is **finished and wrapped**. Everything below is state the next agent needs.
+> **Nothing has been pushed.** That was a deliberate user instruction ("finish all the work before
+> any pushes, commit your work for history but don't push yet"), not an oversight.
+
+## 1 · Where the work is
+
+| | |
+|---|---|
+| Branch | `feat/whatsapp-realtime-inbox` |
+| Worktree | `.claude/worktrees/whatsapp-realtime-inbox` |
+| Commits ahead of `origin/dev` | **30** |
+| Behind `origin/dev` | ~10 (peers kept landing; re-merge before integrating) |
+| Pushed? | **No** |
+| Branch pointer | published in `project-history/branch-tree.ndjson`, `status=on_going` |
+
+The five engineer branches (`feat/wa-seed-client`, `feat/wa-realtime-bus`, `feat/wa-inbox-schema`,
+`feat/wa-ingest`, `feat/wa-read-endpoints`) are **fully merged in** — each verified at
+0 commits outside the integration branch — and their worktrees were removed. The branch refs are
+kept as recovery handles and can be deleted once this lands.
+
+## 2 · Gate results (final merged tip)
+
+social-wiring backend **1556** · seed backend **2565** · seed FE **319** · product FE **455** —
+all exit 0. `--verify-kb-sync` exit 0. `--check-eight-way-sync` exit 0.
+`check_lying_loading_state` clean. Merge with `origin/dev` clean, zero conflicts.
+
+⚠️ The product-FE suite is **flaky under parallel load** (logged `s1-emergent`). A single failure in
+`ClienteModal.test.tsx` / `Settings` / `Clientes` / `Conexoes` / `BaseDeLeads` that passes in
+isolation is the known flake — **but verify in isolation before dismissing it**, don't re-run until
+green on reflex.
+
+## 3 · 🔴 Migrations — read before touching the database
+
+| Migration | State |
+|---|---|
+| `037_erp_stage_parity_and_canonical_phone.sql` | **PENDING** on live dev — canonical-phone contract absent from the DB |
+| `038_n8n_folders.sql` · `039_n8n_nav_route.sql` | **PENDING** — the n8n feature is shipped in code with no schema behind it |
+| `040_whatsapp_inbox_realtime_schema.sql` | **THIS WORK. Authored, statically verified, NEVER APPLIED anywhere.** |
+| `041_leads_meta_lead_id.sql` | **PENDING** — a peer's, appeared during this session |
+
+- Apply 040 **alone**: `migrate_product(product="social-wiring", target="040_...", confirm=true)`.
+  A bare `confirm=true` applies the **entire pending backlog**, including other people's unvetted
+  migrations.
+- `noctus.dev.migrate_product` has **no `worktree_path`** (logged `s1-emergent`), so it resolves
+  from the PRIMARY tree. Merge first, then apply from the primary checkout.
+- 040 is order-independent (new table + additive columns only), but the app **will not work without
+  it** — every read path queries `whatsapp_chats`.
+
+## 4 · Other environments / peer branches at handover
+
+| Branch | ahead | behind | Note |
+|---|---:|---:|---|
+| `feat/meta-leadgen-webhook` | 14 | 6 | peer, unlanded |
+| `feat/meta-leadgen-ui` | 7 | 6 | peer, unlanded |
+| `feat/meta-leadgen-erp` | 6 | 6 | peer, unlanded |
+| `feat/imoveis-phase2` | 3 | 0 | peer — **plus 3 UNTRACKED files** (`useImoveis.ts`, `Imoveis.tsx`, `ImovelDetalhes.tsx`). At risk; salvage before any cleanup. |
+| `feat/meta-seed-leadgen` | 1 | 14 | peer, unlanded |
+| `feat/meta-leads-unified-base` | 0 | 6 | **fully landed — safe to clean** |
+
+These are NOT this session's work and were not touched. `products/social-wiring` is shared with
+them, so re-merge `origin/dev` and re-run gates on the merged tip before pushing.
+
+## 5 · Deploy sequence (suggested)
+
+1. `git -C <wt> fetch origin && git -C <wt> merge origin/dev` → resolve → **re-run all four suites
+   on the merged tip** (per-branch green ≠ integration green).
+2. Push to `dev`. Flip the branch pointer to `shipped`.
+3. Apply migration **040 only** (§3).
+4. Deploy social-wiring to the dev fleet; run **V1–V7** (below). Prod promotes a *dev-validated*
+   build — never first-contact.
+5. `main`/`prod` only with explicit user consent + a prod-exposure consent record.
+
+## 6 · V1–V7 — the whole point; none can be done without a deploy
+
+- **V1 · QR** — the reported bug. `waha_session_get` → `SCAN_QR_CODE`; QR renders; scan → `WORKING`.
+  The watchdog line `Session stuck in STARTING` must stop appearing in `noctus-services-waha-1`.
+  ⚠️ The live session is `FAILED` **right now**; recovery unlinks the device, so **get user consent**.
+- **V2 · fullSync** — after a fresh pairing, `waha_session_get` must report `"fullSync": true`.
+  It reports `false` today; **that flip is the proof the casing fix landed.**
+- **V3 · latency** — `GET /chats` and `/messages` < 50ms p95 (from ~13s).
+- **V4 · WAHA off the read path** — **stop the WAHA container**; both endpoints must still return
+  complete data. This is the real test of the whole refactor.
+- **V5 · realtime** — message from another phone appears with **no new XHR** (SSE frame only);
+  kill/restore the tunnel and confirm `Last-Event-ID` replay fills the gap with no duplicates.
+- **V6 · read/unread** — open a chat → badge clears **and** it reads as read on the real phone;
+  reply from the phone → ack ticks progress.
+- **V7 · gates** — re-run all four suites + `predeploy_check` on the merged tip.
+
+## 7 · Known limits (do not "fix" — they are decisions)
+
+- **Read state is one-directional.** `sendSeen` pushes read state to the phone; nothing reports the
+  reverse (`message.ack` covers only messages *we* sent, and `chats/overview` has no top-level
+  `unreadCount`). Reading on the phone leaves the badge lit in-app. Option (b) — probe
+  `_chat.unreadCount` once `WORKING` — is cheap to test after V1.
+- **`session.status` is persisted to Redis (24h TTL), not Postgres.** No column exists yet.
+- **`markRead` touches the user's real WhatsApp.** Intended and user-approved. Do not move it to
+  hover/prefetch.
+- **`/send` stamps `chat_id` at first write, deliberately.** Do not "simplify" it away — the echo
+  cannot repair it (see the integration-bug section above).
+
+## 8 · Open drift logged this session (`auto-improvement.ndjson`)
+
+1. `migrate_product` missing `worktree_path` — s1-emergent, `broad`.
+2. product-FE vitest flakiness under parallel load — s1-emergent, `scoped`.
+3. Surfaced by engineers, **not** actioned: `MockSupabaseClient.upsert()` does not propagate writes;
+   `_SchemaCachingClient` test wrapper now duplicated **3×** (N≥3 ⇒ MUST formalize into
+   `noctusai_lib.testing`); `KNOWLEDGE-BASE/INDEX.md` Layout-tree has pre-existing structural drift
+   (`pydantic-strict-http.md` filed under `common/`, stray `security/` marker mid-list).
+
+## 9 · Housekeeping
+
+- Disk was CRITICAL (94%) and was pruned to ~19% used / 51 GB free (24.47 GB reclaimed). 6 GB still
+  sits in 51 unused Docker volumes — **not** pruned, because that is where database data lives.
+- At close-out, move this file to `project-history/roadmaps/whatsapp-realtime-inbox-2026-08.md`
+  per `KB § PATTERNS/common/roadmap-tracking.md`, and absorb the retrospective.
