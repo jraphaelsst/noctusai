@@ -116,12 +116,10 @@ To reset (e.g. after rotating the tenant key), restart the server.
 ```
 mcp/vista/
 ├── __init__.py
-├── settings.py        — VistaSettings + get_settings()
-├── client.py          — VistaClient + 7-class error hierarchy + extract_items
-├── normalizers.py     — vista_*_to_showcase mappers + helpers
-├── types.py           — Pydantic In/Out schemas + showcase DTOs
+├── settings.py        — VistaSettings + get_settings() (composes _kit.settings)
+├── types.py           — Pydantic In/Out schemas for the tool surface
 ├── calibration.py     — per-tenant field-set discovery (addresses vista.md § 6)
-├── server.py          — stdio MCP entry point
+├── server.py          — stdio MCP entry point (composes _kit.bootstrap)
 ├── tools/
 │   ├── __init__.py    — aggregates HANDLERS + tool_descriptors() across leafs
 │   ├── imoveis.py
@@ -134,3 +132,13 @@ mcp/vista/
 │   └── test_smoke.py  — import + registration smoke test
 └── README.md          — this file
 ```
+
+**Not in this directory** — imported from the seed, never forked here:
+
+- `VistaClient` + the 7-class error hierarchy + `extract_items` → `noctusai_lib.integrations.vista.client`
+- `vista_*_to_showcase` normalizers → `noctusai_lib.integrations.vista.normalizers`
+- `Showcase*` DTOs → `noctusai_lib.integrations.vista.types`
+
+(They lived here in the original Phase 1 layout; commit `b3e0b10f` moved them to the
+seed as part of the shared `mcp/_kit` refactor. `calibration.py` is next — see the
+`social-wiring-imoveis-vista-2026-08` roadmap, P2.0a.)
