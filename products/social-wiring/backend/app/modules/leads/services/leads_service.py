@@ -259,16 +259,29 @@ def _list_leads_db(
 
     page_query = _table(client, "leads").select("*").eq("org_id", str(org_id))
     page_query = apply_db_filters(page_query, filters)
-    # `.order("id")` tiebreaker: `sort` alone has no stable ordering
-    # guarantee across ties (~14 leads/day on `data_entrada` across
-    # 12,177 rows makes ties the norm, not the exception) — without a
-    # deterministic secondary key Postgres can return overlapping/missing
-    # rows for the same tied group across two page requests, so the same
-    # lead shows on page 3 AND page 4 while another never appears at all.
-    # `id` is unique, so appending it as the secondary sort makes the
-    # ordering total and every page request reproducible.
+    # Two tiebreakers, and they do DIFFERENT jobs — don't collapse them.
+    #
+    # `created_at` (desc, matching the primary direction): the default sort
+    # is `data_entrada`, which is a DATE. With ~14 leads/day, ties are the
+    # norm, and ordering a tied day by `id` alone means UUID order — i.e.
+    # effectively random WITHIN a day. A lead captured at 09:00 could sit
+    # above one captured at 17:00. That is wrong for an inbox whose whole
+    # promise is "newest first", and it got worse the moment campaign leads
+    # started arriving continuously rather than in a nightly spreadsheet
+    # import. `created_at` is a timestamptz, so it restores real recency
+    # inside the day.
+    #
+    # `id` (last): the TOTAL-ORDER guarantee for pagination. Without a
+    # unique final key Postgres may return overlapping/missing rows across
+    # two page requests for the same tied group — the same lead on page 3
+    # AND page 4 while another never appears. `created_at` is not unique
+    # enough to rely on for that (bulk imports share a timestamp), so `id`
+    # stays as the final deterministic key.
     page_query = (
-        page_query.order(sort, desc=(order == "desc")).order("id").range(start, end)
+        page_query.order(sort, desc=(order == "desc"))
+        .order("created_at", desc=(order == "desc"))
+        .order("id")
+        .range(start, end)
     )
     rows = [backfill_generated_columns(r) for r in list(page_query.execute().data or [])]
     return rows, total

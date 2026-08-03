@@ -147,7 +147,8 @@ cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a gener
       per-Page subscribed/not-subscribed badges · "Assinar páginas" · "Cancelar" ·
       callback URL with copy · `verify_token_configured` warning · scope-missing banner
 - [ ] Webhook health panel — last delivery received, inbox counts by `status`
-- [ ] Newest-first: default sort → `data_entrada desc` (`leads_service.py`)
+- [x] Newest-first: default was already `data_entrada desc`, but that is a DATE — added a
+      `created_at desc` tiebreaker so same-day leads order by real recency, not UUID
 - [ ] `loading` gated on `isPending || isFetching`, never `isLoading`
 - [ ] Complete loading / empty / error / not-configured states (no zeros-over-data)
 
