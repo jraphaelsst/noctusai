@@ -134,32 +134,3 @@ async def sync_campaigns(config: MetaApiConfig) -> List[Dict]:
     except Exception as e:
         logger.error(f"Meta campaigns sync error: {e}")
         return []
-
-
-def parse_lead_webhook(payload: Dict) -> Optional[Dict]:
-    """
-    Parse a Meta Lead Ads webhook payload.
-
-    Returns a normalized lead dict or None if invalid.
-    """
-    entry = payload.get("entry", [])
-    if not entry:
-        return None
-
-    changes = entry[0].get("changes", [])
-    if not changes:
-        return None
-
-    value = changes[0].get("value", {})
-    lead_id = value.get("leadgen_id")
-    form_id = value.get("form_id")
-    page_id = value.get("page_id")
-
-    if not lead_id:
-        return None
-
-    return {
-        "lead_id": lead_id,
-        "form_id": form_id,
-        "page_id": page_id,
-    }

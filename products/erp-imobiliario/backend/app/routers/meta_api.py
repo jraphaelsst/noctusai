@@ -11,6 +11,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import Field
 
 from noctusai_lib.security.webhook_signatures import (
@@ -27,49 +28,68 @@ from app.services.meta_api_service import (
     MetaApiConfig,
     sync_leads,
     sync_campaigns,
-    parse_lead_webhook,
 )
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.integrations.meta.leadgen_webhook import (
+    leadgen_challenge_response,
+    parse_leadgen_webhook,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meta", tags=["meta-api"])
 
 
 async def _resolve_meta_secret(request: Request, body: bytes) -> ResolvedSecret:
-    """Resolve the per-page Meta webhook secret from `meta_config`.
+    """Resolve the HMAC secret for an inbound Meta webhook — the **App Secret**.
 
-    Parses the (unverified) body to extract `page_id`, fetches the row,
-    stashes the resolved org_id + lead_data on `extras` so the handler
-    avoids re-parsing.
+    🔴 FIXED 2026-08-03. This previously returned
+    ``meta_config.webhook_verify_token`` as the signing secret. Meta signs
+    ``X-Hub-Signature-256`` with the **App Secret**; the verify token only
+    answers the one-time GET handshake. Both old branches were wrong:
+      • no matching `meta_config` row ⇒ ``secret=None`` ⇒ the then-`True`
+        ``bypass_when_unset`` ACCEPTED UNVERIFIED traffic into a write path;
+      • a matching row ⇒ the signature never matched, so genuine Meta
+        deliveries 401'd.
+    Empty secret now means 401 (``bypass_when_unset=False`` below), which is
+    the correct posture for an unconfigured receiver.
+
+    Resolved per-request (never captured at import) so a test monkeypatch on
+    the settings module is honored — pin 2 of
+    ``KB § PATTERNS/security/webhook-signatures.md``.
+
+    ``extras`` still carries the parsed events + resolved org so the handler
+    does not re-parse. Org resolution is page-scoped and stays a plain lookup;
+    it is NOT a secret and never gates verification.
     """
+    from app.config import settings as _settings
+
+    secret = getattr(_settings, "meta_app_secret", "") or None
+
     try:
         payload = json.loads(body) if body else {}
     except (ValueError, TypeError):
-        return ResolvedSecret(secret=None, extras=None)
+        return ResolvedSecret(secret=secret, extras=None)
 
-    lead_data = parse_lead_webhook(payload)
-    if not lead_data:
-        return ResolvedSecret(secret=None, extras={"lead_data": None, "org_id": None})
+    # Seed parser: walks ALL entry[] x changes[]. The hand-rolled
+    # `parse_lead_webhook` it replaces read entry[0].changes[0] only and
+    # silently dropped the rest of a BATCHED delivery, which Meta does send.
+    events = parse_leadgen_webhook(payload)
+    if not events:
+        return ResolvedSecret(secret=secret, extras={"events": [], "org_id": None})
 
-    page_id = lead_data.get("page_id")
+    page_id = events[0].page_id
     admin = get_admin_client()
     if not admin or not page_id:
-        return ResolvedSecret(secret=None, extras={"lead_data": lead_data, "org_id": None})
+        return ResolvedSecret(secret=secret, extras={"events": events, "org_id": None})
 
     res = (
         admin.table("meta_config")
-        .select("org_id, access_token, webhook_verify_token")
+        .select("org_id, page_id")
         .eq("page_id", page_id)
         .execute()
     )
-    if not res.data:
-        return ResolvedSecret(secret=None, extras={"lead_data": lead_data, "org_id": None})
-
-    row = res.data[0]
-    return ResolvedSecret(
-        secret=row.get("webhook_verify_token") or None,
-        extras={"lead_data": lead_data, "org_id": row["org_id"]},
-    )
+    org_id = res.data[0]["org_id"] if res.data else None
+    return ResolvedSecret(secret=secret, extras={"events": events, "org_id": org_id})
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -312,18 +332,31 @@ async def meta_webhook_verify(
     hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
 ):
-    """Meta webhook verification (GET)."""
-    if hub_mode == "subscribe" and hub_verify_token:
-        # Verify against any org's config
-        admin = get_admin_client()
-        result = (
-            admin.table("meta_config")
-            .select("org_id")
-            .eq("webhook_verify_token", hub_verify_token)
-            .execute()
+    """Meta webhook verification (GET) — echo the challenge as PLAIN TEXT.
+
+    🔴 FIXED 2026-08-03: this returned ``int(hub_challenge)``, which raises on
+    any non-numeric challenge. Meta's challenge is an OPAQUE STRING and it
+    does not promise digits, so the old form could hard-fail the one
+    synchronous handshake that decides whether the subscription saves at all.
+
+    The token comparison goes through the seed helper, which uses
+    ``hmac.compare_digest`` — this endpoint is public, unauthenticated, and
+    guarding a shared secret, so a short-circuiting ``==`` is a (small) oracle.
+    """
+    admin = get_admin_client()
+    result = (
+        admin.table("meta_config").select("org_id, webhook_verify_token").execute()
+        if admin else None
+    )
+    for row in (getattr(result, "data", None) or []):
+        challenge = leadgen_challenge_response(
+            mode=hub_mode,
+            verify_token=hub_verify_token,
+            challenge=hub_challenge,
+            expected_token=row.get("webhook_verify_token"),
         )
-        if result.data:
-            return int(hub_challenge) if hub_challenge else ""
+        if challenge is not None:
+            return PlainTextResponse(challenge)
 
     raise HTTPException(status_code=403, detail="Verification failed")
 
@@ -336,16 +369,28 @@ async def meta_webhook_event(
         secret_resolver=_resolve_meta_secret,
         scheme="sha256_prefixed",
         signature_header="X-Hub-Signature-256",
-        bypass_when_unset=True,
+        # 🔴 FIXED 2026-08-03 (was True). With the old verify-token-as-secret
+        # resolver, `True` meant an unmatched page resolved to secret=None and
+        # the bypass then ACCEPTED UNVERIFIED traffic straight into a write.
+        # An unconfigured receiver must refuse, not trust.
+        bypass_when_unset=False,
         log_prefix="meta-webhook",
     ),
 ):
-    """Receive Meta Lead Ads webhook events (POST)."""
+    """Receive Meta Lead Ads webhook events (POST).
+
+    The canonical, fully-built version of this receiver lives in
+    ``products/social-wiring/backend/app/modules/meta_ads/routers/leadgen_router.py``
+    (durable inbox, enrichment, dedup, retry job). This one stays a thin
+    reference-store; it is currently inert (``erp.meta_config`` and
+    ``erp.meta_leads`` are both empty). Consolidating it onto the seed
+    capability is deliberately NOT done here — see the surfaced note.
+    """
     extras = verified.extras or {}
-    lead_data = extras.get("lead_data")
+    events = extras.get("events") or []
     org_id = extras.get("org_id")
 
-    if not lead_data:
+    if not events:
         return {"status": "ignored"}
     if not org_id:
         return {"status": "ignored", "reason": "page_not_configured"}
@@ -354,13 +399,17 @@ async def meta_webhook_event(
     if not admin:
         raise HTTPException(status_code=503, detail="Serviço indisponível")
 
-    # Store the lead reference (full data fetched on sync); upsert to handle duplicate webhooks
-    admin.table("meta_leads").upsert({
-        "org_id": org_id,
-        "lead_id": lead_data["lead_id"],
-        "form_id": lead_data.get("form_id"),
-        "campo_data": {},
-    }, on_conflict="lead_id").execute()
+    # Every event in the batch — the old hand-rolled parser stored only the
+    # first, so a batched delivery silently lost the rest.
+    for event in events:
+        admin.table("meta_leads").upsert({
+            "org_id": org_id,
+            "lead_id": event.leadgen_id,
+            "form_id": event.form_id,
+            "campo_data": {},
+        }, on_conflict="lead_id").execute()
 
-    logger.info(f"Meta lead webhook stored: {lead_data['lead_id']} for org {org_id}")
-    return {"status": "ok"}
+    logger.info(
+        "Meta lead webhook stored: %d event(s) for org %s", len(events), org_id
+    )
+    return {"status": "ok", "events": len(events)}

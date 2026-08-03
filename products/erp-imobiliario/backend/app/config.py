@@ -43,5 +43,16 @@ class ERPSettings(ProductSettings):
     # See `KB § PATTERNS/llm-tool-audit.md` for the rollout recipe.
     postgres_url: str = ""
 
+    # Meta App Secret — signs EVERY inbound Lead-Ads webhook POST into
+    # `X-Hub-Signature-256`. 🔴 This is NOT `meta_config.webhook_verify_token`:
+    # that token answers the one-time GET handshake and proves to META that we
+    # own the URL, while THIS secret proves to US that a POST came from Meta.
+    # Conflating them was a live defect here (`routers/meta_api.py` resolved
+    # the verify token as the signing secret, so the receiver could never
+    # validate genuine Meta traffic). Empty ⇒ the receiver 401s every POST,
+    # which is the correct posture for an unconfigured webhook — never
+    # "accept unverified".
+    meta_app_secret: str = ""
+
 
 settings = ERPSettings()
