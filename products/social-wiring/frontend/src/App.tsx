@@ -77,6 +77,8 @@ const EmailMembros = lazy(() => import("@/pages/EmailMembros"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
+const Imoveis = lazy(() => import("@/pages/Imoveis"));
+const ImovelDetalhes = lazy(() => import("@/pages/ImovelDetalhes"));
 const MetaDashboard = lazy(() => import("@/pages/MetaDashboard"));
 const Leads = lazy(() => import("@/pages/leads/Leads"));
 const FunilVendas = lazy(() => import("@/pages/funil/FunilVendas"));
@@ -97,6 +99,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
       { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
+      { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
     ],
   },
   {
@@ -164,6 +167,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Meta", href: "/meta", icon: Instagram },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
       { name: "n8n", href: "/n8n", icon: Workflow },
+      { name: "Imóveis", href: "/imoveis", icon: Building2 },
     ],
   },
   {
@@ -247,6 +251,8 @@ export default createProductApp({
     { path: "/integrations", component: RedirectToClientes },
     { path: "/conexao", component: RedirectToClientes },
     { path: "/clientes", component: Clientes },
+    { path: "/imoveis", component: Imoveis },
+    { path: "/imoveis/:codigo", component: ImovelDetalhes },
     { path: "/monitor", component: Monitor },
     // WhatsApp — full dashboard (Chat + Configurações), back in nav (see header comment)
     { path: "/whatsapp-chat", component: WhatsAppChat },
