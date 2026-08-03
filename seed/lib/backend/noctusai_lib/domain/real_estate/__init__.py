@@ -6,7 +6,12 @@ Value objects:
     `PropertyData`
 
 Functions:
-    `build_youtube_metadata`, `validate_product_code`
+    `build_youtube_metadata`, `validate_product_code`,
+    `extract_product_code`, `find_product_codes`
+
+Constants:
+    `PRODUCT_CODE_PATTERN` (anchored, for validation),
+    `PRODUCT_CODE_SCAN_PATTERN` (word-bounded, for free-text extraction)
 
 Lifted 2026-05-20 from
 ``products/social-wiring/backend/app/services/crm_service.py``
@@ -18,10 +23,20 @@ adapters (other tenants, other CRMs) map to/from the same vocabulary.
 
 from noctusai_lib.domain.real_estate.metadata import build_youtube_metadata
 from noctusai_lib.domain.real_estate.types import PropertyData
-from noctusai_lib.domain.real_estate.validators import validate_product_code
+from noctusai_lib.domain.real_estate.validators import (
+    PRODUCT_CODE_PATTERN,
+    PRODUCT_CODE_SCAN_PATTERN,
+    extract_product_code,
+    find_product_codes,
+    validate_product_code,
+)
 
 __all__ = [
+    "PRODUCT_CODE_PATTERN",
+    "PRODUCT_CODE_SCAN_PATTERN",
     "PropertyData",
     "build_youtube_metadata",
+    "extract_product_code",
+    "find_product_codes",
     "validate_product_code",
 ]
