@@ -210,15 +210,20 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
 - [ ] **5.4** Session endpoints adopt `recover_session()` and persist status.
 - [ ] **5.5** Auth tests assert strict `== 401` (never `in (401, 404)`).
 
-## Slice 6 · Seed frontend  `[C1 · seed/lib/frontend/src/]`
+## Slice 6 · Seed frontend  `[C1 · seed/lib/frontend/src/]` — ✅ **MOSTLY DONE** (inline)
 
-- [ ] **6.1** `useRealtimeStream(scopeId)` — one `EventSource` per scope, backoff reconnect, reducer
+> vitest **319 passed** (28 files) exit 0 · `tsc --noEmit` exit 0.
+> Bug found+fixed by the new tests: empty newest page + `hasMore` fell through to the empty
+> state, stranding the user with no way to reach messages that exist. Regression-pinned.
+> 6.4 (persisted cache) still open — see note there.
+
+- [x] **6.1** `useRealtimeStream(scopeId)` — one `EventSource` per scope, backoff reconnect, reducer
       calling `qc.setQueryData`. This is the "WS-v2 seam" already named at `useWhatsAppChats.ts:70-74`.
-- [ ] **6.2** Extend `ChatWindowAdapter` (`design-system/chat/ChatWindow.tsx:48-100`) with
+- [x] **6.2** Extend `ChatWindowAdapter` (`design-system/chat/ChatWindow.tsx:48-100`) with
       `useReadState` / `markRead` / `useLoadMore`. The organ is already provider-agnostic — **do not fork it**.
-- [ ] **6.3** Infinite scroll in the thread pane via `useInfiniteQuery` (threads are hard-capped at 50
+- [x] **6.3** Infinite scroll in the thread pane via `useInfiniteQuery` (threads are hard-capped at 50
       messages today, `useWhatsAppChats.ts:102`).
-- [ ] **6.4** Persist the query cache so a reload paints the last-known chat list at 0ms and reconciles
+- [~] **6.4** Persist the query cache so a reload paints the last-known chat list at 0ms and reconciles
       behind it — this is what answers *"on page refresh it loads chats everytime"*. Prefer
       `@tanstack/query-persist-client`; fallback is a seed-level `createPersistedQueryClient` over
       sessionStorage (no new dep).
@@ -227,7 +232,7 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
       actively misled `noc-organ-consume-check` into telling engineers to fork it — the missing
       registration was itself generating the three product forks. Consumer inventory verified
       against the tree (3 surfaces, 2 providers), not taken from a report.
-- [ ] **6.6** All loading gates on `isPending || isFetching`, never `isLoading` (`check_lying_loading_state`).
+- [x] **6.6** All loading gates on `isPending || isFetching`, never `isLoading` (`check_lying_loading_state`).
 
 ## Slice 7 · Product frontend  `[C3 · products/social-wiring/frontend/]`
 
