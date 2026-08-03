@@ -167,6 +167,32 @@ def _webhook_settings(monkeypatch):
     monkeypatch.setattr(settings, "whatsapp_authorized_numbers", _AUTHORIZED_SENDER)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_redis(monkeypatch):
+    """Pin every ``redis.from_url`` in this module to ONE in-process fake.
+
+    🔴 Without this the module reaches a REAL Redis at ``settings.redis_url``
+    (``redis://noctus-redis:6379/0`` — a docker-internal hostname unreachable
+    from the host or CI). It appeared green only because running the FULL suite
+    let another module's patching land first; run this file alone and 5 tests
+    failed with ``ConnectionError``. Caught by `predeploy_check`, which runs
+    the suite differently — a test that passes only in a particular ordering is
+    not passing.
+
+    One shared instance so the route's writer and the test's reader observe the
+    same keyspace, exactly as a real deployment would.
+    """
+    import fakeredis
+
+    shared = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(
+        "app.routers.whatsapp_router.redis.from_url",
+        lambda *_a, **_kw: shared,
+    )
+    yield shared
+    shared.flushall()
+
+
 def _seed_connection(
     db,
     *,
