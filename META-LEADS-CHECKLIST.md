@@ -83,7 +83,7 @@ upsert keyed on Meta's own lead id.
       (unreachable Redis ⇒ proceed, since layers 2+3 still guarantee idempotency)
 - [x] 18 status-pinned receiver tests + 6 auth-boundary tests. Full suite **1565 passed**
 - [x] `.env.example` `META_*` block; webhook-signatures adopter list corrected
-- [ ] `META-APP-VERIFICATION.md` §10 rewrite (still says "optional / later")
+- [x] `META-APP-VERIFICATION.md` §10 rewritten as the configuration runbook (was "optional / later")
 - [ ] **Verify live:** Lead Ads Testing Tool → inbox `processed` + lead row + one funnel card
 
 ### Original spec (kept for reference)

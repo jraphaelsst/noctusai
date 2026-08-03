@@ -288,24 +288,68 @@ deployment with a **real sandbox** Page + linked IG Business account.
 
 ---
 
-## 10. (Optional / later) Lead Ads — extra permissions + webhook
+## 10. Lead Ads — webhook configuration runbook
 
-Only if/when social-wiring ingests Facebook Lead Ads. This is a **separate submission** — do not bundle it with
-the publish submission.
+> **Status 2026-08-03: SHIPPED in `social-wiring`, awaiting dashboard configuration.**
+> This section used to read "(Optional / later) … treat as future work", which was wrong by
+> the time anyone next needed it and cost a session hunting for a configuration that had
+> never been made. Permissions are **already granted**; only the webhook subscription is
+> outstanding.
 
-- **Permissions:** reading leads needs **`leads_retrieval`**, plus **`ads_management`** and **`pages_manage_ads`**
-  [12][13]. `ads_management` and `leads_retrieval` are **Advanced-Access** permissions and require Business
-  Verification [4].
-- **Delivery:** real-time lead delivery uses **Webhooks for Lead Ads** (the `leadgen` field) — your app
-  subscribes to the Page's `leadgen` webhook and then reads the lead via the Graph API with `leads_retrieval`
-  [12][13].
-- **Marketing API** must be added as a product (§2) [14].
-- Submit these through the same **App Review → Permissions and Features** flow with their own justifications +
-  screencast demonstrating a lead flowing in.
+**Already done — do not redo:** `leads_retrieval` granted (2026-07-27), `ads_management` /
+`pages_show_list` / `pages_manage_ads` / `pages_manage_metadata` present on the System User
+token, app Live, Business Verification complete, Marketing API added as a product.
 
-> ⟦NOC⟧ `meta.ads_management` (read campaigns + ad-insights) already ships in the seed
-> (`meta.md` §5), but the full lead-ads intake + `leads_retrieval` submission is not yet an active project —
-> treat as future work.
+### The two subscriptions — 🔴 BOTH are required
+
+Meta needs an app-level field subscription **and** a per-Page subscription. **Either one alone
+delivers nothing, silently** — no error, no log, just leads that never arrive. This is the
+single most common lead-ads misconfiguration.
+
+| # | Level | Where | Who does it |
+|---|---|---|---|
+| 1 | App | Dashboard → Products → **Webhooks** → **Page** object → tick **`leadgen`** | operator (dashboard only) |
+| 2 | Page | `POST /{page_id}/subscribed_apps` with `subscribed_fields=leadgen` | **our UI** — Meta → Anúncios → Leads → "Assinar páginas" |
+
+### Steps
+
+1. Dashboard → Products → **Webhooks** → **Page** object.
+2. **Callback URL:** `https://social.noctusai.com/api/meta/leadgen/webhook`
+3. **Verify Token:** the exact value of `META_WEBHOOK_VERIFY_TOKEN`
+   (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+4. **Verify and Save.** 🔴 Meta issues the GET handshake *synchronously* and refuses to save if
+   it fails — so the receiver must ALREADY be deployed to prod. Order is
+   ship → deploy → configure → subscribe → test-lead, never any other.
+5. Tick the **`leadgen`** field on the Page row *(app-level, step 1 above)*.
+6. Run the in-product bulk subscribe *(Page-level, step 2 above)*.
+7. Verify with the **Lead Ads Testing Tool** → Create Lead. Within ~30s the lead must appear in
+   `social_wiring.meta_webhook_events` as `processed`, in `meta_ads_leads` with non-null
+   name/phone/email, and as exactly one `negociacoes_venda` funnel card.
+
+### Two secrets — do not conflate them
+
+| | `META_WEBHOOK_VERIFY_TOKEN` | `META_APP_SECRET` |
+|---|---|---|
+| Origin | we invent it | Meta issues it |
+| Used | once, on the GET handshake | every POST, as `X-Hub-Signature-256` |
+| Proves | to Meta, that we own the URL | to us, that the call came from Meta |
+
+Using the verify token as the HMAC secret is a real shipped defect
+(`products/erp-imobiliario/backend/app/routers/meta_api.py:70`) — it makes every genuine Meta
+delivery fail its signature check.
+
+### If leads still do not arrive
+
+`GET /api/meta/leadgen/events` (or the card in the UI). **`last_received_at === null` means Meta
+has never called us at all** — the problem is the dashboard side (step 1/3/4), not our code.
+A non-null timestamp with `error`/`unresolved` rows means delivery works and processing is the
+problem; those rows are re-driven automatically every 15 minutes by `meta_leadgen_retry`.
+
+> ⟦NOC⟧ Implementation: `app/modules/meta_ads/routers/leadgen_router.py` (receiver +
+> subscription management), `services/leadgen_webhook_service.py` (inbox → enrich → upsert),
+> migration `042_meta_webhook_events.sql`, seed
+> `noctusai_lib.integrations.meta.leadgen_webhook`. Full record:
+> `META-LEADS-CHECKLIST.md` and `project-history/roadmaps/meta-ads-console-2026-07.md`.
 
 ---
 
