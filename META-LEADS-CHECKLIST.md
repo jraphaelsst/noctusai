@@ -67,7 +67,26 @@ upsert keyed on Meta's own lead id.
 - [ ] KB `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/meta.md` §5 — flip webhook row to SHIPS
 - [ ] **Merge gate:** grep proves a consumer exists under `products/` (no orphan factory)
 
-## Slice 2 — Product: receiver + inbox (C2)
+## Slice 2 — Product: receiver + inbox (C2) — ✅ code complete (local)
+
+- [x] Migration `042_meta_webhook_events.sql` + 11 structural tests
+- [x] `meta_webhook_verify_token` config + `resolve_meta_webhook_verify_token()` vault key
+- [x] `services/leadgen_webhook_service.py` — `record_event` / `resolve_org` / `resolve_form`
+      (with cold-form fallback) / `process_event` / `claim` / `drain_pending` / `purge_processed`
+- [x] `routers/leadgen_router.py` — 6 routes; HMAC via **App Secret**, `bypass_when_unset=False`;
+      handshake echoes the challenge as a STRING (the erp `int()` bug)
+- [x] `get_leadgen_service` as a named `Depends` seam so tests exercise the real route
+- [x] Registered in `meta_ads/__init__.py`; `_upsert_lead` → public `upsert_lead`
+      (no back-compat alias — grep proved zero other call sites, so an alias would be dead code)
+- [x] `meta_leadgen_retry` job (`*/15`) + 90-day LGPD purge wired into `configure()`
+- [x] Redis SETNX dedup — first production consumer of `get_webhook_dedup()`; fails SAFE
+      (unreachable Redis ⇒ proceed, since layers 2+3 still guarantee idempotency)
+- [x] 18 status-pinned receiver tests + 6 auth-boundary tests. Full suite **1565 passed**
+- [x] `.env.example` `META_*` block; webhook-signatures adopter list corrected
+- [ ] `META-APP-VERIFICATION.md` §10 rewrite (still says "optional / later")
+- [ ] **Verify live:** Lead Ads Testing Tool → inbox `processed` + lead row + one funnel card
+
+### Original spec (kept for reference)
 
 - [ ] Migration `products/social-wiring/backend/migrations/040_meta_webhook_events.sql`
       (`id TEXT PK` · `payload JSONB` · `status`/`attempts`/`error` · RLS · `service_role_bypass`)

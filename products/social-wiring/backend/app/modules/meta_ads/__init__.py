@@ -26,6 +26,17 @@ Routes added
   - ``/api/meta/ads/insights/compare``
   - ``/api/meta/ads/activities``
   - ``/api/meta/ads/sync`` (POST) + ``/api/meta/ads/sync/{job_id}`` (GET)
+
+Lead-Ads webhook (``leadgen_router``, prefix ``/api/meta/leadgen``) —
+mounted under its OWN prefix, not ``/api/meta/ads``, because two of its
+routes are PUBLIC (Meta calls them unauthenticated) and a public route
+hidden inside an otherwise-uniformly-authed namespace is how an
+auth-boundary review misses one:
+
+  - ``/api/meta/leadgen/webhook`` (GET, **public**) — ``hub.challenge`` handshake
+  - ``/api/meta/leadgen/webhook`` (POST, **public**, HMAC-verified) — delivery
+  - ``/api/meta/leadgen/subscriptions`` (GET/POST) + ``/{page_id}`` (DELETE)
+  - ``/api/meta/leadgen/events`` (GET) — delivery health / inbox
 """
 from __future__ import annotations
 
@@ -38,14 +49,14 @@ def register() -> Any:
     Also calls ``meta_ads.scheduler.configure()`` to register the daily
     sync job on the seed scheduler (same pattern as ``youtube``/
     ``email_marketing``)."""
-    from app.modules.meta_ads.routers import ads_router
+    from app.modules.meta_ads.routers import ads_router, leadgen_router
     from app.modules.meta_ads.scheduler import configure as _configure_scheduler
     from app.main import ModuleRegistration
 
     _configure_scheduler()
 
     return ModuleRegistration(
-        routers=[ads_router.router],
+        routers=[ads_router.router, leadgen_router.router],
         # No extra standard routers needed beyond the base set.
         standard_routers=(),
     )

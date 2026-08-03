@@ -200,18 +200,81 @@ async def meta_ads_daily_sync_job() -> None:
         logger.error("meta_ads scheduler: job wrapper error: %s", exc, exc_info=True)
 
 
+def _leadgen_retry_sync(*, cfg=None, admin_client_factory=None, service_factory=None) -> None:
+    """Body of the inbox-drain job. Re-drives `meta_webhook_events` rows the
+    receiver could not finish, then applies the LGPD retention purge.
+
+    This is the half of the durability story the receiver cannot do itself:
+    the receiver owes Meta a 200 within seconds, so a transient Graph error
+    becomes an `error` row rather than a retry. Without this job those rows
+    would sit forever and the lead would be lost anyway — the inbox is only
+    worth having because something drains it."""
+    cfg = cfg or settings
+    org_id = _target_org_id(cfg=cfg)
+    if org_id is None:
+        logger.info("meta_leadgen retry: meta_ads_org_id not configured — skipping")
+        return
+
+    admin = (admin_client_factory or get_admin_client)()
+    if admin is None:
+        logger.warning("meta_leadgen retry: no admin client — skipping run")
+        return
+
+    if service_factory is None:
+        from app.modules.meta_ads.services.leadgen_webhook_service import (
+            LeadgenWebhookService,
+        )
+
+        service_factory = LeadgenWebhookService
+
+    svc = service_factory(admin_supabase=admin)
+    try:
+        result = svc.drain_pending()
+        purged = svc.purge_processed()
+        if result.get("scanned") or purged:
+            logger.info(
+                "meta_leadgen retry: scanned=%d processed=%d failed=%d purged=%d",
+                result.get("scanned", 0), result.get("processed", 0),
+                result.get("failed", 0), purged,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("meta_leadgen retry: run failed: %s", exc, exc_info=True)
+
+
+async def meta_leadgen_retry_job() -> None:
+    """Async wrapper — same thread-offload convention as the daily job."""
+    try:
+        await asyncio.to_thread(_leadgen_retry_sync)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("meta_leadgen retry: job wrapper error: %s", exc, exc_info=True)
+
+
 def configure() -> None:
-    """Register the ``meta_ads`` daily sync job on the seed-side
-    scheduler. Called from ``meta_ads/__init__.py``'s ``register()`` at
-    import time — same pattern as ``youtube``/``email_marketing``.
-    Idempotent."""
+    """Register the ``meta_ads`` scheduled jobs on the seed-side scheduler.
+    Called from ``meta_ads/__init__.py``'s ``register()`` at import time —
+    same pattern as ``youtube``/``email_marketing``. Idempotent.
+
+    TWO jobs, deliberately on different cadences:
+      - ``meta_ads_daily_sync`` (06:00) — the ads console + the lead-sync
+        correctness backstop. Daily is right: ``sync_all`` makes ~70
+        rate-limit-paced Graph calls.
+      - ``meta_leadgen_retry`` (every 15m) — drains the webhook inbox. Cheap
+        (one DB read; Graph only for rows that actually failed), so it can
+        run often enough that a transient blip costs minutes, not a day.
+    """
     seed_scheduler.register(
         "meta_ads_daily_sync",
         meta_ads_daily_sync_job,
         cron="0 6 * * *",
     )
+    seed_scheduler.register(
+        "meta_leadgen_retry",
+        meta_leadgen_retry_job,
+        cron="*/15 * * * *",
+    )
     logger.info(
-        "meta_ads scheduler configured: daily sync at cron '0 6 * * *'"
+        "meta_ads scheduler configured: daily sync '0 6 * * *', "
+        "leadgen inbox retry '*/15 * * * *'"
     )
 
 

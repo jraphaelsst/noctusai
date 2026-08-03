@@ -147,13 +147,13 @@ class LeadsSyncService:
                 raise
             key_types = key_type_by_form.get(form.id, {})
             for lead in leads:
-                self._upsert_lead(
+                self.upsert_lead(
                     lead, org_id=org_id, form=form, key_types=key_types
                 )
                 upserted += 1
         return {"leads_upserted": upserted, "records_gated": gated}
 
-    def _upsert_lead(
+    def upsert_lead(
         self, lead: Any, *, org_id: UUID, form: Any, key_types: dict[str, str]
     ) -> None:
         answers: dict[str, Any] = {}
