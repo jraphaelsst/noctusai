@@ -15,7 +15,16 @@ router exposes:
     POST   /api/whatsapp/connections/{id}/start   → create/start the session
     POST   /api/whatsapp/connections/{id}/restart → restart the session
     POST   /api/whatsapp/connections/{id}/logout  → unlink the account
+    POST   /api/whatsapp/connections/{id}/recover → run the start→restart→
+                                                     logout+start recovery
+                                                     ladder (the UI's primary
+                                                     reconnect action)
     POST   /api/whatsapp/connections/{id}/webhook → wire the inbound webhook
+
+    GET    /api/whatsapp/connections/{id}/chats                    → paginated inbox
+    GET    /api/whatsapp/connections/{id}/chats/{chatId}/messages  → paginated thread
+    POST   /api/whatsapp/connections/{id}/chats/{chatId}/read      → zero the badge
+    GET    /api/whatsapp/connections/{id}/stream                   → SSE (text/event-stream)
 
 CRUD persists to ``social_wiring.whatsapp_connections`` via the
 :class:`WhatsAppConnectionStore` (resolved through the ``get_connection_store``
@@ -23,6 +32,15 @@ DI seam); the live side decrypts the line's API key just-in-time and drives
 the seed ``WahaClient`` (the same client the single-session seed
 ``whatsapp_admin_router`` uses, here parameterized per line through the
 ``get_waha_client_factory`` DI seam).
+
+WAHA IS NOT ON THE READ PATH (whatsapp-realtime-inbox, Slice 5): ``/chats``
+and ``/chats/{chatId}/messages`` read exclusively from Postgres —
+``social_wiring.whatsapp_chats`` (migration 040, via :class:`WhatsAppChatStore`)
+and ``conversation_messages`` (its migration-040 ``chat_id``/``ack``/``acked_at``
+columns, via the router-local :class:`_ChatMessagesReader`). Realtime updates
+ride the seed's provider-neutral bus (``app.services.whatsapp_realtime`` +
+``noctusai_lib.realtime``) — ``/stream`` mounts ``create_sse_router`` scoped
+per connection, ownership-checked the same way every other live op is.
 
 Auth: ``Depends(get_current_user_org)`` → ``(user, token, org_id)``; every
 store call additionally scopes by the resolved ``user_id`` so lines are
@@ -32,15 +50,15 @@ patching per ``KB § PATTERNS/di-test-seam.md``.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 import logging
 import secrets
-import time
-from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from noctusai_lib.config.product_urls import resolve_product_url
@@ -48,8 +66,9 @@ from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     get_whatsapp_client,
 )
+from noctusai_lib.realtime import create_sse_router
 
-from app.config import SocialWiringSettings
+from app.config import SocialWiringSettings, settings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
@@ -60,52 +79,44 @@ from app.schemas.whatsapp_connection import (
     AutoReplyToggleOut,
     AutoReplyToggleRequest,
     BoundChat,
-    ChatSummary,
+    ChatDTO,
+    ChatReadOut,
+    ChatReadRequest,
+    ChatsPage,
+    DEFAULT_WHATSAPP_WEBHOOK_EVENTS,
+    MessageDTO,
     MessageOut,
+    MessagesPage,
     SendMessageRequest,
     WhatsAppConnectionApiKeyOut,
     WhatsAppConnectionCreate,
     WhatsAppConnectionOut,
     WhatsAppConnectionQrOut,
+    WhatsAppConnectionRecoverOut,
     WhatsAppConnectionStatusOut,
     WhatsAppConnectionUpdate,
     WhatsAppWebhookConfigRequest,
     WhatsAppWebhookResultOut,
 )
-from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
 from app.services.message_store import MessageStore
+from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
     build_whatsapp_connection_store,
 )
-from app.services.whatsapp_identity import ResolvedIdentity, build_lids_map_from_list
+from app.services.whatsapp_realtime import (
+    EVENT_CHAT_READ,
+    EVENT_SESSION_STATUS,
+    get_whatsapp_bus,
+    publish_whatsapp_event,
+    whatsapp_scope,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/whatsapp/connections", tags=["WhatsApp"])
-
-# ── Thread history cache ──────────────────────────────────────────────────────
-# WAHA is the SOURCE OF TRUTH for a chat thread (the full real conversation +
-# history). fetch_chat_messages is ~13s and the FE polls every 3s, so we cache
-# the WAHA result per (connection, chat) with a short TTL: the slow call runs at
-# most once per TTL, and an in-flight guard stops the poll burst from stampeding
-# concurrent fetches. Live DB rows are merged in fresh on every request, so a
-# message just sent (or the AI reply) shows immediately even on a cache hit.
-_THREAD_CACHE_TTL_S = 25.0
-_thread_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # key → (ts, msgs)
-_thread_inflight: set[str] = set()
-
-# ── Chat-list name resolution ─────────────────────────────────────────────────
-# WAHA chat objects carry NO display name (verified: name=None on every chat),
-# so the chat list shows raw numbers. We resolve each chat's name via the fast
-# get_contact call (~0.1s) — cached per JID (TTL) so the 5s poll doesn't
-# re-resolve — and upsert into social_wiring.contacts so the name persists and
-# the Contacts page populates. A per-request budget bounds the first-load cost.
-_NAME_CACHE_TTL_S = 600.0
-_name_cache: dict[str, tuple[float, str]] = {}  # jid → (ts, name)  ("" = no name)
-_NAME_RESOLVE_BUDGET = 40  # max uncached get_contact calls per list_chats request
 
 
 # ─── DI seams ───────────────────────────────────────────────────────────────
@@ -134,6 +145,91 @@ def get_waha_client_factory():
     router logic without real HTTP and without patching the external
     integration. Per ``KB § PATTERNS/di-test-seam.md`` (Class-B)."""
     return get_whatsapp_client
+
+
+def get_chat_store_for_org(org_id: UUID) -> WhatsAppChatStore:
+    """Build a :class:`WhatsAppChatStore` bound to the calling user's org.
+
+    Same shape as :func:`get_message_store_for_org` below: not a FastAPI
+    ``Depends`` itself (``org_id`` is resolved per-route after the auth dep
+    runs). Tests override the factory (see :func:`get_chat_store_factory`)
+    with one bound to a SQLite-backed stand-in."""
+    return WhatsAppChatStore(admin_supabase=get_admin_client(), org_id=org_id)
+
+
+def get_chat_store_factory():
+    """DI seam — returns the ``get_chat_store_for_org`` factory.
+
+    Override via ``app.dependency_overrides[get_chat_store_factory]`` to
+    inject a deterministic store in tests. Per ``KB § PATTERNS/di-test-seam.md``
+    (Class-B)."""
+    return get_chat_store_for_org
+
+
+_CHAT_MESSAGES_SCHEMA = "social_wiring"
+_CHAT_MESSAGES_TABLE = "conversation_messages"
+
+
+class _ChatMessagesReader:
+    """Thin, router-local read seam over ``conversation_messages`` scoped by
+    the migration-040 ``chat_id`` column (+ ``ack``/``acked_at``).
+
+    Colocated here rather than folded into :class:`MessageStore` — that
+    store is the ingest/backfill slice's territory (``raw_sender``-keyed,
+    JSON-parses ``structured_payload`` itself); this reader is the
+    connections-router's read-only thread view over the NEW indexed
+    ``(connection_id, chat_id, created_at DESC)`` shape migration 040 added
+    specifically for ``GET /chats/{id}/messages`` (see that migration's
+    header note — this IS the query the index exists for).
+    """
+
+    def __init__(self, *, admin_supabase, org_id: UUID):
+        self._admin = admin_supabase
+        self._org_id = org_id
+
+    def list_messages(
+        self,
+        *,
+        connection_id: UUID,
+        chat_id: str,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Newest-first page of one chat thread, canonical ``chat_id`` only
+        (no JID-alias fan-out — pre-migration-040 rows carry ``chat_id IS
+        NULL`` and are not backfilled, so they simply do not surface here;
+        see the migration's header note). ``before`` is an ISO 8601 UTC
+        cursor — page toward older history."""
+        query = (
+            self._admin.schema(_CHAT_MESSAGES_SCHEMA)
+            .table(_CHAT_MESSAGES_TABLE)
+            .select(
+                "id, chat_id, direction, body, ack, acked_at, created_at, "
+                "provider_message_id, structured_payload"
+            )
+            .eq("connection_id", str(connection_id))
+            .eq("org_id", str(self._org_id))
+            .eq("chat_id", chat_id)
+        )
+        if before:
+            query = query.lt("created_at", before)
+        response = (
+            query.order("created_at", desc=True)
+            .limit(max(1, min(limit, 200)))
+            .execute()
+        )
+        return list(response.data or [])
+
+
+def get_chat_messages_reader_for_org(org_id: UUID) -> _ChatMessagesReader:
+    return _ChatMessagesReader(admin_supabase=get_admin_client(), org_id=org_id)
+
+
+def get_chat_messages_reader_factory():
+    """DI seam — returns the ``get_chat_messages_reader_for_org`` factory.
+    Same Class-B pattern as :func:`get_chat_store_factory` /
+    :func:`get_message_store_factory`."""
+    return get_chat_messages_reader_for_org
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────
@@ -332,7 +428,13 @@ async def create_connection(
         # Do not roll back the DB record — it's valid to create and start later.
 
     try:
-        await client.set_webhook(webhook_url, ["message", "session.status"])
+        # Slice 5 — register the FULL inbound event set (message, message.any,
+        # message.ack, message.reaction, session.status), not just the two
+        # this connection used to boot with: message.ack/reaction feed the
+        # realtime bus, and message.any is the WAHA echo of OUR OWN outbound
+        # sends that keeps `whatsapp_chats` current without /send having to
+        # write it directly (see `DEFAULT_WHATSAPP_WEBHOOK_EVENTS`).
+        await client.set_webhook(webhook_url, DEFAULT_WHATSAPP_WEBHOOK_EVENTS)
     except Exception as exc:
         logger.error(
             "WAHA set_webhook failed for connection %s (session=%s): %s",
@@ -575,6 +677,63 @@ async def logout_connection(
     )
 
 
+@router.post("/{connection_id}/recover", response_model=WhatsAppConnectionRecoverOut)
+async def recover_connection(
+    connection_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    waha_factory: Any = Depends(get_waha_client_factory),
+) -> WhatsAppConnectionRecoverOut:
+    """Run the seed's start→restart→logout+start recovery ladder and return
+    the converged session state. This is the UI's PRIMARY reconnect action
+    going forward — ``/start``, ``/restart``, ``/logout`` remain individually
+    callable (unchanged) for an operator who wants one specific rung.
+
+    Why this exists: a session with stored-but-dead credentials answers
+    ``restart`` by retrying those dead credentials and hangs in ``STARTING``
+    for minutes before WAHA's own watchdog force-stops it back to ``FAILED``
+    (proven twice on the live fleet session's logs) — only ``logout``
+    actually clears the stored credentials so NOWEB can re-enter
+    ``SCAN_QR_CODE``. The ladder converges regardless of which single rung
+    is individually "the fix" for a given session's state.
+    """
+    user, _token, raw_org = auth
+    record = _require_record(
+        store,
+        connection_id=connection_id,
+        org_id=coerce_org_uuid(raw_org),
+        user_id=_coerce_user_uuid(user),
+        decrypt=True,
+    )
+    client = _waha_client(record, waha_factory)
+    try:
+        outcome = await client.recover_session()
+    except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WAHA recover failed: {exc}",
+        ) from exc
+
+    bus = get_whatsapp_bus(settings.redis_url)
+    await publish_whatsapp_event(
+        bus,
+        connection_id=connection_id,
+        event=EVENT_SESSION_STATUS,
+        payload={
+            "connection_id": str(connection_id),
+            "status": outcome.get("status"),
+            "paired": bool(outcome.get("paired")),
+            "stage": outcome.get("stage"),
+        },
+    )
+    return WhatsAppConnectionRecoverOut(
+        connection_id=connection_id,
+        status=outcome.get("status"),
+        paired=bool(outcome.get("paired")),
+        stage=outcome.get("stage") or "",
+    )
+
+
 @router.post("/{connection_id}/webhook", response_model=WhatsAppWebhookResultOut)
 async def configure_connection_webhook(
     connection_id: UUID,
@@ -637,506 +796,177 @@ def get_message_store_factory():
     return get_message_store_for_org
 
 
-def _waha_chat_to_summary(
-    waha_chat: dict[str, Any],
-    *,
-    canonical_chat_id: str | None = None,
-    contact_display: str | None = None,
-    contact_id: str | None = None,
-) -> dict[str, Any] | None:
-    """Map a WAHA chat object to a ``ChatSummary``-shaped dict.
-
-    WAHA NOWEB chat shape (observed):
-        {"id": {"_serialized": "5511@c.us", ...}, "name": "Alice",
-         "lastMessage": {"body": "hi", "fromMe": false, "timestamp": 1718000000}}
-
-    ``canonical_chat_id``: when supplied (from identity dedup), this overrides
-    the raw JID from WAHA — the caller has already resolved the canonical phone-JID.
-
-    ``contact_display``: resolved display name (contacts table → WAHA name →
-    phone digits → raw LID) when supplied by the caller.
-
-    ``contact_id``: contacts.id UUID when the human is registered.
-
-    ``last_message_at`` is ``None`` (not "") when there is no usable timestamp
-    so the FE never renders "Invalid Date".
-
-    Returns ``None`` when the shape is unrecognisable (defensive — never 500).
-    """
-    try:
-        raw_id = waha_chat.get("id") or {}
-        raw_chat_id: str = raw_id if isinstance(raw_id, str) else raw_id.get("_serialized") or ""
-        if not raw_chat_id:
-            return None
-        chat_id = canonical_chat_id or raw_chat_id
-        waha_name: str = waha_chat.get("name") or waha_chat.get("pushName") or ""
-        if contact_display:
-            contact: str = contact_display
-        else:
-            contact = waha_name or (
-                raw_chat_id
-                .replace("@c.us", "")
-                .replace("@s.whatsapp.net", "")
-                .replace("@lid", "")
-            )
-        last_msg = waha_chat.get("lastMessage") or {}
-        body: str = last_msg.get("body") or ""
-        ts_raw = last_msg.get("timestamp")  # Unix epoch seconds (int) from WAHA
-        last_message_at: str | None
-        if ts_raw:
-            from datetime import timezone  # noqa: PLC0415 — lazy import, not on hot path
-            last_message_at = datetime.fromtimestamp(
-                int(ts_raw), tz=timezone.utc
-            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        else:
-            last_message_at = None  # FE guards on null; never emit ""
-        from_me: bool = bool(last_msg.get("fromMe"))
-        return {
-            "chat_id": chat_id,
-            "contact": contact,
-            "contact_id": contact_id,
-            "last_message": body,
-            "last_message_at": last_message_at,
-            "last_direction": "outbound" if from_me else "inbound",
-            "unread": 0,  # WAHA provides unreadCount on some engines; default to 0
-        }
-    except Exception:  # noqa: BLE001 — defensive; malformed WAHA payload never crashes
-        return None
+def _message_dto_from_row(row: dict[str, Any]) -> MessageDTO:
+    """Map one ``conversation_messages`` row (migration-040 shape) to the
+    wire ``MessageDTO``. ``structured_payload`` may arrive as a JSON string
+    (Postgres/PostgREST) or already-decoded (test doubles) — normalise
+    defensively rather than assume one shape."""
+    sp = row.get("structured_payload")
+    if isinstance(sp, str):
+        try:
+            sp = json.loads(sp)
+        except (TypeError, ValueError):
+            sp = None
+    return MessageDTO(
+        id=str(row.get("id")),
+        provider_message_id=row.get("provider_message_id"),
+        chat_id=row.get("chat_id") or "",
+        direction=row.get("direction"),
+        body=row.get("body") or "",
+        ack=row.get("ack"),
+        acked_at=row.get("acked_at"),
+        created_at=row.get("created_at") or "",
+        structured_payload=sp,
+    )
 
 
-def _waha_message_to_out(
-    waha_msg: dict[str, Any], *, chat_id: str
-) -> dict[str, Any] | None:
-    """Map a WAHA message object to a ``MessageOut``-shaped dict.
-
-    WAHA NOWEB message shape (observed):
-        {"id": {"_serialized": "...", "id": "BAE5..."}, "body": "hi",
-         "from": "5511@c.us", "timestamp": 1718000000, "fromMe": false}
-
-    Returns ``None`` when the shape is unrecognisable.
-    """
-    try:
-        from datetime import timezone  # noqa: PLC0415 — lazy import
-        msg_id_raw = waha_msg.get("id") or {}
-        provider_message_id: str | None = (
-            msg_id_raw.get("_serialized")
-            if isinstance(msg_id_raw, dict)
-            else (str(msg_id_raw) if msg_id_raw else None)
-        )
-        body: str = waha_msg.get("body") or ""
-        ts_raw = waha_msg.get("timestamp")
-        if ts_raw:
-            created_at = datetime.fromtimestamp(
-                int(ts_raw), tz=timezone.utc
-            ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        else:
-            created_at = ""
-        from_me: bool = bool(waha_msg.get("fromMe"))
-        direction = "outbound" if from_me else "inbound"
-        # Deterministic synthetic id: use provider id or a hash of (chat_id, ts, dir)
-        import hashlib  # noqa: PLC0415
-        row_id = provider_message_id or hashlib.sha1(  # noqa: S324 — not security-critical
-            f"{chat_id}:{ts_raw}:{direction}:{body[:32]}".encode(),
-            usedforsecurity=False,
-        ).hexdigest()[:16]
-        return {
-            "id": row_id,
-            "chat_id": chat_id,
-            "direction": direction,
-            "body": body,
-            "created_at": created_at,
-            "provider_message_id": provider_message_id,
-            "structured_payload": None,
-        }
-    except Exception:  # noqa: BLE001 — defensive
-        return None
-
-
-@router.get("/{connection_id}/chats", response_model=list[ChatSummary])
+@router.get("/{connection_id}/chats", response_model=ChatsPage)
 async def list_chats(
     connection_id: UUID,
+    limit: int = Query(default=30, ge=1, le=200),
+    before: str | None = Query(default=None, description="ISO 8601 UTC keyset cursor."),
+    archived: bool = Query(default=False),
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
-    msg_store_factory: Any = Depends(get_message_store_factory),
+    chat_store_factory: Any = Depends(get_chat_store_factory),
+) -> ChatsPage:
+    """Paginated inbox — pure Postgres (``social_wiring.whatsapp_chats``,
+    migration 040). WAHA is NEVER called on this path (see the module
+    docstring's "WAHA IS NOT ON THE READ PATH" note).
+
+    Newest-activity-first. ``next_before`` is the last item's
+    ``last_message_at`` in THIS page when the page was full (``limit``
+    items returned) — pass it back as ``before`` to page further into
+    history; ``null`` means there is no more history to load.
+    Non-owner / unknown connection → 404.
+    """
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    user_id = _coerce_user_uuid(user)
+    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+
+    chat_store: WhatsAppChatStore = chat_store_factory(org_id)
+    summaries = chat_store.list_chats(
+        connection_id=connection_id, limit=limit, before=before, archived=archived,
+    )
+    items = [ChatDTO(**s.as_dict()) for s in summaries]
+    next_before = items[-1].last_message_at if len(items) == limit else None
+    return ChatsPage(items=items, next_before=next_before)
+
+
+@router.post("/{connection_id}/chats/{chat_id:path}/read", response_model=ChatReadOut)
+async def mark_chat_read(
+    connection_id: UUID,
+    chat_id: str,
+    body: ChatReadRequest,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    chat_store_factory: Any = Depends(get_chat_store_factory),
     waha_factory: Any = Depends(get_waha_client_factory),
-) -> list[ChatSummary]:
-    """List all contacts that have exchanged messages on this connection.
+) -> ChatReadOut:
+    """Zero a chat's unread badge and mirror the read-receipt to WAHA.
 
-    Merges WAHA live chat list (requires NOWEB store) with persisted
-    ``conversation_messages``.  When WAHA returns 400 (store not enabled)
-    or any other error, falls back to DB-only results — never 500.
+    The Postgres write (the badge-clearing side of the contract) happens
+    first and is what this endpoint's response reflects; ``send_seen`` on
+    the live WAHA session then fires in the BACKGROUND
+    (``asyncio.create_task`` — same fire-and-forget shape
+    ``whatsapp_intake_service`` already uses) and is NEVER awaited here — a
+    slow or dead WAHA must not make clearing a badge feel slow, and a
+    ``send_seen`` failure is logged, never raised, since the badge is
+    already durably cleared.
 
-    Identity dedup: builds a ONE-SHOT LID→phone map from WAHA ``list_lids()``
-    so that multiple JID forms of the same human collapse into one ChatSummary
-    (canonical chat_id = ``<phone>@c.us``; no N-per-chat WAHA calls).
+    ⚠️ ``send_seen`` marks the chat read on the operator's REAL WhatsApp
+    phone (blue ticks on the device) — this is INTENDED and user-approved,
+    not a bug to "fix" into a no-op.
 
-    Contact lookup: checks social_wiring.contacts for a registered record
-    per resolved phone to surface the stored nome and contact_id UUID.
-
-    Returns ``ChatSummary[]`` ordered by last_message_at DESC (null-last).
-    Empty list (no messages yet) is 200 + [].
+    Unknown ``chat_id`` (no ``whatsapp_chats`` row yet) → 404, not 500.
     Non-owner / unknown connection → 404.
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     user_id = _coerce_user_uuid(user)
     record = _require_record(
-        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True,
     )
 
-    msg_store: MessageStore = msg_store_factory(org_id)
-    db_rows = msg_store.list_chats(connection_id=connection_id)
-
-    # ── Build per-org contacts index (phone → {nome, id}) ────────────────────
-    # We need this regardless of whether WAHA is available.
-    contact_svc = ContactService(db=get_admin_client(), org_id=str(org_id))
-    all_contacts, _ = contact_svc.list_contacts(page=1, page_size=500)
-    # phone → {nome, contact_id}
-    phone_to_contact: dict[str, dict[str, Any]] = {}
-    for c in all_contacts:
-        wp = c.get("whatsapp_phone")
-        if wp:
-            phone_to_contact[wp] = {"nome": c.get("nome"), "contact_id": str(c["id"])}
-
-    # ── Attempt to build LID→phone map from WAHA ─────────────────────────────
-    lids_phone_map: dict[str, str] = {}  # lid_jid → phone_digits
+    chat_store: WhatsAppChatStore = chat_store_factory(org_id)
     try:
-        client = _waha_client(record, waha_factory)
-        lids_list = await client.list_lids()
-        lids_phone_map = build_lids_map_from_list(lids_list)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "WAHA list_lids unavailable for connection %s — identity dedup disabled: %s",
-            connection_id, exc,
+        summary = chat_store.mark_read(
+            connection_id=connection_id,
+            chat_id=chat_id,
+            up_to_message_id=body.up_to_message_id,
         )
-        # client may be partially built; reset so we don't try again below
-        client = None  # type: ignore[assignment]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
-    # 🔴 BOUNDARY: augment the LID→phone map from OUR OWN contacts' stored
-    # whatsapp_lids. So a registered human's @lid chat still resolves to its
-    # phone (→ contact name + dedup) even when WAHA's list_lids is slow or
-    # unavailable. Name display reads from our DB, not live WAHA. WAHA's map
-    # (when present) stays authoritative; this only fills gaps (setdefault).
-    for c in all_contacts:
-        wp = c.get("whatsapp_phone")
-        if not wp:
-            continue
-        for lid_jid in (c.get("whatsapp_lids") or []):
-            lids_phone_map.setdefault(lid_jid, wp)
-
-    def _canonical_phone(raw_jid: str) -> str | None:
-        """Resolve any JID to phone digits, or None when unknown."""
-        from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
-            is_lid,
-            normalize_phone,
-        )
-        if raw_jid.endswith("@lid"):
-            return lids_phone_map.get(raw_jid)
-        if raw_jid.endswith(("@c.us", "@s.whatsapp.net")):
-            return normalize_phone(raw_jid)
-        return None
-
-    def _resolve_contact_info(phone: str | None) -> tuple[str | None, str | None]:
-        """Return (nome, contact_id) for a resolved phone, or (None, None)."""
-        if not phone:
-            return None, None
-        entry = phone_to_contact.get(phone)
-        if not entry:
-            return None, None
-        return entry.get("nome"), entry.get("contact_id")
-
-    # ── Index DB rows using canonical phone as key ────────────────────────────
-    # DB rows keyed by raw_sender (JID as stored); remap to canonical chat_id.
-    by_canonical: dict[str, dict[str, Any]] = {}
-    for r in db_rows:
-        raw_cid = r["chat_id"]
-        phone = _canonical_phone(raw_cid)
-        canonical = f"{phone}@c.us" if phone else raw_cid
-        nome, cid = _resolve_contact_info(phone)
-        row = {
-            **r,
-            "chat_id": canonical,
-            "contact": nome or r.get("contact") or (phone or raw_cid),
-            "contact_id": cid,
-        }
-        if canonical not in by_canonical:
-            by_canonical[canonical] = row
-        else:
-            # Merge: keep latest last_message_at, add unread counts
-            existing = by_canonical[canonical]
-            existing_ts = existing.get("last_message_at") or ""
-            new_ts = row.get("last_message_at") or ""
-            if new_ts > existing_ts:
-                by_canonical[canonical] = {
-                    **row,
-                    "unread": existing.get("unread", 0) + row.get("unread", 0),
-                }
-            else:
-                existing["unread"] = existing.get("unread", 0) + row.get("unread", 0)
-
-    # ── Attempt to merge WAHA live chat list ─────────────────────────────────
-    try:
-        if client is None:
-            client = _waha_client(record, waha_factory)
-        waha_chats = await client.list_chats()
-        for wc in waha_chats:
-            raw_id_obj = wc.get("id") or {}
-            raw_cid = raw_id_obj if isinstance(raw_id_obj, str) else (
-                raw_id_obj.get("_serialized") or ""
-            )
-            if not raw_cid:
-                continue
-            phone = _canonical_phone(raw_cid)
-            canonical = f"{phone}@c.us" if phone else raw_cid
-            nome, contact_id_val = _resolve_contact_info(phone)
-            waha_name = wc.get("name") or wc.get("pushName") or ""
-            display = nome or waha_name or (phone or raw_cid.split("@")[0])
-            summary = _waha_chat_to_summary(
-                wc,
-                canonical_chat_id=canonical,
-                contact_display=display,
-                contact_id=contact_id_val,
-            )
-            if summary is None:
-                continue
-            if canonical not in by_canonical:
-                by_canonical[canonical] = summary
-            else:
-                db_entry = by_canonical[canonical]
-                waha_ts = summary.get("last_message_at") or ""
-                db_ts = db_entry.get("last_message_at") or ""
-                if waha_ts > db_ts:
-                    by_canonical[canonical] = {
-                        **summary,
-                        "unread": db_entry.get("unread", 0),
-                    }
-                # Prefer registered contact info when available
-                if db_entry.get("contact_id") and not by_canonical[canonical].get("contact_id"):
-                    by_canonical[canonical]["contact_id"] = db_entry["contact_id"]
-                if not _is_phone_like_display(by_canonical[canonical].get("contact") or ""):
-                    pass  # keep the better name already there
-                elif nome:
-                    by_canonical[canonical]["contact"] = nome
-    except Exception as exc:  # noqa: BLE001 — graceful fallback; not a 500
-        logger.warning(
-            "WAHA list_chats unavailable for connection %s — falling back to DB only: %s",
-            connection_id, exc,
-        )
-
-    # ── Resolve missing names from WAHA get_contact (~0.1s), cached + persisted ─
-    # WAHA chats carry no name, so any chat still showing a number gets resolved
-    # via get_contact (fast), cached per JID (TTL) so the 5s poll doesn't
-    # re-resolve, and upserted into contacts (name persists + Contacts page
-    # populates → future polls read the DB, no WAHA call). Bounded per request.
-    name_client = client
-    if name_client is None:
-        try:
-            name_client = _waha_client(record, waha_factory)
-        except Exception:  # noqa: BLE001
-            name_client = None
-    if name_client is not None:
-        now_mono = time.monotonic()
-        contact_svc_w = ContactService(db=get_admin_client(), org_id=str(org_id))
-        resolved = 0
-        for canonical, entry in by_canonical.items():
-            display = entry.get("contact") or ""
-            if display and not _is_phone_like_display(display):
-                continue  # already has a real name
-            lookup_jid = entry.get("chat_id") or canonical
-            cached = _name_cache.get(lookup_jid)
-            if cached and (now_mono - cached[0]) < _NAME_CACHE_TTL_S:
-                if cached[1]:
-                    entry["contact"] = cached[1]
-                continue
-            if resolved >= _NAME_RESOLVE_BUDGET:
-                continue
-            resolved += 1
-            try:
-                info = await name_client.get_contact(lookup_jid)
-            except Exception:  # noqa: BLE001
-                info = {}
-            name = (info.get("name") or info.get("pushname") or "").strip()
-            _name_cache[lookup_jid] = (now_mono, name)
-            if not name:
-                continue
-            entry["contact"] = name
-            # Persist so the name sticks + the Contacts page populates.
-            phone = _canonical_phone(canonical) or _canonical_phone(lookup_jid)
-            if phone:
-                try:
-                    lid = info.get("lid")
-                    rec = contact_svc_w.upsert_whatsapp_contact(
-                        phone=phone,
-                        lids=[lid] if lid else [],
-                        name=name,
-                        jid=f"{phone}@c.us",
-                    )
-                    if rec.get("id") and not entry.get("contact_id"):
-                        entry["contact_id"] = str(rec["id"])
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "contact upsert during list_chats failed for %s: %s",
-                        lookup_jid, exc,
-                    )
-
-    merged = sorted(
-        by_canonical.values(),
-        key=lambda s: s.get("last_message_at") or "",
-        reverse=True,
+    bus = get_whatsapp_bus(settings.redis_url)
+    await publish_whatsapp_event(
+        bus,
+        connection_id=connection_id,
+        event=EVENT_CHAT_READ,
+        payload={
+            "chat_id": chat_id,
+            "unread_count": 0,
+            "last_read_at": summary.last_read_at,
+        },
     )
-    return [ChatSummary(**r) for r in merged]
+
+    client = _waha_client(record, waha_factory)
+    asyncio.create_task(_fire_send_seen(client, chat_id=chat_id, connection_id=connection_id))
+
+    return ChatReadOut(chat_id=chat_id, unread_count=0, last_read_at=summary.last_read_at)
 
 
-def _is_phone_like_display(display: str) -> bool:
-    """True when display is just digits/JID — a real name is better."""
-    import re  # noqa: PLC0415
-    return bool(re.match(r"^[\d+@.\-\s]+$", display))
+async def _fire_send_seen(client: Any, *, chat_id: str, connection_id: UUID) -> None:
+    """Background-only: mirror a read-receipt to WAHA. Never on the response
+    path, never raised — see ``mark_chat_read``'s docstring for why."""
+    try:
+        await client.send_seen(chat_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort background op
+        logger.warning(
+            "send_seen failed for chat %s connection %s (badge already "
+            "cleared in Postgres, not retried): %s",
+            chat_id, connection_id, exc,
+        )
 
 
-@router.get("/{connection_id}/chats/{chat_id:path}/messages", response_model=list[MessageOut])
+@router.get(
+    "/{connection_id}/chats/{chat_id:path}/messages", response_model=MessagesPage
+)
 async def list_messages(
     connection_id: UUID,
     chat_id: str,
-    limit: int = 50,
-    before: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    before: str | None = Query(default=None, description="ISO 8601 UTC keyset cursor."),
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
-    msg_store_factory: Any = Depends(get_message_store_factory),
-    waha_factory: Any = Depends(get_waha_client_factory),
-) -> list[MessageOut]:
-    """List messages for one chat thread (raw_sender = chatId), oldest-first.
+    reader_factory: Any = Depends(get_chat_messages_reader_factory),
+) -> MessagesPage:
+    """Paginated thread — pure Postgres via the migration-040
+    ``(connection_id, chat_id, created_at DESC)`` index. WAHA is NEVER
+    called on this path; no JID-alias fan-out (canonical ``chat_id`` only —
+    pre-migration-040 rows carry ``chat_id IS NULL`` and are not backfilled,
+    per that migration's header note, so they do not surface here).
 
-    Merges WAHA history (requires NOWEB store) with persisted
-    ``conversation_messages``.  Deduplicates by ``provider_message_id``
-    when available; falls back to ``(direction, body[:32], created_at)``
-    fingerprint.  When WAHA is unavailable, falls back to DB-only.
-
-    ``before`` is an ISO 8601 UTC cursor — when set, only messages with
-    created_at < before are returned (page-backwards).
+    Newest-first per page (mirrors ``GET /chats``'s pagination shape).
+    ``next_before`` is the last item's ``created_at`` in THIS page when the
+    page was full; ``null`` means there is no more history.
     Non-owner / unknown connection → 404.
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     user_id = _coerce_user_uuid(user)
-    actual_limit = min(limit, 200)
-    record = _require_record(
-        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+
+    reader = reader_factory(org_id)
+    rows = reader.list_messages(
+        connection_id=connection_id, chat_id=chat_id, limit=limit, before=before,
     )
-
-    # ── Expand the requested chat_id to ALL its JID aliases ──────────────────
-    # chat_id from the FE is the canonical <phone>@c.us.  WAHA stored messages
-    # may be keyed as @c.us, @s.whatsapp.net, or @lid.  Expand so DB + WAHA
-    # queries cover all aliases.
-    # 🔴 BOUNDARY: expand aliases from OUR cached contacts table — NO live WAHA
-    # call here. The previous version called list_lids() then fanned out a
-    # fetch_chat_messages() per alias, which at 15-30s timeouts produced ~49s
-    # thread loads (2026-06-24 regression). Aliases now come from the contact's
-    # stored whatsapp_lids (populated in the background on inbound).
-    from noctusai_lib.integrations.whatsapp.lid_auth import (  # noqa: PLC0415
-        normalize_phone,
-    )
-    phone_digits = normalize_phone(chat_id)
-    jid_aliases: list[str] = [chat_id]
-    if phone_digits:
-        jid_aliases = [
-            f"{phone_digits}@c.us",
-            f"{phone_digits}@s.whatsapp.net",
-        ]
-        try:
-            _contact = ContactService(
-                db=get_admin_client(), org_id=str(org_id)
-            ).get_by_whatsapp_phone(phone_digits)
-            if _contact:
-                for lid_jid in (_contact.get("whatsapp_lids") or []):
-                    if lid_jid not in jid_aliases:
-                        jid_aliases.append(lid_jid)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "cached alias lookup failed for chat %s connection %s — "
-                "phone-form aliases only: %s",
-                chat_id, connection_id, exc,
-            )
-    if chat_id not in jid_aliases:
-        jid_aliases.append(chat_id)
-
-    msg_store: MessageStore = msg_store_factory(org_id)
-    # Query DB for all aliases to get full history across JID forms
-    db_rows: list[dict[str, Any]] = []
-    seen_aliases: set[str] = set()
-    for alias in jid_aliases:
-        if alias in seen_aliases:
-            continue
-        seen_aliases.add(alias)
-        rows = msg_store.list_messages(
-            connection_id=connection_id,
-            raw_sender=alias,
-            limit=actual_limit,
-            before=before,
-        )
-        db_rows.extend(rows)
-
-    # ── Dedup key ─────────────────────────────────────────────────────────────
-    def _dedup_key(row: dict[str, Any]) -> str:
-        pmid = row.get("provider_message_id")
-        if pmid:
-            return f"pmid:{pmid}"
-        return f"fp:{row.get('direction')}:{(row.get('body') or '')[:32]}:{row.get('created_at')}"
-
-    seen_keys: set[str] = set()
-    merged: list[dict[str, Any]] = []
-    for row in db_rows:
-        k = _dedup_key(row)
-        if k not in seen_keys:
-            seen_keys.add(k)
-            merged.append({**row, "chat_id": chat_id})  # normalise to canonical JID
-
-    # ── Merge WAHA history (SOURCE OF TRUTH) — cached, stampede-guarded ───────
-    # WAHA holds the full real conversation (history + messages we didn't send).
-    # fetch_chat_messages is ~13s, so cache it per chat (TTL) and let only ONE
-    # request fetch at a time; concurrent polls reuse the last good cache (or DB
-    # only) until it fills. DB rows (merged above) cover anything not yet cached,
-    # so the thread is never blank and new messages show instantly.
-    cache_key = f"{connection_id}:{chat_id}"
-    now_mono = time.monotonic()
-    cached = _thread_cache.get(cache_key)
-    fresh = cached is not None and (now_mono - cached[0]) < _THREAD_CACHE_TTL_S
-    waha_mapped: list[dict[str, Any]] = []
-    if fresh:
-        waha_mapped = cached[1]
-    elif cache_key in _thread_inflight:
-        # Another request is already fetching — reuse stale cache if any.
-        waha_mapped = cached[1] if cached else []
-    else:
-        _thread_inflight.add(cache_key)
-        try:
-            waha_client_ref = _waha_client(record, waha_factory)
-            waha_msgs = await waha_client_ref.fetch_chat_messages(chat_id, limit=actual_limit)
-            waha_mapped = [
-                m for m in (_waha_message_to_out(wm, chat_id=chat_id) for wm in waha_msgs)
-                if m is not None
-            ]
-            _thread_cache[cache_key] = (now_mono, waha_mapped)
-        except Exception as exc:  # noqa: BLE001 — degrade to DB / last cache
-            logger.warning(
-                "WAHA history fetch failed for chat %s conn %s — using DB/last-cache: %s",
-                chat_id, connection_id, exc,
-            )
-            waha_mapped = cached[1] if cached else []
-        finally:
-            _thread_inflight.discard(cache_key)
-
-    for mapped in waha_mapped:
-        if before and (mapped.get("created_at") or "") >= before:
-            continue
-        k = _dedup_key(mapped)
-        if k not in seen_keys:
-            seen_keys.add(k)
-            merged.append(mapped)
-
-    # Sort oldest-first, cap at limit.
-    merged.sort(key=lambda m: m.get("created_at") or "")
-    merged = merged[:actual_limit]
-    return [MessageOut(**r) for r in merged]
+    items = [_message_dto_from_row(r) for r in rows]
+    next_before = items[-1].created_at if len(items) == limit else None
+    return MessagesPage(items=items, next_before=next_before)
 
 
 @router.post(
@@ -1256,6 +1086,71 @@ async def toggle_auto_reply(
         connection_id=connection_id,
         auto_reply_enabled=record.auto_reply_enabled,
     )
+
+
+# ── Realtime stream (SSE) ────────────────────────────────────────────────────
+# `create_sse_router` (noctusai_lib.realtime) captures its `bus` argument
+# ONCE at router-construction time (this module's import) — it is not a
+# per-request `Depends` resolution, so `settings.redis_url` is read directly
+# from the singleton here rather than through the `Depends(get_settings)`
+# seam every other endpoint in this file uses (mirrors the seed's own
+# docstring recipe: `bus = get_realtime_bus(settings.redis_url)` at module
+# scope). `_WhatsAppBusProxy` exists ONLY so tests can still swap the target
+# bus after this router (and the sub-router `create_sse_router` builds
+# around it) already exist — a genuinely-live bus cannot be exercised
+# end-to-end through `TestClient` at all (its `subscribe()` never
+# terminates; see `noctusai_lib.realtime`'s own test suite's `_FiniteBus`
+# for the same constraint). Production never reassigns `_whatsapp_bus`
+# after startup, so the indirection is free there.
+_whatsapp_bus = get_whatsapp_bus(settings.redis_url)
+
+
+class _WhatsAppBusProxy:
+    """Delegates to whatever module-level ``_whatsapp_bus`` CURRENTLY points
+    at, read at call time rather than captured once — see the section note
+    above for why this indirection exists."""
+
+    async def publish(self, scope: str, event: str, payload: dict) -> str | None:
+        return await _whatsapp_bus.publish(scope, event, payload)
+
+    def subscribe(self, scope: str, *, last_event_id: str | None = None):
+        return _whatsapp_bus.subscribe(scope, last_event_id=last_event_id)
+
+
+async def _resolve_stream_auth(
+    request: Request,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+) -> UUID:
+    """Auth dependency for the SSE stream: resolves the caller AND verifies
+    ownership of the ``connection_id`` path param via the SAME
+    ``_require_record`` scoping every other live op uses — a subscriber must
+    never be able to attach to a scope they cannot read. Returns the
+    verified ``connection_id`` (handed to ``_stream_scope`` as the resolved
+    ``auth_ctx``)."""
+    connection_id = UUID(request.path_params["connection_id"])
+    user, _token, raw_org = auth
+    _require_record(
+        store,
+        connection_id=connection_id,
+        org_id=coerce_org_uuid(raw_org),
+        user_id=_coerce_user_uuid(user),
+    )
+    return connection_id
+
+
+def _stream_scope(request: Request, connection_id: UUID) -> str:
+    return whatsapp_scope(connection_id)
+
+
+router.include_router(
+    create_sse_router(
+        _WhatsAppBusProxy(),
+        scope_resolver=_stream_scope,
+        auth_dependency=_resolve_stream_auth,
+        path="/{connection_id}/stream",
+    )
+)
 
 
 __all__ = ["router"]
