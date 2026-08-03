@@ -145,11 +145,41 @@ surface as typed `WhatsAppPayloadError`; non-message webhook events as
 
 ---
 
+## 4a. 🔴 Session config is a REPLACE, and WAHA's keys are camelCase
+
+Two traps that have each cost real production time. Both are structural, so the
+cure is structural: **no caller hand-assembles a session config** — every
+config-writing path routes through `client._session_config()`.
+
+- **`PUT /api/sessions/{name}` is a full config REPLACE, not a merge.** Any key
+  you omit is DROPPED. A partial `set_webhook` PUT once clobbered the
+  `noweb.store` block that `start_session` had set, so the engine kept no
+  history and `GET /api/{session}/chats` began 400-ing (2026-06-23, empty-inbox
+  incident).
+- **WAHA's store key is camelCase `fullSync`, not `full_sync`.** The client sent
+  the snake_case spelling for weeks; WAHA silently ignored the unknown key and
+  applied the default (`false`), so NOWEB **never backfilled history** while the
+  code looked correct and the tests were green — two of them asserted the buggy
+  key, making the false-green self-reinforcing. Fixed 2026-08-03.
+  - Detection that actually works: assert the **emitted wire key**
+    (`"fullSync" in payload["config"]["noweb"]["store"]`) *and* the absence of
+    the wrong one. A test that reads back your own dict proves nothing about
+    what the vendor accepted.
+  - Verification signal: after a fresh pairing, `GET /api/sessions/{name}` must
+    report `"fullSync": true`. If it reports `false`, the value was dropped.
+  - Generalize: for any vendor config you PUT and never read back, the vendor's
+    own echo is the only proof it landed.
+- `fullSync` backfills history **at authentication**, so only a FRESH pairing
+  (`logout` → `start` → scan) populates existing chats. Restarting an
+  already-paired session will not re-pull history.
+
 ## 5. Gaps / out-of-scope (with destinations)
 
 | Item | Status | Destination |
 |---|---|---|
 | Twilio backend | not shipped | Provider-neutral surface is ready; add `integrations/whatsapp/twilio_client.py` + factory branch when a consumer needs it |
 | Outbound media send (image/doc) | partial — `send_text` + `download_media` ship; rich outbound media is not in the Protocol | Additive Protocol extension; file when a consumer needs it |
+| Read-state INBOUND (phone → app) | **not expressible with this transport** | `message.ack` carries acks only for messages WE sent; `chats/overview`'s `ChatSummary` (`{id,name,picture,lastMessage,_chat}`) has no top-level `unreadCount`. `sendSeen` therefore syncs read state OUT to the device, but reading a chat ON the phone does not clear the app's badge. Probe the untyped `_chat.unreadCount` once a session is `WORKING` if this needs revisiting. |
+| Realtime delivery to the browser | shipped, but **not in this package** | `noctusai_lib.realtime` (SSE + Redis Streams) → `CONTEXT/PATTERNS/common/realtime-sse-bus.md` |
 | Chatbot orchestration (buffer/worker/LLM dispatch) | **separate by design** | `noctusai_lib.domain.chatbot` + recipe `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md` |
 | FB Pages / Instagram Graph | **separate package** | `noctusai_lib.integrations.meta` — `CONTEXT/INTEGRATIONS/meta.md` |

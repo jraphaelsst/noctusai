@@ -122,12 +122,17 @@ def _register_media_wiring() -> ModuleRegistration:
         router as imoveis_router,
     )
     from app.services.meta import scheduler as meta_insights_scheduler
+    from app.services import whatsapp_backfill
 
     # Register the daily IG-snapshot job on the seed scheduler now (import
     # time) so it lands before `start_scheduler()` fires in app/lifespan.py
     # — mirrors `app.modules.email_marketing.register()`'s
     # `scheduler.configure()` call.
     meta_insights_scheduler.configure()
+    # Same pattern for the WhatsApp inbox history backfill (W4.6,
+    # whatsapp-realtime-inbox) — must be registered before
+    # `start_scheduler()` fires or the job never runs.
+    whatsapp_backfill.configure()
 
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory

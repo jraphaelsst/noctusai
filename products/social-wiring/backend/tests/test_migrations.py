@@ -10,6 +10,8 @@ Coverage:
 - 001_social-wiring.sql: api_tokens table structure + RLS shape
 - 011_rls_current_org_id.sql: current_org_id() fix shape (no jwt() pattern)
 - 042_meta_webhook_events.sql: Meta lead-ads webhook inbox structure + RLS
+- 044_whatsapp_inbox_realtime_schema.sql: whatsapp_chats table + indexes +
+  RLS shape, conversation_messages ack/chat_id columns + thread index
 """
 from __future__ import annotations
 
@@ -28,6 +30,12 @@ MIGRATION_011_PATH = (
 
 MIGRATION_042_PATH = (
     Path(__file__).resolve().parents[1] / "migrations" / "042_meta_webhook_events.sql"
+)
+
+MIGRATION_044_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "044_whatsapp_inbox_realtime_schema.sql"
 )
 
 
@@ -334,3 +342,147 @@ def test_042_carries_the_migration_file_only_banner(sql_042: str) -> None:
     assert "MIGRATION FILE ONLY" in sql_042, (
         "missing the 🔴 MIGRATION FILE ONLY banner (see migration 033)"
     )
+# 044_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
+# ack/chat_id (whatsapp-realtime-inbox, Slice 3, 2026-08-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def sql_044() -> str:
+    assert MIGRATION_044_PATH.is_file(), f"Migration 044 missing at {MIGRATION_044_PATH}"
+    return MIGRATION_044_PATH.read_text(encoding="utf-8")
+
+
+def test_044_whatsapp_chats_table_created(sql_044: str) -> None:
+    """The CREATE TABLE block must exist verbatim (idempotent, schema-qualified)."""
+    assert re.search(
+        r"CREATE TABLE IF NOT EXISTS\s+social_wiring\.whatsapp_chats\s*\(",
+        sql_044,
+    ), "Missing CREATE TABLE IF NOT EXISTS social_wiring.whatsapp_chats"
+
+
+def test_044_whatsapp_chats_primary_key(sql_044: str) -> None:
+    """PK is (connection_id, chat_id) — the compound identity of one chat."""
+    assert re.search(
+        r"PRIMARY KEY\s*\(connection_id,\s*chat_id\)",
+        sql_044,
+    ), "whatsapp_chats must have PRIMARY KEY (connection_id, chat_id)"
+
+
+def test_044_whatsapp_chats_connection_id_has_no_fk(sql_044: str) -> None:
+    """connection_id carries NO REFERENCES — mirrors 014's no-FK precedent.
+
+    Connections can be deleted; orphaned chat history is an accepted
+    trade-off (see 014_whatsapp_chat_per_connection.sql and this file's
+    header). A future edit adding a FK here would silently reintroduce the
+    coupling 014 deliberately avoided.
+    """
+    sql_no_comments = _strip_sql_comments(sql_044)
+    assert "REFERENCES social_wiring.whatsapp_connections" not in sql_no_comments, (
+        "whatsapp_chats.connection_id must NOT carry a FOREIGN KEY to "
+        "whatsapp_connections — see 014_whatsapp_chat_per_connection.sql precedent."
+    )
+
+
+def test_044_chat_list_index_shape(sql_044: str) -> None:
+    """THE chat-list query index: (connection_id, archived, last_message_at DESC)."""
+    assert re.search(
+        r"CREATE INDEX IF NOT EXISTS idx_sw_whatsapp_chats_list\s+"
+        r"ON social_wiring\.whatsapp_chats\s*"
+        r"\(connection_id,\s*archived,\s*last_message_at DESC\)",
+        sql_044,
+    ), "Missing/wrong-shaped idx_sw_whatsapp_chats_list — must be (connection_id, archived, last_message_at DESC)"
+
+
+def test_044_whatsapp_chats_rls_enabled(sql_044: str) -> None:
+    assert re.search(
+        r"ALTER TABLE social_wiring\.whatsapp_chats ENABLE ROW LEVEL SECURITY",
+        sql_044,
+    ), "RLS not enabled for social_wiring.whatsapp_chats"
+
+
+def test_044_whatsapp_chats_has_two_policies(sql_044: str) -> None:
+    """Exactly 2 policies: authenticated SELECT (org-scoped) + service_role ALL."""
+    policy_pattern = re.compile(
+        r'CREATE\s+POLICY\s+"(whatsapp_chats_[a-z_]+)"\s+ON\s+social_wiring\.whatsapp_chats',
+    )
+    policy_names = policy_pattern.findall(sql_044)
+    assert set(policy_names) == {
+        "whatsapp_chats_select_own_org",
+        "whatsapp_chats_service_role",
+    }, f"Policy-name set mismatch on whatsapp_chats: {set(policy_names)!r}"
+
+
+def test_044_select_policy_does_not_filter_beyond_org(sql_044: str) -> None:
+    """The authenticated SELECT policy must only scope by org_id.
+
+    Per KB § PATTERNS/frontend/status-pagina-dev-visibility.md: an RLS
+    read-policy that filters a category (e.g. archived / unread) makes every
+    downstream FE branch keyed on that category dead. That filtering belongs
+    in the FE, not RLS.
+    """
+    match = re.search(
+        r'CREATE POLICY "whatsapp_chats_select_own_org" ON social_wiring\.whatsapp_chats\s+'
+        r"FOR SELECT TO authenticated\s+"
+        r"USING \(org_id = current_org_id\(\)\);",
+        sql_044,
+    )
+    assert match, (
+        "whatsapp_chats_select_own_org must be USING (org_id = current_org_id()) "
+        "with no additional predicate (no archived/unread/status filter)."
+    )
+
+
+def test_044_conversation_messages_ack_columns_added(sql_044: str) -> None:
+    for stmt in (
+        r"ALTER TABLE social_wiring\.conversation_messages\s+"
+        r"ADD COLUMN IF NOT EXISTS ack SMALLINT;",
+        r"ALTER TABLE social_wiring\.conversation_messages\s+"
+        r"ADD COLUMN IF NOT EXISTS acked_at TIMESTAMPTZ;",
+        r"ALTER TABLE social_wiring\.conversation_messages\s+"
+        r"ADD COLUMN IF NOT EXISTS chat_id TEXT;",
+    ):
+        assert re.search(stmt, sql_044), f"Missing idempotent ALTER: {stmt!r}"
+
+
+def test_044_conversation_messages_not_backfilled(sql_044: str) -> None:
+    """No UPDATE statement may backfill chat_id on existing rows (by design)."""
+    sql_no_comments = _strip_sql_comments(sql_044)
+    assert not re.search(
+        r"UPDATE\s+social_wiring\.conversation_messages\s+SET\s+chat_id",
+        sql_no_comments,
+        re.IGNORECASE,
+    ), "conversation_messages.chat_id must NOT be backfilled (mirrors 014's connection_id precedent)"
+
+
+def test_044_thread_index_shape(sql_044: str) -> None:
+    """THE thread query index: (connection_id, chat_id, created_at DESC)."""
+    assert re.search(
+        r"CREATE INDEX IF NOT EXISTS idx_sw_conv_msgs_connection_chat_id\s+"
+        r"ON social_wiring\.conversation_messages\s*"
+        r"\(connection_id,\s*chat_id,\s*created_at DESC\)",
+        sql_044,
+    ), "Missing/wrong-shaped idx_sw_conv_msgs_connection_chat_id"
+
+
+def test_044_all_statements_are_idempotent(sql_044: str) -> None:
+    """Every DDL verb in this file must carry an idempotent guard.
+
+    CREATE TABLE / INDEX -> IF NOT EXISTS; ALTER TABLE ADD COLUMN -> IF NOT
+    EXISTS; DROP POLICY / DROP TRIGGER -> IF EXISTS; CREATE FUNCTION ->
+    OR REPLACE. A bare CREATE TABLE/INDEX (no IF NOT EXISTS) or a bare DROP
+    POLICY/TRIGGER (no IF EXISTS) would make a re-run of this file error out.
+    """
+    sql_no_comments = _strip_sql_comments(sql_044)
+    assert not re.search(
+        r"CREATE TABLE(?! IF NOT EXISTS)\s+social_wiring", sql_no_comments
+    ), "found a non-idempotent bare CREATE TABLE"
+    assert not re.search(
+        r"CREATE INDEX(?! IF NOT EXISTS)\s+\w", sql_no_comments
+    ), "found a non-idempotent bare CREATE INDEX"
+    assert not re.search(
+        r"DROP POLICY(?! IF EXISTS)\s+", sql_no_comments
+    ), "found a non-idempotent bare DROP POLICY"
+    assert not re.search(
+        r"DROP TRIGGER(?! IF EXISTS)\s+", sql_no_comments
+    ), "found a non-idempotent bare DROP TRIGGER"

@@ -13,4 +13,6 @@ export type {
   ChatMessage,
   ChatSendResult,
   ChatAutoReplyResult,
+  ChatReadStateResult,
+  ChatLoadMoreResult,
 } from "./ChatWindow";

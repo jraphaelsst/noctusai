@@ -1,22 +1,55 @@
 """WhatsApp inbound webhook — WAHA forwards messages here.
 
-This router handles incoming WhatsApp messages from WAHA. It validates
-the sender against the authorized whitelist, then routes the message
-through the :class:`WhatsAppIntakeService` conversation state machine.
+This router handles incoming WhatsApp events from WAHA. It validates the
+sender against the authorized whitelist, then routes the message through
+the :class:`WhatsAppIntakeService` conversation state machine. Postgres
+(``social_wiring.conversation_messages`` + ``whatsapp_chats``, migration
+040) is the read source of truth for the chat inbox — every event this
+router handles that changes what a client should see is persisted BEFORE
+it is published on the realtime bus.
 
-Only text messages are processed; media messages are acknowledged but
-not acted on (future: image/video attachments could be an alternate
-upload path).
+Events handled (WAHA webhook subscription list, wired at connection-create
+time by ``whatsapp_connections_router.py``):
+
+  ``message`` / ``message.any``
+      Inbound text (+ media, resolved to text). Persisted, folded into
+      ``whatsapp_chats`` via ``WhatsAppChatStore.record_message``, and
+      published as ``message.new`` + ``chat.upsert``. WAHA fires both
+      ``message`` and ``message.any`` for the same inbound — the Redis
+      SETNX pre-filter plus the ``UNIQUE(provider_message_id)`` constraint
+      guard the race; keep both.
+  ``message.ack``
+      Delivery/read receipt for a message we sent or received. Applied to
+      the matching row by ``provider_message_id`` (globally unique — no
+      org/connection context needed) and published as ``message.ack``. An
+      ack for a message we haven't recorded yet is a no-op, never an error.
+  ``message.reaction``
+      Acknowledged (200) but not persisted — no schema column exists yet
+      for reactions. See the ``NOC-REMEDIATE[whatsapp-reaction-persistence]``
+      marker at the handling site.
+  ``session.status``
+      QR/login state. Persisted to Redis (no durable column exists on
+      ``whatsapp_connections`` for this — see ``_handle_session_status``)
+      and published as ``session.status`` so the connection UI can react
+      live instead of polling ``GET /connections/{id}/status`` (a ~13s
+      live WAHA round-trip).
+
+Only text messages are processed for the chatbot/intake flow; media
+messages are resolved to text via ``media_service`` when an OpenAI key is
+configured, else acknowledged but not acted on.
 
 Auth note: these endpoints do NOT use the standard JWT auth because
-WAHA's webhook calls carry no Authorization header. Sender validation
-is handled by the phone number whitelist in settings.
+WAHA's webhook calls carry no Authorization header. Signature verification
+is via ``noctusai_lib.security.webhook_signatures.webhook_endpoint`` (HMAC
+``sha256_hex`` scheme, ``X-Webhook-Hmac-SHA256`` header — WAHA's shape);
+sender validation is a SEPARATE, later gate: the phone number whitelist in
+settings / the per-connection ``authorized_numbers``.
 
 Two receiver routes are provided:
 
   POST /api/whatsapp/webhook
       Legacy global route (back-compat). Uses the product-level HMAC
-      secret from settings when set.
+      secret from settings when set; bypasses (with a WARNING) when unset.
 
   POST /api/whatsapp/webhook/{token}
       Per-connection token-scoped route. The token is an opaque secret
@@ -30,9 +63,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import hmac
-import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -40,26 +72,40 @@ import redis
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from noctusai_lib.domain.chatbot import QueuedConversationMessage
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
 
 from app.config import settings
 from app.dependencies import get_admin_client
+from app.rate_limit import limiter
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
-from app.services.credential_vault import CredentialStore, EncryptionNotConfigured
+from app.services.credential_vault import EncryptionNotConfigured
 from app.services.account_credentials import build_youtube_service_for_org
 from noctusai_lib.integrations.vista import (
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
 )
-from app.services.credential_vault import EncryptionNotConfigured
 from app.services.media_service import ResolvedMedia, make_media_service
-from app.services.message_store import DuplicateMessage, MessageStore
+from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
 from app.modules.email_marketing.services.contact_service import ContactService
 from app.services.waha_response_registry import record_waha_sample
+from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_chatbot_service import WhatsAppChatbotService
 from app.services.whatsapp_identity import resolve_identity
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
 from app.services.whatsapp_connection_store import build_whatsapp_connection_store
+from app.services.whatsapp_realtime import (
+    EVENT_CHAT_UPSERT,
+    EVENT_MESSAGE_ACK,
+    EVENT_MESSAGE_NEW,
+    EVENT_SESSION_STATUS,
+    get_whatsapp_bus,
+    publish_whatsapp_event,
+)
 from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
 logger = logging.getLogger(__name__)
@@ -264,6 +310,106 @@ def _resolve_default_org(admin_supabase) -> UUID | None:
     return None
 
 
+async def _handle_session_status(envelope: WAHAMessagePayload, *, connection) -> None:
+    """Persist + publish a ``session.status`` event.
+
+    No durable column exists on ``whatsapp_connections`` for session state
+    — adding one is out of this slice's territory (that table's router +
+    schema belong to a peer branch). Redis is the persistence layer
+    instead: a ``whatsapp:session_status:{connection_id|session}`` key
+    with a 24h TTL, keyed by connection when we have one (token route)
+    else by WAHA session name (legacy route). This is what lets a future
+    connection-status read replace the current live-WAHA poll
+    (``GET /connections/{id}/status``, a ~13s round-trip) — out of THIS
+    router's scope, but the durable half of that fix. The realtime publish
+    below is the half that's in scope: it lets a subscribed client react
+    immediately instead of polling at all.
+    """
+    payload = envelope.payload
+    if not isinstance(payload, WAHASessionStatusPayload):
+        return
+    status_value = payload.status or ""
+    logger.info("WAHA session %s status: %s", envelope.session, status_value)
+
+    key = f"whatsapp:session_status:{connection.id if connection is not None else envelope.session}"
+    try:
+        _status_redis = redis.from_url(settings.redis_url, decode_responses=True)
+        _status_redis.set(key, status_value, ex=24 * 3600)
+    except Exception:
+        logger.exception("failed to persist WAHA session status (key=%s)", key)
+
+    if connection is not None:
+        bus = get_whatsapp_bus(settings.redis_url)
+        await publish_whatsapp_event(
+            bus,
+            connection_id=connection.id,
+            event=EVENT_SESSION_STATUS,
+            payload={"status": status_value, "session": envelope.session},
+        )
+
+
+async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection) -> None:
+    """Apply a ``message.ack`` delivery/read receipt and publish it.
+
+    WAHA reuses the message shape for acks (``id`` / ``ack`` / ``from`` /
+    ...), so ``envelope.payload`` already resolves to :class:`WAHAMessage`
+    — no dedicated ack schema needed.
+
+    ``org_id`` is required to construct a :class:`MessageStore` but is NOT
+    used to scope the update (see ``MessageStore.apply_ack``'s docstring —
+    ``provider_message_id`` is globally unique): the connection's org when
+    known, else the dev-fallback org, exactly as ``_build_intake_service``
+    falls back for the legacy route.
+    """
+    payload = envelope.payload
+    if not isinstance(payload, WAHAMessage):
+        return
+    provider_message_id = (payload.id or "").strip()
+    if not provider_message_id:
+        return
+    try:
+        ack = int(payload.ack) if payload.ack is not None else None
+    except (TypeError, ValueError):
+        ack = None
+    if ack is None:
+        logger.debug("WhatsApp ack event with unparseable ack=%r — dropped", payload.ack)
+        return
+
+    org_id = connection.org_id if connection is not None else UUID(settings.local_dev_org_id)
+    message_store = MessageStore(admin_supabase=get_admin_client(), org_id=org_id)
+    acked_at = datetime.now(timezone.utc).isoformat()
+    updated = message_store.apply_ack(
+        provider_message_id=provider_message_id, ack=ack, acked_at=acked_at
+    )
+    if updated is None:
+        # Ack arrived before our insert (or for a message this store never
+        # recorded) — a no-op, never an error. WAHA will not retry a 200.
+        logger.info(
+            "WhatsApp ack for unknown message (provider_message_id=%s) — no-op",
+            provider_message_id,
+        )
+        return
+
+    # Scope the publish by the message's OWN connection_id (read back off
+    # the row), NOT the webhook route's connection context — an ack can
+    # legitimately arrive on the legacy route for a message a token-route
+    # connection recorded, and the row is the source of truth for which
+    # line owns it.
+    if updated.connection_id is not None:
+        bus = get_whatsapp_bus(settings.redis_url)
+        await publish_whatsapp_event(
+            bus,
+            connection_id=updated.connection_id,
+            event=EVENT_MESSAGE_ACK,
+            payload={
+                "chat_id": updated.chat_id,
+                "provider_message_id": updated.provider_message_id,
+                "ack": updated.ack,
+                "acked_at": updated.acked_at,
+            },
+        )
+
+
 async def _process_waha_body(
     body: dict,
     *,
@@ -310,17 +456,28 @@ async def _process_waha_body(
         logger.debug("WhatsApp webhook ignored: unknown WAHA envelope")
         return Response(status_code=status.HTTP_200_OK)
 
-    # WAHA sends various event types. We process inbound messages and log
-    # session.status so deploy testing can diagnose QR/login state.
+    # WAHA sends several event types; each is handled explicitly so an
+    # unrecognized future event falls through to the safe "ignore" branch
+    # below rather than silently misrouting into one of these.
     event = envelope.event
+
     if event == "session.status":
-        payload = envelope.payload
-        if isinstance(payload, WAHASessionStatusPayload):
-            logger.info(
-                "WAHA session %s status: %s",
-                envelope.session,
-                payload.status,
-            )
+        await _handle_session_status(envelope, connection=connection)
+        return Response(status_code=status.HTTP_200_OK)
+
+    if event == "message.ack":
+        await _handle_message_ack(envelope, connection=connection)
+        return Response(status_code=status.HTTP_200_OK)
+
+    if event == "message.reaction":
+        # NOC-REMEDIATE[whatsapp-reaction-persistence]: no schema column
+        # exists for reactions yet — migration 040 added ack/acked_at/chat_id
+        # but not a reactions surface. Ack-and-drop until a product need for
+        # reaction data emerges. — 2026-08-03
+        logger.debug(
+            "WhatsApp reaction event received (session=%s) — acknowledged, not persisted",
+            envelope.session,
+        )
         return Response(status_code=status.HTTP_200_OK)
 
     if event not in {"message", "message.any"}:
@@ -419,8 +576,10 @@ async def _process_waha_body(
     # exception is a 5-minute SETNX TTL expiring before a delayed
     # WAHA retry, in which case the DB catch fires.
     message_store = MessageStore(admin_supabase=get_admin_client(), org_id=intake._org_id)
+    chat_id = payload.chat_id or sender
+    stored_message: StoredMessage | None = None
     try:
-        message_store.record(
+        stored_message = message_store.record(
             session_id=intake.canonical_session_id(sender),
             raw_sender=sender,
             direction="inbound",
@@ -429,6 +588,7 @@ async def _process_waha_body(
             authorized=True,
             structured_payload=resolved_media.structured_payload if resolved_media else None,
             connection_id=connection.id if connection is not None else None,
+            chat_id=chat_id,
         )
     except DuplicateMessage:
         logger.info(
@@ -440,7 +600,58 @@ async def _process_waha_body(
     except Exception:
         # A persistence error must NOT block the bot from replying — log
         # loudly and proceed. The Redis memory list still carries recall.
+        # `stored_message` stays None: there is nothing durable to fold
+        # into the chats table or announce on the bus below (never publish
+        # a write that didn't happen).
         logger.exception("conversation_messages insert failed; processing anyway")
+
+    # ── Maintain the chats table + publish realtime events ──────────────────
+    # Gated on `connection is not None`: WhatsAppChatStore rows are keyed by
+    # (connection_id, chat_id) and connection_id is NOT NULL on that table
+    # (migration 040) — the legacy global route has no connection to key by,
+    # the same limitation the per-connection inbox already has for message
+    # storage. Runs AFTER the DB write above — never before, a client must
+    # never be told about a message that isn't durable yet — and only when
+    # the write actually happened (`stored_message is not None`).
+    if stored_message is not None and connection is not None:
+        try:
+            chat_summary = WhatsAppChatStore(
+                admin_supabase=get_admin_client(), org_id=connection.org_id
+            ).record_message(
+                connection_id=connection.id,
+                chat_id=chat_id,
+                direction="inbound",
+                body=message_body,
+                created_at=stored_message.created_at or datetime.now(timezone.utc).isoformat(),
+                # `pushName` is the only identity the inbound payload itself
+                # carries; the store only ever FILLS a title in, never
+                # overwrites a resolved one with a worse one (see its
+                # docstring) — safe to pass on every message.
+                title=getattr(payload, "pushName", None) or None,
+                has_media=bool(resolved_media) or payload.has_media,
+            )
+        except Exception:
+            logger.exception(
+                "whatsapp_chats upsert failed for connection=%s chat=%s — inbox row "
+                "may be stale; the message itself is already durable",
+                connection.id, chat_id,
+            )
+            chat_summary = None
+
+        bus = get_whatsapp_bus(settings.redis_url)
+        await publish_whatsapp_event(
+            bus,
+            connection_id=connection.id,
+            event=EVENT_MESSAGE_NEW,
+            payload={"chat_id": chat_id, "message": stored_message.as_message_dto()},
+        )
+        if chat_summary is not None:
+            await publish_whatsapp_event(
+                bus,
+                connection_id=connection.id,
+                event=EVENT_CHAT_UPSERT,
+                payload=chat_summary.as_dict(),
+            )
 
     # ── Best-effort contact auto-registration ────────────────────────────────
     # For every inbound message, resolve the sender's identity and upsert
@@ -452,18 +663,42 @@ async def _process_waha_body(
     # the WAHA calls happen inside the backgrounded coroutine.
     if connection is not None:
         try:
-            _cred_store = CredentialStore(admin_client=get_admin_client())
-            _decrypted_key = _cred_store.decrypt(connection.encrypted_api_key)
-            _fire_and_forget(
-                _register_contact_bg(
-                    base_url=connection.base_url,
-                    api_key=_decrypted_key,
-                    session=connection.session_name,
-                    sender=sender,
-                    push_name=payload.pushName,
-                    org_id=str(intake._org_id),
+            # drift-found (pre-existing, fixed on contact — 2 stacked bugs):
+            # (1) this block used to read `connection.encrypted_api_key` —
+            # a field WhatsAppConnectionRecord never carries (only the
+            # store's raw row does). (2) it read `payload.pushName`
+            # directly — Pydantic v2's `extra="allow"` does NOT synthesize
+            # a `None` for an absent extra field; a payload with no
+            # `pushName` key raises AttributeError on access, same as (1).
+            # Both raised on effectively every real inbound, were swallowed
+            # by this same `except Exception`, and logged a misleading
+            # "scheduling failed" warning — contact auto-registration has
+            # therefore never actually fired via the per-connection route.
+            # Fixed by (1) re-resolving the connection through the store
+            # with `decrypt=True` (the sanctioned way to get a live
+            # api_key) and (2) `getattr(..., None)` for the optional field.
+            _store = get_token_webhook_store()
+            _decrypted = (
+                _store.get_connection(
+                    connection_id=connection.id,
+                    org_id=connection.org_id,
+                    user_id=connection.user_id,
+                    decrypt=True,
                 )
+                if _store is not None
+                else None
             )
+            if _decrypted is not None and _decrypted.api_key:
+                _fire_and_forget(
+                    _register_contact_bg(
+                        base_url=connection.base_url,
+                        api_key=_decrypted.api_key,
+                        session=connection.session_name,
+                        sender=sender,
+                        push_name=getattr(payload, "pushName", None),
+                        org_id=str(intake._org_id),
+                    )
+                )
         except Exception:
             logger.warning(
                 "WhatsApp contact auto-register scheduling failed for sender=%s — continuing",
@@ -589,36 +824,41 @@ async def _process_waha_body(
     return Response(status_code=status.HTTP_200_OK)
 
 
-def _verify_hmac(raw_body: bytes, request: Request, hmac_secret: str) -> bool:
-    """Return True if the HMAC signature on the request is valid.
+async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
+    """Per-request lookup of the WAHA webhook HMAC secret.
 
-    Factored out so both the legacy and token-scoped routes reuse the
-    same verification logic without copy-paste."""
-    signature = request.headers.get("X-Webhook-Hmac-SHA256", "")
-    expected = hmac.new(
-        hmac_secret.encode("utf-8"),
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(signature, expected)
+    Reads ``settings.waha_webhook_hmac_secret`` at REQUEST time (not
+    import time) so test-time settings overrides are honored — the
+    import-time-capture trap ``KB § PATTERNS/security/webhook-signatures.md``
+    warns about. ``or None`` collapses an empty string to the unset path
+    so ``bypass_when_unset=True`` engages below, preserving this router's
+    pre-existing dev behavior: no secret configured → accept without
+    verification, loudly logged.
+    """
+    return ResolvedSecret(secret=settings.waha_webhook_hmac_secret or None)
 
 
 @router.post("/webhook")
-async def whatsapp_webhook(request: Request) -> Response:
+@limiter.limit(settings.webhook_rate_limit)
+async def whatsapp_webhook(
+    request: Request,
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_waha_secret,
+        scheme="sha256_hex",
+        bypass_when_unset=True,
+        log_prefix="whatsapp-webhook",
+    ),
+) -> Response:
     """WAHA webhook endpoint (legacy global route).
 
     Always returns 200 to prevent WAHA from retrying. Processing
     failures are logged but never surfaced as HTTP errors — WAHA
-    doesn't understand them and would just retry indefinitely.
+    doesn't understand them and would just retry indefinitely. The one
+    path that DOES return non-200 is a signature mismatch (401, raised
+    by ``webhook_endpoint`` before this body ever runs).
     """
-    raw_body = await request.body()
-    if settings.waha_webhook_hmac_secret:
-        if not _verify_hmac(raw_body, request, settings.waha_webhook_hmac_secret):
-            logger.warning("WhatsApp webhook rejected: invalid HMAC signature")
-            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
-
     try:
-        body = json.loads(raw_body.decode("utf-8"))
+        body = json.loads(verified.body.decode("utf-8")) if verified.body else {}
     except Exception:
         return Response(status_code=status.HTTP_200_OK)
 
@@ -643,10 +883,17 @@ def get_token_webhook_store():
 
 
 @router.post("/webhook/{token}")
+@limiter.limit(settings.webhook_rate_limit)
 async def whatsapp_webhook_by_token(
     token: str,
     request: Request,
     store=Depends(get_token_webhook_store),
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_waha_secret,
+        scheme="sha256_hex",
+        bypass_when_unset=True,
+        log_prefix="whatsapp-webhook-token",
+    ),
 ) -> Response:
     """Per-connection token-scoped WAHA webhook endpoint.
 
@@ -656,7 +903,10 @@ async def whatsapp_webhook_by_token(
     to the legacy ``/webhook`` route.
 
     HMAC check uses the same global ``waha_webhook_hmac_secret`` when
-    configured. No JWT — WAHA calls carry no Authorization header.
+    configured (``store`` and ``verified`` are independent ``Depends`` —
+    both resolve regardless of order; a signature mismatch still 401s
+    before this body runs). No JWT — WAHA calls carry no Authorization
+    header.
     """
     # Store is built by the get_token_webhook_store DI seam (service-role admin
     # client; no JWT — this is a public webhook endpoint). It returns None on a
@@ -680,17 +930,8 @@ async def whatsapp_webhook_by_token(
         connection.session_name,
     )
 
-    raw_body = await request.body()
-    if settings.waha_webhook_hmac_secret:
-        if not _verify_hmac(raw_body, request, settings.waha_webhook_hmac_secret):
-            logger.warning(
-                "WhatsApp token-webhook rejected: invalid HMAC (connection=%s)",
-                connection.id,
-            )
-            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
-
     try:
-        body = json.loads(raw_body.decode("utf-8"))
+        body = json.loads(verified.body.decode("utf-8")) if verified.body else {}
     except Exception:
         return Response(status_code=status.HTTP_200_OK)
 

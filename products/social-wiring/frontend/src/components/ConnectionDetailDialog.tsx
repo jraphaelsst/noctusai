@@ -54,6 +54,7 @@ import {
   useWhatsAppConnectionMutations,
   useWhatsAppConnectionStatus,
   useWhatsAppConnectionQr,
+  useRecoverConnection,
   useWhatsAppConnectionActions,
   useRevealApiKey,
   useConnectionChats,
@@ -563,12 +564,14 @@ export function ConnectionSettingsPanel({
     setEditApiKey("");
   };
 
+  const recover = useRecoverConnection();
+
   const paired = !!status?.paired;
 
   const [startFired, setStartFired] = useState(false);
-  if (autoStart && !startFired && !restart.isPending) {
+  if (autoStart && !startFired && !recover.isPending) {
     setStartFired(true);
-    restart.mutate(line.id);
+    recover.mutate(line.id);
   }
 
   const autoRecoveryFiredRef = useRef(false);
@@ -580,16 +583,21 @@ export function ConnectionSettingsPanel({
     if (
       isFailed &&
       !autoRecoveryFiredRef.current &&
+      !recover.isPending &&
       !restart.isPending &&
       !start.isPending
     ) {
       autoRecoveryFiredRef.current = true;
-      restart.mutate(line.id);
+      // Ladder, not a bare restart. A FAILED session still holding dead
+      // credentials hangs in STARTING on restart and gets force-stopped by
+      // WAHA's watchdog ~5 min later, forever. recover() escalates through to
+      // logout+start, which is what actually yields a QR.
+      recover.mutate(line.id);
     }
     if (!isFailed && liveStatus != null) {
       autoRecoveryFiredRef.current = false;
     }
-  }, [liveStatus, paired, restart.isPending, start.isPending]);
+  }, [liveStatus, paired, recover.isPending, restart.isPending, start.isPending]);
 
   const run = (mut: typeof start, ok: string) =>
     mut.mutate(line.id, {
@@ -653,11 +661,11 @@ export function ConnectionSettingsPanel({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => run(restart, "Nova sessão gerada — escaneie o QR")}
-              disabled={restart.isPending}
+              onClick={() => run(recover, "Recuperando sessão — aguarde o QR")}
+              disabled={recover.isPending}
               data-testid="btn-start"
             >
-              {restart.isPending ? (
+              {recover.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCw className="mr-2 h-4 w-4" />

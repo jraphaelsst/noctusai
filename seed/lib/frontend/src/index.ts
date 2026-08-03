@@ -108,3 +108,15 @@ export type {
   ProviderCardConfig,
   EditableField,
 } from './design-system/integrations';
+
+// ─── Realtime (SSE) ──────────────────────────────────────────────────────────
+// The browser half of `noctusai_lib.realtime`. Replaces refetchInterval polling
+// with a single resumable EventSource per scope that PATCHES the query cache.
+// → KB § PATTERNS/common/realtime-sse-bus.md
+export { useRealtimeStream, REALTIME_EVENT_NAMES } from './realtime';
+export type {
+  RealtimeMessage,
+  RealtimeStatus,
+  RealtimeEventName,
+  UseRealtimeStreamOptions,
+} from './realtime';

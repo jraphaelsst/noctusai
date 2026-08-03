@@ -51,6 +51,33 @@ class StoredMessage:
     provider_message_id: str | None
     authorized: bool
     connection_id: UUID | None = None
+    # 044_whatsapp_inbox_realtime_schema — realtime-inbox fields. ``chat_id``
+    # mirrors ``whatsapp_chats.chat_id``; ``ack``/``acked_at`` are NULL until
+    # a ``message.ack`` webhook lands (see ``apply_ack``); ``created_at`` and
+    # ``structured_payload`` round-trip the row as written so callers can
+    # build the realtime ``MessageDTO`` without a second read.
+    chat_id: str | None = None
+    ack: int | None = None
+    acked_at: str | None = None
+    created_at: str | None = None
+    structured_payload: dict[str, Any] | None = None
+
+    def as_message_dto(self) -> dict[str, Any]:
+        """The realtime-bus ``MessageDTO`` shape (contract appendix, W4.4):
+        ``{id, provider_message_id, chat_id, direction, body, ack, acked_at,
+        created_at, structured_payload}``. Field names/order are the wire
+        contract — the FE reducer matches them exactly."""
+        return {
+            "id": str(self.id),
+            "provider_message_id": self.provider_message_id,
+            "chat_id": self.chat_id,
+            "direction": self.direction,
+            "body": self.body,
+            "ack": self.ack,
+            "acked_at": self.acked_at,
+            "created_at": self.created_at,
+            "structured_payload": self.structured_payload,
+        }
 
 
 class MessageStore:
@@ -74,6 +101,7 @@ class MessageStore:
         structured_payload: dict[str, Any] | None = None,
         connection_id: UUID | None = None,
         created_at: str | None = None,
+        chat_id: str | None = None,
     ) -> StoredMessage:
         """Insert a row.
 
@@ -85,6 +113,13 @@ class MessageStore:
         ``connection_id`` tags the message with the WhatsApp connection it
         arrived on. NULL for pre-014 messages or when the webhook fires
         via the legacy global route (no connection context).
+
+        ``chat_id`` (044_whatsapp_inbox_realtime_schema) mirrors
+        ``whatsapp_chats.chat_id`` so the thread query is a direct index
+        scan. Optional + NULL-safe: pre-040 callers (outbound sends in
+        ``whatsapp_intake_service.py`` / the manual-send endpoint) that
+        don't pass it simply leave the column NULL, same treatment the
+        migration gives historical rows — never backfilled, never guessed.
         """
         if direction not in {"inbound", "outbound"}:
             raise ValueError(f"invalid direction: {direction}")
@@ -109,6 +144,19 @@ class MessageStore:
         # and wreck thread ordering). Omitted ⇒ DB default now() for live sends.
         if created_at:
             payload["created_at"] = created_at
+        # chat_id is only added to the payload when a caller actually passes
+        # one — unlike connection_id (a pre-existing column every caller's
+        # mock/schema already knows about since migration 014), chat_id is
+        # NEW (migration 040). Sending the key unconditionally as NULL broke
+        # hand-maintained local SQLite test fixtures elsewhere in this suite
+        # that predate that migration and don't have the column yet
+        # (whatsapp_connections_router.py's /send path, exercised by
+        # test_whatsapp_chat_router.py). Omitting the key when unset is
+        # NULL-safe for every real backend (Postgres/MockSupabaseClient/the
+        # product's own SQLiteClient) and keeps pre-040 callers working
+        # unchanged until they're updated to pass chat_id themselves.
+        if chat_id:
+            payload["chat_id"] = chat_id
         try:
             response = (
                 self._admin
@@ -123,15 +171,62 @@ class MessageStore:
             raise
         rows = response.data or []
         row = rows[0] if rows else payload
+        return self._to_stored_message(row)
+
+    def apply_ack(
+        self, *, provider_message_id: str, ack: int, acked_at: str
+    ) -> StoredMessage | None:
+        """Update ``ack``/``acked_at`` on the row matching ``provider_message_id``.
+
+        Scoped by ``provider_message_id`` alone — NOT ``org_id`` — because
+        ``uq_conversation_messages_provider_message_id`` is a table-wide
+        UNIQUE constraint (001_social-wiring.sql), so at most one row can
+        ever match. This lets the webhook apply an ack without knowing
+        which org/connection the original message belongs to (the ack
+        event itself carries neither).
+
+        Returns ``None`` when no row has that ``provider_message_id`` yet —
+        WAHA can deliver an ack before our insert lands, or for an outbound
+        message this store never recorded. Callers MUST treat that as a
+        no-op, never an error (see ``whatsapp_router.py``'s ``message.ack``
+        handling).
+        """
+        response = (
+            self._admin
+            .schema(_SCHEMA)
+            .table(_TABLE)
+            .update({"ack": ack, "acked_at": acked_at})
+            .eq("provider_message_id", provider_message_id)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return None
+        return self._to_stored_message(rows[0])
+
+    @staticmethod
+    def _to_stored_message(row: dict[str, Any]) -> StoredMessage:
         raw_cid = row.get("connection_id")
+        sp = row.get("structured_payload")
+        if isinstance(sp, str):
+            try:
+                sp = json.loads(sp)
+            except Exception:
+                sp = None
+        raw_ack = row.get("ack")
         return StoredMessage(
-            id=UUID(row["id"]),
+            id=UUID(str(row["id"])),
             session_id=row["session_id"],
             direction=row["direction"],
             body=row["body"],
             provider_message_id=row.get("provider_message_id"),
             authorized=bool(row.get("authorized", False)),
             connection_id=UUID(str(raw_cid)) if raw_cid else None,
+            chat_id=row.get("chat_id"),
+            ack=int(raw_ack) if raw_ack is not None else None,
+            acked_at=row.get("acked_at"),
+            created_at=row.get("created_at"),
+            structured_payload=sp if isinstance(sp, dict) else None,
         )
 
     def _is_duplicate_error(self, exc: Exception, provider_message_id: str) -> bool:

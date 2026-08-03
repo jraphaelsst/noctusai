@@ -209,8 +209,42 @@ export function useWhatsAppConnectionQr(
     enabled: enabled && !!connectionId,
     refetchInterval: (query) => {
       const data = query.state.data as WhatsAppConnectionQr | undefined;
-      if (data && !data.scannable) return false;
-      return options?.pollMs ?? 8000;
+      // 🔴 Only a session that is actually PAIRED has nothing left to scan.
+      //
+      // This previously returned false on ANY `!scannable` response — but
+      // STOPPED / STARTING / FAILED are precisely the transient states you
+      // must poll THROUGH to reach SCAN_QR_CODE. The result was that a single
+      // non-scannable reply killed the poll permanently: on 2026-08-03 the
+      // live server logged /auth/qr hit exactly twice in 35 minutes while
+      // /status was hit every 5s, and the panel sat on a frozen
+      // "Aguardando QR (STOPPED)" forever.
+      //
+      // WORKING is the only terminal state here. Everything else keeps polling.
+      if (data?.status === "WORKING") return false;
+      return options?.pollMs ?? 3000;
+    },
+  });
+}
+
+/**
+ * Recover a stuck session — the escalation ladder (`start` → `restart` →
+ * `logout` + `start`).
+ *
+ * Why this exists rather than just calling `restart`: a session that still
+ * holds credentials WhatsApp has invalidated will retry those dead credentials
+ * on restart, hang in STARTING, and get force-stopped by WAHA's watchdog ~5
+ * minutes later — proven twice in the production logs on 2026-08-03. Only
+ * clearing the credentials produces a QR. The ladder converges regardless of
+ * which rung is individually correct for the current state.
+ */
+export function useRecoverConnection() {
+  const qc = useQueryClient();
+  return useMutation<WhatsAppConnectionStatus, unknown, string>({
+    mutationFn: (connectionId: string) =>
+      api.post<WhatsAppConnectionStatus>(`${BASE}/${connectionId}/recover`, {}),
+    onSuccess: (_data, connectionId) => {
+      qc.invalidateQueries({ queryKey: [...KEY, connectionId, "status"] });
+      qc.invalidateQueries({ queryKey: [...KEY, connectionId, "qr"] });
     },
   });
 }

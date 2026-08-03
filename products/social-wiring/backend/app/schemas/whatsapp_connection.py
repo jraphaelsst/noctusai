@@ -13,6 +13,22 @@ Contract v2 (social-waha-connect-backend):
     by pydantic's default; callers MUST NOT rely on extra fields being stored.
   - Response exposes ``webhook_url`` (the auto-minted per-connection token URL)
     and ``session_name`` (informational, auto-generated unique value).
+
+Contract v3 (whatsapp-realtime-inbox, Slice 5) — BREAKING for the chat
+inbox shapes:
+  - ``GET /{id}/chats`` and ``GET /{id}/chats/{chatId}/messages`` return a
+    keyset-paginated envelope (``{items, next_before}``), not a bare array.
+    The old ``ChatSummary`` DTO (contact/last_message/unread, WAHA-merge
+    era) is replaced by ``ChatDTO`` (title/last_message_preview/
+    unread_count/last_read_at/archived/pinned — the
+    ``WhatsAppChatStore.ChatSummary`` dataclass's wire shape verbatim).
+  - ``MessageOut``/``MessageDTO`` (alias) gained ``ack``/``acked_at``
+    (migration 040 delivery-ack tracking).
+  - New: ``ChatReadRequest``/``ChatReadOut`` (``POST .../read``),
+    ``WhatsAppConnectionRecoverOut`` (``POST /{id}/recover``).
+  - ``DEFAULT_WHATSAPP_WEBHOOK_EVENTS`` is the single source of truth for
+    the inbound event set both ``create_connection`` and
+    ``WhatsAppWebhookConfigRequest`` register.
 """
 from __future__ import annotations
 
@@ -173,10 +189,43 @@ class WhatsAppConnectionQrOut(BaseModel):
     png_base64: Optional[str] = None
 
 
+class WhatsAppConnectionRecoverOut(BaseModel):
+    """Response for ``POST /{id}/recover`` — the converged state after the
+    seed's start→restart→logout+start escalation ladder."""
+
+    connection_id: UUID
+    status: Optional[str] = Field(
+        default=None, description="WAHA session status after the ladder converged."
+    )
+    paired: bool = False
+    stage: str = Field(
+        ...,
+        description=(
+            "Which rung the ladder converged at: already_working / start / "
+            "restart / logout_start."
+        ),
+    )
+
+
+# Migration 040 / Slice 5 — the full inbound event set. `message.ack` /
+# `message.reaction` feed the realtime bus; `message.any` is WAHA's echo of
+# OUR OWN outbound sends, which is what keeps `whatsapp_chats` current for a
+# just-sent message WITHOUT `POST .../send` writing it directly (see
+# `whatsapp_connections_router.create_connection`'s webhook registration and
+# `configure_connection_webhook`'s default, both sourced from this constant).
+DEFAULT_WHATSAPP_WEBHOOK_EVENTS: list[str] = [
+    "message",
+    "message.any",
+    "message.ack",
+    "message.reaction",
+    "session.status",
+]
+
+
 class WhatsAppWebhookConfigRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     events: list[str] = Field(
-        default_factory=lambda: ["message", "message.any", "session.status"]
+        default_factory=lambda: list(DEFAULT_WHATSAPP_WEBHOOK_EVENTS)
     )
 
 
@@ -188,42 +237,70 @@ class WhatsAppWebhookResultOut(BaseModel):
     status: Optional[str] = None
 
 
-# ── Per-connection chat inbox (014_whatsapp_chat_per_connection) ─────────────
+# ── Per-connection chat inbox — pure Postgres (044_whatsapp_inbox_realtime) ──
+# `ChatDTO` is the wire shape of `app.services.whatsapp_chat_store.ChatSummary`
+# (a dataclass — see its `.as_dict()`, which this model's field set mirrors
+# exactly; the two are the SAME wire contract realized twice, one per layer).
 
-class ChatSummary(BaseModel):
-    """Inbox summary row: one entry per WhatsApp contact (JID) on a connection.
+class ChatDTO(BaseModel):
+    """Inbox summary row: one entry per conversation on a connection,
+    sourced from ``social_wiring.whatsapp_chats`` (migration 040) — no
+    per-request WAHA round-trip, no JID-alias merge (identity dedup happens
+    at INGEST time, not read time; see the initiative's Slice 5 note).
 
-    ``chat_id`` is the CANONICAL send JID (``<phone>@c.us``) — de-duped
-    across all JID forms for the same human (``@c.us`` / ``@s.whatsapp.net``
-    / ``@lid``).  When the phone cannot be resolved the raw JID is kept.
-
-    ``contact`` is the best available display name: contacts table ``nome``
-    → WAHA name/pushname → phone digits → raw LID.
-
-    ``contact_id`` is the social_wiring.contacts.id UUID if this human has
-    been registered, else ``None``.
-
-    ``last_message_at`` is an ISO 8601 UTC string or ``null`` when there is
-    no usable timestamp (avoids "Invalid Date" in the FE).
-
-    ``unread`` is 0 when there are no unread inbound messages (never null).
+    ``chat_id`` is the canonical send JID as ingest recorded it.
+    ``title`` is the best available display label — falls back to the
+    phone digits (never blank) when no contact name has been resolved.
+    ``last_message_at`` / ``last_read_at`` are ISO 8601 UTC strings or
+    ``null`` (never ``""`` — avoids "Invalid Date" in the FE).
+    ``unread_count`` is 0 when there is nothing unread (never null).
     """
 
-    chat_id: str = Field(..., description="Canonical send JID (<phone>@c.us)")
-    contact: str = Field(..., description="Display label — name, phone, or raw JID")
-    contact_id: Optional[str] = Field(
-        default=None, description="contacts.id UUID if registered, else null"
+    chat_id: str
+    title: str
+    last_message_at: Optional[str] = None
+    last_message_preview: str
+    last_direction: Optional[str] = Field(default=None, pattern="^(inbound|outbound)$")
+    unread_count: int = Field(..., ge=0)
+    last_read_at: Optional[str] = None
+    archived: bool = False
+    pinned: bool = False
+
+
+class ChatsPage(BaseModel):
+    """Keyset-paginated envelope for ``GET /{id}/chats``."""
+
+    items: list[ChatDTO]
+    next_before: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pass back as ?before= to page further into history; null = "
+            "no more history."
+        ),
     )
-    last_message: str
-    last_message_at: Optional[str] = Field(
-        default=None, description="ISO 8601 UTC or null when no timestamp available"
-    )
-    last_direction: str = Field(..., pattern="^(inbound|outbound)$")
-    unread: int = Field(..., ge=0)
+
+
+class ChatReadRequest(BaseModel):
+    """Inbound payload for ``POST /{id}/chats/{chatId}/read``."""
+
+    up_to_message_id: Optional[str] = Field(default=None)
+
+
+class ChatReadOut(BaseModel):
+    """Response for ``POST /{id}/chats/{chatId}/read`` — always
+    ``unread_count: 0`` (the endpoint's whole job is clearing the badge)."""
+
+    chat_id: str
+    unread_count: int = Field(..., ge=0)
+    last_read_at: Optional[str] = None
 
 
 class MessageOut(BaseModel):
-    """One message in a chat thread."""
+    """One message in a chat thread.
+
+    ``ack`` / ``acked_at`` (migration 040) are WAHA delivery-ack tracking —
+    ``None`` until the ack webhook lands (``ack`` levels: -1 error, 0
+    pending, 1 server, 2 device, 3 read, 4 played)."""
 
     id: str
     chat_id: str = Field(..., description="WhatsApp contact JID (raw_sender)")
@@ -232,6 +309,28 @@ class MessageOut(BaseModel):
     created_at: str = Field(..., description="ISO 8601 UTC timestamp")
     provider_message_id: Optional[str] = None
     structured_payload: Optional[dict] = None
+    ack: Optional[int] = Field(default=None, ge=-1, le=4)
+    acked_at: Optional[str] = None
+
+
+# Wire-contract alias — the initiative brief names this shape `MessageDTO`;
+# it is IDENTICAL to `MessageOut` (the field set `/send` already returned,
+# now carrying `ack`/`acked_at` too), so this is a plain alias rather than a
+# duplicate class. See `MessageOut`'s docstring for field semantics.
+MessageDTO = MessageOut
+
+
+class MessagesPage(BaseModel):
+    """Keyset-paginated envelope for ``GET /{id}/chats/{chatId}/messages``."""
+
+    items: list[MessageDTO]
+    next_before: Optional[str] = Field(
+        default=None,
+        description=(
+            "Pass back as ?before= to page further into history; null = "
+            "no more history."
+        ),
+    )
 
 
 class SendMessageRequest(BaseModel):

@@ -1,31 +1,40 @@
-"""Tests for per-connection chat endpoints (migration 014).
+"""Tests for per-connection chat endpoints.
 
-Drives all four new endpoints through two DI seams — same Class-B pattern as
+Drives every endpoint through DI seams — same Class-B pattern as
 ``test_whatsapp_connections_router.py``:
 
-  - ``get_connection_store``     → SQLite-backed WhatsAppConnectionStore
-  - ``get_message_store_factory`` → factory returning SQLite-backed MessageStore
+  - ``get_connection_store``             → SQLite-backed WhatsAppConnectionStore
+  - ``get_message_store_factory``        → factory returning SQLite-backed MessageStore
+  - ``get_chat_store_factory``           → factory returning SQLite-backed WhatsAppChatStore
+  - ``get_chat_messages_reader_factory`` → factory returning SQLite-backed _ChatMessagesReader
+  - ``get_waha_client_factory``          → per-session FakeWahaClient producer
 
 Auth is exercised via the shared ``client`` fixture (MockSupabaseClient).  No
-external calls; FakeWahaClient drives the send path.
+external calls; FakeWahaClient drives the send / recover / read-receipt paths.
 
 Endpoints under test
 --------------------
-  GET  /api/whatsapp/connections/{id}/chats
-  GET  /api/whatsapp/connections/{id}/chats/{chat_id:path}/messages
+  GET  /api/whatsapp/connections/{id}/chats                    (pure Postgres, Slice 5)
+  GET  /api/whatsapp/connections/{id}/chats/{chat_id:path}/messages (pure Postgres, Slice 5)
+  POST /api/whatsapp/connections/{id}/chats/{chat_id:path}/read      (Slice 5, new)
   POST /api/whatsapp/connections/{id}/chats/{chat_id:path}/send
+  POST /api/whatsapp/connections/{id}/recover                        (Slice 5, new)
+  GET  /api/whatsapp/connections/{id}/stream                         (Slice 5, new — SSE)
   PUT  /api/whatsapp/connections/{id}/auto-reply
 
 Contract pins
 -------------
-  - 401 on unauthenticated access (via the shared ``client`` fixture with
-    Bearer token missing; the test must pass ``headers={}`` or the seed
-    MockSupabaseClient returns unauthenticated → 401).
+  - 401 on unauthenticated access (assert strict `== 401`, never `in (401, 404)`).
   - 404 for a connection owned by a DIFFERENT user_id (ownership guard).
   - 422 on empty ``text`` in send (Pydantic min_length=1).
   - 201 on send + outbound row tagged with connection_id.
-  - 502 on WAHA send failure.
-  - list_chats grouping + ordering (two senders, mixed directions).
+  - 502 on WAHA send / recover failure.
+  - GET /chats and GET /chats/{id}/messages return the keyset envelope
+    ``{items, next_before}`` — WAHA is NEVER called on either read path
+    (Slice 5 deleted the WAHA-merge code entirely; see
+    ``TestNoWahaOnReadPath``).
+  - POST .../read zeroes unread_count, publishes chat.read, and returns
+    before ``send_seen`` (background, never awaited).
   - auto_reply_enabled surfaces in GET /connections response (False by default).
   - PUT /auto-reply toggles the flag + 404 for wrong owner.
 """
@@ -43,6 +52,7 @@ from cryptography.fernet import Fernet
 from noctusai_lib.integrations.whatsapp import FakeWahaClient
 
 from app.services.message_store import MessageStore, StoredMessage
+from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import WhatsAppConnectionStore
 from app.sqlite_client import SQLiteClient
 
@@ -73,6 +83,7 @@ CREATE TABLE whatsapp_connections (
 );
 """
 
+# Migration 040 columns: ack / acked_at / chat_id.
 _MSG_SCHEMA = """
 CREATE TABLE conversation_messages (
     id TEXT PRIMARY KEY,
@@ -85,7 +96,32 @@ CREATE TABLE conversation_messages (
     authorized INTEGER NOT NULL DEFAULT 1,
     structured_payload TEXT,
     connection_id TEXT,
+    ack INTEGER,
+    acked_at TEXT,
+    chat_id TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+"""
+
+# Migration 040 — social_wiring.whatsapp_chats.
+_CHATS_SCHEMA = """
+CREATE TABLE whatsapp_chats (
+    connection_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    org_id TEXT NOT NULL,
+    title TEXT,
+    last_message_at TEXT,
+    last_message_preview TEXT,
+    last_direction TEXT,
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    last_read_at TEXT,
+    last_read_message_id TEXT,
+    archived INTEGER NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    synced_through TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (connection_id, chat_id)
 );
 """
 
@@ -110,7 +146,11 @@ class _SQLiteSchemaProxy:
 
 
 class _SQLiteTableProxy:
-    """Minimal query builder — enough to support the MessageStore interface."""
+    """Minimal query builder — enough to support the MessageStore /
+    WhatsAppChatStore / _ChatMessagesReader interfaces (select/eq/lt/order/
+    limit/update/execute — real SQL ORDER BY + LIMIT, unlike
+    ``noctusai_lib.testing.MockSupabaseClient`` which no-ops both, so
+    keyset-pagination logic is exercised end-to-end here)."""
 
     def __init__(self, db_path: Path, table: str):
         self._db_path = db_path
@@ -125,8 +165,13 @@ class _SQLiteTableProxy:
 
     # ── chainable query-builder methods ──────────────────────────────────
 
-    def select(self, cols: str) -> "_SQLiteTableProxy":
+    def select(self, cols: str, *, count: str | None = None) -> "_SQLiteTableProxy":
+        # `count="exact"` mirrors PostgREST returning the row count out-of-band
+        # on `response.count`. WhatsAppChatStore._recount_unread relies on it,
+        # so the fake must surface it too — falling back to len(data) here
+        # would hide a real "driver did not supply a count" case.
         self._select_cols = cols
+        self._count_mode = count
         return self
 
     def eq(self, col: str, val: Any) -> "_SQLiteTableProxy":
@@ -156,6 +201,36 @@ class _SQLiteTableProxy:
             conn.execute(sql, vals)
         # Return proxy for execute() to re-read the inserted row.
         self._filters = [("=", "id", payload["id"])]
+        self._select_cols = "*"
+        return self
+
+    def upsert(self, payload: dict, *, on_conflict: str = "") -> "_SQLiteTableProxy":
+        """Real INSERT .. ON CONFLICT DO UPDATE, mirroring Supabase's upsert.
+
+        Implemented against actual SQL rather than stubbed because
+        ``WhatsAppChatStore.record_message`` relies on upsert semantics for its
+        idempotency guarantee — a fake that merely inserted would let a
+        replayed webhook raise instead of converging, and the test would be
+        proving the opposite of the production behaviour.
+        """
+        cols = ", ".join(f'"{k}"' for k in payload)
+        placeholders = ", ".join("?" for _ in payload)
+        vals = list(payload.values())
+        conflict_cols = [c.strip() for c in on_conflict.split(",") if c.strip()]
+        sql = f'INSERT INTO "{self._table}" ({cols}) VALUES ({placeholders})'
+        if conflict_cols:
+            targets = ", ".join(f'"{c}"' for c in conflict_cols)
+            updates = ", ".join(
+                f'"{k}" = excluded."{k}"' for k in payload if k not in conflict_cols
+            )
+            sql += (
+                f" ON CONFLICT({targets}) DO UPDATE SET {updates}"
+                if updates
+                else f" ON CONFLICT({targets}) DO NOTHING"
+            )
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(sql, vals)
+        self._filters = [("=", c, payload[c]) for c in conflict_cols if c in payload]
         self._select_cols = "*"
         return self
 
@@ -217,12 +292,20 @@ class _SQLiteTableProxy:
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, params).fetchall()
-        return _Response([dict(r) for r in rows])
+            exact_count: int | None = None
+            if getattr(self, "_count_mode", None) == "exact":
+                count_sql = f'SELECT COUNT(*) AS n FROM "{self._table}" {where}'
+                exact_count = conn.execute(count_sql, params).fetchone()["n"]
+        return _Response([dict(r) for r in rows], count=exact_count)
 
 
 class _Response:
-    def __init__(self, data: list[dict]):
+    def __init__(self, data: list[dict], *, count: int | None = None):
         self.data = data
+        # PostgREST exposes the exact row count out-of-band when the caller
+        # asked for it; None otherwise. Mirrored so a consumer that branches on
+        # "did the driver give me a count?" is exercised faithfully.
+        self.count = count
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -232,13 +315,18 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
     """Full DI-wired client for the chat endpoints.
 
     Sets up:
-      - SQLite-backed WhatsAppConnectionStore (conn table + msg table)
+      - SQLite-backed WhatsAppConnectionStore (conn table + msg table + chats table)
       - SQLite-backed MessageStore factory
-      - FakeWahaClient for the send path
+      - SQLite-backed WhatsAppChatStore factory
+      - SQLite-backed _ChatMessagesReader factory
+      - FakeWahaClient for the send / recover / read-receipt paths
       - waha_base_url + PRODUCT_URL_SOCIAL_WIRING env
     """
     from app.main import app
     from app.routers.whatsapp_connections_router import (
+        _ChatMessagesReader,
+        get_chat_messages_reader_factory,
+        get_chat_store_factory,
         get_connection_store,
         get_message_store_factory,
         get_waha_client_factory,
@@ -247,39 +335,43 @@ def chat_client(client, tmp_path: Path, override_settings, monkeypatch):
     override_settings(waha_base_url="https://waha.example.com")
     monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", _PRODUCT_BASE)
 
-    # Shared db_path used by both stores so FK-style references work.
+    # Shared db_path used by every store so cross-table reads see the same data.
     db_path = tmp_path / "chat.sqlite3"
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(_CONN_SCHEMA + _MSG_SCHEMA)
+        conn.executescript(_CONN_SCHEMA + _MSG_SCHEMA + _CHATS_SCHEMA)
 
     conn_store = WhatsAppConnectionStore(
         SQLiteClient(db_path), fernet=Fernet(Fernet.generate_key())
     )
-    msg_client = _SQLiteSchemaClient(db_path)
+    schema_client = _SQLiteSchemaClient(db_path)
 
     def _make_msg_store(org_id: UUID) -> MessageStore:
-        return MessageStore(admin_supabase=msg_client, org_id=org_id)
+        return MessageStore(admin_supabase=schema_client, org_id=org_id)
+
+    def _make_chat_store(org_id: UUID) -> WhatsAppChatStore:
+        return WhatsAppChatStore(admin_supabase=schema_client, org_id=org_id)
+
+    def _make_chat_messages_reader(org_id: UUID) -> _ChatMessagesReader:
+        return _ChatMessagesReader(admin_supabase=schema_client, org_id=org_id)
 
     fakes: dict[str, FakeWahaClient] = {}
 
     def _fake_factory(*, base_url=None, api_key=None, session="default"):
         return fakes.setdefault(session, FakeWahaClient(session=session))
 
-    _prev_conn = app.dependency_overrides.get(get_connection_store)
-    _prev_msg = app.dependency_overrides.get(get_message_store_factory)
-    _prev_waha = app.dependency_overrides.get(get_waha_client_factory)
-
-    app.dependency_overrides[get_connection_store] = lambda: conn_store
-    app.dependency_overrides[get_message_store_factory] = lambda: _make_msg_store
-    app.dependency_overrides[get_waha_client_factory] = lambda: _fake_factory
+    overrides = {
+        get_connection_store: lambda: conn_store,
+        get_message_store_factory: lambda: _make_msg_store,
+        get_chat_store_factory: lambda: _make_chat_store,
+        get_chat_messages_reader_factory: lambda: _make_chat_messages_reader,
+        get_waha_client_factory: lambda: _fake_factory,
+    }
+    _prev = {dep: app.dependency_overrides.get(dep) for dep in overrides}
+    app.dependency_overrides.update(overrides)
 
     yield client, conn_store, fakes, db_path
 
-    for dep, prev in (
-        (get_connection_store, _prev_conn),
-        (get_message_store_factory, _prev_msg),
-        (get_waha_client_factory, _prev_waha),
-    ):
+    for dep, prev in _prev.items():
         if prev is None:
             app.dependency_overrides.pop(dep, None)
         else:
@@ -303,7 +395,10 @@ def _seed_messages(db_path: Path, *, org_id: str, connection_id: str, rows: list
             row.setdefault("authorized", 1)
             row.setdefault("provider_message_id", None)
             row.setdefault("structured_payload", None)
-            row.setdefault("created_at", f"2026-06-22T10:00:00.000Z")
+            row.setdefault("ack", None)
+            row.setdefault("acked_at", None)
+            row.setdefault("chat_id", row.get("raw_sender"))
+            row.setdefault("created_at", "2026-06-22T10:00:00.000Z")
             cols = ", ".join(f'"{k}"' for k in row)
             placeholders = ", ".join("?" for _ in row)
             conn.execute(
@@ -312,15 +407,41 @@ def _seed_messages(db_path: Path, *, org_id: str, connection_id: str, rows: list
             )
 
 
-# ── GET /chats ────────────────────────────────────────────────────────────────
+def _seed_chats(db_path: Path, *, org_id: str, connection_id: str, rows: list[dict]) -> None:
+    """Directly insert whatsapp_chats rows into SQLite for test setup —
+    mirrors what `WhatsAppChatStore.record_message` (the ingest write path,
+    peer territory — not exercised here) would have produced."""
+    with sqlite3.connect(db_path) as conn:
+        for row in rows:
+            row.setdefault("org_id", org_id)
+            row.setdefault("connection_id", connection_id)
+            row.setdefault("title", None)
+            row.setdefault("last_message_at", None)
+            row.setdefault("last_message_preview", "")
+            row.setdefault("last_direction", None)
+            row.setdefault("unread_count", 0)
+            row.setdefault("last_read_at", None)
+            row.setdefault("last_read_message_id", None)
+            row.setdefault("archived", 0)
+            row.setdefault("pinned", 0)
+            cols = ", ".join(f'"{k}"' for k in row)
+            placeholders = ", ".join("?" for _ in row)
+            conn.execute(
+                f'INSERT INTO whatsapp_chats ({cols}) VALUES ({placeholders})',
+                list(row.values()),
+            )
+
+
+# ── GET /chats — pure Postgres, keyset envelope (Slice 5) ────────────────────
 
 class TestListChats:
-    def test_empty_returns_200_bare_array(self, chat_client):
+    def test_empty_returns_envelope_with_empty_items(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         resp = c.get(f"/api/whatsapp/connections/{created['id']}/chats")
         assert resp.status_code == 200, resp.text
-        assert resp.json() == []
+        body = resp.json()
+        assert body == {"items": [], "next_before": None}
 
     def test_401_unauthenticated(self, chat_client):
         """No Authorization header → 401 strictly (not 503 / 404)."""
@@ -333,7 +454,6 @@ class TestListChats:
     def test_404_other_user_connection(self, chat_client):
         """A connection owned by a different user_id is opaque → 404."""
         c, conn_store, fakes, db_path = chat_client
-        # The fixture owns user 00...aa; insert a row owned by user 00...bb
         other_org = UUID("00000000-0000-4000-8000-000000000001")
         other_user = UUID("00000000-0000-4000-8000-0000000000bb")
         other_conn = conn_store.create_connection(
@@ -346,72 +466,118 @@ class TestListChats:
         resp = c.get(f"/api/whatsapp/connections/{other_conn.id}/chats")
         assert resp.status_code == 404, resp.text
 
-    def test_groups_by_sender_and_orders_by_last_message(self, chat_client):
-        """Two senders, one with later activity — that one must come first."""
+    def test_orders_by_last_message_at_desc(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        # Determine org_id from the token fixture (the seed mock always uses a fixed one).
-        from app.config import settings  # noqa: PLC0415
-        # Derive the org_id the MockSupabaseClient uses.
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound",  "body": "hi",   "created_at": "2026-06-22T09:00:00.000Z"},
-            {"raw_sender": "5522@c.us", "direction": "inbound",  "body": "hello","created_at": "2026-06-22T10:00:00.000Z"},
-            {"raw_sender": "5522@c.us", "direction": "outbound", "body": "hey",  "created_at": "2026-06-22T10:01:00.000Z"},
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "title": "5511", "last_message_at": "2026-06-22T09:00:00.000Z",
+             "last_message_preview": "hi", "last_direction": "inbound"},
+            {"chat_id": "5522@c.us", "title": "5522", "last_message_at": "2026-06-22T10:01:00.000Z",
+             "last_message_preview": "hey", "last_direction": "outbound"},
         ])
         resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
         assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert len(data) == 2
-        # 5522 has later last_message_at → must be first.
-        assert data[0]["chat_id"] == "5522@c.us"
-        assert data[0]["last_direction"] == "outbound"
-        assert data[1]["chat_id"] == "5511@c.us"
+        items = resp.json()["items"]
+        assert len(items) == 2
+        assert items[0]["chat_id"] == "5522@c.us"
+        assert items[0]["last_direction"] == "outbound"
+        assert items[1]["chat_id"] == "5511@c.us"
 
-    def test_unread_count_correct(self, chat_client):
-        """Unread = inbound messages after the last outbound."""
+    def test_chat_dto_shape(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5599@c.us", "direction": "inbound",  "body": "msg1", "created_at": "2026-06-22T09:00:00.000Z"},
-            {"raw_sender": "5599@c.us", "direction": "outbound", "body": "rep1", "created_at": "2026-06-22T09:01:00.000Z"},
-            {"raw_sender": "5599@c.us", "direction": "inbound",  "body": "msg2", "created_at": "2026-06-22T09:02:00.000Z"},
-            {"raw_sender": "5599@c.us", "direction": "inbound",  "body": "msg3", "created_at": "2026-06-22T09:03:00.000Z"},
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511999998888@c.us", "title": "Ana",
+             "last_message_at": "2026-06-22T10:00:00.000Z",
+             "last_message_preview": "oi", "last_direction": "inbound",
+             "unread_count": 2},
         ])
         resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
         assert resp.status_code == 200, resp.text
-        chats = resp.json()
-        assert len(chats) == 1
-        assert chats[0]["unread"] == 2  # msg2 + msg3 are after last outbound
+        item = resp.json()["items"][0]
+        for field in (
+            "chat_id", "title", "last_message_at", "last_message_preview",
+            "last_direction", "unread_count", "last_read_at", "archived", "pinned",
+        ):
+            assert field in item, f"Missing ChatDTO field: {field}"
+        assert item["title"] == "Ana"
+        assert item["unread_count"] == 2
+        # The old WAHA-merge era ChatSummary fields must NOT be present.
+        assert "contact" not in item
+        assert "last_message" not in item
+        assert "unread" not in item
 
-    def test_contact_strips_jid_suffix(self, chat_client):
+    def test_archived_default_false_excludes_archived_chats(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511999998888@c.us", "direction": "inbound", "body": "x",
-             "created_at": "2026-06-22T10:00:00.000Z"},
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z",
+             "last_message_preview": "active", "archived": 0},
+            {"chat_id": "5522@c.us", "last_message_at": "2026-06-22T10:00:00.000Z",
+             "last_message_preview": "archived one", "archived": 1},
         ])
         resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
         assert resp.status_code == 200, resp.text
-        assert resp.json()[0]["contact"] == "5511999998888"
+        items = resp.json()["items"]
+        assert [i["chat_id"] for i in items] == ["5511@c.us"]
+
+    def test_next_before_set_on_full_page(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z", "last_message_preview": "a"},
+            {"chat_id": "5522@c.us", "last_message_at": "2026-06-22T10:00:00.000Z", "last_message_preview": "b"},
+        ])
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats", params={"limit": 1})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["items"]) == 1
+        assert body["items"][0]["chat_id"] == "5522@c.us"  # newest first
+        assert body["next_before"] == "2026-06-22T10:00:00.000Z"
+
+    def test_next_before_null_when_page_not_full(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z", "last_message_preview": "a"},
+        ])
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats", params={"limit": 30})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["next_before"] is None
+
+    def test_before_cursor_pages_toward_older_history(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z", "last_message_preview": "older"},
+            {"chat_id": "5522@c.us", "last_message_at": "2026-06-22T10:00:00.000Z", "last_message_preview": "newer"},
+        ])
+        resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats",
+            params={"before": "2026-06-22T10:00:00.000Z"},
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        assert [i["chat_id"] for i in items] == ["5511@c.us"]
 
 
-# ── GET /chats/{chat_id}/messages ────────────────────────────────────────────
+# ── GET /chats/{chat_id}/messages — pure Postgres, keyset envelope (Slice 5) ─
 
 class TestListMessages:
-    def test_empty_thread_returns_200_bare_array(self, chat_client):
+    def test_empty_thread_returns_envelope_with_empty_items(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         resp = c.get(
             f"/api/whatsapp/connections/{created['id']}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json() == []
+        assert resp.json() == {"items": [], "next_before": None}
 
     def test_401_unauthenticated(self, chat_client):
         from fastapi.testclient import TestClient  # noqa: PLC0415
@@ -433,37 +599,37 @@ class TestListMessages:
         )
         assert resp.status_code == 404, resp.text
 
-    def test_returns_messages_oldest_first(self, chat_client):
+    def test_returns_messages_newest_first(self, chat_client):
+        """Newest-first per page — mirrors GET /chats's pagination shape;
+        `next_before` is always the LAST item's cursor field in the page."""
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "first",
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "first",
              "created_at": "2026-06-22T09:00:00.000Z"},
-            {"raw_sender": "5511@c.us", "direction": "outbound", "body": "second",
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "outbound", "body": "second",
              "created_at": "2026-06-22T09:01:00.000Z"},
         ])
         resp = c.get(
             f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
-        msgs = resp.json()
+        msgs = resp.json()["items"]
         assert len(msgs) == 2
-        assert msgs[0]["body"] == "first"
-        assert msgs[0]["direction"] == "inbound"
-        assert msgs[1]["body"] == "second"
-        assert msgs[1]["direction"] == "outbound"
+        assert msgs[0]["body"] == "second"
+        assert msgs[0]["direction"] == "outbound"
+        assert msgs[1]["body"] == "first"
+        assert msgs[1]["direction"] == "inbound"
 
-    def test_before_cursor_filters_older_messages(self, chat_client):
+    def test_before_cursor_filters_newer_messages(self, chat_client):
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "old",
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "old",
              "created_at": "2026-06-22T08:00:00.000Z"},
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "newer",
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "newer",
              "created_at": "2026-06-22T09:00:00.000Z"},
         ])
         resp = c.get(
@@ -471,28 +637,34 @@ class TestListMessages:
             params={"before": "2026-06-22T08:30:00.000Z"},
         )
         assert resp.status_code == 200, resp.text
-        msgs = resp.json()
+        msgs = resp.json()["items"]
         assert len(msgs) == 1
         assert msgs[0]["body"] == "old"
 
-    def test_message_shape_fields_present(self, chat_client):
-        """Verify all required MessageOut fields are in the response."""
+    def test_message_dto_shape_includes_ack_fields(self, chat_client):
+        """Verify all required MessageDTO fields are in the response,
+        including the migration-040 ack/acked_at columns."""
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "check",
-             "created_at": "2026-06-22T10:00:00.000Z"},
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "outbound", "body": "check",
+             "created_at": "2026-06-22T10:00:00.000Z", "ack": 2,
+             "acked_at": "2026-06-22T10:00:05.000Z"},
         ])
         resp = c.get(
             f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
-        msg = resp.json()[0]
-        for field in ("id", "chat_id", "direction", "body", "created_at"):
+        msg = resp.json()["items"][0]
+        for field in (
+            "id", "provider_message_id", "chat_id", "direction", "body",
+            "ack", "acked_at", "created_at", "structured_payload",
+        ):
             assert field in msg, f"Missing field: {field}"
         assert msg["chat_id"] == "5511@c.us"
+        assert msg["ack"] == 2
+        assert msg["acked_at"] == "2026-06-22T10:00:05.000Z"
 
     def test_only_own_connection_messages_visible(self, chat_client):
         """Messages tagged with a different connection_id are NOT returned."""
@@ -500,22 +672,182 @@ class TestListMessages:
         created = _create_connection(c)
         conn_id_a = created["id"]
         conn_id_b = str(uuid4())
-        org_id = _TEST_ORG_ID
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id_a, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "on A",
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id_a, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "on A",
              "created_at": "2026-06-22T10:00:00.000Z"},
         ])
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id_b, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "on B",
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id_b, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "on B",
              "created_at": "2026-06-22T10:00:00.000Z"},
         ])
         resp = c.get(
             f"/api/whatsapp/connections/{conn_id_a}/chats/5511@c.us/messages"
         )
         assert resp.status_code == 200, resp.text
-        msgs = resp.json()
+        msgs = resp.json()["items"]
         assert len(msgs) == 1
         assert msgs[0]["body"] == "on A"
+
+    def test_null_chat_id_rows_never_surface(self, chat_client):
+        """Pre-migration-040 rows (chat_id IS NULL, not backfilled) must not
+        appear on the new indexed thread query — see migration 040's header
+        note (the intentional non-backfill decision)."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": None, "raw_sender": "5511@c.us", "direction": "inbound", "body": "pre-040",
+             "created_at": "2026-06-01T00:00:00.000Z"},
+        ])
+        resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+
+
+# ── POST /chats/{chat_id}/read (Slice 5, new) ─────────────────────────────────
+
+class TestChatRead:
+    def test_marks_read_zeroes_unread_and_publishes(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z",
+             "last_message_preview": "hi", "unread_count": 3},
+        ])
+        resp = c.post(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/read", json={}
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["chat_id"] == "5511@c.us"
+        assert body["unread_count"] == 0
+        assert body["last_read_at"] is not None
+
+        # Persisted: a subsequent GET /chats reflects unread_count == 0.
+        listed = c.get(f"/api/whatsapp/connections/{conn_id}/chats").json()
+        assert listed["items"][0]["unread_count"] == 0
+
+    def test_does_not_await_send_seen(self, chat_client):
+        """send_seen fires in the background — the response returns even
+        when the FakeWahaClient's send_seen would raise."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z",
+             "last_message_preview": "hi"},
+        ])
+
+        from app.main import app  # noqa: PLC0415
+        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
+
+        class _RaisingFake(FakeWahaClient):
+            async def send_seen(self, chat_id, message_id=None, participant=None):
+                raise RuntimeError("WAHA unreachable")
+
+        def _raising_factory(*, base_url=None, api_key=None, session="default"):
+            return _RaisingFake(session=session)
+
+        _prev = app.dependency_overrides.get(get_waha_client_factory)
+        app.dependency_overrides[get_waha_client_factory] = lambda: _raising_factory
+        try:
+            resp = c.post(
+                f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/read", json={}
+            )
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_waha_client_factory, None)
+            else:
+                app.dependency_overrides[get_waha_client_factory] = _prev
+
+        # The background send_seen failure must NEVER surface as a 5xx here.
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["unread_count"] == 0
+
+    def test_401_unauthenticated(self, chat_client):
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from app.main import app  # noqa: PLC0415
+        tc = TestClient(app, raise_server_exceptions=False)
+        resp = tc.post(
+            f"/api/whatsapp/connections/{uuid4()}/chats/5511@c.us/read", json={}
+        )
+        assert resp.status_code == 401, resp.text
+
+    def test_404_other_user_connection(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        other_org = UUID("00000000-0000-4000-8000-000000000001")
+        other_user = UUID("00000000-0000-4000-8000-0000000000bb")
+        other_conn = conn_store.create_connection(
+            org_id=other_org, user_id=other_user,
+            label="OtherRead", base_url="https://waha.example.com", api_key="kr",
+        )
+        resp = c.post(
+            f"/api/whatsapp/connections/{other_conn.id}/chats/5511@c.us/read", json={}
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_404_unknown_chat(self, chat_client):
+        """A chat_id with no whatsapp_chats row yet is a 404, not a 500."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        resp = c.post(
+            f"/api/whatsapp/connections/{conn_id}/chats/never-seen@c.us/read", json={}
+        )
+        assert resp.status_code == 404, resp.text
+
+
+# ── No-WAHA-on-read-path assertion (Slice 5 deletion pin) ────────────────────
+
+class TestNoWahaOnReadPath:
+    """Pins the deletion: GET /chats and GET /chats/{id}/messages must never
+    touch the WAHA client. Uses a FakeWahaClient subclass that raises on
+    every method — if either read endpoint still called WAHA, this fails."""
+
+    def test_list_chats_and_list_messages_never_call_waha(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        _seed_chats(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "last_message_at": "2026-06-22T09:00:00.000Z",
+             "last_message_preview": "hi"},
+        ])
+        _seed_messages(db_path, org_id=_TEST_ORG_ID, connection_id=conn_id, rows=[
+            {"chat_id": "5511@c.us", "raw_sender": "5511@c.us", "direction": "inbound", "body": "hi",
+             "created_at": "2026-06-22T09:00:00.000Z"},
+        ])
+
+        from app.main import app  # noqa: PLC0415
+        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
+
+        class _ExplodingFake:
+            def __getattr__(self, name):
+                raise AssertionError(
+                    f"WAHA method {name!r} was called — the read path must "
+                    "be pure Postgres (Slice 5)."
+                )
+
+        def _exploding_factory(*, base_url=None, api_key=None, session="default"):
+            return _ExplodingFake()
+
+        _prev = app.dependency_overrides.get(get_waha_client_factory)
+        app.dependency_overrides[get_waha_client_factory] = lambda: _exploding_factory
+        try:
+            chats_resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
+            messages_resp = c.get(
+                f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
+            )
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_waha_client_factory, None)
+            else:
+                app.dependency_overrides[get_waha_client_factory] = _prev
+
+        assert chats_resp.status_code == 200, chats_resp.text
+        assert messages_resp.status_code == 200, messages_resp.text
 
 
 # ── POST /chats/{chat_id}/send ────────────────────────────────────────────────
@@ -599,9 +931,6 @@ class TestSendMessage:
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
-        # Trigger FakeWahaClient's error path by pre-loading an exception.
-        # FakeWahaClient always succeeds by default; we patch it post-fixture.
-        session = "default"
 
         from noctusai_lib.integrations.whatsapp import FakeWahaClient as _Fake  # noqa: PLC0415
 
@@ -632,24 +961,184 @@ class TestSendMessage:
         body = resp.json()
         assert body["error"]["code"] == "waha_send_failed", f"unexpected body: {body}"
 
-    def test_send_shows_in_chat_list_afterwards(self, chat_client):
-        """After a send, GET /chats shows the chat in the inbox."""
+    def test_send_creates_its_own_chat_row_and_is_visible_immediately(self, chat_client):
+        """🔴 REGRESSION PIN. A send must be visible in BOTH reads immediately.
+
+        This test previously asserted the opposite — that the inbox
+        "legitimately stays empty until ingest catches up" via WAHA's
+        `message.any` echo. That assumption is provably false: the echo carries
+        the SAME `provider_message_id`, so `UNIQUE(provider_message_id)` drops
+        it as a duplicate and it can never write the row or backfill `chat_id`.
+        The message would have been invisible in its own thread permanently,
+        not merely until the echo arrived.
+
+        Found on the merged tip of slices 4+5 — each branch was green alone;
+        the defect lived only in the seam between them.
+        """
         c, conn_store, fakes, db_path = chat_client
         created = _create_connection(c)
         conn_id = created["id"]
 
-        send_resp = c.post(
+        resp = c.post(
             f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/send",
             json={"text": "hello inbox"},
         )
-        assert send_resp.status_code == 201, send_resp.text
+        assert resp.status_code == 201, resp.text
 
+        # 1. the conversation row exists, with the preview and direction set
         chats_resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
         assert chats_resp.status_code == 200, chats_resp.text
-        chats = chats_resp.json()
-        assert any(ch["chat_id"] == "5511@c.us" for ch in chats), (
-            f"Expected 5511@c.us in chats, got {chats}"
+        items = chats_resp.json()["items"]
+        assert [i["chat_id"] for i in items] == ["5511@c.us"], chats_resp.text
+        assert items[0]["last_message_preview"] == "hello inbox"
+        assert items[0]["last_direction"] == "outbound"
+        # our own send must never make our own inbox look unread
+        assert items[0]["unread_count"] == 0
+
+        # 2. and the message is in its own thread — i.e. chat_id was stamped
+        msgs_resp = c.get(
+            f"/api/whatsapp/connections/{conn_id}/chats/5511%40c.us/messages"
         )
+        assert msgs_resp.status_code == 200, msgs_resp.text
+        bodies = [m["body"] for m in msgs_resp.json()["items"]]
+        assert "hello inbox" in bodies, msgs_resp.text
+
+
+# ── POST /recover (Slice 5, new) ──────────────────────────────────────────────
+
+class TestRecoverConnection:
+    def test_recover_returns_ladder_result(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        resp = c.post(f"/api/whatsapp/connections/{conn_id}/recover")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["connection_id"] == conn_id
+        assert body["stage"]
+        assert "status" in body
+        assert "paired" in body
+
+    def test_recover_converges_a_stuck_session(self, chat_client):
+        """A session whose FakeWahaClient starts stuck (simulating dead
+        stored credentials) converges via the ladder, mirroring the live
+        fleet incident this endpoint exists to fix."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+        fake: FakeWahaClient = fakes["default"]
+        fake.simulate_stuck_session()
+
+        resp = c.post(f"/api/whatsapp/connections/{conn_id}/recover")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["stage"] in {"start", "restart", "logout_start", "already_working"}
+
+    def test_401_unauthenticated(self, chat_client):
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from app.main import app  # noqa: PLC0415
+        tc = TestClient(app, raise_server_exceptions=False)
+        resp = tc.post(f"/api/whatsapp/connections/{uuid4()}/recover")
+        assert resp.status_code == 401, resp.text
+
+    def test_404_other_user_connection(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        other_org = UUID("00000000-0000-4000-8000-000000000001")
+        other_user = UUID("00000000-0000-4000-8000-0000000000bb")
+        other_conn = conn_store.create_connection(
+            org_id=other_org, user_id=other_user,
+            label="OtherRecover", base_url="https://waha.example.com", api_key="krec",
+        )
+        resp = c.post(f"/api/whatsapp/connections/{other_conn.id}/recover")
+        assert resp.status_code == 404, resp.text
+
+    def test_502_on_waha_failure(self, chat_client):
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        from app.main import app  # noqa: PLC0415
+        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
+
+        class _ErrorFake(FakeWahaClient):
+            async def recover_session(self, *, settle_seconds: float = 8.0):
+                raise RuntimeError("WAHA unavailable")
+
+        def _error_factory(*, base_url=None, api_key=None, session="default"):
+            return _ErrorFake(session=session)
+
+        _prev = app.dependency_overrides.get(get_waha_client_factory)
+        app.dependency_overrides[get_waha_client_factory] = lambda: _error_factory
+        try:
+            resp = c.post(f"/api/whatsapp/connections/{conn_id}/recover")
+        finally:
+            if _prev is None:
+                app.dependency_overrides.pop(get_waha_client_factory, None)
+            else:
+                app.dependency_overrides[get_waha_client_factory] = _prev
+
+        assert resp.status_code == 502, resp.text
+
+
+# ── GET /stream (Slice 5, new — SSE) ──────────────────────────────────────────
+
+class _FiniteBus:
+    """``RealtimeBus`` double whose ``subscribe()`` yields nothing then
+    RETURNS — lets a router-level ``TestClient`` request terminate
+    naturally instead of hanging. Mirrors ``noctusai_lib.realtime``'s own
+    test suite's ``_FiniteBus``: per that module's docstring, ``TestClient``
+    fully drives the ASGI response to completion before returning anything
+    at all, so a genuinely-live (never-terminating) bus subscription would
+    hang the whole test, not just a partial read."""
+
+    async def publish(self, scope, event, payload):
+        raise NotImplementedError("not used by these tests")
+
+    async def subscribe(self, scope, *, last_event_id=None):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+
+class TestStream:
+    def test_headers_are_sse_and_no_buffering(self, chat_client, monkeypatch):
+        """Swap the module-level ``_whatsapp_bus`` (the seam
+        ``whatsapp_connections_router`` ships specifically for this — see
+        its "Realtime stream (SSE)" section) for a ``_FiniteBus`` so the
+        request completes; asserts the headers `create_sse_router` sets."""
+        c, conn_store, fakes, db_path = chat_client
+        created = _create_connection(c)
+        conn_id = created["id"]
+
+        import app.routers.whatsapp_connections_router as wcr  # noqa: PLC0415
+        monkeypatch.setattr(wcr, "_whatsapp_bus", _FiniteBus())
+
+        resp = c.get(f"/api/whatsapp/connections/{conn_id}/stream")
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        assert resp.headers["x-accel-buffering"] == "no"
+        assert resp.headers["cache-control"] == "no-cache"
+
+    def test_401_unauthenticated(self, chat_client):
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from app.main import app  # noqa: PLC0415
+        tc = TestClient(app, raise_server_exceptions=False)
+        resp = tc.get(f"/api/whatsapp/connections/{uuid4()}/stream")
+        assert resp.status_code == 401, resp.text
+
+    def test_404_rejects_a_caller_who_does_not_own_the_connection(self, chat_client):
+        """A subscriber must never be able to attach to a scope they cannot
+        read — the auth_dependency runs `_require_record` BEFORE the SSE
+        response (or its stream) is ever constructed."""
+        c, conn_store, fakes, db_path = chat_client
+        other_org = UUID("00000000-0000-4000-8000-000000000001")
+        other_user = UUID("00000000-0000-4000-8000-0000000000bb")
+        other_conn = conn_store.create_connection(
+            org_id=other_org, user_id=other_user,
+            label="OtherStream", base_url="https://waha.example.com", api_key="kstream",
+        )
+        resp = c.get(f"/api/whatsapp/connections/{other_conn.id}/stream")
+        assert resp.status_code == 404, resp.text
 
 
 # ── PUT /auto-reply ───────────────────────────────────────────────────────────
@@ -725,315 +1214,8 @@ class TestAutoReply:
         assert conn_row["auto_reply_enabled"] is True
 
 
-# ── WAHA live-merge tests ─────────────────────────────────────────────────────
-# These tests exercise the new WAHA list_chats / fetch_chat_messages merge path
-# added by feat/sw-wa-chat-fetch.
-
-class TestWahaLiveMergeChats:
-    """GET /chats merges WAHA live list with DB rows."""
-
-    def test_waha_chats_appear_when_db_empty(self, chat_client):
-        """Conversations that exist only in WAHA (no DB rows) surface in the list."""
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-
-        # Seed the FakeWahaClient with a chat (simulates full_sync result).
-        fake: FakeWahaClient = fakes["default"]
-        fake.fake_chat_list = [
-            {
-                "id": {"_serialized": "5599@c.us"},
-                "name": "Carlos",
-                "lastMessage": {"body": "oi", "fromMe": False, "timestamp": 1718000000},
-            }
-        ]
-
-        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert len(data) == 1
-        row = data[0]
-        assert row["chat_id"] == "5599@c.us"
-        assert row["contact"] == "Carlos"
-        assert row["last_direction"] == "inbound"
-        assert row["last_message"] == "oi"
-
-    def test_chat_name_resolved_via_get_contact_when_waha_chat_unnamed(self, chat_client):
-        """WAHA NOWEB chats carry no name → the list resolves it via get_contact
-        and shows the contact name instead of the number."""
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-
-        fake: FakeWahaClient = fakes["default"]
-        fake.fake_chat_list = [
-            {
-                "id": {"_serialized": "5588@c.us"},
-                "name": None,  # NOWEB chats have no resolved name
-                "lastMessage": {"body": "ola", "fromMe": False, "timestamp": 1718000000},
-            }
-        ]
-        # get_contact supplies the display name.
-        fake.fake_contacts["5588@c.us"] = {"id": "5588@c.us", "name": "Marina Silva"}
-
-        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert len(data) == 1
-        assert data[0]["contact"] == "Marina Silva"
-
-    def test_waha_chat_merged_with_db_row_prefers_newer_ts(self, chat_client):
-        """When WAHA has a newer message than DB, the merged row reflects it."""
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5577@c.us", "direction": "inbound", "body": "old",
-             "created_at": "2026-06-10T10:00:00.000Z"},
-        ])
-
-        fake: FakeWahaClient = fakes["default"]
-        # WAHA has a newer message (full_sync result)
-        fake.fake_chat_list = [
-            {
-                "id": {"_serialized": "5577@c.us"},
-                "name": "Ana",
-                # Unix epoch for 2026-06-22T10:00:00Z = 1782122400
-                "lastMessage": {"body": "new msg", "fromMe": False, "timestamp": 1782122400},
-            }
-        ]
-
-        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert len(data) == 1
-        row = data[0]
-        assert row["chat_id"] == "5577@c.us"
-        # WAHA name used as contact because WAHA is newer and provides a name
-        assert row["last_message"] == "new msg"
-
-    def test_waha_unavailable_falls_back_to_db_no_500(self, chat_client):
-        """Store-not-enabled 400 (WAHA unavailable) falls back to DB — never 500."""
-        import httpx  # noqa: PLC0415
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "fallback",
-             "created_at": "2026-06-22T10:00:00.000Z"},
-        ])
-
-        # Make list_chats raise to simulate store-not-enabled 400.
-        from noctusai_lib.integrations.whatsapp import FakeWahaClient as _Fake  # noqa: PLC0415
-
-        class _ErrorFake(_Fake):
-            async def list_chats(self, limit=50):
-                raise httpx.HTTPStatusError(
-                    "400 Bad Request",
-                    request=object(),  # type: ignore[arg-type]
-                    response=object(),  # type: ignore[arg-type]
-                )
-
-        from app.main import app  # noqa: PLC0415
-        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
-
-        def _err_factory(*, base_url=None, api_key=None, session="default"):
-            return _ErrorFake(session=session)
-
-        _prev = app.dependency_overrides.get(get_waha_client_factory)
-        app.dependency_overrides[get_waha_client_factory] = lambda: _err_factory
-        try:
-            resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
-        finally:
-            if _prev is None:
-                app.dependency_overrides.pop(get_waha_client_factory, None)
-            else:
-                app.dependency_overrides[get_waha_client_factory] = _prev
-
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        # DB row still visible (fallback).
-        assert any(row["chat_id"] == "5511@c.us" for row in data)
-
-    def test_waha_and_db_dedup_same_chat(self, chat_client):
-        """The same chat_id in WAHA and DB is not duplicated in the result."""
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "hi",
-             "created_at": "2026-06-22T10:00:00.000Z"},
-        ])
-
-        fake: FakeWahaClient = fakes["default"]
-        fake.fake_chat_list = [
-            {
-                "id": {"_serialized": "5511@c.us"},
-                "name": "Bob",
-                "lastMessage": {"body": "hi", "fromMe": False, "timestamp": 1750503600},
-            }
-        ]
-
-        resp = c.get(f"/api/whatsapp/connections/{conn_id}/chats")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        # Must be exactly ONE entry for 5511@c.us.
-        matching = [r for r in data if r["chat_id"] == "5511@c.us"]
-        assert len(matching) == 1
-
-
-class TestWahaLiveMergeMessages:
-    """GET /chats/{chat_id}/messages merges WAHA history with DB rows."""
-
-    def test_waha_history_merged_into_thread(self, chat_client):
-        """WAHA is the SOURCE OF TRUTH: its history merges into the thread
-        alongside DB rows (cached per chat to bound the ~13s fetch). Here the DB
-        has one message and WAHA has another — BOTH must appear in the thread.
-        """
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "outbound", "body": "db reply",
-             "created_at": "2026-06-22T10:00:00.000Z"},
-        ])
-
-        fake: FakeWahaClient = fakes["default"]
-        fake.fake_chat_messages["5511@c.us"] = [
-            {
-                "id": {"_serialized": "BAE5XXX001"},
-                "body": "waha history msg",
-                "from": "5511@c.us",
-                "timestamp": 1750500000,
-                "fromMe": False,
-            }
-        ]
-
-        resp = c.get(
-            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
-        )
-        assert resp.status_code == 200, resp.text
-        bodies = [m["body"] for m in resp.json()]
-        assert "db reply" in bodies
-        assert "waha history msg" in bodies
-
-    def test_waha_and_db_dedup_by_provider_message_id(self, chat_client):
-        """A message in both WAHA and DB (same provider_message_id) appears once."""
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {
-                "raw_sender": "5511@c.us",
-                "direction": "inbound",
-                "body": "hello",
-                "created_at": "2026-06-22T09:00:00.000Z",
-                "provider_message_id": "BAE5DUP001",
-            }
-        ])
-
-        fake: FakeWahaClient = fakes["default"]
-        fake.fake_chat_messages["5511@c.us"] = [
-            {
-                "id": {"_serialized": "BAE5DUP001"},
-                "body": "hello",
-                "from": "5511@c.us",
-                "timestamp": 1750467600,
-                "fromMe": False,
-            }
-        ]
-
-        resp = c.get(
-            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
-        )
-        assert resp.status_code == 200, resp.text
-        msgs = resp.json()
-        assert len(msgs) == 1
-        assert msgs[0]["body"] == "hello"
-
-    def test_waha_unavailable_falls_back_to_db_no_500(self, chat_client):
-        """WAHA error on fetch_chat_messages falls back to DB — never 500."""
-        import httpx  # noqa: PLC0415
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "from db",
-             "created_at": "2026-06-22T10:00:00.000Z"},
-        ])
-
-        from noctusai_lib.integrations.whatsapp import FakeWahaClient as _Fake  # noqa: PLC0415
-
-        class _ErrorFake(_Fake):
-            async def fetch_chat_messages(self, chat_id, limit=50):
-                raise httpx.HTTPStatusError(
-                    "400 Bad Request",
-                    request=object(),  # type: ignore[arg-type]
-                    response=object(),  # type: ignore[arg-type]
-                )
-
-        from app.main import app  # noqa: PLC0415
-        from app.routers.whatsapp_connections_router import get_waha_client_factory  # noqa: PLC0415
-
-        def _err_factory(*, base_url=None, api_key=None, session="default"):
-            return _ErrorFake(session=session)
-
-        _prev = app.dependency_overrides.get(get_waha_client_factory)
-        app.dependency_overrides[get_waha_client_factory] = lambda: _err_factory
-        try:
-            resp = c.get(
-                f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
-            )
-        finally:
-            if _prev is None:
-                app.dependency_overrides.pop(get_waha_client_factory, None)
-            else:
-                app.dependency_overrides[get_waha_client_factory] = _prev
-
-        assert resp.status_code == 200, resp.text
-        msgs = resp.json()
-        assert any(m["body"] == "from db" for m in msgs)
-
-    def test_messages_db_rows_sorted_oldest_first(self, chat_client):
-        """The thread response (DB-sourced) is sorted oldest-first.
-
-        Background sync writes WAHA history INTO the DB (with preserved
-        timestamps), so once present it sorts alongside live rows. Here we seed
-        two DB rows out of insertion order and assert oldest-first ordering.
-        """
-        c, conn_store, fakes, db_path = chat_client
-        created = _create_connection(c)
-        conn_id = created["id"]
-        org_id = _TEST_ORG_ID
-
-        _seed_messages(db_path, org_id=org_id, connection_id=conn_id, rows=[
-            {"raw_sender": "5511@c.us", "direction": "outbound", "body": "newer reply",
-             "created_at": "2026-06-22T10:00:00.000Z"},
-            {"raw_sender": "5511@c.us", "direction": "inbound", "body": "older inbound",
-             "created_at": "2026-06-22T09:00:00.000Z"},
-        ])
-
-        resp = c.get(
-            f"/api/whatsapp/connections/{conn_id}/chats/5511@c.us/messages"
-        )
-        assert resp.status_code == 200, resp.text
-        msgs = resp.json()
-        assert [m["body"] for m in msgs] == ["older inbound", "newer reply"]
-        assert msgs[0]["direction"] == "inbound"
-        assert msgs[1]["direction"] == "outbound"
-
+# ── start_session NOWEB payload ───────────────────────────────────────────────
+# Unaffected by Slice 5 — session admin, not the chat-inbox read path.
 
 class TestStartSessionNoweb:
     """start_session payload includes NOWEB store config."""
@@ -1094,7 +1276,13 @@ class TestStartSessionNoweb:
         body = posted_bodies[0]
         noweb = body.get("config", {}).get("noweb", {}).get("store", {})
         assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
-        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"
+        assert noweb.get("fullSync") is True, f"noweb.store.fullSync missing in: {body}"
+        # 🔴 Regression pin. WAHA's key is camelCase `fullSync`. This assertion
+        # previously named the snake_case spelling, so it passed against a payload
+        # WAHA silently DROPPED — the live session reported `fullSync: false` for
+        # weeks while this test stayed green. Asserting the absence of the wrong
+        # key is what makes the false-green unrepeatable.
+        assert "full_sync" not in noweb, f"snake_case full_sync must never be sent: {body}"
 
     def test_real_client_restart_session_sends_noweb_payload(self, monkeypatch):
         """WahaClient.restart_session POSTs the noweb store config in the JSON body."""
@@ -1135,4 +1323,10 @@ class TestStartSessionNoweb:
         body = posted_bodies[0]
         noweb = body.get("config", {}).get("noweb", {}).get("store", {})
         assert noweb.get("enabled") is True, f"noweb.store.enabled missing in: {body}"
-        assert noweb.get("full_sync") is True, f"noweb.store.full_sync missing in: {body}"
+        assert noweb.get("fullSync") is True, f"noweb.store.fullSync missing in: {body}"
+        # 🔴 Regression pin. WAHA's key is camelCase `fullSync`. This assertion
+        # previously named the snake_case spelling, so it passed against a payload
+        # WAHA silently DROPPED — the live session reported `fullSync: false` for
+        # weeks while this test stayed green. Asserting the absence of the wrong
+        # key is what makes the false-green unrepeatable.
+        assert "full_sync" not in noweb, f"snake_case full_sync must never be sent: {body}"
