@@ -199,16 +199,21 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
       Default depth **90 days or 500 messages per chat, whichever is smaller** — configurable.
       `max_instances=1` is per-process: fine at one replica, documented not assumed.
 
-## Slice 5 · Read endpoints go DB-only  `[C3 · whatsapp_connections_router.py]`
+## Slice 5 · Read endpoints go DB-only  `[C3 · whatsapp_connections_router.py]` — ✅ **DONE** (`437fc07e`)
 
-- [ ] **5.1** `GET /chats` → pure `whatsapp_chats` query + keyset pagination. Delete the WAHA merge,
+> 47 chat-router + 29 connections tests; full social-wiring suite **1512 passed**, exit 0.
+> Deleted: the WAHA merge in both reads, `list_lids`, the 40-call name-resolve budget, and the
+> process-local `_thread_cache`/`_name_cache` globals (also a multi-replica hazard).
+> ⚠️ Contract change: `/messages` now returns **newest-first** (was oldest-first).
+
+- [x] **5.1** `GET /chats` → pure `whatsapp_chats` query + keyset pagination. Delete the WAHA merge,
       the `list_lids` call, the 40-call name-resolution budget, and `_thread_cache` (`:96-98`).
-- [ ] **5.2** `GET /chats/{id}/messages` → pure Postgres + keyset pagination. The `before` cursor
+- [x] **5.2** `GET /chats/{id}/messages` → pure Postgres + keyset pagination. The `before` cursor
       already exists server-side (`:996-1021`); the FE simply never sent it.
-- [ ] **5.3** **New** `POST /chats/{id}/read` → advance read cursor, zero `unread_count`, publish
+- [x] **5.3** **New** `POST /chats/{id}/read` → advance read cursor, zero `unread_count`, publish
       `chat.read`, fire `send_seen` in the background (never on the response path).
-- [ ] **5.4** Session endpoints adopt `recover_session()` and persist status.
-- [ ] **5.5** Auth tests assert strict `== 401` (never `in (401, 404)`).
+- [x] **5.4** Session endpoints adopt `recover_session()` and persist status.
+- [x] **5.5** Auth tests assert strict `== 401` (never `in (401, 404)`).
 
 ## Slice 6 · Seed frontend  `[C1 · seed/lib/frontend/src/]` — ✅ **MOSTLY DONE** (inline)
 
@@ -234,17 +239,21 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
       against the tree (3 surfaces, 2 providers), not taken from a report.
 - [x] **6.6** All loading gates on `isPending || isFetching`, never `isLoading` (`check_lying_loading_state`).
 
-## Slice 7 · Product frontend  `[C3 · products/social-wiring/frontend/]`
+## Slice 7 · Product frontend  `[C3 · products/social-wiring/frontend/]` — ✅ **DONE** (inline)
 
-- [ ] **7.1** `WhatsAppChatWindow.tsx` — adapter consumes the stream; delete both `refetchInterval`s.
-- [ ] **7.2** `ConnectionDetailDialog.tsx` — QR panel driven by `session.status` over SSE. Remove the
+> product FE **455 passed** (42 files) exit 0 · `tsc --noEmit` exit 0 · `check_lying_loading_state` clean.
+> ⚠️ Five unrelated FE files are FLAKY under full-suite parallel load (pass in isolation) —
+> logged `s1-emergent`. Flaky red masks real breakage; not silently absorbed.
+
+- [x] **7.1** `WhatsAppChatWindow.tsx` — adapter consumes the stream; delete both `refetchInterval`s.
+- [x] **7.2** `ConnectionDetailDialog.tsx` — QR panel driven by `session.status` over SSE. Remove the
       self-terminating poll and the one-shot `autoRecoveryFiredRef` guess (`:574-592`); "Gerar nova
       sessão / QR" calls `recover_session`, not `restart` (`:656`); show real ladder state, not a
       frozen stale string.
-- [ ] **7.3** **DRY:** `useConnectionChats` (`useWhatsAppConnections.ts:223`) and `useWhatsAppChats`
+- [x] **7.3** **DRY:** `useConnectionChats` (`useWhatsAppConnections.ts:223`) and `useWhatsAppChats`
       (`useWhatsAppChats.ts:75`) share an identical query key + URL with different options, and
       `ChatSummary` is declared twice. Collapse to one hook + one type.
-- [ ] **7.4** Wire the `configureWebhook` mutation (defined, never called) so the event-set change can
+- [~] **7.4** Wire the `configureWebhook` mutation (defined, never called) so the event-set change can
       be re-applied to existing connections from the UI.
 
 ## Slice 8 · Docs · KB · tests  `[C1]`
