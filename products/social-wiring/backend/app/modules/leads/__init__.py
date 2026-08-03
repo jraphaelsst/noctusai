@@ -15,9 +15,10 @@ Adding it to the app:
 
 What ``register()`` does
 ─────────────────────────
-Returns the five Leads routers (leads CRUD+facets, analytics, sources,
-corretores, import) under ``/api/leads/...``. No ``standard_routers``
-needed beyond what the existing MODULES already request.
+Returns the six Leads routers (leads CRUD+facets, analytics, sources,
+corretores, import, meta-ingest) under ``/api/leads/...``. No
+``standard_routers`` needed beyond what the existing MODULES already
+request.
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ def register() -> Any:
         corretores,
         imports,
         leads,
+        meta_ingest,
         sources,
     )
     from app.main import ModuleRegistration
@@ -39,16 +41,18 @@ def register() -> Any:
         # `leads.router` owns a catch-all `GET/PATCH/DELETE /{lead_id}`
         # under the SAME `/api/leads` prefix every other sub-router here
         # mounts under (`/api/leads/sources`, `/api/leads/analytics`,
-        # `/api/leads/import`) — FastAPI/Starlette tries routers in
-        # registration order, so `leads.router` MUST be listed LAST or
-        # e.g. `GET /api/leads/sources` gets caught by `/{lead_id}` and
-        # 422s trying to parse "sources" as a UUID (found exactly this
-        # way while building this module's test suite).
+        # `/api/leads/import`, `/api/leads/meta-ingest`) —
+        # FastAPI/Starlette tries routers in registration order, so
+        # `leads.router` MUST be listed LAST or e.g. `GET /api/leads/sources`
+        # gets caught by `/{lead_id}` and 422s trying to parse "sources" as
+        # a UUID (found exactly this way while building this module's test
+        # suite).
         routers=[
             analytics.router,
             sources.router,
             corretores.router,
             imports.router,
+            meta_ingest.router,
             leads.router,
         ],
         standard_routers=(),

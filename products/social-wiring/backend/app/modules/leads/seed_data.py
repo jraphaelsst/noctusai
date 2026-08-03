@@ -85,6 +85,15 @@ CANONICAL_SOURCES: list[SourceSeed] = [
     {"slug": "parceria", "label": "Parceria", "categoria": "parceria", "cor": "#9467BD", "ordem": 20},
     {"slug": "proprietario", "label": "Proprietário", "categoria": "direto", "cor": "#7F7F7F", "ordem": 21},
     {"slug": "outro", "label": "Outro", "categoria": "outro", "cor": "#C7C7C7", "ordem": 22},
+    # Appended, not interleaved with the spreadsheet-derived set above:
+    # this is the ONLY source `app/modules/leads/services/meta_ingest_service.py`
+    # assigns programmatically (never resolved via SOURCE_ALIASES), so it
+    # carries no alias entry either — renumbering the 0..22 set above to
+    # slot it in by "logical" position would be a gratuitous reorder of
+    # every consumer's chart-legend order for a cosmetic gain. `categoria`
+    # is `social` (Instant Forms run on Facebook/Instagram, both social
+    # platforms) — a legal value per migration 025's CHECK constraint.
+    {"slug": "meta-lead-ads", "label": "Meta Ads (Leads)", "categoria": "social", "cor": "#0081FB", "ordem": 23},
 ]
 
 # raw ORIGEM spelling (already normalize_alias'd below at import time) ->
