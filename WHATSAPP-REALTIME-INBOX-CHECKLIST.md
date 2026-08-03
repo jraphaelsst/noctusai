@@ -177,9 +177,11 @@ as the canonical instance every future chat UI consumes.
       behind it — this is what answers *"on page refresh it loads chats everytime"*. Prefer
       `@tanstack/query-persist-client`; fallback is a seed-level `createPersistedQueryClient` over
       sessionStorage (no new dep).
-- [ ] **6.5** `ChatWindow.organ.yaml` — the organ reports `consumers_count: 0`,
-      `validation_status: "shelfware"` because it is the only design-system organ without a sidecar,
-      which actively misleads `noc-organ-consume-check` into telling the next engineer to fork it.
+- [x] **6.5** `ChatWindow.organ.yaml` — **DONE** (`33c1c62a`, inline). The organ reported
+      `consumers_count: 0` / `shelfware` as the only design-system organ without a sidecar, which
+      actively misled `noc-organ-consume-check` into telling engineers to fork it — the missing
+      registration was itself generating the three product forks. Consumer inventory verified
+      against the tree (3 surfaces, 2 providers), not taken from a report.
 - [ ] **6.6** All loading gates on `isPending || isFetching`, never `isLoading` (`check_lying_loading_state`).
 
 ## Slice 7 · Product frontend  `[C3 · products/social-wiring/frontend/]`
