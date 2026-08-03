@@ -179,6 +179,37 @@ def test_real_satisfies_whatsapp_client_protocol() -> None:
     assert isinstance(client, WhatsAppClient)
 
 
+# The six session-admin methods (get_session/start_session/restart_session/
+# logout_session/get_qr/set_webhook) shipped on both WahaClient and
+# FakeWahaClient long before they were declared on the Protocol — a partial
+# connector still type-checked clean. These pin the completed surface at a
+# finer grain than the bare `isinstance(..., WhatsAppClient)` checks above
+# (which would only fail opaquely if a method went missing).
+_SESSION_ADMIN_AND_NEW_METHODS = (
+    "get_session",
+    "start_session",
+    "restart_session",
+    "logout_session",
+    "get_qr",
+    "set_webhook",
+    "recover_session",
+    "send_seen",
+    "get_chats_overview",
+)
+
+
+@pytest.mark.parametrize("method_name", _SESSION_ADMIN_AND_NEW_METHODS)
+def test_fake_exposes_full_admin_and_new_method_surface(method_name: str) -> None:
+    client = FakeWahaClient()
+    assert callable(getattr(client, method_name, None)), method_name
+
+
+@pytest.mark.parametrize("method_name", _SESSION_ADMIN_AND_NEW_METHODS)
+def test_real_exposes_full_admin_and_new_method_surface(method_name: str) -> None:
+    client = WahaClient(base_url="https://waha.test", api_key="k")
+    assert callable(getattr(client, method_name, None)), method_name
+
+
 # ---- start_session (multi-session pairing) ---------------------------------
 
 
@@ -201,3 +232,159 @@ def test_start_session_leaves_paired_session_working() -> None:
 def test_real_client_exposes_start_session() -> None:
     client = WahaClient(base_url="https://waha.test", api_key="k")
     assert hasattr(client, "start_session")
+
+
+# ---- send_seen ---------------------------------------------------------------
+
+
+def test_send_seen_records_full_call_shape() -> None:
+    client = FakeWahaClient()
+    result = asyncio.run(
+        client.send_seen(
+            "120363@g.us", message_id="msg-1", participant="5511999999999@c.us"
+        )
+    )
+
+    assert result == {"success": True}
+    assert client.seen_calls == [
+        {
+            "session": "default",
+            "chatId": "120363@g.us",
+            "messageId": "msg-1",
+            "participant": "5511999999999@c.us",
+        }
+    ]
+
+
+def test_send_seen_records_none_for_omitted_optional_fields() -> None:
+    client = FakeWahaClient()
+    asyncio.run(client.send_seen("c@c.us"))
+
+    assert client.seen_calls == [
+        {
+            "session": "default",
+            "chatId": "c@c.us",
+            "messageId": None,
+            "participant": None,
+        }
+    ]
+
+
+def test_send_seen_appends_across_multiple_calls() -> None:
+    client = FakeWahaClient()
+    asyncio.run(client.send_seen("a@c.us"))
+    asyncio.run(client.send_seen("b@c.us"))
+
+    assert [call["chatId"] for call in client.seen_calls] == ["a@c.us", "b@c.us"]
+
+
+# ---- get_chats_overview -------------------------------------------------------
+
+
+def test_get_chats_overview_returns_seeded_list_up_to_limit() -> None:
+    client = FakeWahaClient()
+    client.fake_chats_overview = [
+        {"id": f"{i}@c.us", "name": f"Chat {i}", "picture": None, "lastMessage": {}, "_chat": {}}
+        for i in range(3)
+    ]
+
+    result = asyncio.run(client.get_chats_overview(limit=2))
+
+    assert [c["id"] for c in result] == ["0@c.us", "1@c.us"]
+
+
+def test_get_chats_overview_returns_empty_list_when_unseeded() -> None:
+    client = FakeWahaClient()
+    assert asyncio.run(client.get_chats_overview()) == []
+
+
+# ---- recover_session (fake ladder mirrors WahaClient's) ----------------------
+
+
+def test_recover_session_fake_already_working_short_circuits() -> None:
+    client = FakeWahaClient()
+    client.simulate_pair()
+
+    result = asyncio.run(client.recover_session())
+
+    assert result["stage"] == "already_working"
+    assert result["status"] == "WORKING"
+    assert result["paired"] is True
+    assert client.start_count == 0
+
+
+def test_recover_session_fake_converges_at_start_for_never_paired_session() -> None:
+    client = FakeWahaClient()  # default: unpaired, SCAN_QR_CODE
+
+    result = asyncio.run(client.recover_session())
+
+    assert result["stage"] == "start"
+    assert result["status"] == "SCAN_QR_CODE"
+    assert result["paired"] is False
+    assert client.restart_count == 0
+
+
+def test_recover_session_fake_converges_at_restart_when_paired_but_stopped() -> None:
+    client = FakeWahaClient()
+    client.simulate_pair()
+    client.session_status = "STOPPED"  # paired but not WORKING/SCAN_QR_CODE
+
+    result = asyncio.run(client.recover_session())
+
+    # start_session is a no-op for a paired (`me` set) session per the fake's
+    # state machine, so the ladder escalates to restart, which brings a
+    # paired session back to WORKING.
+    assert result["stage"] == "restart"
+    assert result["status"] == "WORKING"
+    assert result["paired"] is True
+
+
+def test_recover_session_fake_converges_at_logout_start_from_stuck_failed() -> None:
+    """The exact live-fleet bug, reproduced deterministically: a session
+    with dead stored credentials stays FAILED through start AND restart;
+    only logout+start clears it — proving the ladder's full convergence
+    path (not just its individual rungs) end to end."""
+    client = FakeWahaClient()
+    client.simulate_stuck_session()
+
+    result = asyncio.run(client.recover_session())
+
+    assert result == {
+        "status": "SCAN_QR_CODE",
+        "stage": "logout_start",
+        "paired": False,
+        "me": None,
+    }
+    assert client.credentials_dead is False  # logout cleared it
+    assert client.start_count == 2  # rung 2 (no-op) + rung 4 (post-logout)
+    assert client.restart_count == 1
+
+
+def test_recover_session_fake_stuck_session_start_and_restart_are_no_ops() -> None:
+    """Isolates the no-op behaviour simulate_stuck_session() drives: while
+    credentials_dead, start_session/restart_session must NOT change status
+    — only logout_session may."""
+    client = FakeWahaClient()
+    client.simulate_stuck_session(status="FAILED")
+
+    asyncio.run(client.start_session())
+    assert client.session_status == "FAILED"
+
+    asyncio.run(client.restart_session())
+    assert client.session_status == "FAILED"
+
+    asyncio.run(client.logout_session())
+    assert client.session_status == "SCAN_QR_CODE"
+    assert client.me is None
+    assert client.credentials_dead is False
+
+
+def test_clear_resets_new_state() -> None:
+    client = FakeWahaClient()
+    asyncio.run(client.send_seen("c@c.us"))
+    client.fake_chats_overview = [{"id": "c@c.us"}]
+
+    client.clear()
+
+    assert client.seen_calls == []
+    assert client.fake_chats_overview == []

@@ -10,7 +10,10 @@ in an event loop, so we expose explicit sync siblings instead.
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import logging
+import time
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -18,6 +21,13 @@ from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
     rewrite_vendor_media_url,
 )
+
+logger = logging.getLogger(__name__)
+
+# Session statuses `recover_session`'s ladder treats as "recovered enough
+# to stop": SCAN_QR_CODE (fresh pairing needed, but the session is alive
+# and not stuck) or WORKING (already paired and connected).
+RECOVER_READY_STATUSES = {"SCAN_QR_CODE", "WORKING"}
 
 # 🔴 BOUNDARY: read/identity calls (chats, messages, contact, lids) hit WAHA in
 # request hot paths (chat-list render, message-thread render, inbound webhook).
@@ -67,6 +77,48 @@ def _safe_json(response: httpx.Response) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {"raw": parsed}
 
 
+async def _call_tolerating_expected_conflict(
+    action: Callable[[], Awaitable[dict[str, Any]]], *, label: str
+) -> None:
+    """Invoke a WAHA session-admin action, tolerating its documented
+    "already in this state" 409/422 responses.
+
+    ``recover_session`` cares about the resulting session STATUS (read
+    fresh via ``get_session`` right after) — not whether the admin call
+    itself returned 2xx. WAHA answers 409/422 for a restart/logout issued
+    against a session that is not exactly in the state it expects, which
+    is precisely the "stuck" case the ladder exists to recover from.
+    Anything else (5xx, network failure, an unexpected status code) is a
+    genuine failure and is re-raised — never swallowed silently.
+    """
+    try:
+        await action()
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code not in (409, 422):
+            raise
+        logger.warning(
+            "WahaClient.recover_session: %s answered %s (expected "
+            "state-conflict); continuing to poll session status",
+            label,
+            status_code,
+        )
+
+
+def recovery_outcome(state: dict[str, Any], stage: str) -> dict[str, Any]:
+    """Shape a `get_session`-like state dict into `recover_session`'s
+    return contract. Pure/stateless — shared verbatim by `WahaClient`
+    (real) and `FakeWahaClient` (fake) so both ladders emit the exact
+    same result shape without duplicating this formatting twice."""
+    me = state.get("me")
+    return {
+        "status": state.get("status"),
+        "stage": stage,
+        "paired": bool(me),
+        "me": me,
+    }
+
+
 def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Build a FULL WAHA session-config payload — ALWAYS carries the NOWEB store.
 
@@ -77,13 +129,24 @@ def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, A
     ``start_session`` had set, so the NOWEB engine kept no history and
     ``GET /api/{session}/chats`` 400'd. The cure is structural: NO caller
     hand-assembles a partial config; every config-writing path routes through
-    here so the store block is always present. ``full_sync`` backfills history
+    here so the store block is always present. ``fullSync`` backfills history
     at authentication, so a FRESH pairing (logout → start → scan QR) is what
     actually populates existing chats — a restart of an already-paired session
     will not re-pull history.
+
+    🔴 WAHA's NOWEB config key is **camelCase** ``fullSync`` (not
+    ``full_sync``). The 2026-0X silent bug: this helper emitted
+    ``full_sync`` (snake_case), WAHA silently dropped the unrecognized key
+    and applied its own default (``false``), so NOWEB never backfilled
+    history — nothing raised, nothing logged, the inbox was just quietly
+    empty/stale. Confirmed live: ``GET /api/sessions/default`` reports
+    ``"noweb": {"store": {"enabled": true, "fullSync": false}}`` for a
+    session started under the old snake_case payload. See
+    ``test_session_config_wire_key_is_camel_case_full_sync`` — it pins
+    the exact wire-format key so this cannot regress silently again.
     """
     config: dict[str, Any] = {
-        "noweb": {"store": {"enabled": True, "full_sync": True}}
+        "noweb": {"store": {"enabled": True, "fullSync": True}}
     }
     if webhooks is not None:
         config["webhooks"] = webhooks
@@ -167,6 +230,39 @@ class WahaClient:
             response.raise_for_status()
             return response.json()
 
+    async def send_seen(
+        self,
+        chat_id: str,
+        message_id: str | None = None,
+        participant: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /api/sendSeen — mark a chat (or a specific message) as read.
+
+        WAHA's ``SendSeenRequest`` requires ``chatId`` + ``session``;
+        ``messageId`` and ``participant`` are optional. Omitting
+        ``message_id`` marks the whole chat as seen (blue ticks on the
+        latest message). ``participant`` is NOWEB-only — the JID of the
+        group member whose message is being acknowledged; irrelevant for
+        1:1 chats. WAHA's current schema also accepts a plural
+        ``messageIds`` array (``messageId`` singular is flagged
+        deprecated-but-still-accepted) — this client sticks to the
+        documented singular field since a single-message read-receipt is
+        the only call shape this connector needs today.
+        """
+        body: dict[str, Any] = {"session": self.session, "chatId": chat_id}
+        if message_id is not None:
+            body["messageId"] = message_id
+        if participant is not None:
+            body["participant"] = participant
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.post(
+                "/api/sendSeen",
+                json=body,
+                headers=self._headers(json=True),
+            )
+            response.raise_for_status()
+            return _safe_json(response)
+
     # ------------------------------------------------------------------
     # Session admin — connection lifecycle, QR pairing, webhook wiring.
     #
@@ -196,7 +292,7 @@ class WahaClient:
         instead of raising.
 
         The NOWEB store config is included so that WAHA maintains and syncs
-        chat/message history. Without ``store.enabled=true`` + ``full_sync=true``
+        chat/message history. Without ``store.enabled=true`` + ``fullSync=true``
         the NOWEB engine keeps no history — ``GET /api/{session}/chats`` returns
         a 400 and the inbox stays empty until the first inbound webhook fires.
         This is the canonical fleet default: any chat-capable product needs the
@@ -221,7 +317,7 @@ class WahaClient:
         paired account when credentials are still valid on disk.
 
         Sends the same NOWEB store config as ``start_session`` so that a
-        restart after deploy also activates ``full_sync`` on the revived session.
+        restart after deploy also activates ``fullSync`` on the revived session.
         (NOTE: WAHA 2026.x ignores a config body on ``/restart`` — it restarts
         with the stored config — so the durable guarantee is that EVERY config
         write, incl. ``set_webhook``, carries the store; see ``_session_config``.)
@@ -245,6 +341,78 @@ class WahaClient:
             )
             response.raise_for_status()
             return _safe_json(response)
+
+    async def _poll_until_ready(self, seconds: float) -> dict[str, Any]:
+        """Poll ``get_session`` until status lands in
+        ``RECOVER_READY_STATUSES`` or ``seconds`` elapses; returns the
+        last-read state either way (caller decides ready vs. still-stuck)."""
+        deadline = time.monotonic() + seconds
+        state = await self.get_session()
+        while (
+            state.get("status") not in RECOVER_READY_STATUSES
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.5)
+            state = await self.get_session()
+        return state
+
+    async def recover_session(self, *, settle_seconds: float = 8.0) -> dict[str, Any]:
+        """Escalation ladder to recover a session stuck outside
+        ``{SCAN_QR_CODE, WORKING}`` — stops at the first rung that gets
+        there:
+
+        1. ``get_session()`` — already ``WORKING``? return immediately.
+        2. ``start_session()`` → poll ``get_session()`` up to
+           ``settle_seconds``.
+        3. still not ready → ``restart_session()`` → poll again.
+        4. still not ready → ``logout_session()`` then ``start_session()``
+           → poll again.
+
+        Root-cause context (proven on the live fleet session): a session
+        that HAS stored (but dead) credentials answers ``restart`` by
+        retrying those dead credentials and hanging in ``STARTING`` for
+        minutes before WAHA force-stops it back to ``FAILED`` — only
+        ``logout`` actually clears the stored credentials so the NOWEB
+        engine can re-enter ``SCAN_QR_CODE``. The ladder's value is
+        CONVERGENCE regardless of which single rung is individually
+        "the fix": a never-paired session converges at rung 2 (cheap),
+        a session with a live-but-stalled connection may recover at
+        rung 3, and a session wedged on dead stored credentials only
+        converges at rung 4 — callers don't have to pre-diagnose which
+        case they're in.
+
+        Never raises on an intermediate rung's expected WAHA 409/422
+        (``start_session`` already tolerates those internally;
+        ``restart_session``/``logout_session`` are wrapped here via
+        ``_call_tolerating_expected_conflict``) — anything else
+        (5xx, network failure, an unexpected status code) surfaces.
+
+        Returns ``{"status": <final WAHA status>, "stage":
+        <"already_working"|"start"|"restart"|"logout_start">, "paired":
+        <bool>, "me": <session "me" dict or None>}``.
+        """
+        state = await self.get_session()
+        if state.get("status") == "WORKING":
+            return recovery_outcome(state, "already_working")
+
+        await self.start_session()
+        state = await self._poll_until_ready(settle_seconds)
+        if state.get("status") in RECOVER_READY_STATUSES:
+            return recovery_outcome(state, "start")
+
+        await _call_tolerating_expected_conflict(
+            self.restart_session, label="restart_session"
+        )
+        state = await self._poll_until_ready(settle_seconds)
+        if state.get("status") in RECOVER_READY_STATUSES:
+            return recovery_outcome(state, "restart")
+
+        await _call_tolerating_expected_conflict(
+            self.logout_session, label="logout_session"
+        )
+        await self.start_session()
+        state = await self._poll_until_ready(settle_seconds)
+        return recovery_outcome(state, "logout_start")
 
     async def get_qr(self) -> bytes:
         """GET /api/{session}/auth/qr?format=image — PNG bytes to scan.
@@ -307,7 +475,7 @@ class WahaClient:
         ``{"id": {"_serialized": "..."}, "name": ..., "lastMessage": {...}}``.
 
         Requires the session to have been started with the NOWEB store config
-        (``store.enabled=true, full_sync=true``). WAHA returns 400 when the
+        (``store.enabled=true, fullSync=true``). WAHA returns 400 when the
         store is not enabled; callers should treat that as an empty list rather
         than raising (use the graceful-fallback pattern in the router).
         """
@@ -320,6 +488,42 @@ class WahaClient:
             response.raise_for_status()
             body = response.json()
             # WAHA returns a JSON array at the top level.
+            return body if isinstance(body, list) else []
+
+    async def get_chats_overview(self, limit: int = 50) -> list[dict[str, Any]]:
+        """GET /api/{session}/chats/overview — chat list pre-shaped for a UI.
+
+        Verified present on the live fleet WAHA build (2026.6.1 CORE,
+        ``https://waha.noctusai.com``) via its own OpenAPI spec:
+        ``operationId: ChatsController_getChatsOverview``, tag "💬 Chats".
+        WAHA also ships a ``POST`` sibling for callers with too many
+        ``ids`` for a GET query string; not needed here.
+
+        Returns a list of WAHA ``ChatSummary`` objects as emitted:
+        ``{"id": ..., "name": ..., "picture": ..., "lastMessage": {...},
+        "_chat": {...}}``. Per WAHA's documented ``ChatSummary`` schema,
+        ``unreadCount`` is **not** a top-level field — the schema only
+        declares ``id``/``name``/``picture``/``lastMessage``/``_chat``.
+        WAHA's raw (untyped) chat object nested under ``_chat`` is where
+        an unread count would live when the underlying engine populates
+        it; callers wanting unread counts should read
+        ``chat.get("_chat", {}).get("unreadCount")`` defensively rather
+        than assume a top-level key — this was NOT observed on a live
+        paired session (the fleet session is currently ``FAILED``, see
+        ``recover_session``), so the nested shape is documented-schema
+        inference, not a directly-observed sample.
+
+        Requires the NOWEB store (same precondition as ``list_chats``);
+        WAHA returns 422 when the session is not ``WORKING``.
+        """
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=_WAHA_READ_TIMEOUT) as client:
+            response = await client.get(
+                f"/api/{self.session}/chats/overview",
+                params={"limit": limit},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            body = response.json()
             return body if isinstance(body, list) else []
 
     async def fetch_chat_messages(
