@@ -1,4 +1,17 @@
--- 041_lead_campanhas_vendas.sql — portal ROI: spend, and what it produced
+-- 043_lead_campanhas_vendas.sql — portal ROI: spend, and what it produced
+--
+-- ⚠️ NUMBERED 043, NOT 041. `041_leads_meta_lead_id.sql` already occupied 041
+-- on `dev`, and this file briefly shipped as a duplicate 041 before being
+-- renumbered. 042 is claimed by `feat/meta-leadgen-webhook`
+-- (`042_meta_webhook_events.sql`, unpushed at the time of writing).
+--
+-- Reserving a migration number requires checking UNPUSHED sibling branches —
+-- `ls migrations/` and `git log origin/dev` both miss them:
+--
+--     for b in $(git branch --format='%(refname:short)'); do
+--       f=$(git diff --name-only origin/dev...$b | grep 'backend/migrations/')
+--       [ -n "$f" ] && echo "$b -> $f"
+--     done
 --
 -- Fires trigger T5 of project-history/roadmaps/social-wiring-imoveis-vista-2026-08.md.
 -- The user named the requirement directly on 2026-08-03: "*the origem is for

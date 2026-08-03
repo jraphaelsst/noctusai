@@ -436,7 +436,7 @@ below if needed):
 | P2.2 | `498be811` | `040_imoveis.sql` — table, RLS, asymmetric CHECKs, `status_pagina` row |
 | P2.3 | `77173487` | `/api/imoveis` + full-pull sync service |
 | P2.4 | `c2377826` | Catalog page, detail page, nav in both `NAV_GROUPS` and `NAV_FALLBACK` |
-| T5 (schema) | this commit | `041_lead_campanhas_vendas.sql` + `vw_portal_roi` |
+| T5 (schema) | this commit | `043_lead_campanhas_vendas.sql` + `vw_portal_roi` (renumbered from a duplicate 041) |
 
 ### 🔴 Not done — and why, precisely
 
