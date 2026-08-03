@@ -18,7 +18,11 @@
 > such column. New trigger **T5** tracks the portal-ROI surface the user actually
 > wants from it.
 >
-> Next gate is still T1.
+> **T1 FIRED 2026-08-03** (user: *"please resolve and finish all the remaining
+> open work"*). Phase 2 is built: **P2.0a/P2.0b/P2.1** (`c92e7973`), **P2.2**
+> (`498be811`), **P2.3** (`77173487`), **P2.4** (`c2377826`), plus the **T5**
+> migration. Two items are NOT done and are handed off — see
+> §"State at handoff" at the bottom.
 
 ## Origin
 
@@ -415,3 +419,69 @@ below if needed):
 > (`KB § PATTERNS/architect/mcp-first-scripts.md`). Deliberately not built in the
 > census session — the ask was data, not tooling — but it is the natural home when
 > P2.0a moves calibration into the seed.
+
+
+---
+
+## State at handoff (2026-08-03, end of the census + build session)
+
+### Shipped to `dev`
+
+| Slice | Commit | What landed |
+|---|---|---|
+| Census | `8f1d9eee` | Catalog-wide wire analysis; overturned quirks W2/W4, added W11/W12 |
+| P2.0c | `3644f6db` | ONE-code validator widened (`^[A-Z]{2,4}\d{3,6}$`) + 3 regexes DRY'd to one seed constant |
+| — | `871bdada` | `origem` correction — it is lead attribution, not imóvel provenance |
+| P2.0a+b, P2.1 | `c92e7973` | Calibration lifted to seed; `Imovel` model + normalizer; adapter seam grew `get_imovel`/`list_imoveis` on Protocol+Real+Fake |
+| P2.2 | `498be811` | `040_imoveis.sql` — table, RLS, asymmetric CHECKs, `status_pagina` row |
+| P2.3 | `77173487` | `/api/imoveis` + full-pull sync service |
+| P2.4 | `c2377826` | Catalog page, detail page, nav in both `NAV_GROUPS` and `NAV_FALLBACK` |
+| T5 (schema) | this commit | `041_lead_campanhas_vendas.sql` + `vw_portal_roi` |
+
+### 🔴 Not done — and why, precisely
+
+**P2.5 — resolve `product_code` against the local store. BLOCKED, not skipped.**
+
+It must point `intake_monitor_router`, `settings_router` and the youtube
+dashboard at `social_wiring.imoveis` instead of a live Vista call. That table
+**does not exist yet** — `040_imoveis.sql` is a file, unapplied, because
+applying it needs explicit tech-lead consent (`noctus.dev.migrate_product`).
+
+Building it now would require a fallback-to-Vista-if-the-table-is-missing
+branch, which is a silent fallback and forbidden by `KB § 01-PHILOSOPHY.md`.
+It is also a behaviour change to **live WhatsApp intake**, so it should not
+ride along with anything else.
+
+**Order of operations for whoever picks this up:**
+1. Apply `040_imoveis.sql` (consent required).
+2. Run `POST /api/imoveis/sync` once — expect ~1919 rows in 4–6 min.
+3. Verify the page renders real rows in the running container.
+4. Flip `status_pagina.imoveis` → `'producao'`.
+5. THEN do P2.5 as its own slice.
+
+**T5 — backend + UI for portal ROI.** Only the schema landed. Still needed:
+a service + router over `vw_portal_roi`, a spend-entry surface for
+`lead_campanhas` (the numbers come from the portals' own dashboards — there
+is no API for them), and the page. `status_pagina.portal_roi` is already
+seeded as `'desenvolvimento'`.
+
+### Verification status
+
+| Surface | Result |
+|---|---|
+| Seed suites | 1240 passed (was 1192 pre-session) |
+| `mcp/vista` smoke | 12 passed |
+| Migration structure | `040` 20 tests green, parses under pglast (18 stmts); `041` parses (24 stmts) |
+| Sync service | 9 tests — idempotency, pagination, failure recording |
+| Router | 8 tests — strict `== 401` on all five routes |
+| Frontend | `tsc --noEmit` clean; `vite build` green |
+| **Live Vista** | `list_imoveis` total=1919; `get_imovel("CA0190")` → 2 corretores, piscina, composed address; `with_detalhes` populates características |
+
+**Not verified:** nothing has run inside a container, and no migration has
+been applied to any database. The page has never rendered against real rows.
+
+### Environment notes for the next agent
+
+- Installed `openpyxl` + `pglast` into `mcp/noctusai/.venv`. `openpyxl` is declared in the product's `requirements.txt` but was absent, which blocked collection of every test that builds the app.
+- The shared checkout carries uncommitted peer-session rows in `project-history/auto-improvement.ndjson` — not this session's, left alone deliberately.
+- `NOC-REMEDIATE[seed-fork]` on `integrations/vista/real.py`: `get_property` + `update_property_video_url` still use raw httpx with a frozen 16-field `pesquisa` instead of `VistaClient` + `calibrator`. Deferred because they feed the live YouTube fan-out and a field-set change alters `PropertyData.description`.
