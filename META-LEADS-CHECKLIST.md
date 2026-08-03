@@ -100,13 +100,31 @@ upsert keyed on Meta's own lead id.
 - [ ] Backfill the 958 stored leads (explicit, logged, idempotent)
 - [ ] **Verify live:** test lead visible in `/api/leads` with origem "Meta Lead Ads"
 
-## Slice 4 — Notification fan-out (C2)
+## Slice 4 — Notification fan-out (C2) — ✅ integrated `3aced8ac`
 
-- [ ] Generalize `notification_service.py` — extract `dispatch(...)` core from `notify_upload`
-- [ ] `notify_new_lead(lead)` — in-app + WhatsApp + email
-- [ ] Confirm `social-wiring` mounts the standard `notificacoes` router
-- [ ] Fan-out runs **after** the 200 (never blocks the webhook response)
-- [ ] **Verify live:** test lead triggers a real WhatsApp message + email + in-app badge
+- [x] Generalized `notification_service.py` — `_dispatch(...)` core extracted from `notify_upload`
+      (`notification_service.py:174`); `notify_upload` behaviour unchanged
+- [x] `notify_new_lead(*, org_id, lead)` (`:138`) — takes the lead dict the caller already holds,
+      never re-queries Meta or Postgres; pt-BR copy (`_build_lead_message:405`)
+- [x] `whatsapp_client_factory` DI seam added so tests drive real resolution
+- [x] Per-recipient failures are logged, never raised — the webhook must never return non-2xx
+      because SMTP was slow (Meta retries non-2xx and can disable the subscription)
+- [x] 6 new tests; full suite 1502 passed, independently re-run and verified by exit code
+- [x] 🐛 **Real bug fixed in passing:** `_log` did `str(job_id)` unconditionally, so a non-upload
+      caller would have written the literal string `"None"` into the nullable `upload_job_id`
+      UUID column. Now conditional.
+- [ ] In-app channel: `notificacoes` router mounting still to confirm (email + WhatsApp shipped)
+- [ ] **Verify live:** test lead triggers a real WhatsApp message + email
+
+**Recipients decision (engineer, explicit):** there is no per-lead recipient subset analogous to
+`upload_jobs.notify_recipients[]`, so `notify_new_lead` fans out to *every active row* in the
+org's existing `notification_recipients` table — the same table and filter `notify_upload`
+already trusts, minus the per-job narrowing. Not a hardcoded address, not an invented table.
+A future "leads but not uploads" toggle is a `notify_on` column, not something this method invents.
+
+**Surfaced → logged** (`auto-improvement.ndjson`, s1): `notification_log` is upload-shaped and
+cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a generic
+`source_kind`/`source_id` pair. N=2 ⇒ triage now, mandatory at the third notification source.
 
 ## Slice 5a — Webhook UI + ordering (C3) · **independent, build now**
 

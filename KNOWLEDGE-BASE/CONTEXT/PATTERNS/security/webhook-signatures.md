@@ -183,13 +183,39 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
 
 ## Current adopters
 
+> **Audited against the tree 2026-08-03.** The previous version of this list
+> named `mailing`, `imobi-scheduling` and `media-scheduling` — **none of which
+> exist under `products/`**; those surfaces were absorbed into `social-wiring`
+> and the list was never updated. It also asserted "all 5 pins" for two
+> receivers that do not satisfy them. A compliance list that overstates
+> compliance is worse than no list: it is exactly what stops the next author
+> from checking. Verify before appending.
+
 - ✅ `core` — Stripe billing webhooks (pattern 4) — pins 4+5 enforced 2026-05-09
-- ✅ `erp-imobiliario` — WAHA (pattern 2), Meta Lead Ads (pattern 1) — all 5 pins from launch
-- ✅ `mailing` — Resend (pattern 3) — all 5 pins from 2026-05-02
-- ✅ `imobi-scheduling` — WAHA (pattern 2) — all 5 pins from launch (consolidates the earlier `media-scheduling` port deleted 2026-05-11)
+  (`app/routers/billing.py`; SDK carve-out, so pins 1–3 are N/A by design)
+- ✅ `social-wiring` — Resend (pattern 3), `app/modules/email_marketing/routers/webhooks.py`
+  — uses `webhook_endpoint(scheme="svix")`, all applicable pins
+- 🔴 `social-wiring` — WAHA (pattern 2), `app/routers/whatsapp_router.py:592`
+  — **VIOLATES pin 1**: hand-rolls `hmac.new(...)` + `compare_digest` in
+  `_verify_hmac` instead of using the lib factory. Compensating controls
+  (opaque per-connection routing token, rate limit) are real, but this is the
+  exact anti-shape pin 1 names.
+- 🔴 `erp-imobiliario` — Meta Lead Ads (pattern 1), `app/routers/meta_api.py:64-71`
+  — **VIOLATES pin 2**: `_resolve_meta_secret` returns
+  `row.get("webhook_verify_token")` as the HMAC secret. Meta signs
+  `X-Hub-Signature-256` with the **App Secret**. Both branches are wrong — no
+  matching `meta_config` row ⇒ `secret=None` ⇒ `bypass_when_unset=True`
+  accepts unverified traffic; a matching row ⇒ it 401s genuine Meta traffic.
+  Currently inert (`erp.meta_config` and `erp.meta_leads` are both empty — it
+  was never configured), scheduled for consolidation onto the seed capability.
+- ✅ `erp-imobiliario` — WAHA (pattern 2), `app/routers/whatsapp_webhook.py`
+  — uses `webhook_endpoint(...)`; note it has **no dedup**, so the WAHA
+  `message`/`message.any` double-delivery race is unguarded.
 - ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2)
   via vendored copy until published-package shape lands.
 
 When a new product comes online, the inherited seed skeleton already
 satisfies all 5 pins — replace `_resolve_example_secret` + the endpoint
-body, keep the rest. Append to this list to make divergence visible.
+body, keep the rest. Append to this list **only after checking the receiver
+against the pins**, and mark violations 🔴 rather than omitting them —
+divergence you can see is divergence someone can fix.
