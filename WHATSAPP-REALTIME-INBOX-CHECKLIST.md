@@ -55,6 +55,23 @@ as the canonical instance every future chat UI consumes.
   also carries session status, so the **QR screen stops polling too**.
 - **Read state mirrors real WhatsApp** (`sendSeen` + `message.ack`). ⚠️ Accepted side effect: opening
   a chat here marks it read **on the real phone**.
+
+  🔴 **QUALIFIED 2026-08-03 by Slice 1.3 — the mirror is ONE-DIRECTIONAL.** This was not knowable
+  when the decision was made, so it is recorded rather than buried:
+
+  | Direction | Works? | Mechanism |
+  |---|---|---|
+  | this UI → your phone | ✅ | `sendSeen` on chat open marks it read on the device |
+  | your phone → this UI | ❌ | nothing reports it |
+
+  `message.ack` carries only the ack level of messages **we sent** (delivered / read *by the
+  recipient*) — it says nothing about you reading an inbound message on your own phone. And WAHA's
+  `chats/overview` `ChatSummary` exposes no top-level `unreadCount` to poll for it either (1.3).
+  **Effect:** read a chat on your phone and this UI's badge stays lit until you open it here too.
+  Not fixable from our side — it is the limit of what the transport exposes.
+  **Options:** (a) accept — opening *here* is the canonical read action; (b) once pairing works,
+  probe whether the untyped `_chat.unreadCount` is populated and reconcile from it in the backfill
+  sweep. **Deferred to the user; (b) is cheap to test the moment the session reaches `WORKING`.**
 - **Seed-first.** Mechanism lands in `noctusai_lib` / `@noctusai/lib`; social-wiring is the proof.
   Other chat forks (therapy, erp `WhatsAppInbox`, `ChatPanel`) stay untouched this pass.
 
@@ -87,53 +104,58 @@ as the canonical instance every future chat UI consumes.
 - [ ] **0.2** Recovery instead happens via Slice 1's `recover_session()` ladder + Slice 7's QR fix.
       Verified under **V1**.
 
-## Slice 1 · Seed WAHA client completion  `[C1 · seed/lib/backend/.../integrations/whatsapp/]` — **DISPATCHED**
+## Slice 1 · Seed WAHA client completion  `[C1 · seed/lib/backend/.../integrations/whatsapp/]` — ✅ **DONE** (`4718495e`)
 
-> worktree `.claude/worktrees/wa-seed-client` · branch `feat/wa-seed-client`
+> merged into the integration branch; seed suite 2565 passed on the merged tip
 
-- [ ] **1.1** Fix `_session_config` casing — `client.py:86` sends `full_sync`, WAHA's key is
+- [x] **1.1** Fix `_session_config` casing — `client.py:86` sends `full_sync`, WAHA's key is
       `fullSync`. Live session reports `"fullSync": false`; NOWEB has therefore **never** backfilled
       history. Add a test asserting the emitted JSON key (this failed silently for weeks).
-- [ ] **1.2** Add `send_seen(chat_id, message_id=None, participant=None)` → `POST /api/sendSeen`.
-- [ ] **1.3** Verify `GET /api/{session}/chats/overview` exists on WAHA 2026.6.1 CORE/NOWEB. Present ⇒
-      add `get_chats_overview()` for real per-chat `unreadCount`. Absent ⇒ unread derives from the
-      read cursor alone; record the verdict here.
-- [ ] **1.4** Move the six session-admin methods into the `WhatsAppClient` Protocol (`types.py:50`) —
+- [x] **1.2** Add `send_seen(chat_id, message_id=None, participant=None)` → `POST /api/sendSeen`.
+- [x] **1.3** **VERDICT: endpoint EXISTS, but `unreadCount` does NOT.** Verified against the live
+      server's own embedded OpenAPI spec (`swagger-ui-init.js` inside `noctus-services-waha-1`):
+      `operationId: ChatsController_getChatsOverview` is present on WAHA 2026.6.1 CORE.
+      **However** its `ChatSummary` schema is `{id, name, picture, lastMessage, _chat}` — there is no
+      top-level `unreadCount`. It would only exist nested inside the untyped `_chat` blob, which could
+      not be confirmed against a live sample because the session is `FAILED` (422). `get_chats_overview()`
+      was added with a defensive docstring rather than a guessed field mapping.
+      ⚠️ **Consequence for the read model — see "Read-state is one-directional" below.**
+- [x] **1.4** Move the six session-admin methods into the `WhatsAppClient` Protocol (`types.py:50`) —
       they exist on both impls but aren't in the contract, so a partial connector type-checks clean.
-- [ ] **1.5** Add `recover_session()` escalation ladder replacing the FE's one-shot guess:
+- [x] **1.5** Add `recover_session()` escalation ladder replacing the FE's one-shot guess:
       `start` → not `SCAN_QR_CODE|WORKING` within N s → `restart` → still stuck → `logout` + `start`.
       The ladder converges regardless of which rung is individually correct.
-- [ ] **1.6** `FakeWahaClient` parity for every new method (seed IO ships Fake+Real+factory).
-- [ ] **1.7** Tests green: `noctus.dev.pytest` on seed.
+- [x] **1.6** `FakeWahaClient` parity for every new method (seed IO ships Fake+Real+factory).
+- [x] **1.7** Tests green: `noctus.dev.pytest` on seed.
 
-## Slice 2 · Seed realtime bus + SSE  `[C1 · NEW seed/lib/backend/noctusai_lib/realtime/]` — **DISPATCHED**
+## Slice 2 · Seed realtime bus + SSE  `[C1 · NEW seed/lib/backend/noctusai_lib/realtime/]` — ✅ **DONE** (`73285903`)
 
-> worktree `.claude/worktrees/wa-realtime-bus` · branch `feat/wa-realtime-bus`
+> merged; `noctusai_lib.realtime` is the platform's FIRST realtime transport
 
-- [ ] **2.1** `bus.py` — `RealtimeBus` Protocol (`publish(scope, event, payload)` / `subscribe(scope)`),
+- [x] **2.1** `bus.py` — `RealtimeBus` Protocol (`publish(scope, event, payload)` / `subscribe(scope)`),
       `RedisRealtimeBus`, `FakeRealtimeBus`, `get_realtime_bus(...)` factory.
-- [ ] **2.2** `sse.py` — `create_sse_router(...)` factory: `text/event-stream`, heartbeat,
+- [x] **2.2** `sse.py` — `create_sse_router(...)` factory: `text/event-stream`, heartbeat,
       `Last-Event-ID` resume, `?since=` cursor replay, `X-Accel-Buffering: no`.
-- [ ] **2.3** Reuse the existing Redis wiring (same URL as the chatbot buffer / `RedisWebhookDedup`) —
+- [x] **2.3** Reuse the existing Redis wiring (same URL as the chatbot buffer / `RedisWebhookDedup`) —
       do not open a second client path.
-- [ ] **2.4** Author `KB § PATTERNS/common/realtime-sse-bus.md` — no realtime/live-data pattern doc
+- [x] **2.4** Author `KB § PATTERNS/common/realtime-sse-bus.md` — no realtime/live-data pattern doc
       exists in the KB at all today.
-- [ ] **2.5** Tests: publish→subscribe roundtrip, reconnect replay, Fake parity.
+- [x] **2.5** Tests: publish→subscribe roundtrip, reconnect replay, Fake parity.
 
-## Slice 3 · Schema  `[C2 · products/social-wiring/backend/migrations/040_*.sql]` — **DISPATCHED**
+## Slice 3 · Schema  `[C2 · products/social-wiring/backend/migrations/040_*.sql]` — ✅ **DONE** (`b524b097`, apply pending)
 
-> worktree `.claude/worktrees/wa-inbox-schema` · branch `feat/wa-inbox-schema`
+> merged; DDL statically verified, live apply deferred
 
-- [ ] **3.1** `social_wiring.whatsapp_chats` — one row per conversation. PK `(connection_id, chat_id)`;
+- [x] **3.1** `social_wiring.whatsapp_chats` — one row per conversation. PK `(connection_id, chat_id)`;
       `org_id`, `title`, `last_message_at`, `last_message_preview`, `last_direction`, `unread_count`,
       `last_read_at`, `last_read_message_id`, `archived`, `pinned`, `synced_through`.
       Index `(connection_id, archived, last_message_at DESC)` — that index **is** the chat-list query.
       Stops the list being a `GROUP BY` over a growing message table.
-- [ ] **3.2** `conversation_messages`: add `ack SMALLINT` (WAHA −1 error … 3 read, 4 played),
+- [x] **3.2** `conversation_messages`: add `ack SMALLINT` (WAHA −1 error … 3 read, 4 played),
       `chat_id TEXT`, `acked_at`. Index `(connection_id, chat_id, created_at DESC)` — the thread query.
-- [ ] **3.3** RLS mirroring the existing pattern exactly: `current_org_id()` SELECT for `authenticated`
+- [x] **3.3** RLS mirroring the existing pattern exactly: `current_org_id()` SELECT for `authenticated`
       + service-role ALL (template: `011_rls_current_org_id.sql:448`).
-- [ ] **3.4** No FK on `connection_id` — consistent with the deliberate choice at `014:30`.
+- [x] **3.4** No FK on `connection_id` — consistent with the deliberate choice at `014:30`.
 - [~] **3.5** Verified STATICALLY, not live — reported honestly rather than claimed.
       Legs: (a) `pglast` (real libpg_query parser) parses all 15 statements as valid DDL, exit 0, and
       an AST walk confirms every statement carries an idempotency guard; (b) 12 new structural tests
