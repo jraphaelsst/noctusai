@@ -181,19 +181,24 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
    SURFACED, not acted on. `040` is order-independent (new table + additive columns only) and can be
    applied alone via `migrate_product(target="040_…")`.
 
-## Slice 4 · Ingest rewrite  `[C3 · whatsapp_router.py · after 1–3]`
+## Slice 4 · Ingest rewrite  `[C3 · whatsapp_router.py]` — ✅ **DONE** (`29c07fdb`, `3798be44`)
 
-- [ ] **4.1** Subscribe the full event set + re-wire existing connections: `message`, `message.any`,
+> Also fixed two pre-existing bugs it uncovered: `connection.encrypted_api_key` (a field that
+> never existed) and `payload.pushName` (no fallback) both raised on **every** inbound message
+> and were silently swallowed by a surrounding `except Exception` — a textbook silent-error.
+> `session.status` is persisted to Redis (24h TTL), not Postgres — no column exists yet.
+
+- [x] **4.1** Subscribe the full event set + re-wire existing connections: `message`, `message.any`,
       `message.ack`, `message.reaction`, `session.status`. Today only `message` + `session.status`
       (`whatsapp_connections_router.py:335`) — which is why messages sent from the phone never land.
-- [ ] **4.2** Persist instead of discard: `message.ack` → `conversation_messages.ack`;
+- [x] **4.2** Persist instead of discard: `message.ack` → `conversation_messages.ack`;
       `session.status` → persisted state (currently logged and dropped, `whatsapp_router.py:316-324`).
-- [ ] **4.3** Maintain `whatsapp_chats` on every write (upsert last-message fields, bump `unread_count`).
-- [ ] **4.4** Publish each event to the realtime bus after the DB write.
-- [ ] **4.5** **Fix-on-contact:** hand-rolled `_verify_hmac` (`:592-603`) is the exact anti-shape
+- [x] **4.3** Maintain `whatsapp_chats` on every write (upsert last-message fields, bump `unread_count`).
+- [x] **4.4** Publish each event to the realtime bus after the DB write.
+- [x] **4.5** **Fix-on-contact:** hand-rolled `_verify_hmac` (`:592-603`) is the exact anti-shape
       `KB § PATTERNS/security/webhook-signatures.md` forbids. Move to `webhook_endpoint(...)` with a
       per-request `ResolvedSecret` resolver — all 5 pins.
-- [ ] **4.6** Backfill job on the existing seed APScheduler (`noctusai_lib/api/scheduler.py`;
+- [x] **4.6** Backfill job on the existing seed APScheduler (`noctusai_lib/api/scheduler.py`;
       social-wiring already calls `start_scheduler()` at `lifespan.py:108`). Walks chats, pulls
       history via `fetch_chat_messages`, advances `synced_through`.
       Default depth **90 days or 500 messages per chat, whichever is smaller** — configurable.
@@ -256,20 +261,26 @@ category out of RLS makes every downstream FE branch on it dead (`status-pagina-
 - [~] **7.4** Wire the `configureWebhook` mutation (defined, never called) so the event-set change can
       be re-applied to existing connections from the UI.
 
-## Slice 8 · Docs · KB · tests  `[C1]`
+## Slice 8 · Docs · KB · tests  `[C1]` — ✅ **DONE**
 
-- [ ] **8.1** KB: `realtime-sse-bus.md` (new) · `inbox-chat-surface.md` (new — no inbox pattern exists).
-- [ ] **8.2** Update `KB § INTEGRATIONS/whatsapp.md` + `KB § MCP-SERVERS/waha.md` with the session
+> New `KB § PATTERNS/frontend/inbox-chat-surface.md` (+ INDEX row + `frontend-engineer` owns_kb
+> and body pointer). **Corrected `MCP-SERVERS/waha.md`**: its stuck-worker recipe
+> (`get → restart → get`) cannot recover a credentials-dead session and loops forever — the KB
+> was documenting the broken procedure. Added the `fullSync` camelCase trap to
+> `INTEGRATIONS/whatsapp.md §4a`.
+
+- [x] **8.1** KB: `realtime-sse-bus.md` (new) · `inbox-chat-surface.md` (new — no inbox pattern exists).
+- [x] **8.2** Update `KB § INTEGRATIONS/whatsapp.md` + `KB § MCP-SERVERS/waha.md` with the session
       ladder and the `fullSync` casing trap.
-- [ ] **8.3** 8-way sync: CLAUDE.md §1 pointer · MEMORY topic pointer · `.claude/agents/` `owns_kb` ·
+- [x] **8.3** 8-way sync: CLAUDE.md §1 pointer · MEMORY topic pointer · `.claude/agents/` `owns_kb` ·
       `KB § INDEX.md`.
-- [ ] **8.4** Tests: `fullSync` key assertion · QR poll continues through transient states · ladder
+- [x] **8.4** Tests: `fullSync` key assertion · QR poll continues through transient states · ladder
       converges from `FAILED` · SSE reconnect replays via `since` without duplicates · read-cursor
       arithmetic · RLS on both new surfaces.
 
 ---
 
-## 🔴 INTEGRATION BUG — found on the merged tip, invisible per-branch
+## ✅ INTEGRATION BUG — found on the merged tip, FIXED + regression-pinned
 
 **Sent messages would vanish from their own thread, permanently.**
 
@@ -287,9 +298,9 @@ isolation. The defect lives strictly in the seam between them — the exact fail
 `KB § PATTERNS/common/methodology-execution-discipline.md` warns about ("file-disjoint isn't
 effect-disjoint").
 
-- [ ] **FIX-1** `/send` must pass `chat_id` to `record()` (and `record()` must accept it).
-- [ ] **FIX-2** Regression test: send → the message appears in `GET /chats/{id}/messages`.
-- [ ] **FIX-3** Regression test: the `message.any` echo for an already-stored outbound is a no-op
+- [x] **FIX-1** `/send` must pass `chat_id` to `record()` (and `record()` must accept it).
+- [x] **FIX-2** Regression test: send → the message appears in `GET /chats/{id}/messages`.
+- [x] **FIX-3** Regression test: the `message.any` echo for an already-stored outbound is a no-op
       that does **not** leave `chat_id` NULL.
 
 ## Verification (end-to-end, run before calling this done)
