@@ -125,7 +125,15 @@ describe("useLeadgenEvents", () => {
     mockGet.mockResolvedValue(null);
     const hook = useLeadgenEvents() as any;
     const result = await hook._queryFn();
-    expect(result).toEqual({ counts: {}, last_received_at: null, events: [] });
+    expect(result).toEqual({
+      counts: {},
+      last_received_at: null,
+      events: [],
+      // 0, not omitted: an empty response must still surface the
+      // "nobody is being alerted" warning rather than hide it behind
+      // a recipient count we never actually received.
+      notification_recipients_active: 0,
+    });
   });
 });
 

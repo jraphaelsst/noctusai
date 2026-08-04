@@ -67,6 +67,13 @@ export interface LeadgenEvents {
   counts: Record<string, number>;
   last_received_at: string | null;
   events: LeadgenEvent[];
+  /**
+   * Active rows in `notification_recipients`. ZERO means leads are being
+   * stored correctly and NOBODY is being alerted — a state that is invisible
+   * everywhere else (the leads all appear; nothing errors), so it has to be
+   * said out loud here.
+   */
+  notification_recipients_active: number;
 }
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -153,7 +160,18 @@ export function useLeadgenEvents(limit = 20) {
     queryFn: () =>
       api
         .get<LeadgenEvents>(`/api/meta/leadgen/events?limit=${limit}`)
-        .then((r) => r ?? { counts: {}, last_received_at: null, events: [] }),
+        .then(
+          (r) =>
+            r ?? {
+              counts: {},
+              last_received_at: null,
+              events: [],
+              // 0 on an empty response is the honest fallback: it surfaces
+              // the "nobody is being alerted" warning rather than hiding it
+              // behind a number we did not actually receive.
+              notification_recipients_active: 0,
+            },
+        ),
   });
 }
 

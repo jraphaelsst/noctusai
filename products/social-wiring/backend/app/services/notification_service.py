@@ -185,8 +185,22 @@ class NotificationService:
         """
         recipients = self._fetch_recipients(org_id=org_id)
         if not recipients:
-            # Honest no-op: no active recipient on this org's roster.
-            # Don't log empty rows; just return.
+            # 🔴 NOT a quiet no-op. A lead just arrived and there is nobody
+            # to tell — which is a CONFIGURATION gap, not a non-event, and it
+            # is invisible from every other angle: the lead lands correctly in
+            # the CRM, no error is raised, and the absence of a WhatsApp
+            # message looks identical to "no leads today".
+            #
+            # Observed in production 2026-08-04: two real leads arrived and
+            # neither alerted anyone, because `notification_recipients` was
+            # empty. Nothing in the logs said so. WARNING, not INFO, because
+            # the operator is silently losing the alerting they asked for.
+            logger.warning(
+                "notify_new_lead: lead %s arrived for org %s but NO active "
+                "notification recipient is configured — nobody was alerted. "
+                "Add one under Configuração → Configurações (notifications).",
+                lead.get("id"), org_id,
+            )
             return DispatchOutcome()
 
         message = self._build_lead_message(lead)

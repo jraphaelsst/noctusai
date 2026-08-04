@@ -322,14 +322,17 @@ def _page_payload(field: str, value: dict | None = None, *, entry_time: int = 17
 def test_an_unknown_field_delivery_is_recorded_not_dropped():
     """🔴 The gap this closes: before, a non-leadgen Page event was parsed to
     nothing and dropped, so 'Meta called us and we ignored it' looked exactly
-    like 'Meta never called us' — opposite problems, identical evidence."""
+    like 'Meta never called us' — opposite problems, identical evidence.
+
+    Uses `feed` rather than `leadgen_update`: the latter graduated to a real
+    processor on 2026-08-04 and is no longer an example of an unknown field."""
     admin = _CapturingAdmin()
     svc = _service(admin_supabase=admin)
-    n = svc.record_unhandled(_page_payload("leadgen_update"))
+    n = svc.record_unhandled(_page_payload("feed"))
 
     assert n == 1
     row = admin.upserted[0]
-    assert row["field"] == "leadgen_update"
+    assert row["field"] == "feed"
     assert row["object_type"] == "page"
     assert row["status"] == "ignored"
     assert row["page_id"] == "page-1"
@@ -343,16 +346,16 @@ def test_the_synthetic_id_is_content_derived_so_retries_dedup():
     defeats the question the inbox exists to answer."""
     admin = _CapturingAdmin()
     svc = _service(admin_supabase=admin)
-    svc.record_unhandled(_page_payload("leadgen_update"))
-    svc.record_unhandled(_page_payload("leadgen_update"))
+    svc.record_unhandled(_page_payload("feed"))
+    svc.record_unhandled(_page_payload("feed"))
     assert admin.upserted[0]["id"] == admin.upserted[1]["id"]
 
 
 def test_a_different_delivery_gets_a_different_id():
     admin = _CapturingAdmin()
     svc = _service(admin_supabase=admin)
-    svc.record_unhandled(_page_payload("leadgen_update", {"a": 1}))
-    svc.record_unhandled(_page_payload("leadgen_update", {"a": 2}))
+    svc.record_unhandled(_page_payload("feed", {"a": 1}))
+    svc.record_unhandled(_page_payload("feed", {"a": 2}))
     assert admin.upserted[0]["id"] != admin.upserted[1]["id"]
 
 
@@ -360,7 +363,7 @@ def test_the_synthetic_id_can_never_collide_with_a_real_leadgen_id():
     """Real leadgen_ids are numeric; ours is namespaced."""
     admin = _CapturingAdmin()
     svc = _service(admin_supabase=admin)
-    svc.record_unhandled(_page_payload("leadgen_update"))
+    svc.record_unhandled(_page_payload("feed"))
     rid = admin.upserted[0]["id"]
     assert rid.startswith("evt:")
     assert not rid.isdigit()
@@ -381,12 +384,12 @@ def test_every_change_in_a_batch_is_recorded():
     svc = _service(admin_supabase=admin)
     payload = {"object": "page", "entry": [
         {"id": "p1", "time": 1, "changes": [
-            {"field": "leadgen_update", "value": {"n": 1}},
-            {"field": "feed", "value": {"n": 2}}]},
-        {"id": "p2", "time": 2, "changes": [{"field": "mention", "value": {"n": 3}}]},
+            {"field": "feed", "value": {"n": 1}},
+            {"field": "mention", "value": {"n": 2}}]},
+        {"id": "p2", "time": 2, "changes": [{"field": "messages", "value": {"n": 3}}]},
     ]}
     assert svc.record_unhandled(payload) == 3
-    assert {r["field"] for r in admin.upserted} == {"leadgen_update", "feed", "mention"}
+    assert {r["field"] for r in admin.upserted} == {"feed", "mention", "messages"}
 
 
 def test_a_write_failure_is_logged_and_never_raised():
@@ -401,7 +404,7 @@ def test_a_write_failure_is_logged_and_never_raised():
             return lambda *_a, **_k: self
 
     svc = _service(admin_supabase=_Exploding())
-    assert svc.record_unhandled(_page_payload("leadgen_update")) == 0
+    assert svc.record_unhandled(_page_payload("feed")) == 0
 
 
 def test_malformed_entries_do_not_raise():
@@ -410,3 +413,143 @@ def test_malformed_entries_do_not_raise():
     assert svc.record_unhandled({"object": "page", "entry": "not-a-list"}) == 0
     assert svc.record_unhandled({"object": "page", "entry": ["str", 42]}) == 0
     assert svc.record_unhandled({}) == 0
+
+
+# ── leadgen_update — the qualification-sync shell ──────────────────────────
+
+from noctusai_lib.integrations.meta.leadgen_webhook import (  # noqa: E402
+    parse_leadgen_update_webhook,
+)
+
+
+def _update_event(leadgen_id="987654321", **over):
+    payload = {"object": "page", "entry": [{"id": "page-1", "time": 1, "changes": [{
+        "field": "leadgen_update", "value": {
+            "leadgen_id": leadgen_id, "page_id": "page-1", "form_id": "form-1",
+            "updated_time": "1704067200", "area": "ai_agent_updates",
+            "event": "qualification_status_change",
+            "updated_fields": ["qualification_details", "qualification_status"],
+            **over}}]}]}
+    return parse_leadgen_update_webhook(payload)[0]
+
+
+class _LeadPresentAdmin(_CapturingAdmin):
+    """Fake where the referenced lead EXISTS in meta_ads_leads."""
+    def execute(self):
+        return SimpleNamespace(data=[{"id": "987654321"}])
+
+
+class _LeadMissingAdmin(_CapturingAdmin):
+    def execute(self):
+        return SimpleNamespace(data=[])
+
+
+def test_a_qualification_update_for_a_KNOWN_lead_is_recorded_as_received():
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    assert svc.process_qualification_event(_update_event()) == "received"
+    row = admin.upserted[0]
+    assert row["field"] == "leadgen_update"
+    assert row["payload"]["area"] == "ai_agent_updates"
+    assert row["payload"]["event"] == "qualification_status_change"
+    assert row["payload"]["updated_fields"] == [
+        "qualification_details", "qualification_status"]
+    assert row["payload"]["matched_lead"] is True
+
+
+def test_an_update_for_an_UNKNOWN_lead_is_parked_unresolved_not_errored():
+    """A miss is information — the lead predates the receiver or belongs to a
+    page we do not sync. Recording it as an ERROR would put it in the retry
+    queue forever for something no retry can fix."""
+    admin = _LeadMissingAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    assert svc.process_qualification_event(_update_event()) == "unresolved"
+    assert admin.upserted[0]["payload"]["matched_lead"] is False
+
+
+def test_successive_DIFFERENT_changes_to_one_lead_are_separate_rows():
+    """🔴 Unlike `leadgen`, this fires repeatedly per lead as the AI agent
+    revises its assessment. Keying on leadgen_id alone would collapse a
+    qualification HISTORY into a single overwritten row."""
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    svc.process_qualification_event(_update_event(updated_time="1704067200"))
+    svc.process_qualification_event(_update_event(updated_time="1704070000"))
+    assert admin.upserted[0]["id"] != admin.upserted[1]["id"]
+
+
+def test_a_RETRY_of_the_same_change_is_idempotent():
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    e = _update_event()
+    svc.process_qualification_event(e)
+    svc.process_qualification_event(e)
+    assert admin.upserted[0]["id"] == admin.upserted[1]["id"]
+
+
+def test_the_row_id_is_namespaced_away_from_leads_and_unknown_events():
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    svc.process_qualification_event(_update_event())
+    rid = admin.upserted[0]["id"]
+    assert rid.startswith("upd:987654321:")
+    assert not rid.isdigit()          # never a real leadgen_id
+    assert not rid.startswith("evt:")  # never an unhandled-field row
+
+
+def test_an_unrecognised_area_or_event_is_still_recorded():
+    """Meta owns this vocabulary. Refusing an unknown value would make us
+    blind to whatever it ships next."""
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    ev = _update_event(area="future_area", event="future_event")
+    assert svc.process_qualification_event(ev) == "received"
+    assert admin.upserted[0]["payload"]["area"] == "future_area"
+
+
+def test_a_write_failure_returns_error_and_never_raises():
+    class _Exploding(_LeadPresentAdmin):
+        def upsert(self, *_a, **_k):
+            raise RuntimeError("db down")
+        def __getattr__(self, name):
+            if name == "upsert":
+                raise AttributeError(name)
+            return lambda *_a, **_k: self
+
+    svc = _service(admin_supabase=_Exploding(), org_resolver=lambda _e: ORG_ID)
+    assert svc.process_qualification_event(_update_event()) == "error"
+
+
+def test_the_raw_payload_is_kept_so_a_future_build_has_the_real_shape():
+    """The shell exists to CAPTURE, so the eventual processor is written
+    against a real payload rather than a guess."""
+    admin = _LeadPresentAdmin()
+    svc = _service(admin_supabase=admin, org_resolver=lambda _e: ORG_ID)
+    svc.process_qualification_event(_update_event(some_unknown_key="surprise"))
+    assert admin.upserted[0]["payload"]["raw"]["some_unknown_key"] == "surprise"
+
+
+def test_leadgen_update_is_not_double_recorded_by_the_unhandled_recorder():
+    """It now has a real processor, so `record_unhandled` must skip it or the
+    inbox gets two rows for one delivery and the health counts lie."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    payload = {"object": "page", "entry": [{"id": "p", "time": 1, "changes": [
+        {"field": "leadgen_update", "value": {"leadgen_id": 1}},
+        {"field": "feed", "value": {"n": 1}}]}]}
+    assert svc.record_unhandled(payload) == 1
+    assert admin.upserted[0]["field"] == "feed"
+
+
+def test_a_leadgen_change_on_a_NON_page_object_is_still_recorded():
+    """🔴 Neither parser accepts a non-`page` object, so such a delivery is
+    processed by nobody. Skipping it by field NAME would make the one field
+    we most need to see invisible — 'Meta called us on the wrong object'
+    would look identical to 'Meta never called us'."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    payload = {"object": "user", "entry": [{"id": "u1", "time": 1, "changes": [
+        {"field": "leadgen", "value": {"leadgen_id": "1"}}]}]}
+    assert svc.record_unhandled(payload) == 1
+    assert admin.upserted[0]["object_type"] == "user"
+    assert admin.upserted[0]["field"] == "leadgen"

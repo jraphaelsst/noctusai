@@ -229,6 +229,18 @@ function DeliveryHealth() {
           Último evento recebido: {formatDateTime(d.last_received_at)}
         </p>
       )}
+      {/* Leads landing correctly with nobody configured to hear about it is
+          a silent failure: the list fills up, nothing errors, and the absence
+          of a WhatsApp message is indistinguishable from a quiet day. It
+          happened in production on 2026-08-04 (two real leads, zero alerts),
+          so it is stated here rather than left to be noticed. */}
+      {d.notification_recipients_active === 0 && (
+        <p className="text-sm text-amber-600" data-testid="leadgen-no-recipients">
+          ⚠️ Nenhum destinatário de notificação ativo — os leads estão sendo
+          salvos, mas <strong>ninguém está sendo avisado</strong>. Cadastre um
+          destinatário em Configuração → Configurações.
+        </p>
+      )}
       {total > 0 ? (
         <div className="flex flex-wrap gap-2">
           {statuses.map(([status, n]) => (

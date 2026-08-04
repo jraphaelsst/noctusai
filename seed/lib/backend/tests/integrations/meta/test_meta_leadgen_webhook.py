@@ -353,3 +353,152 @@ class TestLeadgenChallengeResponse:
             assert result == "X"
         else:
             assert result is None
+
+
+# ── leadgen_update — Meta's AI-agent qualification feed ────────────────────
+#
+# Every fixture below is Meta's OWN "Teste" sample, captured verbatim from the
+# App Dashboard on 2026-08-04. Meta does not document this field anywhere, so
+# the wire is the only specification that exists — a paraphrase here would be
+# inventing a contract rather than pinning one.
+
+from noctusai_lib.integrations.meta.leadgen_webhook import (  # noqa: E402
+    LeadgenUpdateEvent,
+    parse_leadgen_update_webhook,
+)
+
+#: Verbatim from the dashboard's "Exemplo do campo leadgen_update" (v26.0).
+#: NOTE the ids are INTEGERS here while the `leadgen` sample uses STRINGS.
+_META_SAMPLE = {
+    "object": "page",
+    "entry": [{
+        "id": 0,                      # Meta's test harness sends 0, not a page
+        "time": 1785879142,
+        "changes": [{
+            "field": "leadgen_update",
+            "value": {
+                "adgroup_id": 123456789,
+                "ad_id": 123456789,
+                "leadgen_id": 987654321,
+                "page_id": 111111111,
+                "form_id": 222222222,
+                "updated_time": "1704067200",
+                "area": "ai_agent_updates",
+                "event": "qualification_status_change",
+                "updated_fields": ["qualification_details", "qualification_status"],
+            },
+        }],
+    }],
+}
+
+
+def test_parses_metas_own_leadgen_update_sample():
+    events = parse_leadgen_update_webhook(_META_SAMPLE)
+    assert len(events) == 1
+    e = events[0]
+    assert isinstance(e, LeadgenUpdateEvent)
+    assert e.leadgen_id == "987654321"
+    assert e.area == "ai_agent_updates"
+    assert e.event == "qualification_status_change"
+    assert e.updated_fields == ("qualification_details", "qualification_status")
+
+
+def test_INTEGER_ids_are_coerced_to_strings():
+    """🔴 Meta is inconsistent with ITSELF: the `leadgen` sample sends ids as
+    strings, the `leadgen_update` sample sends the same ids as integers. A
+    parser that assumed either would break on the other, and the failure would
+    be a silent type mismatch downstream (a str PK compared against an int)."""
+    e = parse_leadgen_update_webhook(_META_SAMPLE)[0]
+    for got in (e.leadgen_id, e.page_id, e.form_id, e.ad_id, e.adgroup_id):
+        assert isinstance(got, str), f"{got!r} should have been coerced to str"
+    assert e.page_id == "111111111"
+    assert e.adgroup_id == "123456789"
+
+
+def test_leadgen_parser_also_survives_integer_ids():
+    """The same inconsistency could appear on the `leadgen` field. It already
+    coerces — this pins that so a refactor cannot quietly remove it."""
+    payload = {"object": "page", "entry": [{"id": 111, "changes": [{
+        "field": "leadgen", "value": {
+            "leadgen_id": 987654321, "page_id": 111111111,
+            "form_id": 222222222, "created_time": 1704067200}}]}]}
+    e = parse_leadgen_webhook(payload)[0]
+    assert e.leadgen_id == "987654321"
+    assert isinstance(e.page_id, str)
+
+
+def test_updated_time_is_parsed_from_a_STRING_unix_timestamp():
+    """Meta sends `updated_time` as a quoted string here, unlike `leadgen`'s
+    numeric `created_time`."""
+    e = parse_leadgen_update_webhook(_META_SAMPLE)[0]
+    assert e.updated_time is not None
+    assert e.updated_time.year == 2024
+    assert e.updated_time.tzinfo is not None
+
+
+def test_the_two_parsers_never_see_each_others_events():
+    """🔴 The load-bearing separation. `leadgen` is 'a new lead exists';
+    `leadgen_update` is 'an existing lead changed'. If the leadgen parser
+    picked up an update, one qualification change would create a duplicate
+    lead — and if the update parser picked up a leadgen, a brand-new lead
+    would be processed as a qualification change to a lead we do not have."""
+    assert parse_leadgen_webhook(_META_SAMPLE) == []
+    leadgen_payload = {"object": "page", "entry": [{"id": "p", "changes": [{
+        "field": "leadgen", "value": {"leadgen_id": "1", "page_id": "p"}}]}]}
+    assert parse_leadgen_update_webhook(leadgen_payload) == []
+
+
+def test_raw_value_is_preserved_losslessly():
+    """The vocabulary is Meta's to extend. An unrecognised key must survive
+    to the inbox so we can SEE it, rather than being silently narrowed away."""
+    payload = {"object": "page", "entry": [{"id": "p", "changes": [{
+        "field": "leadgen_update", "value": {
+            "leadgen_id": 5, "area": "some_future_area",
+            "event": "some_future_event", "a_key_we_have_never_seen": 42}}]}]}
+    e = parse_leadgen_update_webhook(payload)[0]
+    assert e.raw["a_key_we_have_never_seen"] == 42
+    assert e.area == "some_future_area"
+
+
+def test_an_unknown_area_or_event_is_kept_not_dropped():
+    """`ai_agent_updates` is one area; treating it as an enum would make us
+    blind to the next one Meta ships."""
+    payload = {"object": "page", "entry": [{"id": "p", "changes": [{
+        "field": "leadgen_update", "value": {
+            "leadgen_id": 5, "area": "brand_new", "event": "brand_new_event"}}]}]}
+    e = parse_leadgen_update_webhook(payload)[0]
+    assert (e.area, e.event) == ("brand_new", "brand_new_event")
+
+
+def test_an_update_without_a_leadgen_id_is_dropped():
+    """Without it we cannot say WHICH lead changed — the event is unusable."""
+    payload = {"object": "page", "entry": [{"id": "p", "changes": [{
+        "field": "leadgen_update", "value": {"area": "ai_agent_updates"}}]}]}
+    assert parse_leadgen_update_webhook(payload) == []
+
+
+def test_batched_updates_are_all_parsed():
+    payload = {"object": "page", "entry": [
+        {"id": "p1", "changes": [
+            {"field": "leadgen_update", "value": {"leadgen_id": 1}},
+            {"field": "leadgen_update", "value": {"leadgen_id": 2}}]},
+        {"id": "p2", "changes": [
+            {"field": "leadgen_update", "value": {"leadgen_id": 3}}]}]}
+    assert [e.leadgen_id for e in parse_leadgen_update_webhook(payload)] == ["1", "2", "3"]
+
+
+def test_malformed_shapes_degrade_to_no_events_never_raise():
+    for bad in ({}, {"object": "user", "entry": []},
+                {"object": "page", "entry": "nope"},
+                {"object": "page", "entry": [None, 5]},
+                {"object": "page", "entry": [{"changes": "nope"}]},
+                {"object": "page", "entry": [{"changes": [{"field": "leadgen_update",
+                                                           "value": "not-a-dict"}]}]}):
+        assert parse_leadgen_update_webhook(bad) == []
+
+
+def test_updated_fields_tolerates_a_non_list():
+    payload = {"object": "page", "entry": [{"id": "p", "changes": [{
+        "field": "leadgen_update",
+        "value": {"leadgen_id": 5, "updated_fields": "not-a-list"}}]}]}
+    assert parse_leadgen_update_webhook(payload)[0].updated_fields == ()

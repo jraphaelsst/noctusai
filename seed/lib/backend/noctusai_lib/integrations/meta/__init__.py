@@ -118,7 +118,9 @@ from noctusai_lib.integrations.meta.instagram_login_adapter import (
 )
 from noctusai_lib.integrations.meta.leadgen_webhook import (
     LeadgenEvent,
+    LeadgenUpdateEvent,
     leadgen_challenge_response,
+    parse_leadgen_update_webhook,
     parse_leadgen_webhook,
 )
 from noctusai_lib.integrations.meta.mappers import (
@@ -262,6 +264,7 @@ __all__ = [
     "Lead",
     "LeadFieldEntry",
     "LeadgenEvent",
+    "LeadgenUpdateEvent",
     "LeadgenForm",
     "LeadgenQuestion",
     "META_KITCHEN_SINK_SCOPES",
@@ -301,6 +304,7 @@ __all__ = [
     "page_from_body",
     "page_subscription_from_body",
     "parse_graph_datetime",
+    "parse_leadgen_update_webhook",
     "parse_leadgen_webhook",
     "post_from_body",
     "poll_media_status", "resolve_oauth_scopes",

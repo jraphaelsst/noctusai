@@ -40,6 +40,7 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.integrations.meta import MetaGraphError
 from noctusai_lib.integrations.meta.leadgen_webhook import (
     leadgen_challenge_response,
+    parse_leadgen_update_webhook,
     parse_leadgen_webhook,
 )
 from noctusai_lib.realtime import create_sse_router
@@ -202,19 +203,34 @@ async def leadgen_receive(
             {"status": STATUS_IGNORED, "reason": "not-an-object", "events": 0}
         )
 
+    # `leadgen_update` is a DIFFERENT event class, not a variant of `leadgen`:
+    # it reports that an EXISTING lead's AI-agent qualification changed, and
+    # can fire many times for one lead. Routed first and separately so a
+    # qualification change can never be mistaken for a new lead submission.
+    updates = parse_leadgen_update_webhook(payload)
+    update_results = [
+        {"leadgen_id": u.leadgen_id, "status": svc.process_qualification_event(u)}
+        for u in updates
+    ]
+
     events = parse_leadgen_webhook(payload)
+
+    # Anything STILL unrecognised is recorded, unconditionally — not only when
+    # the delivery contained nothing else. Meta batches, so one body can carry
+    # a lead, a qualification update AND a field we have never seen; an
+    # early-return on either of the first two would silently swallow the third.
+    # "Arrived and we ignored it" must stay distinguishable from "never
+    # arrived": those are opposite problems (our parser vs. the dashboard
+    # subscription) and the inbox is the only thing that tells them apart.
+    recorded = svc.record_unhandled(payload)
+
     if not events:
-        # Meta sends other Page events on the same subscription; a non-leadgen
-        # change is normal traffic, not an error — but it IS recorded, because
-        # "arrived and we ignored it" and "never arrived at all" are opposite
-        # problems (our parser vs. the dashboard subscription) that used to
-        # look identical from the inbox. Recording costs one row and is what
-        # makes an unknown field like `leadgen_update` empirically knowable.
-        recorded = svc.record_unhandled(payload)
         return JSONResponse({
-            "status": STATUS_IGNORED,
-            "reason": "no-leadgen-events",
+            "status": "ok" if update_results else STATUS_IGNORED,
+            "reason": None if update_results else "no-leadgen-events",
             "events": 0,
+            "qualification_updates": len(update_results),
+            "results": update_results,
             "recorded": recorded,
         })
 
@@ -245,7 +261,13 @@ async def leadgen_receive(
         if outcome.announceable:
             announce.add_task(svc.fan_out, outcome)
     return JSONResponse(
-        {"status": "ok", "events": len(events), "results": results},
+        {
+            "status": "ok",
+            "events": len(events),
+            "results": results,
+            "qualification_updates": len(update_results),
+            "recorded": recorded,
+        },
         background=announce if announce.tasks else None,
     )
 
@@ -295,6 +317,12 @@ class EventsOut(StrictHttpModel):
     counts: dict[str, int] = {}
     last_received_at: str | None = None
     events: list[EventOut] = []
+    #: Active rows in `notification_recipients`. ZERO means every arriving
+    #: lead is stored correctly and silently — nobody is alerted. That state
+    #: is invisible from the lead list (the leads are all there) and from the
+    #: logs (nothing errored), so the health card is the one place it can be
+    #: surfaced to the person who can fix it.
+    notification_recipients_active: int = 0
 
 
 def _resolve_adapter(
@@ -455,10 +483,24 @@ def list_events(
         counts[key] = counts.get(key, 0) + 1
     stamps = [r.get("received_at") for r in all_rows if r.get("received_at")]
 
+    # Best-effort: a failure to count recipients must never break the health
+    # card, which is itself a diagnostic surface. 0 is the honest fallback —
+    # it prompts a check rather than falsely reassuring.
+    recipients_active = 0
+    try:
+        rec = (
+            admin.schema(_SCHEMA).table("notification_recipients")
+            .select("id").eq("org_id", str(org_id)).eq("is_active", True).execute()
+        )
+        recipients_active = len(rec.data or [])
+    except Exception:  # noqa: BLE001
+        logger.warning("meta-leadgen: could not count notification recipients")
+
     return EventsOut(
         counts=counts,
         last_received_at=max(stamps) if stamps else None,
         events=[EventOut(**r) for r in rows],
+        notification_recipients_active=recipients_active,
     )
 
 

@@ -122,6 +122,126 @@ def parse_leadgen_webhook(payload: dict[str, Any]) -> list[LeadgenEvent]:
     return events
 
 
+@dataclass(frozen=True)
+class LeadgenUpdateEvent:
+    """One `leadgen_update` change entry — Meta's AI-agent qualification feed.
+
+    A DIFFERENT event class from :class:`LeadgenEvent`, not a variant of it:
+
+    * `leadgen` says "a new lead was submitted" — an immutable fact, fired
+      once, and the lead's PII must then be fetched from Graph.
+    * `leadgen_update` says "an EXISTING lead's qualification changed" —
+      mutable state that can fire many times for the same `leadgen_id` as
+      Meta's AI agent talks to the person and revises its assessment.
+
+    Conflating them would let a qualification change create a duplicate lead.
+
+    🔴 UNDOCUMENTED BY META. Absent from the Page webhook reference and from
+    every lead-ads guide; four searches across StackOverflow, GitHub and
+    vendor blogs on 2026-08-04 found no substantive public description. This
+    shape is taken from Meta's OWN "Teste" sample payload, captured from the
+    App Dashboard on 2026-08-04 — i.e. from the wire, not from prose:
+
+        {"field": "leadgen_update", "value": {
+            "adgroup_id": 123456789, "ad_id": 123456789,
+            "leadgen_id": 987654321, "page_id": 111111111,
+            "form_id": 222222222, "updated_time": "1704067200",
+            "area": "ai_agent_updates",
+            "event": "qualification_status_change",
+            "updated_fields": ["qualification_details", "qualification_status"]}}
+
+    `area` reads as a namespace (`ai_agent_updates` is one, so others likely
+    exist) and `event` as the specific change within it. Neither is treated
+    as an enum here — an unrecognised pair is preserved and surfaced, never
+    dropped, because the vocabulary is Meta's to extend and ours to discover.
+
+    🔴 Note the id types: this sample carries **integers** where the
+    `leadgen` sample carries **strings**. Meta is inconsistent with itself,
+    so every id is coerced through :func:`_stringify` rather than trusted.
+
+    `updated_fields` names WHICH fields changed — it does NOT carry their
+    values. Reading the new qualification data requires a Graph call, the
+    same indirection `leadgen` uses for PII.
+    """
+
+    leadgen_id: str
+    page_id: str | None
+    form_id: str | None
+    ad_id: str | None
+    adgroup_id: str | None
+    updated_time: datetime | None
+    area: str | None
+    event: str | None
+    updated_fields: tuple[str, ...] = ()
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+def parse_leadgen_update_webhook(
+    payload: dict[str, Any],
+) -> list[LeadgenUpdateEvent]:
+    """Parse `leadgen_update` changes out of a Page webhook delivery.
+
+    Same contract as :func:`parse_leadgen_webhook`: iterates **every**
+    `entry[]` × **every** `changes[]`, skips anything whose `field` is not
+    `leadgen_update`, and returns `[]` rather than raising on any malformed
+    shape — a signature-verified body must degrade to "no events", never
+    crash a receiver that owes Meta a 200.
+
+    Deliberately a SEPARATE function from `parse_leadgen_webhook` rather
+    than a `field` parameter: the two produce different types with different
+    downstream meaning, and a shared parser would invite a caller to treat a
+    qualification change as a new lead.
+    """
+
+    if not isinstance(payload, dict) or payload.get("object") != "page":
+        return []
+
+    entries = payload.get("entry")
+    if not isinstance(entries, list):
+        return []
+
+    events: list[LeadgenUpdateEvent] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        changes = entry.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            if change.get("field") != "leadgen_update":
+                continue
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            leadgen_id = _stringify(value.get("leadgen_id"))
+            if not leadgen_id:
+                # Without it we cannot say WHICH lead changed, so the event
+                # is unusable. Dropping is correct; the receiver still has
+                # the raw delivery recorded upstream.
+                continue
+            fields_raw = value.get("updated_fields")
+            updated_fields = tuple(
+                str(f) for f in fields_raw if f
+            ) if isinstance(fields_raw, list) else ()
+            events.append(
+                LeadgenUpdateEvent(
+                    leadgen_id=leadgen_id,
+                    page_id=_stringify(value.get("page_id")),
+                    form_id=_stringify(value.get("form_id")),
+                    ad_id=_stringify(value.get("ad_id")),
+                    adgroup_id=_stringify(value.get("adgroup_id")),
+                    updated_time=_parse_unix_seconds(value.get("updated_time")),
+                    area=_stringify(value.get("area")),
+                    event=_stringify(value.get("event")),
+                    updated_fields=updated_fields,
+                    raw=dict(value),
+                )
+            )
+    return events
+
+
 def leadgen_challenge_response(
     *,
     mode: str | None,

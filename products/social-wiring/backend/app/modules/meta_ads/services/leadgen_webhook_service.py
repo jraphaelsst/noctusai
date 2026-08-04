@@ -77,6 +77,11 @@ PENDING_STATUSES = (STATUS_RECEIVED, STATUS_ERROR, STATUS_UNRESOLVED)
 #: forever or silently dropped.
 MAX_ATTEMPTS = 5
 
+#: Fields with a real processor that writes its OWN inbox row. Everything
+#: else falls through to `record_unhandled`. Kept as one set so adding a
+#: processor cannot leave the recorder double-writing behind it.
+_HANDLED_FIELDS = frozenset({"leadgen", "leadgen_update"})
+
 
 @dataclass
 class ProcessResult:
@@ -284,6 +289,104 @@ class LeadgenWebhookService:
         return form_obj, key_types
 
     # ─── the pipeline ──────────────────────────────────────────────────
+    def process_qualification_event(self, event: Any) -> str:
+        """Handle one `leadgen_update` — Meta's AI-agent qualification feed.
+
+        🔴 THIS IS A SHELL, AND THE INCOMPLETE PART IS DELIBERATE.
+
+        What is real here: the event is parsed, matched against the lead it
+        refers to, and recorded durably with its full payload. That is enough
+        to know an update happened, which lead it concerns, and what Meta says
+        changed.
+
+        What is NOT here: applying the new qualification to the lead or the
+        funnel. That is not laziness — Meta's `updated_fields` names WHICH
+        fields changed but carries none of their VALUES, so applying anything
+        requires a Graph re-fetch whose response shape we have never seen. No
+        public documentation describes it, and Meta's test payload does not
+        include it. Writing that mapping now would mean inventing field names
+        and discovering they were wrong against live lead data — the failure
+        mode being silently-wrong qualification on real leads.
+
+        The trigger to finish it is one real (non-test) event: see
+        `META-LEADGEN-UPDATE.md` at the repo root for the exact next steps and
+        the query that finds it.
+
+        Returns the terminal status. NEVER raises — the caller owes Meta a 200.
+        """
+        leadgen_id = str(getattr(event, "leadgen_id", "") or "")
+        if not leadgen_id:
+            return STATUS_IGNORED
+
+        org_id = self.resolve_org(event)
+        matched = self._find_lead(leadgen_id)
+
+        row = {
+            "id": f"upd:{leadgen_id}:{_update_fingerprint(event)}",
+            "org_id": str(org_id) if org_id else None,
+            "page_id": getattr(event, "page_id", None),
+            "form_id": getattr(event, "form_id", None),
+            "ad_id": getattr(event, "ad_id", None),
+            "object_type": "page",
+            "field": "leadgen_update",
+            "payload": {
+                "leadgen_id": leadgen_id,
+                "area": getattr(event, "area", None),
+                "event": getattr(event, "event", None),
+                "updated_fields": list(getattr(event, "updated_fields", ()) or ()),
+                "raw": getattr(event, "raw", {}) or {},
+                "matched_lead": matched,
+            },
+            # `unresolved` when the update names a lead we have never seen —
+            # a REAL signal (the lead predates our receiver, or belongs to a
+            # page we do not sync), not an error we caused. `received` when
+            # matched: the event is captured and awaiting the processor that
+            # this shell deliberately does not yet contain.
+            "status": STATUS_UNRESOLVED if not matched else STATUS_RECEIVED,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            (
+                self._admin.schema(_SCHEMA).table(_EVENTS)
+                .upsert(row, on_conflict="id")
+                .execute()
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "meta-leadgen: could not record qualification event for lead=%s",
+                leadgen_id,
+            )
+            return STATUS_ERROR
+
+        logger.warning(
+            "meta-leadgen: 🔔 REAL leadgen_update received — lead=%s matched=%s "
+            "area=%s event=%s updated_fields=%s. This is the trigger to finish "
+            "the qualification sync (see META-LEADGEN-UPDATE.md).",
+            leadgen_id, bool(matched),
+            getattr(event, "area", None), getattr(event, "event", None),
+            list(getattr(event, "updated_fields", ()) or ()),
+        )
+        return row["status"]
+
+    def _find_lead(self, leadgen_id: str) -> bool:
+        """Does the lead this update refers to exist in our raw ledger?
+
+        Answers "can this update be applied at all?" before anything tries.
+        A miss is information, not a failure.
+        """
+        try:
+            resp = (
+                self._admin.schema(_SCHEMA).table("meta_ads_leads")
+                .select("id").eq("id", leadgen_id).limit(1).execute()
+            )
+            return bool(resp.data)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "meta-leadgen: lead lookup failed for %s — treating as unmatched",
+                leadgen_id,
+            )
+            return False
+
     def record_unhandled(self, payload: dict[str, Any]) -> int:
         """Persist a verified delivery we do NOT act on, so it is observable.
 
@@ -310,8 +413,18 @@ class LeadgenWebhookService:
                 if not isinstance(change, dict):
                     continue
                 field = str(change.get("field") or "")
-                if field == "leadgen":
-                    continue  # handled by the real path; never double-record
+                # A field counts as handled ONLY on a `page` object, because
+                # that is the only object either parser accepts. A `leadgen`
+                # change arriving on some OTHER object type is processed by
+                # nobody — skipping it by field name alone would recreate the
+                # exact blind spot this method exists to close, and it would
+                # do so for the one field we most need to see.
+                if obj == "page" and field in _HANDLED_FIELDS:
+                    # Both have real processors that write their own inbox
+                    # rows. Recording here too would put two rows in the
+                    # inbox for one delivery and corrupt the counts the
+                    # health card reports.
+                    continue
                 value = change.get("value")
                 rows.append({
                     "id": _synthetic_event_id(obj, entry, field, value),
@@ -596,6 +709,27 @@ class LeadgenWebhookService:
         except Exception:  # noqa: BLE001
             logger.exception("meta-leadgen: inbox purge failed")
             return 0
+
+
+def _update_fingerprint(event: Any) -> str:
+    """Distinguish successive qualification changes to the SAME lead.
+
+    Unlike `leadgen`, `leadgen_update` fires repeatedly per lead as the AI
+    agent revises its assessment — so `leadgen_id` alone is not a usable PK.
+    Keying on (updated_time, area, event, updated_fields) keeps each distinct
+    change while making a Meta RETRY of one change idempotent.
+    """
+    import hashlib
+
+    basis = "|".join([
+        str(getattr(event, "updated_time", "") or ""),
+        str(getattr(event, "area", "") or ""),
+        str(getattr(event, "event", "") or ""),
+        ",".join(sorted(getattr(event, "updated_fields", ()) or ())),
+    ])
+    return hashlib.sha256(
+        basis.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:16]
 
 
 def _synthetic_event_id(

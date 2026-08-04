@@ -299,3 +299,57 @@ pattern, `CONTEXT/PATTERNS/backend/backend.md`).
 > ships its own Meta Cloud API client (`get_meta_cloud_client`) for
 > WhatsApp Business — see `CONTEXT/INTEGRATIONS/whatsapp.md`. This doc
 > is Facebook-Pages + Instagram-Graph only.
+
+---
+
+## 6. `leadgen_update` — Meta AI-agent lead qualification
+
+**Undocumented by Meta.** Absent from the Page webhook reference and from every
+lead-ads guide; four searches across StackOverflow, GitHub and vendor blogs on
+2026-08-04 found no substantive public description. Everything below is captured
+from Meta's own **"Teste"** sample payload in the App Dashboard — from the wire,
+not from prose.
+
+**Full runbook + the unfinished-processor contract: `/META-LEADGEN-UPDATE.md`.**
+
+### The distinction that matters
+
+`leadgen` = "a new lead was **submitted**" — immutable, fires once, `leadgen_id`
+is a natural PK. `leadgen_update` = "an existing lead's **qualification
+changed**" — mutable, fires repeatedly per lead, so `leadgen_id` alone is *not*
+a PK. 🔴 Routing an update down the new-lead path creates a **duplicate lead**;
+the two parsers are separate functions returning separate types for that reason.
+
+### What ships
+
+- `parse_leadgen_update_webhook(payload) -> list[LeadgenUpdateEvent]` — sibling
+  of `parse_leadgen_webhook`, same batched-`entry[]`×`changes[]` and
+  never-raise contract.
+- `LeadgenUpdateEvent` — `leadgen_id`, ad context, `updated_time`, `area`,
+  `event`, `updated_fields`, `raw` (lossless).
+
+### Three wire facts
+
+1. 🔴 **Ids are INTEGERS in this payload and STRINGS in `leadgen`'s.** Meta is
+   inconsistent with itself; everything is coerced through `_stringify`. A `str`
+   PK compared against an un-coerced `int` silently never matches.
+2. `updated_time` is a **quoted string** unix timestamp; `created_time` is a bare
+   number.
+3. `updated_fields` names WHICH fields changed and carries **none of their
+   values** — reading them needs a Graph call, the same indirection `leadgen`
+   uses for PII.
+
+`area` (`ai_agent_updates`) reads as a namespace and `event`
+(`qualification_status_change`) as the change within it. Treated as open
+vocabulary, never an enum — an unrecognised pair is preserved and surfaced.
+
+### Consumer state
+
+`products/social-wiring` captures these into `meta_webhook_events` as
+`upd:<leadgen_id>:<fingerprint>` rows (fingerprint = `updated_time`+`area`+
+`event`+`updated_fields`, so distinct changes are a history while a retry is
+idempotent). **Applying the qualification to the lead or funnel is deliberately
+NOT built** — the Graph response shape has never been observed, and guessing it
+yields silently-wrong qualification rather than a visible failure. The trigger to
+finish is one real non-test event; `/META-LEADGEN-UPDATE.md` §4 has the query,
+the log marker, and the ordered next steps.

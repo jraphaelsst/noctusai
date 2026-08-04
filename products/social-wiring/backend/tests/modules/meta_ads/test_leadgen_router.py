@@ -80,6 +80,8 @@ class _FakeService:
         #: been sent — which is exactly the ordering guarantee under test.
         self.fanned_out: list[str] = []
         self.unhandled: list[Any] = []
+        #: leadgen_update events routed to the qualification shell.
+        self.qualified: list[str] = []
 
     def record_event(self, event: Any) -> bool:
         self.recorded.append(event.leadgen_id)
@@ -105,12 +107,26 @@ class _FakeService:
         self.fanned_out.append((result.lead_row or {}).get("id"))
         return {"notified": True, "published": True}
 
+    def process_qualification_event(self, event: Any) -> str:
+        self.qualified.append(event.leadgen_id)
+        return "received"
+
+    #: Fields with a real processor. Mirrors `_HANDLED_FIELDS` in the service
+    #: so this fake stays FAITHFUL: the route now hands it every payload and
+    #: the recorder decides what to skip. A fake that recorded everything
+    #: would make a double-record bug pass here.
+    _HANDLED = frozenset({"leadgen", "leadgen_update"})
+
     def record_unhandled(self, payload: Any) -> int:
-        #: Deliveries the route recognised as non-leadgen and handed here.
-        #: Asserted below — a route that stopped calling this would silently
-        #: reopen the "arrived vs never arrived" blind spot.
-        self.unhandled.append(payload)
-        return 1
+        is_page = payload.get("object") == "page"
+        unknown = [
+            c for e in (payload.get("entry") or [])
+            for c in (e.get("changes") or [])
+            if not (is_page and c.get("field") in self._HANDLED)
+        ]
+        if unknown:
+            self.unhandled.append(payload)
+        return len(unknown)
 
 
 @pytest.fixture
@@ -272,17 +288,52 @@ def test_non_leadgen_field_returns_200_ignored(wired):
     assert len(wired.svc.unhandled) == 1
 
 
-def test_an_unknown_field_like_leadgen_update_is_handed_to_the_recorder(wired):
-    """The concrete motivation: `leadgen_update` is undocumented by Meta and
-    has no public discussion, so the only way to learn its payload is to
-    capture one. This is the seam that makes that possible."""
-    body = json.dumps(_delivery(field="leadgen_update")).encode()
+def test_an_unknown_field_is_handed_to_the_recorder(wired):
+    """The seam that made `leadgen_update` knowable in the first place: an
+    unrecognised field is captured rather than dropped. `leadgen_update` has
+    since graduated to a real processor, so `mention` stands in for the next
+    field Meta ships that we have never seen."""
+    body = json.dumps(_delivery(field="mention")).encode()
     resp = wired.raw.post(WEBHOOK, content=body,
                           headers={"X-Hub-Signature-256": _sign(body),
                                    "Content-Type": "application/json"})
     assert resp.status_code == 200
     assert resp.json()["recorded"] == 1
-    assert wired.svc.unhandled[0]["entry"][0]["changes"][0]["field"] == "leadgen_update"
+    assert wired.svc.unhandled[0]["entry"][0]["changes"][0]["field"] == "mention"
+
+
+def test_a_leadgen_update_is_routed_to_the_qualification_processor(wired):
+    """🔴 It must NOT go down the new-lead path: a qualification change to an
+    existing lead processed as a submission would create a duplicate lead."""
+    body = json.dumps(_delivery(field="leadgen_update")).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    assert resp.json()["qualification_updates"] == 1
+    assert wired.svc.qualified == ["lead-1-0-0"]
+    assert wired.svc.processed == []      # never treated as a new lead
+    assert wired.svc.unhandled == []      # never double-recorded
+
+
+def test_a_batch_carrying_a_lead_AND_an_update_AND_an_unknown_handles_all_three(wired):
+    """Meta batches. An early return on any one path would silently swallow
+    the others — the exact shape of bug this receiver keeps producing."""
+    body = json.dumps({"object": "page", "entry": [{"id": "page-1", "changes": [
+        {"field": "leadgen", "value": {"leadgen_id": "L1", "page_id": "page-1",
+                                       "form_id": "f", "created_time": 1754000000}},
+        {"field": "leadgen_update", "value": {"leadgen_id": "L2", "page_id": "page-1"}},
+        {"field": "mention", "value": {"n": 1}}]}]}).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    body_json = resp.json()
+    assert body_json["events"] == 1
+    assert body_json["qualification_updates"] == 1
+    assert body_json["recorded"] == 1
+    assert wired.svc.processed == ["L1"]
+    assert wired.svc.qualified == ["L2"]
 
 
 def test_a_json_body_that_is_not_an_object_returns_200_and_records_nothing(wired):
