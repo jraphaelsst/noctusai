@@ -10,7 +10,8 @@
 
 Merged alongside the WhatsApp realtime inbox and Imóveis/Vista; all three green together.
 Gates on the pushed tip: social-wiring **1658** · erp **2161** · seed **2662** — exit 0.
-**Blocking prod:** migrations `041` + `044` unapplied, and the operator's Meta dashboard steps.
+✅ Migrations `041` + `044` **applied and schema-verified** 2026-08-04.
+**Blocking prod:** operator held the deploy (dev-only for now) + the Meta dashboard steps.
 See `META-LEADS-HANDOFF.md`.
 
 **What remains is not code.** Every open box below is one of: (a) a **live verification** that
@@ -120,6 +121,7 @@ upsert keyed on Meta's own lead id.
       parametrized auth-boundary list. The route IS protected (verified 401), so this was a
       test gap not a hole — but that list only works if every new route joins it. Fixed (`6a3d1b72`)
 - [ ] Run the backfill for the 958 stored leads (deliberate, post-deploy — not auto-run)
+      *(migration 041 is now applied, so `leads.meta_lead_id` exists and the backfill is unblocked)*
 - [ ] **Verify live:** test lead visible in `/api/leads` with origem "Meta Lead Ads"
 
 > Engineer flagged two judgement calls worth knowing: re-ingesting an already-ingested lead

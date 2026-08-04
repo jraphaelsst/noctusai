@@ -17,7 +17,7 @@
 | **Integrated** | ✅ All Meta lead-ads work is on `origin/dev` @ `7f1495db` |
 | **Gates on the pushed tip** | social-wiring **1658** · erp-imobiliario **2161** · seed lib **2662** — all exit 0; `check_migration_number_collision` clean |
 | **Prod** | `origin/main` = `origin/prod` = `4db0c4bc` — **untouched** |
-| **Blocking prod** | two migrations unapplied + the operator's Meta dashboard steps |
+| **Blocking prod** | operator decision (deploy held) + the Meta dashboard steps |
 
 Three initiatives merged into `dev` concurrently: this Meta lead-ads work, the WhatsApp realtime
 inbox, and Imóveis/Vista. All three are integrated and green together.
@@ -26,7 +26,13 @@ inbox, and Imóveis/Vista. All three are integrated and green together.
 
 ## 2 · Migration state — read before touching the database
 
-**Applied:** `036` · `040_imoveis` · `042_whatsapp_inbox_realtime_schema` · `043_lead_campanhas_vendas`
+**Applied:** `036` · `040_imoveis` · **`041_leads_meta_lead_id`** · `042_whatsapp_inbox_realtime_schema` ·
+`043_lead_campanhas_vendas` · **`044_meta_webhook_events`**
+
+✅ **2026-08-04 — 041 and 044 applied by target and verified in the live schema**:
+`meta_webhook_events` has all 14 columns, RLS enabled, both policies; `leads.meta_lead_id` +
+`uq_sw_leads_org_meta_lead_id`. `037`/`038`/`039` deliberately NOT swept in.
+Both are additive, so the currently-deployed prod code ignores them — applying ahead of deploy is safe.
 
 **PENDING:**
 
@@ -58,7 +64,7 @@ the wrong tree. Both are additive (new table + nullable column + indexes), so or
 
 ## 3 · Remaining path to production
 
-1. **Apply `041` + `044`** (§2) with operator consent.
+1. ~~Apply `041` + `044`~~ ✅ **DONE 2026-08-04.**
 2. **Set `META_WEBHOOK_VERIFY_TOKEN`** in the root `.env` or the Fernet vault — **before** deploy.
    `python -c "import secrets; print(secrets.token_urlsafe(32))"`
 3. **Promote + deploy** `social-wiring` (skill `noc-ship`). No new prod-exposure consent needed —
