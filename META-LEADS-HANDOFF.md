@@ -89,8 +89,8 @@ the wrong tree.
 
 | Item | Why |
 |---|---|
-| **Slice 5b — live push (no-refresh lead list)** | Suspended by operator decision. The WhatsApp work landed `noctusai_lib/realtime` (SSE + Redis). Build the Meta live session **on top of it**; do not add Supabase Realtime as a second primitive. Now unblocked — the transport exists and can be assessed. |
-| **erp Graph-client consolidation** | Scoped down deliberately. erp is a testing ground still being refined and its Meta receiver is inert (0 config rows, 0 leads). **The canon is social-wiring's `leadgen_router.py`**; erp's remainder is drift against it. The *security* half was fixed. |
+| ~~Slice 5b — live push~~ | ✅ **BUILT 2026-08-04** on the peer's `noctusai_lib.realtime`, exactly as the constraint required — Supabase Realtime was dropped rather than shipped as a second primitive. The seed needed no change to accept a second surface. |
+| **erp Graph-client consolidation** (security half DONE) | Scoped down deliberately. erp is a testing ground still being refined and its Meta receiver is inert (0 config rows, 0 leads). **The canon is social-wiring's `leadgen_router.py`**; erp's remainder is drift against it. The *security* half was fixed. |
 | **Slice 7 — CSV history import** | Conditional on the operator finding off-platform exports. Meta permanently deletes leads after 90 days; pre-2026-04-28 history is unrecoverable by any means. |
 
 ---

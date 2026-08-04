@@ -6,48 +6,32 @@
 > this checklist is its execution surface). Full rationale for every decision lives there and
 > in the approved plan; this file is the *what shipped* view.
 
-**Status:** 🟢 **integrated to `origin/dev` @ `7f1495db`** · 2026-08-04
+**Status:** 🟢 **feature-complete on `origin/dev`** · 2026-08-04
 
 Merged alongside the WhatsApp realtime inbox and Imóveis/Vista; all three green together.
-Gates on the pushed tip: social-wiring **1658** · erp **2161** · seed **2662** — exit 0.
-✅ Migrations `041` + `044` **applied and schema-verified** 2026-08-04.
-**Blocking prod:** operator held the deploy (dev-only for now) + the Meta dashboard steps.
-See `META-LEADS-HANDOFF.md`.
+Suites on the merged tip, **by exit code**: social-wiring **1671** · erp **2161** ·
+seed lib **2662** · social-wiring FE **490** · seed FE **319** · tsc + vite build clean.
+✅ Migrations `041` + `044` applied and schema-verified.
 
-**What remains is not code.** Every open box below is one of: (a) a **live verification** that
-needs a prod deploy, (b) an **operator step** in the Meta App Dashboard that no code can perform,
-(c) **Slice 5b**, suspended by design until the peer's seed realtime work is assessed, or
-(d) **Slice 7**, conditional on whether off-platform lead exports exist.
+**What remains is not code.** Every open box below is one of: (a) a **live verification**
+that needs a prod deploy, (b) an **operator step** in the Meta App Dashboard that no code
+can perform, or (c) **Slice 7**, conditional on whether off-platform lead exports exist.
 
-**Suite state at the tip:** social-wiring **1565** · erp-imobiliario **2161** · seed lib **2545** ·
-frontend **483** — all by exit code, all on the merged tip (per-branch green ≠ integration green).
+**Two defects found and fixed on 2026-08-04, both invisible to every existing gate:**
 
-**Prod posture (operator, 2026-08-03):** ❌ **no prod deploy until everything is built and
-validated.** Slice 0 is on `dev` only. One promotion at the end, not a trickle.
+1. 🔴 **The fan-out was never wired.** `process_event` promised
+   "enrich → upsert → normalize → notify" and did only the first two. Slice 3's
+   `ingest_meta_lead` and Slice 4's `notify_new_lead` each shipped green and *uncalled* —
+   so leads never reached `social_wiring.leads` and no alert ever fired. Both were explicit
+   product decisions. Cause: file-disjoint parallel dispatch leaves the integration seam
+   owned by nobody, and the receiver had **zero** service-level tests (only route tests
+   against a fake service). Fixed + guarded at the service level, negative-controlled.
 
-**Build order right now:** Slices 1 · 2 · 3 · 4 · 5a · 6 (all independent of the peer branch) →
-then pause. Slice 5b (live push) stays suspended until the peer's seed realtime work is assessed.
-
-**Migration numbers:** `044` (webhook inbox, this branch) · `041` (leads.meta_lead_id, Slice 3).
-🔴 **040 was NOT free** — peer branch `feat/wa-inbox-schema` (commit `b524b097`) already holds
-`040_whatsapp_inbox_realtime_schema.sql` on an **unpushed local branch**. Neither
-`ls migrations/` (shows 039 as highest) nor `git log origin/dev` reveals it. The only check that
-works is `git diff --name-only origin/dev...<branch>` across **every local branch**, not just
-remote ones. Re-run that immediately before writing any migration here.
-
----
-
-## Why (one paragraph)
-
-Campaign leads stopped arriving because nothing drives the pull path: the daily cron
-(`meta_ads/scheduler.py`) syncs accounts/hierarchy/insights/activities but **never** calls
-`LeadsSyncService`, so leads only moved when someone pressed "Sincronizar leads" — last done
-2026-07-29. There is also no push path at all (no webhook, no Page subscription), and Meta
-**permanently deletes** lead data after 90 days, so the un-synced tail expires silently. Fix =
-a webhook for freshness + a scheduled sync for correctness, both landing in one idempotent
-upsert keyed on Meta's own lead id.
-
----
+2. 🔴 **Migration `042` carried committed merge-conflict markers** (from the peer's
+   040→042 renumber). The SQL body was intact and the shared DB had already applied a clean
+   blob, so the live schema was correct and the test suite stayed green — it would only have
+   surfaced on a fresh environment or a DR restore. Fixed, and gated by a new
+   `check_conflict_markers` keeper.
 
 ## Slice 0 — Scheduled lead sync (the standalone fix) — ✅ code complete
 
@@ -142,7 +126,8 @@ upsert keyed on Meta's own lead id.
 - [x] 🐛 **Real bug fixed in passing:** `_log` did `str(job_id)` unconditionally, so a non-upload
       caller would have written the literal string `"None"` into the nullable `upload_job_id`
       UUID column. Now conditional.
-- [ ] In-app channel: `notificacoes` router mounting still to confirm (email + WhatsApp shipped)
+- [x] In-app channel: `notificacoes` router IS mounted in social-wiring
+      (`app/main.py:245` `standard_routers=[..., "notificacoes", ...]`) — confirmed 2026-08-04
 - [ ] **Verify live:** test lead triggers a real WhatsApp message + email
 
 **Recipients decision (engineer, explicit):** there is no per-lead recipient subset analogous to
@@ -169,7 +154,7 @@ cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a gener
 - [x] Complete loading / empty / error / gated / not-configured states; partial bulk-subscribe
       failure rendered per-page, never collapsed. 483 FE tests, tsc + vite build clean
 
-## Slice 5b — Live push (C3) · 🔴 **SUSPENDED — do not build**
+## Slice 5b — Live push (C3) · ✅ **BUILT 2026-08-04** (un-suspended)
 
 > Blocked by design, not by effort. The peer branch `feat/whatsapp-realtime-inbox` is building
 > `seed/lib/backend/noctusai_lib/realtime` (SSE + Redis bus) for the WhatsApp/WAHA inbox. That is a
@@ -179,17 +164,38 @@ cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a gener
 > evaluate their transport together and decide how to touch that seed. Nothing here gets built
 > until that assessment happens.
 
-- [ ] ⏸ Evaluate the peer's landed `noctusai_lib/realtime` transport
-- [ ] ⏸ Decide the Meta-leads live-session shape on top of it
-- [ ] ⏸ Live lead list prepends via `queryClient.setQueryData` — no refetch, no polling
-- [ ] ⏸ **Verify live:** lead appears with no refresh, no loading flash
+- [x] Evaluated the peer's `noctusai_lib.realtime` (SSE + Redis Stream). **Adopted it**;
+      the originally-planned Supabase Realtime was dropped — a second transport would have
+      forked the platform into two reconnect models and two auth models
+- [x] `app/services/meta_leads_realtime.py` — per-org scope, `lead.new`, PII-narrowed
+      wire projection (never `answers`/`raw` — free-text the list doesn't render)
+- [x] SSE mount `/api/meta/leadgen/stream`; org from the AUTHENTICATED CALLER, never a param
+- [x] `useLiveLeads` prepends via `setQueryData`; **never** invalidates the lead list
+- [x] Visible `ao vivo / reconectando` badge — a dropped stream must not look like "no leads"
+- [x] Seed fix: `REALTIME_EVENT_NAMES` was a hardcoded WhatsApp vocabulary every new
+      surface would have had to edit — now a per-consumer `events` option
+- [x] 7 hook tests + 11 service tests; FE 490, tsc + vite build clean
+- [ ] **Verify live:** lead appears with no refresh, no loading flash *(needs deploy)*
 
-## Slice 6 — erp-imobiliario consolidation (C2)
+## Slice 6 — erp-imobiliario consolidation (C2) — ⚖️ security half shipped, rest scoped out
 
-- [ ] Migrate `products/erp-imobiliario/backend/app/routers/meta_api.py` onto the seed capability
-- [ ] Fix the HMAC-secret defect (was using `webhook_verify_token`; must be the **App Secret**)
-- [ ] Delete the hand-rolled Graph client `app/services/meta_api_service.py`
-- [ ] Replace `parse_lead_webhook` (drops batched deliveries) with the seed parser
+- [x] **Fixed the HMAC-secret defect** — `_resolve_meta_secret` returned the *verify token*
+      as the signing secret. Both branches were wrong: no matching `meta_config` row ⇒
+      `secret=None` + `bypass_when_unset=True` **accepted unverified traffic into a write
+      path**; a matching row ⇒ genuine Meta deliveries 401'd. Now the App Secret,
+      `bypass_when_unset=False`. 8 status-pinned tests
+      (`tests/routers/test_meta_webhook_signature.py`)
+- [x] Replaced the hand-rolled `parse_lead_webhook` (read `entry[0].changes[0]` only,
+      silently dropping every batched delivery) with the seed's all-entries parser
+- [x] GET handshake returns the challenge as a **string** — the old `int(challenge)` raised
+      on Meta's opaque non-numeric challenge, and that is the ONE synchronous call deciding
+      whether the subscription saves at all
+- [ ] ⏸ Migrate the router fully onto the seed capability / delete the hand-rolled Graph
+      client — **deliberately not done.** erp is a testing ground still being refined, its
+      Meta receiver is inert (0 config rows, 0 leads ever), and **the canon is
+      social-wiring's `leadgen_router.py`**. The remaining erp code is drift against that
+      canon, and rewriting a dead receiver is not worth carrying into a prod promotion.
+      The *dangerous* half — a receiver that accepted unsigned writes — is closed.
 
 ## Slice 7 — CSV recovery importer (conditional)
 
@@ -218,10 +224,12 @@ Permissions, App Review, Live mode and OAuth callbacks are **already done**. Rem
 
 ## Gates before ship
 
-- [ ] `noctus.dev.validate` on the integrated branch
+- [x] Gates re-run on the **merged tip** (per-branch green ≠ integration green) — 2026-08-04
+- [x] Merge-integrity audit: prod/main are strict ancestors of dev; all 11 branches
+      contained; every branch file accounted for. Found + fixed ONE real casualty —
+      conflict markers committed into migration `042` by the renumber
 - [ ] `compliance-reviewer` on the diff
 - [ ] `security` advisory on the public receiver
-- [ ] Gates re-run on the **merged tip** (per-branch green ≠ integration green)
 - [ ] `noctus_vps_logs` — `meta-leadgen-webhook: secret unset` must be **absent**
 
 ---
