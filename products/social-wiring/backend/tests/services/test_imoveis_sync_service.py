@@ -191,3 +191,77 @@ def test_row_preserves_the_zero_vs_none_distinction():
     assert row["dormitorios"] == 0
     assert row["valor_locacao"] is None
     assert row["area_construida"] is None
+
+
+# ─── PostgREST row cap ────────────────────────────────────────────────────
+
+
+class _CappedTable:
+    """A table that silently truncates like PostgREST does.
+
+    The real failure was not an error — it was a short answer with an `ok`
+    status. This fake reproduces exactly that: honour `.range()`, and never
+    return more than `cap` rows in one response.
+    """
+
+    CAP = 1000
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+        self._lo, self._hi = 0, None
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def range(self, lo, hi):
+        self._lo, self._hi = lo, hi
+        return self
+
+    def execute(self):
+        hi = self._rows if self._hi is None else self._rows[self._lo : self._hi + 1]
+        window = hi[: self.CAP]
+        return type("R", (), {"data": window, "count": len(self._rows)})()
+
+
+class _CappedClient:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def schema(self, _n):
+        return self
+
+    def table(self, _n):
+        return _CappedTable(self._rows)
+
+
+def test_filter_options_sees_values_past_the_postgrest_row_cap():
+    """The measured bug: 19 categorias reported where 20 exist.
+
+    A rare categoria that only appears after row 1000 was invisible to the
+    filter dropdown, with no error anywhere. An unpaginated select cannot
+    tell "these are all the values" from "these are the first 1000 rows'
+    values".
+    """
+    from app.services.imoveis_service import ImoveisService
+
+    rows = [{"status": "Venda", "categoria": "Casa", "cidade": "Cotia", "bairro": "X"}
+            for _ in range(1500)]
+    # The needle, deliberately in the tail — past the cap.
+    rows[1400] = {"status": "Aluguel", "categoria": "Loft",
+                  "cidade": "Ilhabela", "bairro": "Y"}
+
+    opts = ImoveisService(_CappedClient(rows)).filter_options(ORG)
+    assert "Loft" in opts["categoria"], "tail categoria lost to the row cap"
+    assert "Ilhabela" in opts["cidade"], "tail cidade lost to the row cap"
+    assert "Aluguel" in opts["status"]
+
+
+def test_caracteristica_counts_counts_every_row_not_just_the_first_page():
+    from app.services.imoveis_service import ImoveisService
+
+    rows = [{"caracteristicas": ["piscina"]} for _ in range(1500)]
+    counts = ImoveisService(_CappedClient(rows)).caracteristica_counts(ORG)
+    assert counts["piscina"] == 1500, f"counted {counts['piscina']} of 1500"
