@@ -485,3 +485,90 @@ been applied to any database. The page has never rendered against real rows.
 - Installed `openpyxl` + `pglast` into `mcp/noctusai/.venv`. `openpyxl` is declared in the product's `requirements.txt` but was absent, which blocked collection of every test that builds the app.
 - The shared checkout carries uncommitted peer-session rows in `project-history/auto-improvement.ndjson` — not this session's, left alone deliberately.
 - `NOC-REMEDIATE[seed-fork]` on `integrations/vista/real.py`: `get_property` + `update_property_video_url` still use raw httpx with a frozen 16-field `pesquisa` instead of `VistaClient` + `calibrator`. Deferred because they feed the live YouTube fan-out and a field-set change alters `PropertyData.description`.
+
+
+---
+
+## APPLIED — live state as of 2026-08-03 23:50 UTC
+
+User authorized applying to the live database after being told the constraint
+below. Recording it here because the next agent must not rediscover it.
+
+### ⚠️ There is no dev database
+
+The Supabase account has exactly ONE active project — `nyplttplcoyiiqjrvtiw`
+("NoctusAI", `ACTIVE_HEALTHY`); the other four are INACTIVE/paused. That
+single project holds the live `leads`, `contacts`, `whatsapp_connections`.
+This matches the 2026-05-23 decision: *"a free cloud dev project is impossible
+(Supabase 2-active-free cap) … so dev runs against the `noctusai` project (no
+separate dev DB)."*
+
+**Consequence: "apply to dev only" is not achievable at the database layer.**
+Any migration applied is applied to production. Both of these were additive
+(new tables only, no ALTER/DROP, no existing row read or written), which is
+why they were safe — that property should be re-established, not assumed, for
+the next one.
+
+| Migration | Applied at | Notes |
+|---|---|---|
+| `040_imoveis.sql` | 2026-08-03 23:50:31Z | via `migrate_product target=…` |
+| `043_lead_campanhas_vendas.sql` | 2026-08-03 23:50:51Z | via `migrate_product target=…` |
+
+**Use `target=` — never a bare `migrate_product`.** `schema_migrations` had
+drifted from reality: it listed `036` as the last applied, yet `n8n_folders`
+(from `038`) existed live. A blanket "apply all pending" would have re-run
+037–041, which are not all idempotent and not all ours.
+
+### Sync — proven end-to-end on real data
+
+`ImovelSyncService.sync(with_detalhes=True)` against tenant `oneconsu-rest`:
+
+| | |
+|---|---|
+| upserted | **1919 / 1919** |
+| detalhes fetched | 1919 |
+| failures | **0** (`complete: true`) |
+| duration | **411 s** (~6.9 min at concurrency 6) |
+
+Every census figure survived the full pipeline — Vista wire → normalizer →
+coercion → CHECK constraints → storage — verified by querying the live table:
+
+| Fact | Census (API) | Live table |
+|---|---|---|
+| rows | 1919 | 1919 |
+| categorias / cidades | 20 / 18 | 20 / 18 |
+| `dormitorios = 0` (real zeros) | 405 | 405 |
+| `valor_locacao IS NULL` | 1687 | 1687 |
+| `area_construida` populated | 1 | 1 |
+| multi-corretor | 252 | 252 |
+| `codigo_imobiliaria IS NULL` | 38 | 38 |
+| no geo | 707 | 707 |
+| non-ONE codes | 285 | 285 |
+
+The asymmetric CHECKs landed intact: `valor_venda > 0` / `area_construida > 0`
+but `dormitorios >= 0` / `vagas >= 0`.
+
+### A bug this verification caught
+
+`filter_options` reported 19 categorias / 16 cidades against a true 20 / 18.
+PostgREST caps an unpaginated `select` at 1000 rows, so it was aggregating
+over half the catalog and reporting it as complete — two categorias and two
+cidades were missing from the filter dropdowns, and every amenity count was
+roughly half. Fixed in `c5a34390` (`_select_all` paginates); re-verified live
+at 20 / 18 / 428.
+
+**This is the argument for verifying against a known-good baseline rather than
+eyeballing output.** The wrong numbers looked entirely plausible.
+
+### 🔴 NOT done — status_pagina is still `'desenvolvimento'`
+
+`status_pagina.imoveis` and `status_pagina.portal_roi` remain
+`'desenvolvimento'`, so the sidebar links are hidden from normal users.
+
+**Deliberately not flipped.** The data layer is proven exhaustively, but the
+*rendered page* has never been loaded — no container run, no browser. Flipping
+on the strength of green tests and correct SQL would be exactly the
+"I did not personally see it work" claim this roadmap keeps warning about.
+
+To finish: deploy social-wiring, load `/imoveis`, confirm real rows and a
+visible nav link, then flip.
