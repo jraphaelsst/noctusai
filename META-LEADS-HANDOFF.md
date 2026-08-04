@@ -34,25 +34,26 @@ inbox, and Imóveis/Vista. All three are integrated and green together.
 `uq_sw_leads_org_meta_lead_id`. `037`/`038`/`039` deliberately NOT swept in.
 Both are additive, so the currently-deployed prod code ignores them — applying ahead of deploy is safe.
 
-**PENDING:**
+**STILL PENDING — none of it belongs to this work, and none was applied here:**
 
 | Migration | Owner | Needed for |
 |---|---|---|
-| `037_erp_stage_parity_and_canonical_phone.sql` | not this work | canonical-phone contract |
-| `038_n8n_folders.sql` · `039_n8n_nav_route.sql` | not this work | n8n feature (shipped in code, no schema behind it) |
-| **`041_leads_meta_lead_id.sql`** | **this work** | the unified leads base — without it, Meta→`leads` normalization has no idempotency key |
-| **`044_meta_webhook_events.sql`** | **this work** | the webhook inbox — without it, the receiver cannot persist a delivery at all |
+| `037_erp_stage_parity_and_canonical_phone.sql` | another initiative | canonical-phone contract |
+| `038_n8n_folders.sql` · `039_n8n_nav_route.sql` | another initiative | n8n feature — shipped in code with no schema behind it |
 
-🔴 **Apply by `target=`, never a bare `confirm=true`** — that applies the ENTIRE pending backlog,
-including three migrations belonging to other initiatives that nobody here has vetted:
+Those three are a real gap somebody should close, but deliberately not by this session: they were
+never reviewed here, and sweeping them in as a side-effect of a Meta deploy is how an unrelated
+schema change ships unnoticed.
+
+🔴 **Always apply by `target=`, never a bare `confirm=true`** — a bare confirm applies the ENTIRE
+pending backlog, which is exactly how the three above would have gone in unvetted:
 
 ```
-noctus.dev.migrate_product(product="social-wiring", target="041_leads_meta_lead_id.sql",  confirm=true)
-noctus.dev.migrate_product(product="social-wiring", target="044_meta_webhook_events.sql", confirm=true)
+noctus.dev.migrate_product(product="social-wiring", target="<one_file>.sql", confirm=true)
 ```
 
 ⚠️ `migrate_product` has **no `worktree_path`** — run it from the PRIMARY checkout or it resolves
-the wrong tree. Both are additive (new table + nullable column + indexes), so order-independent.
+the wrong tree.
 
 > **The migration-number history, because it will look strange in `git log`:** 040 was claimed by
 > two different files on two unpushed branches; then, mid-integration, the WhatsApp peer renumbered
