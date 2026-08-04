@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:products/social-wiring/backend/migrations/044_whatsapp_inbox_realtime_schema.sql
--- 044_whatsapp_inbox_realtime_schema.sql — Postgres as the read source of
-========
 -- 042_whatsapp_inbox_realtime_schema.sql — Postgres as the read source of
->>>>>>>> origin/dev:products/social-wiring/backend/migrations/042_whatsapp_inbox_realtime_schema.sql
 -- truth for the WhatsApp chat inbox.
 --
 -- Project: whatsapp-realtime-inbox (2026-08-03), Slice 3.

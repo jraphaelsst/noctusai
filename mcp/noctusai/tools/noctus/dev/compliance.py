@@ -8315,6 +8315,128 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     return findings
 
 
+def check_conflict_markers(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag a tracked file that still carries unresolved merge-conflict markers.
+
+    **The failure this exists for.** On 2026-08-04 a merge-integrity audit run
+    just before a prod promotion found
+    `products/social-wiring/backend/migrations/042_whatsapp_inbox_realtime_schema.sql`
+    on `origin/dev` with a five-line conflict header committed verbatim. It was
+    produced by a rename-conflict during the 040→042 migration renumber: git
+    emits the eight-character marker variant (`<`*8 plus a `path:` suffix) when
+    the conflict is in a RENAMED file, which does not look like the seven-char
+    markers people visually scan for.
+
+    **Why the existing gates all missed it.** The corruption sat in the header
+    COMMENT block, so nothing that reads the file semantically noticed:
+    `test_migrations.py` asserts on the SQL body, `check_migration_number_collision`
+    only compares numeric prefixes, and the file had already been applied to the
+    shared database from a clean blob — so the live schema was correct and no
+    runtime signal existed either. The defect was invisible until a fresh
+    environment or a DR restore replayed the migrations, where line 1 is a bare
+    syntax error.
+
+    **Detection rule — opener AND closer, never either alone.** A lone `=`*7
+    line is a legitimate Markdown heading underline and a common Python section
+    divider, so matching it in isolation is almost all false positives. A file
+    is only flagged when it contains BOTH an opener (`<`*7+) and a closer
+    (`>`*7+) at line start. That pairing effectively does not occur outside a
+    real unresolved conflict.
+
+    Severity is `high` throughout: a committed conflict marker is never
+    intentional, and in a migration it is a latent environment-provisioning
+    failure rather than a style issue.
+
+    Scans every tracked text file (`git ls-files`), so it covers SQL, code,
+    config and docs alike — the class is not specific to any of them. Pass
+    `paths` to scan an explicit subset instead: the pre-commit hook hands it
+    the staged files so the hook stays O(staged) rather than O(repo), while CI
+    and manual runs still sweep the whole tree (which is how this class was
+    caught in the first place — the corrupt file was committed long before the
+    scan that found it).
+    """
+    import subprocess
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    # Built from repetition rather than written literally, so this keeper's own
+    # source (and its regression test) can describe the markers without matching
+    # itself — the self-detection trap that makes marker scanners flaky.
+    opener = "<" * 7
+    divider = "=" * 7
+    closer = ">" * 7
+
+    if paths is not None:
+        candidates = list(paths)
+    else:
+        try:
+            tracked = subprocess.run(
+                ["git", "ls-files", "-z"],
+                cwd=root, capture_output=True, text=True, timeout=60, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return findings
+        if tracked.returncode != 0:
+            return findings
+        candidates = tracked.stdout.split("\0")
+
+    for rel in candidates:
+        if not rel:
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # binary or unreadable — nothing a text scanner can say
+        if opener not in text or closer not in text:
+            continue  # cheap reject before the line walk
+
+        # In Markdown, a fenced code block is where docs legitimately SHOW the
+        # marker shape — `KB § PATTERNS/architect/branching-and-merging.md`
+        # teaches conflict resolution and necessarily prints all three markers.
+        # Fenced lines are therefore exempt in `.md` only. The honest cost: a
+        # real conflict landing entirely inside a doc's code fence is missed.
+        # That trade is deliberate — the false positives are certain and
+        # recurring (every doc about merging), the miss is rare and harmless
+        # (a doc does not execute).
+        is_markdown = rel.endswith(".md")
+        in_fence = False
+        hits: list[tuple[int, str]] = []
+        for n, line in enumerate(text.splitlines(), 1):
+            if is_markdown and line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            if (line.startswith(opener) or line.startswith(closer)
+                    or line.rstrip() == divider):
+                hits.append((n, line))
+        has_open = any(line.startswith(opener) for _, line in hits)
+        has_close = any(line.startswith(closer) for _, line in hits)
+        if not (has_open and has_close):
+            continue
+        lines = ", ".join(str(n) for n, _ in hits[:6])
+        findings.append({
+            "product": rel.split("/")[1] if rel.startswith("products/") else "-",
+            "file": rel,
+            "issue": (
+                f"unresolved merge-conflict markers at line(s) {lines} — this "
+                "file was committed mid-conflict. Restore the intended side; a "
+                "marker line is a syntax error in every language we ship."
+            ),
+            "severity": "high",
+        })
+
+    return findings
+
+
 def check_hashlib_usedforsecurity(repo_root: Path | None = None) -> list[dict]:
     """Flag a weak-hash call missing `usedforsecurity=False` (Bandit B324).
 

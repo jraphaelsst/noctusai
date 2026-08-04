@@ -489,6 +489,6 @@ def test_meta_webhook_carries_the_migration_file_only_banner(sql_meta_webhook: s
     assert "MIGRATION FILE ONLY" in sql_meta_webhook, (
         "missing the 🔴 MIGRATION FILE ONLY banner (see migration 033)"
     )
-# 044_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
+# 042_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
 # ack/chat_id (whatsapp-realtime-inbox, Slice 3, 2026-08-03)
 # ---------------------------------------------------------------------------

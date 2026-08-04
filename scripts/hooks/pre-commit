@@ -235,6 +235,26 @@ if [[ -n "$STAGED_BANDIT_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-ter. Unresolved merge-conflict markers (blocking, staged files) ───
+# Keeper `check_conflict_markers`. A file committed mid-conflict is a syntax
+# error in every language we ship, and it is NOT reliably caught by eye: git
+# uses an eight-character marker variant with a `path:` suffix when the
+# conflict is in a RENAMED file, which is what put five marker lines into
+# migration 042 on `dev` during the 040→042 renumber on 2026-08-03. The header
+# sat in a comment block, so the test suite (which asserts on the SQL body)
+# and the live schema (applied earlier from a clean blob) both stayed green —
+# it would only have surfaced when a fresh environment replayed the migrations.
+# Scoped to the STAGED set so the hook stays fast; CI sweeps the whole tree.
+STAGED_ALL=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | paste -sd, - || true)
+if [[ -n "$STAGED_ALL" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-conflict-markers --paths "$STAGED_ALL" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] conflict-markers check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A staged file still carries unresolved merge-conflict markers." >&2
+        echo "[pre-commit] Open the file, keep the side you intended, delete the marker lines." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-bis. Migration-number collision (blocking, only when a migration ──
 # is staged) ──────────────────────────────────────────────────────────────
 # Keeper `check_migration_number_collision`. Two migrations sharing a numeric
