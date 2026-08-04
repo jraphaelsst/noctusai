@@ -215,6 +215,49 @@ class ImoveisService:
         rows = result.data or []
         return rows[0] if rows else None
 
+    def _select_all(self, columns: str, org_id: UUID) -> list[dict]:
+        """Fetch EVERY matching row, paginating past PostgREST's row cap.
+
+        **This exists because of a measured bug, not a hypothetical one.**
+        PostgREST caps an unpaginated `select` at its configured maximum
+        (1000 by default). A bare `.select(...).execute()` over a
+        1919-imovel catalog therefore returns the first 1000 rows and reports
+        no error at all — the caller cannot distinguish a complete answer
+        from a truncated one.
+
+        Verified live 2026-08-03 against the real catalog: the aggregate
+        helpers below reported 19 categorias and 16 cidades where the true
+        counts are 20 and 18. Two whole categories and two whole cities were
+        missing from the filter dropdowns, silently, because they only occur
+        in the tail of the table.
+
+        That is exactly the shape this codebase treats as a defect — an
+        incomplete answer presented as a complete one.
+
+        NOC-REMEDIATE[query-efficiency]: `filter_options` and
+        `caracteristica_counts` pull every row to aggregate in Python. At
+        ~1919 rows that is fine; at 50k it is not. Replace with a
+        Postgres-side aggregate (a view or RPC returning distinct values and
+        slug counts) rather than raising the page size. Named destination:
+        roadmap `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up.
+        """
+        page_size = 1000
+        out: list[dict] = []
+        start = 0
+        while True:
+            result = (
+                self._table()
+                .select(columns)
+                .eq("org_id", str(org_id))
+                .range(start, start + page_size - 1)
+                .execute()
+            )
+            rows = result.data or []
+            out.extend(rows)
+            if len(rows) < page_size:
+                return out
+            start += page_size
+
     def filter_options(self, org_id: UUID) -> dict:
         """Distinct values for the filter dropdowns, derived from stored rows.
 
@@ -222,13 +265,7 @@ class ImoveisService:
         calibration. A frozen list goes stale the moment the tenant adds a
         categoria, and it would go stale silently.
         """
-        result = (
-            self._table()
-            .select("status,categoria,cidade,bairro")
-            .eq("org_id", str(org_id))
-            .execute()
-        )
-        rows = result.data or []
+        rows = self._select_all("status,categoria,cidade,bairro", org_id)
         out: dict[str, list[str]] = {}
         for key in ("status", "categoria", "cidade", "bairro"):
             values = {r.get(key) for r in rows if r.get(key)}
@@ -243,11 +280,8 @@ class ImoveisService:
         that always return nothing, so the UI orders by this and drops the
         zeroes.
         """
-        result = (
-            self._table().select("caracteristicas").eq("org_id", str(org_id)).execute()
-        )
         counts: dict[str, int] = {}
-        for row in result.data or []:
+        for row in self._select_all("caracteristicas", org_id):
             for slug in row.get("caracteristicas") or []:
                 counts[slug] = counts.get(slug, 0) + 1
         return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
