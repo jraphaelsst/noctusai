@@ -49,6 +49,23 @@ export interface UseRealtimeStreamOptions {
   enabled?: boolean;
   /** Reconnect backoff ceiling. Default 30s. */
   maxBackoffMs?: number;
+  /**
+   * Named events to listen for, in ADDITION to the defaults.
+   *
+   * 🔴 Load-bearing: `EventSource` only delivers a named event to a listener
+   * registered for that exact name, so an event the server emits and nobody
+   * registered is silently invisible — no error, no frame, the UI simply
+   * never updates.
+   *
+   * This is a per-consumer parameter rather than a growing constant in the
+   * seed, because the seed must not know any product's event vocabulary. The
+   * defaults below are the WhatsApp inbox's names, kept only so that the
+   * first consumer keeps working unchanged; a second live surface supplies
+   * its own here instead of editing a shared list. (`KB § PATTERNS/architect/
+   * seed-canonical-defaults.md` — a default that is really consumer #1's
+   * vocabulary silently misroutes consumers #2..N.)
+   */
+  events?: readonly string[];
 }
 
 const HEARTBEAT_EVENT = "heartbeat";
@@ -66,7 +83,15 @@ export function useRealtimeStream(
   url: string | null,
   options: UseRealtimeStreamOptions = {},
 ): { status: RealtimeStatus; lastEventId: string | null } {
-  const { onEvent, enabled = true, maxBackoffMs = DEFAULT_MAX_BACKOFF_MS } = options;
+  const {
+    onEvent,
+    enabled = true,
+    maxBackoffMs = DEFAULT_MAX_BACKOFF_MS,
+    events,
+  } = options;
+  // Joined into a primitive so the effect below re-runs when the vocabulary
+  // genuinely changes, not on every render that rebuilds the array literal.
+  const eventNamesKey = (events ?? []).join(",");
 
   const [status, setStatus] = useState<RealtimeStatus>("closed");
   const lastEventIdRef = useRef<string | null>(null);
@@ -132,9 +157,15 @@ export function useRealtimeStream(
       };
 
       // Named events do NOT fire `onmessage` — each must be registered.
-      // Anything the server can emit has to be listed here or it is invisible.
+      // Anything the server can emit has to be registered here or it is
+      // invisible. `Set` because a consumer naming an event that is also a
+      // default would otherwise attach the same handler twice and apply the
+      // event twice.
       source.onmessage = handle;
-      for (const name of REALTIME_EVENT_NAMES) {
+      for (const name of new Set([
+        ...REALTIME_EVENT_NAMES,
+        ...(eventNamesKey ? eventNamesKey.split(",") : []),
+      ])) {
         source.addEventListener(name, handle as EventListener);
       }
 
@@ -157,19 +188,22 @@ export function useRealtimeStream(
       source?.close();
       setStatus("closed");
     };
-  }, [url, enabled, maxBackoffMs]);
+  }, [url, enabled, maxBackoffMs, eventNamesKey]);
 
   return { status, lastEventId: lastEventIdRef.current };
 }
 
 /**
- * Event names the client listens for.
+ * DEFAULT event names the client listens for — the WhatsApp inbox's
+ * vocabulary, which was this transport's first consumer.
  *
- * 🔴 This list is load-bearing: `EventSource` only delivers a named event to a
- * listener registered for that exact name. An event the server emits but this
- * array omits is silently invisible — no error, no frame, the UI simply never
- * updates. Keep it in lockstep with the server's event vocabulary
- * (`app/services/whatsapp_realtime.py::WHATSAPP_EVENTS`).
+ * 🔴 Do NOT append a new surface's events here. That would make a seed
+ * constant grow once per product, which is the hand-maintained-list drift
+ * class: the seed would need editing every time a product invents an event,
+ * and nothing would fail if someone forgot. Pass
+ * `useRealtimeStream(url, { events: [...] })` from the consumer instead.
+ *
+ * Kept in lockstep with `app/services/whatsapp_realtime.py::WHATSAPP_EVENTS`.
  */
 export const REALTIME_EVENT_NAMES = [
   "message.new",

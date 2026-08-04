@@ -18,8 +18,12 @@
  * this router), NOT the `{data: ...}` envelope `useMetaAds` reads elsewhere
  * in this same product — do not wrap these in `.data`.
  */
+import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { useRealtimeStream } from "@noctusai/lib";
+
+import type { LeadRecord, LeadRecords } from "./useMetaAds";
 
 // ─── Types (mirror leadgen_router.py's Out DTOs verbatim) ──────────────────
 
@@ -150,5 +154,112 @@ export function useLeadgenEvents(limit = 20) {
       api
         .get<LeadgenEvents>(`/api/meta/leadgen/events?limit=${limit}`)
         .then((r) => r ?? { counts: {}, last_received_at: null, events: [] }),
+  });
+}
+
+// ─── Live delivery (SSE) ───────────────────────────────────────────────────
+
+/**
+ * The event vocabulary the leads stream emits. Mirrors
+ * `app/services/meta_leads_realtime.py::META_LEAD_EVENTS`.
+ *
+ * 🔴 Passed to `useRealtimeStream` rather than appended to the seed's
+ * defaults: `EventSource` only delivers a named event to a listener
+ * registered for that exact name, and a seed constant that grows once per
+ * product is a hand-maintained list nobody fails to update loudly.
+ */
+export const LEADGEN_EVENTS = ["lead.new"] as const;
+
+/** The projection the server puts on the wire. Deliberately NOT the whole
+ *  `meta_ads_leads` row — `answers`/`raw` are free-text PII the list never
+ *  renders, so they are not broadcast to every open tab. */
+export interface LiveLead {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  form_id: string | null;
+  form_name: string | null;
+  campaign_name: string | null;
+  platform: string | null;
+  created_time: string | null;
+}
+
+/** Map the wire projection onto the `LeadRecord` shape the list renders, so
+ *  a live-arrived lead is indistinguishable from a fetched one. The answer
+ *  fields are absent by design (see `LiveLead`); a refetch fills them in. */
+function toLeadRecord(lead: LiveLead): LeadRecord {
+  return {
+    id: lead.id,
+    created_time: lead.created_time,
+    ad_id: null,
+    ad_name: null,
+    campaign_id: null,
+    campaign_name: lead.campaign_name,
+    platform: lead.platform,
+    is_organic: null,
+    field_data: [
+      ...(lead.full_name ? [{ name: "full_name", values: [lead.full_name] }] : []),
+      ...(lead.email ? [{ name: "email", values: [lead.email] }] : []),
+      ...(lead.phone ? [{ name: "phone_number", values: [lead.phone] }] : []),
+    ],
+  };
+}
+
+/**
+ * Subscribe to this org's live lead stream and PREPEND arrivals into the
+ * already-cached lead list.
+ *
+ * WHY `setQueryData` AND NOT `invalidateQueries`
+ * ─────────────────────────────────────────────
+ * An invalidate would trigger a refetch — reintroducing exactly the network
+ * round trip this removes, and flashing the list's loading state on every
+ * arrival. The requirement was a background update that adds the row to the
+ * list, with no refresh and no polling; patching the cache in place is what
+ * that means.
+ *
+ * Prepending (rather than appending) matches the list's newest-first order.
+ * The de-dup guard is not optional: a resumed connection may redeliver an
+ * event the client already applied, and the same lead can arrive twice if the
+ * server retried a publish — the seed's own contract says to keep handlers
+ * idempotent.
+ *
+ * Every cached `lead-records` page is patched, not just the visible one: the
+ * key is per (formId, pageId), and a lead belongs to exactly one form. Rows
+ * for other forms are left untouched.
+ */
+export function useLiveLeads(enabled = true) {
+  const qc = useQueryClient();
+
+  const onEvent = useCallback(
+    (message: { event: string; payload: Record<string, unknown> }) => {
+      if (message.event !== "lead.new") return;
+      const lead = message.payload as unknown as LiveLead;
+      if (!lead?.id) return;
+
+      qc.setQueriesData<LeadRecords>(
+        { queryKey: ["meta-ads", "lead-records"] },
+        (prev) => {
+          if (!prev) return prev;
+          // Only the form this lead belongs to; an unknown form_id means the
+          // list for it is not cached yet and will fetch fresh anyway.
+          if (lead.form_id && prev.form_id && lead.form_id !== prev.form_id) {
+            return prev;
+          }
+          if (prev.data.some((r) => r.id === lead.id)) return prev;
+          return { ...prev, data: [toLeadRecord(lead), ...prev.data] };
+        },
+      );
+
+      // The delivery-health panel counts arrivals; keep its badge honest
+      // without refetching the list itself.
+      qc.invalidateQueries({ queryKey: ["meta-leadgen", "events"] });
+    },
+    [qc],
+  );
+
+  return useRealtimeStream(enabled ? "/api/meta/leadgen/stream" : null, {
+    onEvent,
+    events: LEADGEN_EVENTS,
   });
 }

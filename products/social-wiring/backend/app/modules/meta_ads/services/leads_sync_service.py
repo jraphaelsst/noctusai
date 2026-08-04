@@ -155,7 +155,7 @@ class LeadsSyncService:
 
     def upsert_lead(
         self, lead: Any, *, org_id: UUID, form: Any, key_types: dict[str, str]
-    ) -> None:
+    ) -> dict[str, Any]:
         answers: dict[str, Any] = {}
         promoted: dict[str, str] = {}
         for fd in lead.field_data:
@@ -201,6 +201,11 @@ class LeadsSyncService:
             .upsert(row, on_conflict="id")
             .execute()
         )
+        # Returned (rather than the previous `None`) so the webhook receiver's
+        # fan-out — unified-base normalization, operator alert, realtime push —
+        # can work from the row it just wrote instead of re-reading it back.
+        # `sync_leads` ignores the return value; nothing else consumed it.
+        return row
 
     # ─── orchestration ─────────────────────────────────────────────────
     def sync_all(

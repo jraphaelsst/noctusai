@@ -49,6 +49,7 @@ import {
   type LeadgenForm,
   type LeadgenQuestion,
 } from "@/hooks/useMetaAds";
+import { useLiveLeads } from "@/hooks/useMetaLeadgen";
 import { AdsError, AdsLoading, AdsNotConfigured } from "./adsShared";
 import LeadgenWebhookCard from "./LeadgenWebhookCard";
 
@@ -167,6 +168,11 @@ function RecordsPanel({
     selected?.page_id ?? null,
     available,
   );
+  // Live delivery: a lead submitted on Meta right now is prepended into the
+  // cache above without a refetch and without polling. Enabled only when the
+  // records surface is actually usable — holding an SSE connection open for a
+  // list the caller cannot read wastes a server-side stream reader.
+  const live = useLiveLeads(available);
 
   if (!available) {
     return (
@@ -200,7 +206,30 @@ function RecordsPanel({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
         <div>
-          <CardTitle className="text-base">Registros de leads</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            Registros de leads
+            {/* The live indicator is not decoration: without it, a dropped
+                SSE connection looks exactly like "no leads are arriving",
+                which is the failure this whole feature exists to make
+                visible. Reconnection is automatic and backed off, so the
+                honest label for that state is "reconnecting", not an error. */}
+            <Badge
+              variant={live.status === "open" ? "default" : "secondary"}
+              className="gap-1 font-normal"
+              title={
+                live.status === "open"
+                  ? "Novos leads aparecem aqui automaticamente, sem atualizar a página."
+                  : "Sem conexão ao vivo no momento — os leads continuam sendo salvos; a lista atualiza ao reconectar."
+              }
+            >
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  live.status === "open" ? "bg-emerald-500" : "bg-muted-foreground"
+                }`}
+              />
+              {live.status === "open" ? "ao vivo" : "reconectando"}
+            </Badge>
+          </CardTitle>
           <CardDescription>Dados enviados em cada formulário</CardDescription>
         </div>
         <select

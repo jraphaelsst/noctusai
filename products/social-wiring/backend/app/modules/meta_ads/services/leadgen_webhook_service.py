@@ -44,7 +44,9 @@ which is exactly the leak the 2026-07-23 scheduler fix exists to prevent.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -76,6 +78,37 @@ PENDING_STATUSES = (STATUS_RECEIVED, STATUS_ERROR, STATUS_UNRESOLVED)
 MAX_ATTEMPTS = 5
 
 
+@dataclass
+class ProcessResult:
+    """What ``process_event`` finished with, and the material the async
+    fan-out needs.
+
+    ``process_event`` used to return a bare status string. It now returns
+    this because the two halves of "a lead arrived" run in different worlds:
+    the DURABLE half (enrich → upsert → normalize) is synchronous and must
+    complete before we admit the lead exists, while the ANNOUNCEMENT half
+    (operator alert, realtime push) is async, best-effort, and must run
+    *after* the 200 so a slow SMTP server can never make Meta retry.
+
+    ``lead_row`` is the ``meta_ads_leads`` row exactly as written — carried
+    forward so the fan-out never re-reads what it just wrote.
+    """
+
+    status: str
+    org_id: UUID | None = None
+    lead_row: dict[str, Any] | None = field(default=None, repr=False)
+
+    @property
+    def announceable(self) -> bool:
+        """True when there is a real, newly-processed lead worth telling
+        anyone about. A duplicate, a parked row or a failure is not."""
+        return (
+            self.status == STATUS_PROCESSED
+            and self.org_id is not None
+            and bool(self.lead_row)
+        )
+
+
 class LeadgenWebhookService:
     """Per-request collaborator for the Meta leadgen receiver.
 
@@ -91,12 +124,18 @@ class LeadgenWebhookService:
         leads_sync_factory: Any = None,
         dedup: Any = None,
         org_resolver: Any = None,
+        ingest_fn: Any = None,
+        notifier_factory: Any = None,
+        publisher: Any = None,
     ) -> None:
         self._admin = admin_supabase
         self._adapter_factory = adapter_factory
         self._leads_sync_factory = leads_sync_factory
         self._dedup = dedup
         self._org_resolver = org_resolver
+        self._ingest_fn = ingest_fn
+        self._notifier_factory = notifier_factory
+        self._publisher = publisher
 
     # ─── inbox ─────────────────────────────────────────────────────────
     def record_event(self, event: LeadgenEvent) -> bool:
@@ -245,8 +284,12 @@ class LeadgenWebhookService:
         return form_obj, key_types
 
     # ─── the pipeline ──────────────────────────────────────────────────
-    def process_event(self, event: LeadgenEvent) -> str:
-        """Enrich → upsert → normalize → notify. Returns the terminal status.
+    def process_event(self, event: LeadgenEvent) -> ProcessResult:
+        """Enrich → upsert → normalize. Returns the terminal status plus the
+        material :meth:`fan_out` needs.
+
+        This is the DURABLE half only. The announcement half (operator alert,
+        realtime push) is deliberately NOT here — see :meth:`fan_out`.
 
         NEVER raises: the caller owes Meta a 200 regardless, and every
         failure mode is recorded on the inbox row instead.
@@ -259,7 +302,7 @@ class LeadgenWebhookService:
                 event.page_id,
             )
             self._set_status(event.leadgen_id, status=STATUS_UNRESOLVED)
-            return STATUS_UNRESOLVED
+            return ProcessResult(STATUS_UNRESOLVED)
 
         try:
             adapter = self._build_adapter(org_id)
@@ -272,7 +315,24 @@ class LeadgenWebhookService:
                     id=lead.form_id or event.form_id, name=None, page_id=event.page_id
                 )
             svc = self._build_leads_sync()
-            svc.upsert_lead(lead, org_id=org_id, form=form, key_types=key_types)
+            lead_row = svc.upsert_lead(
+                lead, org_id=org_id, form=form, key_types=key_types
+            )
+            # ── normalize into the canonical `leads` base ──────────────────
+            # Both destinations were an explicit product decision: the raw
+            # ledger stays lossless, AND every lead becomes a first-class row
+            # in the unified base (origem / corretor / filters / Funil). This
+            # call is what makes the second half true for webhook-delivered
+            # leads; without it `leads` only ever saw the manual backfill.
+            #
+            # A normalize failure DOES flip the row to `error`. That is
+            # deliberate: the retry job re-drives it, and every step in the
+            # chain is idempotent (`meta_ads_leads` upserts on its PK,
+            # `ingest_meta_lead` checks `(org_id, meta_lead_id)` before
+            # inserting), so a re-drive costs one Graph call and cannot
+            # duplicate. Swallowing it instead would leave the lead invisible
+            # in the base with nothing recording why.
+            self._ingest(org_id=org_id, lead_row=lead_row, key_types=key_types)
         except MetaGraphError as exc:
             detail = str(exc)
             if getattr(exc, "is_permission", False):
@@ -284,15 +344,74 @@ class LeadgenWebhookService:
                            event.leadgen_id, detail)
             self._set_status(event.leadgen_id, status=STATUS_ERROR,
                              error=detail, org_id=org_id, bump_attempts=True)
-            return STATUS_ERROR
+            return ProcessResult(STATUS_ERROR, org_id=org_id)
         except Exception as exc:  # noqa: BLE001
             logger.exception("meta-leadgen: unexpected failure for %s", event.leadgen_id)
             self._set_status(event.leadgen_id, status=STATUS_ERROR,
                              error=str(exc), org_id=org_id, bump_attempts=True)
-            return STATUS_ERROR
+            return ProcessResult(STATUS_ERROR, org_id=org_id)
 
         self._set_status(event.leadgen_id, status=STATUS_PROCESSED, org_id=org_id)
-        return STATUS_PROCESSED
+        return ProcessResult(STATUS_PROCESSED, org_id=org_id, lead_row=lead_row)
+
+    # ─── the announcement half ─────────────────────────────────────────
+    async def fan_out(self, result: ProcessResult) -> dict[str, bool]:
+        """Announce a processed lead: operator alert + realtime push.
+
+        Runs AFTER the 200 (the router schedules it as a background task).
+        That ordering is not cosmetic — ``notify_new_lead`` talks to SMTP and
+        WAHA, and Meta retries any non-2xx and can disable the subscription
+        outright. A slow mail server must never become a lost lead.
+
+        Every leg is independently guarded. These are announcements about a
+        write that has ALREADY succeeded durably, so degrading one channel is
+        strictly better than failing the others with it — but each failure is
+        logged at exception level with its channel named, never swallowed
+        silently. The returned dict says which legs actually fired, so a
+        caller (and a test) can tell "sent" from "degraded".
+        """
+        if not result.announceable:
+            return {"notified": False, "published": False}
+        org_id = result.org_id
+        lead = result.lead_row or {}
+        outcome = {"notified": False, "published": False}
+
+        try:
+            notifier = self._build_notifier()
+            if notifier is not None:
+                await notifier.notify_new_lead(org_id=org_id, lead=lead)
+                outcome["notified"] = True
+        except Exception:  # noqa: BLE001 — degrade the alert, never the lead
+            logger.exception(
+                "meta-leadgen: operator alert failed for lead=%s (org=%s) — the "
+                "lead is stored and normalized; only the notification is lost",
+                lead.get("id"), org_id,
+            )
+
+        try:
+            publisher = self._publisher or _default_publisher()
+            if publisher is not None:
+                await publisher(org_id=org_id, lead=lead)
+                outcome["published"] = True
+        except Exception:  # noqa: BLE001 — degrade realtime, never the lead
+            logger.exception(
+                "meta-leadgen: realtime publish failed for lead=%s (org=%s) — "
+                "open clients will pick it up on their next reconnect/refetch",
+                lead.get("id"), org_id,
+            )
+        return outcome
+
+    def fan_out_sync(self, result: ProcessResult) -> dict[str, bool]:
+        """``fan_out`` for synchronous callers (the retry job runs inside
+        ``asyncio.to_thread``, so it owns its thread and can safely start a
+        loop). Never raises — a drain must not die on an alert."""
+        if not result.announceable:
+            return {"notified": False, "published": False}
+        try:
+            return asyncio.run(self.fan_out(result))
+        except Exception:  # noqa: BLE001
+            logger.exception("meta-leadgen: fan-out failed during drain")
+            return {"notified": False, "published": False}
 
     # ─── collaborators ─────────────────────────────────────────────────
     def _build_adapter(self, org_id: UUID) -> Any:
@@ -308,6 +427,48 @@ class LeadgenWebhookService:
         from app.modules.meta_ads.services.leads_sync_service import LeadsSyncService
 
         return LeadsSyncService(admin_supabase=self._admin)
+
+    def _ingest(
+        self, *, org_id: UUID, lead_row: dict[str, Any] | None,
+        key_types: dict[str, str],
+    ) -> None:
+        """Normalize one raw lead into the canonical ``leads`` base.
+
+        ``key_types`` is the form's question→type map the enrich step already
+        resolved; handing it down means ``ingest_meta_lead`` does not re-read
+        the form to render ``observacoes``.
+        """
+        if not lead_row:
+            return
+        ingest = self._ingest_fn
+        if ingest is None:
+            from app.modules.leads.services.meta_ingest_service import (
+                ingest_meta_lead,
+            )
+
+            ingest = ingest_meta_lead
+        ingest(
+            self._admin,
+            org_id,
+            lead_row,
+            question_types=key_types or None,
+        )
+
+    def _build_notifier(self) -> Any:
+        if self._notifier_factory is not None:
+            return self._notifier_factory(admin_supabase=self._admin)
+        from app.services.notification_service import build_notification_service
+
+        return build_notification_service(self._admin)
+
+
+def _default_publisher() -> Any:
+    """The realtime leg's default, imported lazily so the service module has
+    no import-time dependency on the bus (and so a test can inject its own
+    ``publisher=`` without the seed's Redis machinery loading at all)."""
+    from app.services.meta_leads_realtime import publish_new_lead
+
+    return publish_new_lead
 
     def claim(self, leadgen_id: str) -> bool:
         """Redis SETNX pre-filter. True ⇒ we own this delivery.
@@ -347,8 +508,15 @@ class LeadgenWebhookService:
         processed = failed = 0
         for row in rows:
             event = _event_from_row(row)
-            if self.process_event(event) == STATUS_PROCESSED:
+            result = self.process_event(event)
+            if result.status == STATUS_PROCESSED:
                 processed += 1
+                # A re-driven lead is one whose FIRST delivery never announced
+                # itself — the operator has not been told and no client has
+                # seen it. Announcing on the retry is what closes that gap;
+                # skipping it here would make a transient Graph blip a
+                # permanently silent lead.
+                self.fan_out_sync(result)
             else:
                 failed += 1
         if rows:

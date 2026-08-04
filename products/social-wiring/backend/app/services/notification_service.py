@@ -563,3 +563,40 @@ class NotificationService:
                 "(upload_job_id=%s, recipient_id=%s, channel=%s)",
                 upload_job_id, recipient_id, channel,
             )
+
+
+# ─── construction ───────────────────────────────────────────────────────────
+#: The seven channel-credential attributes every caller has to forward.
+_CHANNEL_ATTRS = (
+    "smtp_host",
+    "smtp_port",
+    "smtp_user",
+    "smtp_password",
+    "waha_base_url",
+    "waha_api_key",
+    "waha_session",
+)
+
+
+def build_notification_service(
+    admin_supabase: Any, source: Any = None, **overrides: Any
+) -> NotificationService:
+    """Construct a :class:`NotificationService` from a credential source.
+
+    Formalized at N=3 per the recurrence rule: the YouTube upload router
+    passed an org-scoped ``cfg``, ``whatsapp_intake_service`` passed the
+    global ``settings``, and the Meta leadgen receiver was about to become
+    the third hand-rolled copy of the same seven-keyword call. All three
+    sources expose the same attribute names, which is precisely why the
+    duplication was invisible — and why a new channel credential would have
+    had to be threaded through every call site by hand.
+
+    ``source`` defaults to the global ``settings``; pass an org-scoped config
+    object to keep per-org credentials. ``overrides`` forwards the DI seams
+    (``email_service_factory`` / ``whatsapp_client_factory``) untouched.
+    """
+    if source is None:
+        from app.config import settings as source  # noqa: PLC0415
+
+    creds = {name: getattr(source, name) for name in _CHANNEL_ATTRS}
+    return NotificationService(admin_supabase=admin_supabase, **creds, **overrides)

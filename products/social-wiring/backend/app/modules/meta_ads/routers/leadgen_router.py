@@ -33,7 +33,8 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.integrations.meta import MetaGraphError
@@ -41,6 +42,7 @@ from noctusai_lib.integrations.meta.leadgen_webhook import (
     leadgen_challenge_response,
     parse_leadgen_webhook,
 )
+from noctusai_lib.realtime import create_sse_router
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
     VerifiedWebhook,
@@ -57,6 +59,7 @@ from app.modules.meta_ads.services.leadgen_webhook_service import (
 from app.rate_limit import limiter
 from app.routers._meta_common import handle_meta_graph_error
 from app.services.meta import MetaAdapter, get_meta_adapter
+from app.services.meta_leads_realtime import get_meta_leads_bus, meta_leads_scope
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +176,7 @@ async def leadgen_receive(
         log_prefix="meta-leadgen-webhook",
     ),
     svc: LeadgenWebhookService = Depends(get_leadgen_service),
-) -> dict[str, Any]:
+) -> JSONResponse:
     """Receive a verified `leadgen` delivery.
 
     Returns 200 for EVERYTHING past signature verification — malformed
@@ -196,15 +199,35 @@ async def leadgen_receive(
         return {"status": STATUS_IGNORED, "reason": "no-leadgen-events", "events": 0}
 
     results: list[dict[str, Any]] = []
+    # The announcement half — operator alert (in-app + WhatsApp + email) and
+    # the realtime push that puts the lead on open screens with no refresh.
+    # It runs strictly AFTER this 200 is on the wire: SMTP and WAHA are slow
+    # third parties, and Meta retries any non-2xx and can disable the
+    # subscription outright. `process_event` has already stored + normalized
+    # the lead durably by then, so nothing scheduled here can lose it.
+    #
+    # 🔴 Attached to the RESPONSE rather than taken as a `BackgroundTasks`
+    # parameter, and that is not a style choice: `@limiter.limit` wraps this
+    # endpoint with `functools.wraps`, so FastAPI resolves the signature's
+    # annotations against SlowAPI's module globals, where `BackgroundTasks`
+    # does not exist. The parameter form raises `PydanticUndefinedAnnotation`
+    # at import and takes the whole app down with it. Starlette's
+    # response-level `background=` has identical run-after-response semantics
+    # and needs no annotation resolution.
+    announce = StarletteBackgroundTasks()
     for event in events:
         is_new = svc.record_event(event)
         if not is_new or not svc.claim(event.leadgen_id):
             results.append({"leadgen_id": event.leadgen_id, "status": "duplicate"})
             continue
-        results.append(
-            {"leadgen_id": event.leadgen_id, "status": svc.process_event(event)}
-        )
-    return {"status": "ok", "events": len(events), "results": results}
+        outcome = svc.process_event(event)
+        results.append({"leadgen_id": event.leadgen_id, "status": outcome.status})
+        if outcome.announceable:
+            announce.add_task(svc.fan_out, outcome)
+    return JSONResponse(
+        {"status": "ok", "events": len(events), "results": results},
+        background=announce if announce.tasks else None,
+    )
 
 
 # ─── authed: subscription management ─────────────────────────────────────
@@ -417,6 +440,64 @@ def list_events(
         last_received_at=max(stamps) if stamps else None,
         events=[EventOut(**r) for r in rows],
     )
+
+
+# ── Realtime stream (SSE) ────────────────────────────────────────────────────
+# The live half of "a lead appears without a refresh". Mounted on the SAME
+# seed primitive the WhatsApp inbox uses (`noctusai_lib.realtime`) rather than
+# a second transport — see `app/services/meta_leads_realtime.py` for why that
+# decision was made once instead of twice.
+#
+# `create_sse_router` captures its `bus` argument ONCE at router-construction
+# time (module import), not per request. `_MetaLeadsBusProxy` exists so tests
+# can still swap the target bus afterwards: a genuinely-live bus cannot be
+# driven through `TestClient` at all, because `subscribe()` never terminates.
+# Production never reassigns `_meta_leads_bus` after startup, so the
+# indirection costs nothing there. This mirrors the WhatsApp router's proxy
+# for the same reason — the constraint is the seed's, not either product's.
+_meta_leads_bus = get_meta_leads_bus(getattr(settings, "redis_url", "") or "")
+
+
+class _MetaLeadsBusProxy:
+    """Delegates to whatever module-level ``_meta_leads_bus`` CURRENTLY points
+    at, read at call time rather than captured once."""
+
+    async def publish(self, scope: str, event: str, payload: dict) -> str | None:
+        return await _meta_leads_bus.publish(scope, event, payload)
+
+    def subscribe(self, scope: str, *, last_event_id: str | None = None):
+        return _meta_leads_bus.subscribe(scope, last_event_id=last_event_id)
+
+
+async def _resolve_stream_org(
+    request: Request,
+    auth: tuple = Depends(get_current_user_org),
+) -> UUID:
+    """Auth dependency for the SSE stream.
+
+    🔴 The org is taken from the AUTHENTICATED CALLER, never from a path or
+    query parameter. A scope string is an opaque subscription key to the seed
+    — it performs no authorization of its own — so if the org were
+    caller-supplied, any authenticated user could subscribe to any org's lead
+    stream and receive its PII in real time. Deriving it from the session is
+    what makes the stream honour the same boundary the leads tables' RLS does.
+    """
+    _user, _token, raw_org = auth
+    return coerce_org_uuid(raw_org)
+
+
+def _stream_scope(request: Request, org_id: UUID) -> str:
+    return meta_leads_scope(org_id)
+
+
+router.include_router(
+    create_sse_router(
+        _MetaLeadsBusProxy(),
+        scope_resolver=_stream_scope,
+        auth_dependency=_resolve_stream_org,
+        path="/stream",
+    )
+)
 
 
 __all__ = ["router", "PENDING_STATUSES"]

@@ -2305,7 +2305,7 @@ class WhatsAppIntakeService:
         """
         from app.modules.youtube.schemas.upload import UploadMetadata
         from app.services.credential_vault import CredentialStore, build_credential_store
-        from app.services.notification_service import NotificationService
+        from app.services.notification_service import build_notification_service
         from app.modules.youtube.services.upload import (
             UploadService,
             rename_for_job,
@@ -2378,16 +2378,7 @@ class WhatsAppIntakeService:
 
             store = build_credential_store(self._admin)
 
-            notification = NotificationService(
-                admin_supabase=self._admin,
-                smtp_host=settings.smtp_host,
-                smtp_port=settings.smtp_port,
-                smtp_user=settings.smtp_user,
-                smtp_password=settings.smtp_password,
-                waha_base_url=settings.waha_base_url,
-                waha_api_key=settings.waha_api_key,
-                waha_session=settings.waha_session,
-            )
+            notification = build_notification_service(self._admin, settings)
 
             upload_svc = UploadService(
                 user_supabase=self._admin,

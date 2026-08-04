@@ -60,7 +60,7 @@ from app.modules.youtube.schemas.upload import (
 from app.services.credential_vault import (
     CredentialStore, EncryptionNotConfigured)
 from app.services.account_credentials import build_youtube_service_for_org
-from app.services.notification_service import NotificationService
+from app.services.notification_service import build_notification_service
 from app.modules.youtube.services.upload import (
     UploadService,
     UploadServiceError,
@@ -114,16 +114,7 @@ def _build_upload_service(token: str, cfg: SocialWiringSettings) -> UploadServic
             detail=str(exc),
         ) from exc
 
-    notification = NotificationService(
-        admin_supabase=admin_supabase,
-        smtp_host=cfg.smtp_host,
-        smtp_port=cfg.smtp_port,
-        smtp_user=cfg.smtp_user,
-        smtp_password=cfg.smtp_password,
-        waha_base_url=cfg.waha_base_url,
-        waha_api_key=cfg.waha_api_key,
-        waha_session=cfg.waha_session,
-    )
+    notification = build_notification_service(admin_supabase, cfg)
 
     # Best-effort Redis client so this path queues uniformly with the
     # WhatsApp-triggered uploads. A Redis outage degrades to bypassing

@@ -25,8 +25,13 @@ from typing import Any
 
 import pytest
 
+from uuid import UUID
+
+from app.modules.meta_ads.services.leadgen_webhook_service import ProcessResult
+
 APP_SECRET = "test-app-secret"
 VERIFY_TOKEN = "test-verify-token"
+ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 WEBHOOK = "/api/meta/leadgen/webhook"
 
@@ -70,6 +75,10 @@ class _FakeService:
         self._new, self._claim, self._status = new, claim, status
         self.recorded: list[str] = []
         self.processed: list[str] = []
+        #: Leads whose announcement half actually ran. The route schedules
+        #: `fan_out` on the RESPONSE, so this only fills in once the 200 has
+        #: been sent — which is exactly the ordering guarantee under test.
+        self.fanned_out: list[str] = []
 
     def record_event(self, event: Any) -> bool:
         self.recorded.append(event.leadgen_id)
@@ -78,9 +87,22 @@ class _FakeService:
     def claim(self, leadgen_id: str) -> bool:
         return self._claim
 
-    def process_event(self, event: Any) -> str:
+    def process_event(self, event: Any) -> ProcessResult:
         self.processed.append(event.leadgen_id)
-        return self._status
+        return ProcessResult(
+            self._status,
+            org_id=ORG_ID,
+            # Only a genuinely-processed lead carries a row; a parked or
+            # failed one must not look announceable.
+            lead_row=(
+                {"id": event.leadgen_id, "full_name": "Fulano"}
+                if self._status == "processed" else None
+            ),
+        )
+
+    async def fan_out(self, result: ProcessResult) -> dict[str, bool]:
+        self.fanned_out.append((result.lead_row or {}).get("id"))
+        return {"notified": True, "published": True}
 
 
 @pytest.fixture
