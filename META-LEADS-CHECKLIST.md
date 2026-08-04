@@ -6,7 +6,7 @@
 > this checklist is its execution surface). Full rationale for every decision lives there and
 > in the approved plan; this file is the *what shipped* view.
 
-**Status:** 🟢 **feature-complete on `origin/dev`** · 2026-08-04
+**Status:** 🚀 **DEPLOYED TO PRODUCTION** · 2026-08-04 · `dev = main = prod = 27c1522f`
 
 Merged alongside the WhatsApp realtime inbox and Imóveis/Vista; all three green together.
 Suites on the merged tip, **by exit code**: social-wiring **1671** · erp **2161** ·
@@ -205,6 +205,36 @@ cannot trace a lead-triggered row back to its `meta_ads_leads.id`. Needs a gener
 
 ---
 
+## 🚀 Deployment — DONE 2026-08-04
+
+| | |
+|---|---|
+| **prod** | `27c1522f` (was `4db0c4bc`) — 104 commits |
+| **Rollback pointer** | `prod-backup` = `4db0c4bc`; VPS tag `backup/predeploy-20260804-181402` + tar |
+| **Images** | social-wiring + erp-imobiliario rebuilt from `27c1522f`, health-probed, tunnel re-resolved |
+| **Fleet** | 14 healthy / 0 unhealthy |
+
+**Verified in the PRODUCTION shape** (not just dev-green), inside `noctus-social-wiring`
+and again over the public URL:
+
+| Check | Result |
+|---|---|
+| `GET /stream` unauthenticated | **401** |
+| Handshake, wrong verify token | **403** |
+| Handshake, real token, non-numeric challenge | **200**, echoed as a STRING |
+| Unsigned `POST` | **401** (no bypass) |
+| **Signed POST over the public URL, Meta's own User-Agent** | **200** |
+| Replay of the same delivery | **200 `duplicate`** — not reprocessed |
+| Tampered body | refused |
+
+🔴 **Cloudflare 1010 — read this before debugging a "dead" webhook.** The public `POST`
+is rejected with CF error **1010** for a `Python-urllib` User-Agent, but returns **200** for
+Meta's real UA (`facebookplatform/1.0 (+http://developers.facebook.com)`) and for a browser
+UA. So Meta's deliveries pass — but **any hand-rolled probe with a default client UA will
+look like a hard failure when nothing is wrong.** Always probe with Meta's UA.
+
+Smoke rows were deleted afterwards; the inbox is empty and the 958 stored leads are untouched.
+
 ## Operator steps (cannot be done in code)
 
 Permissions, App Review, Live mode and OAuth callbacks are **already done**. Remaining, at
@@ -212,7 +242,10 @@ Permissions, App Review, Live mode and OAuth callbacks are **already done**. Rem
 
 - [ ] Products → Webhooks → **Page** object
 - [ ] Callback URL `https://social.noctusai.com/api/meta/leadgen/webhook`
-- [ ] Verify Token = the exact `META_WEBHOOK_VERIFY_TOKEN`
+- [ ] Verify Token = `zGjmbt-Rk2q_DHOmug8_i-R8Ic5HToYWgpc-4b_ShZY`
+      *(generated + stored Fernet-encrypted in `social_wiring.app_integration_config`
+      under `meta_webhook_verify_token`; prod resolves Meta config from the vault, NOT
+      `.env` — the VPS `.env` carries no `META_*` keys at all. Verified live above.)*
 - [ ] **Verify and Save** (Meta GETs the endpoint synchronously — it must be live first)
 - [ ] Tick the **`leadgen`** field → Subscribe *(app-level)*
 - [ ] Run our bootstrap `POST /api/meta/leadgen/subscriptions` *(per-Page level)*
