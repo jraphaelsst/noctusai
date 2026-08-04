@@ -23,6 +23,12 @@ _AUTHED_ROUTES = [
     ("post", "/api/meta/leadgen/subscriptions", {"json": {"page_ids": None}}),
     ("delete", "/api/meta/leadgen/subscriptions/page-1", {}),
     ("get", "/api/meta/leadgen/events", {}),
+    # 🔴 The SSE stream. It carries lead PII continuously rather than once,
+    # so an unauthenticated subscriber is a worse leak than an unauthenticated
+    # read — it keeps receiving. Its org is derived from the session, never
+    # from a path or query param, precisely so a caller cannot name someone
+    # else's scope; this asserts the front door is shut in the first place.
+    ("get", "/api/meta/leadgen/stream", {}),
 ]
 
 APP_SECRET = "test-app-secret"

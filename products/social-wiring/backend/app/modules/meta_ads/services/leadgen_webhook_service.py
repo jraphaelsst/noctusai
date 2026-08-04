@@ -461,15 +461,6 @@ class LeadgenWebhookService:
 
         return build_notification_service(self._admin)
 
-
-def _default_publisher() -> Any:
-    """The realtime leg's default, imported lazily so the service module has
-    no import-time dependency on the bus (and so a test can inject its own
-    ``publisher=`` without the seed's Redis machinery loading at all)."""
-    from app.services.meta_leads_realtime import publish_new_lead
-
-    return publish_new_lead
-
     def claim(self, leadgen_id: str) -> bool:
         """Redis SETNX pre-filter. True ⇒ we own this delivery.
 
@@ -544,6 +535,15 @@ def _default_publisher() -> Any:
         except Exception:  # noqa: BLE001
             logger.exception("meta-leadgen: inbox purge failed")
             return 0
+
+
+def _default_publisher() -> Any:
+    """The realtime leg's default, imported lazily so this module has no
+    import-time dependency on the bus (and so a test can inject its own
+    ``publisher=`` without the seed's Redis machinery loading at all)."""
+    from app.services.meta_leads_realtime import publish_new_lead
+
+    return publish_new_lead
 
 
 def _event_from_row(row: dict[str, Any]) -> LeadgenEvent:

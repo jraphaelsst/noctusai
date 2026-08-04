@@ -256,3 +256,38 @@ async def test_nothing_is_announced_without_a_real_processed_lead(result):
     assert outcome == {"notified": False, "published": False}
     assert notifier.calls == []
     assert published == []
+
+
+# ── structural: the public surface actually exists on the class ────────────
+
+def test_the_service_exposes_its_whole_public_surface():
+    """🔴 A real defect this caught, 2026-08-04.
+
+    A module-level helper was inserted into the middle of the class body
+    during an edit. Python does not complain: everything after the dedent
+    simply stopped being part of the class — `claim`, `drain_pending` and
+    `purge_processed` became NESTED functions inside that helper and vanished
+    from the service. The full 1671-test suite still passed, because the route
+    tests substitute a fake service and nothing else constructed a real one.
+
+    It surfaced only as a 500 on a live signed delivery
+    (`AttributeError: 'LeadgenWebhookService' object has no attribute 'claim'`)
+    — which, on the real webhook, is the failure mode that makes Meta retry and
+    can disable the subscription outright.
+
+    Asserting the surface is the cheap structural guard for that whole class of
+    edit accident; it costs nothing and does not care WHY a method went missing.
+    """
+    expected = {
+        "record_event", "resolve_org", "resolve_form", "process_event",
+        "fan_out", "fan_out_sync", "claim", "drain_pending", "purge_processed",
+    }
+    missing = {n for n in expected if not callable(getattr(LeadgenWebhookService, n, None))}
+    assert not missing, f"fell out of the class body: {sorted(missing)}"
+
+
+def test_the_retry_drain_can_actually_be_called_on_a_real_service():
+    """The drain is only ever invoked by the scheduler, so nothing else would
+    notice it going missing until the */15 job started erroring in prod."""
+    svc = _service(admin_supabase=_FakeAdmin(rows=[]))
+    assert svc.drain_pending(limit=1) == {"scanned": 0, "processed": 0, "failed": 0}
