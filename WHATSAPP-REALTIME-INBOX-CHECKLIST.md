@@ -592,3 +592,46 @@ Fixed with one shared `fakeredis` pinned for the module.
 - `smoke_fleet` reports **degraded**, but 9 of 11 backends simply are not running locally (only
   `social-wiring` and `erp-imobiliario` dev containers are up). Both running backends return 200.
   Not a regression — recorded rather than presented as green.
+
+---
+
+# 🔬 EVALUATION — "does the new code fix it?" (2026-08-03, non-destructive)
+
+Asked before authorising a re-pair. Answered **without touching the session.**
+
+## The diagnosis is now proven, not inferred
+
+Every watchdog force-stop is preceded by a `restart` carrying the **same `reqId`**, at a consistent
+~5-minute interval:
+
+| restart | → force-stop | Δ | reqId |
+|---|---|---|---|
+| 20:12:16 | 20:17:16 | 5:00 | 5919 |
+| 17:44:14 | 17:49:13 | 4:59 | 6112 |
+| 17:57:46 | 18:02:50 | 5:04 | 6130 |
+| 18:15:46 | 18:20:41 | 4:55 | 6344 |
+
+**4 attempts, 4 failures, one signature, zero QRs.** `restart` does not *sometimes* fail on this
+session — it fails deterministically.
+
+## What the new code does and does not fix
+
+| | |
+|---|---|
+| ✅ **Fixes the mechanism** | The ladder escalates past the two dead rungs to `logout` + `start` instead of looping forever, and the QR panel no longer kills its own poll, so a QR is actually rendered once one exists. |
+| ❌ **Cannot revive the session** | WhatsApp invalidated the credentials **server-side**. No client-side code can un-invalidate them. |
+
+**Therefore re-pairing (one QR scan) is physically required — it is not a choice this design made.**
+The old code's failure was looping forever *without ever asking*; the new code's correctness is
+that it escalates to the one action that works and then shows you the QR.
+
+## Live state at evaluation time
+
+`status: FAILED` · `me` still present (credentials exist but are dead) · `fullSync: false` ·
+webhook still `["message","session.status"]` — this connection predates the fix, so it has **not**
+yet been re-wired with `message.any` / `message.ack` / `message.reaction`. The first
+`start`/`restart`/`webhook` write from the new code will also rewrite the config with the corrected
+camelCase `fullSync`, which is what V2 verifies.
+
+**Blocked:** the harness classifier denied the session write, so even the two non-destructive rungs
+could not be exercised from here. Not worked around.
