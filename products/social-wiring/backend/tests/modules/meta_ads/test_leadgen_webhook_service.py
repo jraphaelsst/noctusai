@@ -291,3 +291,122 @@ def test_the_retry_drain_can_actually_be_called_on_a_real_service():
     notice it going missing until the */15 job started erroring in prod."""
     svc = _service(admin_supabase=_FakeAdmin(rows=[]))
     assert svc.drain_pending(limit=1) == {"scanned": 0, "processed": 0, "failed": 0}
+
+
+# ── unhandled-delivery visibility ──────────────────────────────────────────
+
+class _CapturingAdmin(_FakeAdmin):
+    """Captures what was upserted, so the recorded ROW SHAPE is assertable —
+    not just that some write happened."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.upserted: list[dict] = []
+
+    def upsert(self, rows, **_kw):
+        self.upserted.extend(rows if isinstance(rows, list) else [rows])
+        return self
+
+    def __getattr__(self, name: str):
+        if name == "upsert":
+            raise AttributeError(name)
+        return lambda *_a, **_k: self
+
+
+def _page_payload(field: str, value: dict | None = None, *, entry_time: int = 1754300000):
+    return {"object": "page", "entry": [{
+        "id": "page-1", "time": entry_time,
+        "changes": [{"field": field, "value": value or {"foo": "bar"}}]}]}
+
+
+def test_an_unknown_field_delivery_is_recorded_not_dropped():
+    """🔴 The gap this closes: before, a non-leadgen Page event was parsed to
+    nothing and dropped, so 'Meta called us and we ignored it' looked exactly
+    like 'Meta never called us' — opposite problems, identical evidence."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    n = svc.record_unhandled(_page_payload("leadgen_update"))
+
+    assert n == 1
+    row = admin.upserted[0]
+    assert row["field"] == "leadgen_update"
+    assert row["object_type"] == "page"
+    assert row["status"] == "ignored"
+    assert row["page_id"] == "page-1"
+    # The raw value must survive intact — the whole point is to LEARN what
+    # an undocumented field actually sends.
+    assert row["payload"]["value"] == {"foo": "bar"}
+
+
+def test_the_synthetic_id_is_content_derived_so_retries_dedup():
+    """Meta retries. A random id would make one delivery look like six, which
+    defeats the question the inbox exists to answer."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    svc.record_unhandled(_page_payload("leadgen_update"))
+    svc.record_unhandled(_page_payload("leadgen_update"))
+    assert admin.upserted[0]["id"] == admin.upserted[1]["id"]
+
+
+def test_a_different_delivery_gets_a_different_id():
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    svc.record_unhandled(_page_payload("leadgen_update", {"a": 1}))
+    svc.record_unhandled(_page_payload("leadgen_update", {"a": 2}))
+    assert admin.upserted[0]["id"] != admin.upserted[1]["id"]
+
+
+def test_the_synthetic_id_can_never_collide_with_a_real_leadgen_id():
+    """Real leadgen_ids are numeric; ours is namespaced."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    svc.record_unhandled(_page_payload("leadgen_update"))
+    rid = admin.upserted[0]["id"]
+    assert rid.startswith("evt:")
+    assert not rid.isdigit()
+
+
+def test_leadgen_itself_is_never_double_recorded_here():
+    """The real path already owns `leadgen`. Recording it again would put two
+    rows in the inbox for one lead and corrupt the delivery counts."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    assert svc.record_unhandled(_page_payload("leadgen")) == 0
+    assert admin.upserted == []
+
+
+def test_every_change_in_a_batch_is_recorded():
+    """Meta batches. Recording only the first would under-count deliveries."""
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    payload = {"object": "page", "entry": [
+        {"id": "p1", "time": 1, "changes": [
+            {"field": "leadgen_update", "value": {"n": 1}},
+            {"field": "feed", "value": {"n": 2}}]},
+        {"id": "p2", "time": 2, "changes": [{"field": "mention", "value": {"n": 3}}]},
+    ]}
+    assert svc.record_unhandled(payload) == 3
+    assert {r["field"] for r in admin.upserted} == {"leadgen_update", "feed", "mention"}
+
+
+def test_a_write_failure_is_logged_and_never_raised():
+    """Observability must never cost us the 200 — a non-2xx makes Meta retry
+    and can disable the subscription."""
+    class _Exploding(_FakeAdmin):
+        def upsert(self, *_a, **_k):
+            raise RuntimeError("db down")
+        def __getattr__(self, name):
+            if name == "upsert":
+                raise AttributeError(name)
+            return lambda *_a, **_k: self
+
+    svc = _service(admin_supabase=_Exploding())
+    assert svc.record_unhandled(_page_payload("leadgen_update")) == 0
+
+
+def test_malformed_entries_do_not_raise():
+    admin = _CapturingAdmin()
+    svc = _service(admin_supabase=admin)
+    assert svc.record_unhandled({"object": "page", "entry": "not-a-list"}) == 0
+    assert svc.record_unhandled({"object": "page", "entry": ["str", 42]}) == 0
+    assert svc.record_unhandled({}) == 0

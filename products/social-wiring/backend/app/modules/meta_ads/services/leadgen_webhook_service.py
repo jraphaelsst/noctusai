@@ -284,6 +284,67 @@ class LeadgenWebhookService:
         return form_obj, key_types
 
     # ─── the pipeline ──────────────────────────────────────────────────
+    def record_unhandled(self, payload: dict[str, Any]) -> int:
+        """Persist a verified delivery we do NOT act on, so it is observable.
+
+        The inbox exists to answer "did Meta actually call us?" — and until
+        now it could not answer that for anything except `leadgen`. A Page
+        event on any other field was parsed to nothing and dropped, which
+        made an ARRIVED-BUT-UNHANDLED delivery indistinguishable from one
+        that never arrived. Those are opposite problems (our parser vs. the
+        dashboard subscription) and they looked identical.
+
+        The columns for this already existed — `object_type`, `field`, and
+        `'ignored'` in the status CHECK were all in migration 044 from the
+        start. Only the writer was missing, so this needs no migration.
+
+        Returns the number of rows recorded. Never raises: the caller owes
+        Meta a 200, and an unrecorded observation must not become a retry.
+        """
+        rows: list[dict[str, Any]] = []
+        obj = str(payload.get("object") or "")
+        for entry in payload.get("entry") or []:
+            if not isinstance(entry, dict):
+                continue
+            for change in entry.get("changes") or []:
+                if not isinstance(change, dict):
+                    continue
+                field = str(change.get("field") or "")
+                if field == "leadgen":
+                    continue  # handled by the real path; never double-record
+                value = change.get("value")
+                rows.append({
+                    "id": _synthetic_event_id(obj, entry, field, value),
+                    "page_id": str(entry.get("id") or "") or None,
+                    "object_type": obj or "unknown",
+                    "field": field or "unknown",
+                    "payload": {"value": value, "entry_time": entry.get("time")},
+                    "status": STATUS_IGNORED,
+                    "received_at": datetime.now(timezone.utc).isoformat(),
+                })
+        if not rows:
+            return 0
+        try:
+            # Upsert, not insert: the id is a CONTENT hash, so a Meta retry
+            # of the same delivery lands on the same row instead of raising
+            # a duplicate-key error we would then have to swallow.
+            (
+                self._admin.schema(_SCHEMA).table(_EVENTS)
+                .upsert(rows, on_conflict="id")
+                .execute()
+            )
+            logger.info(
+                "meta-leadgen: recorded %d unhandled delivery row(s) — fields=%s",
+                len(rows), sorted({r["field"] for r in rows}),
+            )
+            return len(rows)
+        except Exception:  # noqa: BLE001 — observability must never cost a 200
+            logger.exception(
+                "meta-leadgen: could not record unhandled delivery (fields=%s)",
+                sorted({r["field"] for r in rows}),
+            )
+            return 0
+
     def process_event(self, event: LeadgenEvent) -> ProcessResult:
         """Enrich → upsert → normalize. Returns the terminal status plus the
         material :meth:`fan_out` needs.
@@ -535,6 +596,31 @@ class LeadgenWebhookService:
         except Exception:  # noqa: BLE001
             logger.exception("meta-leadgen: inbox purge failed")
             return 0
+
+
+def _synthetic_event_id(
+    obj: str, entry: dict[str, Any], field: str, value: Any
+) -> str:
+    """A stable id for a delivery that carries no `leadgen_id`.
+
+    CONTENT-derived rather than random, because the inbox's PK is what
+    dedups Meta's retries. A random id would make every retry of the same
+    delivery look like a new event, which is precisely the "did this happen
+    once or six times?" question the table exists to answer.
+
+    Prefixed `evt:` so it can never collide with a real `leadgen_id`, which
+    is always numeric.
+    """
+    import hashlib
+    import json as _json
+
+    basis = _json.dumps(
+        {"o": obj, "e": entry.get("id"), "t": entry.get("time"),
+         "f": field, "v": value},
+        sort_keys=True, separators=(",", ":"), default=str,
+    )
+    digest = hashlib.sha256(basis.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"evt:{field or 'unknown'}:{digest[:32]}"
 
 
 def _default_publisher() -> Any:

@@ -190,13 +190,33 @@ async def leadgen_receive(
         payload = json.loads(verified.body or b"{}")
     except (ValueError, TypeError):
         logger.warning("meta-leadgen: verified body was not JSON — ignoring")
-        return {"status": STATUS_IGNORED, "reason": "malformed-json", "events": 0}
+        return JSONResponse(
+            {"status": STATUS_IGNORED, "reason": "malformed-json", "events": 0}
+        )
+    if not isinstance(payload, dict):
+        # Valid JSON, wrong shape (a bare list or scalar). Distinguished from
+        # `malformed-json` because they point at different causes, and nothing
+        # downstream may assume `.get()` exists on it.
+        logger.warning("meta-leadgen: verified body was JSON but not an object")
+        return JSONResponse(
+            {"status": STATUS_IGNORED, "reason": "not-an-object", "events": 0}
+        )
 
     events = parse_leadgen_webhook(payload)
     if not events:
         # Meta sends other Page events on the same subscription; a non-leadgen
-        # change is normal traffic, not an error.
-        return {"status": STATUS_IGNORED, "reason": "no-leadgen-events", "events": 0}
+        # change is normal traffic, not an error — but it IS recorded, because
+        # "arrived and we ignored it" and "never arrived at all" are opposite
+        # problems (our parser vs. the dashboard subscription) that used to
+        # look identical from the inbox. Recording costs one row and is what
+        # makes an unknown field like `leadgen_update` empirically knowable.
+        recorded = svc.record_unhandled(payload)
+        return JSONResponse({
+            "status": STATUS_IGNORED,
+            "reason": "no-leadgen-events",
+            "events": 0,
+            "recorded": recorded,
+        })
 
     results: list[dict[str, Any]] = []
     # The announcement half — operator alert (in-app + WhatsApp + email) and

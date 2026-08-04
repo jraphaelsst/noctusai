@@ -79,6 +79,7 @@ class _FakeService:
         #: `fan_out` on the RESPONSE, so this only fills in once the 200 has
         #: been sent — which is exactly the ordering guarantee under test.
         self.fanned_out: list[str] = []
+        self.unhandled: list[Any] = []
 
     def record_event(self, event: Any) -> bool:
         self.recorded.append(event.leadgen_id)
@@ -103,6 +104,13 @@ class _FakeService:
     async def fan_out(self, result: ProcessResult) -> dict[str, bool]:
         self.fanned_out.append((result.lead_row or {}).get("id"))
         return {"notified": True, "published": True}
+
+    def record_unhandled(self, payload: Any) -> int:
+        #: Deliveries the route recognised as non-leadgen and handed here.
+        #: Asserted below — a route that stopped calling this would silently
+        #: reopen the "arrived vs never arrived" blind spot.
+        self.unhandled.append(payload)
+        return 1
 
 
 @pytest.fixture
@@ -247,6 +255,10 @@ def test_non_page_object_returns_200_ignored(wired):
     assert resp.status_code == 200
     assert resp.json()["status"] == "ignored"
     assert wired.svc.processed == []
+    # Ignored, but RECORDED — "we ignored it" must stay distinguishable from
+    # "it never arrived", which is the whole reason the inbox exists.
+    assert len(wired.svc.unhandled) == 1
+    assert resp.json()["recorded"] == 1
 
 
 def test_non_leadgen_field_returns_200_ignored(wired):
@@ -257,6 +269,31 @@ def test_non_leadgen_field_returns_200_ignored(wired):
     assert resp.status_code == 200
     assert resp.json()["status"] == "ignored"
     assert wired.svc.processed == []
+    assert len(wired.svc.unhandled) == 1
+
+
+def test_an_unknown_field_like_leadgen_update_is_handed_to_the_recorder(wired):
+    """The concrete motivation: `leadgen_update` is undocumented by Meta and
+    has no public discussion, so the only way to learn its payload is to
+    capture one. This is the seam that makes that possible."""
+    body = json.dumps(_delivery(field="leadgen_update")).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    assert resp.json()["recorded"] == 1
+    assert wired.svc.unhandled[0]["entry"][0]["changes"][0]["field"] == "leadgen_update"
+
+
+def test_a_json_body_that_is_not_an_object_returns_200_and_records_nothing(wired):
+    """Valid JSON, wrong shape. Must not reach `.get()` on a list."""
+    body = json.dumps([1, 2, 3]).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    assert resp.json()["reason"] == "not-an-object"
+    assert wired.svc.unhandled == []
 
 
 def test_malformed_json_from_a_VERIFIED_sender_returns_200(wired):
