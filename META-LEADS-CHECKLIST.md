@@ -6,7 +6,12 @@
 > this checklist is its execution surface). Full rationale for every decision lives there and
 > in the approved plan; this file is the *what shipped* view.
 
-**Status:** 🟢 **all buildable slices complete** · 2026-08-03 · branch `feat/meta-leadgen-webhook`
+**Status:** 🟢 **integrated to `origin/dev` @ `7f1495db`** · 2026-08-04
+
+Merged alongside the WhatsApp realtime inbox and Imóveis/Vista; all three green together.
+Gates on the pushed tip: social-wiring **1658** · erp **2161** · seed **2662** — exit 0.
+**Blocking prod:** migrations `041` + `044` unapplied, and the operator's Meta dashboard steps.
+See `META-LEADS-HANDOFF.md`.
 
 **What remains is not code.** Every open box below is one of: (a) a **live verification** that
 needs a prod deploy, (b) an **operator step** in the Meta App Dashboard that no code can perform,
