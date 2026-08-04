@@ -34,16 +34,22 @@ inbox, and Imóveis/Vista. All three are integrated and green together.
 `uq_sw_leads_org_meta_lead_id`. `037`/`038`/`039` deliberately NOT swept in.
 Both are additive, so the currently-deployed prod code ignores them — applying ahead of deploy is safe.
 
-**STILL PENDING — none of it belongs to this work, and none was applied here:**
+✅ **2026-08-04 — `037` / `038` / `039` reconciled, NOT re-applied.** They were never
+"pending": every artifact was already live (037's two `normalize_phone` functions + both
+canonicalize triggers + the ERP stage vocabulary; 038's `n8n_folders` +
+`n8n_workflow_placement`; 039's `status_pagina` row). Only the LEDGER was missing them, so a
+bare `confirm=true` would have RE-RUN three applied migrations rather than applied three
+unvetted ones — the opposite of what the earlier note here claimed. Ledger rows inserted with
+the tool's own sha256 checksums; `migrate_product` now reports `pending: []`.
 
-| Migration | Owner | Needed for |
-|---|---|---|
-| `037_erp_stage_parity_and_canonical_phone.sql` | another initiative | canonical-phone contract |
-| `038_n8n_folders.sql` · `039_n8n_nav_route.sql` | another initiative | n8n feature — shipped in code with no schema behind it |
+⚠️ The earlier claim in this file that "the n8n feature is shipped in code with no schema
+behind it" was **wrong** — read from a handoff note instead of the database. The schema is
+there and the feature is not broken.
 
-Those three are a real gap somebody should close, but deliberately not by this session: they were
-never reviewed here, and sweeping them in as a side-effect of a Meta deploy is how an unrelated
-schema change ships unnoticed.
+🔎 037 installs `canonicalize_meta_lead_phone_trigger` on `meta_ads_leads`, the column this
+work's receiver writes. Verified compatible: the SQL and Python normalizers agree on 11/11
+cases including legacy 8-digit and non-BR numbers, and both leave an unparseable number
+exactly as Meta sent it, for the same recorded reason.
 
 🔴 **Always apply by `target=`, never a bare `confirm=true`** — a bare confirm applies the ENTIRE
 pending backlog, which is exactly how the three above would have gone in unvetted:
