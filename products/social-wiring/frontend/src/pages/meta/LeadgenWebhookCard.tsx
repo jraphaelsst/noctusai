@@ -16,6 +16,10 @@
  * called our webhook, i.e. the App-Dashboard half isn't configured yet.
  */
 import { useState } from "react";
+
+/** Sentinel for "no client" in the <select>. A DOM select cannot hold `null`,
+ *  and "" is indistinguishable from "nothing chosen yet". */
+const UNATTRIBUTED = "__none__";
 import { Check, Copy, Info, Loader2, ShieldAlert, Webhook } from "lucide-react";
 
 import {
@@ -34,7 +38,9 @@ import {
   useUnsubscribeLeadgenPage,
   type LeadgenPageSubscription,
   type LeadgenSubscribeResult,
+  useSetPageClient,
 } from "@/hooks/useMetaLeadgen";
+import { useClients } from "@/hooks/useClients";
 import { AdsError, AdsLoading } from "./adsShared";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -90,6 +96,8 @@ function CopyButton({ value }: { value: string }) {
 function PageRow({ page }: { page: LeadgenPageSubscription }) {
   const subscribe = useSubscribeLeadgenPages();
   const unsubscribe = useUnsubscribeLeadgenPage();
+  const setClient = useSetPageClient();
+  const { data: clients = [] } = useClients();
   const [rowError, setRowError] = useState<string | null>(null);
   const busy = subscribe.isPending || unsubscribe.isPending;
 
@@ -143,6 +151,50 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
           {busy && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
           {page.subscribed ? "Desinscrever" : "Inscrever"}
         </Button>
+      </div>
+      {/* Client attribution — the key that decides WHICH client's recipients
+          get alerted for this Page's leads (migration 045). Unattributed is a
+          legitimate state, not an error: those leads reach the org-wide tier
+          rather than nobody. It is stated plainly so the operator can see that
+          per-client routing is not yet in effect for this Page. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
+        <span className="text-xs text-muted-foreground">Cliente:</span>
+        <select
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          aria-label={`Cliente da página ${page.page_name || page.page_id}`}
+          value={page.client_id ?? UNATTRIBUTED}
+          disabled={setClient.isPending}
+          onChange={(e) => {
+            setRowError(null);
+            setClient.mutate(
+              {
+                pageId: page.page_id,
+                clientId: e.target.value === UNATTRIBUTED ? null : e.target.value,
+              },
+              { onError: (err) => setRowError((err as Error).message) },
+            );
+          }}
+        >
+          <option value={UNATTRIBUTED}>Sem cliente (alertas gerais)</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        {setClient.isPending && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        )}
+        {/* A Page whose forms disagree is real — a form that synced after the
+            assignment carries NULL and still routes to the org tier. Showing
+            only the majority would hide exactly that. */}
+        {typeof page.forms_total === "number" && page.forms_total > 0 &&
+          page.forms_attributed !== page.forms_total && (
+            <span className="text-xs text-amber-600">
+              {page.forms_attributed}/{page.forms_total} formulários atribuídos —
+              os demais usam os alertas gerais
+            </span>
+          )}
       </div>
       {rowError && (
         <p className="mt-1.5 text-xs text-destructive">{rowError}</p>

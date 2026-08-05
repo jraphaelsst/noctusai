@@ -29,6 +29,10 @@ _AUTHED_ROUTES = [
     # from a path or query param, precisely so a caller cannot name someone
     # else's scope; this asserts the front door is shut in the first place.
     ("get", "/api/meta/leadgen/stream", {}),
+    # Page → client attribution. It decides WHICH client's contacts receive a
+    # lead's PII, so an unauthenticated caller flipping it is a routing hole,
+    # not a cosmetic change.
+    ("put", "/api/meta/leadgen/pages/page-1/client", {"json": {"client_id": None}}),
 ]
 
 APP_SECRET = "test-app-secret"

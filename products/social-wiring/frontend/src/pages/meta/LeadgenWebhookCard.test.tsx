@@ -14,12 +14,26 @@ const mockUseLeadgenSubscriptions = vi.fn();
 const mockUseSubscribeLeadgenPages = vi.fn();
 const mockUseUnsubscribeLeadgenPage = vi.fn();
 const mockUseLeadgenEvents = vi.fn();
+const mockUseSetPageClient = vi.fn();
 
 vi.mock("@/hooks/useMetaLeadgen", () => ({
   useLeadgenSubscriptions: mockUseLeadgenSubscriptions,
   useSubscribeLeadgenPages: mockUseSubscribeLeadgenPages,
   useUnsubscribeLeadgenPage: mockUseUnsubscribeLeadgenPage,
   useLeadgenEvents: mockUseLeadgenEvents,
+  useSetPageClient: mockUseSetPageClient,
+}));
+
+// `useClients` calls TanStack's `useQuery` directly; without a provider it
+// throws and takes the whole card down. Two real clients so the per-Page
+// attribution selector has something to render.
+vi.mock("@/hooks/useClients", () => ({
+  useClients: () => ({
+    data: [
+      { id: "client-one", name: "One Consultoria" },
+      { id: "client-joao", name: "João Raphael" },
+    ],
+  }),
 }));
 
 vi.mock("@/components/ui/card", () => ({
@@ -85,6 +99,7 @@ function setDefaults() {
   });
   mockUseSubscribeLeadgenPages.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null });
   mockUseUnsubscribeLeadgenPage.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockUseSetPageClient.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockUseLeadgenEvents.mockReturnValue({
     data: { counts: { received: 5, processed: 4, error: 1 }, last_received_at: "2026-08-01T12:00:00Z", events: [] },
     isPending: false,
@@ -289,5 +304,100 @@ describe("LeadgenWebhookCard — delivery health", () => {
     const { getByTestId } = await renderCard();
     expect(getByTestId("leadgen-health-error")).toBeTruthy();
     expect(getByTestId("leadgen-page-row-p1")).toBeTruthy();
+  });
+});
+
+// ─── Per-Page client attribution (migration 045) ────────────────────────────
+// This is the key that decides WHICH client's recipients get a lead's PII.
+// Unattributed is a legitimate state (alerts go to the org-wide tier), so the
+// UI must state it rather than imply routing that is not happening.
+
+describe("LeadgenWebhookCard — client attribution", () => {
+  it("shows the attributed client, and 'no client' when unattributed", async () => {
+    mockUseLeadgenSubscriptions.mockReturnValue({
+      data: makeSubscriptions({
+        pages: [
+          { page_id: "p1", page_name: "Loja Central", subscribed: true,
+            subscribed_fields: ["leadgen"], app_id: "a1",
+            client_id: "client-one", forms_total: 3, forms_attributed: 3 },
+          { page_id: "p2", page_name: "Loja Norte", subscribed: false,
+            subscribed_fields: [], app_id: null,
+            client_id: null, forms_total: 2, forms_attributed: 0 },
+        ],
+      }),
+      isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
+    });
+    const { getByLabelText } = await renderCard();
+
+    expect((getByLabelText("Cliente da página Loja Central") as HTMLSelectElement).value)
+      .toBe("client-one");
+    expect((getByLabelText("Cliente da página Loja Norte") as HTMLSelectElement).value)
+      .toBe("__none__");
+  });
+
+  it("attributes a Page to a client", async () => {
+    const mutate = vi.fn();
+    mockUseSetPageClient.mockReturnValue({ mutate, isPending: false });
+    const { getByLabelText, fireEvent } = await renderCard();
+
+    fireEvent.change(getByLabelText("Cliente da página Loja Central"), {
+      target: { value: "client-joao" },
+    });
+    expect(mutate).toHaveBeenCalledWith(
+      { pageId: "p1", clientId: "client-joao" },
+      expect.anything(),
+    );
+  });
+
+  it("clears an attribution with null, not the sentinel string", async () => {
+    const mutate = vi.fn();
+    mockUseSetPageClient.mockReturnValue({ mutate, isPending: false });
+    mockUseLeadgenSubscriptions.mockReturnValue({
+      data: makeSubscriptions({
+        pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
+                  subscribed_fields: ["leadgen"], app_id: "a1",
+                  client_id: "client-one", forms_total: 1, forms_attributed: 1 }],
+      }),
+      isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
+    });
+    const { getByLabelText, fireEvent } = await renderCard();
+
+    fireEvent.change(getByLabelText("Cliente da página Loja Central"), {
+      target: { value: "__none__" },
+    });
+    // 🔴 null, never "__none__": the sentinel is a DOM affordance and must not
+    // reach the API, where it would be stored as a bogus client id.
+    expect(mutate).toHaveBeenCalledWith(
+      { pageId: "p1", clientId: null },
+      expect.anything(),
+    );
+  });
+
+  it("warns when a Page's forms are only PARTLY attributed", async () => {
+    // A form that synced after the assignment carries NULL and still routes to
+    // the org tier. Showing only the majority client would hide that entirely.
+    mockUseLeadgenSubscriptions.mockReturnValue({
+      data: makeSubscriptions({
+        pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
+                  subscribed_fields: ["leadgen"], app_id: "a1",
+                  client_id: "client-one", forms_total: 5, forms_attributed: 3 }],
+      }),
+      isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
+    });
+    const { getByText } = await renderCard();
+    expect(getByText(/3\/5 formulários atribuídos/)).toBeTruthy();
+  });
+
+  it("does not warn when every form is attributed", async () => {
+    mockUseLeadgenSubscriptions.mockReturnValue({
+      data: makeSubscriptions({
+        pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
+                  subscribed_fields: ["leadgen"], app_id: "a1",
+                  client_id: "client-one", forms_total: 4, forms_attributed: 4 }],
+      }),
+      isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
+    });
+    const { queryByText } = await renderCard();
+    expect(queryByText(/formulários atribuídos/)).toBeNull();
   });
 });

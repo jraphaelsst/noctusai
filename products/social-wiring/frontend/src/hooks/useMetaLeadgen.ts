@@ -32,6 +32,11 @@ export interface LeadgenPageSubscription {
   page_name: string;
   subscribed: boolean;
   subscribed_fields: string[];
+  /** Client this Page's leads are attributed to. `null` = unattributed, so its
+   *  alerts fall back to the org-wide recipient tier. */
+  client_id?: string | null;
+  forms_total?: number;
+  forms_attributed?: number;
   app_id: string | null;
 }
 
@@ -141,6 +146,39 @@ export function useUnsubscribeLeadgenPage() {
               page_id: pageId,
               ok: false,
               error: "resposta vazia do servidor",
+            },
+        ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
+    },
+  });
+}
+
+/**
+ * Attribute every lead form on a Page to a client — the key that decides which
+ * client's recipients get alerted (migration 045). Sending `null` clears it
+ * back to unattributed, which routes to the org-wide tier.
+ *
+ * Invalidates the subscriptions query so the badge and the counts reflect the
+ * write immediately; there is no optimistic update because a partial write
+ * (some forms updated, some not) must show its real end state rather than the
+ * one we hoped for.
+ */
+export function useSetPageClient() {
+  const qc = useQueryClient();
+  return useMutation<LeadgenPageSubscription, Error, { pageId: string; clientId: string | null }>({
+    mutationFn: ({ pageId, clientId }) =>
+      api
+        .put<LeadgenPageSubscription>(
+          `/api/meta/leadgen/pages/${encodeURIComponent(pageId)}/client`,
+          { client_id: clientId },
+        )
+        .then(
+          (r) =>
+            r ?? {
+              page_id: pageId, page_name: "", subscribed: false,
+              subscribed_fields: [], app_id: null, client_id: clientId,
+              forms_total: 0, forms_attributed: 0,
             },
         ),
     onSuccess: () => {

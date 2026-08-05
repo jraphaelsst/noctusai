@@ -32,7 +32,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 
@@ -279,6 +279,17 @@ class PageSubscriptionOut(StrictHttpModel):
     subscribed: bool = False
     subscribed_fields: list[str] = []
     app_id: str | None = None
+    #: Which client this Page's leads belong to, for notification routing.
+    #: NULL = unattributed → alerts fall back to the org-wide recipient tier.
+    #: Derived from the Page's lead forms, which is where the mapping lives
+    #: (`integration_accounts` cannot answer it — its `meta` row holds an
+    #: Instagram business id, not the Facebook Page id the webhook sends).
+    client_id: str | None = None
+    #: How many of this Page's forms carry that client. Surfaced because a
+    #: Page whose forms disagree is a real state (a form synced before the
+    #: assignment) and silently showing one of them would hide it.
+    forms_total: int = 0
+    forms_attributed: int = 0
 
 
 class SubscriptionsOut(StrictHttpModel):
@@ -380,6 +391,7 @@ def list_subscriptions(
             else:
                 raise
         fields = sorted({f for s in subs for f in (s.subscribed_fields or [])})
+        attribution = _page_client_attribution(_org_id, page.id)
         out.append(
             PageSubscriptionOut(
                 page_id=page.id,
@@ -387,6 +399,9 @@ def list_subscriptions(
                 subscribed="leadgen" in fields,
                 subscribed_fields=fields,
                 app_id=next((s.app_id for s in subs if s.app_id), None),
+                client_id=attribution["client_id"],
+                forms_total=attribution["total"],
+                forms_attributed=attribution["attributed"],
             )
         )
     return SubscriptionsOut(
@@ -395,6 +410,88 @@ def list_subscriptions(
         verify_token_configured=verify_configured,
         gated=gated,
         reason=reason,
+    )
+
+
+def _page_client_attribution(org_id: UUID, page_id: str) -> dict[str, Any]:
+    """Summarise which client a Page's lead forms are attributed to.
+
+    Reports the MAJORITY client plus the counts rather than a single id,
+    because "3 of 5 forms are One Consultoria" is a real and actionable state
+    (a form synced after the assignment carries NULL) and collapsing it to one
+    value would hide the two that still route to the org tier.
+    """
+    try:
+        rows = (
+            get_admin_client().schema(_SCHEMA).table("meta_ads_lead_forms")
+            .select("client_id").eq("org_id", str(org_id))
+            .eq("page_id", page_id).execute()
+        ).data or []
+    except Exception:  # noqa: BLE001 — the card must render without this
+        logger.warning("meta-leadgen: could not read client attribution for page %s", page_id)
+        return {"client_id": None, "total": 0, "attributed": 0}
+
+    assigned = [r["client_id"] for r in rows if r.get("client_id")]
+    majority = max(set(assigned), key=assigned.count) if assigned else None
+    return {"client_id": majority, "total": len(rows), "attributed": len(assigned)}
+
+
+class PageClientIn(StrictHttpModel):
+    #: `None` clears the attribution back to unattributed (org-wide alerts).
+    client_id: str | None = None
+
+
+@router.put("/pages/{page_id}/client", response_model=PageSubscriptionOut)
+def set_page_client(
+    page_id: str,
+    payload: PageClientIn,
+    auth: tuple = Depends(get_current_user_org),
+):
+    """Attribute every lead form on a Page to a client — the routing key.
+
+    Applied at PAGE level, not per form: a Page belongs to one client in
+    practice, and per-form assignment would be tedious and would drift as new
+    forms sync in. Every form on the page is updated, so a form created later
+    is picked up by re-applying rather than by hunting for the odd one out.
+
+    🔴 Never inferred from the Page name or the ad account. A wrong
+    attribution routes one client's lead PII to another client's contacts,
+    which is strictly worse than the unattributed fallback it would replace.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    admin = get_admin_client()
+
+    if payload.client_id:
+        owned = (
+            admin.schema(_SCHEMA).table("clients")
+            .select("id").eq("org_id", str(org_id))
+            .eq("id", payload.client_id).limit(1).execute()
+        ).data or []
+        if not owned:
+            # Cross-org assignment would be a PII routing hole, not a 404.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="client not found in this organisation",
+            )
+
+    (
+        admin.schema(_SCHEMA).table("meta_ads_lead_forms")
+        .update({"client_id": payload.client_id})
+        .eq("org_id", str(org_id)).eq("page_id", page_id)
+        .execute()
+    )
+    attribution = _page_client_attribution(org_id, page_id)
+    logger.info(
+        "meta-leadgen: page %s attributed to client %s (%d/%d forms)",
+        page_id, payload.client_id or "—",
+        attribution["attributed"], attribution["total"],
+    )
+    return PageSubscriptionOut(
+        page_id=page_id,
+        client_id=attribution["client_id"],
+        forms_total=attribution["total"],
+        forms_attributed=attribution["attributed"],
     )
 
 
