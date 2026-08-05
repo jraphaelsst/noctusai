@@ -126,6 +126,14 @@ can perform, or (c) **Slice 7**, conditional on whether off-platform lead export
 - [x] 🐛 **Real bug fixed in passing:** `_log` did `str(job_id)` unconditionally, so a non-upload
       caller would have written the literal string `"None"` into the nullable `upload_job_id`
       UUID column. Now conditional.
+- [x] **Recipients configured 2026-08-05** — João Raphael (joaoraphaelsst@gmail.com
+      / +5511974693365), org-wide tier. Two real leads arrived on 2026-08-04 and
+      alerted nobody because the roster was empty; that state is now both fixed
+      and *visible* (WARNING log + amber banner on the webhook health card).
+- [x] **Per-client recipients (migration 045)** — recipients scope to a client
+      with an org-wide fallback, so "One Consultoria" and "João Raphael" can have
+      different people alerted. Meta Page → client attribution lives on
+      `meta_ads_lead_forms.client_id`; unattributed forms route to the org tier.
 - [x] In-app channel: `notificacoes` router IS mounted in social-wiring
       (`app/main.py:245` `standard_routers=[..., "notificacoes", ...]`) — confirmed 2026-08-04
 - [ ] **Verify live:** test lead triggers a real WhatsApp message + email

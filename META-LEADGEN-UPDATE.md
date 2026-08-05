@@ -128,33 +128,60 @@ in `noctus_vps_logs` without a query.
 2. **Call `GET /{leadgen_id}` with the Page token** and diff the response against
    what `meta_ads_leads.raw` already holds. The delta IS the qualification schema.
    Record it in `KB § INTEGRATIONS/meta.md` before writing code.
-3. **Extend `meta_ads_leads`** with the qualification columns (migration — and it
-   will need a real number; check for collisions across unpushed branches).
+3. **Extend `meta_ads_leads`** with the qualification columns (migration — next
+   free number is **046**; 045 is taken by per-client notification recipients.
+   Check collisions across UNPUSHED branches, which `ls migrations/` and
+   `git log origin/dev` both miss:
+   `for b in $(git branch --format='%(refname:short)'); do git diff --name-only origin/dev...$b | grep migrations/; done`).
 4. **Map qualification status → funnel stage** so a Meta-qualified lead
    auto-advances its `negociacoes_venda` card. This is the actual product value;
    everything above is plumbing to reach it safely.
 5. **Decide the notification policy.** A lead qualifying is arguably a bigger
-   event than it arriving. Reuse `notify_new_lead`'s `_dispatch` core; do not
-   invent a second fan-out.
+   event than it arriving. Reuse `notify_new_lead`'s `_dispatch` core and the
+   per-client recipient tiers from migration 045 — do not invent a second
+   fan-out, and do not default to notifying: whether a qualification change
+   deserves a WhatsApp is the operator's call, not the implementer's.
 
-### Open questions to answer with the real event, not by reasoning
+### Open questions — status as of 2026-08-05
 
-- Does it fire for **organic** leads or only paid?
-- Can qualification move **backwards** (qualified → unqualified)? If so, does the
-  funnel card move back, or is that a human decision?
-- Is `updated_time` the agent's revision time or the conversation's?
-- Does one conversation emit **many** events, or one on completion?
+Each is marked with **how it can be answered**, because the distinction between
+"needs a real event" and "needs a decision" is what a future agent will get
+wrong otherwise. Do not answer the first group by reasoning; do not wait for an
+event to answer the second.
 
----
+**🔬 ANSWERABLE ONLY BY A REAL EVENT** — the payload is the only source.
+
+| Question | Why it cannot be reasoned out |
+|---|---|
+| Does it fire for **organic** leads or only paid? | The sample carries `ad_id`/`adgroup_id`, but Meta populates those with placeholders in test payloads. Only a real organic lead settles it. |
+| Can qualification move **backwards** (qualified → unqualified)? | Nothing in the payload constrains direction. Assuming forward-only would silently strand a demoted lead in a stage it no longer merits. |
+| Is `updated_time` the agent's revision time or the conversation's? | Both are plausible for a `"1704067200"` string. Getting it wrong misorders a qualification history. |
+| Does one conversation emit **many** events or one on completion? | Decides whether the fingerprint produces a useful history or a flood. The row key already handles both; the UI treatment differs. |
+| Does `GET /{leadgen_id}` actually return qualification fields? | 🔴 **The load-bearing one.** `updated_fields` names them but Meta documents no such fields on the lead object. If the re-fetch does not return them, the whole feature needs a different data source and the current plan is void. |
+
+**✅ ANSWERED / DECIDED — no event required**
+
+| Question | Answer |
+|---|---|
+| Is it a variant of `leadgen`? | **No — a different event class.** `leadgen` = immutable submission, fires once, `leadgen_id` is a natural PK. `leadgen_update` = mutable state, fires repeatedly per lead. Separate parsers, separate types, pinned by test. |
+| Is `leadgen_id` a safe primary key? | **No.** Hence `upd:<leadgen_id>:<fingerprint>` over `updated_time+area+event+updated_fields` — distinct changes form a history, retries collapse. |
+| Are `area`/`event` enums? | **Treated as open vocabulary.** `ai_agent_updates` is one area; an unrecognised pair is preserved and surfaced, never dropped. |
+| Are the id types stable? | **No — Meta is inconsistent with itself.** This payload sends INTEGERS where the `leadgen` sample sends STRINGS. Everything is coerced via `_stringify`; pinned by test on both fields. |
+| What if the update names a lead we do not have? | **`unresolved`, not `error`.** The lead may predate the receiver or belong to an unsynced page. No retry can fix that, so it must not enter the retry queue. |
+| Who is notified when it eventually applies? | **Reuse `notify_new_lead`'s `_dispatch` core and the per-client recipient tiers (migration 045).** Do not invent a second fan-out. Whether a qualification change *should* notify at all is an operator decision, not a technical one. |
+| Does subscribing cost anything today? | **One inbox row per event, and nothing else.** It is recorded as `received`/`unresolved` and touches no other table. |
 
 ## 5 · Operator state (2026-08-04)
 
 - `leadgen` — **subscribed**, app-level ∧ Page-level, verified end to end with two
   real production leads.
-- `leadgen_update` — subscribed for capture. **Whether it ever fires depends on
-  the AI-agent feature being enabled on the account's forms/campaigns**, which was
-  being confirmed with the paid-traffic team at the time of writing. The sample
-  proves the contract, not that it is active.
+- `leadgen_update` — subscribed for capture, and the **shell is deployed to
+  production** (`process_qualification_event`), so a real event is captured and
+  logged the moment one arrives. **Whether it ever fires depends on the AI-agent
+  feature being enabled on the account's forms/campaigns** — the operator was
+  confirming that with the paid-traffic team on 2026-08-05, and the stated
+  expectation is "if we don't use it now, we will soon". The sample proves the
+  contract, not that it is active.
 - Cost of leaving it on: one inbox row per event. It touches nothing else.
 
 ---
