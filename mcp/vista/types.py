@@ -75,9 +75,10 @@ class ListCorretoresOutput(BaseModel):
 
 
 class ProbeOutput(BaseModel):
-    probes: list[dict] = Field(default_factory=list, description="One row per PROBE_ENDPOINTS entry: {endpoint, status, http_status, latency_ms}.")
+    probes: list[dict] = Field(default_factory=list, description="One row per PROBE_ENDPOINTS entry: {endpoint, status, http_status, latency_ms, expected_http_status, as_expected, note}. Read `as_expected` — NOT `status` — to decide whether a row needs attention: several endpoints answer a bare GET with 400/401/405 by design.")
     tenant_base_url: str = Field("", description="The base URL the probe was issued against.")
     configured: bool = Field(False, description="True iff VistaClient saw both base_url + api_key.")
+    unexpected: list[str] = Field(default_factory=list, description="Endpoints whose http_status differed from the documented baseline — the only rows an operator must act on. Empty means the tenant matches vista.md § 4.")
 
 
 class CalibratedFieldsOutput(BaseModel):

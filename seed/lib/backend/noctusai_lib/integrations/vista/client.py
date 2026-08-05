@@ -25,6 +25,62 @@ DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_PAGE_SIZE = 50
 PAGINATION_KEYS = {"total", "paginas", "pagina", "quantidade"}
 
+KEY_REDACTION_PLACEHOLDER = "<VISTA_API_KEY:redacted>"
+
+
+def redact_api_key(text: str, api_key: str) -> str:
+    """Strip the tenant API key out of any text bound for an exception or log.
+
+    Vista echoes the key **verbatim** in its 401 body — confirmed live
+    2026-08-05 against `oneconsu-rest.vistahost.com.br`::
+
+        {"status":401,"message":"Permissão Negada: \\"<key>\\" Método: clientes/listar"}
+
+    and the key also rides in the query string of any URL that httpx
+    surfaces inside a transport error. Both paths end up in
+    `VistaUpstreamError.body` / `str(exc)`, and from there in the MCP's
+    `typed_error.message` — which is read straight into an AI agent's
+    context. Redact at the boundary, so no downstream consumer has to
+    remember to.
+
+    Applied at every point where upstream text enters our error/log model;
+    see `KB § INTEGRATIONS/vista.md § 3` (Credential echo).
+    """
+    if not api_key or not text:
+        return text
+    return text.replace(api_key, KEY_REDACTION_PLACEHOLDER)
+
+
+# ─── Endpoint baseline (vista.md § 4) ─────────────────────────────────────
+
+# Probe-status vocabulary. The permission_gated/absent split is the
+# actionable one: only the former is unlocked by a Vista support request.
+ENDPOINT_LIVE = "live_probed"            # reachable
+ENDPOINT_PERMISSION_GATED = "permission_gated"  # route exists, key lacks grant (401)
+ENDPOINT_WRITE_ONLY = "write_only"       # route exists, rejects GET (405)
+ENDPOINT_ABSENT = "absent"               # no such route on this tenant (404)
+
+# Canonical for BOTH consumers — `mcp/vista/tools/diagnostics.py` and the ERP
+# showcase service (`products/erp-imobiliario/.../vista_showcase_service.py`).
+# Lifted to the seed 2026-08-05 at N=2: the identical list had been hand-copied
+# into both, and both carried the same two stale labels — a hand-maintained
+# list in two places drifts in two places.
+#
+# `expected_http_status` is what a HEALTHY tenant returns for a BARE GET.
+# Several of these are non-200 by design, so a non-200 is not itself a fault;
+# only a deviation from this baseline is. Re-probed live 2026-08-05.
+VISTA_ENDPOINT_BASELINE: tuple[tuple[str, int, str, str], ...] = (
+    ("/imoveis/listar", 200, ENDPOINT_LIVE, "reachable"),
+    ("/imoveis/listarConteudo", 400, ENDPOINT_LIVE, "reachable; bare GET needs `pesquisa`"),
+    ("/usuarios/listar", 200, ENDPOINT_LIVE, "reachable"),
+    ("/agencias/listar", 200, ENDPOINT_LIVE, "reachable"),
+    ("/clientes/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.2)"),
+    ("/corretores/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.5)"),
+    ("/imoveis/fotos", 405, ENDPOINT_WRITE_ONLY, "write-only route; GET not allowed"),
+)
+
+VISTA_PROBE_PATHS: tuple[str, ...] = tuple(row[0] for row in VISTA_ENDPOINT_BASELINE)
+
 
 # ─── Error hierarchy (vista.md §3 typed-error model) ───────────────────────
 
@@ -133,6 +189,10 @@ class VistaClient:
     def base_url(self) -> str:
         return self._base_url
 
+    def _redact(self, text: str) -> str:
+        """Scrub this client's API key from `text`. See `redact_api_key`."""
+        return redact_api_key(text, self._api_key)
+
     # ─── Low-level request ──────────────────────────────────────────────
 
     async def _request(
@@ -179,14 +239,21 @@ class VistaClient:
                         method, url, params=params, headers=headers
                     )
         except httpx.TimeoutException as e:
-            logger.warning("Vista %s timed out after %.1fs: %s", endpoint, self._timeout, e)
+            # httpx renders the full request URL — which carries ?key=<secret>.
+            logger.warning(
+                "Vista %s timed out after %.1fs: %s",
+                endpoint, self._timeout, self._redact(str(e)),
+            )
             raise VistaTimeout(endpoint) from e
         except httpx.HTTPError as e:
-            logger.warning("Vista %s HTTP error: %s", endpoint, e)
-            raise VistaUpstreamError(0, str(e), endpoint) from e
+            redacted = self._redact(str(e))
+            logger.warning("Vista %s HTTP error: %s", endpoint, redacted)
+            raise VistaUpstreamError(0, redacted, endpoint) from e
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        body_text = resp.text or ""
+        # Redact ONCE, here — every error/log path below is fed from body_text,
+        # so this is the single boundary the credential has to cross.
+        body_text = self._redact(resp.text or "")
 
         if resp.status_code == 200:
             try:

@@ -52,7 +52,14 @@ from .calibration import (
 from .client import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_TIMEOUT_SECONDS,
+    ENDPOINT_ABSENT,
+    ENDPOINT_LIVE,
+    ENDPOINT_PERMISSION_GATED,
+    ENDPOINT_WRITE_ONLY,
+    KEY_REDACTION_PLACEHOLDER,
     PAGINATION_KEYS,
+    VISTA_ENDPOINT_BASELINE,
+    VISTA_PROBE_PATHS,
     VistaCallResult,
     VistaClient,
     VistaConfigError,
@@ -63,6 +70,7 @@ from .client import (
     VistaTimeout,
     VistaUpstreamError,
     extract_items,
+    redact_api_key,
 )
 from .factory import make_vista_client
 from .fake import FakeVistaClient
@@ -93,6 +101,18 @@ __all__ = [
     "make_vista_client",
     "VistaCallResult",
     "extract_items",
+    # Credential hygiene — Vista echoes the API key in 4xx bodies + in the
+    # URL httpx renders on transport errors (vista.md § 3).
+    "redact_api_key",
+    "KEY_REDACTION_PLACEHOLDER",
+    # Endpoint baseline — canonical for the MCP server AND the ERP showcase
+    # service; re-probe updates ONE place (vista.md § 4, § 5.3).
+    "VISTA_ENDPOINT_BASELINE",
+    "VISTA_PROBE_PATHS",
+    "ENDPOINT_LIVE",
+    "ENDPOINT_PERMISSION_GATED",
+    "ENDPOINT_WRITE_ONLY",
+    "ENDPOINT_ABSENT",
     # Per-tenant field-set calibration (vista.md § 6). Lifted from
     # `mcp/vista/calibration.py` 2026-08-03 so backend consumers can
     # calibrate instead of hardcoding a field list.

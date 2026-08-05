@@ -18,14 +18,19 @@ Network-free: the Fake never touches httpx or the filesystem.
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from noctusai_lib.integrations.vista import (
+    KEY_REDACTION_PLACEHOLDER,
+    VISTA_ENDPOINT_BASELINE,
+    VISTA_PROBE_PATHS,
     FakeVistaClient,
     VistaCallResult,
     VistaConfigError,
     VistaPermissionDenied,
     make_vista_client,
+    redact_api_key,
     vista_imovel_detalhes_to_showcase,
 )
 from noctusai_lib.integrations.vista.client import VistaClient
@@ -153,3 +158,101 @@ async def test_fake_detalhes_round_trips_through_real_normalizer() -> None:
     assert showcase.base.banheiros == 2  # BanheiroSocial fallback
     assert showcase.base.corretor_nome == "Fernanda"  # dict-keyed Corretor
     assert showcase.caracteristicas == {"Piscina": "Sim", "Churrasqueira": "Sim"}
+
+
+# ============================================================================
+# Credential hygiene — Vista echoes the API key back at us (vista.md § 3)
+# ============================================================================
+#
+# Confirmed live 2026-08-05 against oneconsu-rest.vistahost.com.br: the 401
+# body for a permission-gated method contains the raw key verbatim, and httpx
+# renders the full ?key=<secret> URL inside transport errors. Both land in
+# VistaUpstreamError.body / str(exc), and from there in the MCP's
+# typed_error.message — which is read straight into an agent's context.
+# These tests are the regression guard on that boundary.
+
+# A DUMMY key, shaped like a real one (32 hex chars) but never issued.
+# Never put the live tenant key in a tracked file — that is the same leak
+# this module exists to prevent, just via git instead of via a log line.
+SECRET = "00000000deadbeef0000000000000000"
+
+
+def test_redact_api_key_removes_the_secret() -> None:
+    body = f'{{"status":401,"message":"Permissão Negada: \\"{SECRET}\\" Método: clientes/listar"}}'
+    out = redact_api_key(body, SECRET)
+    assert SECRET not in out
+    assert KEY_REDACTION_PLACEHOLDER in out
+    # The diagnostic value must survive — we still want to know WHICH method.
+    assert "clientes/listar" in out
+
+
+def test_redact_api_key_is_a_noop_without_a_key() -> None:
+    # An unconfigured client must not rewrite arbitrary text (an empty
+    # needle would otherwise splice the placeholder between every char).
+    assert redact_api_key("anything at all", "") == "anything at all"
+    assert redact_api_key("", SECRET) == ""
+
+
+@pytest.mark.asyncio
+async def test_401_body_reaches_the_caller_redacted() -> None:
+    """The end-to-end guarantee: a real 401 never carries the key outward."""
+    leaky = f'{{"status":401,"message":"Permissão Negada: \\"{SECRET}\\" Método: clientes/listar"}}'
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(401, text=leaky)
+    )
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        with pytest.raises(VistaPermissionDenied) as exc_info:
+            await client.listar_clientes(fields=["Codigo"])
+
+    exc = exc_info.value
+    assert SECRET not in str(exc), "API key leaked via str(exc)"
+    assert SECRET not in exc.body, "API key leaked via .body"
+    assert exc.status == 401
+
+
+@pytest.mark.asyncio
+async def test_transport_error_url_reaches_the_caller_redacted() -> None:
+    """httpx renders the full URL — including ?key= — on a transport error."""
+    def _boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"failed connecting to {request.url}")
+
+    transport = httpx.MockTransport(_boom)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        with pytest.raises(Exception) as exc_info:
+            await client.listar_imoveis(fields=["Codigo"])
+
+    assert SECRET not in str(exc_info.value), "API key leaked via transport error"
+
+
+# ============================================================================
+# Endpoint baseline — seed-canonical, consumed by MCP + ERP (vista.md § 5.3)
+# ============================================================================
+
+
+def test_probe_paths_derive_from_the_baseline() -> None:
+    assert VISTA_PROBE_PATHS == tuple(row[0] for row in VISTA_ENDPOINT_BASELINE)
+
+
+def test_baseline_records_non_200_expectations() -> None:
+    """A bare GET is 400/401/405 by design on several routes.
+
+    Encoding the expectation is the whole point: it lets the probe tell
+    "this tenant drifted" apart from "this endpoint always answers that way".
+    """
+    expected = {row[0]: row[1] for row in VISTA_ENDPOINT_BASELINE}
+    # Needs a `pesquisa` param — a bare GET is 400, not a fault.
+    assert expected["/imoveis/listarConteudo"] == 400
+    # Route exists; this tenant's key lacks the per-method grant.
+    assert expected["/clientes/listar"] == 401
+    # Write-only upload route — GET is 405, NOT the 404 we used to claim.
+    assert expected["/imoveis/fotos"] == 405
+
+
+def test_baseline_distinguishes_gated_from_absent() -> None:
+    """The actionable split: only permission_gated is unlocked by a request."""
+    status = {row[0]: row[2] for row in VISTA_ENDPOINT_BASELINE}
+    assert status["/clientes/listar"] == "permission_gated"
+    assert status["/imoveis/fotos"] == "write_only"
+    assert status["/imoveis/listar"] == "live_probed"

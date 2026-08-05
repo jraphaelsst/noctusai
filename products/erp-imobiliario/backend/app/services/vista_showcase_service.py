@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from app import dependencies as _deps  # call _deps.log_action(...) so test patches apply
 from noctusai_lib.integrations.vista import (
+    VISTA_PROBE_PATHS,
     VistaCallResult,
     VistaClient,
     VistaConfigError,
@@ -348,15 +349,10 @@ async def fetch_agencias(
 # ---------------------------------------------------------------------------
 
 
-PROBE_ENDPOINTS = [
-    "/imoveis/listar",
-    "/imoveis/listarConteudo",
-    "/usuarios/listar",
-    "/agencias/listar",
-    "/clientes/listar",
-    "/corretores/listar",
-    "/imoveis/fotos",
-]
+# Seed-canonical (`noctusai_lib.integrations.vista.VISTA_PROBE_PATHS`) — this
+# used to be a hand-copied fork of the MCP server's identical list, and both
+# drifted the same way. Consume, never restate. See vista.md § 5.3.
+PROBE_ENDPOINTS = list(VISTA_PROBE_PATHS)
 
 
 async def diagnose(client: VistaClient, *, user_id: str) -> ShowcaseDiagnostic:

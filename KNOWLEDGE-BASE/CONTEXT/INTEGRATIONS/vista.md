@@ -230,8 +230,40 @@ embedded substring. Live probe results 2026-05-03:
 |---|---|---|
 | 200 | normal | OK |
 | 400 | `{"message": ["Campo Estado não está disponível. Consulte a documentação para obter os campos disponíveis."], "status": 400}` — note `message` is an **array** in the field-rejection case | Field-level permission denied or unknown field |
-| 401 | `{"message": "Permissão Negada: \"<key-hash>\" Método: <path>", "status": 401}` — `message` is a string with the masked key hash + path embedded | Endpoint exists; key lacks permission |
-| 404 | `{"message": "No route found for \"GET http://<tenant>/<path>\": Method Not Allowed (Allow: ...)", "status": 404}` — Symfony-style routing message | Endpoint not exposed on this tenant |
+| 401 | `{"message": "Permissão Negada: \"<API KEY VERBATIM>\" Método: <path>", "status": 401}` — a string embedding **the raw API key** + the method path | Endpoint exists; key lacks permission |
+| 404 | `{"message": "No route found for \"GET http://<tenant>/<path>\"", "status": 404}` — Symfony-style routing message. Method-specific: a route that exists but rejects GET answers **405**, not 404 | Endpoint not exposed on this tenant |
+
+#### ⚠️ Credential echo — Vista returns our API key in error text
+
+> **Corrected 2026-08-05.** This table previously called the 401 token a
+> "masked key hash". It is **not masked** — it is the tenant API key
+> verbatim, confirmed by string-matching the live 401 body against
+> `VISTA_API_KEY`. That mistaken belief is why the leak sat unnoticed.
+
+Two paths carry the credential out of the HTTP layer:
+
+1. **4xx bodies** — the 401 `message` embeds the key (above).
+2. **Transport errors** — httpx renders the full request URL, and the key
+   is a *query parameter* (`?key=…`, § 1), so any `httpx.HTTPError` /
+   timeout string contains it too.
+
+Both used to reach `VistaUpstreamError.body` and `str(exc)`, and from there
+the MCP's `typed_error.message` — which is read straight into an AI agent's
+context window. **Contract: redact at the client boundary.**
+`noctusai_lib.integrations.vista.redact_api_key(text, api_key)` replaces the
+key with `KEY_REDACTION_PLACEHOLDER`; `VistaClient._redact` applies it to
+every body and transport-error string before they enter the error/log model,
+and `VistaRESTAdapter` (`real.py`, a second independent HTTP path) applies it
+to its own two error strings.
+
+Guarded by `test_401_body_reaches_the_caller_redacted` +
+`test_transport_error_url_reaches_the_caller_redacted`
+(`seed/lib/backend/tests/test_vista_integration.py`) — both verified to go
+red when the redaction is removed.
+
+**If you add a third Vista HTTP path, it redacts too.** The rotation
+question is separate and open: the key has been exposed in agent contexts
+and any log built from `str(exc)` prior to 2026-08-05.
 
 The adapter's `_extract_unavailable_field` (`client.py:278-286`) does
 substring search for `"Campo "` against the JSON-serialized body, which
@@ -431,29 +463,59 @@ and `Embu Das Artes` — Vista does NOT canonicalize. A filter using
 exactly one form will miss properties listed under the other. Surface
 this to the user / model when populating dropdowns.
 
-### 4.2 `/clientes` (Clients) — 🔒 not authorized on this tenant
+### 4.2 `/clientes` (Clients) — 🔒 two routes gated, the rest ❌ absent
 
-Documented in public docs, blocked on this tenant's key.
+**Re-probed live 2026-08-05.** The critical distinction this table now
+carries: **🔒 401 ≠ ❌ 404**. Only 🔒 is unlocked by a Vista support
+request — a 404 route does not exist on this tenant's REST deployment, so
+asking them to "grant permission" on it is a category error.
 
-| Op | Method | Path | ID param | This tenant | Public docs |
+| Op | Method | Path | ID param | This tenant (2026-08-05) | Public docs |
 |---|---|---|---|---|---|
-| Search | GET | `/clientes/pesquisar` | — | 🔒 | 📖 |
-| List | GET | `/clientes/listar` | — | 🔒 | ❓ |
-| By broker | GET | `/clientes/porcorretor` | — | ❓ | 📖 |
-| By agency | GET | `/clientes/poragencia` | — | ❓ | 📖 |
-| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 | 📖 |
-| History | GET | `/clientes/historicos` | `?cliente=` | ❓ | 📖 |
-| Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❓ | 📖 |
-| Available fields | GET | `/clientes/campos` | — | ❓ | 📖 |
-| Create | POST | `/clientes/cadastrar` | — | ❓ | 📖 |
-| Update | PUT | `/clientes/alterar` | `?cliente=` | ❓ | 📖 |
-| Add history | POST | `/clientes/cadhis` | `?cliente=` | ❓ | 📖 |
-| Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❓ | 📖 |
-| Submit lead | POST | `/clientes/lead` | — | ❓ | 📖 |
+| List | GET | `/clientes/listar` | — | 🔒 401 | ❓ |
+| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 401 | 📖 |
+| Search | GET | `/clientes/pesquisar` | — | ❌ 404 | 📖 |
+| By broker | GET | `/clientes/porcorretor` | — | ❌ 404 | 📖 |
+| By agency | GET | `/clientes/poragencia` | — | ❌ 404 | 📖 |
+| History | GET | `/clientes/historicos` | `?cliente=` | ❌ 404 | 📖 |
+| Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❌ 404 | 📖 |
+| Available fields | GET | `/clientes/campos` | — | ❌ 404 | 📖 |
+| Create | POST | `/clientes/cadastrar` | — | ❌ 404 | 📖 |
+| Update | PUT | `/clientes/alterar` | `?cliente=` | ❌ 404 | 📖 |
+| Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
+| Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
+| Submit lead | POST | `/clientes/lead` | — | ❌ 404 | 📖 |
+
+> **Corrections vs the 2026-05-03 snapshot** (always-doc-the-trim):
+> `pesquisar` was recorded 🔒 and is now ❌; the six ❓ rows
+> (`porcorretor`, `poragencia`, `historicos`, `favoritos`, `campos`, and
+> the four write ops) are now confirmed ❌. Nothing regressed on our side —
+> the ❓ rows had simply never been probed, and `pesquisar` was likely
+> mis-recorded from a sibling's 401.
+
+**How the write rows were probed without issuing a write.** Vista's router
+returns **405** for a route that exists but rejects the method, and **404**
+when there is no route at all — verified by `/imoveis/fotos`, which answers
+GET with 405. So a *read-only* GET distinguishes "exists, needs POST" from
+"absent" with no risk to a live CRM. Every write row above answered 404, so
+they are genuinely absent, not merely method-mismatched.
+
+**What a permission grant would and would not buy.** Granting
+`clientes/listar` + `clientes/detalhes` yields the client roster and
+per-client detail. It does **not** yield history (`historicos`),
+broker↔client assignment (`porcorretor`/`cadcor`), favourites, or lead
+submission (`lead`) — those routes are absent regardless of permission.
+Notably there is therefore **no API path to write a captured lead back into
+Vista** on this tenant; an inbound-lead flow terminates in our own database.
+
+**LGPD.** `clientes` carries CPF, addresses and phones. A grant means
+ingesting third-party personal data — do the data-category intake
+(`KB § PATTERNS/security/lgpd.md`) *before* the first call, not after.
 
 UI behavior on this tenant: render a "Permissão pendente — solicite expansão
 junto à Vista" placeholder and surface the 401 status code. The MCP tool
-should surface the same as a typed `VistaPermissionDenied`.
+surfaces the same as a typed `VistaPermissionDenied` (with the key redacted
+per § 3).
 
 ### 4.3 `/usuarios` (internal Vista users) — ✅
 
@@ -497,34 +559,46 @@ Fields that returned 400 on this tenant: `Estado`, `UF`, `CEP`, `Telefone`,
 
 ### 4.5 `/corretores` (brokers) — 🔒
 
-Endpoint exists; this tenant's key has no permission. UI placeholder.
+`/corretores/listar` → **401**, re-confirmed 2026-08-05. Route exists; this
+tenant's key lacks the per-method grant. UI placeholder. Unlockable by a
+support request (unlike the ❌ families in § 4.6).
+
+Note the overlap: `/usuarios/listar` (§ 4.3, ✅) already returns the broker
+roster with `Setor: "Corretores"`, and `/imoveis/listar` embeds the listing
+broker's name + email per property. So the *practical* gap `/corretores`
+leaves is small — worth knowing before spending a support request on it.
 
 ### 4.6 Endpoint families NOT exposed on this tenant — ❌
 
-These return 404 here. They are referenced in the public-doc nav, but the
-public docs provide no spec. Treat as ❓ for an MCP targeting other tenants:
+**Re-probed live 2026-08-05** (`<family>/listar`, GET): every one below
+returned **404 "No route found"** — not 401. They are referenced in the
+public-doc nav with no spec body.
 
 ```
-/leads/*                  ❓ (public-doc nav only; doc body empty)
-/atendimentos/*           ❓
-/agendamentos/*           ❓
-/negociacoes/*            ❓
-/propostas/*              ❓
-/vendas/*                 ❓
-/condominios/*            ❓
-/empreendimentos/*        ❓
-/bairros/*                ❓
-/cidades/*                ❓
-/categorias/*             ❓
+/leads/*                  ❌ 404   (public-doc nav only; doc body empty)
+/atendimentos/*           ❌ 404
+/agendamentos/*           ❌ 404
+/negociacoes/*            ❌ 404
+/propostas/*              ❌ 404
+/vendas/*                 ❌ 404
+/condominios/*            ❌ 404
+/empreendimentos/*        ❌ 404
+/portais/*                ❌ 404
+/buscas/*                 ❌ 404
+/campanhas/*              ❌ 404
+/tarefas/*                ❌ 404
+/reservas/*               ❌ 404
+/bairros/*                ❓       (not re-probed; enum values already come
+/cidades/*                ❓        from /imoveis/listarConteudo, so there is
+/categorias/*             ❓        no consumer need — probe before relying)
 /tabelas/*                ❓
-/portais/*                ❓
-/ancillary-revenue/*      ❓ (referenced explicitly via the user-supplied
-                              link `#fotos_ancillary-revenue`; no body)
-/buscas/*                 ❓
-/campanhas/*              ❓
-/tarefas/*                ❓
-/reservas/*               ❓
+/ancillary-revenue/*      ❓       (referenced via the user-supplied link
+                                    `#fotos_ancillary-revenue`; no body)
 ```
+
+**A 404 cannot distinguish** "not provisioned for this tenant" from "not
+built in this Vista REST version" — only Vista can answer that. That
+question is the Tier-2 ask in the support request (§ 9).
 
 If/when an MCP targets a tenant that exposes any of these, the adapter must
 re-probe and add a row above with verified shape.
@@ -641,20 +715,44 @@ minimum-impact probe path distinct from per-tab fetchers:
 Status values: `"ok" | "permission_denied" | "not_found" | "timeout" |
 "not_configured" | "upstream_error"`.
 
-`vista_showcase_service.diagnose(client)` (`service.py:356-383`) iterates
-the canonical seven-endpoint list and collects results:
+**The endpoint list is seed-canonical** — `VISTA_ENDPOINT_BASELINE` in
+`noctusai_lib.integrations.vista`. Both consumers import it: the MCP's
+`vista.diagnostics.probe` and `vista_showcase_service.diagnose()`.
+
+> **Lifted to the seed 2026-08-05 at N=2 (always-doc-the-trim).** The
+> identical list had been hand-copied into `mcp/vista/tools/diagnostics.py`
+> *and* `vista_showcase_service.py`, and **both carried the same two stale
+> labels** — a hand-maintained list in two places drifts in two places.
+> Do not re-inline it; a re-probe must update exactly one tuple.
 
 ```python
-PROBE_ENDPOINTS = [
-    "/imoveis/listar",
-    "/imoveis/listarConteudo",
-    "/usuarios/listar",
-    "/agencias/listar",
-    "/clientes/listar",     # 401 expected on this tenant
-    "/corretores/listar",   # 401 expected on this tenant
-    "/imoveis/fotos",       # 404 expected on this tenant
-]
+# (path, expected bare-GET status, probe_status, note)
+VISTA_ENDPOINT_BASELINE = (
+    ("/imoveis/listar",        200, "live_probed",      "reachable"),
+    ("/imoveis/listarConteudo",400, "live_probed",      "bare GET needs `pesquisa`"),
+    ("/usuarios/listar",       200, "live_probed",      "reachable"),
+    ("/agencias/listar",       200, "live_probed",      "reachable"),
+    ("/clientes/listar",       401, "permission_gated", "§ 4.2"),
+    ("/corretores/listar",     401, "permission_gated", "§ 4.5"),
+    ("/imoveis/fotos",         405, "write_only",       "GET not allowed"),
+)
 ```
+
+**`expected` encodes that a non-200 is not automatically a fault.** Two
+labels were corrected 2026-08-05:
+
+- `/imoveis/listarConteudo` — needs a `pesquisa` param, so the bare probe
+  GET is *always* 400. The old probe reported `upstream_error` on an
+  endpoint whose own tool works fine: a permanent false alarm that trains
+  an operator to ignore the report.
+- `/imoveis/fotos` — answers GET with **405**, not 404, and was labelled
+  `tier_gated`. It is a *write-only* (POST upload) route that exists. The
+  405-vs-404 distinction is what makes read-only write-surface probing
+  possible at all (§ 4.2).
+
+`probe` therefore returns `{…, expected_http_status, as_expected, note}` per
+row plus a top-level `unexpected: [...]` — **read `unexpected`, not
+`status`**, to decide whether a tenant has actually drifted.
 
 Probes run **sequentially** (~1.4s wall-clock for seven endpoints).
 Acceptable for an admin-only debug tool;
@@ -924,6 +1022,39 @@ ships):
 
 ## 8. Change log
 
+### 2026-08-05 — Live re-probe (24 routes) + credential-echo fix + baseline seed-lift
+
+Triggered by a capability audit ("what can we actually reach, and what would
+we have to ask Vista for?"). Three findings, all fixed same-commit:
+
+1. **🔴 Credential echo (§ 3).** Vista returns the API key **verbatim** in
+   401 bodies, and httpx renders the `?key=` URL in transport errors. Both
+   reached `VistaUpstreamError.body` / `str(exc)` and the MCP's
+   `typed_error.message` — i.e. into agent context. This doc had called the
+   token a "masked key hash", which is why it went unnoticed. Fixed by
+   `redact_api_key` applied at both HTTP boundaries (`client.py` +
+   `real.py`), with regression guards verified to go red without it.
+   The ERP router was already clean (fixed strings, not `str(exc)`).
+   **Open:** key rotation is a separate decision — it was exposed before
+   2026-08-05.
+2. **Endpoint-status drift (§ 4.2, § 4.5, § 4.6).** `/clientes/pesquisar`
+   was recorded 🔒 but is ❌ 404; six ❓ client sub-routes confirmed ❌ 404;
+   thirteen families confirmed ❌ 404. `/imoveis/fotos` is **405
+   write-only**, not 404/`tier_gated`. Established the read-only
+   405-vs-404 technique for mapping a write surface without issuing writes.
+3. **`PROBE_ENDPOINTS` forked at N=2 (§ 5.3).** The same list was
+   hand-copied into `mcp/vista/tools/diagnostics.py` and
+   `vista_showcase_service.py`, and both carried the same two stale labels.
+   Lifted to seed-canonical `VISTA_ENDPOINT_BASELINE`; both now consume it.
+   The probe also gained `expected_http_status`/`as_expected`/`unexpected`,
+   retiring a permanent false alarm on `/imoveis/listarConteudo`.
+
+Live tenant numbers at probe time: **1,928 properties** (964 pages), 10
+users, 1 agency. `Latitude`/`Longitude` are returned but empty on every row
+(a data-entry gap at the agency, not an API gap).
+
+Support-request content derived from this probe → § 9.
+
 ### 2026-05-20 — High-level adapter layer + real-estate domain (vista-seed-lift)
 
 Lifted the social-wiring product-local `app/services/crm_service.py` into two seed modules:
@@ -946,3 +1077,77 @@ Follow-up filed: refactor `VistaRESTAdapter` to compose `VistaClient.detalhes_im
 | 2026-05-03 | **Adapter-implementation refresh — closed the gap between the doc and the showcase code.** Driven by user "evolve the API" intent. Concretely: (a) §1 added client-wiring details (lenient `__init__`, `configured` property, `DEFAULT_TIMEOUT_SECONDS=15.0`, `http_client` injection seam). (b) §2 noted client-side `quantidade` clamp and the showtotal-per-endpoint asymmetry. (c) §3 fixed `extract_items()` signature (was wrongly documented as taking `pagination_keys=...`; real signature is `(payload: dict) -> tuple[list[dict], dict]`); added `VistaError` base + corrected the inheritance picture (`VistaPermissionDenied`/`NotFound`/`FieldNotAvailable` are subclasses of `VistaUpstreamError`); added the catch-order rule with the exact router example. (d) §4.1 expanded `/imoveis/detalhes` quirks with the listing-prefetch + `{**listing, **detalhes}` merge orchestration; expanded `listarConteudo` with the `CONTEUDO_FIELDS` constant and the live enum content. (e) §5 full rewrite: corrected layout, added §5.1 (5 field-set constants), §5.2 (full normalizer field-mapping contract incl. type-coercion helpers + per-tenant fallback chains), §5.3 (diagnostic probe surface), §5.4 (audit-log payload schema with the actual `detalhes` dict structure), §5.5 (router HTTP status mapping with 401→403 and 400→422 rationales), §5.6 (admin-gating resolution order). (f) NEW §6: explicit honesty about per-tenant calibration — the showcase adapter does NOT implement runtime calibration; field sets are constants frozen 2026-05-02. Sketched the calibration routine the in-repo MCP server should ship in Phase 0. | Claude Opus 4.7 |
 | 2026-05-03 | **Vista MCP server Phase 1 shipped — `mcp/vista/`.** Per user directive 2026-05-03 ("implement the mcp phase"). Shipped: (a) ported VistaClient + 7-class error hierarchy + extract_items + VistaCallResult into `mcp/vista/client.py` (recommendation β from PROJECT.md §7 Q3 — port now, absorb to seed-lib later when `mcp-server-expansion` substrate lands). (b) Ported the 4 normalizers + helpers into `mcp/vista/normalizers.py`. (c) Pydantic In/Out per tool in `mcp/vista/types.py`. (d) **NEW: per-tenant calibration routine** at `mcp/vista/calibration.py` — addresses the §6 gap; lazy probe-and-drop loop per endpoint family, cached per process. (e) 8 tools across 6 services using the `vista.<service>.<action>` dotted naming convention from `KB § PATTERNS/architect/mcp-tool-conventions.md`. (f) Hierarchical registration via `tools/__init__.py`. (g) MCP stdio server entry at `mcp/vista/server.py`. (h) 12 smoke tests at `mcp/vista/tests/test_smoke.py` (all pass). (i) README at `mcp/vista/README.md` documenting Phase 1 scope, known limitations, and the calibration routine. **Bug surfaced AND fixed during live verification:** the showcase adapter's `VistaFieldNotAvailable` detector used `"não está disponível" in body_text`, which silently failed because Vista's wire body uses JSON unicode escapes (`não está disponível`) — meaning Phase 4.5's 422 surface NEVER fired. Fixed in BOTH `mcp/vista/client.py` AND `products/erp-imobiliario/backend/app/integrations/vista/client.py` (parse-message-then-search; handles array-shaped messages too). Recurrence rule: this fix lives in two places now → triage time when the seed-lib absorption ships, this becomes a single helper. **Live verification:** `vista.imoveis.list` returned 1,783 properties with valor_venda correctly coerced; calibration dropped exactly the 7 known-bad fields (Estado, Banheiros, Foto, FotoPrincipal, Slug, PalavrasChave, CodigoImobiliaria) ending at 25 valid fields. **Phase 1 deferred (Phase 2-5 work):** keeper detector for guide↔adapter drift; full integration tests against live tenant; nested-sub-field calibration; per-endpoint probe sentinels (`/imoveis/listarConteudo` rejects the generic `["Codigo"]` probe — UX nit, not a functional bug). | Claude Opus 4.7 |
 | 2026-05-03 | **Doc relocated to `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` (durable home).** Project folders (`projects/vista-api-mcp/`) are deleted at project close — the doc would be lost there. KB is the single durable source of truth: (a) the in-repo Vista MCP server build will reference this doc; (b) the portable repo-root `VISTA-API-MCP-GUIDE.md` is re-authored from this doc; (c) any future agent walking into Vista work cold starts here. New folder `KB/CONTEXT/INTEGRATIONS/` established as the namespace for vendor-integration references; INDEX.md updated. PROJECT.md `Related docs` line updated to point here. | Claude Opus 4.7 |
+
+---
+
+## 9. Support request to Vista — what to ask for, and why
+
+> **Derived from the 2026-08-05 live probe (§ 4, § 8).** Ordered by cost to
+> Vista, cheapest first, so the easy wins are not held hostage by the hard
+> questions. Tier 1 is a config flag; Tier 2 is a question; Tier 3 depends
+> on Tier 2's answer.
+>
+> **Ask per METHOD, not per resource.** Vista's authorization is
+> method-scoped — the 401 body literally names `Método: clientes/listar`.
+> A request phrased as "give us access to clients" is ambiguous; a request
+> naming `clientes/listar` + `clientes/detalhes` is a one-line change on
+> their side.
+
+### Tier 1 — grant these on our existing key (no contract change)
+
+| Method | Today | Why we need it |
+|---|---|---|
+| `clientes/listar` | 401 | Client roster — the base for any CRM-side view |
+| `clientes/detalhes` | 401 | Per-client record |
+| `corretores/listar` | 401 | Broker roster (partially substitutable — see § 4.5) |
+
+These three are the **only** routes a permission grant can unlock; every
+other gap below is a 404, where permission is not the blocker.
+
+### Tier 2 — questions that decide whether Tier 3 exists
+
+For each of the following, ask: **(a)** a separately-contracted module,
+**(b)** available in a newer API version we are not pointed at, or
+**(c)** not offered at all?
+
+- `clientes/historicos` — client interaction timeline
+- `clientes/porcorretor` / `clientes/cadcor` — broker↔client assignment
+- `clientes/lead` — inbound lead submission
+- `negociacoes/*`, `propostas/*`, `vendas/*` — the deal pipeline
+
+Also worth asking outright: **is there a newer REST base URL or version
+header for this tenant?** Thirteen documented families returning 404 is
+more consistent with a version/contract gap than with thirteen features
+that do not exist.
+
+### Tier 3 — the write path (only if Tier 2 says it is available)
+
+`clientes/lead` (POST) and `clientes/cadastrar` (POST). This is the one
+that changes the architecture: **without it there is no API path to write a
+captured lead back into Vista**, so any lead-capture flow we build
+terminates in our own database and the agency has two places to look. If
+Vista cannot offer it, that is a product decision to surface, not a
+technical detail.
+
+### Tier 4 — ask regardless (operational)
+
+1. **Page-size cap.** `quantidade` is capped server-side at 50. At 1,928
+   properties that is 39 requests for a full sync — tolerable now, but ask
+   whether the cap is raisable.
+2. **Delta sync.** Is there a documented "changed since `DataAtualizacao`"
+   filter? Without it, every sync is a full crawl. `advFilter` may cover
+   this — ask for its spec, which the public docs do not provide.
+3. **🔴 Credential echo.** Report it as a security defect on their side:
+   *the 401 response body contains the caller's API key in plaintext.* Any
+   customer logging error bodies is persisting a credential. We redact on
+   receipt (§ 3), but the fix belongs upstream.
+4. **Key rotation.** Ask for the rotation procedure — ours has been exposed
+   in logs/agent contexts and should be rotated once Tier 1 lands.
+
+### What we deliberately did NOT do
+
+- **No write probes.** The write surface was mapped read-only via the
+  405-vs-404 distinction (§ 4.2). Never POST to a live CRM to discover a
+  route.
+- **No `/clientes` data pulled.** Blocked by 401 — and blocked by LGPD
+  intake regardless, which must land before the first successful call.

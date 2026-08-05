@@ -44,6 +44,7 @@ from noctusai_lib.integrations.vista.client import (
     VistaError,
     VistaNotFound,
     extract_items,
+    redact_api_key,
 )
 from noctusai_lib.integrations.vista.imovel_normalizer import vista_to_imovel
 
@@ -123,8 +124,10 @@ class VistaRESTAdapter:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(url, params=params, headers=headers)
         except httpx.HTTPError as exc:
+            # httpx renders the full URL, which carries ?key=<secret>.
             raise VistaError(
-                f"Vista API request failed: {exc}"
+                f"Vista API request failed: "
+                f"{redact_api_key(str(exc), self._api_key)}"
             ) from exc
 
         if response.status_code == 404:
@@ -137,9 +140,10 @@ class VistaRESTAdapter:
             )
 
         if response.status_code >= 400:
+            # Vista echoes the API key inside 4xx bodies (vista.md § 3).
             raise VistaError(
                 f"Vista API error {response.status_code}: "
-                f"{response.text[:200]}"
+                f"{redact_api_key(response.text, self._api_key)[:200]}"
             )
 
         try:
