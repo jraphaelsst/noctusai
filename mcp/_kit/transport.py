@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.parse
-from typing import Optional
+from typing import Callable, Optional
 from urllib.request import Request, urlopen  # patch target: `_kit.transport.urlopen`
 
 # Browser UA — LOAD-BEARING for endpoints behind Cloudflare's WAF: the default
@@ -71,6 +71,7 @@ def request_json(
     error_cls: type = ConnectorHttpError,
     empty_result: object = None,
     label: str = "",
+    on_http_error: Optional[Callable[[int, str, str], Optional[Exception]]] = None,
 ) -> object:
     """Issue `method url`, return parsed JSON (or `empty_result` on empty body).
 
@@ -85,6 +86,17 @@ def request_json(
     - `empty_result` — returned on an empty (2xx) body (n8n wants `{}`,
       supabase wants `None`).
     - `label` — human tag for error messages (default `"<METHOD> <url>"`).
+    - `on_http_error` — OPTIONAL vendor error-body hook, called as
+      `(status, body, tag)` on an `HTTPError` **before** the default raise.
+      Return an exception to raise it instead (so a connector can attach a
+      typed vendor error code — cloudflare's `errors[0].code`, omie's
+      `faultstring`/`faultcode`); return `None` to fall through to the
+      default `error_cls(...)`. A hook that itself raises is not swallowed.
+
+      Formalized at N=2 (cloudflare's `cf_code` + omie's `faultstring`) —
+      the seam extension this module's README flagged as the revisit
+      trigger. Default `None` ⇒ byte-for-byte prior behavior for the five
+      connectors that don't pass it.
     """
     tag = label or f"{method.upper()} {url}"
     if params:
@@ -110,6 +122,12 @@ def request_json(
             detail = e.read().decode("utf-8", errors="replace")[:500]
         except Exception:  # noqa: BLE001 — body read is best-effort context
             detail = ""
+        if on_http_error is not None:
+            # Vendor hook wins when it returns an exception; `None` falls
+            # through to the default below (never silently swallows).
+            vendor_exc = on_http_error(e.code, detail, tag)
+            if vendor_exc is not None:
+                raise vendor_exc from e
         raise error_cls(
             f"{tag} → HTTP {e.code}" + (f": {detail}" if detail else ""),
             status=e.code,

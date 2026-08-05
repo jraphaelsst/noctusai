@@ -23,7 +23,7 @@ connector servers.
 | `build_registry(leaf_modules)` | `_kit.registry` | `(all_handlers, all_descriptors, register_all)` from the leaf-module contract. |
 | `typed_error(e)` | `_kit.errors` | 3-key JSON error payload `{error_class, message, status}` for tool-handler internals. |
 | `confirmation_required_message(action, effect="", *, noun="write action")` | `_kit.errors` | The standard confirm-then-execute message; each connector keeps its own `ConfirmationRequiredError` subclass but builds the message here. |
-| `request_json(method, url, *, auth_header, user_agent, params, body, timeout, error_cls, empty_result, label)` | `_kit.transport` | The shared stdlib-`urllib` HTTP boundary — connectors delegate transport mechanics here (see § Shared HTTP transport seam). |
+| `request_json(method, url, *, auth_header, user_agent, params, body, timeout, error_cls, empty_result, label, on_http_error)` | `_kit.transport` | The shared stdlib-`urllib` HTTP boundary — connectors delegate transport mechanics here (see § Shared HTTP transport seam). |
 | `normalize_base_url(raw)` | `_kit.transport` | Trim trailing slashes; connectors needing a path suffix (n8n's `/api/v1`) wrap it. |
 | `BROWSER_USER_AGENT` / `DEFAULT_USER_AGENT` | `_kit.transport` | Browser UA (clears the Cloudflare WAF on WAF-fronted hosts) / the plain default UA. |
 | `ConnectorHttpError` | `_kit.transport` | Default typed error for the seam; a connector passes its OWN `<Vendor>ApiError` as `error_cls`. |
@@ -188,16 +188,38 @@ status are preserved).
 `"_kit.transport.urlopen"` — an external-boundary patch (sanctioned by
 `CLAUDE.md §1`); our own code is never patched.
 
-### The one documented exception — cloudflare
+### Vendor error-body hook — `on_http_error` (the N=2 formalization)
 
-`mcp/cloudflare/api.py` keeps its **own** transport (does NOT delegate).
-Its `request_envelope` extracts the Cloudflare `errors[0].code` from the
-HTTP-error body and attaches it as a typed `CloudflareApiError.cf_code`
-— a channel the seam's `error_cls(message, *, status=...)` interface
-cannot carry. Folding it in would regress `cf_code`-on-HTTPError or need
-an N=1 seam hook; accepted-with-rationale in
-`KB § PATTERNS/accept-with-rationale.md` (revisit at N=2 — a 2nd
-vendor-error-code need formalizes a seam error-body hook).
+`on_http_error(status, body, tag) -> Exception | None` is called on an
+`HTTPError` **before** the default raise. Return an exception to raise it
+instead; return `None` to fall through to `error_cls(...)`. Default
+`None` ⇒ byte-for-byte prior behavior for connectors that don't pass it.
+
+It exists because two vendors carry their real error identity in the
+response *body*, not the status:
+
+```python
+# mcp/omie/api.py — Omie answers failures with {"faultstring", "faultcode"}
+on_http_error=lambda st, bd, tg: fault_from_body(bd, http_status=st, tag=tg)
+```
+
+**History.** cloudflare was N=1 and was accepted-with-rationale below;
+omie's `faultstring`/`faultcode` is **N=2**, which this README named as
+the revisit trigger — so the hook is now formalized here rather than
+hand-rolled a second time.
+
+### The remaining exception — cloudflare
+
+`mcp/cloudflare/api.py` still keeps its **own** transport (does NOT
+delegate). Its `request_envelope` extracts the Cloudflare
+`errors[0].code` from the HTTP-error body and attaches it as a typed
+`CloudflareApiError.cf_code` — the exact need `on_http_error` now serves.
+
+> **Open follow-up.** With the hook in place cloudflare can fold onto the
+> shared seam, which would close its entry in
+> `KB § PATTERNS/accept-with-rationale.md`. Not done in the omie branch
+> deliberately — it touches a fleet-facing connector and deserves its own
+> slice with its own regression run.
 
 ## In-tree seed pin (`_kit.seed_pin.pin_in_tree_seed`)
 
