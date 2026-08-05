@@ -17,6 +17,13 @@ export interface Recipient {
   email?: string | null;
   whatsapp_number?: string | null;
   is_active: boolean;
+  /**
+   * Client this recipient is scoped to. `null` = ORG-WIDE: the fallback tier
+   * that hears about anything not attributed to a specific client. Leads whose
+   * Meta Page maps to no client land here, so an empty org tier means those
+   * leads alert nobody.
+   */
+  client_id?: string | null;
   created_at: string;
 }
 
@@ -25,9 +32,17 @@ export interface RecipientCreate {
   email?: string;
   whatsapp_number?: string;
   is_active?: boolean;
+  /** Omit or send null for an org-wide recipient. */
+  client_id?: string | null;
 }
 
 export interface RecipientUpdate {
+  /**
+   * Send an explicit `null` to clear the scope back to org-wide; OMIT the key
+   * to leave it unchanged. The backend distinguishes the two via
+   * `model_fields_set`, so `undefined` and `null` are NOT interchangeable here.
+   */
+  client_id?: string | null;
   name?: string;
   email?: string | null;
   whatsapp_number?: string | null;

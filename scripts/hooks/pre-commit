@@ -45,6 +45,41 @@ fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
 
+# ─── 0-pre. Self-branching gate (BLOCKING, runs FIRST) ───────────
+# Keeper `check_primary_checkout_commit`. `CLAUDE.md` §1 has said "🔴 ABSOLUTE:
+# never work on dev" since self-branching mode existed, and it was violated in
+# essentially every session anyway — because NOTHING FAILS AT COMMIT TIME. The
+# commit succeeds, hooks pass, tests pass; local `dev` silently diverges from
+# origin and the bill arrives much later as "Diverging branches can't be
+# fast-forwarded" at integrate or deploy, where it reads as a git problem
+# rather than the process slip it is.
+#
+# Deliberately the FIRST step: it costs ~50ms and its failure invalidates every
+# check after it, so spending two minutes on gates before telling the committer
+# they are on the wrong branch would be its own small cruelty.
+#
+# Ledger-only commits (project-history/*) are the sanctioned exception — the
+# MCP tools push those to dev by design. Escape hatch, used loudly and rarely:
+#   NOCTUS_ALLOW_PRIMARY_COMMIT=1 git commit ...
+if have_py; then
+    if ! "$PY" "$CLI" --check-primary-checkout-commit --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] self-branching gate FAILED. Commit aborted." >&2
+        echo "[pre-commit]" >&2
+        echo "[pre-commit] You are committing WORK on a shared branch in the PRIMARY checkout." >&2
+        echo "[pre-commit] Move it to an isolated worktree:" >&2
+        echo "[pre-commit]" >&2
+        echo "[pre-commit]   noctus.dev.task_branch action=start slug=<kebab-task> confirm=true" >&2
+        echo "[pre-commit]   # then commit inside .claude/worktrees/<slug>/ and integrate" >&2
+        echo "[pre-commit]" >&2
+        echo "[pre-commit] Already committed here by mistake? Nothing is lost:" >&2
+        echo "[pre-commit]   git branch feat/<slug> && git reset --hard origin/<branch>" >&2
+        echo "[pre-commit]   # your commits now live on feat/<slug>" >&2
+        echo "[pre-commit]" >&2
+        echo "[pre-commit] KB § PATTERNS/common/self-branching-mode.md" >&2
+        exit 1
+    fi
+fi
+
 # ─── 0. Version stamp echo (informational) ──────────────────────
 # Surfaces the current VERSION file content at every commit so the
 # committer (human or agent) sees which methodology version they're

@@ -30,6 +30,11 @@ class RecipientCreate(BaseModel):
         pattern=r"^\+[1-9]\d{7,14}$",
     )
     is_active: bool = True
+    #: Scope this recipient to one client. `None` = ORG-WIDE: the fallback
+    #: tier that hears about anything not claimed by a specific client. That
+    #: tier is what stops an unattributed lead from alerting nobody, so it
+    #: should rarely be empty.
+    client_id: str | None = None
 
     @model_validator(mode="after")
     def _at_least_one_channel(self) -> "RecipientCreate":
@@ -50,6 +55,12 @@ class RecipientUpdate(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    #: Re-scope an existing recipient. Handled via `model_fields_set` rather
+    #: than the shared `exclude_none` path, so sending an explicit `null`
+    #: CLEARS the scope back to org-wide while omitting the key leaves it
+    #: untouched. Without that distinction a recipient could be scoped to a
+    #: client and never returned to org-wide through the API.
+    client_id: str | None = None
     email: EmailStr | None = None
     whatsapp_number: str | None = Field(
         default=None,
@@ -66,6 +77,7 @@ class RecipientOut(BaseModel):
     email: str | None = None
     whatsapp_number: str | None = None
     is_active: bool
+    client_id: str | None = None
     created_at: datetime
 
 

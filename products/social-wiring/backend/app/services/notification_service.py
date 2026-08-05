@@ -156,7 +156,7 @@ class NotificationService:
         )
 
     async def notify_new_lead(
-        self, *, org_id: UUID, lead: dict[str, Any]
+        self, *, org_id: UUID, lead: dict[str, Any], client_id: Any = None
     ) -> DispatchOutcome:
         """Fan-out an alert for a freshly-upserted Meta lead.
 
@@ -183,7 +183,9 @@ class NotificationService:
         must not surface as an exception here, since the webhook receiver
         calling this must not turn that into a non-2xx to Meta.
         """
-        recipients = self._fetch_recipients(org_id=org_id)
+        recipients, tier = self.resolve_lead_recipients(
+            org_id=org_id, client_id=client_id
+        )
         if not recipients:
             # 🔴 NOT a quiet no-op. A lead just arrived and there is nobody
             # to tell — which is a CONFIGURATION gap, not a non-event, and it
@@ -196,10 +198,12 @@ class NotificationService:
             # empty. Nothing in the logs said so. WARNING, not INFO, because
             # the operator is silently losing the alerting they asked for.
             logger.warning(
-                "notify_new_lead: lead %s arrived for org %s but NO active "
-                "notification recipient is configured — nobody was alerted. "
-                "Add one under Configuração → Configurações (notifications).",
-                lead.get("id"), org_id,
+                "notify_new_lead: lead %s arrived for org %s (client=%s, tier=%s) "
+                "but NO active notification recipient is configured — nobody was "
+                "alerted. Add one under Configuração → Configurações "
+                "(notifications); a client-scoped recipient covers just that "
+                "client, an org-wide one covers everything unattributed.",
+                lead.get("id"), org_id, client_id or "—", tier,
             )
             return DispatchOutcome()
 
@@ -387,6 +391,67 @@ class NotificationService:
             query = query.in_("id", recipient_ids)
         response = query.execute()
         return list(response.data or [])
+
+    def resolve_lead_recipients(
+        self, *, org_id: UUID, client_id: Any = None
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Who to alert about a lead, resolved by client with an org fallback.
+
+        Two tiers, and the order between them is the whole design:
+
+        1. **Client tier** — active recipients whose ``client_id`` matches the
+           client this lead belongs to. If the client has any, they are the
+           ONLY recipients: a client with its own roster must not also reach
+           the org-wide fallback, or "One's leads go to One" quietly becomes
+           "One's leads go to One *and* everyone else".
+        2. **Org tier** (``client_id IS NULL``) — used when the lead resolves
+           to no client, or to a client that has no active recipient of its
+           own. This tier is what stops an unattributed lead from alerting
+           nobody, which is the exact silent failure this area shipped with.
+
+        Returns ``(recipients, tier)`` — the tier is returned rather than
+        inferred by the caller because "0 recipients" needs different wording
+        depending on whether a client was resolved at all, and a caller
+        guessing that would get it wrong.
+        """
+        if client_id:
+            client_rows = self._fetch_recipients_scoped(
+                org_id=org_id, client_id=str(client_id)
+            )
+            if client_rows:
+                return client_rows, "client"
+        return self._fetch_recipients_scoped(org_id=org_id, client_id=None), "org"
+
+    def _fetch_recipients_scoped(
+        self, *, org_id: UUID, client_id: str | None
+    ) -> list[dict[str, Any]]:
+        """Active recipients for one tier. ``client_id=None`` selects the
+        org-wide rows (``client_id IS NULL``), NOT "any client" — the two
+        readings differ and conflating them would make every client-scoped
+        recipient also an org-wide one."""
+        query = (
+            self._admin
+            .schema(_SCHEMA)
+            .table(_RECIPIENTS)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("is_active", True)
+        )
+        query = (
+            query.is_("client_id", "null") if client_id is None
+            else query.eq("client_id", client_id)
+        )
+        try:
+            return list(query.execute().data or [])
+        except Exception:  # noqa: BLE001
+            # Pre-migration-045 databases have no `client_id` column. Degrade
+            # to the org-wide roster rather than alerting nobody: a deploy that
+            # lands before its migration must not silence alerts.
+            logger.warning(
+                "notification recipients: client scoping unavailable (is "
+                "migration 045 applied?) — falling back to the whole roster"
+            )
+            return self._fetch_recipients(org_id=org_id)
 
     def _try_build_email_service(self) -> EmailService | None:
         """Returns None when SMTP isn't configured — callers log the

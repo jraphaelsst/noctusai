@@ -171,6 +171,7 @@ def main():
     parser.add_argument("--check-hashlib-usedforsecurity", action="store_true", help="Keeper: a weak-hash call (hashlib.md5/sha1/new(\"md5\"|\"sha1\", ...)) in the Bandit scope (products/*/backend/app + seed/lib/backend/noctusai_lib) used for a non-security purpose MUST pass usedforsecurity=False, or Bandit B324 (High) hard-fails CI. AST-based; a `# noqa: S324` does NOT satisfy it. Severity error (baseline 0). KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.")
     parser.add_argument("--check-migration-number-collision", action="store_true", help="Keeper: two migrations claiming the same numeric prefix. Leg A (high) = duplicate ON DISK in one product — apply-order is undefined. Leg B (warning) = the same number used by DIFFERENT files across local branches; whichever merges second must renumber. Catches the class `ls migrations/` and `git log origin/dev` both miss, because an unpushed sibling branch is invisible to both. MCP keeper check_migration_number_collision.")
     parser.add_argument("--paths", default="", help="Comma-separated repo-relative paths to narrow a keeper's sweep (currently --check-conflict-markers). Omitted, the keeper scans its full default scope.")
+    parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
     parser.add_argument("--check-conflict-markers", action="store_true", help="Keeper: a tracked file committed with unresolved merge-conflict markers. Flags only when an opener (7+ '<') AND a closer (7+ '>') both appear at line start, so a lone '=======' Markdown underline or section divider is not a false positive. Found on origin/dev 2026-08-04 in a RENAMED migration, where git emits the 8-char marker variant that visual scanning misses; the header sat in a comment block so every semantic gate and the live schema both looked clean. Severity high. MCP keeper check_conflict_markers.")
     parser.add_argument("--check-lying-loading-state", action="store_true", help="Keeper: TanStack Query v5 `isLoading` is FALSE during a background refetch (`isLoading === isPending && isFetching`); a `loading=`/`isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0` guard falls through to its EMPTY branch mid-refetch, rendering \"no data\" over live data. Live incident 2026-07-21/22 (social-wiring Leads, 12,177 leads / 28 brokers, fixed b0cb47b1). Scans products/*/frontend/src/**/*.tsx. Severity warning (observe-first on a brand-new detector). Escape hatch: `lying-loading-ok` comment. KB § PATTERNS/frontend/lying-loading-state.md.")
     parser.add_argument("--check-status-pagina-role-parity", action="store_true", help="Keeper: the `dev_veem_desenvolvimento` RLS role array in every *_status_pagina_dev_visibility.sql must match the seed frontend `DEV_ROLES` const. Two halves of one gate in two languages across N+1 files, no shared source — divergence is split-brain (RLS returns a row the FE hides, or the reverse) and BOTH modes look like \"the page is just missing\". KB § PATTERNS/frontend/status-pagina-dev-visibility.md.")
@@ -1212,6 +1213,18 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.check_primary_checkout_commit:
+        from tools.noctus.dev.compliance import check_primary_checkout_commit
+        issues = check_primary_checkout_commit()
+        if not issues:
+            print(f"  {GREEN}✓ primary-checkout-commit: clean (not a work commit on a shared branch in the primary checkout).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ work commit on a shared branch in the PRIMARY checkout:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
+            print(f"      {i['issue']}")
+        sys.exit(1)
 
     elif args.check_conflict_markers:
         from tools.noctus.dev.compliance import check_conflict_markers

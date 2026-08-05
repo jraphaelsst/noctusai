@@ -130,6 +130,11 @@ def create_recipient(
             "email": payload.email,
             "whatsapp_number": payload.whatsapp_number,
             "is_active": payload.is_active,
+            # NULL = org-wide fallback tier (migration 045). Not defaulted to
+            # a client: an unattributed recipient hearing everything is the
+            # safe failure, an unrelated client's contacts hearing another
+            # client's lead PII is not.
+            "client_id": payload.client_id,
         })
         .execute()
     )
@@ -154,6 +159,12 @@ def update_recipient(
         k: v
         for k, v in payload.model_dump(exclude_none=True).items()
     }
+    # `client_id` needs the explicit-null distinction the shared exclude_none
+    # path erases: sending `null` must CLEAR the scope back to org-wide, while
+    # omitting the key leaves it alone. `model_fields_set` is what tells those
+    # two apart.
+    if "client_id" in payload.model_fields_set:
+        update_payload["client_id"] = payload.client_id
     if not update_payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

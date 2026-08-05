@@ -196,3 +196,83 @@ A worktree perfectly isolates your **Edits**. It does NOT, by itself, isolate **
 - [[branching-dispatch]] — the *dispatch* runbook (architect dispatches N engineers). Self-branching is the *self*-case: the agent isolates itself rather than dispatching. They nest (§3).
 - `noctus.dev.task_branch` (this mode's tool) · `noctus.dev.cleanup_stale_worktrees` (heuristic bulk-sweep sibling) · `noctus.dev.release` (the sacred-line gates self-branching never touches).
 - Codification: emerged + s2 memory `feedback_self_branching_mode.md` + s3 this doc + CLAUDE.md §1 pointer; s4 tooling = the `task_branch` tool (the *process*-shape analogue of a keeper).
+
+---
+
+## §10 · The gate (2026-08-05) — why the rule needed one
+
+**This rule was the most-violated rule in the methodology.** It is stated as
+🔴 ABSOLUTE in `CLAUDE.md` §1, restated as step 0 of `noc-self-branch`, and it
+was broken in essentially every session — including twice in one session by an
+agent that had it in context both times and had *already apologised for it once*.
+
+### Why discipline could never have worked
+
+**Nothing fails at the moment of the mistake.** `git commit` on `dev` in the
+primary checkout succeeds. Every hook passes. Every test passes. Local `dev`
+diverges from `origin/dev` silently.
+
+The bill arrives later and elsewhere:
+
+```
+hint: Diverging branches can't be fast-forwarded, you need to either:
+```
+
+…at integrate or deploy — several steps from the cause, and reading like a git
+problem rather than the process slip it is. Agents therefore "fixed" it with a
+rebase and moved on, learning nothing, and repeated it the next session.
+
+That shape — **invisible at the moment of violation, expensive much later** — is
+the signature of a rule that needs a mechanism. Restating it more loudly is a
+non-intervention; every restatement had already been tried.
+
+### The gate
+
+`check_primary_checkout_commit` (`--check-primary-checkout-commit`), wired as
+the **first** step of `scripts/hooks/pre-commit`. Blocks when all three hold:
+
+1. the repo is the **primary** checkout (`--absolute-git-dir` == `--git-common-dir`;
+   a linked worktree reports a path under `<common>/worktrees/<name>`), **and**
+2. `HEAD` is a **shared** branch — `dev` / `main` / `prod`, **and**
+3. the staged set contains anything outside `project-history/`.
+
+It runs first deliberately: it costs ~50ms, and its failure invalidates every
+gate after it. Spending two minutes of checks before telling the committer they
+are on the wrong branch would be its own small cruelty.
+
+### The one exception, and why it cannot be laundered
+
+The MCP toolkit commits its append-only ledgers straight to `dev` from the
+primary checkout **by design** — `branch_pointer`, worktree-salvage, cost logs.
+That is how parallel agents publish their collision zones, so blocking it would
+break coordination.
+
+So a commit whose **entire** staged set lives under `project-history/` passes.
+Stage one source file alongside them and it blocks, with only the source file
+named. Without that, "it's just a ledger commit" becomes a hole wide enough to
+drive the original slip through — and `test_work_MIXED_INTO_a_ledger_commit_is_still_blocked`
+exists to keep it shut.
+
+### Escape hatch
+
+`NOCTUS_ALLOW_PRIMARY_COMMIT=1` — an env var rather than a CLI flag, so it
+cannot be baked into a script and forgotten. `--no-verify` is **not** an escape
+hatch (`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
+
+### Recovering a commit already made on the wrong branch
+
+Nothing is lost — the commits just need a branch to live on:
+
+```bash
+git branch feat/<slug>              # give the commits a home
+git reset --hard origin/<branch>    # return the shared branch to origin
+git checkout feat/<slug>            # ...or work from a worktree off it
+```
+
+### The general lesson
+
+Per `KB § PATTERNS/common/gate-methodology-sync.md`: **a rule whose violation
+produces no immediate signal is advice, not a rule.** When a documented
+constraint is found to have been violated repeatedly, the correct response is
+not a stronger restatement — it is to ask *what would have failed at the moment
+of the mistake*, and build that.

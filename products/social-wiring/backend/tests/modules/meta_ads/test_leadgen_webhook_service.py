@@ -166,9 +166,15 @@ def test_unresolved_org_is_parked_and_never_announced():
 class _RecordingNotifier:
     def __init__(self, **_kw: Any) -> None:
         self.calls: list[tuple] = []
+        self.client_ids: list = []
 
-    async def notify_new_lead(self, *, org_id: UUID, lead: dict) -> Any:
+    async def notify_new_lead(
+        self, *, org_id: UUID, lead: dict, client_id: Any = None
+    ) -> Any:
+        # `client_id` mirrors the real signature (migration 045): the receiver
+        # resolves which client a lead belongs to and the notifier routes on it.
         self.calls.append((org_id, lead.get("id")))
+        self.client_ids.append(client_id)
         return SimpleNamespace()
 
 

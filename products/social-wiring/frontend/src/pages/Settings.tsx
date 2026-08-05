@@ -44,6 +44,7 @@ import {
   type Recipient,
   type RecipientCreate,
 } from "@/hooks/useSettings";
+import { useClients, type Client } from "@/hooks/useClients";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -65,11 +66,19 @@ const EMPTY_RECIPIENT: RecipientCreate = {
   email: "",
   whatsapp_number: "",
   is_active: true,
+  client_id: null,
 };
+
+/** Sentinel for the org-wide tier in the <select>. A DOM select cannot hold
+ *  `null`, and "" is indistinguishable from "nothing chosen yet" — so the
+ *  absence of a client is given an explicit value rather than being inferred
+ *  from an empty string. */
+const ORG_WIDE = "__org__";
 
 function NotificationsTab() {
   const { data, loading, create, update, remove } = useRecipients();
   const { data: keys } = useKeysStatus();
+  const { data: clients = [] } = useClients();
   const [draft, setDraft] = useState<RecipientCreate>(EMPTY_RECIPIENT);
   const [submitting, setSubmitting] = useState(false);
 
@@ -90,6 +99,7 @@ function NotificationsTab() {
         email: draft.email || undefined,
         whatsapp_number: draft.whatsapp_number || undefined,
         is_active: draft.is_active,
+        client_id: draft.client_id ?? null,
       });
       setDraft(EMPTY_RECIPIENT);
     } finally {
@@ -164,6 +174,24 @@ function NotificationsTab() {
                 setDraft({ ...draft, whatsapp_number: e.target.value })
               }
             />
+            <select
+              className="h-10 rounded-md border bg-background px-2 text-sm sm:col-span-3"
+              aria-label="Cliente do destinatário"
+              value={draft.client_id ?? ORG_WIDE}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  client_id: e.target.value === ORG_WIDE ? null : e.target.value,
+                })
+              }
+            >
+              <option value={ORG_WIDE}>Todos os clientes (geral)</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
             <div className="flex items-center gap-2 sm:col-span-1">
               <Switch
                 id="is-active"
@@ -201,8 +229,12 @@ function NotificationsTab() {
                 <RecipientRow
                   key={r.id}
                   recipient={r}
+                  clients={clients}
                   onToggleActive={(active) =>
                     update(r.id, { is_active: active })
+                  }
+                  onChangeClient={(clientId) =>
+                    update(r.id, { client_id: clientId })
                   }
                   onDelete={() => remove(r.id)}
                 />
@@ -217,11 +249,15 @@ function NotificationsTab() {
 
 function RecipientRow({
   recipient,
+  clients,
   onToggleActive,
+  onChangeClient,
   onDelete,
 }: {
   recipient: Recipient;
+  clients: Client[];
   onToggleActive: (active: boolean) => void;
+  onChangeClient: (clientId: string | null) => void;
   onDelete: () => void;
 }) {
   return (
@@ -236,6 +272,24 @@ function RecipientRow({
         </div>
       </div>
       <div className="flex items-center gap-3">
+        {/* Scope is editable in place. Sending null clears it back to the
+            org-wide tier — the backend distinguishes an explicit null from an
+            omitted key, so this genuinely un-scopes rather than no-ops. */}
+        <select
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          aria-label={`Cliente de ${recipient.name}`}
+          value={recipient.client_id ?? ORG_WIDE}
+          onChange={(e) =>
+            onChangeClient(e.target.value === ORG_WIDE ? null : e.target.value)
+          }
+        >
+          <option value={ORG_WIDE}>Todos os clientes</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
         <div className="flex items-center gap-2">
           <Switch
             checked={recipient.is_active}

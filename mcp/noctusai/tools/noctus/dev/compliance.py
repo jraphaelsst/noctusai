@@ -8315,6 +8315,132 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     return findings
 
 
+#: Branches that are shared integration/release lines. A commit landing on one
+#: of these in the PRIMARY checkout is the slip this keeper exists to stop.
+SHARED_BRANCHES = frozenset({"dev", "main", "prod"})
+
+#: The ONE legitimate reason to commit on the primary checkout: the MCP tools'
+#: append-only ledgers, which are pushed to `dev` by design (branch_pointer,
+#: worktree-salvage, auto-improvement, vector-costs). Anything outside this set
+#: is source, docs or config — i.e. work, which belongs on a branch.
+_PRIMARY_COMMIT_ALLOWLIST = (
+    "project-history/",
+)
+
+
+def check_primary_checkout_commit(
+    repo_root: Path | None = None,
+    staged: list[str] | None = None,
+    branch: str | None = None,
+    is_primary: bool | None = None,
+    allow_override: bool | None = None,
+) -> list[dict]:
+    """Refuse a work commit made on a SHARED branch in the PRIMARY checkout.
+
+    **The slip.** `CLAUDE.md` §1 has said "🔴 ABSOLUTE: never work on `dev`"
+    since self-branching mode was introduced, and `noc-self-branch` restates
+    it. It was still violated in essentially every session — including twice
+    in this one, by an agent that had the rule in context both times. The
+    2026-08-05 review found no session where the rule reliably held.
+
+    **Why discipline was never going to fix it.** Nothing failed at the moment
+    of the mistake. `git commit` on `dev` in the primary checkout succeeds,
+    the hooks pass, the tests pass. The cost lands LATER and somewhere else:
+    local `dev` silently diverges from `origin/dev`, and the next integrate or
+    deploy stops with "Diverging branches can't be fast-forwarded" — by which
+    point the cause is several steps back and reads as a git problem rather
+    than a process one. A rule whose violation is invisible at commit time and
+    expensive at deploy time is a rule that needs a GATE, not a reminder.
+    This is the gate (`KB § PATTERNS/common/gate-methodology-sync.md`: a rule
+    without a mechanism is advice).
+
+    **What is allowed.** The MCP toolkit deliberately commits its append-only
+    ledgers straight to `dev` from the primary checkout — `branch_pointer`,
+    the salvage ledger, cost logs. Those are bookkeeping, not work, so a
+    commit whose ENTIRE staged set lives under `project-history/` passes. One
+    source file alongside them and it blocks: mixing work into a ledger commit
+    is how the exemption would be laundered.
+
+    **Escape hatch.** `NOCTUS_ALLOW_PRIMARY_COMMIT=1` — deliberately an env
+    var rather than a flag, so it cannot be set once and forgotten in a
+    script, and it is reported loudly when used. `--no-verify` is NOT an
+    escape hatch here or anywhere (`KB § PATTERNS/common/
+    bypass-rationalization-anti-patterns.md`).
+
+    Every input is injectable so the detector is testable without a real
+    git checkout on a real shared branch — which is itself the state this
+    forbids, and could not be created in a test otherwise.
+    """
+    import os
+    import subprocess
+
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+
+    if allow_override is None:
+        allow_override = os.environ.get("NOCTUS_ALLOW_PRIMARY_COMMIT", "") == "1"
+    if allow_override:
+        return findings
+
+    def _git(*args: str) -> str:
+        try:
+            out = subprocess.run(
+                ["git", *args], cwd=root, capture_output=True,
+                text=True, timeout=30, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return out.stdout.strip() if out.returncode == 0 else ""
+
+    # A linked worktree reports a `--git-dir` under `<common>/worktrees/<name>`
+    # while the primary reports the common dir itself. Comparing the two is
+    # the only check that does not depend on path naming conventions.
+    if is_primary is None:
+        git_dir = _git("rev-parse", "--absolute-git-dir")
+        common = _git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        if not git_dir or not common:
+            return findings  # cannot tell — never block on a broken probe
+        is_primary = os.path.normpath(git_dir) == os.path.normpath(common)
+    if not is_primary:
+        return findings
+
+    if branch is None:
+        branch = _git("symbolic-ref", "--short", "HEAD")
+    if branch not in SHARED_BRANCHES:
+        return findings
+
+    if staged is None:
+        out = _git("diff", "--cached", "--name-only", "--diff-filter=ACMRD")
+        staged = [p for p in out.splitlines() if p.strip()]
+    if not staged:
+        return findings
+
+    work = [
+        p for p in staged
+        if not any(p.startswith(prefix) for prefix in _PRIMARY_COMMIT_ALLOWLIST)
+    ]
+    if not work:
+        return findings  # ledger-only bookkeeping commit — the sanctioned case
+
+    sample = ", ".join(sorted(work)[:4])
+    if len(work) > 4:
+        sample += f", +{len(work) - 4} more"
+    findings.append({
+        "product": "<repo>",
+        "file": sample,
+        "issue": (
+            f"{len(work)} non-ledger file(s) staged on shared branch "
+            f"'{branch}' in the PRIMARY checkout. Work must be isolated in a "
+            f"worktree: `noctus.dev.task_branch action=start slug=<kebab>`, "
+            f"commit there, then integrate. Committing here diverges local "
+            f"'{branch}' from origin and the failure surfaces later as a "
+            f"non-fast-forward at integrate/deploy."
+        ),
+        "severity": "high",
+    })
+    return findings
+
+
 def check_conflict_markers(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:

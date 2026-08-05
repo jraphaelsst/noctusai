@@ -41,6 +41,13 @@ class _MockSupabase:
         self._captured_filters.append(("eq", key, value))
         return self
 
+    def is_(self, key, value):
+        # Real supabase-py exposes `.is_()` for NULL comparisons; the org-wide
+        # recipient tier is `client_id IS NULL`, so the mock needs it or the
+        # tests exercise an error path instead of the code under test.
+        self._captured_filters.append(("is", key, value))
+        return self
+
     def in_(self, key, values):
         self._captured_filters.append(("in", key, list(values)))
         return self
@@ -455,3 +462,119 @@ class TestNewLeadFanout:
 
         assert any(f == ("eq", "is_active", True) for f in admin._captured_filters)
         assert not any(f[0] == "in" for f in admin._captured_filters)
+
+
+# ── per-client recipient routing (migration 045) ───────────────────────────
+
+class _RecipientAdmin:
+    """Chainable double that answers the two-tier recipient query.
+
+    `rows_by_scope` maps the client_id filter (or None for the org-wide tier)
+    to the rows returned, so a test can say "One has recipients, the org tier
+    does not" and have the resolver actually experience that.
+    """
+
+    def __init__(self, rows_by_scope: dict):
+        self.rows_by_scope = rows_by_scope
+        self._scope = "__unset__"
+        self.queried_scopes: list = []
+
+    def schema(self, _n): return self
+    def table(self, _n): return self
+    def select(self, *_a, **_k): return self
+    def eq(self, col, val):
+        if col == "client_id":
+            self._scope = val
+        return self
+    def is_(self, col, _val):
+        if col == "client_id":
+            self._scope = None
+        return self
+    def in_(self, *_a, **_k): return self
+    def order(self, *_a, **_k): return self
+    def execute(self):
+        from types import SimpleNamespace
+        self.queried_scopes.append(self._scope)
+        rows = self.rows_by_scope.get(self._scope, [])
+        self._scope = "__unset__"
+        return SimpleNamespace(data=rows)
+
+
+ORG = UUID("11111111-1111-1111-1111-111111111111")
+ONE = "c2b77620-c550-48e1-b789-b680c7e6bb0d"
+JOAO = "9d4c1b63-9899-48c0-8b93-8fabb545817c"
+
+
+def _svc(admin):
+    from app.services.notification_service import NotificationService
+    return NotificationService(
+        admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
+        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+    )
+
+
+def test_a_client_with_its_own_recipients_gets_ONLY_those():
+    """🔴 The requirement: One's leads reach One's people, not João's."""
+    admin = _RecipientAdmin({
+        ONE: [{"id": "r-one", "name": "One contact"}],
+        None: [{"id": "r-org", "name": "Org fallback"}],
+    })
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    assert tier == "client"
+    assert [r["id"] for r in rows] == ["r-one"]
+
+
+def test_a_client_with_NO_recipients_falls_back_to_the_org_tier():
+    """Silence is the failure mode this whole area shipped with. A client
+    nobody configured must still reach somebody."""
+    admin = _RecipientAdmin({ONE: [], None: [{"id": "r-org"}]})
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    assert tier == "org"
+    assert [r["id"] for r in rows] == ["r-org"]
+
+
+def test_an_UNATTRIBUTED_lead_uses_the_org_tier():
+    """A lead whose Page maps to no client — the state every existing form is
+    in until someone assigns it."""
+    admin = _RecipientAdmin({None: [{"id": "r-org"}]})
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=None)
+    assert tier == "org"
+    assert [r["id"] for r in rows] == ["r-org"]
+    # The client tier must not even be queried when there is no client.
+    assert admin.queried_scopes == [None]
+
+
+def test_the_org_tier_means_client_id_IS_NULL_not_any_client():
+    """🔴 Conflating 'org-wide' with 'all recipients' would make every
+    client-scoped recipient also an org-wide one — One's contact would receive
+    João's leads, which is the exact bug this feature exists to prevent."""
+    admin = _RecipientAdmin({
+        None: [{"id": "r-org"}],
+        ONE: [{"id": "r-one"}],
+        JOAO: [{"id": "r-joao"}],
+    })
+    rows, _ = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=None)
+    assert [r["id"] for r in rows] == ["r-org"]
+
+
+def test_two_clients_are_routed_independently():
+    admin = _RecipientAdmin({ONE: [{"id": "r-one"}], JOAO: [{"id": "r-joao"}]})
+    svc = _svc(admin)
+    assert [r["id"] for r in svc.resolve_lead_recipients(
+        org_id=ORG, client_id=ONE)[0]] == ["r-one"]
+    assert [r["id"] for r in svc.resolve_lead_recipients(
+        org_id=ORG, client_id=JOAO)[0]] == ["r-joao"]
+
+
+def test_a_pre_migration_database_degrades_to_the_whole_roster_not_to_silence():
+    """If the code deploys before migration 045, selecting `client_id` errors.
+    Alerting everyone is wrong-but-loud; alerting nobody is wrong-and-silent,
+    and this feature exists because silence went unnoticed for two real leads."""
+    class _NoColumn(_RecipientAdmin):
+        def execute(self):
+            raise RuntimeError('column "client_id" does not exist')
+
+    svc = _svc(_NoColumn({}))
+    svc._fetch_recipients = lambda **_kw: [{"id": "everyone"}]  # the legacy path
+    rows, tier = svc.resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    assert [r["id"] for r in rows] == ["everyone"]
