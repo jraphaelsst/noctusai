@@ -151,6 +151,64 @@ def _message_from_api(item: dict[str, Any]) -> GmailMessage:
 # ---- RealGmailClient -------------------------------------------------------
 
 
+def _as_google_credentials(creds: Any) -> Any:
+    """Accept EITHER a ready `google.oauth2.credentials.Credentials` OR this
+    package's `OAuthGmailCredentials` data carrier, and return the former.
+
+    🔴 THE GAP THIS CLOSES. `GmailCredentialResolver` is documented to return
+    `OAuthGmailCredentials`, and this module's own `__init__` docstring shows
+    `make_gmail_client(oauth_credentials=resolver.get_credentials(tenant))` as
+    THE usage. But `RealGmailClient` passed that dataclass straight to
+    `googleapiclient.build`, which needs a real `Credentials` — so the
+    documented path failed at first send with:
+
+        'OAuthGmailCredentials' object has no attribute 'authorize'
+
+    A half-shipped adapter: Protocol, dataclass, Fake, Real and factory all
+    present, with no seam converting the carrier into what the client needs.
+    Found 2026-08-06 by the first production consumer (social-wiring lead
+    notifications), whose email silently never sent.
+
+    `google_calendar.oauth_adapter` already does exactly this conversion for
+    its own carrier; Gmail simply never got the equivalent. Doing it HERE
+    rather than in the consumer means every future consumer inherits it —
+    fixing it consumer-side would have been the fork this repo's seed-first
+    rule exists to prevent.
+
+    Detection is duck-typed on `before_request` — the method every
+    `google.auth.credentials.Credentials` implements — so an already-built
+    credential (or a test double shaped like one) passes through untouched.
+
+    🔴 NOT `authorize`. That is the OLD `oauth2client` interface; a modern
+    `google.oauth2.credentials.Credentials` does not have it. Sentinelling on
+    `authorize` would re-convert an already-valid credential on every call —
+    silently re-refreshing tokens and burning quota. Caught by the test below
+    asserting the converted object's real interface.
+    """
+    if creds is None or hasattr(creds, "before_request"):
+        return creds
+
+    from google.oauth2.credentials import Credentials
+
+    google_creds = Credentials(
+        token=getattr(creds, "token", None),
+        refresh_token=getattr(creds, "refresh_token", None),
+        token_uri=getattr(creds, "token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=getattr(creds, "client_id", None),
+        client_secret=getattr(creds, "client_secret", None),
+        scopes=list(getattr(creds, "scopes", []) or []),
+    )
+    # Refresh eagerly when the stored access token is stale/absent. Without
+    # this the FIRST call after a restart fails, because the stored
+    # `access_token` is typically hours old while `refresh_token` is the only
+    # durable half — the exact reason the carrier makes `token` optional.
+    if not google_creds.valid and google_creds.refresh_token:
+        from google.auth.transport.requests import Request
+
+        google_creds.refresh(Request())
+    return google_creds
+
+
 class RealGmailClient:
     """Real Gmail API v1 client.
 
@@ -177,7 +235,7 @@ class RealGmailClient:
                 "private mailbox; an api_key cannot authenticate one)"
             )
         self._api_key = api_key
-        self._oauth_credentials = oauth_credentials
+        self._oauth_credentials = _as_google_credentials(oauth_credentials)
 
     def _service(self) -> Any:
         return build(

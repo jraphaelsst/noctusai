@@ -500,3 +500,59 @@ class TestOAuthGmailCredentials:
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
         )
         assert creds.scopes == ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+# ── OAuthGmailCredentials → google Credentials conversion (2026-08-06) ─────
+# The seed shipped Protocol + dataclass + Fake + Real + factory, and its own
+# docstrings named
+#   make_gmail_client(oauth_credentials=resolver.get_credentials(tenant))
+# as THE usage — but nothing converted the dataclass into what
+# googleapiclient needs. The documented path died at the first real send:
+#   'OAuthGmailCredentials' object has no attribute 'authorize'
+# Found by the first production consumer, whose email silently never sent.
+
+from noctusai_lib.integrations.gmail.real import (  # noqa: E402
+    _as_google_credentials,
+)
+
+
+class _AlreadyGoogleShaped:
+    """Duck-types a real `Credentials` — must pass through untouched.
+
+    `before_request` is the marker, NOT `authorize`: the latter belongs to
+    the retired `oauth2client` and is absent from every modern
+    `google.auth.credentials.Credentials`.
+    """
+    def before_request(self, *_a, **_k):  # pragma: no cover - marker only
+        return None
+
+
+def test_an_already_google_shaped_credential_passes_through_unchanged():
+    """Re-converting a live credential would re-refresh its token on every
+    call — silent quota burn, not a visible failure."""
+    creds = _AlreadyGoogleShaped()
+    assert _as_google_credentials(creds) is creds
+
+
+def test_none_passes_through_so_the_loud_ValueError_still_fires():
+    """RealGmailClient raises on None by design — the converter must not
+    turn that into a confusing TypeError first."""
+    assert _as_google_credentials(None) is None
+
+
+def test_the_dataclass_is_converted_to_a_google_credentials():
+    """🔴 The regression. If this stops converting, every Gmail send fails
+    with an AttributeError at the API boundary."""
+    from noctusai_lib.integrations.gmail import OAuthGmailCredentials
+
+    carrier = OAuthGmailCredentials(
+        refresh_token="rt", client_id="cid", client_secret="sec",
+        token="at", scopes=["https://www.googleapis.com/auth/gmail.send"],
+    )
+    out = _as_google_credentials(carrier)
+    assert out is not carrier
+    # The whole point: the result speaks the interface googleapiclient needs.
+    assert hasattr(out, "before_request")
+    assert out.refresh_token == "rt"
+    assert out.client_id == "cid"
+    assert "gmail.send" in " ".join(out.scopes or [])
