@@ -68,6 +68,41 @@ class DispatchOutcome:
     recipients: int = 0  # how many recipient ROWS were addressed
 
 
+class _GmailEmailSender:
+    """Adapts a seed `GmailClient` to `EmailService`'s send signature.
+
+    Exists so `_send_email_logged` stays transport-agnostic: it already knows
+    how to call `send_email(to=, subject=, html_body=, text_body=)` and how to
+    turn an `EmailServiceError` into a `failed` log row. Wrapping here means
+    swapping SMTP → Gmail changed the TRANSPORT and nothing about the
+    per-recipient error containment that surrounds it.
+
+    Gmail failures are re-raised as `EmailServiceError` for exactly that
+    reason — a 403 (missing scope) or 429 (quota) must land in
+    `notification_log` with its message, not escape as an unhandled type the
+    caller has no branch for.
+    """
+
+    def __init__(self, gmail: Any, *, sender_label: str | None = None) -> None:
+        self._gmail = gmail
+        #: The mailbox mail is sent FROM. Gmail derives the actual `From:`
+        #: header from the authenticated account, so this is for logging and
+        #: diagnostics only — it is never used to forge a sender.
+        self.sender_label = sender_label
+
+    async def send_email(
+        self, *, to: str, subject: str, html_body: str, text_body: str
+    ) -> None:
+        try:
+            await self._gmail.send_message(
+                to=to, subject=subject, body_text=text_body, body_html=html_body
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise EmailServiceError(
+                f"gmail send failed (from={self.sender_label or '?'}): {exc}"
+            ) from exc
+
+
 class NotificationService:
     """Per-request collaborator. Constructed from the service-role
     Supabase admin client (writes go through service-role because the
@@ -91,6 +126,7 @@ class NotificationService:
         waha_session: str,
         email_service_factory: "Callable[..., EmailService] | None" = None,
         whatsapp_client_factory: "Callable[..., Any] | None" = None,
+        gmail_sender_factory: "Callable[..., Any] | None" = None,
     ):
         self._admin = admin_supabase
         self._smtp_host = smtp_host
@@ -118,6 +154,15 @@ class NotificationService:
         # tests) or rely on the patchable module global (existing tests).
         self._whatsapp_client_factory: "Callable[..., Any] | None" = (
             whatsapp_client_factory
+        )
+        # DI seam for the Gmail transport. Signature is
+        # ``(org_id=, client_id=) -> sender | None`` so a test can assert
+        # WHICH client's mailbox was asked for — the per-client routing is
+        # the point of this feature, and a factory that ignored client_id
+        # would pass a naive test while sending every client's mail from one
+        # mailbox.
+        self._gmail_sender_factory: "Callable[..., Any] | None" = (
+            gmail_sender_factory
         )
 
     async def notify_upload(self, *, job_id: UUID) -> DispatchOutcome:
@@ -213,6 +258,10 @@ class NotificationService:
             org_id=org_id,
             recipients=recipients,
             message=message,
+            # Selects the SENDING mailbox, mirroring the tier that selected
+            # the recipients — so One's leads are sent from One's Gmail to
+            # One's people, and João's from João's.
+            client_id=client_id,
         )
 
     # ─── Reusable fan-out core ──────────────────────────────────────────
@@ -224,6 +273,7 @@ class NotificationService:
         recipients: list[dict[str, Any]],
         message: dict[str, str],
         upload_job_id: UUID | None = None,
+        client_id: Any = None,
     ) -> DispatchOutcome:
         """Channel fan-out shared by every notification entry point.
 
@@ -243,7 +293,20 @@ class NotificationService:
         # instead of sends, safe for dev). Email service raises
         # EmailNotConfigured when SMTP creds are missing; in that case
         # email channel becomes a per-log "skipped" row, not a fatal.
-        email_service = self._try_build_email_service()
+        # Email transport, in preference order:
+        #   1. the CLIENT's connected Gmail mailbox — mail arrives from a real
+        #      address the recipient recognises, and each client sends from its
+        #      own account, so One's leads never appear to come from João's.
+        #   2. SMTP, if it is configured.
+        # SMTP has never actually been configured on this deployment (verified
+        # 2026-08-05: unset in prod env, container env and the Fernet vault),
+        # which is why email notifications had never worked. Gmail is now the
+        # real transport; SMTP stays as the fallback rather than being ripped
+        # out, because removing a configured-elsewhere path is a separate
+        # decision from adding this one.
+        email_service = self._try_build_gmail_sender(
+            org_id=org_id, client_id=client_id
+        ) or self._try_build_email_service()
         whatsapp_client = self._build_whatsapp_client()
 
         # Dispatch per recipient × per channel. Tasks gathered in
@@ -295,7 +358,10 @@ class NotificationService:
                 upload_job_id=upload_job_id, org_id=org_id,
                 recipient_id=recipient["id"],
                 channel="email", status="failed",
-                error_message="SMTP not configured (.env: SMTP_USER / SMTP_PASSWORD)",
+                error_message=(
+                    "no email transport: no connected Gmail mailbox for this "
+                    "client (Configuração → Integrações) and SMTP unset"
+                ),
             )
             return False
         try:
@@ -452,6 +518,39 @@ class NotificationService:
                 "migration 045 applied?) — falling back to the whole roster"
             )
             return self._fetch_recipients(org_id=org_id)
+
+    def _try_build_gmail_sender(self, *, org_id: UUID, client_id: Any = None):
+        """The client's connected Gmail mailbox as an email transport.
+
+        Returns an object exposing the same ``send_email(...)`` signature as
+        ``EmailService`` so the per-recipient send path is untouched — the
+        transport swap is invisible below this line.
+
+        ``None`` when no usable mailbox exists (not connected, no refresh
+        token, missing send scope, GCP app unconfigured). Each of those is
+        logged with its specific cause by ``build_gmail_client_for``; the
+        caller then falls back to SMTP and, failing that, writes a `failed`
+        notification_log row. At no point does a send silently succeed.
+        """
+        if self._gmail_sender_factory is not None:
+            return self._gmail_sender_factory(org_id=org_id, client_id=client_id)
+        try:
+            from app.config import settings
+            from app.services.account_credentials import build_gmail_client_for
+
+            gmail, sender = build_gmail_client_for(
+                self._admin, settings, org_id=org_id, client_id=client_id
+            )
+            if gmail is None:
+                return None
+            return _GmailEmailSender(gmail, sender_label=sender)
+        except Exception:  # noqa: BLE001 — never let transport selection raise
+            logger.exception(
+                "notification: could not build a Gmail sender for org=%s "
+                "client=%s; falling back to SMTP",
+                org_id, client_id,
+            )
+            return None
 
     def _try_build_email_service(self) -> EmailService | None:
         """Returns None when SMTP isn't configured — callers log the

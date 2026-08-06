@@ -43,6 +43,7 @@ __all__ = [
     "MultiAccountCredentialStore",
     "ProviderNotWired",
     "build_credential_store",
+    "build_gmail_client_for",
     "build_service_for_org",
     "build_youtube_service_for_org",
     "resolve_default_account",
@@ -237,10 +238,115 @@ def _build_youtube_service(admin_client: Any, cfg: Any, store: CredentialStore):
 
 _SERVICE_FACTORIES: dict[str, Callable[[Any, Any, CredentialStore], Any]] = {
     "youtube": _build_youtube_service,
-    # "gmail":          _build_gmail_service,        # ← register as wired
+    # "gmail" is deliberately NOT here — see `build_gmail_client_for` below.
+    # This registry's contract is (admin, cfg, store) -> service, where the
+    # store resolves the org's DEFAULT account. Gmail's whole point here is
+    # picking a mailbox by CLIENT, which needs the org AND client id at call
+    # time, so squeezing it in would mean either a lazy wrapper that lies
+    # about when credentials resolve, or silently always sending from the
+    # org default. Both are worse than a purpose-built resolver.
     # "google_drive":   _build_drive_service,
     # "meta":           _build_meta_service,
 }
+
+
+def build_gmail_client_for(
+    admin_client: Any,
+    cfg: Any,
+    *,
+    org_id: UUID,
+    client_id: Optional[UUID] = None,
+) -> tuple[Any, Optional[str]]:
+    """Resolve the Gmail mailbox that should SEND for a given client.
+
+    Returns ``(client, sender_email)``; ``(None, None)`` when no usable
+    mailbox exists. Resolution order:
+
+    1. the client's own connected mailbox (`integration_accounts` row with
+       `provider='gmail'` and that `client_id`), else
+    2. the org's default mailbox — so a client without its own connection
+       still sends, rather than silently dropping the email.
+
+    🔴 The OAuth CLIENT id/secret are NOT in the stored bundle — only the
+    per-user `refresh_token` is. That pair belongs to the GCP OAuth app
+    (`GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`, shared with Calendar/Drive) and comes
+    from config, exactly as `_build_youtube_service` sources its own. Building
+    from the bundle alone yields a credential that cannot refresh — it works
+    until the access token expires an hour later, which is the worst possible
+    failure shape.
+
+    Never returns a Fake. A Fake here would accept every send and deliver
+    nothing, which is precisely the silent-success this whole notification
+    area has been bitten by.
+    """
+    from noctusai_lib.integrations.gmail import (
+        GMAIL_SEND_SCOPE,
+        OAuthGmailCredentials,
+        make_gmail_client,
+    )
+
+    if not getattr(cfg, "google_oauth_client_id", None) or not getattr(
+        cfg, "google_oauth_client_secret", None
+    ):
+        logger.warning(
+            "gmail: GOOGLE_OAUTH_CLIENT_ID/SECRET unset — cannot build a "
+            "refreshable credential; email channel unavailable"
+        )
+        return None, None
+
+    svc = build_integration_account_service(
+        admin_client, encryption_key=cfg.encryption_key
+    )
+    accounts = svc.list_accounts(org_id, provider="gmail")
+    if not accounts:
+        logger.warning("gmail: org %s has no connected mailbox", org_id)
+        return None, None
+
+    account = None
+    if client_id is not None:
+        account = next(
+            (a for a in accounts if str(a.client_id or "") == str(client_id)), None
+        )
+    if account is None:
+        account = next((a for a in accounts if a.is_default), accounts[0])
+
+    try:
+        bundle = svc.decrypt_credential(account.id, account.org_id)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "gmail: could not decrypt credentials for account %s", account.id
+        )
+        return None, None
+
+    refresh_token = bundle.get("refresh_token")
+    if not refresh_token:
+        # Google only returns a refresh_token on the FIRST consent unless
+        # prompt=consent is forced. Without it the mailbox cannot be used
+        # unattended, and saying so beats a token that dies in an hour.
+        logger.warning(
+            "gmail: account %s (%s) has no refresh_token — re-connect the "
+            "mailbox with consent to enable unattended sending",
+            account.id, account.account_label,
+        )
+        return None, None
+
+    scopes = bundle.get("scopes") or []
+    if GMAIL_SEND_SCOPE not in scopes:
+        logger.warning(
+            "gmail: account %s (%s) lacks the %s scope — it can read but not "
+            "send; re-connect granting send",
+            account.id, account.account_label, GMAIL_SEND_SCOPE,
+        )
+        return None, None
+
+    creds = OAuthGmailCredentials(
+        refresh_token=refresh_token,
+        client_id=cfg.google_oauth_client_id,
+        client_secret=cfg.google_oauth_client_secret,
+        token=bundle.get("access_token"),
+        scopes=list(scopes),
+    )
+    return make_gmail_client(oauth_credentials=creds), account.account_label
 
 
 def register_service_factory(

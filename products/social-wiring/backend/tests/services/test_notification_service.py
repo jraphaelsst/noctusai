@@ -578,3 +578,140 @@ def test_a_pre_migration_database_degrades_to_the_whole_roster_not_to_silence():
     svc._fetch_recipients = lambda **_kw: [{"id": "everyone"}]  # the legacy path
     rows, tier = svc.resolve_lead_recipients(org_id=ORG, client_id=ONE)
     assert [r["id"] for r in rows] == ["everyone"]
+
+
+# ── Gmail as the email transport, per client (2026-08-05) ──────────────────
+# SMTP was never configured on this deployment — verified unset in prod env,
+# container env AND the Fernet vault — so email notifications had never once
+# worked. Email now sends from the CLIENT's connected Gmail mailbox.
+
+def _raise_unconfigured(**_kw):
+    from app.services.email_service import EmailNotConfigured
+    raise EmailNotConfigured("no smtp configured")
+
+
+class _RecordingGmail:
+    """Stands in for the seed GmailClient. Records the sends."""
+
+    def __init__(self, fail: bool = False):
+        self.sent: list[dict] = []
+        self.fail = fail
+
+    async def send_message(self, *, to, subject, body_text, body_html=None):
+        if self.fail:
+            raise RuntimeError("403 insufficient scope")
+        self.sent.append({"to": to, "subject": subject})
+        from types import SimpleNamespace
+        return SimpleNamespace(message_id="m1", thread_id="t1")
+
+
+def _svc_with_gmail(admin, gmail, capture=None):
+    from app.services.notification_service import (
+        NotificationService, _GmailEmailSender,
+    )
+
+    def factory(*, org_id, client_id=None):
+        if capture is not None:
+            capture.append({"org_id": org_id, "client_id": client_id})
+        return _GmailEmailSender(gmail, sender_label="one@example.com")
+
+    return NotificationService(
+        admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
+        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+        gmail_sender_factory=factory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_lead_email_is_sent_through_the_clients_gmail_mailbox():
+    admin = _MockSupabase()
+    admin.set_select(data=[{
+        "id": str(uuid4()), "name": "One contact",
+        "email": "contact@one.com", "whatsapp_number": None, "is_active": True,
+    }])
+    gmail = _RecordingGmail()
+    svc = _svc_with_gmail(admin, gmail)
+
+    await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+
+    assert len(gmail.sent) == 1
+    assert gmail.sent[0]["to"] == "contact@one.com"
+
+
+@pytest.mark.asyncio
+async def test_the_SENDING_mailbox_is_selected_by_the_SAME_client_as_the_recipients():
+    """🔴 The requirement. A factory that ignored `client_id` would pass a
+    naive send-test while mailing every client's leads from one mailbox —
+    which is the failure this feature exists to prevent."""
+    admin = _MockSupabase()
+    admin.set_select(data=[{
+        "id": str(uuid4()), "name": "One", "email": "c@one.com",
+        "whatsapp_number": None, "is_active": True,
+    }])
+    seen: list[dict] = []
+    svc = _svc_with_gmail(admin, _RecordingGmail(), capture=seen)
+
+    org = uuid4()
+    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=ONE)
+
+    assert len(seen) == 1
+    assert seen[0]["client_id"] == ONE
+    assert seen[0]["org_id"] == org
+
+
+@pytest.mark.asyncio
+async def test_two_clients_resolve_two_different_mailboxes():
+    admin = _MockSupabase()
+    row = [{"id": str(uuid4()), "name": "R", "email": "r@x.com",
+            "whatsapp_number": None, "is_active": True}]
+    # `set_select` QUEUES one response per call — two dispatches need two.
+    admin.set_select(data=row)
+    admin.set_select(data=row)
+    seen: list[dict] = []
+    svc = _svc_with_gmail(admin, _RecordingGmail(), capture=seen)
+
+    org = uuid4()
+    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=ONE)
+    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=JOAO)
+
+    assert [s["client_id"] for s in seen] == [ONE, JOAO]
+
+
+@pytest.mark.asyncio
+async def test_a_gmail_send_failure_is_logged_as_failed_never_raised():
+    """A 403 (missing scope) or 429 (quota) must land in notification_log with
+    its message — the webhook that triggered this must not see an exception."""
+    admin = _MockSupabase()
+    admin.set_select(data=[{
+        "id": str(uuid4()), "name": "R", "email": "r@x.com",
+        "whatsapp_number": None, "is_active": True,
+    }])
+    svc = _svc_with_gmail(admin, _RecordingGmail(fail=True))
+
+    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+    assert outcome.failed >= 1
+    assert outcome.succeeded == 0
+
+
+@pytest.mark.asyncio
+async def test_no_mailbox_falls_back_rather_than_silently_succeeding():
+    """`None` from the Gmail factory must degrade to SMTP (unset here) and
+    therefore to an explicit `failed` row — never to a fake that accepts the
+    send and delivers nothing."""
+    admin = _MockSupabase()
+    admin.set_select(data=[{
+        "id": str(uuid4()), "name": "R", "email": "r@x.com",
+        "whatsapp_number": None, "is_active": True,
+    }])
+    from app.services.notification_service import NotificationService
+
+    svc = NotificationService(
+        admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="",
+        smtp_password="", waha_base_url="", waha_api_key="", waha_session="",
+        gmail_sender_factory=lambda **_kw: None,
+        # SMTP unconfigured — exactly prod's real state.
+        email_service_factory=_raise_unconfigured,
+    )
+    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+    assert outcome.succeeded == 0
+    assert outcome.failed >= 1
