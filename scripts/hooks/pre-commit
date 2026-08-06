@@ -389,6 +389,28 @@ if [[ -n "$STAGED_LOADING_TSX" ]] && have_py; then
     # this gate; never block the commit on a brand-new detector's findings.
 fi
 
+# ─── 6g. PostgREST schema-qualified table gate (blocking, only when backend ──
+# Python changed) ────────────────────────────────────────────────────────
+# Keeper `check_postgrest_schema_qualified_table` +
+# `KB § PATTERNS/backend/postgrest-schema-targeting.md`. A Supabase client is
+# ALREADY schema-bound, so `.table(name)` resolves RELATIVE to that schema and
+# never reads a dot as a separator. `f"{deps._db.schema}.invitations"` therefore
+# asks for `<schema>.<schema>.<table>` → 500 "Could not find the table ... in
+# the schema cache" on EVERY call, phrased so it reads as a missing migration.
+# Live incident 2026-08-06: every team invite across the 9 products mounting
+# the seed team router, green in CI ~3 months (MockSupabaseClient keys tables
+# by whatever string it is handed, so the qualified fixtures agreed with the
+# qualified caller). BLOCKING, severity high — a qualified name never works.
+STAGED_BACKEND_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/.*|products/[^/]+/backend/.*)\.py$' || true)
+if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
+    echo "[pre-commit] backend .py staged — checking for schema-qualified PostgREST table names..."
+    if ! "$PY" "$CLI" --check-postgrest-schema-qualified-table --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] POSTGREST-SCHEMA-QUALIFIED-TABLE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] The Supabase client already carries its schema — pass the BARE table name ('invitations', not f\"{schema}.invitations\"). See KB § PATTERNS/backend/postgrest-schema-targeting.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),

@@ -15,6 +15,7 @@ from tools.noctus.dev.compliance import (
     check_silent_errors,
     check_clean_folder_violations,
     check_detector_has_regression_test,
+    check_postgrest_schema_qualified_table,
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
     check_seed_canonical_default,
@@ -2374,6 +2375,132 @@ class TestCheckPlaywrightSupabaseEnv:
     def test_no_webserver_is_out_of_scope(self):
         cfg = "export default defineConfig({ testDir: './e2e' });\n"
         assert check_playwright_supabase_env(self._mk("nows", cfg)) == []
+
+
+class TestCheckPostgrestSchemaQualifiedTable:
+    """PostgREST table names are schema-RELATIVE — a qualified name 500s.
+
+    Live incident 2026-08-06: `f"{deps._db.schema}.invitations"` in the seed
+    team router made PostgREST answer
+    `Could not find the table 'social_wiring.social_wiring.invitations'` on
+    every team invite, across all 9 products mounting that router. Green in CI
+    for ~3 months because the test fixtures qualified the name too.
+    """
+
+    def _mk(self, body: str, *, where: str = "seed/framework/backend/x.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="postgrest_qualified_test_"))
+        target = tmp / where
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp
+
+    # ── Flag: the interpolated shape, at a `.table()` call site ────────
+    def test_interpolated_at_table_call_flags(self):
+        repo = self._mk('x = db.table(f"{deps._db.schema}.invitations")\n')
+        issues = check_postgrest_schema_qualified_table(repo)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+        assert "interpolated" in issues[0]["issue"]
+
+    # ── Flag: the interpolated shape at a DOMAIN-HELPER boundary ───────
+    def test_interpolated_at_helper_call_flags(self):
+        """The actual live shape. The qualified string was composed as a
+        helper argument and only reached `.table()` two frames later, inside
+        the lib — a call-site-anchored detector would have missed it."""
+        repo = self._mk(
+            'r = validate_invitation(admin, f"{deps._db.schema}.invitations", tok)\n'
+        )
+        issues = check_postgrest_schema_qualified_table(repo)
+        assert len(issues) == 1, issues
+        assert "interpolated" in issues[0]["issue"]
+
+    # ── Flag: the hardcoded literal shape ──────────────────────────────
+    def test_literal_dotted_name_flags(self):
+        repo = self._mk('x = db.table("social_wiring.invitations").select("*")\n')
+        issues = check_postgrest_schema_qualified_table(repo)
+        assert len(issues) == 1, issues
+        assert "literal" in issues[0]["issue"]
+        assert "social_wiring.invitations" in issues[0]["issue"]
+
+    def test_literal_at_invitation_helper_flags(self):
+        repo = self._mk('cancel_invitation(db, "erp.invitations", iid, org)\n')
+        issues = check_postgrest_schema_qualified_table(repo)
+        assert len(issues) == 1, issues
+
+    # ── Flag: `.from_()` is the same PostgREST builder ─────────────────
+    def test_from_alias_flags(self):
+        repo = self._mk('x = db.from_("therapy.invitations")\n')
+        issues = check_postgrest_schema_qualified_table(repo)
+        assert len(issues) == 1, issues
+
+    # ── No-flag: the correct bare form ─────────────────────────────────
+    def test_bare_table_name_passes(self):
+        repo = self._mk('x = db.table("invitations").select("*")\n')
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── No-flag: an f-string with no dot after the interpolation ───────
+    def test_interpolated_without_dot_passes(self):
+        repo = self._mk('x = db.table(f"{schema_prefix}_events")\n')
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── No-flag: a dotted f-string that interpolates something else ────
+    def test_dotted_fstring_without_schema_passes(self):
+        repo = self._mk('p = f"{basename}.json"\nx = db.table("leads")\n')
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── No-flag: a dotted literal NOT in a table-name position ─────────
+    def test_dotted_literal_elsewhere_passes(self):
+        """Module paths, filenames and version strings are dotted too — the
+        literal shape is anchored to table-name arguments for exactly this
+        reason."""
+        repo = self._mk(
+            'mod = importlib.import_module("app.services")\n'
+            'x = db.table("invitations")\n'
+        )
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── No-flag: PROSE describing the bug (why this is AST-based) ──────
+    def test_docstring_mentioning_the_bug_does_not_self_flag(self):
+        """A regex over source text cannot tell an f-string in CODE from the
+        same characters quoted inside a docstring — which would make the
+        pattern doc, the fix's own comments, and these tests self-flag."""
+        repo = self._mk(
+            '"""Never write db.table(f"{deps._db.schema}.invitations") —\n'
+            'PostgREST resolves it as social_wiring.social_wiring.invitations.\n'
+            '"""\n'
+            '# also not: db.table("social_wiring.invitations")\n'
+            'x = db.table("invitations")\n'
+        )
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── No-flag: escape hatch ──────────────────────────────────────────
+    def test_escape_hatch_suppresses(self):
+        repo = self._mk(
+            "# postgrest-qualified-ok — this table's NAME contains a dot\n"
+            'x = db.table("weird.name")\n'
+        )
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── Scope: products/<slug>/backend is scanned; frontend is not ─────
+    def test_product_backend_is_in_scope(self):
+        repo = self._mk(
+            'x = db.table("erp.invitations")\n',
+            where="products/erp-imobiliario/backend/app/r.py",
+        )
+        assert len(check_postgrest_schema_qualified_table(repo)) == 1
+
+    def test_unparseable_file_is_skipped_not_crashed(self):
+        repo = self._mk('x = db.table("a.b"\n')  # syntax error
+        assert check_postgrest_schema_qualified_table(repo) == []
+
+    # ── The real repo must be clean ────────────────────────────────────
+    def test_real_repo_is_clean(self):
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_postgrest_schema_qualified_table(_ROOT)
+        assert issues == [], (
+            "Schema-qualified PostgREST table name(s) present — each is a "
+            f"guaranteed runtime 500: {[i['file'] for i in issues]}"
+        )
 
 
 class TestCheckRootRequirementsSuperset:

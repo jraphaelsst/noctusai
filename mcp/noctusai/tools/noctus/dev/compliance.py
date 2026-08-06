@@ -7693,6 +7693,232 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_postgrest_schema_qualified_table` — a PostgREST/Supabase client is
+# ALREADY bound to a schema (`make_supabase_client(schema=…)` sets the
+# Accept-Profile/Content-Profile headers). `.table(name)` resolves relative to
+# that binding and NEVER parses a dot as a schema separator — it looks for a
+# table whose NAME contains a dot. So `db.table(f"{schema}.invitations")` asks
+# for a table that cannot exist and PostgREST answers 500:
+#
+#   Could not find the table 'social_wiring.social_wiring.invitations'
+#   in the schema cache
+#
+# The doubled prefix in the message is the tell, but it reads as a missing
+# migration — the 2026-08-06 live incident (every team invite across the 9
+# products mounting the seed team router) sent the investigation to
+# migrations/ and the PostgREST schema cache, both of which were fine.
+#
+# Unit tests cannot catch it: `MockSupabaseClient` keys tables by whatever
+# string it is handed, so a fixture seeding "test.invitations" agrees with a
+# caller asking for "test.invitations" and stays green for months against
+# code that 500s on first real contact (fixture-vs-real false-green).
+# Severity `high` — a guaranteed runtime 500, not a style preference.
+# KB § PATTERNS/backend/postgrest-schema-targeting.md.
+# ---------------------------------------------------------------------------
+
+_POSTGREST_QUALIFIED_SEVERITY = "high"
+
+_POSTGREST_QUALIFIED_EXCLUDED_PARTS: set[str] = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    ".backup", "archive",
+}
+
+# Escape hatch — for the vanishingly rare table whose name genuinely contains
+# a dot. Same-line or up-to-3-preceding-line comment.
+_POSTGREST_QUALIFIED_RATIONALE_RE = re.compile(r"postgrest-qualified-ok", re.IGNORECASE)
+_POSTGREST_QUALIFIED_RATIONALE_WINDOW = 3
+
+# Callees whose table-name argument this keeper reasons about. `.table` /
+# `.from_` are the PostgREST builders themselves; the invitations-domain
+# helpers take the table name as their 2nd positional arg and are where the
+# 2026-08-06 bug actually lived (the qualified string only reached `.table()`
+# two frames later, inside the lib — a call-site-anchored check would have
+# missed the very incident that motivated this keeper).
+_POSTGREST_TABLE_ARG_CALLEES: frozenset[str] = frozenset({
+    "table", "from_",
+    "create_invitation", "validate_invitation", "accept_invitation",
+    "cancel_invitation", "list_pending_invitations", "expire_old_invitations",
+})
+
+# A bare table identifier: `invitations`, `mc_posts`. Two of these joined by a
+# dot is the qualified shape.
+_POSTGREST_QUALIFIED_LITERAL_RE = re.compile(r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")
+
+
+def _postgrest_scan_roots(root: Path) -> list[Path]:
+    """Backend Python that talks to Supabase: the seed + every product API."""
+    roots: list[Path] = []
+    seed = root / "seed"
+    if seed.is_dir():
+        roots.append(seed)
+    products = root / "products"
+    if products.is_dir():
+        for product_dir in sorted(products.iterdir()):
+            backend = product_dir / "backend"
+            if backend.is_dir():
+                roots.append(backend)
+    return roots
+
+
+def _postgrest_callee_name(node: ast.Call) -> str | None:
+    """`db.table(...)` -> "table"; `create_invitation(...)` -> the bare name."""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _postgrest_qualified_fstring(node: ast.AST) -> str | None:
+    """Return the rendered f-string when it has the `{…schema…}.<ident>` shape.
+
+    Matches `f"{deps._db.schema}.invitations"` — an interpolation whose source
+    mentions `schema`, immediately followed by a literal starting with a dot
+    and continuing into a table identifier. Returns None otherwise, so
+    `f"{prefix}_events"` (no dot), `f"{schema} rows"` (no dot) and
+    `f"{path}.json"` (no `schema`) are all left alone.
+
+    Working on the AST rather than the raw text is what keeps prose out: a
+    docstring *describing* the bug is an `ast.Constant`, never a `JoinedStr`,
+    so the pattern library and this keeper's own tests do not self-flag.
+    """
+    if not isinstance(node, ast.JoinedStr):
+        return None
+    parts = node.values
+    for i, part in enumerate(parts[:-1]):
+        if not isinstance(part, ast.FormattedValue):
+            continue
+        try:
+            expr_src = ast.unparse(part.value)
+        except Exception as exc:  # pragma: no cover — unparse is total in 3.9+
+            logger.debug("compliance: cannot unparse f-string part (%s)", exc)
+            continue
+        if "schema" not in expr_src:
+            continue
+        nxt = parts[i + 1]
+        if not isinstance(nxt, ast.Constant) or not isinstance(nxt.value, str):
+            continue
+        if re.match(r"^\.[A-Za-z_]\w*", nxt.value):
+            return f'f"{{{expr_src}}}{nxt.value}"'
+    return None
+
+
+def check_postgrest_schema_qualified_table(repo_root: Path | None = None) -> list[dict]:
+    """Flag schema-qualified PostgREST table names — they are schema-RELATIVE.
+
+    The client returned by `DatabaseModule.get_client()` /
+    `get_admin_client()` / `get_core_client()` already carries its schema.
+    Qualifying the table name on top of that produces
+    `<schema>.<schema>.<table>`, which PostgREST reports as a missing table —
+    a 500 on every call, phrased so it reads like a missing migration.
+
+    Two shapes, both flagged:
+
+      1. **Interpolated** — any `f"{…schema…}.<ident>"`, wherever it is built.
+         This is the form that shipped live on 2026-08-06 (introduced by
+         `06b5eeb6`, green in CI ~3 months because the test fixtures qualified
+         the name too). Not anchored to a call site: the bug composed the
+         string at the domain-helper boundary, frames away from `.table()`.
+      2. **Literal** — a dotted string passed to `.table(...)` / `.from_(...)`
+         or to an invitations-domain helper. Anchored, because a bare dotted
+         string is far too common elsewhere (module paths, filenames).
+
+    AST-based (`KB § PATTERNS/common/ast.md`): a regex over source text cannot
+    separate an f-string in CODE from the same characters quoted inside a
+    docstring, which would make the pattern doc and these very tests self-flag.
+
+    Severity `_POSTGREST_QUALIFIED_SEVERITY` (`high`). Escape hatch:
+    `postgrest-qualified-ok` in a same-line or up-to-3-preceding-line comment.
+    Per `KB § PATTERNS/backend/postgrest-schema-targeting.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for scan_root in _postgrest_scan_roots(root):
+        for path in sorted(scan_root.rglob("*.py")):
+            if any(p in _POSTGREST_QUALIFIED_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            # Cheap pre-filter — most modules never touch PostgREST at all.
+            if not any(
+                marker in content
+                for marker in (".table(", ".from_(", "schema}", "invitation")
+            ):
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            try:
+                tree = ast.parse(content)
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+
+            lines = content.splitlines()
+
+            def _escape_hatched(line_no: int) -> bool:
+                window_start = max(
+                    0, line_no - 1 - _POSTGREST_QUALIFIED_RATIONALE_WINDOW
+                )
+                return any(
+                    _POSTGREST_QUALIFIED_RATIONALE_RE.search(ln)
+                    for ln in lines[window_start:line_no]
+                )
+
+            def _flag(line_no: int, shape: str, snippet: str) -> None:
+                if _escape_hatched(line_no):
+                    return
+                issues.append({
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{line_no}` builds a schema-qualified "
+                        f"table name ({shape} form): `{snippet}`. The Supabase "
+                        f"client is ALREADY bound to its schema, so PostgREST "
+                        f"resolves this as `<schema>.<schema>.<table>` and "
+                        f"answers 500 \"Could not find the table ... in the "
+                        f"schema cache\" — on every call. Pass the BARE name. "
+                        f"Live incident 2026-08-06 (seed team router; all 9 "
+                        f"products mounting it). Per "
+                        f"`KB § PATTERNS/backend/postgrest-schema-targeting.md`. "
+                        f"Escape hatch: `postgrest-qualified-ok` in a same-line "
+                        f"or preceding-line comment."
+                    ),
+                    "severity": _POSTGREST_QUALIFIED_SEVERITY,
+                })
+
+            for node in ast.walk(tree):
+                # Shape 1 — interpolated, anywhere in the module.
+                rendered = _postgrest_qualified_fstring(node)
+                if rendered is not None:
+                    _flag(node.lineno, "interpolated", rendered)
+                    continue
+
+                # Shape 2 — dotted literal at a table-name argument position.
+                if not isinstance(node, ast.Call):
+                    continue
+                if _postgrest_callee_name(node) not in _POSTGREST_TABLE_ARG_CALLEES:
+                    continue
+                for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                    if not isinstance(arg, ast.Constant):
+                        continue
+                    if not isinstance(arg.value, str):
+                        continue
+                    if _POSTGREST_QUALIFIED_LITERAL_RE.match(arg.value):
+                        _flag(arg.lineno, "literal", arg.value)
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_playwright_supabase_env` — the E2E-harness sibling of
 # `check_dockerfile_vite_supabase_args`. Every product's frontend Playwright
 # config whose `webServer` boots the real SPA MUST inject the boot-critical

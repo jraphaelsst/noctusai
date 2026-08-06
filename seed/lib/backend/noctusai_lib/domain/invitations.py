@@ -9,6 +9,11 @@ the same structure.  All functions accept a ``table`` parameter so
 products target the correct schema automatically via their Supabase
 client's schema targeting.
 
+**The ``table`` argument must be BARE** (``"invitations"``), never
+schema-qualified (``"social_wiring.invitations"``) — the client passed as
+``db`` already carries the schema, and PostgREST resolves the name relative
+to it. Every helper enforces this via ``_require_bare_table``.
+
 Usage in a product's team router::
 
     from noctusai_lib.domain.invitations import (
@@ -40,6 +45,29 @@ from typing import Optional
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+
+def _require_bare_table(table: str) -> str:
+    """Reject a schema-qualified table name — `db` is ALREADY schema-targeted.
+
+    PostgREST resolves `db.table(name)` relative to the schema bound on the
+    client, so passing ``"<schema>.invitations"`` asks for a table literally
+    named ``"<schema>.invitations"`` INSIDE that schema — PostgREST answers
+    500 ``Could not find the table '<schema>.<schema>.invitations' in the
+    schema cache``. That message names a table the caller never wrote, which
+    is why the class reads as a missing migration instead of a caller bug.
+
+    Failing loudly HERE (the one boundary every caller crosses) turns a
+    confusing runtime 500 into a named programming error. → no-silent-errors.
+    """
+    if "." in table:
+        raise ValueError(
+            f"invitations: table must be BARE, got {table!r}. The Supabase client "
+            "is already schema-targeted; pass 'invitations', not "
+            f"'{table}' (PostgREST would resolve it as a table named "
+            f"{table!r} inside the bound schema)."
+        )
+    return table
 
 
 def generate_invite_token() -> str:
@@ -76,7 +104,10 @@ def create_invitation(
     Raises:
         HTTPException(409) if email already has a pending invitation.
         HTTPException(500) if insert fails.
+        ValueError if `table` is schema-qualified.
     """
+    table = _require_bare_table(table)
+
     # Check for existing pending invitation
     pending = (
         db.table(table)
@@ -124,7 +155,10 @@ def validate_invitation(db, table: str, token: str) -> dict:
     Raises:
         HTTPException(404) if not found.
         HTTPException(400) if already used, canceled, or expired.
+        ValueError if `table` is schema-qualified.
     """
+    table = _require_bare_table(table)
+
     invite = (
         db.table(table)
         .select("*")
@@ -176,14 +210,19 @@ def accept_invitation(
 
     Args:
         db: Supabase client (schema-targeted).
-        table: Table name (e.g. "invitations" or "<schema>.invitations").
+        table: BARE table name (e.g. "invitations") — never schema-qualified.
         invitation_id: Invitation row id.
         accepted_by: Optional user id of the accepting user. When provided,
             the row's ``accepted_at`` (utcnow) and ``accepted_by`` columns
             are populated alongside ``status="accepted"``. When ``None``
             (default), only ``status`` is written — preserves back-compat
             with adopters that haven't yet migrated the columns.
+
+    Raises:
+        ValueError if `table` is schema-qualified.
     """
+    table = _require_bare_table(table)
+
     payload: dict = {"status": "accepted"}
     if accepted_by is not None:
         payload["accepted_at"] = datetime.now(timezone.utc).isoformat()
@@ -197,7 +236,10 @@ def cancel_invitation(db, table: str, invitation_id: str, org_id: str) -> None:
 
     Raises:
         HTTPException(404) if not found or not pending.
+        ValueError if `table` is schema-qualified.
     """
+    table = _require_bare_table(table)
+
     invite = (
         db.table(table)
         .select("id, status")
@@ -215,7 +257,13 @@ def cancel_invitation(db, table: str, invitation_id: str, org_id: str) -> None:
 
 
 def list_pending_invitations(db, table: str, org_id: str) -> list:
-    """List all pending invitations for an organization."""
+    """List all pending invitations for an organization.
+
+    Raises:
+        ValueError if `table` is schema-qualified.
+    """
+    table = _require_bare_table(table)
+
     result = (
         db.table(table)
         .select("id, email, role, status, invited_by, expires_at, created_at")
@@ -231,7 +279,12 @@ def expire_old_invitations(db, table: str) -> int:
     """Expire all invitations past their expires_at. Returns count expired.
 
     Intended for periodic cleanup (e.g. scheduled task).
+
+    Raises:
+        ValueError if `table` is schema-qualified.
     """
+    table = _require_bare_table(table)
+
     result = (
         db.table(table)
         .update({"status": "expired"})

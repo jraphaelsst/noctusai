@@ -42,6 +42,14 @@ from noctusai_lib.primitives.roles import ORG_ROLE_LABELS
 
 logger = logging.getLogger(__name__)
 
+# PostgREST resolves table names RELATIVE to the schema already bound on the
+# client (`deps.get_admin_client()` → `DatabaseModule.get_client(schema=...)`),
+# so this name must stay BARE. Qualifying it (`f"{deps._db.schema}.invitations"`)
+# asks PostgREST for `<schema>.<schema>.invitations` → 500 "Could not find the
+# table ... in the schema cache". `noctusai_lib.domain.invitations` re-checks
+# this at the call boundary. → KB § PATTERNS/backend/postgrest-schema-targeting.md
+_INVITATIONS_TABLE = "invitations"
+
 
 def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRouter:
     router = APIRouter(tags=["Health"])
@@ -129,7 +137,13 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
         invite = create_invitation(
-            admin, f"{deps._db.schema}.invitations", email=body["email"], org_id=org_id, role=body.get("role", "member"), invited_by=str(user.id))
+            admin,
+            _INVITATIONS_TABLE,
+            email=body["email"],
+            org_id=org_id,
+            role=body.get("role", "member"),
+            invited_by=str(user.id),
+        )
         inviter_name = (user.user_metadata or {}).get("name", "Um administrador")
         org_name = (user.user_metadata or {}).get("org_name", "sua organizacao")
         role_label = ORG_ROLE_LABELS.get(body.get("role", "member"), body.get("role", "member"))
@@ -148,7 +162,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     @router.get("/accept/validate")
     async def validate_invite(token: str = Query(...)):
         admin = deps.get_admin_client()
-        result = validate_invitation(admin, f"{deps._db.schema}.invitations", token)
+        result = validate_invitation(admin, _INVITATIONS_TABLE, token)
         if not result:
             raise HTTPException(status_code=400, detail="Convite invalido ou expirado")
         return {"data": result}
@@ -156,9 +170,8 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     @router.post("/accept")
     async def accept_invite(body: dict):
         admin = deps.get_admin_client()
-        table = f"{deps._db.schema}.invitations"
-        inv = validate_invitation(admin, table, body["token"])
-        accept_invitation(admin, table, inv["id"])
+        inv = validate_invitation(admin, _INVITATIONS_TABLE, body["token"])
+        accept_invitation(admin, _INVITATIONS_TABLE, inv["id"])
         return {"data": inv}
 
     @router.get("/invitations")
@@ -169,7 +182,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             raise HTTPException(status_code=403, detail="Sem permissao")
         org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
-        result = list_pending_invitations(admin, f"{deps._db.schema}.invitations", org_id)
+        result = list_pending_invitations(admin, _INVITATIONS_TABLE, org_id)
         return {"data": result}
 
     @router.delete("/invitations/{invitation_id}")
@@ -178,8 +191,12 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         role = deps.get_user_role(user)
         if role not in ("platform_admin", "owner", "admin"):
             raise HTTPException(status_code=403, detail="Sem permissao")
+        org_id = deps.get_org_id(user)
         admin = deps.get_admin_client()
-        cancel_invitation(admin, f"{deps._db.schema}.invitations", invitation_id)
+        # `cancel_invitation` takes org_id as its 4th positional arg — it scopes the
+        # cancel to the caller's org (an admin of org A must not cancel org B's
+        # invite). Omitting it raised TypeError → 500 on every DELETE.
+        cancel_invitation(admin, _INVITATIONS_TABLE, invitation_id, org_id)
         return {"ok": True}
 
     @router.delete("/{user_id}")

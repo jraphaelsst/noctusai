@@ -137,6 +137,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── parallelization-first-orchestration.md
 │   │   │   ├── persistent-files-absorption.md
 │   │   │   ├── phased-push-policy.md
+│   │   │   ├── postgrest-schema-targeting.md
 │   │   │   ├── prod-cache-container.md
 │   │   │   ├── prod-deploy-safety-gates.md
 │   │   │   ├── prod-exposure-consent.md
@@ -273,6 +274,7 @@ KNOWLEDGE-BASE/
 | Inbox / chat surface — the canonical shape for ANY chat UI: consume the `ChatWindow` organ + a provider **adapter** (never a fork), **DB-first** reads (the vendor API is ingest+send only — vendor latency is latency you don't own; ~13s → ~10ms, and it survives a dead session), **one** realtime stream patching the query cache (never `refetchInterval`), and a read **cursor** (not an "inbound since my last reply" heuristic that silently degrades to 0). Born from the 2026-08 social-wiring realtime-inbox slice; documents why three forks shipped (a missing `.organ.yaml` made the catalog report the organ as shelfware, so `noc-organ-consume-check` told each engineer to build one — **a missing registration manufactures forks**), plus the non-obvious rules each of which cost something: `markRead` may reach the user's real phone so assert the call COUNT; `staleTime: Infinity` once a stream owns the cache; recount unread, never increment (vendors double-deliver); and an id-deduped write can never be repaired by a later echo | `CONTEXT/PATTERNS/frontend/inbox-chat-surface.md` |
 | Testing discipline (3 layers, mocking, auth boundary) | `CONTEXT/PATTERNS/compliance/testing.md` |
 | RLS + DB rules (`auth.uid()` subquery, search_path) | `CONTEXT/PATTERNS/backend/database-rls.md` |
+| PostgREST schema targeting — the client is ALREADY schema-bound, so `.table(name)` is schema-RELATIVE and a qualified name (`f"{schema}.invitations"`) resolves as `<schema>.<schema>.<table>` → 500 "Could not find the table ... in the schema cache" on every call, phrased so it reads as a missing migration; why MockSupabaseClient cannot catch it (keys tables by the string it is handed ⇒ qualified fixture agrees with qualified caller = fixture-vs-real false-green); the 3-layer fix (bare-name constant + `_require_bare_table` boundary refusal + keeper `check_postgrest_schema_qualified_table`, AST-based so prose does not self-flag); live incident 2026-08-06 seed team router / all 9 mounting products / green in CI ~3 months, plus the sibling arity bug (`cancel_invitation` dropped `org_id`, losing the org scoping as well as crashing) | `CONTEXT/PATTERNS/backend/postgrest-schema-targeting.md` |
 | Environment vars (single `.env`, VITE_ prefix, CORS) | `CONTEXT/PATTERNS/devops/environment.md` |
 | Notifications (`public.notifications`, field mapping) | `CONTEXT/PATTERNS/backend/notifications.md` |
 | Shared-library conventions (privatize / absorb / rename; catalog tool) | `CONTEXT/PATTERNS/architect/shared-library-conventions.md` |
