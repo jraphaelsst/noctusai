@@ -120,3 +120,4 @@ export type {
   RealtimeEventName,
   UseRealtimeStreamOptions,
 } from './realtime';
+export { lazyWithReload } from "./lazyWithReload";

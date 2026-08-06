@@ -23,7 +23,6 @@
  * no new migration needed to make it visible again.
  * pt-BR copy preserved.
  */
-import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import { useSocialWiringLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
@@ -52,37 +51,39 @@ import {
   Workflow,
 } from "lucide-react";
 
+import { lazyWithReload } from "@noctusai/lib";
+
 // Pages
-const Landing = lazy(() => import("@/pages/Landing"));
-const Login = lazy(() => import("@/pages/Login"));
-const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
-const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
-const Chat = lazy(() => import("@/pages/Chat"));
-const Dashboard = lazy(() => import("@/pages/Dashboard"));
-const Equipe = lazy(() => import("@/pages/Equipe"));
-const Settings = lazy(() => import("@/pages/Settings"));
-const YouTube = lazy(() => import("@/pages/YouTube"));
-const N8n = lazy(() => import("@/pages/N8n"));
-const RedirectToClientes = lazy(() => import("@/pages/RedirectToClientes"));
-const RedirectToMeta = lazy(() => import("@/pages/RedirectToMeta"));
-const Monitor = lazy(() => import("@/pages/Monitor"));
-const MediaCreation = lazy(() => import("@/pages/MediaCreation"));
-const EmailMarketing = lazy(() => import("@/pages/EmailMarketing"));
-const Contatos = lazy(() => import("@/pages/Contatos"));
-const EmailListas = lazy(() => import("@/pages/EmailListas"));
-const EmailTemplates = lazy(() => import("@/pages/EmailTemplates"));
-const EmailCampanhas = lazy(() => import("@/pages/EmailCampanhas"));
-const EmailMarketingConfig = lazy(() => import("@/pages/EmailMarketingConfig"));
-const EmailMembros = lazy(() => import("@/pages/EmailMembros"));
-const NotFound = lazy(() => import("@/pages/NotFound"));
-const WhatsAppChat = lazy(() => import("@/pages/WhatsAppChat"));
-const Clientes = lazy(() => import("@/pages/Clientes"));
-const Imoveis = lazy(() => import("@/pages/Imoveis"));
-const ImovelDetalhes = lazy(() => import("@/pages/ImovelDetalhes"));
-const MetaDashboard = lazy(() => import("@/pages/MetaDashboard"));
-const Leads = lazy(() => import("@/pages/leads/Leads"));
-const FunilVendas = lazy(() => import("@/pages/funil/FunilVendas"));
-const ProcessosVenda = lazy(() => import("@/pages/funil/ProcessosVenda"));
+const Landing = lazyWithReload(() => import("@/pages/Landing"));
+const Login = lazyWithReload(() => import("@/pages/Login"));
+const AcceptInvite = lazyWithReload(() => import("@/pages/AcceptInvite"));
+const ForgotPassword = lazyWithReload(() => import("@/pages/ForgotPassword"));
+const Chat = lazyWithReload(() => import("@/pages/Chat"));
+const Dashboard = lazyWithReload(() => import("@/pages/Dashboard"));
+const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
+const Settings = lazyWithReload(() => import("@/pages/Settings"));
+const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
+const N8n = lazyWithReload(() => import("@/pages/N8n"));
+const RedirectToClientes = lazyWithReload(() => import("@/pages/RedirectToClientes"));
+const RedirectToMeta = lazyWithReload(() => import("@/pages/RedirectToMeta"));
+const Monitor = lazyWithReload(() => import("@/pages/Monitor"));
+const MediaCreation = lazyWithReload(() => import("@/pages/MediaCreation"));
+const EmailMarketing = lazyWithReload(() => import("@/pages/EmailMarketing"));
+const Contatos = lazyWithReload(() => import("@/pages/Contatos"));
+const EmailListas = lazyWithReload(() => import("@/pages/EmailListas"));
+const EmailTemplates = lazyWithReload(() => import("@/pages/EmailTemplates"));
+const EmailCampanhas = lazyWithReload(() => import("@/pages/EmailCampanhas"));
+const EmailMarketingConfig = lazyWithReload(() => import("@/pages/EmailMarketingConfig"));
+const EmailMembros = lazyWithReload(() => import("@/pages/EmailMembros"));
+const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
+const WhatsAppChat = lazyWithReload(() => import("@/pages/WhatsAppChat"));
+const Clientes = lazyWithReload(() => import("@/pages/Clientes"));
+const Imoveis = lazyWithReload(() => import("@/pages/Imoveis"));
+const ImovelDetalhes = lazyWithReload(() => import("@/pages/ImovelDetalhes"));
+const MetaDashboard = lazyWithReload(() => import("@/pages/MetaDashboard"));
+const Leads = lazyWithReload(() => import("@/pages/leads/Leads"));
+const FunilVendas = lazyWithReload(() => import("@/pages/funil/FunilVendas"));
+const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
