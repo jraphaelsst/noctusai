@@ -9,13 +9,23 @@
 > (11 screenshots supplied 2026-08-07).
 >
 > **Decision: this roadmap ships the design record only. No product code yet.**
-> Every decision below is user-ratified in the 2026-08-07 session. Phase 1 begins on
-> trigger **T1**.
+> All **17 decisions** below are user-ratified in the 2026-08-07 session, and **§7 is
+> closed** — every open question was answered before anything was designed against
+> it. The only thing left is **T0: the user says to start building.**
 >
 > **Scope ruling (user-ratified): the card hub is a SHARED ORGAN**, built in
 > `noctusai_lib` + `@noctusai/lib` and consumed by **social-wiring** *and*
-> **erp-imobiliario**. User: *"yes make it shareable"*. Building it inside
+> **erp-imobiliario** — *"yes make it shareable"*. Building it inside
 > `products/social-wiring/` would fork a primitive both products already share.
+>
+> 🔴 **Scope boundary (user-ratified 2026-08-07): social-wiring + erp-imobiliario
+> ONLY.** *"let work only on social wiring and erp. Leave the other products."*
+> A third forked Funil exists in `products/orbity` — found while fact-checking this
+> document, recorded in §3, and **explicitly out of scope**.
+>
+> **Read order if you are picking this up cold:** §1 (what broke) → §2 (the
+> measurement that changed the design) → §4 (the 17 decisions) → §5 (phases). §2 is
+> the one that explains why everything else looks the way it does.
 
 ---
 
@@ -120,7 +130,7 @@ measure and is the one the review queue is sized against.)*
 | | erp-imobiliario | social-wiring |
 |---|---|---|
 | config | `app/services/pipelines.py` | `app/modules/pipeline/configs.py` |
-| `cliente_field` | **default** → cards hang off `clientes` | **`None`** → cards hang off raw source rows |
+| `cliente_field` | **default** → cards hang off `erp.clientes` (table verified to exist) | **`None`** → cards hang off raw source rows |
 
 **erp-imobiliario already builds person-cards.** social-wiring is the outlier: it is
 the one product with no person layer, which is precisely the defect. The shared
@@ -129,20 +139,80 @@ proved and back-fills the layer social-wiring lacks. Replication-to-seed symmetr
 (`KB § PATTERNS/architect/project-execution.md`) says the right count of per-product
 implementations is **zero**.
 
-### 🔴 Naming trap — do not call it `clientes` in social-wiring
+### 🔴 Naming — RESOLVED 2026-08-07: the person is `clientes`; the incumbent becomes `marcas`
 
-`social_wiring.clients` **already exists** and means something else entirely: agency
-client *accounts* / brand owners, from migration 007 (`app/services/clients_service.py`,
-compat view `mc_brand_owners`). The new person entity must not collide with it.
+`social_wiring.clients` **already existed** and meant something else entirely: the
+brand/profile owner an integration account belongs to (migration 007,
+`app/services/clients_service.py`, compat view `mc_brand_owners`). Live contents —
+two rows: `One Consultoria` (`kind='empresa'`) and `João Raphael`
+(`kind='pessoa_fisica'`), i.e. the profiles whose Instagram / Facebook / WhatsApp /
+YouTube accounts are connected.
 
-**Working name: `social_wiring.pessoas`.** Not user-ratified — flagged as an open
-question (§7 Q1). Cheap to change before Phase 1 lands; expensive after.
+The user wants the person entity to be called **`clientes`**, which is the right
+word for it. So the incumbent is renamed.
+
+**First proposal was `colaboradores` and it was rejected on a collision argument:**
+Phase 3 invites the 28 corretores + admins as real noc users — *those* are the
+actual colaboradores. Giving the brand-owner table that name would make one word
+mean two different things one phase apart. The user accepted the objection and
+chose **`marcas`**.
+
+| | |
+|---|---|
+| person / lead entity (new) | `social_wiring.clientes` |
+| brand-profile owner (renamed from `clients`) | `social_wiring.marcas` |
+
+**Rename blast radius (measured):** 38 backend references, 17 frontend files, 34
+files total. AST-first (libcst / ts-morph), never regex. Migration 007 already set
+the precedent for this exact move (`mc_brand_owners` → `clients` behind a compat
+view), so the same play applies: rename + compat view + migrate callers + drop the
+view once no caller reads it.
 
 ### The seam
 
 `PipelineConfig` is already configured by table **name**, which is exactly the seam
-needed: each product names its own person table (`clientes` for erp, `pessoas` for
-social-wiring) and the organ stays product-agnostic. No new seam invention required.
+needed: each product names its own person table and the organ stays
+product-agnostic. No new seam invention required.
+
+After D14 **both** products land on the same name — `erp.clientes` and
+`social_wiring.clientes` — so the seam is uniform in practice while remaining
+configurable in principle. That is a convenience, **not** a licence to hardcode the
+table name in the organ. See the third-consumer finding below.
+
+### ⚠️ Found on contact: orbity is a third, forked Funil (out of scope, recorded)
+
+`products/orbity` also runs a Funil kanban — `frontend/src/pages/Funil.tsx`,
+`app/services/crm_service.py` (*"leads CRUD, funil kanban grouping, stage moves,
+activities, lead scoring"*). It does **not** consume the shared primitive:
+`grep -rn "noctusai_lib.domain.pipeline\|PipelineConfig" products/orbity/backend/app`
+returns nothing.
+
+So the true count of funil-kanban implementations is **three**, of which two
+consume the primitive and one forks it:
+
+| product | funil substrate | consumes `noctusai_lib.domain.pipeline`? |
+|---|---|---|
+| erp-imobiliario | `app/services/pipelines.py` | ✅ |
+| social-wiring | `app/modules/pipeline/configs.py` | ✅ |
+| **orbity** | `app/services/crm_service.py` | ❌ **fork** |
+
+N=3 would normally trip the recurrence rule (`CLAUDE.md` §1 · `KB §
+PATTERNS/architect/project-execution.md`). It is pre-existing debt, discovered
+while verifying a claim written for this roadmap — not caused by this work.
+
+> 🔴 **USER RULING 2026-08-07 — scope is social-wiring + erp-imobiliario ONLY.**
+> *"let work only on social wiring and erp. Leave the other products."*
+> **Orbity is not to be touched** — not migrated, not refactored, not "while we're
+> in there". It is recorded on this page so the finding is not lost and so nobody
+> re-discovers it as news, and for **one** design consequence only:
+
+**The one consequence:** the organ stays genuinely table-name-configurable rather
+than hardcoding `clientes` just because both in-scope products now use that name.
+That costs nothing and keeps the door open. Everything else about orbity is out of
+scope by explicit instruction.
+
+**No design decision in Phases 0–5 depends on orbity.** If it is never migrated,
+nothing in this roadmap changes.
 
 ---
 
@@ -163,6 +233,10 @@ social-wiring) and the organ stays product-agnostic. No new seam invention requi
 | D11 | **Checklists: both** — each stage carries configurable requirements, and ad-hoc per-card checklists are still allowed. | *"Both"* |
 | D12 | **The card is stage-aware in fields AND actions**, not just its checklist. Sections stay hidden until the card reaches the stage that needs them. Declarative stage schema — **not** a user-facing form builder. | selected "Fields and actions too" |
 | D13 | **Built as a shared organ**, consumed by social-wiring and erp-imobiliario. | *"yes make it shareable"* |
+| D14 | **The person entity is `clientes`.** The incumbent `clients` (brand-profile owners) is renamed **`marcas`**. `colaboradores` was proposed and withdrawn — it collides with the 28 real colaboradores D10 invites. | *"i wanna call them clientes. The clientes that already exists, let's call them colaboradores"* → after the collision objection, selected **Marcas** |
+| D15 | **Conversations are embedded AND replyable from the card** — read and send WhatsApp / Meta DMs without leaving. | selected *"Embed and reply"* |
+| D16 | **Inactivity threshold: 180 days**, configurable in the UI. | selected *"180 days, configurable"* |
+| D17 | **A person accumulates negotiations over time; closed ones stay on the card as history** (bought in 2024, negotiating again now). | selected *"Yes, closed ones stay as history"* |
 
 ### The Trello → domain map (from the 11 supplied screenshots)
 
@@ -205,19 +279,52 @@ at a name.
 > engineers without the tech-lead integrating and live-probing first — a worktree
 > being green is not the feature working (`KB § PATTERNS/common/self-branching-mode.md`).
 
+### Phase 0 — free the name (**must land before Phase 1 opens**)
+
+🔴 **Sequencing hazard.** Phase 1 creates `social_wiring.clientes` for people. If
+the incumbent `clients` still means brand-owners at that moment, two tables named
+for the same word are live simultaneously and every reader — human and agent —
+has to guess which is which. **Phase 0 is not optional and cannot run in parallel
+with Phase 1.**
+
+**Verified table inventory (2026-08-07)** — three tables carry this name and only
+one is in scope:
+
+| table | what it holds | disposition |
+|---|---|---|
+| `social_wiring.clients` | brand-profile owners (2 rows) | → **`marcas`** (this phase) |
+| `erp.clientes` | erp's people — already the person layer | **untouched**; already the right name |
+| `orbity.clients` | orbity's own CRM clients | 🔴 **out of scope** (user ruling) |
+
+- **P0.1** `social_wiring.clients` → `social_wiring.marcas` (**D14**), behind a compat
+  view, following migration 007's own precedent (`mc_brand_owners` → `clients`).
+- **P0.2** Migrate all callers AST-first — **38 backend references, 17 frontend
+  files**, all within `products/social-wiring/`. libcst / ts-morph, never regex
+  (`KB § PATTERNS/common/ast.md`).
+- **P0.3** Drop the compat view only once no caller reads it. Verify by grep +
+  a live probe, not by assumption.
+
+**Checkpoint:** nothing **inside `products/social-wiring/`** says `clients` any
+more, the app still works, and `social_wiring.clientes` is free to create.
+
+⚠️ The checkpoint is scoped to social-wiring **deliberately**. A repo-wide "no
+`clients` anywhere" check can never pass while `orbity.clients` exists, and chasing
+it would breach the scope ruling in §3.
+
 ### Phase 1 — the person layer (the foundation; everything else attaches here)
 
-- **P1.1** `pessoas` table + canonical identity key (E.164 phone / lowercased email),
-  org-scoped RLS matching the rest of the schema.
-- **P1.2** `pessoa_touches` — every `leads` row and every `meta_ads_leads` row
+- **P1.1** `clientes` table + canonical identity key (E.164 phone / lowercased
+  email), org-scoped RLS matching the rest of the schema.
+- **P1.2** `cliente_touches` — every `leads` row and every `meta_ads_leads` row
   becomes a touch. **Lossless: no source row is modified or deleted.**
 - **P1.3** Identity resolution: auto-merge the 1 871 name-compatible groups; the
   223 + 7 land in a review queue. Merges recorded in a links table (**D3**, undoable).
-- **P1.4** Repoint `negociacoes_venda` at `pessoa_id`; retire the
+- **P1.4** Repoint `negociacoes_venda` at `cliente_id`; retire the
   `exactly_one_origin` CHECK. Backfill the 125 pairs into single cards, keeping the
-  furthest-advanced stage.
-- **P1.5** Active/inactive lifecycle (**D4**) — configurable silence threshold,
-  **default 90 days** (assumption, §7 Q2), archive + manual restore, full history
+  furthest-advanced stage. **A cliente may hold many negociações (D17)** — the
+  repoint is one-to-many from the start, not a one-to-one that has to be widened later.
+- **P1.5** Active/inactive lifecycle (**D4**) — **180 days** of silence
+  (**D16**), configurable in the UI; archive + manual restore; full history
   preserved on return.
 
 **Checkpoint:** the board shows one card per human; nothing is lost; the review
@@ -228,13 +335,41 @@ queue is walkable.
 - **P2.1** Extract the card organ into `@noctusai/lib` + `noctusai_lib`: card face
   (colour strip, badge row) and two-pane detail, per the screenshots.
 - **P2.2** The unified timeline (**D9**) — notes + system events + touches, in one
-  chronological thread. `pipeline_movimentos` finally renders.
+  chronological thread. `pipeline_movimentos` finally renders. **Conversations are
+  deferred to Phase 2b** (see below); the timeline is built with a slot for them
+  rather than being retro-fitted.
 - **P2.3** Tags (**D6**) — colour + name, searchable, colour-blind mode, board filter.
-- **P2.4** erp-imobiliario consumes the same organ against `clientes`. **This is the
-  proof the organ is genuinely shared** and not a social-wiring feature in a shared
-  folder.
+- **P2.4** Negotiation history on the card (**D17**) — active plus closed, with
+  outcome and date.
+- **P2.5** erp-imobiliario consumes the same organ against its own `clientes`.
+  **This is the proof the organ is genuinely shared** and not a social-wiring
+  feature in a shared folder.
 
 **Checkpoint:** both products render the same card from the same code.
+
+### Phase 2b — conversations in the card (**split out because of its size**)
+
+**D15 is the single largest slice in this roadmap** and it is not a rendering
+change. "Embed and reply" pulls the outbound send path, connection state and
+realtime into the organ: `whatsapp_outbound`, `whatsapp_realtime`,
+`whatsapp_connection_store`, `whatsapp_identity`, `message_store` and the Meta DM
+path (`meta_dms_router`). It also raises questions the read-only version never
+has to answer — which connection sends when a person is reachable on two, what
+happens when the session is down mid-reply, and how a failed send surfaces.
+
+It is separated so Phase 2 can ship and be judged without waiting on it, **not**
+because it is optional — the user chose it deliberately over both cheaper options.
+
+- **P2b.1** Read path: real messages inline in the timeline, matched to the cliente
+  by canonical phone — the same key Phase 1 builds identity on.
+- **P2b.2** Send path from the card, reusing `whatsapp_outbound` — never a second
+  send implementation.
+- **P2b.3** Connection-state and delivery-failure states in the card UI. A send that
+  silently does nothing is the no-silent-errors violation this phase is most exposed to.
+- **P2b.4** Meta DMs on the same timeline.
+
+**Checkpoint:** the whole relationship — inquiries, campaign answers, notes, stage
+moves and the live conversation — is readable and answerable from one card.
 
 ### Phase 3 — people and process
 
@@ -271,25 +406,28 @@ right person is asked.
 
 | ID | Trigger | Fires |
 |---|---|---|
-| **T1** | User ratifies this record and the open questions in §7 | Phase 1 |
+| **T0** | 🟡 **PENDING** — user says to start building. §7 is closed; this is the only thing left. | Phase 0 |
+| **T1** | Phase 0 checkpoint accepted — the name `clientes` is free | Phase 1 |
 | **T2** | Phase 1 checkpoint accepted — board shows one card per human | Phase 2 |
 | **T3** | Phase 2 checkpoint accepted — **erp-imobiliario consuming the organ** | Phase 3 |
+| **T3b** | Phase 2 shipped; runs independently of Phase 3 | Phase 2b |
 | **T4** | Phase 3 checkpoint accepted **and** the LGPD data-category intake is filed | Phase 4 |
 | **T5** | Any phase ≥ 2 shipped (the component has a card to live on) | Phase 5 |
 
 ---
 
-## 7 · Open questions — **must be answered before T1**
+## 7 · Open questions — **ALL CLOSED 2026-08-07**
 
-| # | Question | Assumption held meanwhile |
+| # | Question | Resolution |
 |---|---|---|
-| **Q1** | What is the person entity called, given `social_wiring.clients` is taken? | `pessoas` |
-| **Q2** | How many days of silence makes a person inactive? | 90, configurable in the UI |
-| **Q3** | Can one person hold several negotiations over time (bought in 2024, negotiating again now)? Do closed ones stay on the card as history? | yes to both |
-| **Q4** | Does the WhatsApp/DM half of the timeline (**D9**) embed the messages or link out to the existing chat pages? Embedding is a materially larger slice. | embed, read-only, in Phase 2 |
+| **Q1** | What is the person entity called, given `social_wiring.clients` is taken? | **`clientes`** — and the incumbent is renamed **`marcas`**. See **D14** + §3. |
+| **Q2** | How many days of silence makes a person inactive? | **180**, configurable (**D16**) |
+| **Q3** | Can one person hold several negotiations over time? Do closed ones stay as history? | **Yes to both** (**D17**) |
+| **Q4** | Does the WhatsApp/DM half of the timeline embed the messages or link out? | **Embed AND reply** (**D15**) — split into its own Phase 2b on size |
 
-Q1–Q3 were raised in-session and not answered. Q4 was not raised; it is a real fork
-inside a ratified decision and is flagged rather than guessed.
+Q1–Q3 were raised in-session and initially passed over; Q4 was never raised by the
+user — it was a fork discovered *inside* ratified decision D9 and surfaced rather
+than guessed. All four were answered before any code was designed against them.
 
 ---
 
@@ -301,4 +439,11 @@ inside a ratified decision and is flagged rather than guessed.
 | 2026-08-07 | **Design pivot:** lead base measured before choosing a merge strategy. 13 245 rows → ~9 270 people; 3 576 rows are repeat contact. Reframed from "de-duplicate" to "person + touches", which preserves every row. This reframe is the reason D1–D3 look the way they do. |
 | 2026-08-07 | Match-safety quantified (1 871 compatible / 223 conflicting / 7 nameless). A real shared-number case found (`+5511974781330` → two distinct people), which is why blind phone-merge was rejected. |
 | 2026-08-07 | Scope raised to shared organ on user instruction. Justified independently: erp already person-cards via `cliente_field`; social-wiring sets it to `None`. |
-| 2026-08-07 | Naming trap recorded — `social_wiring.clients` is the agency-account table (migration 007), not people. |
+| 2026-08-07 | Naming trap recorded — `social_wiring.clients` is the brand-profile-owner table (migration 007), not people. |
+| 2026-08-07 | **§7 closed — all four open questions answered.** Q1 naming, Q2 180d, Q3 multi-negotiation history, Q4 conversations. |
+| 2026-08-07 | **`colaboradores` proposed for the renamed table and withdrawn.** The user's first instinct was to rename `clients` → `colaboradores`. Objected: D10 invites 28 corretores + admins as real users one phase later, and *those* are the colaboradores — one word, two meanings, one phase apart. Objection accepted; **`marcas`** chosen. Recorded because the near-miss is the reusable lesson: check a proposed name against what LATER phases will need to call things, not only against what exists today. |
+| 2026-08-07 | **Phase 0 inserted.** Phase 1 creates `clientes`; if the incumbent still holds the word at that moment, two tables are live under one name. The rename is therefore a hard predecessor, not a parallel cleanup. |
+| 2026-08-07 | **Phase 2b split out.** D15 ("embed and reply") is the largest slice here and pulls the outbound/realtime/connection stack into the organ. Separated so Phase 2 can ship and be judged without it — deliberately chosen by the user over both cheaper options, so it is deferred in sequencing only, never in scope. |
+| 2026-08-07 | **A claim written into this document was wrong and was caught by verification.** A draft sentence asserted orbity "is the next consumer in line" for the pipeline primitive. Checked before committing: orbity does **not** consume it — it forks the mechanic in `crm_service.py`. Corrected, and the real finding (N=3 funil implementations, one forked) recorded in §3. The lesson is the cheap one: a plausible architectural claim about a product you have not opened is a guess, and a durable record is exactly where a guess does the most damage. |
+| 2026-08-07 | **Scope boundary set by the user** after that finding: social-wiring + erp-imobiliario only; orbity explicitly not to be touched. Recorded at the top of the document, not only here, because a scope boundary read late is a scope boundary read after the work. |
+| 2026-08-07 | **Table inventory verified against the live DB rather than inferred:** `erp.clientes`, `social_wiring.clients`, `orbity.clients`. Two consequences — erp already holds the target name (so Phase 2's erp consumption needs no rename), and Phase 0's checkpoint had to be scoped to `products/social-wiring/`, because a repo-wide "no `clients`" assertion can never pass while `orbity.clients` exists and is out of scope. A checkpoint that can never pass is a phase that can never close. |
