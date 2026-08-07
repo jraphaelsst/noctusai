@@ -14,8 +14,11 @@ from tools.noctus.dev.compliance import (
     check_no_self_monkeypatch,
     check_silent_errors,
     check_clean_folder_violations,
+    check_conflict_markers,
     check_detector_has_regression_test,
+    check_migration_number_collision,
     check_postgrest_schema_qualified_table,
+    check_primary_checkout_commit,
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
     check_seed_canonical_default,
@@ -2375,6 +2378,446 @@ class TestCheckPlaywrightSupabaseEnv:
     def test_no_webserver_is_out_of_scope(self):
         cfg = "export default defineConfig({ testDir: './e2e' });\n"
         assert check_playwright_supabase_env(self._mk("nows", cfg)) == []
+
+
+class TestCheckMigrationNumberCollision:
+    """Two migrations claiming one number — apply-order is undefined.
+
+    Origin 2026-08-03: three concurrent sessions each picked a number from
+    `ls migrations/` + `git log origin/dev`, both blind to a sibling branch
+    that had not pushed. Two branches claimed 040; a third shipped a duplicate
+    041 to dev.
+    """
+
+    def _mk(self, product: str, names: list[str]) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="migration_collision_test_"))
+        mig = tmp / "products" / product / "backend" / "migrations"
+        mig.mkdir(parents=True, exist_ok=True)
+        for n in names:
+            (mig / n).write_text("-- migration\nSELECT 1;\n")
+        return tmp
+
+    # ── Leg A: duplicates on disk ──────────────────────────────────────
+    def test_distinct_numbers_pass(self):
+        repo = self._mk("core", ["001_a.sql", "002_b.sql", "003_c.sql"])
+        assert check_migration_number_collision(repo) == []
+
+    def test_duplicate_number_flags_high(self):
+        repo = self._mk("core", ["040_leads.sql", "040_imoveis.sql"])
+        issues = [
+            i for i in check_migration_number_collision(repo)
+            if i["severity"] == "high"
+        ]
+        assert len(issues) == 1, issues
+        assert issues[0]["product"] == "core"
+        assert "040" in issues[0]["issue"]
+        # The message must name BOTH files — the fix is "renumber all but the
+        # earliest-merged", which you cannot do without knowing which they are.
+        assert "040_leads.sql" in issues[0]["issue"]
+        assert "040_imoveis.sql" in issues[0]["issue"]
+
+    def test_three_way_duplicate_is_one_finding_naming_all_three(self):
+        repo = self._mk("core", ["040_a.sql", "040_b.sql", "040_c.sql"])
+        highs = [
+            i for i in check_migration_number_collision(repo)
+            if i["severity"] == "high"
+        ]
+        assert len(highs) == 1, highs
+        assert "3 files" in highs[0]["issue"]
+
+    def test_four_digit_prefix_supported(self):
+        repo = self._mk("core", ["0040_a.sql", "0040_b.sql"])
+        assert any(
+            i["severity"] == "high"
+            for i in check_migration_number_collision(repo)
+        )
+
+    def test_same_number_in_DIFFERENT_products_is_not_a_collision(self):
+        """Numbering is per-product — every product has its own 001."""
+        repo = self._mk("core", ["001_a.sql"])
+        other = repo / "products" / "erp-imobiliario" / "backend" / "migrations"
+        other.mkdir(parents=True)
+        (other / "001_b.sql").write_text("SELECT 1;")
+        assert check_migration_number_collision(repo) == []
+
+    def test_unnumbered_file_is_ignored(self):
+        repo = self._mk("core", ["001_a.sql", "README.md", "rollback.sql"])
+        assert check_migration_number_collision(repo) == []
+
+    def test_ratified_historical_duplicate_is_accepted(self):
+        """`_ACCEPTED_MIGRATION_DUPLICATES` — renumbering an APPLIED migration
+        is worse than the duplicate (the runner would re-run the renamed
+        file). The allowlist keeps the detector meaningful for NEW collisions
+        instead of muting it wholesale."""
+        repo = self._mk(
+            "social-wiring",
+            ["005_integration_accounts.sql", "005_whatsapp_connection_webhook_token.sql"],
+        )
+        highs = [
+            i for i in check_migration_number_collision(repo)
+            if i["severity"] == "high"
+        ]
+        assert highs == [], f"ratified pair must not flag: {highs}"
+
+    def test_accepted_entry_does_not_mute_other_numbers_in_that_product(self):
+        """The allowlist is keyed on (product, NUMBER) — accepting 005 must
+        not turn social-wiring into a free-for-all."""
+        repo = self._mk(
+            "social-wiring",
+            [
+                "005_integration_accounts.sql",
+                "005_whatsapp_connection_webhook_token.sql",
+                "046_x.sql",
+                "046_y.sql",
+            ],
+        )
+        highs = [
+            i for i in check_migration_number_collision(repo)
+            if i["severity"] == "high"
+        ]
+        assert len(highs) == 1, highs
+        assert "046" in highs[0]["issue"]
+
+    def test_missing_products_dir_is_not_a_crash(self):
+        tmp = Path(tempfile.mkdtemp(prefix="migration_collision_empty_"))
+        assert check_migration_number_collision(tmp) == []
+
+    def test_nonexistent_root_returns_empty(self):
+        assert check_migration_number_collision(Path("/no/such/root")) == []
+
+    # ── Leg B: the same number claimed by DIFFERENT branches ───────────
+    def _git_repo(self) -> Path | None:
+        """A real repo with `origin/dev` + two feature branches. Returns None
+        if git is unusable, so the suite degrades rather than false-fails."""
+        import subprocess
+
+        tmp = Path(tempfile.mkdtemp(prefix="migration_collision_git_"))
+
+        def git(*a: str, cwd: Path = tmp) -> bool:
+            r = subprocess.run(
+                ["git", *a], cwd=cwd, capture_output=True, text=True, timeout=30
+            )
+            return r.returncode == 0
+
+        def write(name: str) -> None:
+            mig = tmp / "products" / "core" / "backend" / "migrations"
+            mig.mkdir(parents=True, exist_ok=True)
+            (mig / name).write_text("SELECT 1;\n")
+
+        ok = (
+            git("init", "-q", "-b", "dev")
+            and git("config", "user.email", "t@test.local")
+            and git("config", "user.name", "t")
+        )
+        if not ok:
+            return None
+        write("001_base.sql")
+        if not (git("add", "-A") and git("commit", "-qm", "base")):
+            return None
+        # `origin/dev` without a real remote: a local ref under refs/remotes.
+        if not git("update-ref", "refs/remotes/origin/dev", "HEAD"):
+            return None
+        for branch, fname in (("feat/a", "040_leads.sql"), ("feat/b", "040_imoveis.sql")):
+            if not git("checkout", "-q", "-b", branch, "dev"):
+                return None
+            write(fname)
+            if not (git("add", "-A") and git("commit", "-qm", branch)):
+                return None
+        # Land back on dev so the working tree carries neither 040 file —
+        # isolating Leg B from Leg A.
+        if not git("checkout", "-q", "dev"):
+            return None
+        return tmp
+
+    def test_two_branches_claiming_one_number_flags_warning(self):
+        repo = self._git_repo()
+        if repo is None:
+            import pytest as _pytest
+            _pytest.skip("git unavailable in this environment")
+        issues = check_migration_number_collision(repo)
+        warnings = [i for i in issues if i["severity"] == "warning"]
+        assert len(warnings) == 1, f"expected one latent-collision warning: {issues}"
+        msg = warnings[0]["issue"]
+        assert "040" in msg
+        # Must name the branches — the fix belongs to whoever merges second,
+        # who needs to know who the other claimant is.
+        assert "feat/a" in msg and "feat/b" in msg
+        assert "040_leads.sql" in msg and "040_imoveis.sql" in msg
+
+    def test_leg_b_is_warning_not_high(self):
+        """Latent, not broken: nothing is wrong until the second merge. Rating
+        it `high` would block the FIRST branch, which did nothing wrong."""
+        repo = self._git_repo()
+        if repo is None:
+            import pytest as _pytest
+            _pytest.skip("git unavailable in this environment")
+        assert all(
+            i["severity"] == "warning" for i in check_migration_number_collision(repo)
+        )
+
+    def test_same_FILE_on_sibling_branches_is_not_a_collision(self):
+        """A stack of sibling branches off one initiative all carry the same
+        migration file. Comparing filenames (not just numbers) is what keeps
+        that from false-flagging."""
+        import subprocess
+
+        repo = self._git_repo()
+        if repo is None:
+            import pytest as _pytest
+            _pytest.skip("git unavailable in this environment")
+
+        def git(*a: str) -> None:
+            subprocess.run(["git", *a], cwd=repo, capture_output=True, timeout=30)
+
+        # Wipe the divergent pair, then give two branches the SAME 041 file.
+        git("branch", "-D", "feat/a")
+        git("branch", "-D", "feat/b")
+        mig = repo / "products" / "core" / "backend" / "migrations"
+        for branch in ("feat/c", "feat/d"):
+            git("checkout", "-q", "-b", branch, "dev")
+            (mig / "041_shared.sql").write_text("SELECT 1;\n")
+            git("add", "-A")
+            git("commit", "-qm", branch)
+            git("checkout", "-q", "dev")
+        assert check_migration_number_collision(repo) == []
+
+    def test_no_git_still_returns_leg_a_findings(self):
+        """Leg B needs git; Leg A does not. An unavailable branch list must
+        not swallow an on-disk duplicate that is already broken."""
+        repo = self._mk("core", ["040_a.sql", "040_b.sql"])  # not a git repo
+        issues = check_migration_number_collision(repo)
+        assert any(i["severity"] == "high" for i in issues), issues
+
+
+class TestCheckPrimaryCheckoutCommit:
+    """Refuse a WORK commit on a shared branch in the PRIMARY checkout.
+
+    Every input is injectable precisely because the forbidden state (a real
+    primary checkout sitting on `dev` with work staged) is the thing the gate
+    exists to prevent and so cannot be created in a test.
+    """
+
+    _ROOT = Path("/tmp")  # unused when every probe is injected
+
+    def _run(self, **kw):
+        base = dict(
+            repo_root=self._ROOT,
+            is_primary=True,
+            branch="dev",
+            allow_override=False,
+            staged=["seed/lib/backend/noctusai_lib/x.py"],
+        )
+        base.update(kw)
+        return check_primary_checkout_commit(**base)
+
+    # ── Flag: work on each shared branch ───────────────────────────────
+    def test_work_on_dev_in_primary_flags_high(self):
+        issues = self._run()
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+        assert "dev" in issues[0]["issue"]
+        # The message must hand over the exact recovery command.
+        assert "task_branch action=start" in issues[0]["issue"]
+
+    def test_work_on_main_flags(self):
+        assert len(self._run(branch="main")) == 1
+
+    def test_work_on_prod_flags(self):
+        assert len(self._run(branch="prod")) == 1
+
+    # ── No-flag: not a shared branch ───────────────────────────────────
+    def test_feature_branch_passes(self):
+        assert self._run(branch="feat/some-slice") == []
+
+    # ── No-flag: linked worktree (the sanctioned place to work) ────────
+    def test_worktree_passes_even_on_dev(self):
+        assert self._run(is_primary=False) == []
+
+    # ── The ledger exemption ───────────────────────────────────────────
+    def test_ledger_only_commit_passes(self):
+        """`branch_pointer` / salvage / cost logs commit straight to dev from
+        the primary by design — bookkeeping, not work."""
+        assert self._run(staged=[
+            "project-history/branch-tree.ndjson",
+            "project-history/vector-costs.ndjson",
+        ]) == []
+
+    def test_one_source_file_mixed_into_a_ledger_commit_still_blocks(self):
+        """The laundering path: hide work behind ledger files. Must block."""
+        issues = self._run(staged=[
+            "project-history/branch-tree.ndjson",
+            "seed/lib/backend/noctusai_lib/domain/invitations.py",
+        ])
+        assert len(issues) == 1, issues
+        assert "invitations.py" in issues[0]["file"]
+        # ...and the ledger file must NOT be listed as the offender.
+        assert "branch-tree" not in issues[0]["file"]
+
+    def test_empty_staged_set_passes(self):
+        assert self._run(staged=[]) == []
+
+    # ── Escape hatch ───────────────────────────────────────────────────
+    def test_env_override_suppresses(self):
+        assert self._run(allow_override=True) == []
+
+    def test_override_reads_the_env_var_when_not_injected(self, monkeypatch):
+        """`NOCTUS_ALLOW_PRIMARY_COMMIT=1` is the documented hatch. Patching
+        the ENVIRONMENT is an external boundary, not our own code."""
+        monkeypatch.setenv("NOCTUS_ALLOW_PRIMARY_COMMIT", "1")
+        assert check_primary_checkout_commit(
+            repo_root=self._ROOT, is_primary=True, branch="dev",
+            staged=["seed/x.py"],
+        ) == []
+
+    def test_env_var_set_to_something_else_does_not_suppress(self):
+        """Only the literal "1" opens the hatch — a stray truthy value must
+        not silently disable the gate."""
+        import os
+        prev = os.environ.get("NOCTUS_ALLOW_PRIMARY_COMMIT")
+        os.environ["NOCTUS_ALLOW_PRIMARY_COMMIT"] = "0"
+        try:
+            assert len(check_primary_checkout_commit(
+                repo_root=self._ROOT, is_primary=True, branch="dev",
+                staged=["seed/x.py"],
+            )) == 1
+        finally:
+            if prev is None:
+                os.environ.pop("NOCTUS_ALLOW_PRIMARY_COMMIT", None)
+            else:
+                os.environ["NOCTUS_ALLOW_PRIMARY_COMMIT"] = prev
+
+    # ── Message quality: the sample is truncated, and says so ──────────
+    def test_many_files_are_summarised_with_a_remainder_count(self):
+        issues = self._run(staged=[f"seed/f{i}.py" for i in range(9)])
+        assert len(issues) == 1
+        assert "+5 more" in issues[0]["file"], issues[0]["file"]
+        assert "9 non-ledger file(s)" in issues[0]["issue"]
+
+
+class TestCheckConflictMarkers:
+    """A tracked file that still carries unresolved merge-conflict markers.
+
+    Origin 2026-08-04: `042_whatsapp_inbox_realtime_schema.sql` reached
+    `origin/dev` with a conflict header committed verbatim, produced by a
+    rename-conflict during the 040→042 renumber. It sat in the header COMMENT
+    block, so every semantic gate read past it and the already-applied live
+    schema gave no runtime signal — a latent DR/provisioning failure.
+
+    Markers are built by repetition here for the same reason the detector
+    builds them that way: a literal would make this file self-flag under
+    `test_real_repo_is_clean`.
+    """
+
+    OPEN = "<" * 7
+    DIV = "=" * 7
+    CLOSE = ">" * 7
+
+    def _mk(self, rel: str, body: str) -> tuple[Path, str]:
+        tmp = Path(tempfile.mkdtemp(prefix="conflict_markers_test_"))
+        target = tmp / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp, rel
+
+    def _conflicted(self, *, opener: str | None = None) -> str:
+        return (
+            f"{opener or self.OPEN} HEAD\n"
+            "SELECT 1;\n"
+            f"{self.DIV}\n"
+            "SELECT 2;\n"
+            f"{self.CLOSE} feat/other\n"
+        )
+
+    # ── Flag: a real conflict ──────────────────────────────────────────
+    def test_conflicted_file_flags_high(self):
+        repo, rel = self._mk("products/core/backend/migrations/042_x.sql",
+                             self._conflicted())
+        issues = check_conflict_markers(repo, paths=[rel])
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+        assert issues[0]["file"] == rel
+        assert issues[0]["product"] == "core"
+
+    def test_eight_char_rename_variant_flags(self):
+        """git emits an EIGHT-character opener with a `path:` suffix when the
+        conflict is in a RENAMED file — the exact shape that shipped, and the
+        one nobody visually scans for."""
+        repo, rel = self._mk(
+            "products/core/backend/migrations/042_x.sql",
+            self._conflicted(opener=("<" * 8) + " HEAD:migrations/040_x.sql"),
+        )
+        assert len(check_conflict_markers(repo, paths=[rel])) == 1
+
+    def test_message_names_the_line_numbers(self):
+        repo, rel = self._mk("a.sql", "-- head\n" + self._conflicted())
+        issues = check_conflict_markers(repo, paths=[rel])
+        assert "line(s) 2" in issues[0]["issue"], issues[0]["issue"]
+
+    # ── No-flag: opener/closer must BOTH be present ────────────────────
+    def test_lone_divider_is_a_markdown_heading_not_a_conflict(self):
+        """`=======` underlines a Markdown heading and divides Python
+        sections. Matching it alone would be almost all false positives."""
+        repo, rel = self._mk("doc.md", f"Title\n{self.DIV}\n\nbody\n")
+        assert check_conflict_markers(repo, paths=[rel]) == []
+
+    def test_opener_without_closer_does_not_flag(self):
+        repo, rel = self._mk("a.py", f"{self.OPEN} HEAD\nx = 1\n")
+        assert check_conflict_markers(repo, paths=[rel]) == []
+
+    def test_closer_without_opener_does_not_flag(self):
+        repo, rel = self._mk("a.py", f"{self.CLOSE} feat/x\nx = 1\n")
+        assert check_conflict_markers(repo, paths=[rel]) == []
+
+    def test_clean_file_passes(self):
+        repo, rel = self._mk("a.sql", "-- fine\nSELECT 1;\n")
+        assert check_conflict_markers(repo, paths=[rel]) == []
+
+    # ── The Markdown fence exemption ───────────────────────────────────
+    def test_markers_inside_a_markdown_fence_are_exempt(self):
+        """`branching-and-merging.md` teaches conflict resolution and must
+        print all three markers. Docs do not execute."""
+        repo, rel = self._mk(
+            "KNOWLEDGE-BASE/x.md",
+            "How to resolve:\n\n```\n" + self._conflicted() + "```\n",
+        )
+        assert check_conflict_markers(repo, paths=[rel]) == []
+
+    def test_markers_OUTSIDE_a_fence_in_markdown_still_flag(self):
+        """The exemption is the fence, not the file extension."""
+        repo, rel = self._mk("KNOWLEDGE-BASE/x.md", self._conflicted())
+        assert len(check_conflict_markers(repo, paths=[rel])) == 1
+
+    def test_fence_exemption_does_NOT_apply_to_code(self):
+        """A ``` line in a .py file is not a fence — it is nothing. A real
+        conflict there must still flag."""
+        repo, rel = self._mk("a.py", "```\n" + self._conflicted() + "```\n")
+        assert len(check_conflict_markers(repo, paths=[rel])) == 1
+
+    # ── Robustness ─────────────────────────────────────────────────────
+    def test_binary_file_is_skipped_not_crashed(self):
+        tmp = Path(tempfile.mkdtemp(prefix="conflict_markers_bin_"))
+        (tmp / "b.bin").write_bytes(b"\xff\xfe\x00\x01" + b"\x80" * 32)
+        assert check_conflict_markers(tmp, paths=["b.bin"]) == []
+
+    def test_missing_path_is_skipped(self):
+        tmp = Path(tempfile.mkdtemp(prefix="conflict_markers_missing_"))
+        assert check_conflict_markers(tmp, paths=["nope.sql"]) == []
+
+    def test_nonexistent_root_returns_empty(self):
+        assert check_conflict_markers(Path("/no/such/root"), paths=["a.sql"]) == []
+
+    def test_product_field_is_dash_outside_products(self):
+        repo, rel = self._mk("seed/lib/backend/x.py", self._conflicted())
+        assert check_conflict_markers(repo, paths=[rel])[0]["product"] == "-"
+
+    # ── The real repo must be clean (this is how the class was caught) ──
+    def test_real_repo_is_clean(self):
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_conflict_markers(_ROOT)
+        assert issues == [], (
+            f"tracked file(s) carry unresolved conflict markers: "
+            f"{[i['file'] for i in issues]}"
+        )
 
 
 class TestCheckPostgrestSchemaQualifiedTable:
