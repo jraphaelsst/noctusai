@@ -50,8 +50,12 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 382** distributed across the schemas.
+- **Schemas DECLARED in migrations (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
+- **Tables: 382** declared across those schemas.
+- Counted from `products/*/backend/migrations/*.sql` — this is what the
+  REPO declares, not what is provisioned on the Supabase project. A
+  schema can appear here and not exist live (unapplied migrations, or
+  absent from PostgREST's exposed-schema setting).
 <!-- kb-counts:end:database -->
 
 - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.

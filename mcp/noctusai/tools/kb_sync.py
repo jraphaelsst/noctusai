@@ -684,9 +684,25 @@ def _render_database(repo: Path) -> str:
     # nothing present in counts is ever silently omitted.
     ordered = ["public"] + sorted(s for s in counts if s != "public")
     schemas_line = " + ".join(f"`{s}`" for s in ordered if s in counts)
+    # "DECLARED", not "exists". Every number here is counted from
+    # `products/*/backend/migrations/*.sql` in THIS REPO — the generator never
+    # connects to a database. Saying "Schemas (N)" under a "## Database"
+    # heading read as a statement about the live project, and on 2026-08-07
+    # three of the schemas listed (`adconnect`, `dev_team`,
+    # `knowledge_extractor`) turned out not to exist there at all: their
+    # migrations had never been applied, and the schemas were not in
+    # PostgREST's exposed list either. The counts were right about the repo and
+    # wrong about the world. Naming the source is what stops the next reader
+    # trusting this as provisioning evidence.
+    # → KB § PATTERNS/backend/invitation-acceptance.md § Prerequisite
     return (
-        f"- **Schemas ({len([s for s in ordered if s in counts])}):** {schemas_line}.\n"
-        f"- **Tables: {total}** distributed across the schemas.\n"
+        f"- **Schemas DECLARED in migrations ({len([s for s in ordered if s in counts])}):** "
+        f"{schemas_line}.\n"
+        f"- **Tables: {total}** declared across those schemas.\n"
+        f"- Counted from `products/*/backend/migrations/*.sql` — this is what the\n"
+        f"  REPO declares, not what is provisioned on the Supabase project. A\n"
+        f"  schema can appear here and not exist live (unapplied migrations, or\n"
+        f"  absent from PostgREST's exposed-schema setting).\n"
     )
 
 
