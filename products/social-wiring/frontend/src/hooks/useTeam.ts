@@ -37,12 +37,13 @@ export function useTeamInvitations() {
   return useQuery({
     queryKey: INVITES_KEY,
     queryFn: async () => {
-      try {
-        const res = await api.get<{ data: Invitation[] }>("/api/team/invitations");
-        return res.data ?? [];
-      } catch {
-        return [];
-      }
+      // No try/catch. A swallowed failure here rendered "Nenhum convite
+      // pendente" over a 500 — the endpoint was broken for ~3 months
+      // (schema-qualified `invitations` table, fixed 0dc45027) and the page
+      // reported the healthy-and-empty state the whole time. Let the error
+      // reach the query so `Equipe.tsx` can say what actually happened.
+      const res = await api.get<{ data: Invitation[] }>("/api/team/invitations");
+      return res.data ?? [];
     },
   });
 }

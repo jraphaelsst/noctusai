@@ -31,7 +31,18 @@ export default function Equipe() {
 
   const members = membersQuery.data ?? [];
   const invitations = invitationsQuery.data ?? [];
-  const loading = membersQuery.isLoading || invitationsQuery.isLoading;
+  // `isPending || isFetching`, never `isLoading`: in TanStack v5 `isLoading`
+  // is `isPending && isFetching`, so it goes FALSE during a background
+  // refetch and the empty branches below would render "no data" over data
+  // that exists. → KB § PATTERNS/frontend/lying-loading-state.md
+  const loading =
+    membersQuery.isPending ||
+    membersQuery.isFetching ||
+    invitationsQuery.isPending ||
+    invitationsQuery.isFetching;
+  // An empty list and a failed request are DIFFERENT states — conflating them
+  // is what hid the 500 behind "Nenhum convite pendente".
+  const invitationsError = invitationsQuery.isError;
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -190,7 +201,24 @@ export default function Equipe() {
             )}
           </h2>
 
-          {invitations.length === 0 ? (
+          {invitationsError ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3">
+              <p className="text-sm font-medium text-destructive">
+                Nao foi possivel carregar os convites pendentes
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {(invitationsQuery.error as any)?.message ||
+                  "Erro ao consultar o servidor."}
+              </p>
+              <button
+                type="button"
+                onClick={() => invitationsQuery.refetch()}
+                className="mt-2 text-sm font-medium text-primary hover:underline"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          ) : invitations.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhum convite pendente</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
