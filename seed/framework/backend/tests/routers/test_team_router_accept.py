@@ -33,6 +33,7 @@ mock's own key set so the qualified form cannot come back green.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,6 +73,10 @@ def _make_invitation_row(
     }
 
 
+#: The identity `auth.admin.create_user` returns for a brand-new invitee.
+NEW_USER_ID = "new-user-1"
+
+
 def _fake_user(
     *,
     user_id: str = "u-admin",
@@ -106,6 +111,18 @@ def team_app(fake_deps, fake_settings, product_name):
     mock_db = MockSupabaseClient(validate_schema=False, schema="test")
     fake_deps.get_admin_client = MagicMock(return_value=mock_db)
 
+    # `noctus_users` + `auth.users` are PLATFORM tables in `public`, reached
+    # through the CORE client — a distinct connection from the product-schema
+    # one. /accept writes to both, so the two must be separate mocks or the
+    # test cannot tell which client the router used.
+    core_db = MockSupabaseClient(validate_schema=False, schema="public")
+    core_db.set_table_data("noctus_users", [])
+    core_db.auth.admin.list_users.return_value = []
+    core_db.auth.admin.create_user.return_value = SimpleNamespace(
+        user=SimpleNamespace(id=NEW_USER_ID)
+    )
+    fake_deps.get_core_client = MagicMock(return_value=core_db)
+
     # The authenticated endpoints (/invite, GET+DELETE /invitations) await
     # `deps.get_current_user(...)`. That is the EXTERNAL auth boundary —
     # AsyncMock is the right seam there (nothing of ours is patched).
@@ -117,9 +134,14 @@ def team_app(fake_deps, fake_settings, product_name):
     router: APIRouter = _create_team_router(fake_deps, fake_settings, product_name)
     app.include_router(router)
 
-    # Attach mock for per-test seeding.
+    # Attach mocks for per-test seeding.
     app.state.mock_db = mock_db
+    app.state.core_db = core_db
     return app
+
+
+#: What the AcceptInvitePage organ actually submits.
+SIGNUP = {"nome": "Nova Pessoa", "password": "hunter2"}
 
 
 @pytest.fixture
@@ -157,7 +179,7 @@ class TestAcceptInvitationEndpoint:
             [_make_invitation_row(token="happy-tok", invitation_id="inv-happy")],
         )
 
-        resp = client.post("/api/team/accept", json={"token": "happy-tok"})
+        resp = client.post("/api/team/accept", json={"token": "happy-tok", **SIGNUP})
 
         # Status-code-assertion-rule: ALWAYS pair with status_code.
         # Pre-fix: TypeError inside the handler → 500. Post-fix: 200.
@@ -176,7 +198,7 @@ class TestAcceptInvitationEndpoint:
         # No matching row — `.single()` returns empty data.
         mock_db.set_table_data("invitations", [])
 
-        resp = client.post("/api/team/accept", json={"token": "no-such-token"})
+        resp = client.post("/api/team/accept", json={"token": "no-such-token", **SIGNUP})
 
         assert resp.status_code == 404, (
             f"Expected 404 (not-found), got {resp.status_code}. Body: {resp.text}"
@@ -197,7 +219,7 @@ class TestAcceptInvitationEndpoint:
             ],
         )
 
-        resp = client.post("/api/team/accept", json={"token": "already-used"})
+        resp = client.post("/api/team/accept", json={"token": "already-used", **SIGNUP})
 
         assert resp.status_code == 400, (
             f"Expected 400 (already-used), got {resp.status_code}. Body: {resp.text}"
@@ -220,7 +242,7 @@ class TestAcceptInvitationEndpoint:
             ],
         )
 
-        resp = client.post("/api/team/accept", json={"token": "expired-tok"})
+        resp = client.post("/api/team/accept", json={"token": "expired-tok", **SIGNUP})
 
         assert resp.status_code == 400, (
             f"Expected 400 (expired), got {resp.status_code}. Body: {resp.text}"
@@ -283,7 +305,7 @@ class TestInvitationsTableIsBare:
             [_make_invitation_row(token="bare-tok", invitation_id="inv-bare")],
         )
 
-        resp = client.post("/api/team/accept", json={"token": "bare-tok"})
+        resp = client.post("/api/team/accept", json={"token": "bare-tok", **SIGNUP})
 
         assert resp.status_code == 200, (
             f"Expected 200, got {resp.status_code}. Body: {resp.text}"
@@ -426,6 +448,317 @@ class TestListAndCancelInvitations:
         assert mock_db.table("invitations").updated_payloads == [], (
             "A foreign-org invitation must not be mutated"
         )
+
+
+class TestAcceptActuallyCreatesTheMember:
+    """The 2026-08-07 gap: /accept used to ONLY flip the invitation status.
+
+    It created no identity, no `public.noctus_users` profile and no org
+    membership, and discarded the `nome`/`password` the AcceptInvitePage organ
+    submits. The invitee saw a success screen and then could not log in
+    anywhere — core's `/api/sso/launch/{slug}` reads that profile row to mint an
+    SSO token and 404s "Perfil não encontrado" without it, so the account could
+    not open ANY product.
+    """
+
+    def _seed(self, team_app, **kw):
+        team_app.state.mock_db.set_table_data(
+            "invitations", [_make_invitation_row(**kw)]
+        )
+
+    # ── Anonymous accept: identity + membership ────────────────────────
+    def test_creates_the_auth_identity(self, team_app, client):
+        self._seed(team_app, token="t1", email="invitee@test.com")
+        resp = client.post("/api/team/accept", json={"token": "t1", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        core = team_app.state.core_db
+        core.auth.admin.create_user.assert_called_once()
+        payload = core.auth.admin.create_user.call_args[0][0]
+        assert payload["email"] == "invitee@test.com"
+        assert payload["password"] == "hunter2"
+        assert payload["email_confirm"] is True
+
+    def test_creates_the_noctus_users_membership_row(self, team_app, client):
+        """The row core's SSO launch requires. Without it the invitee has an
+        identity that cannot open a single product."""
+        self._seed(team_app, token="t2", org_id="org-1", email="invitee@test.com")
+        resp = client.post("/api/team/accept", json={"token": "t2", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        inserted = team_app.state.core_db.table("noctus_users").inserted_payloads
+        assert len(inserted) == 1, inserted
+        assert inserted[0]["id"] == NEW_USER_ID
+        assert inserted[0]["org_id"] == "org-1"
+        assert inserted[0]["org_role"] == "member"
+        assert inserted[0]["email"] == "invitee@test.com"
+        assert inserted[0]["nome"] == "Nova Pessoa"
+
+    def test_membership_is_written_to_the_CORE_client_not_the_product_one(
+        self, team_app, client
+    ):
+        """`noctus_users` lives in `public`. Writing it through the
+        product-schema client would target `<schema>.noctus_users` — a table
+        that does not exist."""
+        self._seed(team_app, token="t3")
+        resp = client.post("/api/team/accept", json={"token": "t3", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        assert "noctus_users" in set(team_app.state.core_db._tables)
+        assert "noctus_users" not in set(team_app.state.mock_db._tables)
+
+    def test_invite_role_becomes_the_org_role(self, team_app, client):
+        self._seed(team_app, token="t4")
+        team_app.state.mock_db.set_table_data(
+            "invitations", [{**_make_invitation_row(token="t4"), "role": "admin"}]
+        )
+        resp = client.post("/api/team/accept", json={"token": "t4", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        inserted = team_app.state.core_db.table("noctus_users").inserted_payloads
+        assert inserted[0]["org_role"] == "admin"
+        assert inserted[0]["role"] == "user", (
+            "an org-level invite must never confer a PLATFORM role"
+        )
+
+    def test_org_context_is_mirrored_into_user_metadata(self, team_app, client):
+        """`get_org_id(user)` reads `user_metadata["org_id"]` and 403s without
+        it, so a member whose metadata was never written is locked out of the
+        product's own endpoints until their first SSO launch."""
+        self._seed(team_app, token="t5", org_id="org-1")
+        resp = client.post("/api/team/accept", json={"token": "t5", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        core = team_app.state.core_db
+        core.auth.admin.update_user_by_id.assert_called_once()
+        meta = core.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
+        assert meta["org_id"] == "org-1"
+        assert meta["org_role"] == "member"
+
+    def test_invitation_records_who_accepted(self, team_app, client):
+        self._seed(team_app, token="t6", invitation_id="inv-6")
+        resp = client.post("/api/team/accept", json={"token": "t6", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        payloads = team_app.state.mock_db.table("invitations").updated_payloads
+        assert len(payloads) == 1, payloads
+        assert payloads[0]["status"] == "accepted"
+        assert payloads[0]["accepted_by"] == NEW_USER_ID
+        assert "accepted_at" in payloads[0]
+
+    def test_response_reports_the_new_user(self, team_app, client):
+        self._seed(team_app, token="t7")
+        resp = client.post("/api/team/accept", json={"token": "t7", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["user_id"] == NEW_USER_ID
+        assert data["created_identity"] is True
+
+    # ── The email comes from the INVITATION, never the body ────────────
+    def test_body_cannot_override_the_invited_email(self, team_app, client):
+        """Otherwise a leaked token enrolls an attacker's address instead of
+        the one that was actually invited."""
+        self._seed(team_app, token="t8", email="invitee@test.com")
+        resp = client.post(
+            "/api/team/accept",
+            json={"token": "t8", "email": "attacker@evil.com", **SIGNUP},
+        )
+
+        assert resp.status_code == 200, resp.text
+        created = team_app.state.core_db.auth.admin.create_user.call_args[0][0]
+        assert created["email"] == "invitee@test.com"
+
+    # ── Input validation on the anonymous path ─────────────────────────
+    def test_missing_token_returns_400(self, team_app, client):
+        resp = client.post("/api/team/accept", json={**SIGNUP})
+        assert resp.status_code == 400, resp.text
+        assert "Token" in resp.json()["detail"]
+
+    def test_missing_nome_returns_400(self, team_app, client):
+        self._seed(team_app, token="t9")
+        resp = client.post(
+            "/api/team/accept", json={"token": "t9", "password": "hunter2"}
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Nome" in resp.json()["detail"]
+
+    def test_short_password_returns_400(self, team_app, client):
+        """Matches the organ's own client-side rule (>= 6). A backend that
+        accepted what the form rejects would be a contract the FE cannot see."""
+        self._seed(team_app, token="t10")
+        resp = client.post(
+            "/api/team/accept",
+            json={"token": "t10", "nome": "X", "password": "abc"},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "Senha" in resp.json()["detail"]
+
+    def test_no_identity_is_created_when_validation_fails(self, team_app, client):
+        self._seed(team_app, token="t11")
+        client.post("/api/team/accept", json={"token": "t11", "nome": "X"})
+        team_app.state.core_db.auth.admin.create_user.assert_not_called()
+
+    # ── Existing identity ──────────────────────────────────────────────
+    def test_existing_identity_is_linked_not_recreated(self, team_app, client):
+        """Someone who already signed up on core and is now invited here."""
+        core = team_app.state.core_db
+        core.set_table_data(
+            "noctus_users",
+            [{"id": "existing-1", "email": "invitee@test.com",
+              "nome": "Existing", "org_id": None}],
+        )
+        self._seed(team_app, token="t12", email="invitee@test.com")
+
+        resp = client.post("/api/team/accept", json={"token": "t12", **SIGNUP})
+
+        assert resp.status_code == 200, resp.text
+        core.auth.admin.create_user.assert_not_called()
+        assert resp.json()["data"]["created_identity"] is False
+        assert core.table("noctus_users").updated_payloads == [
+            {"org_id": "org-1", "org_role": "member"}
+        ]
+
+    def test_member_of_another_org_gets_409(self, team_app, client):
+        """Membership is a single-org FK — accepting would EVICT them from
+        their current org and every product licensed to it."""
+        core = team_app.state.core_db
+        core.set_table_data(
+            "noctus_users",
+            [{"id": "existing-1", "email": "invitee@test.com",
+              "nome": "Existing", "org_id": "other-org", "org_role": "owner"}],
+        )
+        self._seed(team_app, token="t13", org_id="org-1", email="invitee@test.com")
+
+        resp = client.post("/api/team/accept", json={"token": "t13", **SIGNUP})
+
+        assert resp.status_code == 409, resp.text
+        assert core.table("noctus_users").updated_payloads == []
+
+    def test_conflict_leaves_the_invitation_pending(self, team_app, client):
+        """A refused accept must stay retryable — burning the token on a 409
+        would strand the invite permanently."""
+        core = team_app.state.core_db
+        core.set_table_data(
+            "noctus_users",
+            [{"id": "e1", "email": "invitee@test.com", "nome": "E",
+              "org_id": "other-org"}],
+        )
+        self._seed(team_app, token="t14", email="invitee@test.com")
+
+        client.post("/api/team/accept", json={"token": "t14", **SIGNUP})
+
+        assert team_app.state.mock_db.table("invitations").updated_payloads == []
+
+    # ── Authenticated accept ───────────────────────────────────────────
+    def test_authenticated_accept_uses_the_caller_identity(
+        self, team_app, client, auth_header
+    ):
+        """Someone already signed in is accepting FOR THEMSELVES — no account
+        is created and no password is needed."""
+        self._seed(team_app, token="t15", org_id="org-1")
+        resp = client.post(
+            "/api/team/accept", json={"token": "t15"}, headers=auth_header,
+        )
+
+        assert resp.status_code == 200, resp.text
+        core = team_app.state.core_db
+        core.auth.admin.create_user.assert_not_called()
+        inserted = core.table("noctus_users").inserted_payloads
+        assert inserted[0]["id"] == "u-admin", inserted
+        assert resp.json()["data"]["created_identity"] is False
+
+    def test_authenticated_accept_ignores_a_submitted_password(
+        self, team_app, client, auth_header
+    ):
+        self._seed(team_app, token="t16")
+        resp = client.post(
+            "/api/team/accept",
+            json={"token": "t16", "password": "attacker-chosen"},
+            headers=auth_header,
+        )
+        assert resp.status_code == 200, resp.text
+        team_app.state.core_db.auth.admin.create_user.assert_not_called()
+
+    def test_unusable_auth_header_falls_back_to_the_anonymous_path(
+        self, team_app, fake_deps, client
+    ):
+        """An expired token in the header must not block a legitimate signup —
+        the anonymous path is the whole point of an invitation link."""
+        from fastapi import HTTPException as _HTTPException
+
+        fake_deps.get_current_user = AsyncMock(
+            side_effect=_HTTPException(status_code=401, detail="expired")
+        )
+        self._seed(team_app, token="t17")
+
+        resp = client.post(
+            "/api/team/accept",
+            json={"token": "t17", **SIGNUP},
+            headers={"Authorization": "Bearer stale"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["created_identity"] is True
+
+    # ── Compensating rollback ──────────────────────────────────────────
+    def test_orphan_identity_is_deleted_when_membership_fails(
+        self, team_app, client
+    ):
+        """An identity we just created, with no membership, is unreachable AND
+        blocks the retry (its email is now taken). Leaving it behind turns a
+        transient failure into a permanent one."""
+        core = team_app.state.core_db
+        self._seed(team_app, token="t18")
+
+        # Break ONLY the insert on the real builder — select/eq/execute stay
+        # genuine, so the failure is the one under test and not a mock that
+        # cannot answer the lookup.
+        core.table("noctus_users").insert = MagicMock(
+            side_effect=RuntimeError("insert failed")
+        )
+
+        resp = client.post("/api/team/accept", json={"token": "t18", **SIGNUP})
+
+        assert resp.status_code == 500, resp.text
+        core.auth.admin.delete_user.assert_called_once_with(NEW_USER_ID)
+
+    def test_failed_membership_leaves_the_invitation_pending(
+        self, team_app, client
+    ):
+        """The rollback must be complete: a burned token plus a deleted
+        identity would leave the invitee with no way back in at all."""
+        core = team_app.state.core_db
+        self._seed(team_app, token="t18b")
+        core.table("noctus_users").insert = MagicMock(
+            side_effect=RuntimeError("insert failed")
+        )
+
+        client.post("/api/team/accept", json={"token": "t18b", **SIGNUP})
+
+        assert team_app.state.mock_db.table("invitations").updated_payloads == []
+
+    def test_a_PRE_EXISTING_identity_is_never_deleted_on_failure(
+        self, team_app, client
+    ):
+        """It is not ours to delete — that account existed before this invite
+        and belongs to someone who may be using it elsewhere."""
+        core = team_app.state.core_db
+        # No profile row, but the identity DOES exist in auth.users — the
+        # "signed up on core, never joined an org" case. `provision_invited_identity`
+        # links it, so `created_identity` is False and it must survive.
+        core.auth.admin.list_users.return_value = [
+            SimpleNamespace(id="existing-1", email="invitee@test.com")
+        ]
+        self._seed(team_app, token="t19", email="invitee@test.com")
+        core.table("noctus_users").insert = MagicMock(
+            side_effect=RuntimeError("insert failed")
+        )
+
+        resp = client.post("/api/team/accept", json={"token": "t19", **SIGNUP})
+
+        assert resp.status_code == 500, resp.text
+        core.auth.admin.delete_user.assert_not_called()
 
 
 class TestRouterSurfaceUnchanged:

@@ -36,6 +36,11 @@ from noctusai_lib.domain.invitations import (
     cancel_invitation,
     list_pending_invitations,
 )
+from noctusai_lib.domain.org import (
+    attach_user_to_org,
+    provision_invited_identity,
+    sync_org_metadata,
+)
 from noctusai_lib.integrations.email.templates import send_product_invitation_email
 from noctusai_lib.domain.notifications import map_notification_to_pt
 from noctusai_lib.primitives.roles import ORG_ROLE_LABELS
@@ -168,11 +173,146 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         return {"data": result}
 
     @router.post("/accept")
-    async def accept_invite(body: dict):
+    async def accept_invite(
+        body: dict,
+        authorization: Optional[str] = Header(None),
+    ):
+        """Accept an invitation — and actually make the invitee a member.
+
+        Until 2026-08-07 this only flipped the invitation row to `accepted`.
+        It created no identity, no `noctus_users` profile and no org
+        membership, and silently discarded the `nome`/`password` the
+        `AcceptInvitePage` organ submits — so the invitee saw a success screen
+        and then could not log in anywhere. Core's `/api/sso/launch/{slug}`
+        404s "Perfil não encontrado" without that profile row, so the account
+        could not open ANY product.
+
+        Two paths:
+
+        - **Authenticated** (a Bearer token) — the caller already has an
+          identity; they are joined to the org as-is and any submitted
+          password is ignored. Someone who is signed in is accepting for
+          themselves, not creating an account.
+        - **Anonymous** — `nome` + `password` are required, and the identity is
+          created (or an existing one for that email is linked, without
+          touching its password).
+
+        The invitation's `email` is the source of truth for the address; the
+        body cannot override it, so a leaked token cannot enroll a different
+        address than the one that was invited.
+        """
+        token = body.get("token")
+        if not token:
+            raise HTTPException(status_code=400, detail="Token do convite ausente")
+
         admin = deps.get_admin_client()
-        inv = validate_invitation(admin, _INVITATIONS_TABLE, body["token"])
-        accept_invitation(admin, _INVITATIONS_TABLE, inv["id"])
-        return {"data": inv}
+        # `noctus_users` + `auth.users` are PLATFORM tables in `public` — the
+        # product-schema client cannot see them.
+        core = deps.get_core_client()
+
+        inv = validate_invitation(admin, _INVITATIONS_TABLE, token)
+        email = inv["email"]
+        org_id = inv["org_id"]
+        org_role = inv.get("role", "member")
+
+        # ── Identity ──────────────────────────────────────────────────────
+        current_user = None
+        if authorization:
+            try:
+                current_user, _ = await deps.get_current_user(authorization)
+            except HTTPException as exc:
+                # A stale/invalid token must not block the anonymous path —
+                # fall through and treat this as a fresh acceptance.
+                logger.info(
+                    "team.accept: ignoring unusable Authorization header (%s)",
+                    getattr(exc, "detail", exc),
+                )
+
+        created_identity = False
+        if current_user is not None:
+            user_id = str(current_user.id)
+            nome = (
+                body.get("nome")
+                or (current_user.user_metadata or {}).get("nome")
+                or (current_user.email or email).split("@", 1)[0]
+            )
+        else:
+            nome = (body.get("nome") or "").strip()
+            password = body.get("password") or ""
+            if not nome:
+                raise HTTPException(status_code=400, detail="Nome e obrigatorio")
+            if len(password) < 6:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Senha deve ter no minimo 6 caracteres",
+                )
+            user_id, created_identity = provision_invited_identity(
+                core, email=email, password=password, nome=nome,
+            )
+
+        # ── Membership ────────────────────────────────────────────────────
+        try:
+            attach_user_to_org(
+                core,
+                user_id,
+                org_id=org_id,
+                email=email,
+                nome=nome,
+                org_role=org_role,
+            )
+        except Exception as exc:
+            # Compensating delete: an identity we JUST created, with no
+            # membership, is unreachable AND blocks the retry (its email is
+            # now taken). Leaving it behind converts a transient failure into
+            # a permanent one. An identity that already existed is never
+            # touched — it is not ours to delete.
+            if created_identity:
+                try:
+                    core.auth.admin.delete_user(user_id)
+                    logger.info(
+                        "team.accept: rolled back orphan identity %s after membership failure",
+                        user_id,
+                    )
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "team.accept: could not roll back orphan identity %s (%s) — "
+                        "a retry for %s will report the email as already registered",
+                        user_id, cleanup_exc, email,
+                    )
+            # An HTTPException is a decision (the 409 for "already in another
+            # org") and travels as-is. Anything else is an infrastructure
+            # failure: convert it rather than letting a bare exception escape
+            # the handler, which would surface as an unhandled crash instead
+            # of an answer the frontend can render.
+            if isinstance(exc, HTTPException):
+                raise
+            logger.error(
+                "team.accept: could not attach %s to org %s (%s)", user_id, org_id, exc,
+            )
+            raise HTTPException(
+                status_code=500, detail="Erro ao vincular usuario a organizacao",
+            ) from exc
+
+        # Mirror into user_metadata so the member works BEFORE their first SSO
+        # launch (which re-syncs from noctus_users anyway). Best-effort.
+        sync_org_metadata(core, user_id, org_id=org_id, org_role=org_role, nome=nome)
+
+        accept_invitation(
+            admin, _INVITATIONS_TABLE, inv["id"], accepted_by=user_id,
+        )
+        logger.info(
+            "team.accept: invitation=%s email=%s joined org=%s as %s (identity %s)",
+            inv["id"], email, org_id, org_role,
+            "created" if created_identity else "existing",
+        )
+        return {
+            "data": {
+                **inv,
+                "user_id": user_id,
+                "org_role": org_role,
+                "created_identity": created_identity,
+            }
+        }
 
     @router.get("/invitations")
     async def list_invitations(authorization: Optional[str] = Header(None)):
