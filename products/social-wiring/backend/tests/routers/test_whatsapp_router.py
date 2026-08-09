@@ -156,15 +156,28 @@ def _webhook_settings(monkeypatch):
     ``intake.handle_message`` no-reply path so tests don't depend on
     OpenAI/YouTube/CRM credentials.
     """
-    monkeypatch.setattr(settings, "encryption_key", Fernet.generate_key().decode())
-    monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "")
-    monkeypatch.setattr(settings, "whatsapp_chatbot_enabled", False)
-    monkeypatch.setattr(settings, "openai_api_key", "")
-    monkeypatch.setattr(settings, "crm_base_url", "")
-    monkeypatch.setattr(settings, "crm_api_key", "")
-    monkeypatch.setattr(settings, "vista_base_url", "")
-    monkeypatch.setattr(settings, "vista_api_key", "")
-    monkeypatch.setattr(settings, "whatsapp_authorized_numbers", _AUTHORIZED_SENDER)
+    # NOC-REMEDIATE[settings-di]: `whatsapp_router` reads the `app.config.settings`
+    # SINGLETON directly at ~20 sites inside module-level pipeline helpers
+    # (`_build_intake`, `_process_waha_body`, ...), not in route signatures — so
+    # the canonical `override_settings` fixture (which overrides
+    # `Depends(get_settings)`, see conftest.py) cannot reach them. Migrating this
+    # router to the DI seam is the real fix and is tracked as its own slice; it is
+    # NOT attempted here because the file is mid-`wip` WAHA-ingest rewrite (29c07fdb)
+    # and a DI refactor on top of that would collide.
+    #
+    # Until then these are allowlisted — legitimately, because every one sets a
+    # CONFIGURATION VALUE and none neuters a guard. That is the exact distinction
+    # `check_no_self_monkeypatch` polices. Same shape + rationale as
+    # `tests/routers/test_meta_org_auth_boundary.py` in this product.
+    monkeypatch.setattr(settings, "encryption_key", Fernet.generate_key().decode())  # self-patch-ok: a REAL Fernet key so the token-route's get_token_webhook_store DI seam resolves instead of 404ing — makes the decryption path RUN, does not bypass it
+    monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "")  # self-patch-ok: module default steers non-signature tests down the documented bypass_when_unset branch; the guard IS exercised — every HMAC test sets a real "sekrit", and test_unset_secret_bypasses_with_warning asserts the bypass WARNING fires
+    monkeypatch.setattr(settings, "whatsapp_chatbot_enabled", False)  # self-patch-ok: steers to the cheap intake.handle_message no-reply path so the suite needs no OpenAI credentials
+    monkeypatch.setattr(settings, "openai_api_key", "")  # self-patch-ok: test config — without it the suite would reach live OpenAI
+    monkeypatch.setattr(settings, "crm_base_url", "")  # self-patch-ok: test config — without it the suite would reach the live CRM
+    monkeypatch.setattr(settings, "crm_api_key", "")  # self-patch-ok: test config — without it the suite would reach the live CRM
+    monkeypatch.setattr(settings, "vista_base_url", "")  # self-patch-ok: test config — without it the suite would reach live Vista
+    monkeypatch.setattr(settings, "vista_api_key", "")  # self-patch-ok: test config — without it the suite would reach live Vista
+    monkeypatch.setattr(settings, "whatsapp_authorized_numbers", _AUTHORIZED_SENDER)  # self-patch-ok: the allowlist the test sender must appear in for the intake path to accept it
 
 
 @pytest.fixture(autouse=True)
@@ -281,7 +294,7 @@ def _reset_recording_chat_store():
 class TestWebhookSignatureVerification:
     def test_valid_signature_returns_200(self, client, monkeypatch):
         tc, _mock_sb, _db = client
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         body = b'{"event":"session.status","session":"default","payload":{"status":"WORKING"}}'
         resp = tc.post(
             "/api/whatsapp/webhook",
@@ -295,7 +308,7 @@ class TestWebhookSignatureVerification:
 
     def test_tampered_body_returns_401(self, client, monkeypatch):
         tc, _mock_sb, _db = client
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         signed_body = b'{"event":"session.status","session":"default","payload":{"status":"A"}}'
         sig = _sig(signed_body, "sekrit")
         resp = tc.post(
@@ -307,7 +320,7 @@ class TestWebhookSignatureVerification:
 
     def test_missing_signature_header_returns_401(self, client, monkeypatch):
         tc, _mock_sb, _db = client
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         resp = tc.post(
             "/api/whatsapp/webhook",
             content=b'{"event":"session.status","session":"default","payload":{}}',
@@ -319,7 +332,7 @@ class TestWebhookSignatureVerification:
         import logging
 
         tc, _mock_sb, _db = client
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "")  # self-patch-ok: empty secret is the INPUT under test — this case asserts the documented bypass_when_unset branch logs its warning
         with caplog.at_level(logging.WARNING, logger="noctusai_lib.security.webhook_signatures"):
             resp = tc.post(
                 "/api/whatsapp/webhook",
@@ -337,7 +350,7 @@ class TestWebhookSignatureVerification:
         JSON is malformed post-verification, the router 200-acks and
         drops it (never retried forever)."""
         tc, _mock_sb, _db = client
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         body = b"not-json{"
         resp = tc.post(
             "/api/whatsapp/webhook",
@@ -363,7 +376,7 @@ class TestTokenRouteResolution:
     def test_known_token_valid_signature_returns_200(self, client, monkeypatch):
         tc, _mock_sb, db = client
         _seed_connection(db)
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         body = b'{"event":"session.status","session":"default","payload":{"status":"WORKING"}}'
         resp = tc.post(
             f"/api/whatsapp/webhook/{_WEBHOOK_TOKEN}",
@@ -378,7 +391,7 @@ class TestTokenRouteResolution:
     def test_known_token_tampered_body_returns_401(self, client, monkeypatch):
         tc, _mock_sb, db = client
         _seed_connection(db)
-        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")
+        monkeypatch.setattr(settings, "waha_webhook_hmac_secret", "sekrit")  # self-patch-ok: sets a REAL secret so the HMAC guard RUNS and this test can assert it accepts/rejects a signature — the opposite of bypassing it
         signed_body = b'{"event":"session.status","session":"default","payload":{"status":"A"}}'
         sig = _sig(signed_body, "sekrit")
         resp = tc.post(

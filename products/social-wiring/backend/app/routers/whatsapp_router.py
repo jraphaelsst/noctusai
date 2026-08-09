@@ -59,7 +59,20 @@ Two receiver routes are provided:
       when configured. Processing delegates to the shared
       ``_process_waha_body`` helper — identical pipeline, no forked logic.
 """
-from __future__ import annotations
+# 🔴 NO `from __future__ import annotations` IN THIS FILE — deliberate.
+#
+# This module carries `@limiter.limit(...)` routes. slowapi resolves a
+# rate-limited endpoint's signature at runtime; under PEP 563 every
+# annotation is a STRING, so FastAPI/slowapi can no longer see a Pydantic
+# body model and the route breaks. Keeper: `check_slowapi_with_pep563`
+# (`mcp/noctusai/tools/noctus/dev/compliance.py`), baseline = zero.
+#
+# Today's two rate-limited routes take only `request: Request` + a
+# `webhook_endpoint(...)` dependency and no body model, so the import was a
+# LATENT hazard rather than a live break — it would have detonated the day
+# someone added a request body. Removed rather than annotated, matching how
+# the other baseline cases were fixed (products/seed .../webhook_router.py,
+# products/adconnect .../financial.py both carry no future-import).
 
 import asyncio
 import logging
