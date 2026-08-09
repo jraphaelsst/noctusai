@@ -1,7 +1,7 @@
 /**
  * Clientes — page listing all clients as cards.
  *
- * Each card opens the ClienteModal (tabbed: Contas | Chat).
+ * Each card opens the MarcaModal (tabbed: Contas | Chat).
  *
  * Create flow: "Novo cliente" button → inline form in an AlertDialog-style panel.
  *
@@ -48,17 +48,17 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
-import { ClienteModal } from "@/components/ClienteModal";
+import { MarcaModal } from "@/components/MarcaModal";
 import {
-  useClients,
-  useCreateClient,
-  type Client,
+  useMarcas,
+  useCreateMarca,
+  type Marca,
   type CreateClientInput,
-} from "@/hooks/useClients";
+} from "@/hooks/useMarcas";
 
 // ─── Create dialog ────────────────────────────────────────────────────────────
 
-function CreateClientDialog({ onCreated }: { onCreated?: (c: Client) => void }) {
+function CreateClientDialog({ onCreated }: { onCreated?: (c: Marca) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -67,7 +67,7 @@ function CreateClientDialog({ onCreated }: { onCreated?: (c: Client) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(false);
 
-  const createClient = useCreateClient();
+  const createMarca = useCreateMarca();
 
   function deriveSlug(n: string): string {
     return n
@@ -109,7 +109,7 @@ function CreateClientDialog({ onCreated }: { onCreated?: (c: Client) => void }) 
     if (notes.trim()) payload.notes = notes.trim();
 
     try {
-      const client = await createClient.mutateAsync(payload);
+      const client = await createMarca.mutateAsync(payload);
       resetForm();
       setOpen(false);
       onCreated?.(client);
@@ -198,12 +198,12 @@ function CreateClientDialog({ onCreated }: { onCreated?: (c: Client) => void }) 
               type="button"
               variant="ghost"
               onClick={() => { resetForm(); setOpen(false); }}
-              disabled={createClient.isPending}
+              disabled={createMarca.isPending}
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={createClient.isPending}>
-              {createClient.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+            <Button type="submit" disabled={createMarca.isPending}>
+              {createMarca.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               Criar
             </Button>
           </div>
@@ -219,8 +219,8 @@ function ClientCard({
   client,
   onOpen,
 }: {
-  client: Client;
-  onOpen: (c: Client, tab: "contas" | "chat") => void;
+  client: Marca;
+  onOpen: (c: Marca, tab: "contas" | "chat") => void;
 }) {
   return (
     <Card
@@ -296,10 +296,10 @@ function ClientsSkeleton() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ClientesPage() {
-  const { data: clients = [], isLoading, isError, error } = useClients();
+export default function MarcasPage() {
+  const { data: marcas = [], isLoading, isError, error } = useMarcas();
 
-  const [modalClient, setModalClient] = useState<Client | null>(null);
+  const [modalClient, setModalClient] = useState<Marca | null>(null);
   const [modalTab, setModalTab] = useState<"contas" | "chat">("contas");
 
   // Handle ?account_created=<id> from OAuth callback redirect
@@ -318,19 +318,19 @@ export default function ClientesPage() {
     }, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  function handleOpen(client: Client, tab: "contas" | "chat") {
+  function handleOpen(client: Marca, tab: "contas" | "chat") {
     setModalClient(client);
     setModalTab(tab);
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6" data-testid="clientes-page">
+    <div className="flex flex-col gap-6 p-6" data-testid="marcas-page">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Clientes</h1>
+          <h1 className="text-lg font-semibold">Marcas</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Gerencie clientes e suas contas de integração.
+            Gerencie marcas e suas contas de integração.
           </p>
         </div>
         <CreateClientDialog
@@ -344,18 +344,18 @@ export default function ClientesPage() {
       ) : isError ? (
         <div
           className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground"
-          data-testid="clientes-error"
+          data-testid="marcas-error"
         >
           <AlertCircle className="h-8 w-8 text-destructive" />
-          <p className="text-sm font-medium">Erro ao carregar clientes</p>
+          <p className="text-sm font-medium">Erro ao carregar marcas</p>
           <p className="text-xs">
             {error instanceof Error ? error.message : "Tente novamente mais tarde."}
           </p>
         </div>
-      ) : clients.length === 0 ? (
+      ) : marcas.length === 0 ? (
         <div
           className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground"
-          data-testid="clientes-empty"
+          data-testid="marcas-empty"
         >
           <Users className="h-10 w-10 opacity-20" />
           <p className="text-sm font-medium">Nenhum cliente cadastrado</p>
@@ -369,15 +369,15 @@ export default function ClientesPage() {
           className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
           data-testid="clients-grid"
         >
-          {clients.map((client) => (
+          {marcas.map((client) => (
             <ClientCard key={client.id} client={client} onOpen={handleOpen} />
           ))}
         </div>
       )}
 
-      {/* ClienteModal */}
+      {/* MarcaModal */}
       {modalClient && (
-        <ClienteModal
+        <MarcaModal
           client={modalClient}
           open={!!modalClient}
           onClose={() => setModalClient(null)}

@@ -45,7 +45,7 @@ import {
   useSubmitInstagramToken,
   type IntegrationAccount,
 } from "@/hooks/useIntegrationAccounts";
-import type { Client } from "@/hooks/useClients";
+import type { Marca } from "@/hooks/useMarcas";
 
 const INSTAGRAM_PROVIDER = "instagram";
 
@@ -53,8 +53,8 @@ function toLibAccount(acc: IntegrationAccount): LibIntegrationAccount {
   return acc as unknown as LibIntegrationAccount;
 }
 
-export function InstagramCardSection({ clients }: { clients: Client[] }) {
-  const [oauthClientId, setOauthClientId] = useState<string>("");
+export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
+  const [oauthMarcaId, setOauthMarcaId] = useState<string>("");
   const [showTokenPaste, setShowTokenPaste] = useState(false);
   const [pastedToken, setPastedToken] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export function InstagramCardSection({ clients }: { clients: Client[] }) {
   const loading = isPending || isFetching;
 
   function handleConnect() {
-    oauthStart.mutate(oauthClientId ? { clientId: oauthClientId } : undefined, {
+    oauthStart.mutate(oauthMarcaId ? { marcaId: oauthMarcaId } : undefined, {
       onError: (e: any) =>
         toast.error("Falha ao iniciar conexão com o Instagram", {
           // A 503 here means the Instagram App ID/Secret aren't configured —
@@ -93,7 +93,7 @@ export function InstagramCardSection({ clients }: { clients: Client[] }) {
     const token = pastedToken.trim();
     if (!token) return;
     submitToken.mutate(
-      { access_token: token, client_id: oauthClientId || null },
+      { access_token: token, marca_id: oauthMarcaId || null },
       {
         onSuccess: () => {
           toast.success("Conta do Instagram conectada");
@@ -143,15 +143,15 @@ export function InstagramCardSection({ clients }: { clients: Client[] }) {
           <h2 className="text-lg font-semibold">Instagram</h2>
         </div>
 
-        {clients.length > 0 && (
+        {marcas.length > 0 && (
           <select
-            value={oauthClientId}
-            onChange={(e) => setOauthClientId(e.target.value)}
+            value={oauthMarcaId}
+            onChange={(e) => setOauthMarcaId(e.target.value)}
             className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
-            aria-label="Atribuir a cliente ao conectar"
+            aria-label="Atribuir a marca ao conectar"
           >
-            <option value="">Sem cliente</option>
-            {clients.map((c) => (
+            <option value="">Sem marca</option>
+            {marcas.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>

@@ -7,14 +7,14 @@
  *   3. Renders empty state when no clients exist
  *   4. Renders error state on fetch failure
  *   5. "Novo cliente" button opens create dialog
- *   6. ClienteModal opens when a card is clicked
+ *   6. MarcaModal opens when a card is clicked
  *   7. Chat tab opens from the card chat button
  *
  * Mock strategy (mirrors Conexoes.test.tsx):
  *   · ONE vi.mock per module
  *   · hooks are vi.fn()s configured per-test in beforeEach
  *   · @noctusai/lib's IntegrationCard + IntegrationCardModal are stubs
- *   · ClienteModal is a lightweight stub to avoid full render pipeline
+ *   · MarcaModal is a lightweight stub to avoid full render pipeline
  *   · localStorage provisioned by seed vitest setup
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -30,17 +30,17 @@ const mockUseCreateClient = vi.fn();
 const mockUseUpdateClient = vi.fn();
 const mockUseDeleteClient = vi.fn();
 
-vi.mock("@/hooks/useClients", () => ({
-  useClients: mockUseClients,
-  useCreateClient: mockUseCreateClient,
-  useUpdateClient: mockUseUpdateClient,
-  useDeleteClient: mockUseDeleteClient,
+vi.mock("@/hooks/useMarcas", () => ({
+  useMarcas: mockUseClients,
+  useCreateMarca: mockUseCreateClient,
+  useUpdateMarca: mockUseUpdateClient,
+  useDeleteMarca: mockUseDeleteClient,
 }));
 
 // ─── Component mocks ────────────────────────────────────────────────────────
 
-vi.mock("@/components/ClienteModal", () => ({
-  ClienteModal: ({ client, open, onClose, defaultTab }: any) =>
+vi.mock("@/components/MarcaModal", () => ({
+  MarcaModal: ({ client, open, onClose, defaultTab }: any) =>
     open ? (
       <div data-testid="cliente-modal" data-client-id={client?.id} data-tab={defaultTab}>
         <button onClick={onClose}>Fechar</button>
@@ -80,14 +80,14 @@ beforeEach(() => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function renderClientes(initialEntries: string[] = ["/"]) {
-  const { default: Clientes } = await import("./Clientes");
+  const { default: Marcas } = await import("./Marcas");
   const React = (await import("react")).default;
   const { MemoryRouter } = await import("react-router-dom");
   const rtl = await import("@testing-library/react");
   return {
     ...rtl.render(
       React.createElement(MemoryRouter, { initialEntries },
-        React.createElement(Clientes),
+        React.createElement(Marcas),
       ),
     ),
     fireEvent: rtl.fireEvent,
@@ -96,7 +96,7 @@ async function renderClientes(initialEntries: string[] = ["/"]) {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("Clientes — loading state", () => {
+describe("Marcas — loading state", () => {
   it("renders skeleton while loading", async () => {
     mockUseClients.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     const { getByTestId } = await renderClientes();
@@ -104,13 +104,13 @@ describe("Clientes — loading state", () => {
   });
 });
 
-describe("Clientes — success state", () => {
+describe("Marcas — success state", () => {
   it("renders client cards for each client", async () => {
-    const clients = [
+    const marcas = [
       makeClient({ id: "c-1", name: "Acme Corp" }),
       makeClient({ id: "c-2", name: "Beta Ltd", slug: "beta" }),
     ];
-    mockUseClients.mockReturnValue({ data: clients, isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: marcas, isLoading: false, isError: false });
 
     const { getAllByTestId, getByText } = await renderClientes();
     expect(getAllByTestId("client-card").length).toBe(2);
@@ -121,7 +121,7 @@ describe("Clientes — success state", () => {
   it("renders the page header", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
     const { getByText } = await renderClientes();
-    expect(getByText("Clientes")).toBeTruthy();
+    expect(getByText("Marcas")).toBeTruthy();
   });
 
   it("renders kind badge when present", async () => {
@@ -135,15 +135,15 @@ describe("Clientes — success state", () => {
   });
 });
 
-describe("Clientes — empty state", () => {
+describe("Marcas — empty state", () => {
   it("renders empty state when no clients", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
     const { getByTestId } = await renderClientes();
-    expect(getByTestId("clientes-empty")).toBeTruthy();
+    expect(getByTestId("marcas-empty")).toBeTruthy();
   });
 });
 
-describe("Clientes — error state", () => {
+describe("Marcas — error state", () => {
   it("renders error state on fetch failure", async () => {
     mockUseClients.mockReturnValue({
       data: undefined,
@@ -152,13 +152,13 @@ describe("Clientes — error state", () => {
       error: new Error("Network error"),
     });
     const { getByTestId, getByText } = await renderClientes();
-    expect(getByTestId("clientes-error")).toBeTruthy();
+    expect(getByTestId("marcas-error")).toBeTruthy();
     expect(getByText("Network error")).toBeTruthy();
   });
 });
 
-describe("Clientes — modal interactions", () => {
-  it("opens ClienteModal when card is clicked", async () => {
+describe("Marcas — modal interactions", () => {
+  it("opens MarcaModal when card is clicked", async () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
     mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
 
@@ -172,7 +172,7 @@ describe("Clientes — modal interactions", () => {
     expect(modal.getAttribute("data-tab")).toBe("contas");
   });
 
-  it("opens ClienteModal on Chat tab when chat button is clicked", async () => {
+  it("opens MarcaModal on Chat tab when chat button is clicked", async () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
     mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
 
@@ -200,7 +200,7 @@ describe("Clientes — modal interactions", () => {
   });
 });
 
-describe("Clientes — create dialog", () => {
+describe("Marcas — create dialog", () => {
   it("shows at least one create dialog button", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
     // The empty state renders a second CreateClientDialog, so multiple buttons exist.

@@ -2,7 +2,7 @@
  * ConnectionDetailDialog — per-WAHA-connection manage modal.
  *
  * Extracted from @/pages/Conexao to be shared by:
- *   - ClienteModal (Contas tab → WhatsApp section)
+ *   - MarcaModal (Contas tab → WhatsApp section)
  *   - Conexoes page (WhatsApp card section)
  *
  * Shows QR pairing, session actions, auto-reply toggle, authorized numbers,
@@ -499,7 +499,7 @@ function BoundChatsEditor({
  * authorized numbers, bound chats). Extracted from the pre-Wave-5
  * `ConnectionDetailDialog` body so the SAME markup + hooks render in two
  * contexts without duplicating any WAHA logic:
- *   - inside a modal — `ConnectionDetailDialog` below (ClienteModal / Conexoes)
+ *   - inside a modal — `ConnectionDetailDialog` below (MarcaModal / Conexoes)
  *   - inline as a page subtab — `pages/WhatsAppChat.tsx` "Configurações"
  *
  * Uses plain heading markup (`<h2>`/`<p>`), not `DialogTitle`/`DialogDescription`
@@ -915,7 +915,7 @@ export function ConnectionSettingsPanel({
 // ─── ConnectionDetailDialog (exported — thin modal wrapper) ──────────────────
 /**
  * ConnectionDetailDialog — the Dialog-chrome consumer of `ConnectionSettingsPanel`.
- * Shared by ClienteModal + Conexoes: full QR/config management for one WAHA
+ * Shared by MarcaModal + Conexoes: full QR/config management for one WAHA
  * connection line, presented as a modal.
  */
 export function ConnectionDetailDialog({

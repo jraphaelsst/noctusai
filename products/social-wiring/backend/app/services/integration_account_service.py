@@ -60,7 +60,7 @@ class IntegrationAccount:
     created_at: Any
     updated_at: Any
     # Channel-object columns (migration 008)
-    client_id: Optional[UUID]
+    marca_id: Optional[UUID]
     status: str
     channel_info: dict[str, Any]
     last_synced_at: Any
@@ -71,7 +71,7 @@ class IntegrationAccountNotFound(Exception):
 
 
 # Sentinel for update_account: distinguishes "caller passed None (clear the
-# FK)" from "caller did not pass client_id at all (leave unchanged)".
+# FK)" from "caller did not pass marca_id at all (leave unchanged)".
 _UNSET = object()
 
 
@@ -139,8 +139,8 @@ class IntegrationAccountService:
                 raw_channel_info = json.loads(raw_channel_info)
             except Exception:
                 raw_channel_info = {}
-        raw_client_id = row.get("client_id")
-        client_id = UUID(str(raw_client_id)) if raw_client_id else None
+        raw_marca_id = row.get("marca_id")
+        marca_id = UUID(str(raw_marca_id)) if raw_marca_id else None
         return IntegrationAccount(
             id=UUID(str(row["id"])),
             org_id=UUID(str(row["org_id"])),
@@ -150,7 +150,7 @@ class IntegrationAccountService:
             is_default=bool(row.get("is_default", False)),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
-            client_id=client_id,
+            marca_id=marca_id,
             status=row.get("status") or "validated",
             channel_info=raw_channel_info,
             last_synced_at=row.get("last_synced_at"),
@@ -178,15 +178,15 @@ class IntegrationAccountService:
         self,
         org_id: UUID,
         provider: Optional[str] = None,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> list[IntegrationAccount]:
         """List integration accounts for an org, optionally filtered by
-        provider and/or client_id."""
+        provider and/or marca_id."""
         q = self._table().select("*").eq("org_id", str(org_id))
         if provider:
             q = q.eq("provider", provider)
-        if client_id is not None:
-            q = q.eq("client_id", str(client_id))
+        if marca_id is not None:
+            q = q.eq("marca_id", str(marca_id))
         resp = q.execute()
         return [self._row_to_account(r) for r in (resp.data or [])]
 
@@ -210,7 +210,7 @@ class IntegrationAccountService:
         credential_dict: dict,
         metadata: Optional[dict] = None,
         is_default: bool = False,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
         status: str = "validated",
     ) -> IntegrationAccount:
         """Create a new integration account row.
@@ -234,8 +234,8 @@ class IntegrationAccountService:
             "is_default": is_default,
             "status": status,
         }
-        if client_id is not None:
-            data["client_id"] = str(client_id)
+        if marca_id is not None:
+            data["marca_id"] = str(marca_id)
         if is_default:
             # Clear existing defaults for this provider before inserting.
             self._clear_defaults(org_id=org_id, provider=provider)
@@ -252,12 +252,12 @@ class IntegrationAccountService:
         account_label: Optional[str] = None,
         metadata: Optional[dict] = None,
         is_default: Optional[bool] = None,
-        client_id: Any = _UNSET,
+        marca_id: Any = _UNSET,
         status: Optional[str] = None,
     ) -> IntegrationAccount:
-        """Update label / metadata / is_default / client_id / status.
+        """Update label / metadata / is_default / marca_id / status.
 
-        ``client_id`` uses the ``_UNSET`` sentinel so passing ``None``
+        ``marca_id`` uses the ``_UNSET`` sentinel so passing ``None``
         explicitly clears the FK, while omitting the arg leaves it unchanged.
         credential cannot be patched via this method — re-create the account
         to rotate keys.
@@ -280,9 +280,9 @@ class IntegrationAccountService:
                     provider=row["provider"],
                     exclude_id=account_id,
                 )
-        if client_id is not _UNSET:
+        if marca_id is not _UNSET:
             # Explicit None clears the FK; a UUID sets it.
-            updates["client_id"] = str(client_id) if client_id is not None else None
+            updates["marca_id"] = str(marca_id) if marca_id is not None else None
         if status is not None:
             updates["status"] = status
 

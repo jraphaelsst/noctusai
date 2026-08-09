@@ -1,9 +1,9 @@
 """Tests for the channel-object features added in P2-BE.
 
 Covers:
-  - IntegrationAccount.client_id / status / channel_info / last_synced_at
+  - IntegrationAccount.marca_id / status / channel_info / last_synced_at
     round-trip through service CRUD
-  - list_accounts with client_id filter
+  - list_accounts with marca_id filter
   - update_channel_info writes the three cols
   - sync_channel_info happy path (validating→validated, channel_info cached)
   - sync_channel_info error path (→status='error')
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS integration_accounts (
     is_default          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    client_id           TEXT,
+    marca_id           TEXT,
     status              TEXT NOT NULL DEFAULT 'validated',
     channel_info        TEXT NOT NULL DEFAULT '{}',
     last_synced_at      TEXT,
@@ -92,7 +92,7 @@ def _make(
     provider="youtube",
     label="My Channel",
     is_default=False,
-    client_id=None,
+    marca_id=None,
     status="validated",
 ) -> IntegrationAccount:
     return svc.create_account(
@@ -102,7 +102,7 @@ def _make(
         credential_dict=_cred(),
         metadata={"channel_id": "UC123"},
         is_default=is_default,
-        client_id=client_id,
+        marca_id=marca_id,
         status=status,
     )
 
@@ -112,12 +112,12 @@ def _make(
 class TestClientIdRoundTrip:
     def test_create_with_client_id(self, svc):
         cid = uuid4()
-        acct = _make(svc, client_id=cid)
-        assert acct.client_id == cid
+        acct = _make(svc, marca_id=cid)
+        assert acct.marca_id == cid
 
     def test_create_without_client_id(self, svc):
         acct = _make(svc)
-        assert acct.client_id is None
+        assert acct.marca_id is None
 
     def test_status_stored_and_returned(self, svc):
         acct = _make(svc, status="wiring")
@@ -141,16 +141,16 @@ class TestClientIdRoundTrip:
 class TestClientIdFilter:
     def test_filter_by_client_id_returns_only_matching(self, svc):
         cid = uuid4()
-        a1 = _make(svc, label="A", client_id=cid)
+        a1 = _make(svc, label="A", marca_id=cid)
         a2 = _make(svc, label="B")  # no client_id
-        results = svc.list_accounts(_ORG_A, client_id=cid)
+        results = svc.list_accounts(_ORG_A, marca_id=cid)
         ids = {r.id for r in results}
         assert a1.id in ids
         assert a2.id not in ids
 
     def test_filter_by_nonexistent_client_id_returns_empty(self, svc):
         _make(svc, label="A")
-        results = svc.list_accounts(_ORG_A, client_id=uuid4())
+        results = svc.list_accounts(_ORG_A, marca_id=uuid4())
         assert results == []
 
     def test_no_client_id_filter_returns_all(self, svc):

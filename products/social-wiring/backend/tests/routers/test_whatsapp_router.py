@@ -222,7 +222,7 @@ def _seed_connection(
                 "auto_reply_enabled": auto_reply_enabled,
                 "authorized_numbers": authorized_numbers or [],
                 "bound_chats": bound_chats or [],
-                "client_id": None,
+                "marca_id": None,
                 "created_at": "2026-08-01T00:00:00Z",
                 "updated_at": "2026-08-01T00:00:00Z",
             }

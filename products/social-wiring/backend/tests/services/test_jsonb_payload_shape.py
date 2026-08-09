@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS integration_accounts (
     is_default          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    client_id           TEXT,
+    marca_id           TEXT,
     status              TEXT NOT NULL DEFAULT 'validated',
     channel_info        TEXT NOT NULL DEFAULT '{}',
     last_synced_at      TEXT,

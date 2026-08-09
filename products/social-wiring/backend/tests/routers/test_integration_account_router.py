@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS integration_accounts (
     is_default          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    client_id           TEXT,
+    marca_id           TEXT,
     status              TEXT NOT NULL DEFAULT 'validated',
     channel_info        TEXT NOT NULL DEFAULT '{}',
     last_synced_at      TEXT,
@@ -519,12 +519,12 @@ _FAKE_YT_CLIENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 class TestYouTubeOAuthClientId:
-    """Verify that client_id threads correctly through the YouTube OAuth flow
+    """Verify that marca_id threads correctly through the YouTube OAuth flow
     (migration 017): start encodes it into state, callback decodes and passes
     it to create_account.
 
     Uses the same DI seam pattern as TestYouTubeOAuthCallback — no monkeypatch,
-    no mock of our own code.  build_client_service is called with get_admin_client()
+    no mock of our own code.  build_marca_service is called with get_admin_client()
     for the validation step; the mock admin client returns a MockSupabaseClient
     that does NOT raise on .table().select().eq().eq().execute(), so the
     validation succeeds with a stub response (empty data → None → 404 from the
@@ -568,7 +568,7 @@ class TestYouTubeOAuthClientId:
         }
 
     def test_start_state_contains_org_id(self, client):
-        """POST /start without client_id → state still contains org_id (backward compat)."""
+        """POST /start without marca_id → state still contains org_id (backward compat)."""
         from app.config import settings as _settings
         from app.main import app
         from app.dependencies import get_settings
@@ -614,8 +614,8 @@ class TestYouTubeOAuthClientId:
     def test_callback_three_part_state_creates_account_with_client_id(
         self, client, ia_service
     ):
-        """Callback with state={org}:{nonce}:{client_id} creates the account
-        linked to that client_id — the third-segment round-trip."""
+        """Callback with state={org}:{nonce}:{marca_id} creates the account
+        linked to that marca_id — the third-segment round-trip."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -639,13 +639,13 @@ class TestYouTubeOAuthClientId:
 
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+        assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
     def test_callback_two_part_state_creates_account_without_client_id(
         self, client, ia_service
     ):
         """Callback with old-style state={org}:{nonce} (no third part) still
-        creates the account — backward-compatible, client_id=None."""
+        creates the account — backward-compatible, marca_id=None."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -669,7 +669,7 @@ class TestYouTubeOAuthClientId:
 
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="youtube")
         assert len(accounts) == 1
-        assert accounts[0].client_id is None
+        assert accounts[0].marca_id is None
 
 
 # ─── Legacy adoption endpoint ───────────────────────────────────────────────
@@ -881,7 +881,7 @@ class TestGmailOAuthCallback:
         assert accounts[0].status == "validated"
 
     def test_callback_with_client_id_links_account(self, client, ia_service):
-        """client_id in state is decoded and stored on the gmail account row."""
+        """marca_id in state is decoded and stored on the gmail account row."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -904,7 +904,7 @@ class TestGmailOAuthCallback:
         assert resp.status_code in (302, 303), resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="gmail")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+        assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
     def test_callback_missing_code_400(self, client):
         resp = client.get(
@@ -1043,7 +1043,7 @@ class TestDriveOAuthCallback:
         assert accounts[0].status == "validated"
 
     def test_callback_with_client_id_links_account(self, client, ia_service):
-        """client_id in state is decoded and stored on the drive account row."""
+        """marca_id in state is decoded and stored on the drive account row."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -1066,7 +1066,7 @@ class TestDriveOAuthCallback:
         assert resp.status_code in (302, 303), resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="google_drive")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+        assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
     def test_callback_missing_code_400(self, client):
         resp = client.get(
@@ -1121,7 +1121,7 @@ class TestMetaOAuthStart:
         assert "auth_url" in body
         assert "state" in body
         assert "facebook.com" in body["auth_url"]
-        assert "client_id=fake-app-id" in body["auth_url"]
+        assert "client_id=fake-app-id" in body["auth_url"]  # OAuth app id, not the marca FK
         # The Wave 2-pinned scope set — not the org-level auto-discovered set.
         for scope in (
             "instagram_basic",
@@ -1167,7 +1167,7 @@ class TestMetaOAuthStart:
                 app.dependency_overrides[get_settings] = prev
 
     def test_start_404_when_client_id_not_found(self, client):
-        """A client_id that doesn't resolve via build_client_service (the
+        """A marca_id that doesn't resolve via build_marca_service (the
         mock admin client's default empty-select) 404s — never silently
         proceeds with an unvalidated FK."""
         from app.dependencies import get_settings
@@ -1179,7 +1179,7 @@ class TestMetaOAuthStart:
         try:
             resp = client.post(
                 "/api/integrations/accounts/meta/oauth/start",
-                json={"client_id": _FAKE_YT_CLIENT_ID},
+                json={"marca_id": _FAKE_YT_CLIENT_ID},
                 headers=_auth_header(),
             )
             assert resp.status_code == 404
@@ -1318,8 +1318,8 @@ class TestMetaOAuthCallback:
         assert len(same) == 1, f"expected 1 account for IG1, got {len(same)}"
 
     def test_callback_with_client_id_links_account(self, client, ia_service):
-        """State's third segment (client_id) round-trips onto the created
-        account — mirrors the YouTube client_id round-trip."""
+        """State's third segment (marca_id) round-trips onto the created
+        account — mirrors the YouTube marca_id round-trip."""
         from app.config import settings as _settings
         from app.main import app
 
@@ -1342,7 +1342,7 @@ class TestMetaOAuthCallback:
         assert resp.status_code in (302, 303), resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="meta")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+        assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
     def test_callback_missing_code_400(self, client):
         resp = client.get(
@@ -1425,7 +1425,7 @@ class TestInstagramOAuthStart:
         assert "auth_url" in body
         assert "state" in body
         assert "www.instagram.com" in body["auth_url"]
-        assert "client_id=fake-ig-app-id" in body["auth_url"]
+        assert "client_id=fake-ig-app-id" in body["auth_url"]  # OAuth app id, not the marca FK
         for scope in (
             "instagram_business_basic",
             "instagram_business_manage_messages",
@@ -1464,7 +1464,7 @@ class TestInstagramOAuthStart:
         try:
             resp = client.post(
                 "/api/integrations/accounts/instagram/oauth/start",
-                json={"client_id": _FAKE_YT_CLIENT_ID},
+                json={"marca_id": _FAKE_YT_CLIENT_ID},
                 headers=_auth_header(),
             )
             assert resp.status_code == 404
@@ -1607,7 +1607,7 @@ class TestInstagramOAuthCallback:
         assert resp.status_code in (302, 303), resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="instagram")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == _FAKE_YT_CLIENT_ID
+        assert str(accounts[0].marca_id) == _FAKE_YT_CLIENT_ID
 
     def test_callback_falls_back_to_short_token_on_long_lived_failure(
         self, client, ia_service
@@ -1765,7 +1765,7 @@ class TestInstagramManualToken:
         try:
             resp = client.post(
                 "/api/integrations/accounts/instagram/token",
-                json={"access_token": "GOOD-TOKEN", "client_id": _FAKE_YT_CLIENT_ID},
+                json={"access_token": "GOOD-TOKEN", "marca_id": _FAKE_YT_CLIENT_ID},
                 headers=_auth_header(),
             )
         finally:
@@ -1778,21 +1778,21 @@ class TestInstagramManualToken:
 
 # ─── n8n manual create with client_id round-trip ─────────────────────────────
 class TestN8nClientIdRoundTrip:
-    """n8n is manual-key-only (no OAuth); verify client_id persists correctly
+    """n8n is manual-key-only (no OAuth); verify marca_id persists correctly
     via the existing POST /api/integrations/accounts path.
     Also confirms 'n8n' passes the integration_accounts CHECK constraint.
     """
 
     def test_n8n_create_with_client_id_round_trips(self, client, ia_service):
-        """Create an n8n account with a client_id; read it back and confirm the
-        client_id is stored (the field survives the Pydantic → service → DB round-trip).
+        """Create an n8n account with a marca_id; read it back and confirm the
+        marca_id is stored (the field survives the Pydantic → service → DB round-trip).
         No OAuth, no external call — pure CRUD validation."""
         n8n_client_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
         body = {
             "provider": "n8n",
             "account_label": "N8N Main",
             "credential": {"base_url": "https://n8n.example.com", "api_key": "n8n-key-123"},
-            "client_id": n8n_client_id,
+            "marca_id": n8n_client_id,
         }
         resp = client.post("/api/integrations/accounts", json=body, headers=_auth_header())
         assert resp.status_code == 201, resp.text
@@ -1806,10 +1806,10 @@ class TestN8nClientIdRoundTrip:
         # Read back via the service directly to confirm client_id is stored.
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="n8n")
         assert len(accounts) == 1
-        assert str(accounts[0].client_id) == n8n_client_id
+        assert str(accounts[0].marca_id) == n8n_client_id
 
     def test_n8n_create_without_client_id(self, client, ia_service):
-        """n8n without client_id also creates successfully (client_id is the
+        """n8n without marca_id also creates successfully (marca_id is the
         optional field here — base_url + api_key are both required)."""
         body = {
             "provider": "n8n",
@@ -1820,4 +1820,4 @@ class TestN8nClientIdRoundTrip:
         assert resp.status_code == 201, resp.text
         accounts = ia_service.list_accounts(org_id=UUID(_ORG_A), provider="n8n")
         assert len(accounts) == 1
-        assert accounts[0].client_id is None
+        assert accounts[0].marca_id is None

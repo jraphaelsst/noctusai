@@ -1,5 +1,5 @@
 /**
- * ClienteModal — tabbed sheet for one cliente.
+ * MarcaModal — tabbed sheet for one marca.
  *
  * Tab "Contas"
  *   · Edit name / kind / notes
@@ -11,7 +11,7 @@
  *   · WhatsAppChatWindow — live two-pane chat
  *
  * Inputs:
- *   client  — Cliente object (already loaded by the parent Clientes page)
+ *   marca   — Marca object (already loaded by the parent Marcas page)
  *   open    — Dialog open state
  *   onClose — called when the dialog requests close
  */
@@ -94,10 +94,10 @@ import {
   type IntegrationStatus,
 } from "@/hooks/useIntegrationAccounts";
 import {
-  useUpdateClient,
-  useDeleteClient,
-  type Client,
-} from "@/hooks/useClients";
+  useUpdateMarca,
+  useDeleteMarca,
+  type Marca,
+} from "@/hooks/useMarcas";
 import {
   useMailchimpConnection,
   useUpsertMailchimpConnection,
@@ -161,11 +161,11 @@ const PROVIDER_CATALOG: ProviderDef[] = [
 // this generic integration_accounts create path.
 
 function N8nConnectForm({
-  clientId,
+  marcaId,
   onCancel,
   onConnected,
 }: {
-  clientId: string;
+  marcaId: string;
   onCancel: () => void;
   onConnected: () => void;
 }) {
@@ -189,7 +189,7 @@ function N8nConnectForm({
         provider: "n8n",
         account_label: label.trim() || "n8n",
         credential: { base_url: baseUrl.trim(), api_key: apiKey.trim() },
-        client_id: clientId,
+        marca_id: marcaId,
       });
       toast.success("n8n conectado com sucesso.");
       onConnected();
@@ -268,12 +268,12 @@ function N8nConnectForm({
 // ─── Mailchimp inline connect form (manual API-key) ───────────────────────────
 
 function MailchimpConnectForm({
-  clientId,
+  marcaId,
   connection,
   onCancel,
   onConnected,
 }: {
-  clientId: string;
+  marcaId: string;
   connection: MailchimpConnection | null;
   onCancel: () => void;
   onConnected: () => void;
@@ -294,7 +294,7 @@ function MailchimpConnectForm({
         api_key: apiKey.trim(),
         server_prefix: serverPrefix.trim() || undefined,
         audience_id: audienceId.trim() || undefined,
-        client_id: clientId,
+        marca_id: marcaId,
       });
       toast.success("Mailchimp conectado com sucesso.");
       onConnected();
@@ -381,15 +381,15 @@ function MailchimpConnectForm({
  * inline form, mirroring the greyed-row chrome used by the other providers.
  */
 function MailchimpProviderRow({
-  clientId,
+  marcaId,
   icon: ProviderIcon,
   label,
 }: {
-  clientId: string;
+  marcaId: string;
   icon: LucideIcon;
   label: string;
 }) {
-  const { data: connection, isLoading } = useMailchimpConnection(clientId);
+  const { data: connection, isLoading } = useMailchimpConnection(marcaId);
   const [formOpen, setFormOpen] = useState(false);
   const connected = !!connection?.connected;
 
@@ -461,7 +461,7 @@ function MailchimpProviderRow({
 
       {formOpen && (
         <MailchimpConnectForm
-          clientId={clientId}
+          marcaId={marcaId}
           connection={connection ?? null}
           onCancel={() => setFormOpen(false)}
           onConnected={() => setFormOpen(false)}
@@ -498,7 +498,7 @@ function WaConnectionCard({
     provider: "whatsapp",
     account_label: line.label,
     is_default: false,
-    client_id: null,
+    marca_id: null,
     status: integrationStatus,
     channel_info: {
       session: line.session_name,
@@ -531,11 +531,11 @@ function WaConnectionCard({
 // ─── "Nova conexão WA" mini-dialog ────────────────────────────────────────────
 
 function AddWaConnectionDialog({
-  clientId,
+  marcaId,
   onCreated,
   onClose,
 }: {
-  clientId: string;
+  marcaId: string;
   onCreated: (line: WhatsAppConnectionLine) => void;
   onClose: () => void;
 }) {
@@ -553,7 +553,7 @@ function AddWaConnectionDialog({
       return;
     }
     try {
-      const line = await create.mutateAsync({ label: label.trim(), api_key: apiKey.trim(), client_id: clientId });
+      const line = await create.mutateAsync({ label: label.trim(), api_key: apiKey.trim(), marca_id: marcaId });
       toast.success("Conexão criada. Escaneie o QR para parear.");
       onCreated(line);
     } catch (err: unknown) {
@@ -613,21 +613,21 @@ function AddWaConnectionDialog({
 
 // ─── Tab: Contas ──────────────────────────────────────────────────────────────
 
-function ContasTab({ client }: { client: Client }) {
+function ContasTab({ client }: { client: Marca }) {
   // Edit form state
   const [name, setName] = useState(client.name);
   const [kind, setKind] = useState(client.kind ?? "");
   const [notes, setNotes] = useState(client.notes ?? "");
   const [editSaving, setEditSaving] = useState(false);
 
-  const updateClient = useUpdateClient();
-  const deleteClient = useDeleteClient();
+  const updateMarca = useUpdateMarca();
+  const deleteMarca = useDeleteMarca();
 
   // Deep-link navigation — a connected card's body click pre-selects this
   // client/account in the shared store, then routes into the provider's own
   // dashboard (per ProviderCardConfig.dashboardRoute).
   const navigate = useNavigate();
-  const setActiveClient = useActiveAccountStore((s) => s.setActiveClient);
+  const setActiveMarca = useActiveAccountStore((s) => s.setActiveMarca);
   const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
 
   useEffect(() => {
@@ -639,8 +639,8 @@ function ContasTab({ client }: { client: Client }) {
   async function handleSave() {
     setEditSaving(true);
     try {
-      await updateClient.mutateAsync({ id: client.id, name: name.trim() || undefined, kind: kind || null, notes: notes || null });
-      toast.success("Cliente atualizado.");
+      await updateMarca.mutateAsync({ id: client.id, name: name.trim() || undefined, kind: kind || null, notes: notes || null });
+      toast.success("Marca atualizada.");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Falha ao salvar.");
     } finally {
@@ -653,7 +653,7 @@ function ContasTab({ client }: { client: Client }) {
     data: intAccounts = [],
     isLoading: loadingInt,
     isError: errorInt,
-  } = useIntegrationAccounts({ clientId: client.id });
+  } = useIntegrationAccounts({ marcaId: client.id });
 
   const updateAcc = useUpdateAccount();
   const setDefault = useSetDefaultAccount();
@@ -708,7 +708,7 @@ function ContasTab({ client }: { client: Client }) {
   function handleAccOpen(acc: IntegrationAccount) {
     const dashboardRoute = getProviderConfig(acc.provider)?.dashboardRoute;
     if (dashboardRoute) {
-      setActiveClient(client.id);
+      setActiveMarca(client.id);
       // Key the pre-selection under the account's OWN provider — the page we
       // are about to navigate to reads only its own slot. (setActiveClient
       // clears every slot first, so the order here matters.)
@@ -747,7 +747,7 @@ function ContasTab({ client }: { client: Client }) {
   function handleWaOpen(line: WhatsAppConnectionLine) {
     const dashboardRoute = getProviderConfig("whatsapp")?.dashboardRoute;
     if (dashboardRoute) {
-      setActiveClient(client.id);
+      setActiveMarca(client.id);
       // A WhatsApp connection id is not an integration_accounts.id at all —
       // it keys `whatsapp` explicitly so WhatsAppChat can find it and no
       // other page can mistake it for one of theirs.
@@ -806,9 +806,9 @@ function ContasTab({ client }: { client: Client }) {
             <Button
               size="sm"
               onClick={handleSave}
-              disabled={editSaving || updateClient.isPending}
+              disabled={editSaving || updateMarca.isPending}
             >
-              {(editSaving || updateClient.isPending) && (
+              {(editSaving || updateMarca.isPending) && (
                 <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
               )}
               Salvar
@@ -847,7 +847,7 @@ function ContasTab({ client }: { client: Client }) {
                 return (
                   <MailchimpProviderRow
                     key={provider.id}
-                    clientId={client.id}
+                    marcaId={client.id}
                     icon={ProviderIcon}
                     label={provider.label}
                   />
@@ -909,7 +909,7 @@ function ContasTab({ client }: { client: Client }) {
                             ((provider.id === "meta" || provider.id === "instagram") && metaOAuth.isPending)
                           }
                           onClick={() => {
-                            const opts = { clientId: client.id };
+                            const opts = { marcaId: client.id };
                             if (provider.id === "youtube") {
                               youtubeOAuth.mutate(opts, {
                                 onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Falha."),
@@ -963,7 +963,7 @@ function ContasTab({ client }: { client: Client }) {
                   {/* n8n inline form */}
                   {provider.id === "n8n" && n8nFormOpen && (
                     <N8nConnectForm
-                      clientId={client.id}
+                      marcaId={client.id}
                       onCancel={() => setN8nFormOpen(false)}
                       onConnected={() => setN8nFormOpen(false)}
                     />
@@ -1022,7 +1022,7 @@ function ContasTab({ client }: { client: Client }) {
       {/* ── Add WA dialog ────────────────────────────────────────────────── */}
       {addWaOpen && (
         <AddWaConnectionDialog
-          clientId={client.id}
+          marcaId={client.id}
           onCreated={(line) => {
             setAddWaOpen(false);
             setNewWaLine(line);
@@ -1059,7 +1059,7 @@ function ContasTab({ client }: { client: Client }) {
 
 // ─── Tab: Chat ────────────────────────────────────────────────────────────────
 
-function ChatTab({ client }: { client: Client }) {
+function ChatTab({ client }: { client: Marca }) {
   const {
     data: waConnections = [],
     isLoading,
@@ -1144,22 +1144,22 @@ function ChatTab({ client }: { client: Client }) {
   );
 }
 
-// ─── ClienteModal ─────────────────────────────────────────────────────────────
+// ─── MarcaModal ───────────────────────────────────────────────────────────────
 
-interface ClienteModalProps {
-  client: Client;
+interface MarcaModalProps {
+  client: Marca;
   open: boolean;
   onClose: () => void;
   /** If true, opens on the Chat tab instead of Contas (default: "contas") */
   defaultTab?: "contas" | "chat";
 }
 
-export function ClienteModal({
+export function MarcaModal({
   client,
   open,
   onClose,
   defaultTab = "contas",
-}: ClienteModalProps) {
+}: MarcaModalProps) {
   const [tab, setTab] = useState(defaultTab);
 
   // Reset tab when switching clients
@@ -1205,4 +1205,4 @@ export function ClienteModal({
   );
 }
 
-export default ClienteModal;
+export default MarcaModal;

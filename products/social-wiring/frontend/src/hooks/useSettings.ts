@@ -23,7 +23,7 @@ export interface Recipient {
    * Meta Page maps to no client land here, so an empty org tier means those
    * leads alert nobody.
    */
-  client_id?: string | null;
+  marca_id?: string | null;
   created_at: string;
 }
 
@@ -33,7 +33,7 @@ export interface RecipientCreate {
   whatsapp_number?: string;
   is_active?: boolean;
   /** Omit or send null for an org-wide recipient. */
-  client_id?: string | null;
+  marca_id?: string | null;
 }
 
 export interface RecipientUpdate {
@@ -42,7 +42,7 @@ export interface RecipientUpdate {
    * to leave it unchanged. The backend distinguishes the two via
    * `model_fields_set`, so `undefined` and `null` are NOT interchangeable here.
    */
-  client_id?: string | null;
+  marca_id?: string | null;
   name?: string;
   email?: string | null;
   whatsapp_number?: string | null;

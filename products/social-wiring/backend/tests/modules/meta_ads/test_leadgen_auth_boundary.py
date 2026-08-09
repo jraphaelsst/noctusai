@@ -32,7 +32,7 @@ _AUTHED_ROUTES = [
     # Page → client attribution. It decides WHICH client's contacts receive a
     # lead's PII, so an unauthenticated caller flipping it is a routing hole,
     # not a cosmetic change.
-    ("put", "/api/meta/leadgen/pages/page-1/client", {"json": {"client_id": None}}),
+    ("put", "/api/meta/leadgen/pages/page-1/client", {"json": {"marca_id": None}}),
 ]
 
 APP_SECRET = "test-app-secret"

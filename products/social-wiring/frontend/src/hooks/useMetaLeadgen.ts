@@ -34,7 +34,7 @@ export interface LeadgenPageSubscription {
   subscribed_fields: string[];
   /** Client this Page's leads are attributed to. `null` = unattributed, so its
    *  alerts fall back to the org-wide recipient tier. */
-  client_id?: string | null;
+  marca_id?: string | null;
   forms_total?: number;
   forms_attributed?: number;
   app_id: string | null;
@@ -164,20 +164,20 @@ export function useUnsubscribeLeadgenPage() {
  * (some forms updated, some not) must show its real end state rather than the
  * one we hoped for.
  */
-export function useSetPageClient() {
+export function useSetPageMarca() {
   const qc = useQueryClient();
-  return useMutation<LeadgenPageSubscription, Error, { pageId: string; clientId: string | null }>({
-    mutationFn: ({ pageId, clientId }) =>
+  return useMutation<LeadgenPageSubscription, Error, { pageId: string; marcaId: string | null }>({
+    mutationFn: ({ pageId, marcaId }) =>
       api
         .put<LeadgenPageSubscription>(
           `/api/meta/leadgen/pages/${encodeURIComponent(pageId)}/client`,
-          { client_id: clientId },
+          { marca_id: marcaId },
         )
         .then(
           (r) =>
             r ?? {
               page_id: pageId, page_name: "", subscribed: false,
-              subscribed_fields: [], app_id: null, client_id: clientId,
+              subscribed_fields: [], app_id: null, marca_id: marcaId,
               forms_total: 0, forms_attributed: 0,
             },
         ),

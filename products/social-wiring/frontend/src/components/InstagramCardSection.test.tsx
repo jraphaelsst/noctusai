@@ -62,7 +62,7 @@ const igAccount = {
   org_id: "org-1",
   provider: "instagram",
   account_label: "@cliente",
-  client_id: null,
+  marca_id: null,
   status: "validated",
   channel_info: { channel_id: "17841400000000000", title: "cliente" },
   metadata: { model: "instagram_login" },
@@ -94,12 +94,12 @@ beforeEach(() => {
   });
 });
 
-async function render(clients: any[] = []) {
+async function render(marcas: any[] = []) {
   const { InstagramCardSection } = await import("./InstagramCardSection");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   return {
-    ...rtl.render(React.createElement(InstagramCardSection, { clients })),
+    ...rtl.render(React.createElement(InstagramCardSection, { marcas })),
     fireEvent: rtl.fireEvent,
   };
 }
@@ -128,13 +128,13 @@ describe("InstagramCardSection — connect", () => {
   });
 
   it("passes the selected client through to OAuth start", async () => {
-    const clients = [{ id: "client-a", name: "Acme" }];
-    const { getByText, getByLabelText, fireEvent } = await render(clients);
-    fireEvent.change(getByLabelText("Atribuir a cliente ao conectar"), {
+    const marcas = [{ id: "client-a", name: "Acme" }];
+    const { getByText, getByLabelText, fireEvent } = await render(marcas);
+    fireEvent.change(getByLabelText("Atribuir a marca ao conectar"), {
       target: { value: "client-a" },
     });
     fireEvent.click(getByText("Conectar Instagram"));
-    expect(startMutate.mock.calls[0][0]).toEqual({ clientId: "client-a" });
+    expect(startMutate.mock.calls[0][0]).toEqual({ marcaId: "client-a" });
   });
 });
 

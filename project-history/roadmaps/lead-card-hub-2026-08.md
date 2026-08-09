@@ -8,10 +8,10 @@
 > tags, classifications, temperature, contracts. Explicit reference model: **Trello**
 > (11 screenshots supplied 2026-08-07).
 >
-> **Decision: this roadmap ships the design record only. No product code yet.**
+> **Status: design record + Phase 0 shipped. Phases 1–5 are still design-only.**
 > All **17 decisions** below are user-ratified in the 2026-08-07 session, and **§7 is
-> closed** — every open question was answered before anything was designed against
-> it. The only thing left is **T0: the user says to start building.**
+> closed**. **Phase 0 shipped 2026-08-08** (migration 046 + 73 files, all suites
+> green); Phases 1–5 remain design-only, gated on **T1**.
 >
 > **Scope ruling (user-ratified): the card hub is a SHARED ORGAN**, built in
 > `noctusai_lib` + `@noctusai/lib` and consumed by **social-wiring** *and*
@@ -162,11 +162,24 @@ chose **`marcas`**.
 | person / lead entity (new) | `social_wiring.clientes` |
 | brand-profile owner (renamed from `clients`) | `social_wiring.marcas` |
 
-**Rename blast radius (measured):** 38 backend references, 17 frontend files, 34
-files total. AST-first (libcst / ts-morph), never regex. Migration 007 already set
-the precedent for this exact move (`mc_brand_owners` → `clients` behind a compat
-view), so the same play applies: rename + compat view + migrate callers + drop the
-view once no caller reads it.
+**Rename blast radius — first estimate was WRONG in both directions; corrected
+after execution (2026-08-08):**
+
+| Layer | First estimate | Actual |
+|---|---:|---:|
+| table-name references in code | "38 backend refs" | **6** |
+| `client_id` occurrences (backend) | — | **312** |
+| `client_id` / `clientId` (frontend) | "17 files" | **126** |
+| files actually edited | 34 | **73** (44 backend, 29 frontend) |
+
+The original grep counted prose ("websocket clients", "email clients") and OAuth
+fields as if they were this entity. The table rename was ~6× smaller than
+estimated; the column rename ~13× larger. Recorded because the estimate drove a
+scoping decision (§7 Q1's "table-only" option) that the real numbers reversed.
+
+AST-first throughout (libcst for Python, ts-morph for TypeScript), never regex —
+see §5 Phase 0 for why the decisive rule was contextual and a regex could not have
+expressed it.
 
 ### The seam
 
@@ -296,20 +309,52 @@ one is in scope:
 | `erp.clientes` | erp's people — already the person layer | **untouched**; already the right name |
 | `orbity.clients` | orbity's own CRM clients | 🔴 **out of scope** (user ruling) |
 
-- **P0.1** `social_wiring.clients` → `social_wiring.marcas` (**D14**), behind a compat
-  view, following migration 007's own precedent (`mc_brand_owners` → `clients`).
-- **P0.2** Migrate all callers AST-first — **38 backend references, 17 frontend
-  files**, all within `products/social-wiring/`. libcst / ts-morph, never regex
-  (`KB § PATTERNS/common/ast.md`).
-- **P0.3** Drop the compat view only once no caller reads it. Verify by grep +
-  a live probe, not by assumption.
+- **P0.1** ✅ `social_wiring.clients` → `social_wiring.marcas` + the 6 FK columns
+  `client_id` → `marca_id`, with constraint / index / policy names and the
+  `status_pagina` nav row (migration `046_clients_to_marcas.sql`).
+- **P0.2** ✅ Migrate all callers AST-first — **73 files**, libcst + ts-morph,
+  never regex (`KB § PATTERNS/common/ast.md`).
+- **P0.3** ✅ No compat view — the user chose the full rename, so DB + code ship
+  together (verified first that the frontend never queries the table directly).
 
-**Checkpoint:** nothing **inside `products/social-wiring/`** says `clients` any
-more, the app still works, and `social_wiring.clientes` is free to create.
+**Checkpoint (met 2026-08-08):** `pytest` 1708 passed · `tsc` clean · `vitest`
+498 passed · zero files touched outside `products/social-wiring/`.
 
 ⚠️ The checkpoint is scoped to social-wiring **deliberately**. A repo-wide "no
 `clients` anywhere" check can never pass while `orbity.clients` exists, and chasing
 it would breach the scope ruling in §3.
+
+### 🔴 Why AST-first was load-bearing here, not ceremony
+
+`client_id` means **two unrelated things** in this product, and the discriminator
+is context a regex cannot read. Every one of these was found by inspection or by a
+failing test, and each would have been a live outage:
+
+| Site | Meaning | Verdict |
+|---|---|---|
+| `client_id=cfg.youtube_client_id` (×8) | Google/YouTube OAuth kwarg | **keep** |
+| `{"client_id": app_id}` in `auth_params` | Meta OAuth query param | **keep** |
+| `youtube_client_id` / `google_oauth_client_id` | OAuth settings | **keep** |
+| `DatabaseModule.get_client` (~20 test patches) | Supabase handle | **keep** |
+| `useQueryClient` (99 uses) | TanStack Query | **keep** |
+| `_require_client` in `mailchimp/routers/*` | `make_require_mailchimp_client` | **keep** |
+| `"Token de Cliente"` | Meta's own product name | **keep** |
+| `"Clientes VIP"` / `"Clientes ativos"` | e-mail SUBSCRIBERS, not marcas | **keep** |
+| `oauthClientId` in the IG/Conexões pickers | actually a MARCA id despite the name | **renamed** |
+
+Two whole classes were missed by the first codemod pass and caught by the test
+suites, not by review — worth remembering as the general lesson:
+
+- **f-strings** are `FormattedString` in libcst, not `SimpleString` — 6 query-param
+  URLs in tests were skipped silently.
+- **regex literals** (`/Gerenciar clientes/i`) are their own node kind — skipped
+  for the same reason.
+
+And one over-reach: the ts-morph pass filtered on `/src/`, followed the
+`@noctusai/lib` symlink, and edited **`seed/lib/frontend/`** — shared code used by
+every product. Caught by `git status`, reverted, and the filter tightened to
+`/products/social-wiring/frontend/src/`. A codemod's file filter is part of its
+blast radius and deserves the same scrutiny as its match rule.
 
 ### Phase 1 — the person layer (the foundation; everything else attaches here)
 
@@ -406,8 +451,8 @@ right person is asked.
 
 | ID | Trigger | Fires |
 |---|---|---|
-| **T0** | 🟡 **PENDING** — user says to start building. §7 is closed; this is the only thing left. | Phase 0 |
-| **T1** | Phase 0 checkpoint accepted — the name `clientes` is free | Phase 1 |
+| **T0** | ✅ **FIRED 2026-08-08** — user said continue. | Phase 0 ✅ **SHIPPED** |
+| **T1** | 🟡 **PENDING** — Phase 0 checkpoint accepted by the user; `clientes` is now free | Phase 1 |
 | **T2** | Phase 1 checkpoint accepted — board shows one card per human | Phase 2 |
 | **T3** | Phase 2 checkpoint accepted — **erp-imobiliario consuming the organ** | Phase 3 |
 | **T3b** | Phase 2 shipped; runs independently of Phase 3 | Phase 2b |
@@ -447,3 +492,6 @@ than guessed. All four were answered before any code was designed against them.
 | 2026-08-07 | **A claim written into this document was wrong and was caught by verification.** A draft sentence asserted orbity "is the next consumer in line" for the pipeline primitive. Checked before committing: orbity does **not** consume it — it forks the mechanic in `crm_service.py`. Corrected, and the real finding (N=3 funil implementations, one forked) recorded in §3. The lesson is the cheap one: a plausible architectural claim about a product you have not opened is a guess, and a durable record is exactly where a guess does the most damage. |
 | 2026-08-07 | **Scope boundary set by the user** after that finding: social-wiring + erp-imobiliario only; orbity explicitly not to be touched. Recorded at the top of the document, not only here, because a scope boundary read late is a scope boundary read after the work. |
 | 2026-08-07 | **Table inventory verified against the live DB rather than inferred:** `erp.clientes`, `social_wiring.clients`, `orbity.clients`. Two consequences — erp already holds the target name (so Phase 2's erp consumption needs no rename), and Phase 0's checkpoint had to be scoped to `products/social-wiring/`, because a repo-wide "no `clients`" assertion can never pass while `orbity.clients` exists and is out of scope. A checkpoint that can never pass is a phase that can never close. |
+| 2026-08-08 | **Phase 0 SHIPPED.** Migration `046_clients_to_marcas.sql` + 73 files (44 backend, 29 frontend). `pytest` 1708 passed · `tsc` clean · `vitest` 498 passed. Zero files touched outside `products/social-wiring/`. |
+| 2026-08-08 | **The estimate that drove a scoping decision was wrong.** "38 backend refs / 17 frontend files" counted prose and OAuth fields as this entity: the table rename was really 6 references, the column rename 438. The user initially chose "table-only" partly on those numbers, then reversed to the full rename. Corrected in §3 rather than quietly overwritten, because the wrong number is what makes the reversal legible. |
+| 2026-08-08 | **AST-first earned its keep.** Nine distinct `client_id`/`Client` meanings had to be preserved (OAuth kwargs, Meta `app_id`, Supabase `get_client`, TanStack `useQueryClient`, Mailchimp `_require_client`, "Token de Cliente", e-mail-subscriber copy). Two node kinds were missed by the first pass and caught by the SUITES, not by review: f-strings (`FormattedString`) and regex literals. One over-reach edited `seed/lib/` via the `@noctusai/lib` symlink and was reverted. Full table in §5 Phase 0. |

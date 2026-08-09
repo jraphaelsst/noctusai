@@ -48,14 +48,14 @@ class WhatsAppConnectionCreate(BaseModel):
     if present. Extra fields are silently dropped (pydantic default) so
     existing callers that still pass them do not break.
 
-    ``client_id`` (migration 017): optional UUID linking the new connection
+    ``marca_id`` (migration 017): optional UUID linking the new connection
     to an existing cliente.  Absent / null = unassigned.
     """
 
     label: str = Field(..., min_length=1, max_length=120)
     api_key: str = Field(..., min_length=1, max_length=2048)
     # Migration 017 — optional cliente ownership at creation time.
-    client_id: Optional[UUID] = Field(
+    marca_id: Optional[UUID] = Field(
         default=None,
         description="Optional clients.id to link this connection to a cliente.",
     )
@@ -109,7 +109,7 @@ class WhatsAppConnectionUpdate(BaseModel):
     # Null (explicit null) = clear the link (unassign from cliente).
     # UUID = set the link.
     # Uses model_fields_set to distinguish "not supplied" from "supplied as null".
-    client_id: Optional[UUID] = Field(
+    marca_id: Optional[UUID] = Field(
         default=None,
         description=(
             "Optional clients.id. "
@@ -148,7 +148,7 @@ class WhatsAppConnectionOut(BaseModel):
     authorized_numbers: list[str] = []
     bound_chats: list[BoundChat] = []
     # Migration 017 — optional cliente ownership.
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
 
 class WhatsAppConnectionApiKeyOut(BaseModel):

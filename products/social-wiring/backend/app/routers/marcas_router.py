@@ -1,17 +1,18 @@
-"""Clients CRUD router — /api/clients.
+"""Marcas CRUD router — /api/marcas.
 
 Endpoints:
-    GET    /api/clients          → Client[]
-    POST   /api/clients          → Client (201)
-    PATCH  /api/clients/{id}     → Client
-    DELETE /api/clients/{id}     → 204
+    GET    /api/marcas          → Marca[]
+    POST   /api/marcas          → Marca (201)
+    PATCH  /api/marcas/{id}     → Marca
+    DELETE /api/marcas/{id}     → 204
 
 Auth: ``Depends(get_current_user_org)`` throughout. Admin client used for
 all writes (service-role, same shape as integration_accounts_router).
 
-``clients`` is the canonical entity that folds in ``mc_brand_owners``
+``marcas`` is the canonical entity that folds in ``mc_brand_owners``
+(renamed from ``clients`` by migration 046 — roadmap Phase 0)
 (migration 007). It anchors per-account channel objects via the
-``integration_accounts.client_id`` FK (migration 008).
+``integration_accounts.marca_id`` FK (migration 008).
 """
 from __future__ import annotations
 
@@ -27,22 +28,22 @@ from app.dependencies import (
     get_admin_client,
     get_current_user_org,
 )
-from app.services.clients_service import (
-    Client,
-    ClientNotFound,
-    ClientService,
-    build_client_service,
+from app.services.marcas_service import (
+    Marca,
+    MarcaNotFound,
+    MarcaService,
+    build_marca_service,
 )
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/clients", tags=["clients"])
+router = APIRouter(prefix="/api/marcas", tags=["marcas"])
 
 
 # ─── Pydantic schemas ─────────────────────────────────────────────────────────
 
-class ClientOut(BaseModel):
-    """REST-safe representation of a client row."""
+class MarcaOut(BaseModel):
+    """REST-safe representation of a marca row."""
 
     id: UUID
     org_id: UUID
@@ -57,8 +58,8 @@ class ClientOut(BaseModel):
         from_attributes = True
 
 
-class ClientCreate(BaseModel):
-    """POST /api/clients body."""
+class MarcaCreate(BaseModel):
+    """POST /api/marcas body."""
 
     slug: str
     name: str
@@ -69,8 +70,8 @@ class ClientCreate(BaseModel):
         extra = "forbid"
 
 
-class ClientUpdate(BaseModel):
-    """PATCH /api/clients/{id} body — all fields optional."""
+class MarcaUpdate(BaseModel):
+    """PATCH /api/marcas/{id} body — all fields optional."""
 
     name: Optional[str] = None
     slug: Optional[str] = None
@@ -83,64 +84,64 @@ class ClientUpdate(BaseModel):
 
 # ─── DI seam ─────────────────────────────────────────────────────────────────
 
-def get_client_service() -> ClientService:
-    """Yield a wired ClientService backed by the admin Supabase client.
+def get_marca_service() -> MarcaService:
+    """Yield a wired MarcaService backed by the admin Supabase client.
 
-    Tests override via ``app.dependency_overrides[get_client_service]``.
+    Tests override via ``app.dependency_overrides[get_marca_service]``.
     Per KB § PATTERNS/di-test-seam.md (Class-B, service DI).
     """
-    return build_client_service(get_admin_client())
+    return build_marca_service(get_admin_client())
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
-def _out(client: Client) -> ClientOut:
-    return ClientOut(
-        id=client.id,
-        org_id=client.org_id,
-        slug=client.slug,
-        name=client.name,
-        kind=client.kind,
-        notes=client.notes,
-        created_at=client.created_at,
-        updated_at=client.updated_at,
+def _out(marca: Marca) -> MarcaOut:
+    return MarcaOut(
+        id=marca.id,
+        org_id=marca.org_id,
+        slug=marca.slug,
+        name=marca.name,
+        kind=marca.kind,
+        notes=marca.notes,
+        created_at=marca.created_at,
+        updated_at=marca.updated_at,
     )
 
 
-def _require_client(svc: ClientService, client_id: UUID, org_id: UUID) -> Client:
-    """Fetch a client owner-scoped or 404."""
-    c = svc.get_client(client_id, org_id)
+def _require_marca(svc: MarcaService, marca_id: UUID, org_id: UUID) -> Marca:
+    """Fetch a marca owner-scoped or 404."""
+    c = svc.get_marca(marca_id, org_id)
     if c is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="client not found",
+            detail="marca not found",
         )
     return c
 
 
 # ─── CRUD ─────────────────────────────────────────────────────────────────────
 
-@router.get("", response_model=list[ClientOut])
-def list_clients(
+@router.get("", response_model=list[MarcaOut])
+def list_marcas(
     auth: tuple = Depends(get_current_user_org),
-    svc: ClientService = Depends(get_client_service),
-) -> list[ClientOut]:
+    svc: MarcaService = Depends(get_marca_service),
+) -> list[MarcaOut]:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    clients = svc.list_clients(org_id=org_id)
-    return [_out(c) for c in clients]
+    marcas = svc.list_marcas(org_id=org_id)
+    return [_out(m) for m in marcas]
 
 
-@router.post("", response_model=ClientOut, status_code=status.HTTP_201_CREATED)
-def create_client(
-    body: ClientCreate,
+@router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
+def create_marca(
+    body: MarcaCreate,
     auth: tuple = Depends(get_current_user_org),
-    svc: ClientService = Depends(get_client_service),
-) -> ClientOut:
+    svc: MarcaService = Depends(get_marca_service),
+) -> MarcaOut:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     try:
-        client = svc.create_client(
+        marca = svc.create_marca(
             org_id=org_id,
             slug=body.slug,
             name=body.name,
@@ -153,55 +154,55 @@ def create_client(
         if "unique" in msg or "conflict" in msg or "duplicate" in msg:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"a client with slug {body.slug!r} already exists for this org",
+                detail=f"a marca with slug {body.slug!r} already exists for this org",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"client create failed: {exc}",
+            detail=f"marca create failed: {exc}",
         ) from exc
-    return _out(client)
+    return _out(marca)
 
 
-@router.patch("/{client_id}", response_model=ClientOut)
-def update_client(
-    client_id: UUID,
-    body: ClientUpdate,
+@router.patch("/{marca_id}", response_model=MarcaOut)
+def update_marca(
+    marca_id: UUID,
+    body: MarcaUpdate,
     auth: tuple = Depends(get_current_user_org),
-    svc: ClientService = Depends(get_client_service),
-) -> ClientOut:
+    svc: MarcaService = Depends(get_marca_service),
+) -> MarcaOut:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    _require_client(svc, client_id, org_id)
+    _require_marca(svc, marca_id, org_id)
     try:
-        client = svc.update_client(
-            client_id=client_id,
+        marca = svc.update_marca(
+            marca_id=marca_id,
             org_id=org_id,
             name=body.name,
             slug=body.slug,
             kind=body.kind,
             notes=body.notes,
         )
-    except ClientNotFound:
+    except MarcaNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="client not found",
+            detail="marca not found",
         )
-    return _out(client)
+    return _out(marca)
 
 
-@router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_client(
-    client_id: UUID,
+@router.delete("/{marca_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_marca(
+    marca_id: UUID,
     auth: tuple = Depends(get_current_user_org),
-    svc: ClientService = Depends(get_client_service),
+    svc: MarcaService = Depends(get_marca_service),
 ) -> Response:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    deleted = svc.delete_client(client_id=client_id, org_id=org_id)
+    deleted = svc.delete_marca(marca_id=marca_id, org_id=org_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="client not found",
+            detail="marca not found",
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

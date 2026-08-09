@@ -1,8 +1,8 @@
 """Tests for the channel-object fields on the integration_accounts_router.
 
 Extends the existing router tests with:
-  - client_id round-trip in create + list filter
-  - PATCH updates status + client_id
+  - marca_id round-trip in create + list filter
+  - PATCH updates status + marca_id
   - /sync endpoint (happy + error)
   - OAuth callback writes channel_info + status='validated'
 """
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS integration_accounts (
     is_default          INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    client_id           TEXT,
+    marca_id           TEXT,
     status              TEXT NOT NULL DEFAULT 'validated',
     channel_info        TEXT NOT NULL DEFAULT '{}',
     last_synced_at      TEXT,
@@ -94,7 +94,7 @@ def _auth():
     return {"Authorization": "Bearer test-token"}
 
 
-def _make_account(client, *, label="My Channel", provider="youtube", client_id=None, status="validated"):
+def _make_account(client, *, label="My Channel", provider="youtube", marca_id=None, status="validated"):
     body = {
         "provider": provider,
         "account_label": label,
@@ -102,8 +102,8 @@ def _make_account(client, *, label="My Channel", provider="youtube", client_id=N
         "metadata": {"channel_id": "UC1"},
         "is_default": False,
     }
-    if client_id is not None:
-        body["client_id"] = str(client_id)
+    if marca_id is not None:
+        body["marca_id"] = str(marca_id)
     resp = client.post("/api/integrations/accounts", json=body, headers=_auth())
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -114,19 +114,19 @@ def _make_account(client, *, label="My Channel", provider="youtube", client_id=N
 class TestClientIdCreateAndFilter:
     def test_create_with_client_id_round_trips(self, client):
         cid = uuid4()
-        data = _make_account(client, client_id=cid)
-        assert data["client_id"] == str(cid)
+        data = _make_account(client, marca_id=cid)
+        assert data["marca_id"] == str(cid)
 
     def test_create_without_client_id_returns_null(self, client):
         data = _make_account(client)
-        assert data["client_id"] is None
+        assert data["marca_id"] is None
 
     def test_list_filter_by_client_id(self, client):
         cid = uuid4()
-        a_with = _make_account(client, label="With", client_id=cid)
+        a_with = _make_account(client, label="With", marca_id=cid)
         a_without = _make_account(client, label="Without")
         resp = client.get(
-            f"/api/integrations/accounts?client_id={cid}", headers=_auth()
+            f"/api/integrations/accounts?marca_id={cid}", headers=_auth()
         )
         assert resp.status_code == 200
         ids = {a["id"] for a in resp.json()}
@@ -158,11 +158,11 @@ class TestPatchChannelFields:
         cid = uuid4()
         resp = client.patch(
             f"/api/integrations/accounts/{data['id']}",
-            json={"client_id": str(cid)},
+            json={"marca_id": str(cid)},
             headers=_auth(),
         )
         assert resp.status_code == 200
-        assert resp.json()["client_id"] == str(cid)
+        assert resp.json()["marca_id"] == str(cid)
 
 
 # ─── /sync endpoint ───────────────────────────────────────────────────────────

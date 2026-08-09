@@ -28,8 +28,8 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
 }));
 
 const mockClients = vi.fn();
-vi.mock("@/hooks/useClients", () => ({
-  useClients: mockClients,
+vi.mock("@/hooks/useMarcas", () => ({
+  useMarcas: mockClients,
 }));
 
 vi.mock("@/components/AccountSwitcher", () => ({
@@ -39,7 +39,7 @@ vi.mock("@/components/AccountSwitcher", () => ({
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
 });
 
 function acct(id: string, provider = "youtube") {
@@ -48,7 +48,7 @@ function acct(id: string, provider = "youtube") {
     org_id: "org-1",
     provider,
     account_label: id,
-    client_id: null,
+    marca_id: null,
     status: "validated",
     channel_info: {},
     metadata: {},
@@ -84,7 +84,7 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "dead-account" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
     mockIntegrationAccounts.mockReturnValue({ data: [acct("c15341f9")] });
 
@@ -103,7 +103,7 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "c15341f9" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
     mockIntegrationAccounts.mockReturnValue({ data: [acct("c15341f9")] });
 
@@ -121,7 +121,7 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "pending-id" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
     mockIntegrationAccounts.mockReturnValue({ data: undefined });
 
@@ -148,7 +148,7 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     // to the n8n page, whose only account is a different row entirely.
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { meta: "25efa048", n8n: "dead-n8n-account" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
     mockIntegrationAccounts.mockReturnValue({ data: [acct("12c04443", "n8n")] });
 
@@ -171,7 +171,7 @@ describe("ConnectedAccountSwitcher stale-selection reconcile", () => {
     // then sent to /api/n8n/workflows — the 404 that started all this.
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { meta: "25efa048" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
     mockIntegrationAccounts.mockReturnValue({ data: [acct("12c04443", "n8n")] });
 

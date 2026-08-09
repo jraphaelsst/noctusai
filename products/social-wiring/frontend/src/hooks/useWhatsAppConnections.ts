@@ -89,7 +89,7 @@ export interface CreateConnectionBody {
   label: string;
   api_key: string;
   /** Assign to a cliente on creation. */
-  client_id?: string | null;
+  marca_id?: string | null;
 }
 
 /**
@@ -282,14 +282,14 @@ export function useToggleAutoReply() {
 /**
  * List WhatsApp connections owned by a specific cliente.
  * Maps to GET /api/whatsapp/connections?client_id=<id>.
- * Used by the ClienteModal Chat tab + Contas tab to resolve WA connections.
+ * Used by the MarcaModal Chat tab + Contas tab to resolve WA connections.
  */
-export function useClientWhatsAppConnections(clientId: string | null) {
+export function useClientWhatsAppConnections(marcaId: string | null) {
   return useQuery<WhatsAppConnectionLine[]>({
-    queryKey: [...KEY, "client", clientId],
+    queryKey: [...KEY, "client", marcaId],
     queryFn: () =>
-      api.get<WhatsAppConnectionLine[]>(`${BASE}?client_id=${encodeURIComponent(clientId!)}`),
-    enabled: !!clientId,
+      api.get<WhatsAppConnectionLine[]>(`${BASE}?marca_id=${encodeURIComponent(marcaId!)}`),
+    enabled: !!marcaId,
   });
 }
 

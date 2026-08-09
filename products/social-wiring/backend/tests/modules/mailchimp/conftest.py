@@ -471,7 +471,7 @@ _MAILCHIMP_SCHEMA = """
 CREATE TABLE IF NOT EXISTS mailchimp_connections (
     id            TEXT PRIMARY KEY,
     org_id        TEXT NOT NULL,
-    client_id     TEXT,
+    marca_id     TEXT,
     encrypted_api_key TEXT NOT NULL,
     server_prefix TEXT NOT NULL,
     audience_id   TEXT,
@@ -480,15 +480,15 @@ CREATE TABLE IF NOT EXISTS mailchimp_connections (
 );
 -- Mirror migration 019: at-most-one-per-scope via two partial unique indexes.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_mc_conn_org_default
-    ON mailchimp_connections (org_id) WHERE client_id IS NULL;
+    ON mailchimp_connections (org_id) WHERE marca_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_mc_conn_org_client
-    ON mailchimp_connections (org_id, client_id) WHERE client_id IS NOT NULL;
+    ON mailchimp_connections (org_id, marca_id) WHERE marca_id IS NOT NULL;
 """
 
-# clients table (subset of migration 007) — lets the connection PUT route's
+# marcas table (subset of migration 007, renamed by 046) — lets the PUT route's
 # client-ownership validation resolve a real cliente in tests.
 _CLIENTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS clients (
+CREATE TABLE IF NOT EXISTS marcas (
     id          TEXT PRIMARY KEY,
     org_id      TEXT NOT NULL,
     slug        TEXT NOT NULL,
@@ -554,23 +554,23 @@ def mailchimp_client(client, tmp_path: Path):
 
 @pytest.fixture
 def mailchimp_client_with_clients(mailchimp_client, tmp_path: Path):
-    """``mailchimp_client`` + a SQLite-backed ``ClientService`` (migration 019).
+    """``mailchimp_client`` + a SQLite-backed ``MarcaService`` (migration 019).
 
-    Overrides the ``get_client_service`` DI seam so the connection PUT route's
-    cliente-ownership validation resolves against a real ``clients`` table.
+    Overrides the ``get_marca_service`` DI seam so the connection PUT route's
+    cliente-ownership validation resolves against a real ``marcas`` table.
     Seeds ONE cliente owned by the test org (``test-org-123`` → its coerced
     UUID) and ONE owned by a DIFFERENT org.
 
-    Yields ``(auth_client, store, fake, org_client_id, foreign_client_id)``
-    where ``org_client_id`` belongs to the caller's org (validation passes) and
-    ``foreign_client_id`` belongs to another org (validation → 404).
+    Yields ``(auth_client, store, fake, org_marca_id, foreign_marca_id)``
+    where ``org_marca_id`` belongs to the caller's org (validation passes) and
+    ``foreign_marca_id`` belongs to another org (validation → 404).
     """
     from uuid import uuid4
 
     from app.dependencies import coerce_org_uuid
     from app.main import app
-    from app.routers.clients_router import get_client_service
-    from app.services.clients_service import ClientService
+    from app.routers.marcas_router import get_marca_service
+    from app.services.marcas_service import MarcaService
 
     org_id = coerce_org_uuid("test-org-123")
     org_client_id = uuid4()
@@ -581,7 +581,7 @@ def mailchimp_client_with_clients(mailchimp_client, tmp_path: Path):
     with sqlite3.connect(db_path) as conn:
         conn.executescript(_CLIENTS_SCHEMA)
         conn.executemany(
-            "INSERT INTO clients (id, org_id, slug, name, kind) VALUES (?,?,?,?,?)",
+            "INSERT INTO marcas (id, org_id, slug, name, kind) VALUES (?,?,?,?,?)",
             [
                 (str(org_client_id), str(org_id), "cliente-a", "Cliente A", "real_estate_agent"),
                 (str(foreign_client_id), str(foreign_org_id), "cliente-x", "Cliente X", "real_estate_agent"),
@@ -589,18 +589,18 @@ def mailchimp_client_with_clients(mailchimp_client, tmp_path: Path):
         )
         conn.commit()
 
-    svc = ClientService(SQLiteClient(db_path))
+    svc = MarcaService(SQLiteClient(db_path))
 
     c, store, fake = mailchimp_client
-    _prev = app.dependency_overrides.get(get_client_service)
-    app.dependency_overrides[get_client_service] = lambda: svc
+    _prev = app.dependency_overrides.get(get_marca_service)
+    app.dependency_overrides[get_marca_service] = lambda: svc
 
     yield c, store, fake, org_client_id, foreign_client_id
 
     if _prev is None:
-        app.dependency_overrides.pop(get_client_service, None)
+        app.dependency_overrides.pop(get_marca_service, None)
     else:
-        app.dependency_overrides[get_client_service] = _prev
+        app.dependency_overrides[get_marca_service] = _prev
 
 
 @pytest.fixture

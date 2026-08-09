@@ -2,7 +2,7 @@
 
 Auth: ``Depends(get_current_user_org_unified)`` throughout (admin/service-role
 client for all reads/writes, RLS is defense-in-depth, same shape as
-``clients_router``). Errors: ``AppException`` subclasses only.
+``marcas_router``). Errors: ``AppException`` subclasses only.
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 (never ``in (401, 404)``/``in (401, 422)``) when the Authorization header
 is absent. Bodies are well-formed where a body is required so the ONLY
 missing thing is auth — isolates the signal (mirrors
-``tests/routers/test_clients_router.py::TestAuth``).
+``tests/routers/test_marcas_router.py::TestAuth``).
 Per ``KB § PATTERNS/compliance/auth-boundary-false-green.md``.
 """
 from __future__ import annotations

@@ -25,12 +25,12 @@ import { Users, Youtube, ChevronDown } from "lucide-react";
 import { resolveStatusBadge } from "@noctusai/lib";
 
 import type { IntegrationAccount } from "@/hooks/useIntegrationAccounts";
-import type { Client } from "@/hooks/useClients";
+import type { Marca } from "@/hooks/useMarcas";
 import { useActiveAccountId, useActiveAccountStore } from "@/state/useActiveAccount";
 
 interface AccountSwitcherProps {
   accounts: IntegrationAccount[];
-  clients: Client[];
+  marcas: Marca[];
   /** Provider slug the selection is keyed under (e.g. "youtube", "n8n"). */
   provider?: string;
   /** Human-readable provider name used only for "All accounts" label. */
@@ -40,21 +40,21 @@ interface AccountSwitcherProps {
 
 export function AccountSwitcher({
   accounts,
-  clients,
+  marcas,
   provider = "youtube",
   providerLabel = "YouTube",
   className = "",
 }: AccountSwitcherProps) {
-  const activeClientId = useActiveAccountStore((s) => s.activeClientId);
-  const setActiveClient = useActiveAccountStore((s) => s.setActiveClient);
+  const activeMarcaId = useActiveAccountStore((s) => s.activeMarcaId);
+  const setActiveMarca = useActiveAccountStore((s) => s.setActiveMarca);
   const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
   const activeAccountId = useActiveAccountId(provider);
 
   // Accounts visible in the account dropdown: filtered by the active client
   const filteredAccounts = useMemo(() => {
-    if (!activeClientId) return accounts;
-    return accounts.filter((a) => a.client_id === activeClientId);
-  }, [accounts, activeClientId]);
+    if (!activeMarcaId) return accounts;
+    return accounts.filter((a) => a.marca_id === activeMarcaId);
+  }, [accounts, activeMarcaId]);
 
   // When the selected account is no longer in filtered list, we treat it as cleared.
   const resolvedAccountId = filteredAccounts.some((a) => a.id === activeAccountId)
@@ -73,7 +73,7 @@ export function AccountSwitcher({
       aria-label="Seletor de conta ativa"
     >
       {/* Client selector */}
-      {clients.length > 0 && (
+      {marcas.length > 0 && (
         <div className="flex items-center gap-1.5">
           <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <label htmlFor="sw-client-select" className="text-xs text-muted-foreground sr-only">
@@ -82,13 +82,13 @@ export function AccountSwitcher({
           <div className="relative">
             <select
               id="sw-client-select"
-              value={activeClientId ?? ""}
-              onChange={(e) => setActiveClient(e.target.value || null)}
+              value={activeMarcaId ?? ""}
+              onChange={(e) => setActiveMarca(e.target.value || null)}
               className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              aria-label="Selecionar cliente"
+              aria-label="Selecionar marca"
             >
-              <option value="">Todos os clientes</option>
-              {clients.map((c) => (
+              <option value="">Todos os marcas</option>
+              {marcas.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -103,7 +103,7 @@ export function AccountSwitcher({
       )}
 
       {/* Separator */}
-      {clients.length > 0 && <span className="text-muted-foreground/40" aria-hidden="true">/</span>}
+      {marcas.length > 0 && <span className="text-muted-foreground/40" aria-hidden="true">/</span>}
 
       {/* Account selector */}
       <div className="flex items-center gap-1.5">

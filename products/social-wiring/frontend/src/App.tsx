@@ -7,7 +7,7 @@
  *
  * Nav:
  *   Principal     · Dashboard / Criação de mídia / Contatos / Leads / YouTube / Meta / WhatsApp
- *   Conexões      · Clientes / Monitor
+ *   Conexões      · Marcas / Monitor
  *   Configuração  · Configurações / Equipe
  *
  * The former "Integrações" nav item is folded into "Conexões" — both the
@@ -17,7 +17,7 @@
  *
  * WhatsApp (`/whatsapp-chat`) is back in nav as of the SocialDashboardShell
  * remodel (componentization wave, N=3) — it's now a full dashboard (Chat +
- * Configurações subtabs), not just the connection-scoped Chat tab ClienteModal
+ * Configurações subtabs), not just the connection-scoped Chat tab MarcaModal
  * already surfaces. The `whatsapp_chat` status_pagina row already exists
  * (migration 014, status='producao') from when this route was last in nav —
  * no new migration needed to make it visible again.
@@ -64,7 +64,7 @@ const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
 const Settings = lazyWithReload(() => import("@/pages/Settings"));
 const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
 const N8n = lazyWithReload(() => import("@/pages/N8n"));
-const RedirectToClientes = lazyWithReload(() => import("@/pages/RedirectToClientes"));
+const RedirectToMarcas = lazyWithReload(() => import("@/pages/RedirectToMarcas"));
 const RedirectToMeta = lazyWithReload(() => import("@/pages/RedirectToMeta"));
 const Monitor = lazyWithReload(() => import("@/pages/Monitor"));
 const MediaCreation = lazyWithReload(() => import("@/pages/MediaCreation"));
@@ -77,7 +77,7 @@ const EmailMarketingConfig = lazyWithReload(() => import("@/pages/EmailMarketing
 const EmailMembros = lazyWithReload(() => import("@/pages/EmailMembros"));
 const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
 const WhatsAppChat = lazyWithReload(() => import("@/pages/WhatsAppChat"));
-const Clientes = lazyWithReload(() => import("@/pages/Clientes"));
+const Marcas = lazyWithReload(() => import("@/pages/Marcas"));
 const Imoveis = lazyWithReload(() => import("@/pages/Imoveis"));
 const ImovelDetalhes = lazyWithReload(() => import("@/pages/ImovelDetalhes"));
 const MetaDashboard = lazyWithReload(() => import("@/pages/MetaDashboard"));
@@ -138,7 +138,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Smartphone,
     defaultOpen: true,
     items: [
-      { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
+      { name: "Marcas", href: "/marcas", icon: Building2, route: "marcas" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
     ],
   },
@@ -201,7 +201,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Smartphone,
     defaultOpen: true,
     items: [
-      { name: "Clientes", href: "/clientes", icon: Building2 },
+      { name: "Marcas", href: "/marcas", icon: Building2 },
       { name: "Monitor", href: "/monitor", icon: Activity },
     ],
   },
@@ -247,11 +247,11 @@ export default createProductApp({
     { path: "/meta", component: MetaDashboard },
     // Retired route — remodeled into the unified Meta dashboard (Wave 3)
     { path: "/instagram-insights", component: RedirectToMeta },
-    // Retired routes — connection management now lives inside ClienteModal
-    { path: "/conexoes", component: RedirectToClientes },
-    { path: "/integrations", component: RedirectToClientes },
-    { path: "/conexao", component: RedirectToClientes },
-    { path: "/clientes", component: Clientes },
+    // Retired routes — connection management now lives inside MarcaModal
+    { path: "/conexoes", component: RedirectToMarcas },
+    { path: "/integrations", component: RedirectToMarcas },
+    { path: "/conexao", component: RedirectToMarcas },
+    { path: "/marcas", component: Marcas },
     { path: "/imoveis", component: Imoveis },
     { path: "/imoveis/:codigo", component: ImovelDetalhes },
     { path: "/monitor", component: Monitor },

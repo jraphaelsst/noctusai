@@ -25,7 +25,7 @@ import { api } from "@noctusai/seed/infra";
 
 export interface MailchimpConnection {
   connected: boolean;
-  client_id: string;
+  marca_id: string;
   server_prefix: string | null;
   audience_id: string | null;
   audience_name: string | null;
@@ -37,13 +37,13 @@ export interface UpsertMailchimpConnectionInput {
   api_key: string;
   server_prefix?: string;
   audience_id?: string;
-  client_id: string;
+  marca_id: string;
 }
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
-const CONNECTION_KEY = (clientId: string | null) =>
-  ["sw", "mailchimp", "connection", clientId] as const;
+const CONNECTION_KEY = (marcaId: string | null) =>
+  ["sw", "mailchimp", "connection", marcaId] as const;
 
 // ─── Connection query ────────────────────────────────────────────────────────
 
@@ -52,14 +52,14 @@ const CONNECTION_KEY = (clientId: string | null) =>
  * Maps to GET /api/mailchimp/connection?client_id=<id>. Enabled only when a
  * clientId is provided. Returns { connected: false, ... } when not connected.
  */
-export function useMailchimpConnection(clientId: string | null) {
+export function useMailchimpConnection(marcaId: string | null) {
   return useQuery<MailchimpConnection>({
-    queryKey: CONNECTION_KEY(clientId),
+    queryKey: CONNECTION_KEY(marcaId),
     queryFn: () =>
       api.get<MailchimpConnection>(
-        `/api/mailchimp/connection?client_id=${encodeURIComponent(clientId!)}`,
+        `/api/mailchimp/connection?marca_id=${encodeURIComponent(marcaId!)}`,
       ),
-    enabled: !!clientId,
+    enabled: !!marcaId,
   });
 }
 
@@ -76,8 +76,8 @@ export function useUpsertMailchimpConnection() {
     mutationFn: (payload) =>
       api.put<MailchimpConnection>("/api/mailchimp/connection", payload),
     onSuccess: (res, variables) => {
-      const clientId = (res as MailchimpConnection)?.client_id ?? variables.client_id;
-      qc.invalidateQueries({ queryKey: CONNECTION_KEY(clientId) });
+      const marcaId = (res as MailchimpConnection)?.marca_id ?? variables.marca_id;
+      qc.invalidateQueries({ queryKey: CONNECTION_KEY(marcaId) });
     },
   });
 }

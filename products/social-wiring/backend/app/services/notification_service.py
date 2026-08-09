@@ -156,10 +156,10 @@ class NotificationService:
             whatsapp_client_factory
         )
         # DI seam for the Gmail transport. Signature is
-        # ``(org_id=, client_id=) -> sender | None`` so a test can assert
-        # WHICH client's mailbox was asked for — the per-client routing is
-        # the point of this feature, and a factory that ignored client_id
-        # would pass a naive test while sending every client's mail from one
+        # ``(org_id=, marca_id=) -> sender | None`` so a test can assert
+        # WHICH marca's mailbox was asked for — the per-marca routing is
+        # the point of this feature, and a factory that ignored marca_id
+        # would pass a naive test while sending every marca's mail from one
         # mailbox.
         self._gmail_sender_factory: "Callable[..., Any] | None" = (
             gmail_sender_factory
@@ -201,7 +201,7 @@ class NotificationService:
         )
 
     async def notify_new_lead(
-        self, *, org_id: UUID, lead: dict[str, Any], client_id: Any = None
+        self, *, org_id: UUID, lead: dict[str, Any], marca_id: Any = None
     ) -> DispatchOutcome:
         """Fan-out an alert for a freshly-upserted Meta lead.
 
@@ -229,7 +229,7 @@ class NotificationService:
         calling this must not turn that into a non-2xx to Meta.
         """
         recipients, tier = self.resolve_lead_recipients(
-            org_id=org_id, client_id=client_id
+            org_id=org_id, marca_id=marca_id
         )
         if not recipients:
             # 🔴 NOT a quiet no-op. A lead just arrived and there is nobody
@@ -248,7 +248,7 @@ class NotificationService:
                 "alerted. Add one under Configuração → Configurações "
                 "(notifications); a client-scoped recipient covers just that "
                 "client, an org-wide one covers everything unattributed.",
-                lead.get("id"), org_id, client_id or "—", tier,
+                lead.get("id"), org_id, marca_id or "—", tier,
             )
             return DispatchOutcome()
 
@@ -261,7 +261,7 @@ class NotificationService:
             # Selects the SENDING mailbox, mirroring the tier that selected
             # the recipients — so One's leads are sent from One's Gmail to
             # One's people, and João's from João's.
-            client_id=client_id,
+            marca_id=marca_id,
         )
 
     # ─── Reusable fan-out core ──────────────────────────────────────────
@@ -273,7 +273,7 @@ class NotificationService:
         recipients: list[dict[str, Any]],
         message: dict[str, str],
         upload_job_id: UUID | None = None,
-        client_id: Any = None,
+        marca_id: Any = None,
     ) -> DispatchOutcome:
         """Channel fan-out shared by every notification entry point.
 
@@ -305,7 +305,7 @@ class NotificationService:
         # out, because removing a configured-elsewhere path is a separate
         # decision from adding this one.
         email_service = self._try_build_gmail_sender(
-            org_id=org_id, client_id=client_id
+            org_id=org_id, marca_id=marca_id
         ) or self._try_build_email_service()
         whatsapp_client = self._build_whatsapp_client()
 
@@ -459,18 +459,18 @@ class NotificationService:
         return list(response.data or [])
 
     def resolve_lead_recipients(
-        self, *, org_id: UUID, client_id: Any = None
+        self, *, org_id: UUID, marca_id: Any = None
     ) -> tuple[list[dict[str, Any]], str]:
         """Who to alert about a lead, resolved by client with an org fallback.
 
         Two tiers, and the order between them is the whole design:
 
-        1. **Client tier** — active recipients whose ``client_id`` matches the
+        1. **Client tier** — active recipients whose ``marca_id`` matches the
            client this lead belongs to. If the client has any, they are the
            ONLY recipients: a client with its own roster must not also reach
            the org-wide fallback, or "One's leads go to One" quietly becomes
            "One's leads go to One *and* everyone else".
-        2. **Org tier** (``client_id IS NULL``) — used when the lead resolves
+        2. **Org tier** (``marca_id IS NULL``) — used when the lead resolves
            to no client, or to a client that has no active recipient of its
            own. This tier is what stops an unattributed lead from alerting
            nobody, which is the exact silent failure this area shipped with.
@@ -480,19 +480,19 @@ class NotificationService:
         depending on whether a client was resolved at all, and a caller
         guessing that would get it wrong.
         """
-        if client_id:
+        if marca_id:
             client_rows = self._fetch_recipients_scoped(
-                org_id=org_id, client_id=str(client_id)
+                org_id=org_id, marca_id=str(marca_id)
             )
             if client_rows:
                 return client_rows, "client"
-        return self._fetch_recipients_scoped(org_id=org_id, client_id=None), "org"
+        return self._fetch_recipients_scoped(org_id=org_id, marca_id=None), "org"
 
     def _fetch_recipients_scoped(
-        self, *, org_id: UUID, client_id: str | None
+        self, *, org_id: UUID, marca_id: str | None
     ) -> list[dict[str, Any]]:
-        """Active recipients for one tier. ``client_id=None`` selects the
-        org-wide rows (``client_id IS NULL``), NOT "any client" — the two
+        """Active recipients for one tier. ``marca_id=None`` selects the
+        org-wide rows (``marca_id IS NULL``), NOT "any client" — the two
         readings differ and conflating them would make every client-scoped
         recipient also an org-wide one."""
         query = (
@@ -504,13 +504,14 @@ class NotificationService:
             .eq("is_active", True)
         )
         query = (
-            query.is_("client_id", "null") if client_id is None
-            else query.eq("client_id", client_id)
+            query.is_("marca_id", "null") if marca_id is None
+            else query.eq("marca_id", marca_id)
         )
         try:
             return list(query.execute().data or [])
         except Exception:  # noqa: BLE001
-            # Pre-migration-045 databases have no `client_id` column. Degrade
+            # Pre-migration-045 databases have no such column at all; 045
+            # shipped it as `client_id` and 046 renamed it `marca_id`. Degrade
             # to the org-wide roster rather than alerting nobody: a deploy that
             # lands before its migration must not silence alerts.
             logger.warning(
@@ -519,7 +520,7 @@ class NotificationService:
             )
             return self._fetch_recipients(org_id=org_id)
 
-    def _try_build_gmail_sender(self, *, org_id: UUID, client_id: Any = None):
+    def _try_build_gmail_sender(self, *, org_id: UUID, marca_id: Any = None):
         """The client's connected Gmail mailbox as an email transport.
 
         Returns an object exposing the same ``send_email(...)`` signature as
@@ -533,13 +534,13 @@ class NotificationService:
         notification_log row. At no point does a send silently succeed.
         """
         if self._gmail_sender_factory is not None:
-            return self._gmail_sender_factory(org_id=org_id, client_id=client_id)
+            return self._gmail_sender_factory(org_id=org_id, marca_id=marca_id)
         try:
             from app.config import settings
             from app.services.account_credentials import build_gmail_client_for
 
             gmail, sender = build_gmail_client_for(
-                self._admin, settings, org_id=org_id, client_id=client_id
+                self._admin, settings, org_id=org_id, marca_id=marca_id
             )
             if gmail is None:
                 return None
@@ -548,7 +549,7 @@ class NotificationService:
             logger.exception(
                 "notification: could not build a Gmail sender for org=%s "
                 "client=%s; falling back to SMTP",
-                org_id, client_id,
+                org_id, marca_id,
             )
             return None
 

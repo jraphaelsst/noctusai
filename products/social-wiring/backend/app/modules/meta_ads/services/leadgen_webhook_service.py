@@ -105,7 +105,7 @@ class ProcessResult:
     #: Which client this lead belongs to, resolved from the form's Page during
     #: the durable half. `None` = unattributed, which routes the alert to the
     #: org-wide recipient tier rather than to nobody.
-    client_id: str | None = None
+    marca_id: str | None = None
 
     @property
     def announceable(self) -> bool:
@@ -268,7 +268,7 @@ class LeadgenWebhookService:
         try:
             resp = (
                 self._admin.schema(_SCHEMA).table(_FORMS)
-                .select("id,org_id,page_id,name,questions,client_id")
+                .select("id,org_id,page_id,name,questions,marca_id")
                 .eq("id", form_id).limit(1).execute()
             )
             rows = resp.data or []
@@ -511,7 +511,7 @@ class LeadgenWebhookService:
             # duplicate. Swallowing it instead would leave the lead invisible
             # in the base with nothing recording why.
             self._ingest(org_id=org_id, lead_row=lead_row, key_types=key_types)
-            client_id = getattr(form, "client_id", None)
+            marca_id = getattr(form, "marca_id", None)
         except MetaGraphError as exc:
             detail = str(exc)
             if getattr(exc, "is_permission", False):
@@ -533,7 +533,7 @@ class LeadgenWebhookService:
         self._set_status(event.leadgen_id, status=STATUS_PROCESSED, org_id=org_id)
         return ProcessResult(
             STATUS_PROCESSED, org_id=org_id, lead_row=lead_row,
-            client_id=str(client_id) if client_id else None,
+            marca_id=str(marca_id) if marca_id else None,
         )
 
     # ─── the announcement half ─────────────────────────────────────────
@@ -562,7 +562,7 @@ class LeadgenWebhookService:
             notifier = self._build_notifier()
             if notifier is not None:
                 await notifier.notify_new_lead(
-                    org_id=org_id, lead=lead, client_id=result.client_id
+                    org_id=org_id, lead=lead, marca_id=result.marca_id
                 )
                 outcome["notified"] = True
         except Exception:  # noqa: BLE001 — degrade the alert, never the lead

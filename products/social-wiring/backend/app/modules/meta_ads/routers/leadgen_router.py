@@ -284,7 +284,7 @@ class PageSubscriptionOut(StrictHttpModel):
     #: Derived from the Page's lead forms, which is where the mapping lives
     #: (`integration_accounts` cannot answer it — its `meta` row holds an
     #: Instagram business id, not the Facebook Page id the webhook sends).
-    client_id: str | None = None
+    marca_id: str | None = None
     #: How many of this Page's forms carry that client. Surfaced because a
     #: Page whose forms disagree is a real state (a form synced before the
     #: assignment) and silently showing one of them would hide it.
@@ -399,7 +399,7 @@ def list_subscriptions(
                 subscribed="leadgen" in fields,
                 subscribed_fields=fields,
                 app_id=next((s.app_id for s in subs if s.app_id), None),
-                client_id=attribution["client_id"],
+                marca_id=attribution["marca_id"],
                 forms_total=attribution["total"],
                 forms_attributed=attribution["attributed"],
             )
@@ -424,21 +424,21 @@ def _page_client_attribution(org_id: UUID, page_id: str) -> dict[str, Any]:
     try:
         rows = (
             get_admin_client().schema(_SCHEMA).table("meta_ads_lead_forms")
-            .select("client_id").eq("org_id", str(org_id))
+            .select("marca_id").eq("org_id", str(org_id))
             .eq("page_id", page_id).execute()
         ).data or []
     except Exception:  # noqa: BLE001 — the card must render without this
         logger.warning("meta-leadgen: could not read client attribution for page %s", page_id)
-        return {"client_id": None, "total": 0, "attributed": 0}
+        return {"marca_id": None, "total": 0, "attributed": 0}
 
-    assigned = [r["client_id"] for r in rows if r.get("client_id")]
+    assigned = [r["marca_id"] for r in rows if r.get("marca_id")]
     majority = max(set(assigned), key=assigned.count) if assigned else None
-    return {"client_id": majority, "total": len(rows), "attributed": len(assigned)}
+    return {"marca_id": majority, "total": len(rows), "attributed": len(assigned)}
 
 
 class PageClientIn(StrictHttpModel):
     #: `None` clears the attribution back to unattributed (org-wide alerts).
-    client_id: str | None = None
+    marca_id: str | None = None
 
 
 @router.put("/pages/{page_id}/client", response_model=PageSubscriptionOut)
@@ -462,11 +462,11 @@ def set_page_client(
     org_id = coerce_org_uuid(raw_org)
     admin = get_admin_client()
 
-    if payload.client_id:
+    if payload.marca_id:
         owned = (
             admin.schema(_SCHEMA).table("clients")
             .select("id").eq("org_id", str(org_id))
-            .eq("id", payload.client_id).limit(1).execute()
+            .eq("id", payload.marca_id).limit(1).execute()
         ).data or []
         if not owned:
             # Cross-org assignment would be a PII routing hole, not a 404.
@@ -477,19 +477,19 @@ def set_page_client(
 
     (
         admin.schema(_SCHEMA).table("meta_ads_lead_forms")
-        .update({"client_id": payload.client_id})
+        .update({"marca_id": payload.marca_id})
         .eq("org_id", str(org_id)).eq("page_id", page_id)
         .execute()
     )
     attribution = _page_client_attribution(org_id, page_id)
     logger.info(
         "meta-leadgen: page %s attributed to client %s (%d/%d forms)",
-        page_id, payload.client_id or "—",
+        page_id, payload.marca_id or "—",
         attribution["attributed"], attribution["total"],
     )
     return PageSubscriptionOut(
         page_id=page_id,
-        client_id=attribution["client_id"],
+        marca_id=attribution["marca_id"],
         forms_total=attribution["total"],
         forms_attributed=attribution["attributed"],
     )

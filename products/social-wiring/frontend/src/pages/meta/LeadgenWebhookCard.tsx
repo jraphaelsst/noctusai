@@ -38,9 +38,9 @@ import {
   useUnsubscribeLeadgenPage,
   type LeadgenPageSubscription,
   type LeadgenSubscribeResult,
-  useSetPageClient,
+  useSetPageMarca,
 } from "@/hooks/useMetaLeadgen";
-import { useClients } from "@/hooks/useClients";
+import { useMarcas } from "@/hooks/useMarcas";
 import { AdsError, AdsLoading } from "./adsShared";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -96,8 +96,8 @@ function CopyButton({ value }: { value: string }) {
 function PageRow({ page }: { page: LeadgenPageSubscription }) {
   const subscribe = useSubscribeLeadgenPages();
   const unsubscribe = useUnsubscribeLeadgenPage();
-  const setClient = useSetPageClient();
-  const { data: clients = [] } = useClients();
+  const setClient = useSetPageMarca();
+  const { data: marcas = [] } = useMarcas();
   const [rowError, setRowError] = useState<string | null>(null);
   const busy = subscribe.isPending || unsubscribe.isPending;
 
@@ -162,21 +162,21 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
         <select
           className="h-8 rounded-md border bg-background px-2 text-xs"
           aria-label={`Cliente da página ${page.page_name || page.page_id}`}
-          value={page.client_id ?? UNATTRIBUTED}
+          value={page.marca_id ?? UNATTRIBUTED}
           disabled={setClient.isPending}
           onChange={(e) => {
             setRowError(null);
             setClient.mutate(
               {
                 pageId: page.page_id,
-                clientId: e.target.value === UNATTRIBUTED ? null : e.target.value,
+                marcaId: e.target.value === UNATTRIBUTED ? null : e.target.value,
               },
               { onError: (err) => setRowError((err as Error).message) },
             );
           }}
         >
           <option value={UNATTRIBUTED}>Sem cliente (alertas gerais)</option>
-          {clients.map((c) => (
+          {marcas.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>

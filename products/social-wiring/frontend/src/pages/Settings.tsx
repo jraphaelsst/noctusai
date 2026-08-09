@@ -44,7 +44,7 @@ import {
   type Recipient,
   type RecipientCreate,
 } from "@/hooks/useSettings";
-import { useClients, type Client } from "@/hooks/useClients";
+import { useMarcas, type Marca } from "@/hooks/useMarcas";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -66,7 +66,7 @@ const EMPTY_RECIPIENT: RecipientCreate = {
   email: "",
   whatsapp_number: "",
   is_active: true,
-  client_id: null,
+  marca_id: null,
 };
 
 /** Sentinel for the org-wide tier in the <select>. A DOM select cannot hold
@@ -78,7 +78,7 @@ const ORG_WIDE = "__org__";
 function NotificationsTab() {
   const { data, loading, create, update, remove } = useRecipients();
   const { data: keys } = useKeysStatus();
-  const { data: clients = [] } = useClients();
+  const { data: marcas = [] } = useMarcas();
   const [draft, setDraft] = useState<RecipientCreate>(EMPTY_RECIPIENT);
   const [submitting, setSubmitting] = useState(false);
 
@@ -99,7 +99,7 @@ function NotificationsTab() {
         email: draft.email || undefined,
         whatsapp_number: draft.whatsapp_number || undefined,
         is_active: draft.is_active,
-        client_id: draft.client_id ?? null,
+        marca_id: draft.marca_id ?? null,
       });
       setDraft(EMPTY_RECIPIENT);
     } finally {
@@ -177,16 +177,16 @@ function NotificationsTab() {
             <select
               className="h-10 rounded-md border bg-background px-2 text-sm sm:col-span-3"
               aria-label="Cliente do destinatário"
-              value={draft.client_id ?? ORG_WIDE}
+              value={draft.marca_id ?? ORG_WIDE}
               onChange={(e) =>
                 setDraft({
                   ...draft,
-                  client_id: e.target.value === ORG_WIDE ? null : e.target.value,
+                  marca_id: e.target.value === ORG_WIDE ? null : e.target.value,
                 })
               }
             >
-              <option value={ORG_WIDE}>Todos os clientes (geral)</option>
-              {clients.map((c) => (
+              <option value={ORG_WIDE}>Todos os marcas (geral)</option>
+              {marcas.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -229,12 +229,12 @@ function NotificationsTab() {
                 <RecipientRow
                   key={r.id}
                   recipient={r}
-                  clients={clients}
+                  marcas={marcas}
                   onToggleActive={(active) =>
                     update(r.id, { is_active: active })
                   }
-                  onChangeClient={(clientId) =>
-                    update(r.id, { client_id: clientId })
+                  onChangeClient={(marcaId) =>
+                    update(r.id, { marca_id: marcaId })
                   }
                   onDelete={() => remove(r.id)}
                 />
@@ -249,15 +249,15 @@ function NotificationsTab() {
 
 function RecipientRow({
   recipient,
-  clients,
+  marcas,
   onToggleActive,
   onChangeClient,
   onDelete,
 }: {
   recipient: Recipient;
-  clients: Client[];
+  marcas: Marca[];
   onToggleActive: (active: boolean) => void;
-  onChangeClient: (clientId: string | null) => void;
+  onChangeClient: (marcaId: string | null) => void;
   onDelete: () => void;
 }) {
   return (
@@ -278,13 +278,13 @@ function RecipientRow({
         <select
           className="h-8 rounded-md border bg-background px-2 text-xs"
           aria-label={`Cliente de ${recipient.name}`}
-          value={recipient.client_id ?? ORG_WIDE}
+          value={recipient.marca_id ?? ORG_WIDE}
           onChange={(e) =>
             onChangeClient(e.target.value === ORG_WIDE ? null : e.target.value)
           }
         >
-          <option value={ORG_WIDE}>Todos os clientes</option>
-          {clients.map((c) => (
+          <option value={ORG_WIDE}>Todos os marcas</option>
+          {marcas.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
@@ -375,7 +375,7 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
 }
 
 // ─── Meta App credentials section (owner/admin/dev only) ────────────────
-// App ID + App Secret used for the per-client Meta OAuth flow (ClienteModal).
+// App ID + App Secret used for the per-marca Meta OAuth flow (MarcaModal).
 // The secret is write-only: the backend never echoes it back, so the input
 // always starts empty and is only sent when the admin actually types a new
 // value. App ID is required on every save (backend contract), so it is

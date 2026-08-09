@@ -34,7 +34,7 @@ _TABLE = "mailchimp_connections"
 class MailchimpConnectionRecord:
     """One per-scope Mailchimp connection.
 
-    Scope = ``(org_id, client_id)``. ``client_id`` is ``None`` for the
+    Scope = ``(org_id, marca_id)``. ``marca_id`` is ``None`` for the
     org-level default connection, or the owning cliente's id for a
     per-cliente connection (migration 019, mirrors integration_accounts /
     whatsapp_connections).
@@ -51,7 +51,7 @@ class MailchimpConnectionRecord:
     created_at: Any
     updated_at: Any
     api_key: Optional[str] = None
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
 
 class MailchimpConnectionStore:
@@ -80,8 +80,8 @@ class MailchimpConnectionStore:
             ) from exc
 
     @staticmethod
-    def _norm_client_id(value: Any) -> Optional[str]:
-        """Normalise a client_id (UUID / str / None / "") to a canonical
+    def _norm_marca_id(value: Any) -> Optional[str]:
+        """Normalise a marca_id (UUID / str / None / "") to a canonical
         ``str`` or ``None`` for scope comparison."""
         if value in (None, ""):
             return None
@@ -91,8 +91,8 @@ class MailchimpConnectionStore:
     def _record(
         cls, row: dict[str, Any], *, api_key: Optional[str] = None
     ) -> MailchimpConnectionRecord:
-        raw_cid = row.get("client_id")
-        client_id = UUID(str(raw_cid)) if raw_cid not in (None, "") else None
+        raw_cid = row.get("marca_id")
+        marca_id = UUID(str(raw_cid)) if raw_cid not in (None, "") else None
         return MailchimpConnectionRecord(
             id=UUID(str(row["id"])),
             org_id=UUID(str(row["org_id"])),
@@ -101,23 +101,23 @@ class MailchimpConnectionStore:
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
             api_key=api_key,
-            client_id=client_id,
+            marca_id=marca_id,
         )
 
     def _fetch_scoped_row(
-        self, org_id: UUID, client_id: Optional[UUID]
+        self, org_id: UUID, marca_id: Optional[UUID]
     ) -> Optional[dict[str, Any]]:
-        """Return the raw row for ``(org_id, client_id)`` scope or None.
+        """Return the raw row for ``(org_id, marca_id)`` scope or None.
 
-        Filtering by ``client_id IS NULL`` is done in Python (not ``.eq(col,
+        Filtering by ``marca_id IS NULL`` is done in Python (not ``.eq(col,
         None)``): a ``= NULL`` predicate never matches on SQLite and PostgREST
         needs ``is.null`` — resolving in-memory keeps the store portable across
         both the dev SQLiteClient and the prod admin client. Row counts per org
         are tiny (one org-default + one per cliente)."""
         resp = self._table().select("*").eq("org_id", str(org_id)).execute()
-        target = self._norm_client_id(client_id)
+        target = self._norm_marca_id(marca_id)
         for row in list(resp.data or []):
-            if self._norm_client_id(row.get("client_id")) == target:
+            if self._norm_marca_id(row.get("marca_id")) == target:
                 return row
         return None
 
@@ -126,15 +126,15 @@ class MailchimpConnectionStore:
         self,
         org_id: UUID,
         *,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
         decrypt: bool = False,
     ) -> Optional[MailchimpConnectionRecord]:
-        """Fetch the connection row for ``(org_id, client_id)`` scope.
+        """Fetch the connection row for ``(org_id, marca_id)`` scope.
 
-        ``client_id=None`` resolves the org-level default (client_id IS NULL);
+        ``marca_id=None`` resolves the org-level default (marca_id IS NULL);
         a UUID resolves that cliente's connection. ``decrypt=True`` populates
         ``record.api_key`` (only for the live-client path)."""
-        row = self._fetch_scoped_row(org_id, client_id)
+        row = self._fetch_scoped_row(org_id, marca_id)
         if row is None:
             return None
         api_key = self._decrypt(row["encrypted_api_key"]) if decrypt else None
@@ -148,18 +148,18 @@ class MailchimpConnectionStore:
         api_key: str,
         server_prefix: str,
         audience_id: Optional[str] = None,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> MailchimpConnectionRecord:
-        """Insert-or-replace the connection row for ``(org_id, client_id)``.
+        """Insert-or-replace the connection row for ``(org_id, marca_id)``.
 
         Read-then-write (not DB upsert): the at-most-one-per-scope invariant is
         enforced by two PARTIAL unique indexes (migration 019), which cannot be
         named as a PostgREST ``on_conflict`` target. Resolving the existing row
         first (by scope) then updating it by primary key is portable across the
-        dev SQLiteClient and the prod admin client, and keeps NULL client_id
+        dev SQLiteClient and the prod admin client, and keeps NULL marca_id
         semantics correct."""
         now = datetime.now(timezone.utc).isoformat()
-        existing = self._fetch_scoped_row(org_id, client_id)
+        existing = self._fetch_scoped_row(org_id, marca_id)
         if existing is not None:
             patch: dict[str, Any] = {
                 "encrypted_api_key": self._encrypt(api_key),
@@ -175,12 +175,12 @@ class MailchimpConnectionStore:
             )
             rows = list(resp.data or [])
             return self._record(rows[0]) if rows else self.get_connection(
-                org_id, client_id=client_id
+                org_id, marca_id=marca_id
             ) or self._record({**existing, **patch})
 
         payload: dict[str, Any] = {
             "org_id": str(org_id),
-            "client_id": str(client_id) if client_id is not None else None,
+            "marca_id": str(marca_id) if marca_id is not None else None,
             "encrypted_api_key": self._encrypt(api_key),
             "server_prefix": server_prefix,
             "audience_id": audience_id,
@@ -190,7 +190,7 @@ class MailchimpConnectionStore:
         rows = list(resp.data or [])
         if not rows:
             # Some SQLite test paths return empty data on insert; re-read.
-            return self.get_connection(org_id, client_id=client_id) or self._record(
+            return self.get_connection(org_id, marca_id=marca_id) or self._record(
                 payload
             )
         return self._record(rows[0])
@@ -200,12 +200,12 @@ class MailchimpConnectionStore:
         org_id: UUID,
         audience_id: str,
         *,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> Optional[MailchimpConnectionRecord]:
         """Update ``audience_id`` on the scoped connection (org-default when
-        ``client_id`` is None). Resolves the scoped row by id first so the
-        NULL-client_id case works on both clients."""
-        existing = self._fetch_scoped_row(org_id, client_id)
+        ``marca_id`` is None). Resolves the scoped row by id first so the
+        NULL-marca_id case works on both clients."""
+        existing = self._fetch_scoped_row(org_id, marca_id)
         if existing is None:
             return None
         patch: dict[str, Any] = {
@@ -225,11 +225,11 @@ class MailchimpConnectionStore:
         self,
         org_id: UUID,
         *,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> bool:
-        """Delete the scoped connection (org-default when ``client_id`` is
+        """Delete the scoped connection (org-default when ``marca_id`` is
         None). Resolves the scoped row by id first."""
-        existing = self._fetch_scoped_row(org_id, client_id)
+        existing = self._fetch_scoped_row(org_id, marca_id)
         if existing is None:
             return False
         resp = (

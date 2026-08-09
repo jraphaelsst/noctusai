@@ -255,7 +255,7 @@ def build_gmail_client_for(
     cfg: Any,
     *,
     org_id: UUID,
-    client_id: Optional[UUID] = None,
+    marca_id: Optional[UUID] = None,
 ) -> tuple[Any, Optional[str]]:
     """Resolve the Gmail mailbox that should SEND for a given client.
 
@@ -263,7 +263,7 @@ def build_gmail_client_for(
     mailbox exists. Resolution order:
 
     1. the client's own connected mailbox (`integration_accounts` row with
-       `provider='gmail'` and that `client_id`), else
+       `provider='gmail'` and that `marca_id`), else
     2. the org's default mailbox — so a client without its own connection
        still sends, rather than silently dropping the email.
 
@@ -303,9 +303,9 @@ def build_gmail_client_for(
         return None, None
 
     account = None
-    if client_id is not None:
+    if marca_id is not None:
         account = next(
-            (a for a in accounts if str(a.client_id or "") == str(client_id)), None
+            (a for a in accounts if str(a.marca_id or "") == str(marca_id)), None
         )
     if account is None:
         account = next((a for a in accounts if a.is_default), accounts[0])

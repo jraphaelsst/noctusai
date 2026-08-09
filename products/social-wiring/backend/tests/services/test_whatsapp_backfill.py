@@ -68,7 +68,7 @@ def sqlite_db(tmp_path: Path) -> SQLiteClient:
         auto_reply_enabled INTEGER NOT NULL DEFAULT 0,
         authorized_numbers TEXT,
         bound_chats TEXT,
-        client_id TEXT,
+        marca_id TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );

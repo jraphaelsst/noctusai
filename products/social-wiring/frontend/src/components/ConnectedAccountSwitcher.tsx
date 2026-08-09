@@ -39,7 +39,7 @@
  */
 import { useEffect } from "react";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
-import { useClients } from "@/hooks/useClients";
+import { useMarcas } from "@/hooks/useMarcas";
 import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { useActiveAccountId, useActiveAccountStore } from "@/state/useActiveAccount";
 
@@ -58,7 +58,7 @@ export function ConnectedAccountSwitcher({
   providerLabel,
 }: ConnectedAccountSwitcherProps) {
   const { data: accounts } = useIntegrationAccounts({ provider });
-  const { data: clients } = useClients();
+  const { data: marcas } = useMarcas();
   const activeAccountId = useActiveAccountId(provider);
   const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
 
@@ -78,7 +78,7 @@ export function ConnectedAccountSwitcher({
   return (
     <AccountSwitcher
       accounts={accounts}
-      clients={clients ?? []}
+      marcas={marcas ?? []}
       provider={provider}
       providerLabel={
         providerLabel ?? provider.charAt(0).toUpperCase() + provider.slice(1)

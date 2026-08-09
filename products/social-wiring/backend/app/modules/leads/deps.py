@@ -8,7 +8,7 @@ returns a BRAND NEW wrapper with an EMPTY per-table row cache every
 single time it's called (confirmed empirically while building this
 module's test suite) — so a service pattern of ``client.schema(SCHEMA)
 .table(t)`` called fresh on every read/write (the shape used elsewhere
-in this product, e.g. ``app/services/clients_service.py``,
+in this product, e.g. ``app/services/marcas_service.py``,
 ``app/modules/mailchimp/store.py``) silently loses every prior
 insert/update the instant two SEPARATE calls re-resolve the schema
 binding — which is exactly what happens across two separate HTTP

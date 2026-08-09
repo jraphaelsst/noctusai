@@ -80,7 +80,7 @@ class WhatsAppConnectionRecord:
     bound_chats: list[dict] = field(default_factory=list)
     # Migration 017 — optional cliente ownership.
     # None = unassigned; UUID = the client this connection belongs to.
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
 
 class WhatsAppConnectionStore:
@@ -129,7 +129,7 @@ class WhatsAppConnectionStore:
             authorized_numbers=list(row.get("authorized_numbers") or []),
             bound_chats=list(row.get("bound_chats") or []),
             # Migration 017 — optional cliente FK; absent on un-migrated rows.
-            client_id=UUID(str(row["client_id"])) if row.get("client_id") else None,
+            marca_id=UUID(str(row["marca_id"])) if row.get("marca_id") else None,
         )
 
     # ─── reads ────────────────────────────────────────────────────────
@@ -138,11 +138,11 @@ class WhatsAppConnectionStore:
         *,
         org_id: UUID,
         user_id: UUID,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> list[WhatsAppConnectionRecord]:
         """All of a user's lines, newest first.  Never decrypts the API key.
 
-        ``client_id`` (migration 017): when supplied, filters to only the
+        ``marca_id`` (migration 017): when supplied, filters to only the
         connections owned by that cliente.  ``None`` returns all (no filter).
         """
         q = (
@@ -151,8 +151,8 @@ class WhatsAppConnectionStore:
             .eq("org_id", str(org_id))
             .eq("user_id", str(user_id))
         )
-        if client_id is not None:
-            q = q.eq("client_id", str(client_id))
+        if marca_id is not None:
+            q = q.eq("marca_id", str(marca_id))
         resp = q.execute()
         rows = list(resp.data or [])
         rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -195,9 +195,9 @@ class WhatsAppConnectionStore:
         session_name: str = "default",
         webhook_url: Optional[str] = None,
         webhook_token: Optional[str] = None,
-        client_id: Optional[UUID] = None,
+        marca_id: Optional[UUID] = None,
     ) -> WhatsAppConnectionRecord:
-        """Create a new connection.  ``client_id`` (migration 017) links the
+        """Create a new connection.  ``marca_id`` (migration 017) links the
         connection to a cliente at creation time — optional, default ``None``
         (unassigned).  The DB column is nullable so absent FK is safe.
         """
@@ -211,8 +211,8 @@ class WhatsAppConnectionStore:
             "webhook_url": webhook_url,
             "webhook_token": webhook_token,
         }
-        if client_id is not None:
-            payload["client_id"] = str(client_id)
+        if marca_id is not None:
+            payload["marca_id"] = str(marca_id)
         resp = self._table().insert(payload).execute()
         rows = list(resp.data or [])
         return self._record(rows[0] if rows else payload)
@@ -251,13 +251,13 @@ class WhatsAppConnectionStore:
         webhook_url: Any = _UNSET,
         authorized_numbers: Any = _UNSET,
         bound_chats: Any = _UNSET,
-        client_id: Any = _UNSET,
+        marca_id: Any = _UNSET,
     ) -> Optional[WhatsAppConnectionRecord]:
         """Update a connection.
 
         Uses the ``_UNSET`` sentinel for nullable fields that can be explicitly
         cleared (``webhook_url``, ``authorized_numbers``, ``bound_chats``,
-        ``client_id``) to distinguish "not supplied → keep current value" from
+        ``marca_id``) to distinguish "not supplied → keep current value" from
         "supplied as ``None``/``[]`` → clear the value".
         """
         patch: dict[str, Any] = {}
@@ -278,8 +278,8 @@ class WhatsAppConnectionStore:
         if bound_chats is not _UNSET:
             patch["bound_chats"] = list(bound_chats)
         # Migration 017 — client FK.  _UNSET = keep current; None = clear.
-        if client_id is not _UNSET:
-            patch["client_id"] = str(client_id) if client_id is not None else None
+        if marca_id is not _UNSET:
+            patch["marca_id"] = str(marca_id) if marca_id is not None else None
         patch["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         resp = (

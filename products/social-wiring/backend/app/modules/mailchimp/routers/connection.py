@@ -18,8 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
-from app.routers.clients_router import get_client_service
-from app.services.clients_service import ClientService
+from app.routers.marcas_router import get_marca_service
+from app.services.marcas_service import MarcaService
 from app.modules.mailchimp.deps import (
     get_mailchimp_client_factory,
     get_mailchimp_store,
@@ -49,7 +49,7 @@ router = APIRouter(prefix="/api/mailchimp", tags=["Mailchimp"])
 def _record_to_out(record, audience_name: str | None = None) -> ConnectionOut:
     return ConnectionOut(
         connected=True,
-        client_id=record.client_id,
+        marca_id=record.marca_id,
         server_prefix=record.server_prefix,
         audience_id=record.audience_id,
         audience_name=audience_name,
@@ -58,27 +58,27 @@ def _record_to_out(record, audience_name: str | None = None) -> ConnectionOut:
     )
 
 
-def _validate_client_ownership(
-    client_svc: ClientService,
-    client_id: Optional[UUID],
+def _validate_marca_ownership(
+    marca_svc: MarcaService,
+    marca_id: Optional[UUID],
     org_id: UUID,
 ) -> None:
-    """Reject a client_id that does not belong to the calling org (404).
+    """Reject a marca_id that does not belong to the calling org (404).
 
     Mirrors the OAuth-start ownership check in integration_accounts_router
-    (migration 017). No-op when ``client_id`` is None (org-level scope)."""
-    if client_id is None:
+    (migration 017). No-op when ``marca_id`` is None (org-level scope)."""
+    if marca_id is None:
         return
-    if client_svc.get_client(client_id, org_id) is None:
+    if marca_svc.get_marca(marca_id, org_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="client_id not found or does not belong to this org.",
+            detail="marca_id not found or does not belong to this org.",
         )
 
 
 @router.get("/connection", response_model=ConnectionOut)
 async def get_connection(
-    client_id: Optional[UUID] = Query(
+    marca_id: Optional[UUID] = Query(
         default=None,
         description="Scope to a cliente's connection; omit for the org default.",
     ),
@@ -87,14 +87,14 @@ async def get_connection(
 ) -> ConnectionOut:
     """Always 200 — returns nulls when not connected (FE probe endpoint).
 
-    ``client_id`` omitted → the org-level default (client_id NULL); a UUID →
+    ``marca_id`` omitted → the org-level default (marca_id NULL); a UUID →
     that cliente's connection (migration 019)."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    record = store.get_connection(org_id, client_id=client_id)
+    record = store.get_connection(org_id, marca_id=marca_id)
     if record is None:
         # Echo the probed scope so the FE knows which cliente it queried.
-        return ConnectionOut(connected=False, client_id=client_id)
+        return ConnectionOut(connected=False, marca_id=marca_id)
     return _record_to_out(record)
 
 
@@ -104,21 +104,21 @@ async def put_connection(
     auth: tuple = Depends(get_current_user_org),
     store: MailchimpConnectionStore = Depends(get_mailchimp_store),
     factory: Any = Depends(get_mailchimp_client_factory),
-    client_svc: ClientService = Depends(get_client_service),
+    marca_svc: MarcaService = Depends(get_marca_service),
 ) -> ConnectionOut:
     """Validate API key via live ping, then encrypt+upsert.
 
-    1. Validate ``client_id`` belongs to the org (404 when not — migration 019).
+    1. Validate ``marca_id`` belongs to the org (404 when not — migration 019).
     2. Parse server_prefix from the key suffix (ValueError → 400).
     3. Build a client and call ping() to verify the key is valid.
-    4. Encrypt+upsert the connection row for (org, client_id) scope.
+    4. Encrypt+upsert the connection row for (org, marca_id) scope.
     5. Return the GET shape (api_key never returned).
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    # 1. Validate client scope belongs to the org (no-op when client_id None).
-    _validate_client_ownership(client_svc, body.client_id, org_id)
+    # 1. Validate marca scope belongs to the org (no-op when marca_id None).
+    _validate_marca_ownership(marca_svc, body.marca_id, org_id)
 
     api_key = body.api_key.strip()
 
@@ -144,7 +144,7 @@ async def put_connection(
             api_key=api_key,
             server_prefix=server_prefix,
             audience_id=body.audience_id,
-            client_id=body.client_id,
+            marca_id=body.marca_id,
         )
     except CredentialStoreError as exc:
         raise AppException(
@@ -159,7 +159,7 @@ async def put_connection(
 @router.patch("/connection", response_model=ConnectionOut)
 async def patch_connection(
     body: ConnectionPatchBody,
-    client_id: Optional[UUID] = Query(
+    marca_id: Optional[UUID] = Query(
         default=None,
         description="Scope to a cliente's connection; omit for the org default.",
     ),
@@ -167,11 +167,11 @@ async def patch_connection(
     store: MailchimpConnectionStore = Depends(get_mailchimp_store),
 ) -> ConnectionOut:
     """Update the audience_id on the scoped connection (org default when
-    ``client_id`` is omitted). The row is already org-scoped, so a foreign
-    client_id resolves to no row → 503."""
+    ``marca_id`` is omitted). The row is already org-scoped, so a foreign
+    marca_id resolves to no row → 503."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    record = store.set_audience(org_id, body.audience_id, client_id=client_id)
+    record = store.set_audience(org_id, body.audience_id, marca_id=marca_id)
     if record is None:
         raise AppException(
             code="mailchimp_not_configured",
@@ -183,19 +183,19 @@ async def patch_connection(
 
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connection(
-    client_id: Optional[UUID] = Query(
+    marca_id: Optional[UUID] = Query(
         default=None,
         description="Scope to a cliente's connection; omit for the org default.",
     ),
     auth: tuple = Depends(get_current_user_org),
     store: MailchimpConnectionStore = Depends(get_mailchimp_store),
 ) -> Response:
-    """Delete the scoped connection (org default when ``client_id`` is
-    omitted). The row is already org-scoped, so a foreign client_id resolves
+    """Delete the scoped connection (org default when ``marca_id`` is
+    omitted). The row is already org-scoped, so a foreign marca_id resolves
     to no row → 404."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    deleted = store.delete_connection(org_id, client_id=client_id)
+    deleted = store.delete_connection(org_id, marca_id=marca_id)
     if not deleted:
         raise AppException(
             code="not_found",

@@ -1,37 +1,37 @@
 /**
- * ClientManagementModal — inline modal for client CRUD.
+ * MarcaManagementModal — inline modal for marca CRUD.
  *
  * Allows creating, editing, and deleting clients. Opened from Conexoes via the
- * "Gerenciar clientes" affordance. No new nav route needed — everything lives
+ * "Gerenciar marcas" affordance. No new nav route needed — everything lives
  * within /conexoes.
  *
- * Uses the useClients mutations; the list rerenders automatically via
+ * Uses the useMarcas mutations; the list rerenders automatically via
  * TanStack Query cache invalidation.
  */
 import { useState } from "react";
 import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
-import type { Client } from "@/hooks/useClients";
+import type { Marca } from "@/hooks/useMarcas";
 import {
-  useCreateClient,
-  useDeleteClient,
-  useUpdateClient,
-} from "@/hooks/useClients";
+  useCreateMarca,
+  useDeleteMarca,
+  useUpdateMarca,
+} from "@/hooks/useMarcas";
 
-interface ClientManagementModalProps {
-  clients: Client[];
+interface MarcaManagementModalProps {
+  marcas: Marca[];
   onClose: () => void;
 }
 
-interface ClientFormState {
+interface MarcaFormState {
   name: string;
   slug: string;
   kind: string;
   notes: string;
 }
 
-const emptyForm = (): ClientFormState => ({
+const emptyForm = (): MarcaFormState => ({
   name: "",
   slug: "",
   kind: "",
@@ -46,18 +46,18 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export function ClientManagementModal({
-  clients,
+export function MarcaManagementModal({
+  marcas,
   onClose,
-}: ClientManagementModalProps) {
+}: MarcaManagementModalProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState<ClientFormState>(emptyForm());
+  const [form, setForm] = useState<MarcaFormState>(emptyForm());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const createClient = useCreateClient();
-  const updateClient = useUpdateClient();
-  const deleteClient = useDeleteClient();
+  const createMarca = useCreateMarca();
+  const updateMarca = useUpdateMarca();
+  const deleteMarca = useDeleteMarca();
 
   function startCreate() {
     setEditingId(null);
@@ -65,7 +65,7 @@ export function ClientManagementModal({
     setShowCreate(true);
   }
 
-  function startEdit(client: Client) {
+  function startEdit(client: Marca) {
     setShowCreate(false);
     setEditingId(client.id);
     setForm({
@@ -86,16 +86,16 @@ export function ClientManagementModal({
     e.preventDefault();
     if (!form.name.trim()) return;
     try {
-      await createClient.mutateAsync({
+      await createMarca.mutateAsync({
         name: form.name.trim(),
         slug: form.slug.trim() || slugify(form.name),
         kind: form.kind.trim() || undefined,
         notes: form.notes.trim() || undefined,
       });
-      toast.success("Cliente criado");
+      toast.success("Marca criada");
       cancelForm();
     } catch (err: any) {
-      toast.error("Erro ao criar cliente", { description: err?.message });
+      toast.error("Erro ao criar marca", { description: err?.message });
     }
   }
 
@@ -103,34 +103,34 @@ export function ClientManagementModal({
     e.preventDefault();
     if (!editingId || !form.name.trim()) return;
     try {
-      await updateClient.mutateAsync({
+      await updateMarca.mutateAsync({
         id: editingId,
         name: form.name.trim(),
         slug: form.slug.trim() || undefined,
         kind: form.kind.trim() || null,
         notes: form.notes.trim() || null,
       });
-      toast.success("Cliente atualizado");
+      toast.success("Marca atualizada");
       cancelForm();
     } catch (err: any) {
-      toast.error("Erro ao atualizar cliente", { description: err?.message });
+      toast.error("Erro ao atualizar marca", { description: err?.message });
     }
   }
 
   async function handleDelete(id: string) {
     try {
-      await deleteClient.mutateAsync(id);
-      toast.success("Cliente removido");
+      await deleteMarca.mutateAsync(id);
+      toast.success("Marca removida");
       setConfirmDeleteId(null);
     } catch (err: any) {
-      toast.error("Erro ao remover cliente", { description: err?.message });
+      toast.error("Erro ao remover marca", { description: err?.message });
     }
   }
 
   const isBusy =
-    createClient.isPending ||
-    updateClient.isPending ||
-    deleteClient.isPending;
+    createMarca.isPending ||
+    updateMarca.isPending ||
+    deleteMarca.isPending;
 
   const isFormVisible = showCreate || editingId !== null;
 
@@ -139,14 +139,14 @@ export function ClientManagementModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Gerenciar clientes"
+      aria-label="Gerenciar marcas"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-lg rounded-xl border border-border bg-background shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold">Gerenciar clientes</h2>
+          <h2 className="text-base font-semibold">Gerenciar marcas</h2>
           <button
             type="button"
             aria-label="Fechar"
@@ -160,13 +160,13 @@ export function ClientManagementModal({
         {/* Body */}
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-3">
           {/* Client list */}
-          {clients.length === 0 && !isFormVisible && (
+          {marcas.length === 0 && !isFormVisible && (
             <p className="py-4 text-center text-sm text-muted-foreground">
-              Nenhum cliente ainda. Crie o primeiro abaixo.
+              Nenhuma marca ainda. Crie a primeira abaixo.
             </p>
           )}
 
-          {clients.map((client) => (
+          {marcas.map((client) => (
             <div
               key={client.id}
               className="rounded-lg border border-border bg-card p-3"
@@ -257,7 +257,7 @@ export function ClientManagementModal({
           {showCreate && (
             <div className="rounded-lg border border-dashed border-border bg-muted/20 p-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Novo cliente
+                Nova marca
               </p>
               <form onSubmit={handleCreate} className="space-y-2">
                 <ClientFormFields
@@ -299,7 +299,7 @@ export function ClientManagementModal({
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              Novo cliente
+              Nova marca
             </button>
           )}
           <button
@@ -322,8 +322,8 @@ function ClientFormFields({
   onChange,
   busy,
 }: {
-  form: ClientFormState;
-  onChange: (f: ClientFormState) => void;
+  form: MarcaFormState;
+  onChange: (f: MarcaFormState) => void;
   busy: boolean;
 }) {
   return (
@@ -391,4 +391,4 @@ function ClientFormFields({
   );
 }
 
-export default ClientManagementModal;
+export default MarcaManagementModal;

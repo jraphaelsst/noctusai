@@ -270,7 +270,7 @@ def patch_workflow(
     table) — never touches n8n. Uses ``model_fields_set`` to
     distinguish "folder_id not supplied" (leave placement unchanged)
     from "folder_id explicitly null" (move to root) — same tri-state
-    pattern as ``IntegrationAccountUpdate.client_id``."""
+    pattern as ``IntegrationAccountUpdate.marca_id``."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     resolve_n8n_account(svc, admin, body.account_id, org_id)

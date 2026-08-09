@@ -439,7 +439,7 @@ function YouTubeAccountPicker({
         <Label>Conta YouTube</Label>
         <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
           Nenhuma conta YouTube conectada.{" "}
-          <a href="/clientes" className="underline underline-offset-2 hover:text-foreground">
+          <a href="/marcas" className="underline underline-offset-2 hover:text-foreground">
             Conecte uma conta primeiro.
           </a>
         </div>

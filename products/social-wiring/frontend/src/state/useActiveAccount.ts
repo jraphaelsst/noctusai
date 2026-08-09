@@ -44,9 +44,9 @@ export interface ActiveAccountState {
    */
   activeAccountIdByProvider: Record<string, string | null>;
   /** The currently selected client UUID; null = all clients / unfiltered. */
-  activeClientId: string | null;
+  activeMarcaId: string | null;
   setActiveAccount: (provider: string, accountId: string | null) => void;
-  setActiveClient: (clientId: string | null) => void;
+  setActiveMarca: (marcaId: string | null) => void;
   /** Convenience: clear the client and every provider's account selection. */
   clearSelection: () => void;
 }
@@ -55,7 +55,7 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
   persist(
     (set) => ({
       activeAccountIdByProvider: {},
-      activeClientId: null,
+      activeMarcaId: null,
       setActiveAccount: (provider, accountId) =>
         set((state) => ({
           activeAccountIdByProvider: {
@@ -63,13 +63,13 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
             [provider]: accountId,
           },
         })),
-      setActiveClient: (clientId) =>
+      setActiveMarca: (marcaId) =>
         // Switching clients drops EVERY provider's account selection, not
         // just one — an account belongs to a client, so a client change
         // invalidates the whole map at once. (The old store cleared its
         // single id for the same reason.)
-        set({ activeClientId: clientId, activeAccountIdByProvider: {} }),
-      clearSelection: () => set({ activeAccountIdByProvider: {}, activeClientId: null }),
+        set({ activeMarcaId: marcaId, activeAccountIdByProvider: {} }),
+      clearSelection: () => set({ activeAccountIdByProvider: {}, activeMarcaId: null }),
     }),
     {
       name: "sw:active-account",
@@ -77,7 +77,7 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
       // Persist only the selection state — functions are re-created by zustand.
       partialize: (state) => ({
         activeAccountIdByProvider: state.activeAccountIdByProvider,
-        activeClientId: state.activeClientId,
+        activeMarcaId: state.activeMarcaId,
       }),
       /**
        * v0 → v1: the v0 payload carried a bare `activeAccountId` with no
@@ -96,7 +96,7 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
         if (version === 0) {
           return {
             activeAccountIdByProvider: {},
-            activeClientId: legacy.activeClientId ?? null,
+            activeMarcaId: legacy.activeMarcaId ?? null,
           } as ActiveAccountState;
         }
         return legacy as ActiveAccountState;

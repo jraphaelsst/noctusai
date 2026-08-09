@@ -1,14 +1,14 @@
-"""Tests for the clients_router — /api/clients/*.
+"""Tests for the marcas_router — /api/marcas/*.
 
-Tests use the DI seam (app.dependency_overrides[get_client_service]) with a
-SQLite-backed ClientService (real CRUD). No monkey-patching per
+Tests use the DI seam (app.dependency_overrides[get_marca_service]) with a
+SQLite-backed MarcaService (real CRUD). No monkey-patching per
 KB § PATTERNS/di-test-seam.md.
 
 Coverage:
   - CRUD round-trips (list / create / update / delete)
   - 401 on missing Authorization — strict == 401 per auth-boundary rule
   - 404 on nonexistent
-  - Org isolation (org A cannot see org B's clients via list)
+  - Org isolation (org A cannot see org B's marcas via list)
 """
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
 
-from app.services.clients_service import ClientService, build_client_service
+from app.services.marcas_service import MarcaService, build_marca_service
 from app.sqlite_client import SQLiteClient
 
 _ORG_A = "00000000-0000-4000-8000-000000000001"
 _ORG_B = "00000000-0000-4000-8000-000000000002"
 
 _CLIENT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS clients (
+CREATE TABLE IF NOT EXISTS marcas (
     id          TEXT PRIMARY KEY,
     org_id      TEXT NOT NULL,
     slug        TEXT NOT NULL,
@@ -45,20 +45,20 @@ CREATE TABLE IF NOT EXISTS clients (
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def sqlite_clients_db(tmp_path: Path) -> SQLiteClient:
-    db_path = tmp_path / "clients.sqlite3"
+def sqlite_marcas_db(tmp_path: Path) -> SQLiteClient:
+    db_path = tmp_path / "marcas.sqlite3"
     with sqlite3.connect(db_path) as conn:
         conn.executescript(_CLIENT_SCHEMA)
     return SQLiteClient(db_path)
 
 
 @pytest.fixture
-def client_svc(sqlite_clients_db: SQLiteClient) -> ClientService:
-    return build_client_service(sqlite_clients_db)
+def marca_svc(sqlite_marcas_db: SQLiteClient) -> MarcaService:
+    return build_marca_service(sqlite_marcas_db)
 
 
 @pytest.fixture
-def http_client(client_svc):
+def http_client(marca_svc):
     """TestClient with client service DI seam wired to SQLite."""
     from unittest.mock import MagicMock, patch
     from noctusai_lib.testing import MockSupabaseClient, MockUser, MockUserResponse
@@ -68,7 +68,7 @@ def http_client(client_svc):
         return_value=MockUserResponse(MockUser(org_id=_ORG_A))
     )
 
-    from app.routers.clients_router import get_client_service
+    from app.routers.marcas_router import get_marca_service
     from noctusai_lib.testing import bind_consent_module_to_mock
 
     with (
@@ -80,10 +80,10 @@ def http_client(client_svc):
 
         bind_consent_module_to_mock(mock_sb)
 
-        app.dependency_overrides[get_client_service] = lambda: client_svc
+        app.dependency_overrides[get_marca_service] = lambda: marca_svc
         tc = TestClient(app, raise_server_exceptions=True)
         yield tc
-        app.dependency_overrides.pop(get_client_service, None)
+        app.dependency_overrides.pop(get_marca_service, None)
 
 
 def _auth():
@@ -92,7 +92,7 @@ def _auth():
 
 def _make_client(http_client, *, slug="agent-x", name="Agent X", kind="real_estate_agent"):
     body = {"slug": slug, "name": name, "kind": kind}
-    resp = http_client.post("/api/clients", json=body, headers=_auth())
+    resp = http_client.post("/api/marcas", json=body, headers=_auth())
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -101,19 +101,19 @@ def _make_client(http_client, *, slug="agent-x", name="Agent X", kind="real_esta
 
 class TestAuth:
     def test_list_requires_auth(self, http_client):
-        resp = http_client.get("/api/clients")
+        resp = http_client.get("/api/marcas")
         assert resp.status_code == 401
 
     def test_create_requires_auth(self, http_client):
-        resp = http_client.post("/api/clients", json={"slug": "x", "name": "X"})
+        resp = http_client.post("/api/marcas", json={"slug": "x", "name": "X"})
         assert resp.status_code == 401
 
     def test_update_requires_auth(self, http_client):
-        resp = http_client.patch(f"/api/clients/{uuid4()}", json={"name": "Y"})
+        resp = http_client.patch(f"/api/marcas/{uuid4()}", json={"name": "Y"})
         assert resp.status_code == 401
 
     def test_delete_requires_auth(self, http_client):
-        resp = http_client.delete(f"/api/clients/{uuid4()}")
+        resp = http_client.delete(f"/api/marcas/{uuid4()}")
         assert resp.status_code == 401
 
 
@@ -121,7 +121,7 @@ class TestAuth:
 
 class TestCRUD:
     def test_list_empty(self, http_client):
-        resp = http_client.get("/api/clients", headers=_auth())
+        resp = http_client.get("/api/marcas", headers=_auth())
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -134,14 +134,14 @@ class TestCRUD:
 
     def test_list_one(self, http_client):
         _make_client(http_client)
-        resp = http_client.get("/api/clients", headers=_auth())
+        resp = http_client.get("/api/marcas", headers=_auth())
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
     def test_create_forbidden_fields_422(self, http_client):
         """extra='forbid' on the create model."""
         resp = http_client.post(
-            "/api/clients",
+            "/api/marcas",
             json={"slug": "x", "name": "X", "unknown_field": True},
             headers=_auth(),
         )
@@ -150,7 +150,7 @@ class TestCRUD:
     def test_update_name(self, http_client):
         data = _make_client(http_client)
         resp = http_client.patch(
-            f"/api/clients/{data['id']}",
+            f"/api/marcas/{data['id']}",
             json={"name": "Updated Agent"},
             headers=_auth(),
         )
@@ -159,7 +159,7 @@ class TestCRUD:
 
     def test_update_nonexistent_404(self, http_client):
         resp = http_client.patch(
-            f"/api/clients/{uuid4()}",
+            f"/api/marcas/{uuid4()}",
             json={"name": "X"},
             headers=_auth(),
         )
@@ -168,23 +168,23 @@ class TestCRUD:
     def test_delete_existing(self, http_client):
         data = _make_client(http_client)
         resp = http_client.delete(
-            f"/api/clients/{data['id']}", headers=_auth()
+            f"/api/marcas/{data['id']}", headers=_auth()
         )
         assert resp.status_code == 204
 
     def test_delete_nonexistent_404(self, http_client):
         resp = http_client.delete(
-            f"/api/clients/{uuid4()}", headers=_auth()
+            f"/api/marcas/{uuid4()}", headers=_auth()
         )
         assert resp.status_code == 404
 
-    def test_list_only_own_org(self, http_client, client_svc):
+    def test_list_only_own_org(self, http_client, marca_svc):
         """Clients created for _ORG_B must NOT appear in org A's list."""
         from uuid import UUID
-        client_svc.create_client(
+        marca_svc.create_marca(
             org_id=UUID(_ORG_B), slug="b-client", name="B Client"
         )
-        resp = http_client.get("/api/clients", headers=_auth())
+        resp = http_client.get("/api/marcas", headers=_auth())
         assert resp.status_code == 200
         slugs = {c["slug"] for c in resp.json()}
         assert "b-client" not in slugs

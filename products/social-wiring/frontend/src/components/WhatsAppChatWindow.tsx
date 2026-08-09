@@ -1,7 +1,7 @@
 /**
  * WhatsAppChatWindow — embeddable WhatsApp chat surface scoped to ONE connection.
  *
- * Drop-in for any context that already has a connectionId (the ClienteModal
+ * Drop-in for any context that already has a connectionId (the MarcaModal
  * Chat tab, a future inline panel, etc.). It does NOT contain a connection
  * picker — that's the caller's responsibility.
  *

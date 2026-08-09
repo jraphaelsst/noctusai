@@ -6,17 +6,17 @@
  *   · mutations invalidate their relevant keys on success
  *
  * API contract: all endpoints return bare arrays/objects (NO envelope).
- * GET /api/clients → Client[]
- * POST /api/clients { slug, name, kind?, notes? } → Client
- * PATCH /api/clients/{id} → Client
- * DELETE /api/clients/{id} → 204
+ * GET /api/marcas → Marca[]
+ * POST /api/marcas { slug, name, kind?, notes? } → Marca
+ * PATCH /api/marcas/{id} → Marca
+ * DELETE /api/marcas/{id} → 204
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export interface Client {
+export interface Marca {
   id: string;
   org_id: string;
   slug: string;
@@ -48,11 +48,11 @@ const CLIENT_KEY = (id: string) => ["sw", "clients", "detail", id] as const;
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
 
-export function useClients() {
+export function useMarcas() {
   return useQuery({
     queryKey: CLIENTS_KEY,
     queryFn: async () => {
-      const res = await api.get<Client[]>("/api/clients");
+      const res = await api.get<Marca[]>("/api/marcas");
       return res ?? [];
     },
   });
@@ -62,7 +62,7 @@ export function useClient(id: string) {
   return useQuery({
     queryKey: CLIENT_KEY(id),
     queryFn: async () => {
-      const res = await api.get<Client>(`/api/clients/${id}`);
+      const res = await api.get<Marca>(`/api/marcas/${id}`);
       return res;
     },
     enabled: !!id,
@@ -71,22 +71,22 @@ export function useClient(id: string) {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
-export function useCreateClient() {
+export function useCreateMarca() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateClientInput) =>
-      api.post<Client>("/api/clients", payload),
+      api.post<Marca>("/api/marcas", payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: CLIENTS_KEY });
     },
   });
 }
 
-export function useUpdateClient() {
+export function useUpdateMarca() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...payload }: UpdateClientInput & { id: string }) =>
-      api.patch<Client>(`/api/clients/${id}`, payload),
+      api.patch<Marca>(`/api/marcas/${id}`, payload),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: CLIENTS_KEY });
       if ((res as any)?.id) {
@@ -96,10 +96,10 @@ export function useUpdateClient() {
   });
 }
 
-export function useDeleteClient() {
+export function useDeleteMarca() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/clients/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/marcas/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: CLIENTS_KEY });
     },

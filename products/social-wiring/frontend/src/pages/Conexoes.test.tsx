@@ -25,7 +25,7 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   // Reset the zustand active-account store between tests
   const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
 });
 
 // ─── Hook mocks ────────────────────────────────────────────────────────────
@@ -62,11 +62,11 @@ const mockCreateClient = vi.fn();
 const mockUpdateClient = vi.fn();
 const mockDeleteClient = vi.fn();
 
-vi.mock("@/hooks/useClients", () => ({
-  useClients: mockClients,
-  useCreateClient: mockCreateClient,
-  useUpdateClient: mockUpdateClient,
-  useDeleteClient: mockDeleteClient,
+vi.mock("@/hooks/useMarcas", () => ({
+  useMarcas: mockClients,
+  useCreateMarca: mockCreateClient,
+  useUpdateMarca: mockUpdateClient,
+  useDeleteMarca: mockDeleteClient,
 }));
 
 // WhatsApp (Conexao / ConnectionDetailDialog are now imported by Conexoes)
@@ -128,8 +128,8 @@ vi.mock("@/components/ui/button", () => ({
     <button onClick={onClick} disabled={disabled}>{children}</button>
   ),
 }));
-vi.mock("@/components/ClientManagementModal", () => ({
-  ClientManagementModal: ({ onClose }: any) => (
+vi.mock("@/components/MarcaManagementModal", () => ({
+  MarcaManagementModal: ({ onClose }: any) => (
     <div data-testid="client-management-modal">
       <button onClick={onClose}>Fechar</button>
     </div>
@@ -149,14 +149,14 @@ const clientB = {
 };
 
 const makeAccount = (overrides: Partial<{
-  id: string; account_label: string; client_id: string | null; status: string;
+  id: string; account_label: string; marca_id: string | null; status: string;
   is_default: boolean; channel_info: Record<string, unknown>;
 }> = {}) => ({
   id: overrides.id ?? "acc-1",
   org_id: "org-1",
   provider: "youtube",
   account_label: overrides.account_label ?? "Canal Principal",
-  client_id: overrides.client_id ?? null,
+  marca_id: overrides.marca_id ?? null,
   status: overrides.status ?? "validated",
   channel_info: overrides.channel_info ?? { title: "My Channel", subscriber_count: 1000 },
   metadata: {},
@@ -220,14 +220,14 @@ async function renderConexoes() {
 
 async function renderAccountSwitcher(
   accounts: any[] = [],
-  clients: any[] = [],
+  marcas: any[] = [],
 ) {
   const { AccountSwitcher } = await import("@/components/AccountSwitcher");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   return {
     ...rtl.render(
-      React.createElement(AccountSwitcher, { accounts, clients }),
+      React.createElement(AccountSwitcher, { accounts, marcas }),
     ),
     fireEvent: rtl.fireEvent,
   };
@@ -290,8 +290,8 @@ describe("Conexoes — empty state", () => {
 describe("Conexoes — client grouping", () => {
   it("renders a section header for each client that has accounts", async () => {
     const accounts = [
-      makeAccount({ id: "acc-1", client_id: "client-a", account_label: "Canal Acme" }),
-      makeAccount({ id: "acc-2", client_id: null, account_label: "Canal Livre" }),
+      makeAccount({ id: "acc-1", marca_id: "client-a", account_label: "Canal Acme" }),
+      makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
     ];
     setAccounts({
       data: accounts, isLoading: false, isError: false,
@@ -310,8 +310,8 @@ describe("Conexoes — client grouping", () => {
 
   it("renders both accounts in the correct groups", async () => {
     const accounts = [
-      makeAccount({ id: "acc-1", client_id: "client-a", account_label: "Canal Acme" }),
-      makeAccount({ id: "acc-2", client_id: null, account_label: "Canal Livre" }),
+      makeAccount({ id: "acc-1", marca_id: "client-a", account_label: "Canal Acme" }),
+      makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
     ];
     setAccounts({
       data: accounts, isLoading: false, isError: false,
@@ -327,14 +327,14 @@ describe("Conexoes — client grouping", () => {
     expect(cards[1].getAttribute("data-account-label")).toBe("Canal Livre");
   });
 
-  it("shows Gerenciar clientes button", async () => {
+  it("shows Gerenciar marcas button", async () => {
     const { getByText } = await renderConexoes();
-    expect(getByText(/Gerenciar clientes/i)).toBeTruthy();
+    expect(getByText(/Gerenciar marcas/i)).toBeTruthy();
   });
 
-  it("opens ClientManagementModal when Gerenciar clientes clicked", async () => {
+  it("opens MarcaManagementModal when Gerenciar marcas clicked", async () => {
     const { getByText, getByTestId, fireEvent } = await renderConexoes();
-    fireEvent.click(getByText(/Gerenciar clientes/i));
+    fireEvent.click(getByText(/Gerenciar marcas/i));
     expect(getByTestId("client-management-modal")).toBeTruthy();
   });
 });
@@ -354,8 +354,8 @@ describe("Conexoes — adopt-legacy on mount", () => {
 
 describe("AccountSwitcher", () => {
   const accounts = [
-    makeAccount({ id: "acc-1", account_label: "Canal 1", client_id: "client-a", is_default: true }),
-    makeAccount({ id: "acc-2", account_label: "Canal 2", client_id: null }),
+    makeAccount({ id: "acc-1", account_label: "Canal 1", marca_id: "client-a", is_default: true }),
+    makeAccount({ id: "acc-2", account_label: "Canal 2", marca_id: null }),
   ];
 
   it("renders account dropdown with account options", async () => {
@@ -378,7 +378,7 @@ describe("AccountSwitcher", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "acc-1" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
 
     const { getAllByRole } = await renderAccountSwitcher(accounts, [clientA]);
@@ -395,7 +395,7 @@ describe("AccountSwitcher", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { meta: "acc-1" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
 
     const { getAllByRole } = await renderAccountSwitcher(accounts, [clientA]);
@@ -408,7 +408,7 @@ describe("AccountSwitcher", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { n8n: "n8n-account" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
 
     const { getAllByRole, fireEvent } = await renderAccountSwitcher(accounts, []);

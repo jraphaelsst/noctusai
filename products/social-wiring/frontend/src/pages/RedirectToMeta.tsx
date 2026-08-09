@@ -2,7 +2,7 @@
  * RedirectToMeta — permanent redirect for the retired `/instagram-insights`
  * route (remodeled into the unified `/meta` dashboard, Wave 3).
  *
- * Mirrors `RedirectToClientes.tsx`.
+ * Mirrors `RedirectToMarcas.tsx`.
  */
 import { Navigate } from "react-router-dom";
 

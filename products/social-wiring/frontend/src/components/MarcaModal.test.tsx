@@ -1,5 +1,5 @@
 /**
- * ClienteModal tests.
+ * MarcaModal tests.
  *
  * Tests:
  *   1. Renders the modal with client name in header
@@ -38,9 +38,9 @@ const mockSetActiveClient = vi.fn();
 const mockSetActiveAccount = vi.fn();
 const activeAccountState = {
   activeAccountIdByProvider: {} as Record<string, string | null>,
-  activeClientId: null as string | null,
+  activeMarcaId: null as string | null,
   setActiveAccount: mockSetActiveAccount,
-  setActiveClient: mockSetActiveClient,
+  setActiveMarca: mockSetActiveClient,
   clearSelection: vi.fn(),
 };
 vi.mock("@/state/useActiveAccount", () => ({
@@ -71,9 +71,9 @@ vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useStartProviderOAuth: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 }));
 
-vi.mock("@/hooks/useClients", () => ({
-  useUpdateClient: mockUseUpdateClient,
-  useDeleteClient: mockUseDeleteClient,
+vi.mock("@/hooks/useMarcas", () => ({
+  useUpdateMarca: mockUseUpdateClient,
+  useDeleteMarca: mockUseDeleteClient,
 }));
 
 const mockUseClientWhatsAppConnections = vi.fn();
@@ -192,7 +192,7 @@ const makeAccount = (id: string, label: string) => ({
   org_id: "org-1",
   provider: "youtube",
   account_label: label,
-  client_id: "client-1",
+  marca_id: "client-1",
   status: "validated",
   channel_info: {},
   metadata: {},
@@ -208,7 +208,7 @@ const makeWaLine = (id: string, label: string) => ({
   session_name: `session-${id}`,
   webhook_url: null,
   auto_reply_enabled: false,
-  client_id: "client-1",
+  marca_id: "client-1",
 });
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -235,13 +235,13 @@ beforeEach(() => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function renderClienteModal(props: { open?: boolean; defaultTab?: "contas" | "chat" } = {}) {
-  const { ClienteModal } = await import("./ClienteModal");
+async function renderMarcaModal(props: { open?: boolean; defaultTab?: "contas" | "chat" } = {}) {
+  const { MarcaModal } = await import("./MarcaModal");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   return {
     ...rtl.render(
-      React.createElement(ClienteModal, {
+      React.createElement(MarcaModal, {
         client: baseClient,
         open: props.open ?? true,
         onClose: vi.fn(),
@@ -254,21 +254,21 @@ async function renderClienteModal(props: { open?: boolean; defaultTab?: "contas"
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("ClienteModal — header", () => {
+describe("MarcaModal — header", () => {
   it("renders client name in dialog header", async () => {
-    const { getByText } = await renderClienteModal();
+    const { getByText } = await renderMarcaModal();
     expect(getByText("Acme Corp")).toBeTruthy();
   });
 
   it("does not render when open=false", async () => {
-    const { queryByTestId } = await renderClienteModal({ open: false });
+    const { queryByTestId } = await renderMarcaModal({ open: false });
     expect(queryByTestId("cliente-modal")).toBeNull();
   });
 });
 
-describe("ClienteModal — Contas tab", () => {
+describe("MarcaModal — Contas tab", () => {
   it("renders the contas tab content", async () => {
-    const { getByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByTestId("contas-tab")).toBeTruthy();
   });
 
@@ -282,13 +282,13 @@ describe("ClienteModal — Contas tab", () => {
       isError: false,
     });
 
-    const { getAllByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getAllByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getAllByTestId("integration-card").length).toBe(2);
   });
 
   it("shows the provider grid when no integration accounts exist", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId, getAllByText } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, getAllByText } = await renderMarcaModal({ defaultTab: "contas" });
     // Provider grid is always rendered (greyed rows for unconnected providers)
     expect(getByTestId("integrations-grid")).toBeTruthy();
     // OAuth providers (YouTube, Gmail, Google Drive, Meta) show "Conectar" buttons
@@ -298,7 +298,7 @@ describe("ClienteModal — Contas tab", () => {
 
   it("shows Meta as a live OAuth Conectar row (not 'em breve')", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId, queryByText } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, queryByText } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByTestId("provider-row-meta")).toBeTruthy();
     expect(getByTestId("connect-btn-meta")).toBeTruthy();
     expect(queryByText(/em breve/i)).toBeNull();
@@ -306,7 +306,7 @@ describe("ClienteModal — Contas tab", () => {
 
   it("wires the Meta Conectar button to useStartProviderOAuth('meta')", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     // useStartProviderOAuth is mocked generically for every provider — clicking
     // Meta's button should not throw and should hit the same mutate() path.
     expect(() => fireEvent.click(getByTestId("connect-btn-meta"))).not.toThrow();
@@ -323,19 +323,19 @@ describe("ClienteModal — Contas tab", () => {
     });
 
     // IntegrationCard is mocked globally; just confirm it renders 1 card
-    const { getAllByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getAllByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     // 1 WA connection → renders 1 IntegrationCard via WaConnectionCard
     expect(getAllByTestId("integration-card").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows WA empty state when no connections", async () => {
     mockUseClientWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByText } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByText } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByText(/Nenhuma conexão WhatsApp/i)).toBeTruthy();
   });
 });
 
-describe("ClienteModal — connected-card deep-link (card body click)", () => {
+describe("MarcaModal — connected-card deep-link (card body click)", () => {
   it("youtube card body click sets active client+account and navigates to /youtube", async () => {
     mockUseIntegrationAccounts.mockReturnValue({
       data: [makeAccount("acc-1", "Canal YouTube")],
@@ -343,7 +343,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       isError: false,
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-dashboard-acc-1"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
@@ -361,7 +361,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       isError: false,
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-dashboard-acc-2"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
@@ -376,7 +376,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       isError: false,
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-dashboard-acc-3"));
 
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -390,7 +390,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       isError: false,
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-details-acc-1"));
 
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -407,7 +407,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       data: { status: "WORKING", paired: true, me_id: "551199998888" },
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-dashboard-wa-1"));
 
     expect(mockSetActiveClient).toHaveBeenCalledWith("client-1");
@@ -426,7 +426,7 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
       data: { status: "WORKING", paired: true, me_id: "551199998888" },
     });
 
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("open-details-wa-1"));
 
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -434,10 +434,10 @@ describe("ClienteModal — connected-card deep-link (card body click)", () => {
   });
 });
 
-describe("ClienteModal — Mailchimp per-cliente connect", () => {
+describe("MarcaModal — Mailchimp per-marca connect", () => {
   it("shows a manual Conectar affordance when not connected", async () => {
     mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
-    const { getByTestId, queryByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, queryByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByTestId("provider-row-mailchimp")).toBeTruthy();
     expect(getByTestId("connect-btn-mailchimp")).toBeTruthy();
     // Form is collapsed until the user clicks Conectar
@@ -446,7 +446,7 @@ describe("ClienteModal — Mailchimp per-cliente connect", () => {
 
   it("toggles the inline API-key form on Conectar", async () => {
     mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     fireEvent.click(getByTestId("connect-btn-mailchimp"));
     expect(getByTestId("mailchimp-connect-form")).toBeTruthy();
     expect(getByTestId("mailchimp-api-key")).toBeTruthy();
@@ -456,7 +456,7 @@ describe("ClienteModal — Mailchimp per-cliente connect", () => {
     mockUseMailchimpConnection.mockReturnValue({
       data: {
         connected: true,
-        client_id: "client-1",
+        marca_id: "client-1",
         server_prefix: "us6",
         audience_id: "aud-1",
         audience_name: "Newsletter",
@@ -465,7 +465,7 @@ describe("ClienteModal — Mailchimp per-cliente connect", () => {
       },
       isLoading: false,
     });
-    const { getByText, getByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByText, getByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByText("Conectado")).toBeTruthy();
     expect(getByText(/Newsletter/)).toBeTruthy();
     // Re-configure re-opens the same form (pre-filled)
@@ -473,13 +473,13 @@ describe("ClienteModal — Mailchimp per-cliente connect", () => {
   });
 });
 
-describe("ClienteModal — Instagram connect (via Facebook Login)", () => {
+describe("MarcaModal — Instagram connect (via Facebook Login)", () => {
   // This app uses Facebook Login for Business — Instagram is reached THROUGH
   // the Facebook/Meta connection, so the Instagram button runs the Meta OAuth
   // and there is NO separate Instagram credential / token-paste path.
   it("shows Instagram as an OAuth Conectar row with no token-paste toggle", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId, queryByTestId } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, queryByTestId } = await renderMarcaModal({ defaultTab: "contas" });
     expect(getByTestId("provider-row-instagram")).toBeTruthy();
     expect(getByTestId("connect-btn-instagram")).toBeTruthy();
     // The separate Instagram-Login token-paste affordance is gone.
@@ -489,19 +489,19 @@ describe("ClienteModal — Instagram connect (via Facebook Login)", () => {
 
   it("wires the Instagram Conectar button to the Meta/Facebook OAuth (no throw)", async () => {
     mockUseIntegrationAccounts.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId, fireEvent } = await renderClienteModal({ defaultTab: "contas" });
+    const { getByTestId, fireEvent } = await renderMarcaModal({ defaultTab: "contas" });
     expect(() => fireEvent.click(getByTestId("connect-btn-instagram"))).not.toThrow();
   });
 });
 
-describe("ClienteModal — Chat tab", () => {
+describe("MarcaModal — Chat tab", () => {
   // NOTE: Radix Tabs only mounts the ACTIVE tab's content in JSDOM.
   // Tests use visible content (text/testids within the active tab) rather
   // than the container data-testid which requires both tabs to be in DOM.
 
   it("shows empty state text when no WA connections and chat tab is active", async () => {
     mockUseClientWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByText } = await renderClienteModal({ defaultTab: "chat" });
+    const { getByText } = await renderMarcaModal({ defaultTab: "chat" });
     // "Nenhuma conexão WhatsApp" comes from ChatTab's empty state
     expect(getByText(/Nenhuma conexão WhatsApp/i)).toBeTruthy();
   });
@@ -513,7 +513,7 @@ describe("ClienteModal — Chat tab", () => {
       isError: false,
     });
 
-    const { getByTestId } = await renderClienteModal({ defaultTab: "chat" });
+    const { getByTestId } = await renderMarcaModal({ defaultTab: "chat" });
     const chatWindow = getByTestId("wa-chat-window");
     expect(chatWindow.getAttribute("data-connection-id")).toBe("wa-1");
   });
@@ -528,7 +528,7 @@ describe("ClienteModal — Chat tab", () => {
       isError: false,
     });
 
-    const { getByText } = await renderClienteModal({ defaultTab: "chat" });
+    const { getByText } = await renderMarcaModal({ defaultTab: "chat" });
     // Select trigger text of the first connection appears when picker renders
     expect(getByText("WhatsApp Vendas")).toBeTruthy();
   });

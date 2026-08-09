@@ -115,8 +115,8 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.integration_accounts_router import (
         router as integration_accounts_router,
     )
-    from app.routers.clients_router import (
-        router as clients_router,
+    from app.routers.marcas_router import (
+        router as marcas_router,
     )
     from app.routers.imoveis_router import (
         router as imoveis_router,
@@ -173,7 +173,7 @@ def _register_media_wiring() -> ModuleRegistration:
             meta_comments_router,
             meta_dms_router,
             integration_accounts_router,
-            clients_router,
+            marcas_router,
             imoveis_router,
         ],
         standard_routers=("health", "notificacoes", "team"),

@@ -75,7 +75,7 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
     build_integration_account_service,
 )
-from app.services.clients_service import build_client_service
+from app.services.marcas_service import build_marca_service
 from app.services.integration_providers import PROVIDERS
 from app.services.legacy_adoption import adopt_legacy_account
 from app.services.meta import META_PROVIDER, MetaGraphError, MetaOAuthAdapter
@@ -98,7 +98,7 @@ class IntegrationAccountOut(BaseModel):
     created_at: Any = None
     updated_at: Any = None
     # Channel-object fields (migration 008)
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
     status: str = "validated"
     channel_info: dict = Field(default_factory=dict)
     last_synced_at: Any = None
@@ -115,7 +115,7 @@ class IntegrationAccountCreate(BaseModel):
     credential: dict  # provider-specific key/value bag — Fernet-encrypted at rest
     metadata: dict = Field(default_factory=dict)
     is_default: bool = False
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
     class Config:
         extra = "forbid"
@@ -127,7 +127,7 @@ class IntegrationAccountUpdate(BaseModel):
     account_label: Optional[str] = None
     metadata: Optional[dict] = None
     is_default: Optional[bool] = None
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
     status: Optional[str] = None
 
     class Config:
@@ -147,12 +147,12 @@ class OAuthStartOut(BaseModel):
 class OAuthStartIn(BaseModel):
     """Common optional body for OAuth start endpoints.
 
-    ``client_id`` (migration 017): when supplied the new ``integration_accounts``
+    ``marca_id`` (migration 017): when supplied the new ``integration_accounts``
     row is linked to the given cliente (must belong to the calling org).
     Absent / null = no link (backward-compatible with callers that send no body).
     """
 
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
 
 # Backward-compat aliases so existing references (response_model, tests) keep working.
@@ -168,7 +168,7 @@ class InstagramTokenIn(BaseModel):
     before the account is created (never trust an unverified token)."""
 
     access_token: str
-    client_id: Optional[UUID] = None
+    marca_id: Optional[UUID] = None
 
     class Config:
         extra = "forbid"
@@ -215,7 +215,7 @@ def _out(account: IntegrationAccount) -> IntegrationAccountOut:
         is_default=account.is_default,
         created_at=account.created_at,
         updated_at=account.updated_at,
-        client_id=account.client_id,
+        marca_id=account.marca_id,
         status=account.status,
         channel_info=account.channel_info or {},
         last_synced_at=account.last_synced_at,
@@ -250,13 +250,13 @@ def list_providers() -> list[dict]:
 @router.get("/accounts", response_model=list[IntegrationAccountOut])
 def list_accounts(
     provider: Optional[str] = Query(default=None),
-    client_id: Optional[UUID] = Query(default=None),
+    marca_id: Optional[UUID] = Query(default=None),
     auth: tuple = Depends(get_current_user_org),
     svc: IntegrationAccountService = Depends(get_account_service),
 ) -> list[IntegrationAccountOut]:
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    accounts = svc.list_accounts(org_id=org_id, provider=provider, client_id=client_id)
+    accounts = svc.list_accounts(org_id=org_id, provider=provider, marca_id=marca_id)
     return [_out(a) for a in accounts]
 
 
@@ -333,7 +333,7 @@ def create_account(
             credential_dict=body.credential,
             metadata=body.metadata,
             is_default=body.is_default,
-            client_id=body.client_id,
+            marca_id=body.marca_id,
         )
     except CredentialStoreError as exc:
         raise HTTPException(
@@ -355,18 +355,18 @@ def update_account(
     org_id = coerce_org_uuid(raw_org)
     # Confirm ownership first.
     _require_account(svc, account_id, org_id)
-    # client_id uses a sentinel: if the field was not supplied in the request
+    # marca_id uses a sentinel: if the field was not supplied in the request
     # body Pydantic leaves it as None (the default); we still need to
     # distinguish "explicitly set to null" from "not provided". Because
-    # IntegrationAccountUpdate.client_id defaults to None, we can't tell the
+    # IntegrationAccountUpdate.marca_id defaults to None, we can't tell the
     # difference from the model alone. The conservative choice: treat None as
     # "not provided" (no change) since clearing the FK via PATCH is an
-    # explicit opt-in the FE signals via `client_id: null` in the body. Pydantic
+    # explicit opt-in the FE signals via `marca_id: null` in the body. Pydantic
     # always includes the field; check if it was actually in the raw body via
     # model_fields_set.
-    client_id_arg = _UNSET
-    if "client_id" in body.model_fields_set:
-        client_id_arg = body.client_id
+    marca_id_arg = _UNSET
+    if "marca_id" in body.model_fields_set:
+        marca_id_arg = body.marca_id
     try:
         account = svc.update_account(
             account_id=account_id,
@@ -374,7 +374,7 @@ def update_account(
             account_label=body.account_label,
             metadata=body.metadata,
             is_default=body.is_default,
-            client_id=client_id_arg,
+            marca_id=marca_id_arg,
             status=body.status,
         )
     except IntegrationAccountNotFound:
@@ -592,7 +592,7 @@ def youtube_oauth_start(
 ) -> YouTubeOAuthStartOut:
     """Build a YouTube OAuth consent URL for the multi-account flow.
 
-    State token: ``{org_id}:{nonce}:{client_id_or_empty}`` — org-scoped CSRF
+    State token: ``{org_id}:{nonce}:{marca_id_or_empty}`` — org-scoped CSRF
     token (extended by migration 017 to carry an optional cliente id through the
     redirect round-trip).  Backward-compatible: callers that send no body get
     the old two-part ``{org_id}:{nonce}`` behavior (empty third segment = no
@@ -612,17 +612,17 @@ def youtube_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    # Migration 017 — validate client_id belongs to the org before encoding.
-    client_id_str = ""
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    # Migration 017 — validate marca_id belongs to the org before encoding.
+    marca_id_str = ""
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id_str = str(body.client_id)
+        marca_id_str = str(body.marca_id)
 
     # Derive the multi-account OAuth callback redirect URI (separate path from
     # /api/youtube/oauth/callback so both flows coexist).
@@ -633,7 +633,7 @@ def youtube_oauth_start(
     # State format: {org_id}:{nonce}:{client_id_or_empty}
     # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
     # three-part split in the callback is unambiguous.
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
     # Seed OAuthProvider methods are async; this endpoint is sync (AnyIO worker
     # thread), so bridge via asyncio.run — the same pattern the callback uses
     # for the YouTube client. `provider` (real GoogleProvider or an injected
@@ -698,8 +698,8 @@ def youtube_oauth_callback(
             detail="OAuth state token malformed.",
         )
     org_part = parts[0]
-    # Third segment (index 2) is client_id when present; empty string = no link.
-    client_id_part = parts[2] if len(parts) >= 3 else ""
+    # Third segment (index 2) is marca_id when present; empty string = no link.
+    marca_id_part = parts[2] if len(parts) >= 3 else ""
     try:
         org_id = UUID(org_part)
     except ValueError as exc:
@@ -708,15 +708,15 @@ def youtube_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    # Parse client_id from state (may be empty when caller sent no client_id).
-    _callback_client_id: Optional[UUID] = None
-    if client_id_part:
+    # Parse marca_id from state (may be empty when caller sent no marca_id).
+    _callback_marca_id: Optional[UUID] = None
+    if marca_id_part:
         try:
-            _callback_client_id = UUID(client_id_part)
+            _callback_marca_id = UUID(marca_id_part)
         except ValueError:
             logger.warning(
-                "integration_accounts: OAuth state carries non-UUID client_id_part=%r — ignoring",
-                client_id_part,
+                "integration_accounts: OAuth state carries non-UUID marca_id_part=%r — ignoring",
+                marca_id_part,
             )
 
     if provider is None:
@@ -872,7 +872,7 @@ def youtube_oauth_callback(
             is_default=not youtube_accounts,  # first-ever account becomes default
             status="validated",
             # Migration 017 — link to cliente when carried through OAuth state.
-            client_id=_callback_client_id,
+            marca_id=_callback_marca_id,
         )
         # Write channel_info for the new account too (same as re-auth path).
         if _channel_info:
@@ -1043,7 +1043,7 @@ def meta_oauth_start(
     connection flow.
 
     Mirrors ``youtube_oauth_start``: 3-part state
-    ``{org_id}:{nonce}:{client_id_or_empty}``; ``client_id`` is validated
+    ``{org_id}:{nonce}:{marca_id_or_empty}``; ``marca_id`` is validated
     against the calling org BEFORE it's encoded into the redirect
     round-trip (never trust an unvalidated FK). App ID/secret resolve
     DB-first (Settings-writable) with env fallback via
@@ -1064,21 +1064,21 @@ def meta_oauth_start(
     org_id = coerce_org_uuid(raw_org)
 
     # Migration 017-style client-link validation (mirrors youtube_oauth_start).
-    client_id_str = ""
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    marca_id_str = ""
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id_str = str(body.client_id)
+        marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_meta_redirect_uri(cfg)
     # Neither org_id (UUID) nor token_urlsafe() output ever contain ":" so the
     # three-part split in the callback is unambiguous (mirrors YouTube's state).
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
 
     from urllib.parse import urlencode
 
@@ -1154,16 +1154,16 @@ def meta_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    client_id_part = parts[2] if len(parts) >= 3 else ""
-    _callback_client_id: Optional[UUID] = None
-    if client_id_part:
+    marca_id_part = parts[2] if len(parts) >= 3 else ""
+    _callback_marca_id: Optional[UUID] = None
+    if marca_id_part:
         try:
-            _callback_client_id = UUID(client_id_part)
+            _callback_marca_id = UUID(marca_id_part)
         except ValueError:
             logger.warning(
                 "integration_accounts: Meta OAuth state carries non-UUID "
-                "client_id_part=%r — ignoring",
-                client_id_part,
+                "marca_id_part=%r — ignoring",
+                marca_id_part,
             )
 
     app_id, app_secret = resolve_meta_app_creds(settings=cfg)
@@ -1329,7 +1329,7 @@ def meta_oauth_callback(
             metadata=metadata,
             is_default=not meta_accounts,
             status="validated",
-            client_id=_callback_client_id,
+            marca_id=_callback_marca_id,
         )
         if _channel_info:
             account = svc.update_channel_info(
@@ -1425,7 +1425,7 @@ def instagram_oauth_start(
     """Build an Instagram Business Login consent URL.
 
     Mirrors ``meta_oauth_start``: 3-part state
-    ``{org_id}:{nonce}:{client_id_or_empty}``; ``client_id`` is validated
+    ``{org_id}:{nonce}:{marca_id_or_empty}``; ``marca_id`` is validated
     against the calling org BEFORE it's encoded into the redirect
     round-trip. App ID/secret resolve DB-first (Settings-writable) with
     env fallback via ``resolve_instagram_app_creds`` — a 503 config-gap
@@ -1444,19 +1444,19 @@ def instagram_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    client_id_str = ""
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    marca_id_str = ""
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id_str = str(body.client_id)
+        marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_instagram_redirect_uri(cfg)
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
     auth_url = build_ig_authorize_url(
         app_id=app_id,
         redirect_uri=redirect_uri,
@@ -1519,16 +1519,16 @@ def instagram_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    client_id_part = parts[2] if len(parts) >= 3 else ""
-    _callback_client_id: Optional[UUID] = None
-    if client_id_part:
+    marca_id_part = parts[2] if len(parts) >= 3 else ""
+    _callback_marca_id: Optional[UUID] = None
+    if marca_id_part:
         try:
-            _callback_client_id = UUID(client_id_part)
+            _callback_marca_id = UUID(marca_id_part)
         except ValueError:
             logger.warning(
                 "integration_accounts: Instagram OAuth state carries "
-                "non-UUID client_id_part=%r — ignoring",
-                client_id_part,
+                "non-UUID marca_id_part=%r — ignoring",
+                marca_id_part,
             )
 
     app_id, app_secret = resolve_instagram_app_creds(settings=cfg)
@@ -1663,7 +1663,7 @@ def instagram_oauth_callback(
             metadata=metadata,
             is_default=not ig_accounts,
             status="validated",
-            client_id=_callback_client_id,
+            marca_id=_callback_marca_id,
         )
         if channel_info:
             account = svc.update_channel_info(
@@ -1705,16 +1705,16 @@ def instagram_manual_token(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    client_id: Optional[UUID] = None
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    marca_id: Optional[UUID] = None
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id = body.client_id
+        marca_id = body.marca_id
 
     probe_adapter = adapter_factory(body.access_token)
     try:
@@ -1788,7 +1788,7 @@ def instagram_manual_token(
             metadata=metadata,
             is_default=not ig_accounts,
             status="validated",
-            client_id=client_id,
+            marca_id=marca_id,
         )
         if channel_info:
             account = svc.update_channel_info(
@@ -1817,7 +1817,7 @@ def gmail_oauth_start(
 ) -> OAuthStartOut:
     """Build a Gmail OAuth consent URL for the multi-account IA flow.
 
-    State format: ``{org_id}:{nonce}:{client_id_or_empty}`` (same as YouTube).
+    State format: ``{org_id}:{nonce}:{marca_id_or_empty}`` (same as YouTube).
     Scopes: ``gmail.send`` + ``gmail.readonly`` from the seed.
     """
     import asyncio
@@ -1834,19 +1834,19 @@ def gmail_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    client_id_str = ""
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    marca_id_str = ""
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id_str = str(body.client_id)
+        marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_google_redirect_uri(cfg, "gmail")
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
     auth_result = asyncio.run(
         provider.authorization_url(
             state=state, scopes=_GMAIL_OAUTH_SCOPES, redirect_uri=redirect_uri
@@ -1900,7 +1900,7 @@ def gmail_oauth_callback(
             detail="OAuth state token malformed.",
         )
     org_part = parts[0]
-    client_id_part = parts[2] if len(parts) >= 3 else ""
+    marca_id_part = parts[2] if len(parts) >= 3 else ""
     try:
         org_id = UUID(org_part)
     except ValueError as exc:
@@ -1909,15 +1909,15 @@ def gmail_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    _callback_client_id: Optional[UUID] = None
-    if client_id_part:
+    _callback_marca_id: Optional[UUID] = None
+    if marca_id_part:
         try:
-            _callback_client_id = UUID(client_id_part)
+            _callback_marca_id = UUID(marca_id_part)
         except ValueError:
             logger.warning(
                 "integration_accounts: Gmail OAuth state carries non-UUID "
-                "client_id_part=%r — ignoring",
-                client_id_part,
+                "marca_id_part=%r — ignoring",
+                marca_id_part,
             )
 
     if provider is None:
@@ -2029,7 +2029,7 @@ def gmail_oauth_callback(
             metadata=metadata,
             is_default=not existing_accounts,
             status="validated",
-            client_id=_callback_client_id,
+            marca_id=_callback_marca_id,
         )
 
     redirect_url = f"/clientes?account_created={account.id}"
@@ -2072,19 +2072,19 @@ def drive_oauth_start(
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    client_id_str = ""
-    if body.client_id is not None:
-        client_svc = build_client_service(get_admin_client())
-        found = client_svc.get_client(body.client_id, org_id)
+    marca_id_str = ""
+    if body.marca_id is not None:
+        marca_svc = build_marca_service(get_admin_client())
+        found = marca_svc.get_marca(body.marca_id, org_id)
         if found is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="client_id not found or does not belong to this org.",
+                detail="marca_id not found or does not belong to this org.",
             )
-        client_id_str = str(body.client_id)
+        marca_id_str = str(body.marca_id)
 
     redirect_uri = _build_ia_google_redirect_uri(cfg, "google_drive")
-    state = f"{org_id}:{secrets.token_urlsafe(16)}:{client_id_str}"
+    state = f"{org_id}:{secrets.token_urlsafe(16)}:{marca_id_str}"
     auth_result = asyncio.run(
         provider.authorization_url(
             state=state, scopes=_DRIVE_OAUTH_SCOPES, redirect_uri=redirect_uri
@@ -2139,7 +2139,7 @@ def drive_oauth_callback(
             detail="OAuth state token malformed.",
         )
     org_part = parts[0]
-    client_id_part = parts[2] if len(parts) >= 3 else ""
+    marca_id_part = parts[2] if len(parts) >= 3 else ""
     try:
         org_id = UUID(org_part)
     except ValueError as exc:
@@ -2148,15 +2148,15 @@ def drive_oauth_callback(
             detail="OAuth state token does not encode a valid org_id.",
         ) from exc
 
-    _callback_client_id: Optional[UUID] = None
-    if client_id_part:
+    _callback_marca_id: Optional[UUID] = None
+    if marca_id_part:
         try:
-            _callback_client_id = UUID(client_id_part)
+            _callback_marca_id = UUID(marca_id_part)
         except ValueError:
             logger.warning(
                 "integration_accounts: Drive OAuth state carries non-UUID "
-                "client_id_part=%r — ignoring",
-                client_id_part,
+                "marca_id_part=%r — ignoring",
+                marca_id_part,
             )
 
     if provider is None:
@@ -2268,7 +2268,7 @@ def drive_oauth_callback(
             metadata=metadata,
             is_default=not existing_accounts,
             status="validated",
-            client_id=_callback_client_id,
+            marca_id=_callback_marca_id,
         )
 
     redirect_url = f"/clientes?account_created={account.id}"

@@ -95,7 +95,7 @@ class N8nWorkflowPatchIn(BaseModel):
     ``model_fields_set`` at the router to distinguish "not supplied"
     (leave placement unchanged) from "explicitly null" (move to
     root) — same tri-state pattern as
-    ``integration_accounts_router.IntegrationAccountUpdate.client_id``.
+    ``integration_accounts_router.IntegrationAccountUpdate.marca_id``.
     """
 
     account_id: UUID

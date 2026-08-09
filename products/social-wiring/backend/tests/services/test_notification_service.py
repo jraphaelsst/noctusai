@@ -469,7 +469,7 @@ class TestNewLeadFanout:
 class _RecipientAdmin:
     """Chainable double that answers the two-tier recipient query.
 
-    `rows_by_scope` maps the client_id filter (or None for the org-wide tier)
+    `rows_by_scope` maps the marca_id filter (or None for the org-wide tier)
     to the rows returned, so a test can say "One has recipients, the org tier
     does not" and have the resolver actually experience that.
     """
@@ -483,11 +483,11 @@ class _RecipientAdmin:
     def table(self, _n): return self
     def select(self, *_a, **_k): return self
     def eq(self, col, val):
-        if col == "client_id":
+        if col == "marca_id":
             self._scope = val
         return self
     def is_(self, col, _val):
-        if col == "client_id":
+        if col == "marca_id":
             self._scope = None
         return self
     def in_(self, *_a, **_k): return self
@@ -519,7 +519,7 @@ def test_a_client_with_its_own_recipients_gets_ONLY_those():
         ONE: [{"id": "r-one", "name": "One contact"}],
         None: [{"id": "r-org", "name": "Org fallback"}],
     })
-    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, marca_id=ONE)
     assert tier == "client"
     assert [r["id"] for r in rows] == ["r-one"]
 
@@ -528,7 +528,7 @@ def test_a_client_with_NO_recipients_falls_back_to_the_org_tier():
     """Silence is the failure mode this whole area shipped with. A client
     nobody configured must still reach somebody."""
     admin = _RecipientAdmin({ONE: [], None: [{"id": "r-org"}]})
-    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, marca_id=ONE)
     assert tier == "org"
     assert [r["id"] for r in rows] == ["r-org"]
 
@@ -537,7 +537,7 @@ def test_an_UNATTRIBUTED_lead_uses_the_org_tier():
     """A lead whose Page maps to no client — the state every existing form is
     in until someone assigns it."""
     admin = _RecipientAdmin({None: [{"id": "r-org"}]})
-    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=None)
+    rows, tier = _svc(admin).resolve_lead_recipients(org_id=ORG, marca_id=None)
     assert tier == "org"
     assert [r["id"] for r in rows] == ["r-org"]
     # The client tier must not even be queried when there is no client.
@@ -553,7 +553,7 @@ def test_the_org_tier_means_client_id_IS_NULL_not_any_client():
         ONE: [{"id": "r-one"}],
         JOAO: [{"id": "r-joao"}],
     })
-    rows, _ = _svc(admin).resolve_lead_recipients(org_id=ORG, client_id=None)
+    rows, _ = _svc(admin).resolve_lead_recipients(org_id=ORG, marca_id=None)
     assert [r["id"] for r in rows] == ["r-org"]
 
 
@@ -561,22 +561,22 @@ def test_two_clients_are_routed_independently():
     admin = _RecipientAdmin({ONE: [{"id": "r-one"}], JOAO: [{"id": "r-joao"}]})
     svc = _svc(admin)
     assert [r["id"] for r in svc.resolve_lead_recipients(
-        org_id=ORG, client_id=ONE)[0]] == ["r-one"]
+        org_id=ORG, marca_id=ONE)[0]] == ["r-one"]
     assert [r["id"] for r in svc.resolve_lead_recipients(
-        org_id=ORG, client_id=JOAO)[0]] == ["r-joao"]
+        org_id=ORG, marca_id=JOAO)[0]] == ["r-joao"]
 
 
 def test_a_pre_migration_database_degrades_to_the_whole_roster_not_to_silence():
-    """If the code deploys before migration 045, selecting `client_id` errors.
+    """If the code deploys before migration 045, selecting `marca_id` errors.
     Alerting everyone is wrong-but-loud; alerting nobody is wrong-and-silent,
     and this feature exists because silence went unnoticed for two real leads."""
     class _NoColumn(_RecipientAdmin):
         def execute(self):
-            raise RuntimeError('column "client_id" does not exist')
+            raise RuntimeError('column "marca_id" does not exist')
 
     svc = _svc(_NoColumn({}))
     svc._fetch_recipients = lambda **_kw: [{"id": "everyone"}]  # the legacy path
-    rows, tier = svc.resolve_lead_recipients(org_id=ORG, client_id=ONE)
+    rows, tier = svc.resolve_lead_recipients(org_id=ORG, marca_id=ONE)
     assert [r["id"] for r in rows] == ["everyone"]
 
 
@@ -610,9 +610,9 @@ def _svc_with_gmail(admin, gmail, capture=None):
         NotificationService, _GmailEmailSender,
     )
 
-    def factory(*, org_id, client_id=None):
+    def factory(*, org_id, marca_id=None):
         if capture is not None:
-            capture.append({"org_id": org_id, "client_id": client_id})
+            capture.append({"org_id": org_id, "marca_id": marca_id})
         return _GmailEmailSender(gmail, sender_label="one@example.com")
 
     return NotificationService(
@@ -632,7 +632,7 @@ async def test_a_lead_email_is_sent_through_the_clients_gmail_mailbox():
     gmail = _RecordingGmail()
     svc = _svc_with_gmail(admin, gmail)
 
-    await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+    await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), marca_id=ONE)
 
     assert len(gmail.sent) == 1
     assert gmail.sent[0]["to"] == "contact@one.com"
@@ -640,7 +640,7 @@ async def test_a_lead_email_is_sent_through_the_clients_gmail_mailbox():
 
 @pytest.mark.asyncio
 async def test_the_SENDING_mailbox_is_selected_by_the_SAME_client_as_the_recipients():
-    """🔴 The requirement. A factory that ignored `client_id` would pass a
+    """🔴 The requirement. A factory that ignored `marca_id` would pass a
     naive send-test while mailing every client's leads from one mailbox —
     which is the failure this feature exists to prevent."""
     admin = _MockSupabase()
@@ -652,10 +652,10 @@ async def test_the_SENDING_mailbox_is_selected_by_the_SAME_client_as_the_recipie
     svc = _svc_with_gmail(admin, _RecordingGmail(), capture=seen)
 
     org = uuid4()
-    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=ONE)
+    await svc.notify_new_lead(org_id=org, lead=_lead(), marca_id=ONE)
 
     assert len(seen) == 1
-    assert seen[0]["client_id"] == ONE
+    assert seen[0]["marca_id"] == ONE
     assert seen[0]["org_id"] == org
 
 
@@ -671,10 +671,10 @@ async def test_two_clients_resolve_two_different_mailboxes():
     svc = _svc_with_gmail(admin, _RecordingGmail(), capture=seen)
 
     org = uuid4()
-    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=ONE)
-    await svc.notify_new_lead(org_id=org, lead=_lead(), client_id=JOAO)
+    await svc.notify_new_lead(org_id=org, lead=_lead(), marca_id=ONE)
+    await svc.notify_new_lead(org_id=org, lead=_lead(), marca_id=JOAO)
 
-    assert [s["client_id"] for s in seen] == [ONE, JOAO]
+    assert [s["marca_id"] for s in seen] == [ONE, JOAO]
 
 
 @pytest.mark.asyncio
@@ -688,7 +688,7 @@ async def test_a_gmail_send_failure_is_logged_as_failed_never_raised():
     }])
     svc = _svc_with_gmail(admin, _RecordingGmail(fail=True))
 
-    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), marca_id=ONE)
     assert outcome.failed >= 1
     assert outcome.succeeded == 0
 
@@ -712,6 +712,6 @@ async def test_no_mailbox_falls_back_rather_than_silently_succeeding():
         # SMTP unconfigured — exactly prod's real state.
         email_service_factory=_raise_unconfigured,
     )
-    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), client_id=ONE)
+    outcome = await svc.notify_new_lead(org_id=uuid4(), lead=_lead(), marca_id=ONE)
     assert outcome.succeeded == 0
     assert outcome.failed >= 1

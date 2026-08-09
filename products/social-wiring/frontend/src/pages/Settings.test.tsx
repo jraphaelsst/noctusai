@@ -92,11 +92,11 @@ vi.mock("@/hooks/useSettings", () => ({
   useSaveInstagramApp: () => ({ save: mockSaveInstagram, saving: false }),
 }));
 
-// `useClients` calls TanStack's `useQuery` directly, so without a
+// `useMarcas` calls TanStack's `useQuery` directly, so without a
 // QueryClientProvider it throws for the whole tab. Mocked with the two real
 // clients so the recipient scope selector has something to render.
-vi.mock("@/hooks/useClients", () => ({
-  useClients: () => ({
+vi.mock("@/hooks/useMarcas", () => ({
+  useMarcas: () => ({
     data: [
       { id: "client-one", name: "One Consultoria" },
       { id: "client-joao", name: "João Raphael" },
@@ -395,11 +395,11 @@ function stubRecipients(rows: unknown[], update = vi.fn()) {
 
 const R_SCOPED = {
   id: "r1", name: "One contact", email: "one@x.com", whatsapp_number: null,
-  is_active: true, client_id: "client-one", created_at: "2026-08-05T00:00:00Z",
+  is_active: true, marca_id: "client-one", created_at: "2026-08-05T00:00:00Z",
 };
 const R_ORGWIDE = {
   id: "r2", name: "Fallback", email: "org@x.com", whatsapp_number: null,
-  is_active: true, client_id: null, created_at: "2026-08-05T00:00:00Z",
+  is_active: true, marca_id: null, created_at: "2026-08-05T00:00:00Z",
 };
 
 describe("Settings — recipient client scoping", () => {
@@ -422,7 +422,7 @@ describe("Settings — recipient client scoping", () => {
     fireEvent.change(getByLabelText("Cliente de Fallback"), {
       target: { value: "client-joao" },
     });
-    expect(update).toHaveBeenCalledWith("r2", { client_id: "client-joao" });
+    expect(update).toHaveBeenCalledWith("r2", { marca_id: "client-joao" });
   });
 
   it("clears a scope with an explicit null, never an omitted key", async () => {
@@ -436,6 +436,6 @@ describe("Settings — recipient client scoping", () => {
     // 🔴 null, never undefined. The backend uses `model_fields_set` to tell
     // "clear this" from "leave it alone", so an omitted key would no-op and a
     // recipient could never be returned to the org-wide tier.
-    expect(update).toHaveBeenCalledWith("r1", { client_id: null });
+    expect(update).toHaveBeenCalledWith("r1", { marca_id: null });
   });
 });

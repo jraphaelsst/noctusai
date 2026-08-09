@@ -262,7 +262,7 @@ def _out(record: WhatsAppConnectionRecord) -> WhatsAppConnectionOut:
         authorized_numbers=record.authorized_numbers,
         bound_chats=[BoundChat(**bc) for bc in record.bound_chats],
         # Migration 017 — optional cliente ownership.
-        client_id=record.client_id,
+        marca_id=record.marca_id,
     )
 
 
@@ -323,14 +323,14 @@ def _status_from_session(
 async def list_connections(
     auth: tuple = Depends(get_current_user_org),
     store: WhatsAppConnectionStore = Depends(get_connection_store),
-    # Migration 017 — optional ?client_id= filter.
-    client_id: UUID | None = Query(default=None, description="Filter by cliente id."),
+    # Migration 017 — optional ?marca_id= filter (was `client_id` until 046).
+    marca_id: UUID | None = Query(default=None, description="Filter by marca id."),
 ) -> list[WhatsAppConnectionOut]:
     user, _token, raw_org = auth
     records = store.list_connections(
         org_id=coerce_org_uuid(raw_org),
         user_id=_coerce_user_uuid(user),
-        client_id=client_id,
+        marca_id=marca_id,
     )
     return [_out(r) for r in records]
 
@@ -406,7 +406,7 @@ async def create_connection(
         webhook_url=webhook_url,
         webhook_token=webhook_token,
         # Migration 017 — thread optional cliente id through at creation.
-        client_id=body.client_id,
+        marca_id=body.marca_id,
     )
 
     # ── 5. Wire WAHA: start session then register webhook ───────────────
@@ -471,12 +471,12 @@ async def update_connection(
         _extra["authorized_numbers"] = body.authorized_numbers
     if "bound_chats" in body.model_fields_set and body.bound_chats is not None:
         _extra["bound_chats"] = [bc.model_dump() for bc in body.bound_chats]
-    # Migration 017 — client_id three-state via _UNSET sentinel.
+    # Migration 017 — marca_id three-state via _UNSET sentinel.
     # Absent from request  → keep current (_UNSET propagated).
     # Explicit null        → clear the link (None propagated).
-    # UUID value           → assign to that cliente (UUID propagated).
-    if "client_id" in body.model_fields_set:
-        _extra["client_id"] = body.client_id  # None (clear) or UUID (assign)
+    # UUID value           → assign to that marca (UUID propagated).
+    if "marca_id" in body.model_fields_set:
+        _extra["marca_id"] = body.marca_id  # None (clear) or UUID (assign)
 
     record = store.update_connection(
         connection_id=connection_id,

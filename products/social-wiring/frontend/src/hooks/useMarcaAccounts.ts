@@ -1,5 +1,5 @@
 /**
- * useClientAccounts — convenience aggregation hook for the ClienteModal.
+ * useMarcaAccounts — convenience aggregation hook for the MarcaModal.
  *
  * Combines all connection types scoped to a single cliente:
  *   · Integration accounts (all providers) via GET /api/integrations/accounts?client_id=
@@ -28,9 +28,9 @@ export interface ClientAccounts {
   isError: boolean;
 }
 
-export function useClientAccounts(clientId: string | null): ClientAccounts {
-  const integrations = useIntegrationAccounts({ clientId: clientId ?? undefined });
-  const waConnections = useClientWhatsAppConnections(clientId);
+export function useMarcaAccounts(marcaId: string | null): ClientAccounts {
+  const integrations = useIntegrationAccounts({ marcaId: marcaId ?? undefined });
+  const waConnections = useClientWhatsAppConnections(marcaId);
 
   return {
     integrationAccounts: integrations.data ?? [],

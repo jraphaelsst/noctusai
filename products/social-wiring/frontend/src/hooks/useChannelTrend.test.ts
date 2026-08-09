@@ -28,7 +28,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 afterEach(async () => {
   capturedUrls.length = 0;
   const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
   (await import("@testing-library/react")).cleanup();
   vi.clearAllMocks();
 });
@@ -51,7 +51,7 @@ async function mountHook(days = 30) {
 describe("useChannelTrend — URL construction", () => {
   it("omits account_id in URL when store is null", async () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
-    useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+    useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
 
     await mountHook(30);
 
@@ -67,7 +67,7 @@ describe("useChannelTrend — URL construction", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "acc-test-xyz" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
 
     await mountHook(30);
@@ -81,7 +81,7 @@ describe("useChannelTrend — account switching", () => {
     const { useActiveAccountStore } = await import("@/state/useActiveAccount");
     useActiveAccountStore.setState({
       activeAccountIdByProvider: { youtube: "acc-first" },
-      activeClientId: null,
+      activeMarcaId: null,
     });
 
     const { renderHook, waitFor, act } = await import("@testing-library/react");
@@ -95,7 +95,7 @@ describe("useChannelTrend — account switching", () => {
     await act(async () => {
       useActiveAccountStore.setState({
         activeAccountIdByProvider: { youtube: "acc-second" },
-        activeClientId: null,
+        activeMarcaId: null,
       });
     });
 

@@ -171,36 +171,36 @@ class TestEncryptionNotConfigured:
 
 
 class TestPerClienteConnection:
-    """Migration 019 — Mailchimp connections scoped per (org, client_id)."""
+    """Migration 019 — Mailchimp connections scoped per (org, marca_id)."""
 
     def test_put_with_client_id_scopes_connection(self, mailchimp_client_with_clients):
-        """(a) PUT + GET with a client_id round-trips the scoped connection."""
+        """(a) PUT + GET with a marca_id round-trips the scoped connection."""
         c, store, fake, org_client_id, foreign_client_id = mailchimp_client_with_clients
         resp = c.put(
             "/api/mailchimp/connection",
             json={
                 "api_key": "cli-us6",
                 "audience_id": "aud-cli",
-                "client_id": str(org_client_id),
+                "marca_id": str(org_client_id),
             },
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["connected"] is True
-        assert data["client_id"] == str(org_client_id)
+        assert data["marca_id"] == str(org_client_id)
         assert data["audience_id"] == "aud-cli"
 
-        resp = c.get(f"/api/mailchimp/connection?client_id={org_client_id}")
+        resp = c.get(f"/api/mailchimp/connection?marca_id={org_client_id}")
         assert resp.status_code == 200
         d = resp.json()
         assert d["connected"] is True
-        assert d["client_id"] == str(org_client_id)
+        assert d["marca_id"] == str(org_client_id)
         assert d["audience_id"] == "aud-cli"
 
     def test_get_without_client_id_returns_org_default(
         self, mailchimp_client_with_clients
     ):
-        """(b) The org-default (client_id NULL) is independent from a cliente row."""
+        """(b) The org-default (marca_id NULL) is independent from a cliente row."""
         c, store, fake, org_client_id, foreign_client_id = mailchimp_client_with_clients
         # Seed ONLY a per-cliente connection.
         c.put(
@@ -208,7 +208,7 @@ class TestPerClienteConnection:
             json={
                 "api_key": "cli-us6",
                 "audience_id": "aud-cli",
-                "client_id": str(org_client_id),
+                "marca_id": str(org_client_id),
             },
         )
         # Org-default probe → not connected, client_id echoed as null.
@@ -216,63 +216,63 @@ class TestPerClienteConnection:
         assert resp.status_code == 200
         d = resp.json()
         assert d["connected"] is False
-        assert d["client_id"] is None
+        assert d["marca_id"] is None
 
         # Seed the org-default connection.
         c.put("/api/mailchimp/connection", json={"api_key": "org-us6", "audience_id": "aud-org"})
         d = c.get("/api/mailchimp/connection").json()
         assert d["connected"] is True
-        assert d["client_id"] is None
+        assert d["marca_id"] is None
         assert d["audience_id"] == "aud-org"
 
         # The per-cliente connection stays independently scoped.
-        d_cli = c.get(f"/api/mailchimp/connection?client_id={org_client_id}").json()
+        d_cli = c.get(f"/api/mailchimp/connection?marca_id={org_client_id}").json()
         assert d_cli["audience_id"] == "aud-cli"
-        assert d_cli["client_id"] == str(org_client_id)
+        assert d_cli["marca_id"] == str(org_client_id)
 
     def test_put_with_foreign_org_client_id_rejected_404(
         self, mailchimp_client_with_clients
     ):
-        """(c) A client_id owned by a DIFFERENT org is rejected."""
+        """(c) A marca_id owned by a DIFFERENT org is rejected."""
         c, store, fake, org_client_id, foreign_client_id = mailchimp_client_with_clients
         resp = c.put(
             "/api/mailchimp/connection",
-            json={"api_key": "x-us6", "client_id": str(foreign_client_id)},
+            json={"api_key": "x-us6", "marca_id": str(foreign_client_id)},
         )
         assert resp.status_code == 404, resp.text
 
     def test_put_with_unknown_client_id_rejected_404(
         self, mailchimp_client_with_clients
     ):
-        """(c') A wholly unknown client_id is rejected."""
+        """(c') A wholly unknown marca_id is rejected."""
         c, store, fake, org_client_id, foreign_client_id = mailchimp_client_with_clients
         resp = c.put(
             "/api/mailchimp/connection",
-            json={"api_key": "x-us6", "client_id": str(uuid4())},
+            json={"api_key": "x-us6", "marca_id": str(uuid4())},
         )
         assert resp.status_code == 404
 
     def test_put_idempotent_per_scope(self, mailchimp_client_with_clients):
-        """(d) Repeated PUTs to the same (org, client_id) replace, never duplicate."""
+        """(d) Repeated PUTs to the same (org, marca_id) replace, never duplicate."""
         c, store, fake, org_client_id, foreign_client_id = mailchimp_client_with_clients
         c.put(
             "/api/mailchimp/connection",
-            json={"api_key": "cli-us6", "client_id": str(org_client_id)},
+            json={"api_key": "cli-us6", "marca_id": str(org_client_id)},
         )
         c.put(
             "/api/mailchimp/connection",
-            json={"api_key": "cli2-eu1", "client_id": str(org_client_id)},
+            json={"api_key": "cli2-eu1", "marca_id": str(org_client_id)},
         )
         # Exactly one row for that scope (white-box: query the store's client).
         org_id = coerce_org_uuid("test-org-123")
         rows = store._table().select("*").eq("org_id", str(org_id)).execute().data or []
         scoped = [
             r for r in rows
-            if store._norm_client_id(r.get("client_id")) == str(org_client_id)
+            if store._norm_marca_id(r.get("marca_id")) == str(org_client_id)
         ]
         assert len(scoped) == 1
         # The replacement won (server_prefix updated).
-        d = c.get(f"/api/mailchimp/connection?client_id={org_client_id}").json()
+        d = c.get(f"/api/mailchimp/connection?marca_id={org_client_id}").json()
         assert d["server_prefix"] == "eu1"
 
     def test_org_default_and_cliente_coexist(self, mailchimp_client_with_clients):
@@ -281,11 +281,11 @@ class TestPerClienteConnection:
         c.put("/api/mailchimp/connection", json={"api_key": "org-us6", "audience_id": "aud-org"})
         c.put(
             "/api/mailchimp/connection",
-            json={"api_key": "cli-us6", "audience_id": "aud-cli", "client_id": str(org_client_id)},
+            json={"api_key": "cli-us6", "audience_id": "aud-cli", "marca_id": str(org_client_id)},
         )
         assert c.get("/api/mailchimp/connection").json()["audience_id"] == "aud-org"
         assert (
-            c.get(f"/api/mailchimp/connection?client_id={org_client_id}").json()["audience_id"]
+            c.get(f"/api/mailchimp/connection?marca_id={org_client_id}").json()["audience_id"]
             == "aud-cli"
         )
 

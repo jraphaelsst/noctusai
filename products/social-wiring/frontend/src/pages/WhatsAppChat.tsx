@@ -16,12 +16,12 @@
  *                     fields / authorized numbers / bound chats for the
  *                     selected connection, via `ConnectionSettingsPanel`
  *                     (`components/ConnectionDetailDialog.tsx` — the same
- *                     WAHA management body the ClienteModal/Conexoes modal
+ *                     WAHA management body the MarcaModal/Conexoes modal
  *                     uses, extracted so it also renders inline here).
  *
  * Connection selection lives at the page level (the `accountSwitcher` shell
  * slot) so both subtabs read the SAME selected connection. Deep-links from a
- * connected WhatsApp `IntegrationCard` (`ClienteModal`'s card-body click, or
+ * connected WhatsApp `IntegrationCard` (`MarcaModal`'s card-body click, or
  * `Conexoes`'s) pre-select the connection via the shared
  * `useActiveAccountStore` — the same store YouTube/Meta already use for their
  * account switchers, here holding a WAHA `connection.id` instead of an
@@ -251,7 +251,7 @@ export default function WhatsAppChat() {
         defaultSubtab="chat"
       />
 
-      {/* Delete confirm — mirrors the Conexoes/ClienteModal pattern */}
+      {/* Delete confirm — mirrors the Conexoes/MarcaModal pattern */}
       {deleteTarget && (
         <div
           role="dialog"

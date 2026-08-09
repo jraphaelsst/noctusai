@@ -48,7 +48,7 @@ export interface IntegrationAccount {
   provider: string;
   account_label: string;
   /** Which client this account belongs to; null = unassigned. */
-  client_id: string | null;
+  marca_id: string | null;
   /** Current account status. */
   status: IntegrationStatus;
   /**
@@ -72,7 +72,7 @@ export interface CreateAccountInput {
   metadata?: Record<string, unknown>;
   is_default?: boolean;
   /** Assign to a client on creation. */
-  client_id?: string | null;
+  marca_id?: string | null;
 }
 
 export interface UpdateAccountInput {
@@ -80,7 +80,7 @@ export interface UpdateAccountInput {
   metadata?: Record<string, unknown>;
   is_default?: boolean;
   /** Reassign to a different client (null = unassign). */
-  client_id?: string | null;
+  marca_id?: string | null;
 }
 
 export interface OAuthStartResponse {
@@ -91,9 +91,9 @@ export interface OAuthStartResponse {
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const PROVIDERS_KEY = ["sw", "integrations", "providers"] as const;
-const ACCOUNTS_KEY = (provider?: string, clientId?: string | null) => {
-  if (provider && clientId !== undefined && clientId !== null) {
-    return ["sw", "integrations", "accounts", provider, "client", clientId] as const;
+const ACCOUNTS_KEY = (provider?: string, marcaId?: string | null) => {
+  if (provider && marcaId !== undefined && marcaId !== null) {
+    return ["sw", "integrations", "accounts", provider, "client", marcaId] as const;
   }
   if (provider) {
     return ["sw", "integrations", "accounts", provider] as const;
@@ -120,24 +120,24 @@ export function useIntegrationProviders() {
 export interface UseIntegrationAccountsOptions {
   provider?: string;
   /** Filter by client; pass null to fetch unassigned accounts. */
-  clientId?: string | null;
+  marcaId?: string | null;
 }
 
 export function useIntegrationAccounts(
   providerOrOptions?: string | UseIntegrationAccountsOptions,
 ) {
-  const { provider, clientId } =
+  const { provider, marcaId } =
     typeof providerOrOptions === "string"
-      ? { provider: providerOrOptions, clientId: undefined }
+      ? { provider: providerOrOptions, marcaId: undefined }
       : (providerOrOptions ?? {});
 
   return useQuery({
-    queryKey: ACCOUNTS_KEY(provider, clientId),
+    queryKey: ACCOUNTS_KEY(provider, marcaId),
     queryFn: async () => {
       const params = new URLSearchParams();
       if (provider) params.set("provider", provider);
-      if (clientId !== undefined && clientId !== null) {
-        params.set("client_id", clientId);
+      if (marcaId !== undefined && marcaId !== null) {
+        params.set("marca_id", marcaId);
       }
       const qs = params.toString();
       const url = qs ? `/api/integrations/accounts?${qs}` : "/api/integrations/accounts";
@@ -303,7 +303,7 @@ function openOAuthTab() {
 
 export interface YouTubeOAuthStartOptions {
   /** Assign the new account to this client after OAuth completes. */
-  clientId?: string | null;
+  marcaId?: string | null;
 }
 
 export function useStartYouTubeOAuth() {
@@ -311,7 +311,7 @@ export function useStartYouTubeOAuth() {
     mutationFn: async (options?: YouTubeOAuthStartOptions) => {
       const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
-      if (options?.clientId) body.client_id = options.clientId;
+      if (options?.marcaId) body.marca_id = options.marcaId;
       const res = await api.post<OAuthStartResponse>(
         "/api/integrations/accounts/youtube/oauth/start",
         body
@@ -328,7 +328,7 @@ export function useStartYouTubeOAuth() {
 
 export interface ProviderOAuthStartOptions {
   /** Assign the new account to this client after OAuth completes. */
-  clientId?: string | null;
+  marcaId?: string | null;
 }
 
 /**
@@ -348,7 +348,7 @@ export function useStartProviderOAuth(provider: string) {
     mutationFn: async (options?: ProviderOAuthStartOptions) => {
       const openTab = openOAuthTab();
       const body: Record<string, unknown> = {};
-      if (options?.clientId) body.client_id = options.clientId;
+      if (options?.marcaId) body.marca_id = options.marcaId;
       const res = await api.post<OAuthStartResponse>(
         `/api/integrations/accounts/${provider}/oauth/start`,
         body,
@@ -367,7 +367,7 @@ export interface SubmitInstagramTokenInput {
   /** Instagram User access token (NOT the app "Token de Cliente"). */
   access_token: string;
   /** Assign the new account to this client. */
-  client_id?: string | null;
+  marca_id?: string | null;
 }
 
 /**

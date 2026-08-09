@@ -21,14 +21,14 @@ vi.mock("@/hooks/useMetaLeadgen", () => ({
   useSubscribeLeadgenPages: mockUseSubscribeLeadgenPages,
   useUnsubscribeLeadgenPage: mockUseUnsubscribeLeadgenPage,
   useLeadgenEvents: mockUseLeadgenEvents,
-  useSetPageClient: mockUseSetPageClient,
+  useSetPageMarca: mockUseSetPageClient,
 }));
 
-// `useClients` calls TanStack's `useQuery` directly; without a provider it
+// `useMarcas` calls TanStack's `useQuery` directly; without a provider it
 // throws and takes the whole card down. Two real clients so the per-Page
 // attribution selector has something to render.
-vi.mock("@/hooks/useClients", () => ({
-  useClients: () => ({
+vi.mock("@/hooks/useMarcas", () => ({
+  useMarcas: () => ({
     data: [
       { id: "client-one", name: "One Consultoria" },
       { id: "client-joao", name: "João Raphael" },
@@ -319,10 +319,10 @@ describe("LeadgenWebhookCard — client attribution", () => {
         pages: [
           { page_id: "p1", page_name: "Loja Central", subscribed: true,
             subscribed_fields: ["leadgen"], app_id: "a1",
-            client_id: "client-one", forms_total: 3, forms_attributed: 3 },
+            marca_id: "client-one", forms_total: 3, forms_attributed: 3 },
           { page_id: "p2", page_name: "Loja Norte", subscribed: false,
             subscribed_fields: [], app_id: null,
-            client_id: null, forms_total: 2, forms_attributed: 0 },
+            marca_id: null, forms_total: 2, forms_attributed: 0 },
         ],
       }),
       isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
@@ -344,7 +344,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
       target: { value: "client-joao" },
     });
     expect(mutate).toHaveBeenCalledWith(
-      { pageId: "p1", clientId: "client-joao" },
+      { pageId: "p1", marcaId: "client-joao" },
       expect.anything(),
     );
   });
@@ -356,7 +356,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
       data: makeSubscriptions({
         pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
                   subscribed_fields: ["leadgen"], app_id: "a1",
-                  client_id: "client-one", forms_total: 1, forms_attributed: 1 }],
+                  marca_id: "client-one", forms_total: 1, forms_attributed: 1 }],
       }),
       isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
     });
@@ -368,7 +368,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
     // 🔴 null, never "__none__": the sentinel is a DOM affordance and must not
     // reach the API, where it would be stored as a bogus client id.
     expect(mutate).toHaveBeenCalledWith(
-      { pageId: "p1", clientId: null },
+      { pageId: "p1", marcaId: null },
       expect.anything(),
     );
   });
@@ -380,7 +380,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
       data: makeSubscriptions({
         pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
                   subscribed_fields: ["leadgen"], app_id: "a1",
-                  client_id: "client-one", forms_total: 5, forms_attributed: 3 }],
+                  marca_id: "client-one", forms_total: 5, forms_attributed: 3 }],
       }),
       isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
     });
@@ -393,7 +393,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
       data: makeSubscriptions({
         pages: [{ page_id: "p1", page_name: "Loja Central", subscribed: true,
                   subscribed_fields: ["leadgen"], app_id: "a1",
-                  client_id: "client-one", forms_total: 4, forms_attributed: 4 }],
+                  marca_id: "client-one", forms_total: 4, forms_attributed: 4 }],
       }),
       isPending: false, isFetching: false, isError: false, refetch: vi.fn(),
     });

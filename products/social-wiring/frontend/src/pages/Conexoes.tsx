@@ -10,7 +10,7 @@
  *                  Full card treatment: onSave / onDelete / onSetDefault / onSync
  *                  wired to real mutations. IntegrationCardModal for details.
  *
- * Client management: "Gerenciar clientes" button opens ClientManagementModal
+ * Marca management: "Gerenciar marcas" button opens MarcaManagementModal
  * inline — no new nav route. This keeps the /conexoes page as the single
  * surface for all connection management.
  *
@@ -64,8 +64,8 @@ import {
   useStartYouTubeOAuth,
   type IntegrationAccount,
 } from "@/hooks/useIntegrationAccounts";
-import { useClients, type Client } from "@/hooks/useClients";
-import { ClientManagementModal } from "@/components/ClientManagementModal";
+import { useMarcas, type Marca } from "@/hooks/useMarcas";
+import { MarcaManagementModal } from "@/components/MarcaManagementModal";
 import { InstagramCardSection } from "@/components/InstagramCardSection";
 
 // ─── Type bridge ──────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ function WhatsAppConnectionCard({
     provider: "whatsapp",
     account_label: line.label,
     is_default: false,
-    client_id: null,
+    marca_id: null,
     status: integrationStatus,
     channel_info: {
       session: line.session_name,
@@ -284,7 +284,7 @@ function ClientSection({
   onOpenModal,
   busyId,
 }: {
-  client: Client | null; // null = "Unassigned"
+  client: Marca | null; // null = "Unassigned"
   accounts: IntegrationAccount[];
   onSave: (id: string, patch: Record<string, string | null>) => void;
   onDelete: (id: string) => void;
@@ -338,9 +338,9 @@ function ClientSection({
 // ─── YouTube card section ─────────────────────────────────────────────────────
 
 function YouTubeCardSection({
-  clients,
+  marcas,
 }: {
-  clients: Client[];
+  marcas: Marca[];
 }) {
   const { data: accounts = [], isLoading, isError } =
     useIntegrationAccounts("youtube");
@@ -355,7 +355,7 @@ function YouTubeCardSection({
   const [modalAccount, setModalAccount] =
     useState<IntegrationAccount | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [oauthClientId, setOauthClientId] = useState<string>("");
+  const [oauthMarcaId, setOauthMarcaId] = useState<string>("");
 
   // Adopt-legacy once on mount
   useEffect(() => {
@@ -369,20 +369,20 @@ function YouTubeCardSection({
     const unassigned: IntegrationAccount[] = [];
 
     for (const acc of accounts) {
-      if (!acc.client_id) {
+      if (!acc.marca_id) {
         unassigned.push(acc);
       } else {
-        const arr = clientMap.get(acc.client_id) ?? [];
+        const arr = clientMap.get(acc.marca_id) ?? [];
         arr.push(acc);
-        clientMap.set(acc.client_id, arr);
+        clientMap.set(acc.marca_id, arr);
       }
     }
 
     // Build ordered groups: assigned clients first (ordered by client name),
     // then "Unassigned" last.
-    const result: Array<{ client: Client | null; accounts: IntegrationAccount[] }> = [];
+    const result: Array<{ client: Marca | null; accounts: IntegrationAccount[] }> = [];
 
-    const sortedClients = [...clients].sort((a, b) => a.name.localeCompare(b.name));
+    const sortedClients = [...marcas].sort((a, b) => a.name.localeCompare(b.name));
     for (const client of sortedClients) {
       const accs = clientMap.get(client.id);
       if (accs && accs.length > 0) {
@@ -392,9 +392,9 @@ function YouTubeCardSection({
 
     // Any accounts assigned to unknown clients (client deleted but accounts
     // remain) treated as unassigned.
-    const knownClientIds = new Set(clients.map((c) => c.id));
+    const knownMarcaIds = new Set(marcas.map((c) => c.id));
     for (const [cid, accs] of clientMap.entries()) {
-      if (!knownClientIds.has(cid)) {
+      if (!knownMarcaIds.has(cid)) {
         unassigned.push(...accs);
       }
     }
@@ -404,7 +404,7 @@ function YouTubeCardSection({
     }
 
     return result;
-  }, [accounts, clients]);
+  }, [accounts, marcas]);
 
   async function handleSave(id: string, patch: Record<string, string | null>) {
     setBusyId(id);
@@ -456,7 +456,7 @@ function YouTubeCardSection({
 
   function handleConnect() {
     oauthStart.mutate(
-      oauthClientId ? { clientId: oauthClientId } : undefined,
+      oauthMarcaId ? { marcaId: oauthMarcaId } : undefined,
       {
         onError: (e: any) =>
           toast.error("Falha ao iniciar conexão com o YouTube", {
@@ -475,15 +475,15 @@ function YouTubeCardSection({
         </h3>
 
         {/* Client pre-select for new OAuth account */}
-        {clients.length > 0 && (
+        {marcas.length > 0 && (
           <select
-            value={oauthClientId}
-            onChange={(e) => setOauthClientId(e.target.value)}
+            value={oauthMarcaId}
+            onChange={(e) => setOauthMarcaId(e.target.value)}
             className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
             aria-label="Atribuir a cliente ao conectar"
           >
             <option value="">Sem cliente</option>
-            {clients.map((c) => (
+            {marcas.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
@@ -569,7 +569,7 @@ export default function Conexoes() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [manageClientsOpen, setManageClientsOpen] = useState(false);
 
-  const { data: clients = [], isLoading: clientsLoading } = useClients();
+  const { data: marcas = [], isLoading: clientsLoading } = useMarcas();
 
   // Handle OAuth callback: ?account_created=<id> → success toast + clear param
   useEffect(() => {
@@ -604,10 +604,10 @@ export default function Conexoes() {
           disabled={clientsLoading}
         >
           <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-          Gerenciar clientes
-          {clients.length > 0 && (
+          Gerenciar marcas
+          {marcas.length > 0 && (
             <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px]">
-              {clients.length}
+              {marcas.length}
             </span>
           )}
         </Button>
@@ -634,7 +634,7 @@ export default function Conexoes() {
 
       {/* YouTube card section */}
       <section className="space-y-4">
-        <YouTubeCardSection clients={clients} />
+        <YouTubeCardSection marcas={marcas} />
       </section>
 
       <Separator />
@@ -643,13 +643,13 @@ export default function Conexoes() {
           Facebook Page. Distinct provider from `meta`; see
           InstagramCardSection's header for why they are not merged. */}
       <section className="space-y-4">
-        <InstagramCardSection clients={clients} />
+        <InstagramCardSection marcas={marcas} />
       </section>
 
       {/* Client management modal */}
       {manageClientsOpen && (
-        <ClientManagementModal
-          clients={clients}
+        <MarcaManagementModal
+          marcas={marcas}
           onClose={() => setManageClientsOpen(false)}
         />
       )}

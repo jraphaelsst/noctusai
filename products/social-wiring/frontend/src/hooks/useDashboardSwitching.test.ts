@@ -24,10 +24,10 @@ import { useActiveAccountStore } from "@/state/useActiveAccount";
 beforeEach(() => {
   mockGet.mockReset();
   mockGet.mockResolvedValue([]);
-  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
 });
 afterEach(() => {
-  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeClientId: null });
+  useActiveAccountStore.setState({ activeAccountIdByProvider: {}, activeMarcaId: null });
 });
 
 describe("active-account switching wires into the YT data hooks", () => {
