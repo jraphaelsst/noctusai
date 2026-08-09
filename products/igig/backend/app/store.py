@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["get_store", "get_repositorios", "aplicar_schema_sqlite", "reset_store"]
 
-_SQLITE_SCHEMA = Path(__file__).resolve().parents[1] / "migrations" / "sqlite" / "001_dominio.sql"
+_SQLITE_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "sqlite"
 
 
 @lru_cache(maxsize=1)
@@ -49,20 +49,33 @@ def get_store() -> RecordStore:
     return store
 
 
-def aplicar_schema_sqlite(store: RecordStore) -> None:
-    """Apply the SQLite domain schema if the store is SQLite-backed.
+def sqlite_migrations() -> list[Path]:
+    """Every SQLite migration, in filename order (`001_`, `002_`, …).
 
-    Idempotent — every statement in the mirror is ``IF NOT EXISTS``. This is
+    Ordering is by filename because the files carry FK references forward
+    (`aprovacao` → `tarefa`), and SQLite enforces foreign keys here.
+    """
+    if not _SQLITE_MIGRATIONS_DIR.is_dir():
+        raise FileNotFoundError(f"SQLite migrations dir missing at {_SQLITE_MIGRATIONS_DIR}")
+    arquivos = sorted(_SQLITE_MIGRATIONS_DIR.glob("*.sql"))
+    if not arquivos:
+        raise FileNotFoundError(f"no SQLite migrations found in {_SQLITE_MIGRATIONS_DIR}")
+    return arquivos
+
+
+def aplicar_schema_sqlite(store: RecordStore) -> None:
+    """Apply every SQLite migration if the store is SQLite-backed.
+
+    Idempotent — every statement in the mirrors is ``IF NOT EXISTS``. This is
     the development substitute for running migrations against Postgres; the
-    canonical `006_igig_dominio.sql` still applies to Supabase via the normal
+    canonical `00N_igig_*.sql` files still apply to Supabase via the normal
     migration path.
     """
     executescript = getattr(store, "executescript", None)
     if executescript is None:
         return  # Supabase / in-memory — schema lives elsewhere.
-    if not _SQLITE_SCHEMA.exists():
-        raise FileNotFoundError(f"SQLite domain schema missing at {_SQLITE_SCHEMA}")
-    executescript(_SQLITE_SCHEMA.read_text(encoding="utf-8"))
+    for arquivo in sqlite_migrations():
+        executescript(arquivo.read_text(encoding="utf-8"))
 
 
 def get_repositorios() -> Repositorios:

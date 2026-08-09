@@ -15,8 +15,14 @@ from noctusai_lib.integrations.persistence import SqliteRecordStore
 from app.repositories import Repositorios
 from app.store import aplicar_schema_sqlite, get_repositorios
 
-#: The org the conftest's mock user belongs to.
-ORG = "test-org-123"
+from app.dependencies import coerce_org_uuid
+
+#: The org the AUTHED endpoints actually resolve to. The conftest mock user
+#: carries the opaque fixture org "test-org-123", which `coerce_org_uuid`
+#: maps deterministically onto a UUID before any store call. Seeding data
+#: under the raw string instead would write to an org the API never reads —
+#: the tests would then pass or fail for the wrong reason.
+ORG = str(coerce_org_uuid("test-org-123"))
 
 
 @pytest.fixture

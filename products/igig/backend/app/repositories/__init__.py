@@ -10,7 +10,8 @@ that argument IS the tenant boundary.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from noctusai_lib.integrations.persistence import Op, Order, QuerySpec, Record, RecordStore
 
@@ -25,6 +26,7 @@ __all__ = [
     "PautaRepository",
     "TarefaRepository",
     "ApontamentoRepository",
+    "AprovacaoRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -229,6 +231,110 @@ class ApontamentoRepository(BaseRepository):
         return sum(int(a.get("minutos") or 0) for a in self.da_tarefa(org_id, tarefa_id))
 
 
+class AprovacaoRepository(BaseRepository):
+    """Portal de Aprovação Externo links — Módulo 4.
+
+    The token IS the auth: the client has no noc account, so the portal is
+    unauthenticated and the token must be unguessable, expirable and
+    single-decision.
+
+    **The token carries its own org.** The persistence seam requires an
+    ``org_id`` on every call — that requirement IS the tenant boundary on the
+    SQLite path — but a public caller has no org to supply. Rather than punch
+    a cross-org lookup through the seam and weaken that invariant for every
+    other consumer, the token is minted as ``<org_id>.<secret>``: the public
+    endpoint parses the org out of the token and then performs an ordinary
+    org-scoped query. The org half is not a secret (it is a UUID the client
+    could never guess anything from) and the ``<secret>`` half still carries
+    the full 256 bits of entropy, so guessability is unchanged.
+    """
+
+    table = "aprovacao"
+
+    #: Links stop working after this long. A link that never expires is a
+    #: permanent unauthenticated hole into a client's content.
+    VALIDADE_PADRAO = timedelta(days=14)
+
+    def da_tarefa(self, org_id: str, tarefa_id: str) -> list[Record]:
+        return self._por("tarefa_id", tarefa_id, org_id)
+
+    @staticmethod
+    def montar_token(org_id: str) -> str:
+        """``<org_id>.<secret>`` — see the class docstring for the why.
+
+        ``secrets.token_urlsafe(32)`` is 256 bits from a CSPRNG. Not uuid4
+        (only 122 bits, and version/variant bits are fixed) and emphatically
+        not the row id: a guessable token exposes unpublished client content.
+        """
+        return f"{org_id}.{secrets.token_urlsafe(32)}"
+
+    @staticmethod
+    def org_do_token(token: str) -> str | None:
+        """Parse the org half. ``None`` when the token is malformed."""
+        org_id, separador, secret = token.partition(".")
+        if not separador or not org_id or not secret:
+            return None
+        return org_id
+
+    def emitir(
+        self,
+        org_id: str,
+        tarefa_id: str,
+        *,
+        validade: timedelta | None = None,
+    ) -> Record:
+        """Mint an approval link for a tarefa."""
+        expira = datetime.now(timezone.utc) + (validade or self.VALIDADE_PADRAO)
+        return self.criar(
+            org_id,
+            {
+                "tarefa_id": tarefa_id,
+                "token": self.montar_token(org_id),
+                "expira_em": expira.isoformat(),
+            },
+        )
+
+    def por_token(self, token: str) -> Record | None:
+        """Resolve a link by token — the public portal read path.
+
+        Returns ``None`` when the token is malformed or unknown. Callers MUST
+        NOT distinguish "unknown" from "expired" in what they return to the
+        client, or the endpoint becomes a token oracle.
+        """
+        org_id = self.org_do_token(token)
+        if org_id is None:
+            return None
+        encontradas = self.listar(org_id, spec=QuerySpec().with_filter("token", Op.EQ, token))
+        return encontradas[0] if encontradas else None
+
+    def expirada(self, aprovacao: Record, *, agora: datetime | None = None) -> bool:
+        expira_em = aprovacao.get("expira_em")
+        if not expira_em:
+            return False
+        limite = datetime.fromisoformat(str(expira_em))
+        if limite.tzinfo is None:
+            limite = limite.replace(tzinfo=timezone.utc)
+        return (agora or datetime.now(timezone.utc)) > limite
+
+    def decidida(self, aprovacao: Record) -> bool:
+        return aprovacao.get("decidido_em") is not None
+
+    def registrar_decisao(
+        self, org_id: str, aprovacao_id: str, decisao: str, observacao: str = ""
+    ) -> Record:
+        if decisao not in {"aprovado", "ajuste"}:
+            raise ValueError(f"decisão inválida: {decisao!r}")
+        return self.atualizar(
+            org_id,
+            aprovacao_id,
+            {
+                "decisao": decisao,
+                "observacao": observacao,
+                "decidido_em": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -245,3 +351,4 @@ class Repositorios:
         self.pauta = PautaRepository(store)
         self.tarefa = TarefaRepository(store)
         self.apontamento = ApontamentoRepository(store)
+        self.aprovacao = AprovacaoRepository(store)
