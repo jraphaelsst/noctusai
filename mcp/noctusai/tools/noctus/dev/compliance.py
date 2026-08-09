@@ -8463,29 +8463,39 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     num_re = re.compile(r"^(\d{3,4})_")
 
     # ── Leg A — duplicates on disk ──
+    #
+    # Scoped PER DIRECTORY, not per product. Each migrations directory is its
+    # own apply sequence, so a product may carry a dialect-specific mirror
+    # alongside the canonical set (igig ships `migrations/sqlite/` numbered to
+    # match its Postgres files). Subdirectories are scanned too — before
+    # 2026-08-09 this glob was non-recursive, so a genuine duplicate INSIDE a
+    # mirror directory was invisible.
     for product_dir in sorted((root / "products").glob("*")):
-        mig_dir = product_dir / "backend" / "migrations"
-        if not mig_dir.is_dir():
+        mig_root = product_dir / "backend" / "migrations"
+        if not mig_root.is_dir():
             continue
-        by_number: dict[str, list[str]] = {}
-        for f in sorted(mig_dir.glob("*.sql")):
-            m = num_re.match(f.name)
-            if m:
-                by_number.setdefault(m.group(1), []).append(f.name)
-        for number, names in sorted(by_number.items()):
-            if len(names) > 1 and (product_dir.name, number) in _ACCEPTED_MIGRATION_DUPLICATES:
-                continue
-            if len(names) > 1:
-                findings.append({
-                    "product": product_dir.name,
-                    "file": f"products/{product_dir.name}/backend/migrations/",
-                    "issue": (
-                        f"migration number {number} is claimed by {len(names)} files "
-                        f"({', '.join(names)}) — apply-order is undefined. "
-                        "Renumber all but the earliest-merged one."
-                    ),
-                    "severity": "high",
-                })
+        mig_dirs = [mig_root] + sorted(d for d in mig_root.iterdir() if d.is_dir())
+        for mig_dir in mig_dirs:
+            by_number: dict[str, list[str]] = {}
+            for f in sorted(mig_dir.glob("*.sql")):
+                m = num_re.match(f.name)
+                if m:
+                    by_number.setdefault(m.group(1), []).append(f.name)
+            rel = mig_dir.relative_to(root).as_posix()
+            for number, names in sorted(by_number.items()):
+                if len(names) > 1 and (product_dir.name, number) in _ACCEPTED_MIGRATION_DUPLICATES:
+                    continue
+                if len(names) > 1:
+                    findings.append({
+                        "product": product_dir.name,
+                        "file": f"{rel}/",
+                        "issue": (
+                            f"migration number {number} is claimed by {len(names)} files "
+                            f"in {rel}/ ({', '.join(names)}) — apply-order is undefined. "
+                            "Renumber all but the earliest-merged one."
+                        ),
+                        "severity": "high",
+                    })
 
     # ── Leg B — same number claimed by multiple local branches ──
     try:
@@ -8499,10 +8509,20 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
         # checked either (the caller sees only Leg A findings).
         return findings
 
-    # Key on (product, number) -> {filename: {branches}}. Comparing FILENAMES
-    # matters: a stack of sibling branches off one initiative all carry the
-    # SAME migration file, which is not a collision. Only two DIFFERENT
-    # filenames under one number are.
+    # Key on (migration DIRECTORY, number) -> {filename: {branches}}.
+    #
+    # Comparing FILENAMES matters: a stack of sibling branches off one
+    # initiative all carry the SAME migration file, which is not a collision.
+    # Only two DIFFERENT filenames under one number are.
+    #
+    # Keying on the DIRECTORY rather than the product matters too. Apply-order
+    # is only undefined between files the SAME runner applies, and each
+    # migrations directory is its own sequence. A product may legitimately
+    # carry a second, dialect-specific set — igig ships
+    # `backend/migrations/sqlite/` mirroring its Postgres files and numbered to
+    # MATCH them (006 ↔ 006), which is a deliberate pairing, not a race. Leg A
+    # already scopes this way (a non-recursive glob per directory); Leg B keyed
+    # on the product and so reported every mirrored pair as a collision.
     claims: dict[tuple[str, str], dict[str, set[str]]] = {}
     for branch in branches:
         try:
@@ -8516,24 +8536,25 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
             if "/backend/migrations/" not in path or not path.endswith(".sql"):
                 continue
             parts = path.split("/")
-            product = parts[1] if len(parts) > 1 else "?"
             name = parts[-1]
+            directory = "/".join(parts[:-1])
             m = num_re.match(name)
             if m:
-                claims.setdefault((product, m.group(1)), {}).setdefault(name, set()).add(branch)
+                claims.setdefault((directory, m.group(1)), {}).setdefault(name, set()).add(branch)
 
-    for (product, number), by_name in sorted(claims.items()):
+    for (directory, number), by_name in sorted(claims.items()):
         if len(by_name) > 1:
+            product = directory.split("/")[1] if "/" in directory else "?"
             detail = "; ".join(
                 f"{name} on {', '.join(sorted(brs))}" for name, brs in sorted(by_name.items())
             )
             findings.append({
                 "product": product,
-                "file": f"products/{product}/backend/migrations/",
+                "file": f"{directory}/",
                 "issue": (
                     f"migration number {number} is claimed by {len(by_name)} DIFFERENT "
-                    f"files across local branches ({detail}) — whichever merges SECOND "
-                    "must renumber the file and every reference to it."
+                    f"files in {directory}/ across local branches ({detail}) — whichever "
+                    "merges SECOND must renumber the file and every reference to it."
                 ),
                 "severity": "warning",
             })

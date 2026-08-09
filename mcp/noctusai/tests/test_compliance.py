@@ -2397,6 +2397,41 @@ class TestCheckMigrationNumberCollision:
             (mig / n).write_text("-- migration\nSELECT 1;\n")
         return tmp
 
+    def _mk_with_mirror(self, product: str, canonical: list[str], mirror: list[str]) -> Path:
+        """A product carrying a dialect-mirror subdirectory (igig's shape)."""
+        tmp = self._mk(product, canonical)
+        sub = tmp / "products" / product / "backend" / "migrations" / "sqlite"
+        sub.mkdir(parents=True, exist_ok=True)
+        for n in mirror:
+            (sub / n).write_text("-- mirror\nSELECT 1;\n")
+        return tmp
+
+    # ── Directory scoping (regression, 2026-08-09) ─────────────────────
+    def test_a_dialect_mirror_sharing_numbers_is_not_a_collision(self):
+        """`migrations/sqlite/006_x.sql` beside `migrations/006_y.sql` is a
+        deliberate PAIRING, not a race.
+
+        Apply-order is only undefined between files the same runner applies,
+        and each migrations directory is its own sequence. Leg B used to key
+        on (product, number) and reported every mirrored pair as a collision;
+        it now keys on the directory. Leg A was always directory-scoped (a
+        non-recursive glob), so it never had the bug.
+        """
+        repo = self._mk_with_mirror(
+            "igig",
+            ["006_igig_dominio.sql", "007_igig_aprovacao.sql"],
+            ["006_dominio.sql", "007_aprovacao.sql"],
+        )
+        assert check_migration_number_collision(repo) == []
+
+    def test_a_real_duplicate_inside_the_mirror_dir_still_flags(self):
+        """Loosening the key must not blind the detector INSIDE a directory."""
+        repo = self._mk_with_mirror(
+            "igig", ["006_igig_dominio.sql"], ["006_a.sql", "006_b.sql"]
+        )
+        issues = check_migration_number_collision(repo)
+        assert any("006" in i["issue"] for i in issues), issues
+
     # ── Leg A: duplicates on disk ──────────────────────────────────────
     def test_distinct_numbers_pass(self):
         repo = self._mk("core", ["001_a.sql", "002_b.sql", "003_c.sql"])
