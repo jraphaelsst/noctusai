@@ -366,3 +366,4 @@
 {"ts": "2026-08-07", "event": "worktree-sweep", "path": ".claude/worktrees/lead-card-hub-roadmap-t1", "branch": "feat/lead-card-hub-roadmap-t1", "sha": "2efad8dc748b84e2638842fe1b2163893f2de55b", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-09", "event": "worktree-sweep", "path": ".claude/worktrees/sw-clients-to-marcas", "branch": "feat/sw-clients-to-marcas", "sha": "e27094f3b73148e7fec87c9967eaaf5be952b6b1", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-09", "event": "worktree-sweep", "path": ".claude/worktrees/sw-marcas-ci-green", "branch": "feat/sw-marcas-ci-green", "sha": "a26bd5034e64cb860f43c94d33dd65f465673096", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-09", "event": "worktree-sweep", "path": ".claude/worktrees/sw-marca-ui-strings", "branch": "feat/sw-marca-ui-strings", "sha": "8ed8489c69dcaa9cde8030f089c192222ae622f2", "reason": "task_branch cleanup (learn-before-delete)"}
