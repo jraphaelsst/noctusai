@@ -73,7 +73,7 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
     }),
     {
       name: "sw:active-account",
-      version: 1,
+      version: 2,
       // Persist only the selection state — functions are re-created by zustand.
       partialize: (state) => ({
         activeAccountIdByProvider: state.activeAccountIdByProvider,
@@ -84,22 +84,41 @@ export const useActiveAccountStore = create<ActiveAccountState>()(
        * record of which provider it had been chosen for. That attribution
        * is unrecoverable from localStorage alone, so the id is dropped
        * rather than guessed — guessing wrong reinstates the exact
-       * cross-provider leak this version exists to remove. The cost is one
+       * cross-provider leak that version exists to remove. The cost is one
        * re-selection per browser on first load after deploy, and every page
        * already handles "no selection" by falling back to the org default.
-       * `activeClientId` was never provider-specific, so it carries over.
+       *
+       * v1 → v2 (migration 046, `clients` → `marcas`): the FIELD was renamed
+       * `activeClientId` → `activeMarcaId`. 🔴 EVERY browser that has used
+       * this app holds a payload keyed `activeClientId` — the rename is in
+       * OUR source, never in data already written to someone's localStorage.
+       * Reading `legacy.activeMarcaId` from such a payload yields `undefined`
+       * and silently drops the user's selection, so the old key is read
+       * EXPLICITLY here and the version bumped to force this path to run.
+       *
+       * The general trap: a rename codemod must not rewrite an identifier
+       * that names PERSISTED data written by an older version. The write side
+       * moves; the read side has to understand both.
        */
       migrate: (persisted, version) => {
         const legacy = (persisted ?? {}) as Partial<ActiveAccountState> & {
           activeAccountId?: string | null;
+          /** Pre-046 name for `activeMarcaId`. Present in every stored v0/v1 payload. */
+          activeClientId?: string | null;
         };
+        // Old key first — a payload written before 046 only has that one.
+        const carriedMarcaId = legacy.activeClientId ?? legacy.activeMarcaId ?? null;
         if (version === 0) {
           return {
             activeAccountIdByProvider: {},
-            activeMarcaId: legacy.activeMarcaId ?? null,
+            activeMarcaId: carriedMarcaId,
           } as ActiveAccountState;
         }
-        return legacy as ActiveAccountState;
+        return {
+          ...legacy,
+          activeAccountIdByProvider: legacy.activeAccountIdByProvider ?? {},
+          activeMarcaId: carriedMarcaId,
+        } as ActiveAccountState;
       },
     },
   ),
