@@ -14,6 +14,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from noctusai_lib.integrations.persistence import Op, Order, QuerySpec, Record, RecordStore
+from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
 
 from .base import BaseRepository, RecordNotFound
 
@@ -27,6 +28,10 @@ __all__ = [
     "TarefaRepository",
     "ApontamentoRepository",
     "AprovacaoRepository",
+    "FuncaoRepository",
+    "ProfissionalRepository",
+    "AcessoRepository",
+    "PecaRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -335,6 +340,145 @@ class AprovacaoRepository(BaseRepository):
         )
 
 
+class FuncaoRepository(BaseRepository):
+    """Roles and their default hourly cost — the base of the custo/hora model."""
+
+    table = "funcao"
+    default_order = (Order("nome"),)
+
+
+class ProfissionalRepository(BaseRepository):
+    """Team members. Hourly cost resolves role-default → per-person override.
+
+    Feeds three separate features that the spec never reconciled: M1's
+    calculadora de escopo (minimum price), M5's BI de eficiência (custo real
+    do job), and M6's DRE (margin per account). All three read
+    :meth:`custo_hora_efetivo`, so the rate is defined once.
+    """
+
+    table = "profissional"
+    default_order = (Order("nome"),)
+
+    def ativos(self, org_id: str) -> list[Record]:
+        return self.listar(org_id, spec=QuerySpec().with_filter("ativo", Op.EQ, True))
+
+    def custo_hora_efetivo(self, org_id: str, profissional_id: str, *, funcoes: "FuncaoRepository") -> float:
+        """The rate that actually applies to this person.
+
+        ``custo_hora_override`` NULL means "inherit the função's default";
+        ``0`` is a real, deliberate rate (an unpaid intern), so the two must
+        not collapse — hence the explicit `is not None` rather than a falsy
+        check.
+        """
+        prof = self.buscar(org_id, profissional_id)
+        override = prof.get("custo_hora_override")
+        if override is not None:
+            return float(override)
+        funcao_id = prof.get("funcao_id")
+        if not funcao_id:
+            # No função and no override: costing this person's hours would be
+            # a silent zero, which quietly understates the job. Surface it.
+            raise ValueError(
+                f"profissional {profissional_id} tem custo_hora indefinido "
+                "(sem override e sem função)"
+            )
+        return float(funcoes.buscar(org_id, str(funcao_id)).get("custo_hora_padrao") or 0)
+
+
+class AcessoRepository(BaseRepository):
+    """Cofre de Acessos — Módulo 2.
+
+    Passwords are encrypted with the seed's Fernet helper
+    (``noctusai_lib.security.encrypted_tokens``) before they ever reach the
+    store, and decrypted only in process memory at the moment of use. The KEY
+    is supplied by the caller from configuration and is never persisted beside
+    the ciphertext — if these rows leak via a backup, replica or log line, the
+    credentials are not recoverable.
+
+    There is no "reveal all" method by design: decryption is per-record and
+    explicit, so an accidental bulk decrypt is not one call away.
+    """
+
+    table = "acesso"
+    default_order = (Order("rotulo"),)
+
+    def do_cliente(self, org_id: str, cliente_id: str) -> list[Record]:
+        """Credentials for one client — ciphertext NOT decrypted."""
+        return self._por("cliente_id", cliente_id, org_id)
+
+    def guardar(
+        self,
+        org_id: str,
+        cliente_id: str,
+        *,
+        rotulo: str,
+        senha: str | None = None,
+        chave: bytes | None = None,
+        **campos: object,
+    ) -> Record:
+        """Store an access record, encrypting ``senha`` if one is given.
+
+        Refuses to persist a password without a key rather than falling back
+        to plaintext — a silent downgrade here is the whole failure this table
+        exists to prevent.
+        """
+        valores: Record = {"cliente_id": cliente_id, "rotulo": rotulo, **campos}
+        if senha:
+            if not chave:
+                raise ValueError(
+                    "senha fornecida sem chave de criptografia — recuse-se a gravar "
+                    "credencial em texto puro"
+                )
+            valores["senha_cifrada"] = encrypt(senha, chave)
+        return self.criar(org_id, valores)
+
+    def revelar_senha(self, org_id: str, acesso_id: str, chave: bytes) -> str | None:
+        """Decrypt ONE password. ``None`` when the record stores none."""
+        cifrada = self.buscar(org_id, acesso_id).get("senha_cifrada")
+        if not cifrada:
+            return None
+        return decrypt(str(cifrada), chave)
+
+
+class PecaRepository(BaseRepository):
+    """Visual assets attached to a pauta — Módulo 4's portal view.
+
+    Rows carry a STORAGE KEY, never bytes. The bytes live behind the seed's
+    storage seam, so this repository is identical whether the backend is the
+    local filesystem or Supabase Storage.
+    """
+
+    table = "peca"
+    default_order = (Order("ordem"),)
+
+    def da_pauta(self, org_id: str, pauta_id: str) -> list[Record]:
+        return self._por("pauta_id", pauta_id, org_id)
+
+    def anexar(
+        self,
+        org_id: str,
+        pauta_id: str,
+        *,
+        storage_key: str,
+        nome_arquivo: str | None = None,
+        mime_type: str | None = None,
+        tamanho_bytes: int | None = None,
+    ) -> Record:
+        """Record an uploaded asset. Ordering appends to the end."""
+        existentes = self.da_pauta(org_id, pauta_id)
+        return self.criar(
+            org_id,
+            {
+                "pauta_id": pauta_id,
+                "storage_key": storage_key,
+                "nome_arquivo": nome_arquivo,
+                "mime_type": mime_type,
+                "tamanho_bytes": tamanho_bytes,
+                "ordem": len(existentes),
+            },
+        )
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -352,3 +496,7 @@ class Repositorios:
         self.tarefa = TarefaRepository(store)
         self.apontamento = ApontamentoRepository(store)
         self.aprovacao = AprovacaoRepository(store)
+        self.funcao = FuncaoRepository(store)
+        self.profissional = ProfissionalRepository(store)
+        self.acesso = AcessoRepository(store)
+        self.peca = PecaRepository(store)

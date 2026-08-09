@@ -23,6 +23,7 @@ import {
   BookOpen,
   Sprout,
   Box,
+  Palette,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,6 +38,7 @@ const ICONS: Record<string, LucideIcon> = {
   BookOpen,
   Sprout, // seed (reference) product
   Box, // scaffolder default for freshly-created products
+  Palette, // igig — communication agency ERP
 };
 
 // Size presets so the same component fits both the dashboard cards (md) and

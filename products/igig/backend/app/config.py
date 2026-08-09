@@ -22,14 +22,20 @@ class IgIgSettings(ProductSettings):
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     webhook_rate_limit: str = "60/minute"
 
-    # ── Domain persistence (development) ──────────────────────────────
-    # IgIg's DOMAIN data lives in SQLite while the product is built; auth,
-    # orgs and roles stay on Supabase via the seed's database module. The
-    # swap to Supabase happens in `app/store.py`, not here.
-    # Relative paths resolve against the backend working directory; the
-    # containerised runtime mounts `var/` as a volume so the file survives
-    # restarts.
-    igig_sqlite_path: str = "var/igig.db"
+    # ── Cofre de Acessos (Módulo 2) ───────────────────────────────────
+    # Fernet key for client credentials at rest. Deliberately EMPTY by
+    # default: with no key the vault refuses to store a password rather than
+    # silently falling back to plaintext. Generate with
+    # `noctusai_lib.security.encrypted_tokens.generate_key()` and keep it
+    # OUT-OF-BAND from the database — a key stored beside the ciphertext
+    # protects nothing.
+    igig_cofre_key: str = ""
+
+    # ── Visual assets (Módulo 4 portal) ───────────────────────────────
+    # "supabase" in production; "local" for native dev; "fake" in tests.
+    igig_storage_kind: str = "supabase"
+    igig_storage_root: str = "var/assets"
+    igig_storage_bucket: str = "igig"
 
 
 settings = IgIgSettings()

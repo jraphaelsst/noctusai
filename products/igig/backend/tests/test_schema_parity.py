@@ -34,6 +34,8 @@ PG_FILES = sorted(MIGRATIONS.glob("00[6-9]_igig_*.sql")) + sorted(
 
 DOMAIN_TABLES = {
     "cliente", "marca", "contrato", "pauta", "tarefa", "apontamento", "aprovacao",
+    # 008 — custo/hora model, Cofre de Acessos, visual assets
+    "funcao", "profissional", "acesso", "peca",
 }
 
 
