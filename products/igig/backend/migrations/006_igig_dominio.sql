@@ -9,7 +9,7 @@
 -- `noctusai_lib.integrations.persistence.SqliteRecordStore` — the accepted
 -- divergence recorded in KB § PATTERNS/common/accept-with-rationale.md.
 --
--- The SQLite mirror lives at `migrations/sqlite/001_dominio.sql`. The two are
+-- The SQLite mirror lives at `migrations/sqlite/006_dominio.sql`. The two are
 -- kept honest by `tests/test_schema_parity.py`, which fails if either file
 -- grows a table or column the other lacks. Two hand-maintained schemas would
 -- otherwise drift silently — the failure mode the parity test exists to make

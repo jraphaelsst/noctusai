@@ -12,7 +12,7 @@
 -- exist, not be expired, and not already be decided. The RLS policy below
 -- still governs every AUTHENTICATED access (the agency's own team).
 --
--- SQLite mirror: migrations/sqlite/002_aprovacao.sql (parity-tested).
+-- SQLite mirror: migrations/sqlite/007_aprovacao.sql (parity-tested).
 -- ============================================================================
 SET search_path = igig, public;
 

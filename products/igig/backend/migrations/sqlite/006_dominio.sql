@@ -1,5 +1,8 @@
 -- ============================================================================
 -- IgIg domain schema — SQLite mirror of `006_igig_dominio.sql`
+-- Numbered to MATCH its canonical counterpart (006 ↔ 006), so the pairing is
+-- obvious and the cross-branch migration-number keeper sees one claim per
+-- number rather than two competing files.
 --
 -- The Postgres file is CANONICAL; this is the development-time mirror.
 -- `tests/test_schema_parity.py` fails if either file grows a table or column

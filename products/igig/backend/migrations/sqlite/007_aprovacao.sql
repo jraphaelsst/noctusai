@@ -1,6 +1,7 @@
 -- ============================================================================
 -- IgIg — Portal de Aprovação Externo (Módulo 4) — SQLite mirror of
--- `007_igig_aprovacao.sql`. Parity-tested by tests/test_schema_parity.py.
+-- `007_igig_aprovacao.sql` (numbered to match, 007 ↔ 007). Parity-tested by
+-- tests/test_schema_parity.py.
 --
 -- Same deliberate dialect differences as 001: TEXT ids, TEXT timestamps, no
 -- RLS (app-layer org scoping instead), no updated_at trigger (the store
