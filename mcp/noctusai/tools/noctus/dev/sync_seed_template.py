@@ -155,8 +155,17 @@ def _apply_placeholders(text: str, filename: str, is_compose: bool, is_dockerfil
         # never matches a bare `Dockerfile` (only the listed extensions),
         # so the shell's Dockerfile perl branch never executes either.
         # Kept (and never reached — _is_text_file excludes Dockerfile) so
-        # this port is a faithful 1:1 of the script. Dockerfile
-        # placeholderization is owned by propagate-dockerfiles.sh.
+        # this port is a faithful 1:1 of the script.
+        #
+        # This branch USED to say Dockerfile placeholderization was "owned
+        # by propagate-dockerfiles.sh". No such file exists in scripts/ —
+        # so the real answer was "nobody", and the seed's identity shipped
+        # verbatim into the first product scaffolded after the gap opened
+        # (igig, 2026-08-09: PRODUCT_SLUG=seed, container dead on arrival).
+        # The template Dockerfile therefore keeps the seed's LITERALS, and
+        # `scaffold_product` rewrites them per product via its
+        # `dockerfile_rewrites` map. That is the owner. Fleet-wide keeper:
+        # seed/lib/backend/tests/config/test_per_product_dockerfile_identity.py
         text = text.replace("products/seed/", "products/{{PRODUCT_SLUG}}/")
         text = re.sub(r"PRODUCT_SLUG=seed\b", "PRODUCT_SLUG={{PRODUCT_SLUG}}", text)
         text = re.sub(r"PRODUCT_PORT=8004\b", "PRODUCT_PORT={{BACKEND_PORT}}", text)

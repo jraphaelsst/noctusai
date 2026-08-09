@@ -658,6 +658,34 @@ def scaffold_product(
             "@registry:own:seed": f"@registry:own:{slug}",
         }
 
+        # Dockerfile-SCOPED literals. Same root cause as above, but these
+        # cannot join `literal_rewrites`: that dict runs over every text
+        # file, and rewriting a bare `8004` fleet-wide would corrupt any
+        # unrelated occurrence of that number. The Dockerfile is the only
+        # file carrying them, so scope the rewrite to it.
+        #
+        # Nothing else substitutes these. `sync_seed_template.
+        # _apply_placeholders` has a Dockerfile branch but marks it
+        # PARITY-DEAD and defers to `scripts/propagate-dockerfiles.sh`,
+        # which does not exist. So the seed's own identity shipped
+        # verbatim into igig (2026-08-09): the container resolved
+        # FE=/app/products/seed/frontend, built a directory with no
+        # index.html, and exited 1 on every start. Pinned fleet-wide by
+        # `seed/lib/backend/tests/config/test_per_product_dockerfile_identity.py`.
+        dockerfile_rewrites = {
+            "products/seed/": f"products/{slug}/",
+            "PRODUCT_SLUG=seed PRODUCT_PORT=8004": (
+                f"PRODUCT_SLUG={slug} PRODUCT_PORT={backend_port}"
+            ),
+            "EXPOSE 8004": f"EXPOSE {backend_port}",
+            "localhost:8004/api/health": f"localhost:{backend_port}/api/health",
+            '"--port", "8004"': f'"--port", "{backend_port}"',
+            "# seed — CANONICAL thin product image (the reference every product mirrors).": (
+                f"# {slug} — thin product image (generated from "
+                "products/seed/backend/Dockerfile; edit there + re-propagate)."
+            ),
+        }
+
         for f in target.rglob("*"):
             if not f.is_file():
                 continue
@@ -678,6 +706,15 @@ def scaffold_product(
                 new_content = new_content.replace(placeholder, value)
             for literal, value in literal_rewrites.items():
                 new_content = new_content.replace(literal, value)
+            if f.name == "Dockerfile":
+                # Insertion order matters: `products/seed/` is rewritten
+                # FIRST, so the header's replacement text — which cites
+                # `products/seed/backend/Dockerfile` on purpose, as the
+                # provenance of a generated file — is inserted afterwards
+                # and never re-scanned. Reordering this dict would strip
+                # that citation.
+                for literal, value in dockerfile_rewrites.items():
+                    new_content = new_content.replace(literal, value)
             if new_content != content:
                 try:
                     f.write_text(new_content, encoding="utf-8")

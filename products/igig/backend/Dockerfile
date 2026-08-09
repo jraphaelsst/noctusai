@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# seed — CANONICAL thin product image (the reference every product mirrors).
+# igig — thin product image (generated from products/seed/backend/Dockerfile; edit there + re-propagate).
 #
 # Project: containerization-single-container. Single container: uvicorn
 # serves the API AND the built SPA on ONE port (the seed factory's
