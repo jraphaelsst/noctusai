@@ -25,6 +25,7 @@ over `gpt-4o-mini`):
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
+from app.routers.cliente_router import router as cliente_router
 from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
 
@@ -39,7 +40,7 @@ app = create_product_app(
     # skeletons — rename + extend per the TODO(new-product) markers in
     # ``app/routers/example_router.py`` (CRUD shape) and
     # ``app/routers/webhook_router.py`` (signed-receiver shape).
-    routers=[example_router, webhook_router],
+    routers=[cliente_router, example_router, webhook_router],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):

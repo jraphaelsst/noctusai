@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -18,6 +18,7 @@ const Login = lazy(() => import("@/pages/Login"));
 const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Clientes = lazy(() => import("@/pages/Clientes"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Placeholder domain page — rename + replace per
@@ -34,6 +35,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -48,6 +50,7 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -66,6 +69,7 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
+    { path: "/clientes", component: Clientes },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],

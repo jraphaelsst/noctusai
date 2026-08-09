@@ -22,5 +22,14 @@ class IgIgSettings(ProductSettings):
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     webhook_rate_limit: str = "60/minute"
 
+    # ── Domain persistence (development) ──────────────────────────────
+    # IgIg's DOMAIN data lives in SQLite while the product is built; auth,
+    # orgs and roles stay on Supabase via the seed's database module. The
+    # swap to Supabase happens in `app/store.py`, not here.
+    # Relative paths resolve against the backend working directory; the
+    # containerised runtime mounts `var/` as a volume so the file survives
+    # restarts.
+    igig_sqlite_path: str = "var/igig.db"
+
 
 settings = IgIgSettings()
