@@ -147,8 +147,16 @@ export function useEmitirLinkAprovacao() {
 }
 
 // ─── Client-side (PUBLIC — token is the auth) ──────────────────────────
+/** A peça as the client sees it — a URL and a type, nothing else. */
+export interface PecaPublica {
+  url: string | null;
+  mime_type: string | null;
+}
+
 export interface AprovacaoPublica {
   titulo: string;
+  /** Empty when the pauta has no asset — the portal degrades to copy-only. */
+  pecas: PecaPublica[];
   copy_texto: string | null;
   direcao_video: string | null;
   formato: string | null;

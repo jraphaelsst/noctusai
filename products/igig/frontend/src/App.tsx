@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -21,6 +21,7 @@ const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const Esteira = lazy(() => import("@/pages/Esteira"));
 const Marca = lazy(() => import("@/pages/Marca"));
+const Calendario = lazy(() => import("@/pages/Calendario"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
@@ -42,6 +43,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
+      { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -59,6 +61,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Marca", href: "/marca", icon: PaletteIcon },
+      { name: "Calendário", href: "/calendario", icon: CalendarDays },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -80,6 +83,7 @@ export default createProductApp({
     { path: "/clientes", component: Clientes },
     { path: "/esteira", component: Esteira },
     { path: "/marca", component: Marca },
+    { path: "/calendario", component: Calendario },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],

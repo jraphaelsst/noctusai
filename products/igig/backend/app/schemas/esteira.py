@@ -19,6 +19,7 @@ __all__ = [
     "IniciarTimer",
     "LinkAprovacaoOut",
     "AprovacaoPublicaOut",
+    "PecaPublica",
     "DecisaoIn",
     "DecisaoOut",
 ]
@@ -96,6 +97,17 @@ class LinkAprovacaoOut(BaseModel):
     decisao: str | None = None
 
 
+class PecaPublica(BaseModel):
+    """A peça as the CLIENT sees it: a fetchable URL and nothing else.
+
+    No storage key, no id — those are the agency's internals and would let a
+    caller probe the bucket.
+    """
+
+    url: str | None = None
+    mime_type: str | None = None
+
+
 class AprovacaoPublicaOut(BaseModel):
     """What the CLIENT sees on the public portal.
 
@@ -109,6 +121,10 @@ class AprovacaoPublicaOut(BaseModel):
     direcao_video: str | None = None
     formato: str | None = None
     cliente_nome: str | None = None
+    #: The spec's "peça em paralelo com o texto da legenda". Empty when the
+    #: pauta has no asset yet — the portal degrades to copy-only rather than
+    #: showing a broken frame.
+    pecas: list[PecaPublica] = Field(default_factory=list)
     ja_decidida: bool = False
 
 

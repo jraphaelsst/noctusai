@@ -92,9 +92,35 @@ export default function AprovacaoPublica() {
         <p className="mt-1 text-sm text-muted-foreground">{aprovacao.formato}</p>
       )}
 
-      {/* The spec asks for the peça and the legenda side by side. The visual
-          asset is not yet modelled (Módulo 4 follow-up), so the copy carries
-          the review on its own rather than showing an empty frame. */}
+      {/* The spec's "peça em paralelo com o texto da legenda". When the pauta
+          has no asset the section is omitted entirely rather than rendering an
+          empty frame — copy-only is still a reviewable piece. */}
+      {aprovacao.pecas.length > 0 && (
+        <section className="mt-4 space-y-2">
+          {aprovacao.pecas.map((peca, i) =>
+            !peca.url ? (
+              <p key={i} className="text-sm text-muted-foreground">
+                A peça não pôde ser carregada. Revise pela legenda ou peça um novo link.
+              </p>
+            ) : peca.mime_type?.startsWith("video/") ? (
+              <video
+                key={i}
+                src={peca.url}
+                controls
+                className="w-full rounded-md border border-border"
+              />
+            ) : (
+              <img
+                key={i}
+                src={peca.url}
+                alt={`Peça ${i + 1} — ${aprovacao.titulo}`}
+                className="w-full rounded-md border border-border"
+              />
+            ),
+          )}
+        </section>
+      )}
+
       {aprovacao.copy_texto && (
         <section className="mt-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

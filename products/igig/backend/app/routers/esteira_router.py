@@ -48,6 +48,7 @@ from app.repositories import ETAPAS, Repositorios
 from app.schemas.esteira import (
     ApontamentoOut,
     AprovacaoPublicaOut,
+    PecaPublica,
     DecisaoIn,
     DecisaoOut,
     IniciarTimer,
@@ -57,6 +58,7 @@ from app.schemas.esteira import (
     TarefaCreate,
     TarefaOut,
 )
+from app.storage import get_storage
 from app.store import get_repositorios, get_repositorios_admin
 
 logger = logging.getLogger(__name__)
@@ -218,7 +220,22 @@ async def ver_aprovacao_publica(
         # row must not take down an otherwise valid approval link.
         logger.warning("aprovação %s aponta para cliente ausente", aprovacao.get("id"))
 
+    # Signed URLs so an anonymous client can fetch the asset without the
+    # bucket being public. A failure here must NOT take down the approval
+    # page — the copy alone is still reviewable.
+    pecas: list[PecaPublica] = []
+    for peca in repos.peca.da_pauta(org_id, str(pauta["id"])):
+        try:
+            url = await get_storage().signed_url(
+                bucket=settings.igig_storage_bucket, key=str(peca["storage_key"])
+            )
+        except Exception:  # noqa: BLE001 — storage outage must not block approval
+            logger.warning("peça sem URL assinada: %s", peca.get("storage_key"))
+            url = None
+        pecas.append(PecaPublica(url=url, mime_type=peca.get("mime_type")))
+
     return AprovacaoPublicaOut(
+        pecas=pecas,
         titulo=str(tarefa["titulo"]),
         copy_texto=pauta.get("copy_texto"),
         direcao_video=pauta.get("direcao_video"),
