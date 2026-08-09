@@ -244,7 +244,7 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
 
     # Redis for conversation state
     try:
-        redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        redis_client = redis.from_url(cfg.redis_url, decode_responses=True)
         redis_client.ping()
     except Exception as exc:
         logger.error("Redis unavailable for WhatsApp state: %s", exc)
@@ -277,12 +277,12 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
             "No YouTube credentials found; WhatsApp chat remains enabled, "
             "but upload confirmation will be blocked until YouTube is connected"
         )
-        org_id = UUID(settings.local_dev_org_id)
+        org_id = UUID(cfg.local_dev_org_id)
 
     return WhatsAppIntakeService(
-        waha_base_url=settings.waha_base_url,
-        waha_api_key=settings.waha_api_key,
-        waha_session=settings.waha_session,
+        waha_base_url=cfg.waha_base_url,
+        waha_api_key=cfg.waha_api_key,
+        waha_session=cfg.waha_session,
         redis_client=redis_client,
         authorized_numbers=authorized,
         crm_service=crm,
@@ -300,6 +300,7 @@ async def build_intake_service_for_processor(
     admin_supabase: object | None = None,
     org_id: UUID | None = None,
     connection=None,
+    cfg=None,
 ) -> WhatsAppIntakeService | None:
     """Async public alias of ``_build_intake_service`` for the
     conversation worker's processor.
@@ -317,7 +318,7 @@ async def build_intake_service_for_processor(
     # admin_supabase + org_id reserved for a future signature; pass-through
     # is intentional so callers don't break when we tighten the contract.
     del admin_supabase, org_id
-    return _build_intake_service(connection=connection)
+    return _build_intake_service(connection=connection, cfg=cfg)
 
 
 def _resolve_default_org(admin_supabase) -> UUID | None:
@@ -343,7 +344,7 @@ def _resolve_default_org(admin_supabase) -> UUID | None:
     return None
 
 
-async def _handle_session_status(envelope: WAHAMessagePayload, *, connection) -> None:
+async def _handle_session_status(envelope: WAHAMessagePayload, *, connection, cfg=None) -> None:
     """Persist + publish a ``session.status`` event.
 
     No durable column exists on ``whatsapp_connections`` for session state
@@ -358,6 +359,7 @@ async def _handle_session_status(envelope: WAHAMessagePayload, *, connection) ->
     below is the half that's in scope: it lets a subscribed client react
     immediately instead of polling at all.
     """
+    cfg = cfg or settings
     payload = envelope.payload
     if not isinstance(payload, WAHASessionStatusPayload):
         return
@@ -366,13 +368,13 @@ async def _handle_session_status(envelope: WAHAMessagePayload, *, connection) ->
 
     key = f"whatsapp:session_status:{connection.id if connection is not None else envelope.session}"
     try:
-        _status_redis = redis.from_url(settings.redis_url, decode_responses=True)
+        _status_redis = redis.from_url(cfg.redis_url, decode_responses=True)
         _status_redis.set(key, status_value, ex=24 * 3600)
     except Exception:
         logger.exception("failed to persist WAHA session status (key=%s)", key)
 
     if connection is not None:
-        bus = get_whatsapp_bus(settings.redis_url)
+        bus = get_whatsapp_bus(cfg.redis_url)
         await publish_whatsapp_event(
             bus,
             connection_id=connection.id,
@@ -381,7 +383,7 @@ async def _handle_session_status(envelope: WAHAMessagePayload, *, connection) ->
         )
 
 
-async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection) -> None:
+async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection, cfg=None) -> None:
     """Apply a ``message.ack`` delivery/read receipt and publish it.
 
     WAHA reuses the message shape for acks (``id`` / ``ack`` / ``from`` /
@@ -394,6 +396,7 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection) -> No
     known, else the dev-fallback org, exactly as ``_build_intake_service``
     falls back for the legacy route.
     """
+    cfg = cfg or settings
     payload = envelope.payload
     if not isinstance(payload, WAHAMessage):
         return
@@ -408,7 +411,7 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection) -> No
         logger.debug("WhatsApp ack event with unparseable ack=%r — dropped", payload.ack)
         return
 
-    org_id = connection.org_id if connection is not None else UUID(settings.local_dev_org_id)
+    org_id = connection.org_id if connection is not None else UUID(cfg.local_dev_org_id)
     message_store = MessageStore(admin_supabase=get_admin_client(), org_id=org_id)
     acked_at = datetime.now(timezone.utc).isoformat()
     updated = message_store.apply_ack(
@@ -429,7 +432,7 @@ async def _handle_message_ack(envelope: WAHAMessagePayload, *, connection) -> No
     # connection recorded, and the row is the source of truth for which
     # line owns it.
     if updated.connection_id is not None:
-        bus = get_whatsapp_bus(settings.redis_url)
+        bus = get_whatsapp_bus(cfg.redis_url)
         await publish_whatsapp_event(
             bus,
             connection_id=updated.connection_id,
@@ -497,11 +500,11 @@ async def _process_waha_body(
     event = envelope.event
 
     if event == "session.status":
-        await _handle_session_status(envelope, connection=connection)
+        await _handle_session_status(envelope, connection=connection, cfg=cfg)
         return Response(status_code=status.HTTP_200_OK)
 
     if event == "message.ack":
-        await _handle_message_ack(envelope, connection=connection)
+        await _handle_message_ack(envelope, connection=connection, cfg=cfg)
         return Response(status_code=status.HTTP_200_OK)
 
     if event == "message.reaction":
@@ -541,7 +544,7 @@ async def _process_waha_body(
     provider_message_id = (payload.id or "").strip()
     if provider_message_id:
         try:
-            _setnx_client = redis.from_url(settings.redis_url, decode_responses=True)
+            _setnx_client = redis.from_url(cfg.redis_url, decode_responses=True)
             seen_key = f"whatsapp:msg_seen:{provider_message_id}"
             won = _setnx_client.set(seen_key, "1", ex=5 * 60, nx=True)
             if not won:
@@ -673,7 +676,7 @@ async def _process_waha_body(
             )
             chat_summary = None
 
-        bus = get_whatsapp_bus(settings.redis_url)
+        bus = get_whatsapp_bus(cfg.redis_url)
         await publish_whatsapp_event(
             bus,
             connection_id=connection.id,
@@ -799,13 +802,13 @@ async def _process_waha_body(
     # When a per-connection record is present, the auto_reply_enabled toggle
     # gates the chatbot.  Default is OFF — operators can chat manually without
     # the bot interfering.  The legacy global route preserves the old gate
-    # (settings.whatsapp_chatbot_enabled only, no connection context).
+    # (cfg.whatsapp_chatbot_enabled only, no connection context).
     _auto_reply_allowed = (
         connection.auto_reply_enabled if connection is not None
         else True  # legacy route: respect only the settings gate below
     )
     try:
-        if settings.whatsapp_chatbot_enabled and cfg.openai_api_key and _auto_reply_allowed:
+        if cfg.whatsapp_chatbot_enabled and cfg.openai_api_key and _auto_reply_allowed:
             # Buffer the inbound into the seed conversation buffer; the
             # ConversationWorker drains the queue after the debounce
             # window (settings.message_debounce_seconds, default 8s).
@@ -828,7 +831,7 @@ async def _process_waha_body(
                     "WhatsApp inbound buffered: sender=%s conv=%s debounce=%ss",
                     sender,
                     canonical_session,
-                    settings.message_debounce_seconds,
+                    cfg.message_debounce_seconds,
                 )
             else:
                 # Conversation module not wired (lifespan startup
@@ -843,7 +846,7 @@ async def _process_waha_body(
                     redis_client=intake.redis_client,
                     intake_service=intake,
                     session_id=canonical_session,
-                    model=settings.openai_chat_model,
+                    model=cfg.openai_chat_model,
                     api_key=cfg.openai_api_key,
                 )
                 reply = await chatbot.reply(message_body)
@@ -875,6 +878,10 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
 
 
 @router.post("/webhook")
+# NOTE: `settings` (not `cfg`) is correct here and cannot be changed —
+# a decorator is evaluated at IMPORT time, before any request exists
+# and before dependency_overrides could apply. The other 14 reads in
+# this module now flow through `Depends(get_settings)`.
 @limiter.limit(settings.webhook_rate_limit)
 async def whatsapp_webhook(
     request: Request,
