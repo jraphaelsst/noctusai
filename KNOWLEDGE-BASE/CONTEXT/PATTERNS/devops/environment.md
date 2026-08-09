@@ -65,7 +65,7 @@ Secrets live in non-prefixed vars (backend-only).
 - `products/core/backend/app/config.py` → `cors_origins = "@registry:all"` (SSO-bridge).
 - Other products still carry hardcoded enumerations — per-product migration deferred until the seam is exercised on N=2 consumers. File a follow-up project when surfacing.
 
-Current ports (auto-derived from `start.sh`): 5173 (Core), 8080 (ERP), 8090 (PF), 8095 (Therapy), 8100 (Seed), 8110 (Daily Life), 8120 (Mailing), 8123 (Dev Team), 8130 (AdConnect), 8140 (Media Scheduling), 8150 (YouTube Crawler), 8160 (Imobi Scheduling) — plus `3000` (Next/React default) as a universal localhost alt.
+Current ports (mirroring `start.sh` — re-derive rather than trust this line): 5173 (Core), 8080 (ERP), 8090 (PF), 8095 (Therapy), 8100 (Seed), 8110 (Daily Life), 8123 (Dev Team), 8130 (AdConnect), 8140 (Orbity), 8150 (Knowledge Extractor), 8160 (Social Wiring), 8170 (IgIg) — plus `3000` (Next/React default) as a universal localhost alt.
 
 ### CORS wildcard+credentials guard — auth-replay defense
 

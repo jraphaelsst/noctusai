@@ -7,4 +7,4 @@ import { createViteConfig } from "../../../seed/framework/frontend/vite.config.f
 // knowledge-extractor) is supplied explicitly so the two-port/native
 // dev path (no VITE_SAME_ORIGIN) also resolves without depending on the
 // frontend `port` matching a registry frontend-port row.
-export default createViteConfig({ port: 8140, backendPort: 8012 });
+export default createViteConfig({ port: 8150, backendPort: 8012 });

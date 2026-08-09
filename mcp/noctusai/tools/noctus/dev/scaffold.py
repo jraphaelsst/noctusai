@@ -446,12 +446,14 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8012, "knowledge-extractor"),
     (8013, "igig"),
     (8140, "orbity"),              # Orbity frontend
-    # ⚠ COLLISION: knowledge-extractor's frontend ALSO binds 8140
-    # (products/knowledge-extractor/frontend/vite.config.ts). Unresolved —
-    # KE's Google Console OAuth redirect is registered against :8140, so the
-    # swap is gated on that external registration. See the
-    # NOC-REMEDIATE[house-port] marker in KE's backend/app/config.py.
-    # Recorded here so no THIRD product is ever issued 8140.
+    # knowledge-extractor's native-dev frontend used to bind 8140 too, which
+    # made `./start.sh` unrunnable with both products up. Resolved 2026-08-09
+    # by moving KE to 8150 (its vite port is native-dev-only and independent
+    # of the registry/factory map — `projects/container-first-codify-and-
+    # absorb-ke/findings.md`). KE's :8140 OAuth redirect is a SEPARATE thing:
+    # a transient local callback server pinned to noc's Google Console
+    # registration, deliberately left alone.
+    (8150, "knowledge-extractor"),  # KE frontend (native-dev only; house = 8012)
     (8160, "social-wiring"),       # Social Wiring frontend
     (8170, "igig"),                # IgIg frontend
 ]

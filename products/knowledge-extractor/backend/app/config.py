@@ -47,6 +47,15 @@ class Settings(ProductSettings):
     # NOC-REMEDIATE[house-port]: redirect uses the OLD frontend port :8140; the
     # house port is :8012. NOT a clean swap — must match KE's Google Console
     # OAuth registration, so align during KE completion (container-first KE absorb). — 2026-05-25
+    #
+    # ⚠ HAZARD surfaced 2026-08-09: this :8140 is NOT a server we run — it is a
+    # transient local callback server (see integrations/google_drive/oauth.py)
+    # bound only during one-time consent. Orbity's frontend now holds :8140
+    # PERMANENTLY, so a consent run while Orbity is up will fail to bind. KE's
+    # own frontend was moved off 8140 → 8150 to unbreak `./start.sh`; this
+    # value was deliberately NOT moved with it, because it is pinned by the
+    # Google Console registration. Stop Orbity before running KE consent, or
+    # close this marker by re-registering the redirect at the house port.
     google_oauth_redirect_uri: str = "http://localhost:8140/oauth/google/callback"
     google_oauth_client_secret_file: str = "secrets/client_secret.json"
     google_oauth_token_file: str = "secrets/drive_token.json"
