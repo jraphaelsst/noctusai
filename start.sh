@@ -61,6 +61,7 @@ PRODUCTS=(
   "social-wiring:Social Wiring:8011:8160"
   "knowledge-extractor:Knowledge Extractor:8012:8140"
   "orbity:Orbity:8010:8140"
+  "igig:IgIg:8013:8170"
 )
 # END_PRODUCTS_REGISTRY
 

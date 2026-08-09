@@ -18,6 +18,7 @@
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **Social Wiring** | `products/social-wiring/` | Social-ops hub: email-marketing + WhatsApp-scheduling. Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` |
 | **Knowledge Extractor** | `products/knowledge-extractor/` | Course-methodology RAG: Drive→transcribe→summarize→extract methodology→pgvector KB. Backend-only; absorbed from the sibling `knowledge-extractor` repo 2026-05-23 (seam-swap + container gate in flight, `container-first-codify-and-absorb-ke`) | 8012/— | `knowledge_extractor` |
+| **IgIg** | `products/igig/` | Agency ERP for a communication agency: CRM/orçamentos, Central da Marca, planejamento editorial, esteira de produção criativa + portal de aprovação white-label, distribuição/métricas, financeiro/retainers. **Develops on SQLite** via the `noctusai_lib.integrations.persistence` seam (domain data only — auth stays on Supabase); migrates to Supabase later. Tenant isolation is app-layer `org_id` scoping on the SQLite path (accept-with-rationale) with real RLS policies shipped in the migrations for the Postgres path. Merges into `orbity` in the future | 8013/8170 | `igig` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
@@ -50,8 +51,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas DECLARED in migrations (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 382** declared across those schemas.
+- **Schemas DECLARED in migrations (12):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
+- **Tables: 385** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

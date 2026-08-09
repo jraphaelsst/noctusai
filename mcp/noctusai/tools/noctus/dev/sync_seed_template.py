@@ -100,8 +100,25 @@ def _apply_placeholders(text: str, filename: str, is_compose: bool, is_dockerfil
     # Order matters: longest match first.
     text = text.replace("Seed Product", "{{PRODUCT_NAME}}")
     text = text.replace("seed-product", "{{PRODUCT_SLUG}}")
+
+    # `_REPO / "seed" / "lib"` names the seed DIRECTORY at the repo root —
+    # it is the same path for every product and must NOT become
+    # {{SCHEMA_NAME}}. It only survived this long because `products/seed/`
+    # has schema "seed", so the wrong substitution was invisible there;
+    # the first product scaffolded with any other schema got a conftest.py
+    # pointing at `<repo>/<schema>/lib/backend`, which does not exist
+    # (surfaced by igig, 2026-08-09). Protect the path idiom across the
+    # blanket schema rewrite below, then restore it.
+    _SEED_DIR_SENTINEL = "\x00SEED_DIR\x00"
+    text = re.sub(
+        r'(/\s*)"seed"(\s*/)',
+        lambda m: f'{m.group(1)}{_SEED_DIR_SENTINEL}{m.group(2)}',
+        text,
+    )
+
     text = text.replace('"seed"', '"{{SCHEMA_NAME}}"')
     text = text.replace("'seed'", "'{{SCHEMA_NAME}}'")
+    text = text.replace(_SEED_DIR_SENTINEL, '"seed"')
     text = text.replace("Sprout", "{{PRODUCT_ICON}}")
     text = re.sub(r"\b8004\b", "{{BACKEND_PORT}}", text)
     text = re.sub(r"\b8100\b", "{{FRONTEND_PORT}}", text)

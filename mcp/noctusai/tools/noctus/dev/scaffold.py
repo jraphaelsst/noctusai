@@ -438,7 +438,22 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8110, "daily-life"),          # Daily Life frontend
     (8123, "dev-team"),            # Dev Team frontend (off-pattern: see vite.config.ts)
     (8130, "adconnect"),           # AdConnect frontend
-         # YouTube Crawler frontend
+    # Backfilled 2026-08-09 (igig scaffold) — these shipped without being
+    # registered here, so the table under-reported live allocations and a
+    # future scaffold could have re-issued an occupied port.
+    (8010, "orbity"),
+    (8011, "social-wiring"),
+    (8012, "knowledge-extractor"),
+    (8013, "igig"),
+    (8140, "orbity"),              # Orbity frontend
+    # ⚠ COLLISION: knowledge-extractor's frontend ALSO binds 8140
+    # (products/knowledge-extractor/frontend/vite.config.ts). Unresolved —
+    # KE's Google Console OAuth redirect is registered against :8140, so the
+    # swap is gated on that external registration. See the
+    # NOC-REMEDIATE[house-port] marker in KE's backend/app/config.py.
+    # Recorded here so no THIRD product is ever issued 8140.
+    (8160, "social-wiring"),       # Social Wiring frontend
+    (8170, "igig"),                # IgIg frontend
 ]
 
 
@@ -627,6 +642,20 @@ def scaffold_product(
             "{{PRODUCT_ICON}}": icon,
         }
 
+        # Literal rewrites — for canonical strings that CANNOT be authored
+        # as `{{PLACEHOLDER}}` in the template because the template is
+        # generated from `products/seed/`, where the literal is CORRECT for
+        # that product. The CORS sentinel is the case: `products/seed/`
+        # legitimately declares `@registry:own:seed` (its slug IS "seed"),
+        # so the placeholder form can't live there — but every scaffolded
+        # product inherited the literal and shipped a config that resolves
+        # CORS for the wrong product. Caught by the pre-existing keeper
+        # `tests/config/test_per_product_cors_sentinel.py`, which went red
+        # on the first scaffold after it was added (igig, 2026-08-09).
+        literal_rewrites = {
+            "@registry:own:seed": f"@registry:own:{slug}",
+        }
+
         for f in target.rglob("*"):
             if not f.is_file():
                 continue
@@ -645,6 +674,8 @@ def scaffold_product(
             new_content = content
             for placeholder, value in replacements.items():
                 new_content = new_content.replace(placeholder, value)
+            for literal, value in literal_rewrites.items():
+                new_content = new_content.replace(literal, value)
             if new_content != content:
                 try:
                     f.write_text(new_content, encoding="utf-8")

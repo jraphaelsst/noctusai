@@ -45,6 +45,7 @@ include:
   - products/social-wiring/docker-compose.yml
   - products/knowledge-extractor/docker-compose.yml
   - products/orbity/docker-compose.yml
+  - products/igig/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 
 networks:

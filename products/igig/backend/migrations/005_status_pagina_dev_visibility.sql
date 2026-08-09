@@ -3,12 +3,12 @@
 --
 -- SEED/TEMPLATE LEG of the status_pagina dev-visibility fan-out (pilot:
 -- social-wiring migration 026/032, feat/status-pagina-dev-visibility).
--- Every product scaffolded FROM this {{SCHEMA_NAME}} copies 001_seed.sql (which ships
+-- Every product scaffolded FROM this igig copies 001_seed.sql (which ships
 -- only "todos_veem_producao", USING status='producao') — so without this
 -- migration every NEW product inherits the same defect: a 'desenvolvimento'
 -- row is never returned to anyone (not even dev/owner) through the FE's
 -- authenticated product-client read (seed/lib/frontend/src/page-status.ts
--- usePageStatus). This migration makes the {{SCHEMA_NAME}} canonical shape correct
+-- usePageStatus). This migration makes the igig canonical shape correct
 -- day-1 for future products.
 --
 -- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
@@ -24,13 +24,13 @@
 -- current_org_id()) — CREATE OR REPLACE is idempotent across every product
 -- migration chain that (re)declares it; one definition serves the fleet.
 --
--- Forward-only + idempotent. products/{{SCHEMA_NAME}}/ and templates/product-{{SCHEMA_NAME}}/
--- MUST stay in sync (pre-commit hook mirrors products/{{SCHEMA_NAME}} → templates on
+-- Forward-only + idempotent. products/igig/ and templates/product-igig/
+-- MUST stay in sync (pre-commit hook mirrors products/igig → templates on
 -- staged change) — this file has a byte-identical sibling in
--- templates/product-{{SCHEMA_NAME}}/backend/migrations/ with {{SCHEMA_NAME}} in place
--- of the literal `{{SCHEMA_NAME}}` schema.
+-- templates/product-igig/backend/migrations/ with igig in place
+-- of the literal `igig` schema.
 
-SET search_path = {{SCHEMA_NAME}}, public;
+SET search_path = igig, public;
 
 CREATE OR REPLACE FUNCTION public.current_org_role()
   RETURNS text
@@ -45,8 +45,8 @@ $f$;
 -- TO authenticated is mandatory — anon has no auth.uid(), so
 -- current_org_role() is NULL and `NULL = ANY(...)` is false ⇒ zero rows.
 -- Scoped to 'desenvolvimento' ONLY — 'desativado' stays hidden from all.
-DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON {{SCHEMA_NAME}}.status_pagina;
-CREATE POLICY "dev_veem_desenvolvimento" ON {{SCHEMA_NAME}}.status_pagina
+DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON igig.status_pagina;
+CREATE POLICY "dev_veem_desenvolvimento" ON igig.status_pagina
     FOR SELECT TO authenticated
     USING (
         status = 'desenvolvimento'

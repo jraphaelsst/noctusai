@@ -46,6 +46,8 @@ PRODUCTS: list[tuple[str, str]] = [
     ("dev-team", "8009"),
     ("social-wiring", "8011"),
     ("knowledge-extractor", "8012"),
+    ("orbity", "8010"),
+    ("igig", "8013"),
 ]
 
 # ── compose substitution constants (verbatim from propagate-composes.sh) ──

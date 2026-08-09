@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for {{PRODUCT_NAME}} backend tests.
+Pytest configuration and shared fixtures for IgIg backend tests.
 
 The seed product uses the framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
