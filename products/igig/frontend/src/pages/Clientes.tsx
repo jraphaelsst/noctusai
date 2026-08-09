@@ -9,6 +9,7 @@
  */
 import { useState } from "react";
 import { Badge, Button, Input, TableSkeleton } from "@noctusai/lib/design-system";
+import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { Plus, Search, Trash2, UserCheck } from "lucide-react";
 
 import {
@@ -21,10 +22,11 @@ import {
 
 /** Badge tone per funnel status. Inadimplente is destructive because it
  *  gates the Módulo 4 approval portal — it needs to read as a problem. */
-const STATUS_VARIANT: Record<StatusCliente, string> = {
-  prospect: "secondary",
-  ativo: "success",
+const STATUS_VARIANT: Record<StatusCliente, BadgeVariant> = {
+  prospect: "muted",
+  ativo: "default",
   inativo: "outline",
+  // Inadimplente gates the Módulo 4 approval portal — it must read as a problem.
   inadimplente: "destructive",
 };
 
@@ -167,7 +169,7 @@ export default function Clientes() {
                 </p>
               </div>
 
-              <Badge variant={STATUS_VARIANT[cliente.status] as never}>
+              <Badge variant={STATUS_VARIANT[cliente.status]}>
                 {STATUS_LABEL[cliente.status]}
               </Badge>
 

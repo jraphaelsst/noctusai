@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,6 +20,7 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const Esteira = lazy(() => import("@/pages/Esteira"));
+const Marca = lazy(() => import("@/pages/Marca"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
@@ -40,6 +41,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
+      { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -56,6 +58,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
+      { name: "Marca", href: "/marca", icon: PaletteIcon },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -76,6 +79,7 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/clientes", component: Clientes },
     { path: "/esteira", component: Esteira },
+    { path: "/marca", component: Marca },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],

@@ -47,7 +47,7 @@ function CartaoTarefa({
       <p className="text-sm font-medium text-foreground">{tarefa.titulo}</p>
 
       {tarefa.refacoes > 0 && (
-        <Badge variant={"destructive" as never} className="mt-2">
+        <Badge variant="destructive" className="mt-2">
           {tarefa.refacoes} {tarefa.refacoes === 1 ? "refação" : "refações"}
         </Badge>
       )}
