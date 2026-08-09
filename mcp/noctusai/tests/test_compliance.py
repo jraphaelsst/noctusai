@@ -21,6 +21,7 @@ from tools.noctus.dev.compliance import (
     check_primary_checkout_commit,
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
+    check_settings_di_regression,
     check_seed_canonical_default,
     check_query_fn_returns_undefined,
     check_derives_from_dev_only_artifact,
@@ -3611,3 +3612,95 @@ class TestBranchTreeMirror:
         field_issues = [i for i in issues if "missing claude-tree field" in i["issue"]]
         # role, agent, parent all missing → 3 field issues.
         assert len(field_issues) == 3, f"Expected 3 missing-field issues, got: {field_issues}"
+
+
+class TestCheckSettingsDiRegression:
+    """A request-time config-singleton read in a file certified DI-clean.
+
+    Closes the gap `check_no_self_monkeypatch` leaves: that detector catches
+    the SYMPTOM (a test monkeypatching `settings`) and only once such a test
+    exists. This one catches the CAUSE — the production read that left the
+    test no honest alternative — at the commit that introduces it.
+    """
+
+    def _mk(self, body: str, *, rel="app/routers/whatsapp_router.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="settings_di_test_"))
+        target = tmp / "social-wiring" / "backend" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp / "social-wiring"
+
+    def test_di_clean_file_passes(self):
+        product = self._mk(
+            "from app.config import settings\n"
+            "def handler(cfg=None):\n"
+            "    return cfg.redis_url\n"
+        )
+        assert check_settings_di_regression(product) == []
+
+    def test_request_time_singleton_read_flags_high(self):
+        product = self._mk(
+            "from app.config import settings\n"
+            "def handler(cfg=None):\n"
+            "    return settings.redis_url\n"
+        )
+        issues = check_settings_di_regression(product)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+        assert "settings.redis_url" in issues[0]["issue"]
+
+    def test_module_level_read_is_not_flagged(self):
+        """`@limiter.limit(settings.X)` runs at import — irreducible."""
+        product = self._mk(
+            "from app.config import settings\n"
+            "RATE = settings.webhook_rate_limit\n"
+            "def handler(cfg=None):\n"
+            "    return cfg.redis_url\n"
+        )
+        assert check_settings_di_regression(product) == []
+
+    def test_cfg_or_settings_fallback_is_not_flagged(self):
+        """The documented fallback for non-request callers is a bare Name."""
+        product = self._mk(
+            "from app.config import settings\n"
+            "def handler(cfg=None):\n"
+            "    cfg = cfg or settings\n"
+            "    return cfg.redis_url\n"
+        )
+        assert check_settings_di_regression(product) == []
+
+    def test_uncertified_file_is_ignored(self):
+        """The ratchet only guards files explicitly listed.
+
+        A singleton read in a NON-certified file must produce no `high`. (The
+        fixture omits the certified file, so the detector also emits its
+        "certified file missing" warning — that is separate and expected.)
+        """
+        product = self._mk(
+            "from app.config import settings\n"
+            "def handler():\n"
+            "    return settings.redis_url\n",
+            rel="app/routers/calendar_router.py",
+        )
+        issues = check_settings_di_regression(product)
+        assert [i for i in issues if i["severity"] == "high"] == []
+        assert not any("calendar_router" in i["file"] for i in issues)
+
+    def test_other_products_are_ignored(self):
+        tmp = Path(tempfile.mkdtemp(prefix="settings_di_other_"))
+        target = tmp / "erp-imobiliario" / "backend" / "app/routers/whatsapp_router.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("from app.config import settings\ndef h():\n    return settings.x\n")
+        assert check_settings_di_regression(tmp / "erp-imobiliario") == []
+
+    def test_missing_certified_file_surfaces_a_warning(self):
+        """A vanished certified file means the ratchet silently stopped."""
+        tmp = Path(tempfile.mkdtemp(prefix="settings_di_gone_"))
+        (tmp / "social-wiring" / "backend").mkdir(parents=True, exist_ok=True)
+        issues = check_settings_di_regression(tmp / "social-wiring")
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "warning"
+
+    def test_the_real_router_is_clean(self):
+        """The live file this ratchet was created for."""
+        assert check_settings_di_regression(PRODUCTS_DIR / "social-wiring") == []

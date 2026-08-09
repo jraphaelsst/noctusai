@@ -3452,6 +3452,108 @@ def _file_has_limiter_limit_decorator(tree: ast.Module) -> tuple[bool, int]:
     return False, 0
 
 
+#: Files certified free of request-time `settings.<attr>` singleton reads —
+#: their config flows through the product's `Depends(get_settings)` DI seam.
+#: A RATCHET, not a claim about the whole product: social-wiring still has
+#: ~130 in-function singleton reads elsewhere, and listing a file here locks
+#: in the ones that have been migrated so they cannot silently regress.
+#: Add a file the moment you finish migrating it.
+_SETTINGS_DI_CLEAN_FILES: frozenset[tuple[str, str]] = frozenset({
+    # Migrated 2026-08-09 (whatsapp_router settings-DI completion, 16 self-
+    # patches → 0). Two module-level reads remain by necessity:
+    # `@limiter.limit(settings.webhook_rate_limit)` is evaluated at import.
+    ("social-wiring", "app/routers/whatsapp_router.py"),
+})
+
+
+def check_settings_di_regression(product_path: Path) -> list[dict]:
+    """Flag a request-time config-singleton read in a DI-clean file.
+
+    **The gap this closes.** `check_no_self_monkeypatch` catches the SYMPTOM —
+    a test reaching for `monkeypatch.setattr(settings, ...)` — but only once
+    someone writes such a test. The CAUSE is a production read of the
+    `app.config.settings` singleton inside a request path, which leaves tests
+    no honest way to pin config. That can sit in the tree indefinitely and
+    only surfaces later, as a test-side violation, far from the change that
+    introduced it. This detector catches the cause at the commit that adds it.
+
+    **Scope is a ratchet.** Only files in :data:`_SETTINGS_DI_CLEAN_FILES` are
+    checked. A product-wide gate is not viable today (social-wiring alone has
+    ~130 in-function singleton reads), and a gate that fires 130 times is a
+    gate everyone learns to ignore. Migrate a file, add it here, and it can
+    never regress.
+
+    **What is NOT flagged**, deliberately:
+      * module-level reads — `@limiter.limit(settings.X)` runs at import,
+        before any request or `dependency_overrides` exists. Irreducible.
+      * `cfg = cfg or settings` — the documented fallback for non-request
+        callers. It is a bare Name, not a `settings.<attr>` access, so it
+        never matches.
+
+    Severity: high — this is what regressed social-wiring's 43→0 ratchet.
+    """
+    import ast
+
+    issues: list[dict] = []
+    if not product_path.exists():
+        return issues
+    product_slug = product_path.name
+
+    for _slug, rel in sorted(_SETTINGS_DI_CLEAN_FILES):
+        if _slug != product_slug:
+            continue
+        target = product_path / "backend" / rel
+        if not target.exists():
+            # A certified file that vanished is itself worth surfacing — the
+            # ratchet silently stops protecting anything otherwise.
+            issues.append({
+                "product": product_slug,
+                "file": f"products/{product_slug}/backend/{rel}",
+                "issue": (
+                    f"`{rel}` is listed in _SETTINGS_DI_CLEAN_FILES but does not "
+                    "exist. Update the list if the file moved or was deleted."
+                ),
+                "severity": "warning",
+            })
+            continue
+        try:
+            tree = ast.parse(target.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+
+        funcs = [
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+
+        def _in_function(line: int) -> bool:
+            return any(f.lineno <= line <= (f.end_lineno or f.lineno) for f in funcs)
+
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "settings"
+            ):
+                continue
+            if not _in_function(node.lineno):
+                continue  # module level — decorator/import time, irreducible
+            issues.append({
+                "product": product_slug,
+                "file": f"products/{product_slug}/backend/{rel}",
+                "issue": (
+                    f"`{rel}:{node.lineno}` reads `settings.{node.attr}` at request "
+                    "time, but this file is certified DI-clean. Read it from the "
+                    "`cfg` threaded off `Depends(get_settings)` instead. A "
+                    "singleton read here leaves tests no honest way to pin config "
+                    "and is what regressed this product's self-monkeypatch "
+                    "ratchet. → KB § PATTERNS/backend/di-test-seam.md"
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
 def check_slowapi_with_pep563(product_path: Path) -> list[dict]:
     """Detect files that combine `@limiter.limit` (slowapi) with
     `from __future__ import annotations` (PEP 563).
@@ -9728,6 +9830,7 @@ def check_all_products() -> tuple[int, list]:
             + check_admin_endpoint_service_role_bypass(d)
             + check_auth_session_mutation_on_shared_client(d)
             + check_slowapi_with_pep563(d)
+            + check_settings_di_regression(d)
         )
         all_issues.extend(issues)
         penalties = {"critical": 25, "high": 10, "warning": 3}
