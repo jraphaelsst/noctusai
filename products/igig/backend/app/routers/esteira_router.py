@@ -15,6 +15,11 @@ Three surfaces in one router, because they are one workflow:
     GET   /api/esteira/aprovar/{token}              what the client sees
     POST  /api/esteira/aprovar/{token}              [Aprovar] / [Solicitar Ajuste]
 
+The public pair runs on `get_repositorios_admin` (service-role, RLS bypassed)
+because an anonymous caller has no org for RLS to scope by — the same split
+Orbity uses. `org_id` is still passed explicitly on every repository call, so
+even that client cannot read across tenants.
+
 The public pair is unauthenticated by design and therefore:
   * rate-limited (public surface, DDOS guard),
   * returns a NARROW projection that leaks none of the agency's internals,
@@ -52,7 +57,7 @@ from app.schemas.esteira import (
     TarefaCreate,
     TarefaOut,
 )
-from app.store import get_repositorios
+from app.store import get_repositorios, get_repositorios_admin
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +202,7 @@ def _resolver_link(repos: Repositorios, token: str) -> dict:
 async def ver_aprovacao_publica(
     request: Request,
     token: str,
-    repos: Repositorios = Depends(get_repositorios),
+    repos: Repositorios = Depends(get_repositorios_admin),
 ) -> AprovacaoPublicaOut:
     """What the client sees. No auth; narrow projection."""
     aprovacao = _resolver_link(repos, token)
@@ -229,7 +234,7 @@ async def decidir_aprovacao_publica(
     request: Request,
     token: str,
     payload: DecisaoIn,
-    repos: Repositorios = Depends(get_repositorios),
+    repos: Repositorios = Depends(get_repositorios_admin),
 ) -> DecisaoOut:
     """[Aprovar Conteúdo] or [Solicitar Ajuste].
 

@@ -13,7 +13,7 @@ import pytest
 from noctusai_lib.integrations.persistence import SqliteRecordStore
 
 from app.repositories import Repositorios
-from app.store import aplicar_schema_sqlite, get_repositorios
+from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 
 from app.dependencies import coerce_org_uuid
 
@@ -38,9 +38,15 @@ def api(client, repos):
     """`client`, with domain persistence pointed at the throwaway store."""
     from app.main import app
 
+    # BOTH scopes point at the same throwaway store: the authed routes use
+    # `get_repositorios` (RLS-scoped in production) and the public portal uses
+    # `get_repositorios_admin` (service-role). Overriding only the first would
+    # leave the portal hitting a real Supabase client.
     app.dependency_overrides[get_repositorios] = lambda: repos
+    app.dependency_overrides[get_repositorios_admin] = lambda: repos
     yield client
     app.dependency_overrides.pop(get_repositorios, None)
+    app.dependency_overrides.pop(get_repositorios_admin, None)
 
 
 class TestAuthBoundary:

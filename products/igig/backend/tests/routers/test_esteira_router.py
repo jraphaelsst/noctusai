@@ -12,7 +12,7 @@ import pytest
 from noctusai_lib.integrations.persistence import SqliteRecordStore
 
 from app.repositories import ETAPAS, Repositorios
-from app.store import aplicar_schema_sqlite, get_repositorios
+from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 
 from app.dependencies import coerce_org_uuid
 
@@ -35,9 +35,15 @@ def repos() -> Repositorios:
 def api(client, repos):
     from app.main import app
 
+    # BOTH scopes point at the same throwaway store: the authed routes use
+    # `get_repositorios` (RLS-scoped in production) and the public portal uses
+    # `get_repositorios_admin` (service-role). Overriding only the first would
+    # leave the portal hitting a real Supabase client.
     app.dependency_overrides[get_repositorios] = lambda: repos
+    app.dependency_overrides[get_repositorios_admin] = lambda: repos
     yield client
     app.dependency_overrides.pop(get_repositorios, None)
+    app.dependency_overrides.pop(get_repositorios_admin, None)
 
 
 @pytest.fixture
@@ -236,3 +242,67 @@ class TestPortalPublico:
         """The org half of the token is parsed, not trusted as a bypass."""
         forjado = f"outra-org.{'x' * 40}"
         assert api.raw().get(f"/api/esteira/aprovar/{forjado}").status_code == 404
+
+
+class TestPublicPortalWiring:
+    """Structural guarantees the request-level tests cannot give.
+
+    `test_view_needs_no_auth` overrides `get_repositorios`, and an override
+    replaces that dependency's whole subtree — including the auth dep nested
+    inside it. So it passes even when the public routes are wired to the
+    AUTHENTICATED repository provider, which is exactly the bug the Supabase
+    flip introduced: in production those routes would have 401'd, while the
+    tests stayed green. These assertions inspect the wiring itself.
+    """
+
+    @staticmethod
+    def _deps(path: str, method: str):
+        from app.main import app
+
+        for route in app.routes:
+            if getattr(route, "path", None) == path and method in getattr(route, "methods", ()):
+                return {d.call for d in route.dependant.dependencies if d.call}
+        raise AssertionError(f"route not found: {method} {path}")
+
+    def _flat(self, path: str, method: str):
+        """Direct + nested dependencies for a route."""
+        from app.main import app
+
+        seen = set()
+        for route in app.routes:
+            if getattr(route, "path", None) == path and method in getattr(route, "methods", ()):
+                stack = list(route.dependant.dependencies)
+                while stack:
+                    d = stack.pop()
+                    if d.call:
+                        seen.add(d.call)
+                    stack.extend(d.dependencies)
+                return seen
+        raise AssertionError(f"route not found: {method} {path}")
+
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    def test_public_routes_never_require_auth(self, method):
+        from app.dependencies import get_current_user_org
+
+        assert get_current_user_org not in self._flat("/api/esteira/aprovar/{token}", method), (
+            "the public approval portal must not depend on authentication — "
+            "its caller is the agency's client, who has no noc account"
+        )
+
+    @pytest.mark.parametrize("method", ["GET", "POST"])
+    def test_public_routes_use_the_service_role_provider(self, method):
+        from app.store import get_repositorios, get_repositorios_admin
+
+        deps = self._flat("/api/esteira/aprovar/{token}", method)
+        assert get_repositorios_admin in deps
+        assert get_repositorios not in deps
+
+    def test_authed_routes_use_the_rls_scoped_provider(self):
+        """The inverse: the agency's own routes must stay RLS-scoped."""
+        from app.dependencies import get_current_user_org
+        from app.store import get_repositorios, get_repositorios_admin
+
+        deps = self._flat("/api/esteira/quadro", "GET")
+        assert get_repositorios in deps
+        assert get_repositorios_admin not in deps
+        assert get_current_user_org in deps

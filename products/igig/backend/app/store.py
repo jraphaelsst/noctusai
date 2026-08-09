@@ -1,59 +1,83 @@
-"""Process-wide persistence store for IgIg domain data.
+"""Persistence wiring for IgIg domain data.
 
-**Domain data only.** Auth, orgs, users and roles stay on Supabase through
-the seed's `create_database_module()` / `create_dependencies()` — this store
-holds the `igig` schema's business tables and nothing else. That split is the
-decision recorded in KB § 02-LANDSCAPE's IgIg row: develop domain data on
-SQLite, keep identity on Supabase so core SSO and `public.noctus_users` work
-unchanged.
+**Supabase is production.** IgIg is a standard noc product: domain data lives
+in the `igig` Postgres schema, reached through the seed's
+``create_database_module()`` clients, with RLS as the real tenant boundary.
+The `noctusai_lib.integrations.persistence` seam sits in between so
+repositories never speak PostgREST directly — and so tests can run against a
+genuine SQLite database instead of a mock.
 
-Swapping to Supabase later is a change HERE and nowhere else — repositories,
-services and routers are written against the ``RecordStore`` Protocol.
+Two request scopes, deliberately distinct:
+
+* :func:`get_repositorios` — USER-scoped. Built from the caller's JWT, so
+  every query runs under RLS. This is what authenticated routers use.
+* :func:`get_repositorios_admin` — SERVICE-ROLE, RLS bypassed. ONLY for the
+  public approval portal, whose caller is the agency's client and has no noc
+  account (and therefore no org to scope by). Security there is the token
+  itself; see ``app/routers/esteira_router.py``. Mirrors the split Orbity
+  already uses for the same surface.
+
+`org_id` is still passed explicitly on every repository call. On the Postgres
+path that is defence-in-depth behind RLS — it means a service-role client used
+by the portal still cannot read across tenants.
 """
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 
+from fastapi import Depends
 from noctusai_lib.integrations.persistence import RecordStore, get_record_store
 
-from app.config import settings
+from app.database import get_admin_client, get_supabase_client
+from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["get_store", "get_repositorios", "aplicar_schema_sqlite", "reset_store"]
+__all__ = [
+    "get_repositorios",
+    "get_repositorios_admin",
+    "make_store",
+    "sqlite_migrations",
+    "aplicar_schema_sqlite",
+]
 
 _SQLITE_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "sqlite"
 
 
-@lru_cache(maxsize=1)
-def get_store() -> RecordStore:
-    """The process's store, built once.
+def make_store(token: str | None = None, *, admin: bool = False) -> RecordStore:
+    """Build a Supabase-backed store.
 
-    Cached because :class:`SqliteRecordStore` owns a connection; building one
-    per request would leak file handles and defeat its serialisation lock.
-
-    Today this always resolves to SQLite (``settings.igig_sqlite_path``).
-    When IgIg moves to Supabase, pass the seed's user-scoped client here
-    instead — `get_record_store()` already prefers it over any SQLite path.
+    ``admin=True`` returns a service-role client (RLS bypassed) — reserved for
+    the public portal. Otherwise the client is bound to ``token`` so RLS
+    applies, which is the whole point of passing the user's JWT down.
     """
-    store = get_record_store(sqlite_path=settings.igig_sqlite_path)
-    logger.info(
-        "igig persistence store: %s (sqlite_path=%s)",
-        type(store).__name__,
-        settings.igig_sqlite_path,
-    )
-    aplicar_schema_sqlite(store)
-    return store
+    client = get_admin_client() if admin else get_supabase_client(token)
+    return get_record_store(supabase_client=client)
 
 
+def get_repositorios(auth: tuple = Depends(get_current_user_org)) -> Repositorios:
+    """Repository set bound to the caller's RLS-scoped client."""
+    _user, token, _raw_org = auth
+    return Repositorios(make_store(token))
+
+
+def get_repositorios_admin() -> Repositorios:
+    """Repository set on the service-role client — public portal ONLY.
+
+    Kept as its own dependency rather than a flag so that a route opting out
+    of RLS has to say so explicitly in its signature, where a reviewer sees it.
+    """
+    return Repositorios(make_store(admin=True))
+
+
+# ── SQLite — tests only ─────────────────────────────────────────────
 def sqlite_migrations() -> list[Path]:
-    """Every SQLite migration, in filename order (`001_`, `002_`, …).
+    """Every SQLite migration, in filename order.
 
-    Ordering is by filename because the files carry FK references forward
-    (`aprovacao` → `tarefa`), and SQLite enforces foreign keys here.
+    Each file mirrors its canonical Postgres counterpart (`006` ↔ `006`), and
+    `tests/test_schema_parity.py` fails if the two sets drift.
     """
     if not _SQLITE_MIGRATIONS_DIR.is_dir():
         raise FileNotFoundError(f"SQLite migrations dir missing at {_SQLITE_MIGRATIONS_DIR}")
@@ -64,25 +88,15 @@ def sqlite_migrations() -> list[Path]:
 
 
 def aplicar_schema_sqlite(store: RecordStore) -> None:
-    """Apply every SQLite migration if the store is SQLite-backed.
+    """Apply the SQLite mirrors to a test store.
 
-    Idempotent — every statement in the mirrors is ``IF NOT EXISTS``. This is
-    the development substitute for running migrations against Postgres; the
-    canonical `00N_igig_*.sql` files still apply to Supabase via the normal
-    migration path.
+    Tests run against `SqliteRecordStore` rather than a mock: real SQL, real
+    constraints, real FKs — closer to production than `MockSupabaseClient`,
+    while staying hermetic. Production never calls this (a Supabase-backed
+    store has no ``executescript``, so it is a no-op there by construction).
     """
     executescript = getattr(store, "executescript", None)
     if executescript is None:
-        return  # Supabase / in-memory — schema lives elsewhere.
+        return
     for arquivo in sqlite_migrations():
         executescript(arquivo.read_text(encoding="utf-8"))
-
-
-def get_repositorios() -> Repositorios:
-    """FastAPI dependency — the repository set bound to the process store."""
-    return Repositorios(get_store())
-
-
-def reset_store() -> None:
-    """Drop the cached store. Tests only — lets a test swap in a Fake."""
-    get_store.cache_clear()
