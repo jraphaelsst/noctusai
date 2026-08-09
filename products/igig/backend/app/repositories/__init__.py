@@ -35,6 +35,8 @@ __all__ = [
     "PublicacaoRepository",
     "MetricaRepository",
     "IntegracaoRepository",
+    "FaturaRepository",
+    "FaturaItemRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -628,6 +630,48 @@ class IntegracaoRepository(BaseRepository):
         return self.remover(org_id, str(registro["id"]))
 
 
+class FaturaRepository(BaseRepository):
+    """Monthly invoices — Módulo 6."""
+
+    table = "fatura"
+    default_order = (Order("competencia", descending=True),)
+
+    def do_cliente(self, org_id: str, cliente_id: str) -> list[Record]:
+        return self._por("cliente_id", cliente_id, org_id)
+
+    def da_competencia(self, org_id: str, competencia: str) -> list[Record]:
+        return self._por("competencia", competencia, org_id)
+
+    def marcar_paga(self, org_id: str, fatura_id: str) -> Record:
+        return self.atualizar(
+            org_id,
+            fatura_id,
+            {"status": "paga", "pago_em": datetime.now(timezone.utc).isoformat()},
+        )
+
+    def recalcular_total(self, org_id: str, fatura_id: str, itens: list[Record]) -> Record:
+        """Sum the lines onto the invoice.
+
+        The total is DERIVED, never set by a caller: an invoice whose header
+        disagrees with its own lines is the kind of error a client notices
+        before you do.
+        """
+        total = sum(
+            int(i.get("quantidade") or 0) * float(i.get("valor_unit") or 0) for i in itens
+        )
+        return self.atualizar(org_id, fatura_id, {"valor_total": round(total, 2)})
+
+
+class FaturaItemRepository(BaseRepository):
+    """Invoice lines. Excedentes are their own line so the client sees WHY."""
+
+    table = "fatura_item"
+    default_order = (Order("created_at"),)
+
+    def da_fatura(self, org_id: str, fatura_id: str) -> list[Record]:
+        return self._por("fatura_id", fatura_id, org_id)
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -652,3 +696,5 @@ class Repositorios:
         self.publicacao = PublicacaoRepository(store)
         self.metrica = MetricaRepository(store)
         self.integracao = IntegracaoRepository(store)
+        self.fatura = FaturaRepository(store)
+        self.fatura_item = FaturaItemRepository(store)

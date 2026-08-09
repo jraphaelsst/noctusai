@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -24,6 +24,7 @@ const Marca = lazy(() => import("@/pages/Marca"));
 const Calendario = lazy(() => import("@/pages/Calendario"));
 const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 const Integracoes = lazy(() => import("@/pages/Integracoes"));
+const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
@@ -47,6 +48,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
       { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3, route: "distribuicao" },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
@@ -67,6 +69,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Marca", href: "/marca", icon: PaletteIcon },
       { name: "Calendário", href: "/calendario", icon: CalendarDays },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3 },
+      { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Integrações", href: "/integracoes", icon: Plug },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
@@ -91,6 +94,7 @@ export default createProductApp({
     { path: "/marca", component: Marca },
     { path: "/calendario", component: Calendario },
     { path: "/distribuicao", component: Distribuicao },
+    { path: "/financeiro", component: Financeiro },
     { path: "/integracoes", component: Integracoes },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },

@@ -40,6 +40,8 @@ DOMAIN_TABLES = {
     "publicacao", "metrica",
     # 010 — integrações de canal
     "integracao",
+    # 011 — financeiro
+    "fatura", "fatura_item",
 }
 
 
