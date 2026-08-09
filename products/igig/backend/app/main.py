@@ -29,6 +29,7 @@ from app.routers.cliente_router import router as cliente_router
 from app.routers.esteira_router import router as esteira_router
 from app.routers.marca_router import router as marca_router
 from app.routers.distribuicao_router import router as distribuicao_router
+from app.routers.comercial_router import router as comercial_router
 from app.routers.financeiro_router import router as financeiro_router
 from app.routers.integracoes_router import router as integracoes_router
 from app.routers.pauta_router import router as pauta_router
@@ -48,7 +49,7 @@ app = create_product_app(
     # ``app/routers/webhook_router.py`` (signed-receiver shape).
     routers=[
         cliente_router, esteira_router, marca_router, pauta_router,
-        distribuicao_router, integracoes_router, financeiro_router,
+        distribuicao_router, integracoes_router, financeiro_router, comercial_router,
         example_router, webhook_router,
     ],
     # Uncomment when this product registers AI features in

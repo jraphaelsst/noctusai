@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet, Briefcase } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -25,6 +25,7 @@ const Calendario = lazy(() => import("@/pages/Calendario"));
 const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 const Integracoes = lazy(() => import("@/pages/Integracoes"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
+const Comercial = lazy(() => import("@/pages/Comercial"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
@@ -43,6 +44,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Comercial", href: "/comercial", icon: Briefcase, route: "comercial" },
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
@@ -64,6 +66,7 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Comercial", href: "/comercial", icon: Briefcase },
       { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Marca", href: "/marca", icon: PaletteIcon },
@@ -89,6 +92,7 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
+    { path: "/comercial", component: Comercial },
     { path: "/clientes", component: Clientes },
     { path: "/esteira", component: Esteira },
     { path: "/marca", component: Marca },

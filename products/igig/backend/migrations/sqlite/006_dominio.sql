@@ -75,6 +75,14 @@ CREATE TABLE IF NOT EXISTS contrato (
     status          TEXT NOT NULL DEFAULT 'rascunho'
                     CHECK (status IN ('rascunho', 'aguardando_assinatura', 'ativo', 'encerrado')),
     assinado_em     TEXT,
+    -- Added by 012 (comercial). Declared here because SQLite's ALTER TABLE has
+    -- no IF NOT EXISTS and the mirrors are applied as a SET, never
+    -- incrementally against an existing database.
+    orcamento_id           TEXT,
+    documento_key          TEXT,
+    provedor_assinatura    TEXT,
+    assinatura_external_id TEXT,
+    link_assinatura        TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT
 );

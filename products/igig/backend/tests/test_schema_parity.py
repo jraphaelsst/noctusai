@@ -42,6 +42,8 @@ DOMAIN_TABLES = {
     "integracao",
     # 011 — financeiro
     "fatura", "fatura_item",
+    # 012 — comercial
+    "lead", "orcamento",
 }
 
 
@@ -106,6 +108,16 @@ def _parse_tables(sql: str) -> dict[str, set[str]]:
                 continue
             parsed.add(first.strip('"'))
         tables[name] = parsed
+
+    # Forward migrations add columns with ALTER TABLE rather than editing an
+    # already-applied CREATE TABLE. Without this the parser would report every
+    # later-added column as drift (caught by 012, which extends `contrato`).
+    alter_re = re.compile(
+        r"ALTER TABLE\s+(?:igig\.)?(\w+)\s+ADD COLUMN(?:\s+IF NOT EXISTS)?\s+(\w+)",
+        re.IGNORECASE,
+    )
+    for tabela, coluna in alter_re.findall(sql):
+        tables.setdefault(tabela, set()).add(coluna)
     return tables
 
 

@@ -37,6 +37,8 @@ __all__ = [
     "IntegracaoRepository",
     "FaturaRepository",
     "FaturaItemRepository",
+    "LeadRepository",
+    "OrcamentoRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -672,6 +674,44 @@ class FaturaItemRepository(BaseRepository):
         return self._por("fatura_id", fatura_id, org_id)
 
 
+class LeadRepository(BaseRepository):
+    """Pré-qualificação leads — Módulo 1.
+
+    Separate from `cliente` on purpose: a lead is unqualified, arrives from an
+    UNAUTHENTICATED public form, and most never convert. Landing them in
+    `cliente` would pollute every client-scoped report in the product.
+    """
+
+    table = "lead"
+    default_order = (Order("created_at", descending=True),)
+
+    def por_status(self, org_id: str, status: str) -> list[Record]:
+        return self._por("status", status, org_id)
+
+    def converter(self, org_id: str, lead_id: str, cliente_id: str) -> Record:
+        """Mark a lead converted and link the cliente it became.
+
+        Keeps the funnel auditable: without the link, 'where did this client
+        come from' becomes unanswerable the moment the lead list grows.
+        """
+        return self.atualizar(
+            org_id, lead_id, {"status": "convertido", "cliente_id": cliente_id}
+        )
+
+
+class OrcamentoRepository(BaseRepository):
+    """Proposals — Módulo 1."""
+
+    table = "orcamento"
+    default_order = (Order("created_at", descending=True),)
+
+    def do_lead(self, org_id: str, lead_id: str) -> list[Record]:
+        return self._por("lead_id", lead_id, org_id)
+
+    def aceitar(self, org_id: str, orcamento_id: str) -> Record:
+        return self.atualizar(org_id, orcamento_id, {"status": "aceito"})
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -698,3 +738,5 @@ class Repositorios:
         self.integracao = IntegracaoRepository(store)
         self.fatura = FaturaRepository(store)
         self.fatura_item = FaturaItemRepository(store)
+        self.lead = LeadRepository(store)
+        self.orcamento = OrcamentoRepository(store)
