@@ -92,7 +92,7 @@ from noctusai_lib.security.webhook_signatures import (
 )
 
 from app.config import settings
-from app.dependencies import get_admin_client
+from app.dependencies import get_admin_client, get_settings
 from app.rate_limit import limiter
 from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionStatusPayload
 from app.services.conversation_module import get_conversation_module
@@ -133,6 +133,25 @@ router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp"])
 # social_wiring.contacts for the read endpoints. WAHA calls are bounded by the
 # seed client's short read timeout; any failure is swallowed with a warning.
 _bg_tasks: set = set()
+
+
+def _cfg_for_request(request: Request):
+    """Resolve settings the way FastAPI would, for callables that cannot
+    take ``Depends(get_settings)``.
+
+    ``_resolve_waha_secret`` is handed to ``webhook_endpoint(...)`` as a
+    plain ``(request, body)`` callable, so its signature is fixed and it
+    cannot declare a dependency. Reading the module singleton directly is
+    what forced tests to `monkeypatch.setattr(settings, ...)` — the
+    self-patch this router regressed on. Consulting
+    ``app.dependency_overrides`` honours the SAME `get_settings` seam the
+    rest of the product uses, so `override_settings` works here too and
+    tests never touch the singleton.
+
+    → KB § PATTERNS/backend/di-test-seam.md (Class-A)
+    """
+    override = request.app.dependency_overrides.get(get_settings)
+    return override() if override is not None else settings
 
 
 def _fire_and_forget(coro) -> None:
@@ -182,7 +201,7 @@ async def _register_contact_bg(
 _UPLOAD_DIR = Path("/tmp/uploads")
 
 
-def _build_intake_service(*, connection=None) -> WhatsAppIntakeService | None:
+def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService | None:
     """Wire the intake service. Returns None when critical config is
     missing — the webhook will 200-ack but not process messages.
 
@@ -200,6 +219,7 @@ def _build_intake_service(*, connection=None) -> WhatsAppIntakeService | None:
       - ``bound_chats`` is None (all chats listened to).
       - ``connection_id`` is None.
     """
+    cfg = cfg or settings
     if connection is not None:
         # Per-connection route: empty list = allow all (NOT disabled).
         authorized = list(connection.authorized_numbers or [])
@@ -209,7 +229,7 @@ def _build_intake_service(*, connection=None) -> WhatsAppIntakeService | None:
         # Legacy global route: empty = disabled.
         authorized = [
             n.strip()
-            for n in settings.whatsapp_authorized_numbers.split(",")
+            for n in cfg.whatsapp_authorized_numbers.split(",")
             if n.strip()
         ]
         bound_chats = None
@@ -242,8 +262,8 @@ def _build_intake_service(*, connection=None) -> WhatsAppIntakeService | None:
     crm: CRMService | None = None
     try:
         crm = CRMService(
-            base_url=settings.crm_base_url,
-            api_key=settings.crm_api_key,
+            base_url=cfg.crm_base_url,
+            api_key=cfg.crm_api_key,
         )
     except CRMNotConfigured:
         logger.info("CRM not configured — WhatsApp uploads will use manual titles")
@@ -428,6 +448,7 @@ async def _process_waha_body(
     *,
     event_source: str = "webhook",
     connection=None,
+    cfg=None,
 ) -> Response:
     """Shared WAHA envelope processor.
 
@@ -446,11 +467,12 @@ async def _process_waha_body(
         is True (default OFF — locked product decision for manual chat testing).
     When absent (legacy global route) the old behaviour is preserved: inbound
     messages are stored without connection_id and auto-reply is gated only on
-    ``settings.whatsapp_chatbot_enabled``.
+    ``cfg.whatsapp_chatbot_enabled``.
 
     Always returns a ``200 OK`` Response (WAHA doesn't understand our errors
     and would retry indefinitely on non-200; processing failures are logged).
     """
+    cfg = cfg or settings
     record_waha_sample(
         source=event_source,
         direction="waha_to_app",
@@ -553,7 +575,7 @@ async def _process_waha_body(
         media_filename = getattr(payload.media, "filename", None) or (
             payload.media.get("filename") if isinstance(payload.media, dict) else None
         )
-    if media_url and settings.openai_api_key:
+    if media_url and cfg.openai_api_key:
         try:
             media_service = make_media_service()
             resolved_media = await media_service.resolve_inbound(
@@ -577,7 +599,7 @@ async def _process_waha_body(
 
     # Build the intake service — pass the full connection record so per-connection
     # authorized_numbers and bound_chats config (migration 016) is wired in.
-    intake = _build_intake_service(connection=connection)
+    intake = _build_intake_service(connection=connection, cfg=cfg)
     if intake is None:
         logger.debug("WhatsApp intake not configured — dropping message")
         return Response(status_code=status.HTTP_200_OK)
@@ -690,7 +712,7 @@ async def _process_waha_body(
             # Fixed by (1) re-resolving the connection through the store
             # with `decrypt=True` (the sanctioned way to get a live
             # api_key) and (2) `getattr(..., None)` for the optional field.
-            _store = get_token_webhook_store()
+            _store = _build_token_webhook_store(cfg)
             _decrypted = (
                 _store.get_connection(
                     connection_id=connection.id,
@@ -783,7 +805,7 @@ async def _process_waha_body(
         else True  # legacy route: respect only the settings gate below
     )
     try:
-        if settings.whatsapp_chatbot_enabled and settings.openai_api_key and _auto_reply_allowed:
+        if settings.whatsapp_chatbot_enabled and cfg.openai_api_key and _auto_reply_allowed:
             # Buffer the inbound into the seed conversation buffer; the
             # ConversationWorker drains the queue after the debounce
             # window (settings.message_debounce_seconds, default 8s).
@@ -822,7 +844,7 @@ async def _process_waha_body(
                     intake_service=intake,
                     session_id=canonical_session,
                     model=settings.openai_chat_model,
-                    api_key=settings.openai_api_key,
+                    api_key=cfg.openai_api_key,
                 )
                 reply = await chatbot.reply(message_body)
                 if reply:
@@ -840,7 +862,7 @@ async def _process_waha_body(
 async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
     """Per-request lookup of the WAHA webhook HMAC secret.
 
-    Reads ``settings.waha_webhook_hmac_secret`` at REQUEST time (not
+    Reads ``waha_webhook_hmac_secret`` at REQUEST time (not
     import time) so test-time settings overrides are honored — the
     import-time-capture trap ``KB § PATTERNS/security/webhook-signatures.md``
     warns about. ``or None`` collapses an empty string to the unset path
@@ -848,13 +870,15 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
     pre-existing dev behavior: no secret configured → accept without
     verification, loudly logged.
     """
-    return ResolvedSecret(secret=settings.waha_webhook_hmac_secret or None)
+    cfg = _cfg_for_request(request)
+    return ResolvedSecret(secret=cfg.waha_webhook_hmac_secret or None)
 
 
 @router.post("/webhook")
 @limiter.limit(settings.webhook_rate_limit)
 async def whatsapp_webhook(
     request: Request,
+    cfg=Depends(get_settings),
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_waha_secret,
         scheme="sha256_hex",
@@ -875,24 +899,37 @@ async def whatsapp_webhook(
     except Exception:
         return Response(status_code=status.HTTP_200_OK)
 
-    return await _process_waha_body(body, event_source="webhook")
+    return await _process_waha_body(body, event_source="webhook", cfg=cfg)
 
 
-def get_token_webhook_store():
+def _build_token_webhook_store(cfg=None):
+    """Plain builder — for callers that already hold a settings object.
+
+    Split out of :func:`get_token_webhook_store` so internal call sites
+    inside ``_process_waha_body`` can pass the request's resolved ``cfg``
+    instead of reaching for the module singleton (the read that forced
+    tests to monkeypatch ``settings.encryption_key``).
+    """
+    cfg = cfg or settings
+    try:
+        return build_whatsapp_connection_store(
+            get_admin_client(), encryption_key=cfg.encryption_key
+        )
+    except EncryptionNotConfigured:
+        return None
+
+
+def get_token_webhook_store(cfg=Depends(get_settings)):
     """DI seam for the token-webhook store (service-role admin client; no JWT).
 
     Returns ``None`` when encryption isn't configured so the route can 404
     without leaking config state. This is the injectable seam tests override
     (``app.dependency_overrides[get_token_webhook_store]``) — never patch the
     module-level factory (that trips the no-monkey-patch-internals rule and
-    stops exercising the real wiring).
+    stops exercising the real wiring). ``cfg`` flows from the same
+    ``get_settings`` seam, so ``override_settings`` reaches it too.
     """
-    try:
-        return build_whatsapp_connection_store(
-            get_admin_client(), encryption_key=settings.encryption_key
-        )
-    except EncryptionNotConfigured:
-        return None
+    return _build_token_webhook_store(cfg)
 
 
 @router.post("/webhook/{token}")
@@ -900,6 +937,7 @@ def get_token_webhook_store():
 async def whatsapp_webhook_by_token(
     token: str,
     request: Request,
+    cfg=Depends(get_settings),
     store=Depends(get_token_webhook_store),
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_waha_secret,
@@ -950,6 +988,7 @@ async def whatsapp_webhook_by_token(
 
     return await _process_waha_body(
         body,
+        cfg=cfg,
         event_source=f"webhook/{connection.id}",
         connection=connection,
     )
