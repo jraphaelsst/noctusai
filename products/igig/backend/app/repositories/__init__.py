@@ -32,6 +32,8 @@ __all__ = [
     "ProfissionalRepository",
     "AcessoRepository",
     "PecaRepository",
+    "PublicacaoRepository",
+    "MetricaRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -479,6 +481,93 @@ class PecaRepository(BaseRepository):
         )
 
 
+class PublicacaoRepository(BaseRepository):
+    """One publish attempt, per channel — Módulo 5."""
+
+    table = "publicacao"
+    default_order = (Order("agendada_para"),)
+
+    def da_pauta(self, org_id: str, pauta_id: str) -> list[Record]:
+        return self._por("pauta_id", pauta_id, org_id)
+
+    def agendar(self, org_id: str, pauta_id: str, canal: str, quando: str) -> Record:
+        return self.criar(
+            org_id,
+            {"pauta_id": pauta_id, "canal": canal, "agendada_para": quando, "status": "agendada"},
+        )
+
+    def pendentes(self, org_id: str, ate: str) -> list[Record]:
+        """Scheduled publications due by ``ate`` — the worker's queue."""
+        spec = (
+            QuerySpec()
+            .with_filter("status", Op.EQ, "agendada")
+            .with_filter("agendada_para", Op.LTE, ate)
+        )
+        return self.listar(org_id, spec=spec)
+
+    def marcar_publicada(
+        self, org_id: str, publicacao_id: str, *, external_id: str, permalink: str | None = None
+    ) -> Record:
+        """Only ever called with a platform-confirmed id.
+
+        `external_id` is required by the signature so a caller cannot mark a
+        post published without the handle every later metrics fetch needs.
+        """
+        return self.atualizar(
+            org_id,
+            publicacao_id,
+            {
+                "status": "publicada",
+                "external_id": external_id,
+                "permalink": permalink,
+                "publicada_em": datetime.now(timezone.utc).isoformat(),
+                "erro": None,
+            },
+        )
+
+    def marcar_falha(self, org_id: str, publicacao_id: str, erro: str) -> Record:
+        """Record a failure AND the attempt count.
+
+        Incrementing here rather than in the caller keeps 'how many times have
+        we tried' in one place; a retry policy elsewhere can trust it.
+        """
+        atual = self.buscar(org_id, publicacao_id)
+        return self.atualizar(
+            org_id,
+            publicacao_id,
+            {
+                "status": "falhou",
+                "erro": erro[:2000],
+                "tentativas": int(atual.get("tentativas") or 0) + 1,
+            },
+        )
+
+
+class MetricaRepository(BaseRepository):
+    """Engagement snapshots. APPEND-ONLY — see the migration's note."""
+
+    table = "metrica"
+    default_order = (Order("coletada_em", descending=True),)
+
+    def da_publicacao(self, org_id: str, publicacao_id: str) -> list[Record]:
+        return self._por("publicacao_id", publicacao_id, org_id)
+
+    def registrar(self, org_id: str, publicacao_id: str, **valores: object) -> Record:
+        return self.criar(
+            org_id,
+            {
+                "publicacao_id": publicacao_id,
+                "coletada_em": datetime.now(timezone.utc).isoformat(),
+                **valores,
+            },
+        )
+
+    def ultima(self, org_id: str, publicacao_id: str) -> Record | None:
+        """The most recent snapshot — what a dashboard tile shows."""
+        historico = self.da_publicacao(org_id, publicacao_id)
+        return historico[0] if historico else None
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -500,3 +589,5 @@ class Repositorios:
         self.profissional = ProfissionalRepository(store)
         self.acesso = AcessoRepository(store)
         self.peca = PecaRepository(store)
+        self.publicacao = PublicacaoRepository(store)
+        self.metrica = MetricaRepository(store)

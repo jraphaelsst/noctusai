@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -22,6 +22,7 @@ const Clientes = lazy(() => import("@/pages/Clientes"));
 const Esteira = lazy(() => import("@/pages/Esteira"));
 const Marca = lazy(() => import("@/pages/Marca"));
 const Calendario = lazy(() => import("@/pages/Calendario"));
+const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
@@ -44,6 +45,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
       { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
+      { name: "Distribuição", href: "/distribuicao", icon: BarChart3, route: "distribuicao" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -62,6 +64,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Marca", href: "/marca", icon: PaletteIcon },
       { name: "Calendário", href: "/calendario", icon: CalendarDays },
+      { name: "Distribuição", href: "/distribuicao", icon: BarChart3 },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -84,6 +87,7 @@ export default createProductApp({
     { path: "/esteira", component: Esteira },
     { path: "/marca", component: Marca },
     { path: "/calendario", component: Calendario },
+    { path: "/distribuicao", component: Distribuicao },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],

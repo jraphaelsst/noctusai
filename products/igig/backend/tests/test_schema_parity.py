@@ -36,6 +36,8 @@ DOMAIN_TABLES = {
     "cliente", "marca", "contrato", "pauta", "tarefa", "apontamento", "aprovacao",
     # 008 — custo/hora model, Cofre de Acessos, visual assets
     "funcao", "profissional", "acesso", "peca",
+    # 009 — distribuição e métricas
+    "publicacao", "metrica",
 }
 
 
