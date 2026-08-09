@@ -38,6 +38,8 @@ DOMAIN_TABLES = {
     "funcao", "profissional", "acesso", "peca",
     # 009 — distribuição e métricas
     "publicacao", "metrica",
+    # 010 — integrações de canal
+    "integracao",
 }
 
 

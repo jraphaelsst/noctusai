@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.integrations.persistence import RecordNotFound
 
+from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 from app.schemas.distribuicao import (
@@ -46,6 +47,31 @@ router = APIRouter(prefix="/api/distribuicao", tags=["distribuicao"])
 def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
     return str(coerce_org_uuid(raw_org))
+
+
+def _token_do_canal(repos: Repositorios, org_id: str, canal: str) -> str | None:
+    """Resolve the channel token: per-org credential first, env fallback second.
+
+    Mirrors the platform's own credential precedence (`org_settings` →
+    `platform_settings` → env). Returning ``None`` is a normal outcome — the
+    factory then yields the Fake, and nothing is ever reported as published.
+    """
+    if settings.igig_cofre_key:
+        try:
+            token = repos.integracao.token_de(
+                org_id, canal, settings.igig_cofre_key.encode("utf-8")
+            )
+        except Exception:  # noqa: BLE001 — a bad stored token must not 500 the
+            # publish path; it degrades to "not configured" and is recorded.
+            logger.warning("token de %s ilegível para org=%s", canal, org_id)
+            token = None
+        if token:
+            return token
+    if canal in ("instagram", "facebook"):
+        return settings.igig_meta_token or None
+    if canal == "tiktok":
+        return settings.igig_tiktok_token or None
+    return settings.igig_linkedin_token or None
 
 
 # ── Publicações ─────────────────────────────────────────────────────
@@ -113,17 +139,24 @@ async def executar_publicacao(
     if publicacao.get("status") == "publicada":
         raise HTTPException(status_code=409, detail="Publicação já enviada")
 
+    canal = str(publicacao["canal"])
     pauta = repos.pauta.buscar(org_id, str(publicacao["pauta_id"]))
     pecas = repos.peca.da_pauta(org_id, str(pauta["id"]))
-    publisher = get_publisher(str(publicacao["canal"]))
+    publisher = get_publisher(canal, token=_token_do_canal(repos, org_id, canal))
 
     try:
         resultado = publisher.publicar(
             texto=str(pauta.get("copy_texto") or ""),
             midia_urls=[str(p["storage_key"]) for p in pecas],
         )
-    except (PublisherNotConfigured, Exception) as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — every failure path is the same:
+        # record it and NEVER report success. Distinguishing exception types
+        # here would only change the log line, not the outcome.
         atualizado = repos.publicacao.marcar_falha(org_id, publicacao_id, str(exc))
+        if isinstance(exc, PublisherNotConfigured):
+            # Surface it on the integration too, so the setup screen can say
+            # "reconectar" rather than leaving the operator to correlate.
+            repos.integracao.registrar_erro(org_id, canal, str(exc))
         logger.warning("publicação falhou org=%s id=%s: %s", org_id, publicacao_id, exc)
         return PublicacaoOut(**atualizado)
 

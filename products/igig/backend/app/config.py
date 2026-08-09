@@ -37,5 +37,15 @@ class IgIgSettings(ProductSettings):
     igig_storage_root: str = "var/assets"
     igig_storage_bucket: str = "igig"
 
+    # ── Canais sociais (Módulo 5) ─────────────────────────────────────
+    # Env-level FALLBACK only. The real path is a per-org credential stored
+    # encrypted in `igig.integracao` and set through the Integrações screen —
+    # an agency serves many clients' accounts, so one global token per channel
+    # cannot be the primary model. Empty ⇒ the publisher stays the Fake and
+    # nothing is ever reported as published.
+    igig_meta_token: str = ""
+    igig_tiktok_token: str = ""
+    igig_linkedin_token: str = ""
+
 
 settings = IgIgSettings()

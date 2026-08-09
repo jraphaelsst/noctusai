@@ -34,6 +34,7 @@ __all__ = [
     "PecaRepository",
     "PublicacaoRepository",
     "MetricaRepository",
+    "IntegracaoRepository",
     "Repositorios",
     "ETAPAS",
 ]
@@ -568,6 +569,65 @@ class MetricaRepository(BaseRepository):
         return historico[0] if historico else None
 
 
+class IntegracaoRepository(BaseRepository):
+    """Per-org channel credentials — Módulo 5 shell.
+
+    The token is stored as Fernet ciphertext and there is no method that
+    returns it in bulk. :meth:`token_de` decrypts ONE channel's token at the
+    moment a publish needs it; everything else works from
+    :meth:`status`, which reports connected/not without touching the secret.
+    """
+
+    table = "integracao"
+    default_order = (Order("canal"),)
+
+    def por_canal(self, org_id: str, canal: str) -> Record | None:
+        encontradas = self._por("canal", canal, org_id)
+        return encontradas[0] if encontradas else None
+
+    def conectar(
+        self, org_id: str, canal: str, *, token: str, chave: bytes, conta_externa: str | None = None
+    ) -> Record:
+        """Store (or replace) a channel credential.
+
+        Refuses without a key for the same reason the Cofre does: a token in
+        plaintext is a token leaked the moment anything reads the table.
+        """
+        if not chave:
+            raise ValueError("token sem chave de criptografia — recuse-se a gravar em texto puro")
+        valores = {
+            "token_cifrado": encrypt(token, chave),
+            "conta_externa": conta_externa,
+            "conectado_em": datetime.now(timezone.utc).isoformat(),
+            "ultimo_erro": None,
+            "ativo": True,
+        }
+        atual = self.por_canal(org_id, canal)
+        if atual is not None:
+            return self.atualizar(org_id, str(atual["id"]), valores)
+        return self.criar(org_id, {"canal": canal, **valores})
+
+    def token_de(self, org_id: str, canal: str, chave: bytes) -> str | None:
+        """Decrypt ONE channel token. ``None`` when not connected."""
+        registro = self.por_canal(org_id, canal)
+        if registro is None or not registro.get("token_cifrado") or not registro.get("ativo"):
+            return None
+        return decrypt(str(registro["token_cifrado"]), chave)
+
+    def registrar_erro(self, org_id: str, canal: str, erro: str) -> Record | None:
+        """Record an auth failure so the UI can say 'reconnect'."""
+        registro = self.por_canal(org_id, canal)
+        if registro is None:
+            return None
+        return self.atualizar(org_id, str(registro["id"]), {"ultimo_erro": erro[:1000]})
+
+    def desconectar(self, org_id: str, canal: str) -> bool:
+        registro = self.por_canal(org_id, canal)
+        if registro is None:
+            return False
+        return self.remover(org_id, str(registro["id"]))
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -591,3 +651,4 @@ class Repositorios:
         self.peca = PecaRepository(store)
         self.publicacao = PublicacaoRepository(store)
         self.metrica = MetricaRepository(store)
+        self.integracao = IntegracaoRepository(store)
