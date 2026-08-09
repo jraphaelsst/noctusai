@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2 } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -19,6 +19,9 @@ const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
+const Esteira = lazy(() => import("@/pages/Esteira"));
+// PUBLIC route — the agency's client, no noc account. Token is the auth.
+const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // Placeholder domain page — rename + replace per
@@ -36,6 +39,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
+      { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -51,6 +55,7 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Clientes", href: "/clientes", icon: Building2 },
+      { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -70,11 +75,13 @@ export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/clientes", component: Clientes },
+    { path: "/esteira", component: Esteira },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],
   Layout,
   ...infra.appConfig,
+  publicRoutes: [{ path: "/aprovar/:token", component: AprovacaoPublica }],
   Landing,
   Login,
   AcceptInvite,
