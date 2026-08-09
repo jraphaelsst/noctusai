@@ -1,5 +1,5 @@
 /**
- * UnassignedBucket — the "Sem cliente" droppable list of `scope=unassigned`
+ * UnassignedBucket — the "Sem marca" droppable list of `scope=unassigned`
  * workflows. Dragging one of these into the client's tree (root or any
  * folder) is the ONLY way a workflow enters a client (the assign mutation
  * applies the client's n8n tag) — the live n8n instance carries zero tags
@@ -44,7 +44,7 @@ export function UnassignedBucket({
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Inbox className="h-4 w-4" />
-          Sem cliente
+          Sem marca
         </CardTitle>
       </CardHeader>
       <CardContent ref={setNodeRef} className="min-h-[6rem] space-y-2" data-testid="n8n-unassigned-bucket">
@@ -52,7 +52,7 @@ export function UnassignedBucket({
         {!loading && error && <p className="text-xs text-destructive">{error}</p>}
         {!loading && !error && workflows.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            Nenhum fluxo sem cliente. Arraste um fluxo daqui do cliente para desatribuí-lo.
+            Nenhum fluxo sem marca. Arraste um fluxo daqui da marca para desatribuí-lo.
           </p>
         )}
         {!loading &&

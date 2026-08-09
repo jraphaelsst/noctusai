@@ -1,6 +1,6 @@
 /**
- * Mailchimp per-cliente connection hooks — TanStack Query wrappers for the
- * manual API-key Mailchimp integration scoped to one cliente.
+ * Mailchimp per-marca connection hooks — TanStack Query wrappers for the
+ * manual API-key Mailchimp integration scoped to one marca.
  *
  * Mirrors the conventions in useIntegrationAccounts.ts / useWhatsAppConnections.ts:
  *   · const KEY per query key (["sw", "mailchimp", ...] namespace)
@@ -16,7 +16,7 @@
  *         created_at, updated_at }  (always 200; nulls when not connected)
  *   PUT /api/mailchimp/connection
  *     body { api_key, server_prefix?, audience_id?, client_id }
- *     → upserts the cliente's connection; returns the same shape.
+ *     → upserts the marca's connection; returns the same shape.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
@@ -48,7 +48,7 @@ const CONNECTION_KEY = (marcaId: string | null) =>
 // ─── Connection query ────────────────────────────────────────────────────────
 
 /**
- * Fetch the Mailchimp connection for a specific cliente.
+ * Fetch the Mailchimp connection for a specific marca.
  * Maps to GET /api/mailchimp/connection?client_id=<id>. Enabled only when a
  * clientId is provided. Returns { connected: false, ... } when not connected.
  */
@@ -66,9 +66,9 @@ export function useMailchimpConnection(marcaId: string | null) {
 // ─── Upsert mutation ─────────────────────────────────────────────────────────
 
 /**
- * Upsert (connect / re-key) the cliente's Mailchimp connection.
+ * Upsert (connect / re-key) the marca's Mailchimp connection.
  * Maps to PUT /api/mailchimp/connection. Invalidates the connection query for
- * that cliente on success so the grid reflects the new connected state.
+ * that marca on success so the grid reflects the new connected state.
  */
 export function useUpsertMailchimpConnection() {
   const qc = useQueryClient();

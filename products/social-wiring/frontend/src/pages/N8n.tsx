@@ -3,7 +3,7 @@
  *
  * Subtabs:
  *   Workflows      — the client's folder tree + workflows, built by the
- *                     operator via drag-and-drop from the "Sem cliente"
+ *                     operator via drag-and-drop from the "Sem marca"
  *                     bucket (n8n carries zero tags today; assigning a
  *                     workflow to a client IS applying that client's tag).
  *   Configurações  — the client's n8n connection (base_url / api_key / tag).
@@ -33,7 +33,7 @@ export default function N8nPage() {
   return (
     <SocialDashboardShell
       title="n8n"
-      subtitle="Organize os fluxos n8n de cada cliente numa árvore de pastas."
+      subtitle="Organize os fluxos n8n de cada marca numa árvore de pastas."
       accountSwitcher={<ConnectedAccountSwitcher provider="n8n" providerLabel="n8n" />}
       subtabs={SUBTABS}
       defaultSubtab="workflows"

@@ -83,12 +83,12 @@ export interface WhatsAppConnectionQr {
 /**
  * Create payload — backend derives session_name, base_url, and webhook_url.
  * Only label + api_key are user-supplied. `client_id` is optional; when
- * supplied the new connection is immediately owned by that cliente.
+ * supplied the new connection is immediately owned by that marca.
  */
 export interface CreateConnectionBody {
   label: string;
   api_key: string;
-  /** Assign to a cliente on creation. */
+  /** Assign to a marca on creation. */
   marca_id?: string | null;
 }
 
@@ -280,7 +280,7 @@ export function useToggleAutoReply() {
 
 // ─── Client-scoped connections ───────────────────────────────────────────────
 /**
- * List WhatsApp connections owned by a specific cliente.
+ * List WhatsApp connections owned by a specific marca.
  * Maps to GET /api/whatsapp/connections?client_id=<id>.
  * Used by the MarcaModal Chat tab + Contas tab to resolve WA connections.
  */

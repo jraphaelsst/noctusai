@@ -1,7 +1,7 @@
 /**
  * useMarcaAccounts — convenience aggregation hook for the MarcaModal.
  *
- * Combines all connection types scoped to a single cliente:
+ * Combines all connection types scoped to a single marca:
  *   · Integration accounts (all providers) via GET /api/integrations/accounts?client_id=
  *   · WhatsApp connections           via GET /api/whatsapp/connections?client_id=
  *

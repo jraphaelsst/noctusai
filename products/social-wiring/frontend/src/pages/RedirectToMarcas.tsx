@@ -1,7 +1,7 @@
 /**
  * RedirectToMarcas — permanent redirect used to retire legacy routes.
  *
- * Routes retired (all → /clientes):
+ * Routes retired (all → /marcas):
  *   /conexoes      (was: unified connections page)
  *   /conexao       (was: standalone WAHA-only page)
  *   /integrations  (was: back-compat alias for /conexoes)

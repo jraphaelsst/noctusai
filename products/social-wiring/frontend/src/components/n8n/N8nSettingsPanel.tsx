@@ -78,7 +78,7 @@ export function N8nSettingsPanel() {
   if (!activeAccountId) {
     return (
       <p className="py-12 text-center text-sm text-muted-foreground">
-        Selecione um cliente no seletor acima para configurar o n8n.
+        Selecione uma marca no seletor acima para configurar o n8n.
       </p>
     );
   }
@@ -138,7 +138,7 @@ export function N8nSettingsPanel() {
   return (
     <Card className="max-w-xl">
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Conexão n8n do cliente</CardTitle>
+        <CardTitle className="text-base">Conexão n8n da marca</CardTitle>
         <ReachabilityBadge status={settings.status} reachable={settings.reachable} />
       </CardHeader>
       <CardContent className="space-y-4">
@@ -166,7 +166,7 @@ export function N8nSettingsPanel() {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="n8n-tag">Tag do cliente</Label>
+          <Label htmlFor="n8n-tag">Tag da marca</Label>
           {tagsQuery.isLoading ? (
             <Skeleton className="h-10 w-full" />
           ) : (

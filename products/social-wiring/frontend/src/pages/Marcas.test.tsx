@@ -1,12 +1,12 @@
 /**
- * Clientes page tests.
+ * Marcas page tests.
  *
  * Tests:
  *   1. Renders loading skeleton while clients are fetching
  *   2. Renders client cards when clients are returned
  *   3. Renders empty state when no clients exist
  *   4. Renders error state on fetch failure
- *   5. "Novo cliente" button opens create dialog
+ *   5. "Nova marca" button opens create dialog
  *   6. MarcaModal opens when a card is clicked
  *   7. Chat tab opens from the card chat button
  *
@@ -42,7 +42,7 @@ vi.mock("@/hooks/useMarcas", () => ({
 vi.mock("@/components/MarcaModal", () => ({
   MarcaModal: ({ client, open, onClose, defaultTab }: any) =>
     open ? (
-      <div data-testid="cliente-modal" data-client-id={client?.id} data-tab={defaultTab}>
+      <div data-testid="marca-modal" data-client-id={client?.id} data-tab={defaultTab}>
         <button onClick={onClose}>Fechar</button>
       </div>
     ) : null,
@@ -79,7 +79,7 @@ beforeEach(() => {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function renderClientes(initialEntries: string[] = ["/"]) {
+async function renderMarcas(initialEntries: string[] = ["/"]) {
   const { default: Marcas } = await import("./Marcas");
   const React = (await import("react")).default;
   const { MemoryRouter } = await import("react-router-dom");
@@ -99,7 +99,7 @@ async function renderClientes(initialEntries: string[] = ["/"]) {
 describe("Marcas — loading state", () => {
   it("renders skeleton while loading", async () => {
     mockUseClients.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    const { getByTestId } = await renderClientes();
+    const { getByTestId } = await renderMarcas();
     expect(getByTestId("clients-skeleton")).toBeTruthy();
   });
 });
@@ -112,7 +112,7 @@ describe("Marcas — success state", () => {
     ];
     mockUseClients.mockReturnValue({ data: marcas, isLoading: false, isError: false });
 
-    const { getAllByTestId, getByText } = await renderClientes();
+    const { getAllByTestId, getByText } = await renderMarcas();
     expect(getAllByTestId("client-card").length).toBe(2);
     expect(getByText("Acme Corp")).toBeTruthy();
     expect(getByText("Beta Ltd")).toBeTruthy();
@@ -120,7 +120,7 @@ describe("Marcas — success state", () => {
 
   it("renders the page header", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByText } = await renderClientes();
+    const { getByText } = await renderMarcas();
     expect(getByText("Marcas")).toBeTruthy();
   });
 
@@ -130,7 +130,7 @@ describe("Marcas — success state", () => {
       isLoading: false,
       isError: false,
     });
-    const { getByText } = await renderClientes();
+    const { getByText } = await renderMarcas();
     expect(getByText("empresa")).toBeTruthy();
   });
 });
@@ -138,7 +138,7 @@ describe("Marcas — success state", () => {
 describe("Marcas — empty state", () => {
   it("renders empty state when no clients", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const { getByTestId } = await renderClientes();
+    const { getByTestId } = await renderMarcas();
     expect(getByTestId("marcas-empty")).toBeTruthy();
   });
 });
@@ -151,7 +151,7 @@ describe("Marcas — error state", () => {
       isError: true,
       error: new Error("Network error"),
     });
-    const { getByTestId, getByText } = await renderClientes();
+    const { getByTestId, getByText } = await renderMarcas();
     expect(getByTestId("marcas-error")).toBeTruthy();
     expect(getByText("Network error")).toBeTruthy();
   });
@@ -162,12 +162,12 @@ describe("Marcas — modal interactions", () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
     mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
 
-    const { getAllByTestId, getByTestId, fireEvent } = await renderClientes();
+    const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
 
     const card = getAllByTestId("client-card")[0];
     fireEvent.click(card);
 
-    const modal = getByTestId("cliente-modal");
+    const modal = getByTestId("marca-modal");
     expect(modal.getAttribute("data-client-id")).toBe("c-1");
     expect(modal.getAttribute("data-tab")).toBe("contas");
   });
@@ -176,12 +176,12 @@ describe("Marcas — modal interactions", () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
     mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
 
-    const { getAllByTestId, getByTestId, fireEvent } = await renderClientes();
+    const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
 
     const chatBtn = getAllByTestId("client-chat-btn")[0];
     fireEvent.click(chatBtn);
 
-    const modal = getByTestId("cliente-modal");
+    const modal = getByTestId("marca-modal");
     expect(modal.getAttribute("data-tab")).toBe("chat");
   });
 
@@ -189,14 +189,14 @@ describe("Marcas — modal interactions", () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
     mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
 
-    const { getAllByTestId, queryByTestId, getByText, fireEvent } = await renderClientes();
+    const { getAllByTestId, queryByTestId, getByText, fireEvent } = await renderMarcas();
 
     const card = getAllByTestId("client-card")[0];
     fireEvent.click(card);
 
-    expect(queryByTestId("cliente-modal")).toBeTruthy();
+    expect(queryByTestId("marca-modal")).toBeTruthy();
     fireEvent.click(getByText("Fechar"));
-    expect(queryByTestId("cliente-modal")).toBeNull();
+    expect(queryByTestId("marca-modal")).toBeNull();
   });
 });
 
@@ -204,7 +204,7 @@ describe("Marcas — create dialog", () => {
   it("shows at least one create dialog button", async () => {
     mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
     // The empty state renders a second CreateClientDialog, so multiple buttons exist.
-    const { getAllByTestId } = await renderClientes();
+    const { getAllByTestId } = await renderMarcas();
     const buttons = getAllByTestId("create-client-btn");
     expect(buttons.length).toBeGreaterThan(0);
   });

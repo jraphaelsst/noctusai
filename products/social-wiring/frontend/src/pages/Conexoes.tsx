@@ -293,10 +293,10 @@ function ClientSection({
   onOpenModal: (acc: IntegrationAccount) => void;
   busyId: string | null;
 }) {
-  const label = client ? client.name : "Sem cliente";
+  const label = client ? client.name : "Sem marca";
   const meta = client
     ? client.slug + (client.kind ? ` · ${client.kind}` : "")
-    : "Contas não atribuídas a um cliente";
+    : "Contas não atribuídas a uma marca";
 
   return (
     <div className="space-y-3">
@@ -480,9 +480,9 @@ function YouTubeCardSection({
             value={oauthMarcaId}
             onChange={(e) => setOauthMarcaId(e.target.value)}
             className="h-8 rounded-md border border-input bg-background px-2.5 text-xs"
-            aria-label="Atribuir a cliente ao conectar"
+            aria-label="Atribuir a marca ao conectar"
           >
-            <option value="">Sem cliente</option>
+            <option value="">Sem marca</option>
             {marcas.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

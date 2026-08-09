@@ -303,9 +303,9 @@ describe("Conexoes — client grouping", () => {
     const { getAllByText } = await renderConexoes();
     // "Acme Corp" appears in both the OAuth client dropdown option and the section header
     expect(getAllByText("Acme Corp").length).toBeGreaterThanOrEqual(1);
-    // Unassigned group: "Sem cliente" appears in both the OAuth dropdown option
+    // Unassigned group: "Sem marca" appears in both the OAuth dropdown option
     // and the section header
-    expect(getAllByText("Sem cliente").length).toBeGreaterThanOrEqual(1);
+    expect(getAllByText("Sem marca").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders both accounts in the correct groups", async () => {

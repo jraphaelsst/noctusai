@@ -1,6 +1,6 @@
 /**
  * WorkflowsPanel — the "Workflows" subtab body: the client's n8n folder
- * tree + the "Sem cliente" unassigned bucket, wired together with dnd-kit.
+ * tree + the "Sem marca" unassigned bucket, wired together with dnd-kit.
  *
  * Drag vocabulary (draggable id / droppable id, both namespaced by kind so
  * they never collide with each other inside the same DndContext):
@@ -8,7 +8,7 @@
  *   draggable "folder:<id>"    — a folder's own grip handle (reparenting)
  *   droppable "root"           — the client tree's root drop zone
  *   droppable "folder:<id>"    — a specific folder
- *   droppable "unassigned"     — the "Sem cliente" bucket
+ *   droppable "unassigned"     — the "Sem marca" bucket
  *
  * Status-code-driven top-level states (see useN8nWorkflows.ts header):
  *   424 → "reconectar" (this account's n8n credential is missing/incomplete)
@@ -141,7 +141,7 @@ function ReconnectState() {
     <div className="flex flex-col items-center gap-3 rounded-md border border-dashed py-12 text-center">
       <PlugZap className="h-10 w-10 text-amber-500" />
       <div>
-        <p className="text-sm font-medium">Este cliente precisa ser reconectado ao n8n</p>
+        <p className="text-sm font-medium">Esta marca precisa ser reconectada ao n8n</p>
         <p className="mt-1 text-xs text-muted-foreground">
           A credencial do n8n está ausente ou incompleta. Abra a aba Configurações para
           informar a URL da instância e a chave de API.
@@ -270,7 +270,7 @@ export function WorkflowsPanel() {
         if (target.kind === "unassigned") {
           if (isCurrentlyUnassigned) return; // already there
           await unassignWorkflow.mutateAsync({ workflowId: workflow.id });
-          toast.success(`"${workflow.name}" movido para Sem cliente`);
+          toast.success(`"${workflow.name}" movido para Sem marca`);
           return;
         }
 
@@ -286,7 +286,7 @@ export function WorkflowsPanel() {
               body: { folder_id: targetFolderId },
             });
           }
-          toast.success(`"${workflow.name}" atribuído ao cliente`);
+          toast.success(`"${workflow.name}" atribuído à marca`);
           return;
         }
 
@@ -439,7 +439,7 @@ export function WorkflowsPanel() {
   if (!activeAccountId) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-md border border-dashed py-12 text-center text-sm text-muted-foreground">
-        Selecione um cliente no seletor acima para ver os fluxos n8n.
+        Selecione uma marca no seletor acima para ver os fluxos n8n.
       </div>
     );
   }
@@ -492,14 +492,14 @@ export function WorkflowsPanel() {
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={(e) => void handleDragEnd(e)}>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-2 lg:col-span-2">
-            <h3 className="text-sm font-medium text-muted-foreground">Fluxos do cliente</h3>
+            <h3 className="text-sm font-medium text-muted-foreground">Fluxos da marca</h3>
             {/* Root is always a legal reparent/move target — it's never a
                 descendant of the item being dragged. */}
             <RootDropZone disabled={false}>
               {folderTree.length === 0 && rootWorkflows.length === 0 && (
                 <p className="py-6 text-center text-xs text-muted-foreground">
                   Nenhuma pasta ou fluxo ainda. Crie uma pasta ou arraste um fluxo de "Sem
-                  cliente".
+                  marca".
                 </p>
               )}
               {folderTree.map((folder) => (

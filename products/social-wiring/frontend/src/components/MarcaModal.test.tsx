@@ -262,7 +262,7 @@ describe("MarcaModal — header", () => {
 
   it("does not render when open=false", async () => {
     const { queryByTestId } = await renderMarcaModal({ open: false });
-    expect(queryByTestId("cliente-modal")).toBeNull();
+    expect(queryByTestId("marca-modal")).toBeNull();
   });
 });
 

@@ -1,13 +1,13 @@
 /**
- * Clientes — page listing all clients as cards.
+ * Marcas — page listing all marcas as cards.
  *
  * Each card opens the MarcaModal (tabbed: Contas | Chat).
  *
- * Create flow: "Novo cliente" button → inline form in an AlertDialog-style panel.
+ * Create flow: "Nova marca" button → inline form in an AlertDialog-style panel.
  *
  * States: loading skeleton / empty with CTA / error / success (cards grid).
  *
- * Route: /clientes (registered in App.tsx lazy routes + status_pagina via migration 018).
+ * Route: /marcas (registered in App.tsx lazy routes + status_pagina via migration 018).
  */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -114,7 +114,7 @@ function CreateClientDialog({ onCreated }: { onCreated?: (c: Marca) => void }) {
       setOpen(false);
       onCreated?.(client);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Erro ao criar cliente.");
+      setError(err instanceof Error ? err.message : "Erro ao criar marca.");
     }
   }
 
@@ -128,14 +128,14 @@ function CreateClientDialog({ onCreated }: { onCreated?: (c: Marca) => void }) {
     >
       <DialogTrigger asChild>
         <Button size="sm" data-testid="create-client-btn">
-          <Plus className="mr-1.5 h-4 w-4" /> Novo cliente
+          <Plus className="mr-1.5 h-4 w-4" /> Nova marca
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Novo cliente</DialogTitle>
+          <DialogTitle>Nova marca</DialogTitle>
           <DialogDescription>
-            Crie um cliente para agrupar suas contas de integração.
+            Crie uma marca para agrupar suas contas de integração.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
@@ -228,7 +228,7 @@ function ClientCard({
       onClick={() => onOpen(client, "contas")}
       data-testid="client-card"
       role="button"
-      aria-label={`Abrir cliente ${client.name}`}
+      aria-label={`Abrir marca ${client.name}`}
     >
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
@@ -358,9 +358,9 @@ export default function MarcasPage() {
           data-testid="marcas-empty"
         >
           <Users className="h-10 w-10 opacity-20" />
-          <p className="text-sm font-medium">Nenhum cliente cadastrado</p>
+          <p className="text-sm font-medium">Nenhuma marca cadastrado</p>
           <p className="text-xs text-center max-w-xs">
-            Crie um cliente para agrupar suas conexões e integrações por conta.
+            Crie uma marca para agrupar suas conexões e integrações por conta.
           </p>
           <CreateClientDialog />
         </div>

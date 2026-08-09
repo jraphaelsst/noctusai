@@ -176,7 +176,7 @@ function NotificationsTab() {
             />
             <select
               className="h-10 rounded-md border bg-background px-2 text-sm sm:col-span-3"
-              aria-label="Cliente do destinatário"
+              aria-label="Marca do destinatário"
               value={draft.marca_id ?? ORG_WIDE}
               onChange={(e) =>
                 setDraft({
@@ -277,7 +277,7 @@ function RecipientRow({
             omitted key, so this genuinely un-scopes rather than no-ops. */}
         <select
           className="h-8 rounded-md border bg-background px-2 text-xs"
-          aria-label={`Cliente de ${recipient.name}`}
+          aria-label={`Marca de ${recipient.name}`}
           value={recipient.marca_id ?? ORG_WIDE}
           onChange={(e) =>
             onChangeClient(e.target.value === ORG_WIDE ? null : e.target.value)
@@ -415,7 +415,7 @@ function MetaAppSection() {
             <CardTitle>Meta App</CardTitle>
             <CardDescription>
               Credenciais do app Meta (Facebook/Instagram) usadas no OAuth
-              por cliente. O App Secret nunca e reexibido depois de salvo.
+              por marca. O App Secret nunca e reexibido depois de salvo.
             </CardDescription>
           </div>
         </div>

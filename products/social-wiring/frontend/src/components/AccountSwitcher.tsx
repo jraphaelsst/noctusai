@@ -77,7 +77,7 @@ export function AccountSwitcher({
         <div className="flex items-center gap-1.5">
           <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <label htmlFor="sw-client-select" className="text-xs text-muted-foreground sr-only">
-            Cliente
+            Marca
           </label>
           <div className="relative">
             <select

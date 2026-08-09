@@ -176,7 +176,7 @@ export function useAssignWorkflow() {
 }
 
 /** DELETE /api/n8n/workflows/{id}/assign — removes the client tag (moves
- * the workflow back to the "Sem cliente" bucket). */
+ * the workflow back to the "Sem marca" bucket). */
 export function useUnassignWorkflow() {
   const qc = useQueryClient();
   const storeAccountId = useActiveAccountId("n8n");

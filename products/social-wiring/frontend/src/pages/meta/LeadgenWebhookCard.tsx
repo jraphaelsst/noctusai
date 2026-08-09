@@ -158,10 +158,10 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
           rather than nobody. It is stated plainly so the operator can see that
           per-client routing is not yet in effect for this Page. */}
       <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
-        <span className="text-xs text-muted-foreground">Cliente:</span>
+        <span className="text-xs text-muted-foreground">Marca:</span>
         <select
           className="h-8 rounded-md border bg-background px-2 text-xs"
-          aria-label={`Cliente da página ${page.page_name || page.page_id}`}
+          aria-label={`Marca da página ${page.page_name || page.page_id}`}
           value={page.marca_id ?? UNATTRIBUTED}
           disabled={setClient.isPending}
           onChange={(e) => {
@@ -175,7 +175,7 @@ function PageRow({ page }: { page: LeadgenPageSubscription }) {
             );
           }}
         >
-          <option value={UNATTRIBUTED}>Sem cliente (alertas gerais)</option>
+          <option value={UNATTRIBUTED}>Sem marca (alertas gerais)</option>
           {marcas.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}

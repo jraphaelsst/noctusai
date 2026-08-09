@@ -402,7 +402,7 @@ function MetadataFields({
 // ─── YouTube account selector ──────────────────────────────────────────
 /**
  * Renders a "YouTube account" dropdown. Defaults to the user's default account.
- * When no accounts exist, shows a CTA linking to /clientes.
+ * When no accounts exist, shows a CTA linking to /marcas.
  */
 function YouTubeAccountPicker({
   value,

@@ -408,9 +408,9 @@ describe("Settings — recipient client scoping", () => {
     stubRecipients([R_SCOPED, R_ORGWIDE]);
     const { getByLabelText } = await renderSettingsOnKeysTab();
 
-    expect((getByLabelText("Cliente de One contact") as HTMLSelectElement).value)
+    expect((getByLabelText("Marca de One contact") as HTMLSelectElement).value)
       .toBe("client-one");
-    expect((getByLabelText("Cliente de Fallback") as HTMLSelectElement).value)
+    expect((getByLabelText("Marca de Fallback") as HTMLSelectElement).value)
       .toBe("__org__");
   });
 
@@ -419,7 +419,7 @@ describe("Settings — recipient client scoping", () => {
     const update = stubRecipients([R_ORGWIDE]);
     const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
 
-    fireEvent.change(getByLabelText("Cliente de Fallback"), {
+    fireEvent.change(getByLabelText("Marca de Fallback"), {
       target: { value: "client-joao" },
     });
     expect(update).toHaveBeenCalledWith("r2", { marca_id: "client-joao" });
@@ -430,7 +430,7 @@ describe("Settings — recipient client scoping", () => {
     const update = stubRecipients([R_SCOPED]);
     const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
 
-    fireEvent.change(getByLabelText("Cliente de One contact"), {
+    fireEvent.change(getByLabelText("Marca de One contact"), {
       target: { value: "__org__" },
     });
     // 🔴 null, never undefined. The backend uses `model_fields_set` to tell

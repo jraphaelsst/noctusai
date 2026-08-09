@@ -3,11 +3,11 @@
  *
  * Tab "Contas"
  *   · Edit name / kind / notes
- *   · Integration accounts scoped to this cliente (seed IntegrationCard)
- *   · WhatsApp connections scoped to this cliente
+ *   · Integration accounts scoped to this marca (seed IntegrationCard)
+ *   · WhatsApp connections scoped to this marca
  *
  * Tab "Chat"
- *   · Connection picker (WA connections for this cliente)
+ *   · Connection picker (WA connections for this marca)
  *   · WhatsAppChatWindow — live two-pane chat
  *
  * Inputs:
@@ -372,7 +372,7 @@ function MailchimpConnectForm({
   );
 }
 
-// ─── Mailchimp provider row (per-cliente, separate endpoint) ───────────────────
+// ─── Mailchimp provider row (per-marca, separate endpoint) ───────────────────
 
 /**
  * Mailchimp is NOT an IntegrationAccount — its connection lives on the dedicated
@@ -567,7 +567,7 @@ function AddWaConnectionDialog({
         <DialogHeader>
           <DialogTitle>Nova conexão WhatsApp</DialogTitle>
           <DialogDescription>
-            Esta conexão será vinculada a este cliente.
+            Esta conexão será vinculada a esta marca.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
@@ -760,10 +760,10 @@ function ContasTab({ client }: { client: Marca }) {
 
   return (
     <div className="space-y-6 pt-4 pb-2 overflow-y-auto flex-1" data-testid="contas-tab">
-      {/* ── Edit cliente ─────────────────────────────────────────────────── */}
+      {/* ── Edit marca ─────────────────────────────────────────────────── */}
       <section className="space-y-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-          <Settings2 className="h-3.5 w-3.5" /> Dados do cliente
+          <Settings2 className="h-3.5 w-3.5" /> Dados da marca
         </div>
         <div className="space-y-3 pl-1">
           <div className="grid grid-cols-2 gap-3">
@@ -773,7 +773,7 @@ function ContasTab({ client }: { client: Marca }) {
                 id="clt-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Nome do cliente"
+                placeholder="Nome da marca"
               />
             </div>
             <div className="space-y-1.5">
@@ -798,7 +798,7 @@ function ContasTab({ client }: { client: Marca }) {
               id="clt-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Observações sobre o cliente..."
+              placeholder="Observações sobre a marca..."
               className="resize-none h-20"
             />
           </div>
@@ -841,7 +841,7 @@ function ContasTab({ client }: { client: Marca }) {
               const accounts = intAccounts.filter((a) => a.provider === provider.id);
               const ProviderIcon = provider.icon;
 
-              // Mailchimp uses a dedicated per-cliente endpoint
+              // Mailchimp uses a dedicated per-marca endpoint
               // (/api/mailchimp/connection), not the IntegrationAccounts store.
               if (provider.id === "mailchimp") {
                 return (
@@ -1171,7 +1171,7 @@ export function MarcaModal({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         className="max-w-2xl h-[80vh] flex flex-col p-0 gap-0 overflow-hidden"
-        data-testid="cliente-modal"
+        data-testid="marca-modal"
       >
         {/* Header */}
         <DialogHeader className="px-6 pt-5 pb-3 border-b">

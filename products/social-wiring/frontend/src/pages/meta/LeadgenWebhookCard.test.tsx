@@ -329,9 +329,9 @@ describe("LeadgenWebhookCard — client attribution", () => {
     });
     const { getByLabelText } = await renderCard();
 
-    expect((getByLabelText("Cliente da página Loja Central") as HTMLSelectElement).value)
+    expect((getByLabelText("Marca da página Loja Central") as HTMLSelectElement).value)
       .toBe("client-one");
-    expect((getByLabelText("Cliente da página Loja Norte") as HTMLSelectElement).value)
+    expect((getByLabelText("Marca da página Loja Norte") as HTMLSelectElement).value)
       .toBe("__none__");
   });
 
@@ -340,7 +340,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
     mockUseSetPageClient.mockReturnValue({ mutate, isPending: false });
     const { getByLabelText, fireEvent } = await renderCard();
 
-    fireEvent.change(getByLabelText("Cliente da página Loja Central"), {
+    fireEvent.change(getByLabelText("Marca da página Loja Central"), {
       target: { value: "client-joao" },
     });
     expect(mutate).toHaveBeenCalledWith(
@@ -362,7 +362,7 @@ describe("LeadgenWebhookCard — client attribution", () => {
     });
     const { getByLabelText, fireEvent } = await renderCard();
 
-    fireEvent.change(getByLabelText("Cliente da página Loja Central"), {
+    fireEvent.change(getByLabelText("Marca da página Loja Central"), {
       target: { value: "__none__" },
     });
     // 🔴 null, never "__none__": the sentinel is a DOM affordance and must not

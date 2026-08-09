@@ -177,7 +177,7 @@ export function LeadFormDialog({
               value={form.cliente_nome ?? ""}
               onChange={(e) => setForm({ ...form, cliente_nome: e.target.value })}
               disabled={isPending}
-              placeholder="Nome do cliente"
+              placeholder="Nome da marca"
               data-testid="lead-form-cliente"
             />
           </div>
