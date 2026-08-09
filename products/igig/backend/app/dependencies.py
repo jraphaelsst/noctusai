@@ -26,6 +26,7 @@ from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
     make_get_current_user_org,
+    make_resolve_platform_role,
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
 from app.config import settings
@@ -60,6 +61,15 @@ get_current_user_org = make_get_current_user_org(
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
+
+# Trusted platform-admin cascade, same trust model and the SAME
+# `get_core_client()` reasoning as `get_current_user_org` above — it reads
+# `public.noctus_users` too. Declared here rather than in the router that
+# needs it because adconnect, erp-imobiliario and therapy-platform all put
+# it here (N=3): a product-wide auth primitive belongs next to the other
+# ones, not next to its first consumer. `app/routers/marca_router.py`
+# imports it to gate revealing a Cofre password.
+resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
 
 # Plain-call helpers (NOT to be wired via ``Depends(...)``) — kept for
 # imperative call-sites and for backward compatibility.

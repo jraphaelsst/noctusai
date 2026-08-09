@@ -24,13 +24,16 @@ Two surfaces:
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from noctusai_lib.api.auth import make_resolve_platform_role
 from noctusai_lib.integrations.persistence import RecordNotFound
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
 from app.config import settings
-from app.database import get_admin_client
-from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_role
+from app.dependencies import (
+    coerce_org_uuid,
+    get_current_user_org,
+    get_user_role,
+    resolve_platform_role,
+)
 from app.repositories import Repositorios
 from app.schemas.marca import (
     AcessoCreate,
@@ -62,11 +65,6 @@ def _org(auth: tuple) -> str:
     return str(coerce_org_uuid(raw_org))
 
 
-#: Trusted platform-role resolver. Reads `public.noctus_users` and fails
-#: CLOSED on a DB error rather than degrading to the spoofable path.
-_resolve_platform_role = make_resolve_platform_role(get_admin_client)
-
-
 def _exigir_admin(auth: tuple) -> None:
     """Gate for revealing a stored credential.
 
@@ -85,7 +83,7 @@ def _exigir_admin(auth: tuple) -> None:
     → `role-cascade-trusted`, 2026-07-14.
     """
     user, _token, _raw_org = auth
-    if _resolve_platform_role(user) == "platform_admin":
+    if resolve_platform_role(user) == "platform_admin":
         return
     papel = get_user_role(user)
     if papel not in ADMIN_ROLES:
