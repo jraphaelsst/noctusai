@@ -471,6 +471,19 @@ class TestVerifyAuthorizationPhrase:
         assert not ok
         assert "NOT found" in reason
 
+    def test_refusal_explains_the_one_turn_lag(self, tmp_path):
+        """The harness flushes a user message at TURN END, so a phrase typed
+        in the running turn is not yet on disk. The refusal must say so —
+        otherwise an agent that just watched the user authorize will loop,
+        or decide the gate is broken and route around it."""
+        _write_transcript(tmp_path, "s", [_typed("hi")])
+        _, reason = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert "DURING THE TURN YOU ARE IN" in reason
+        assert "next turn" in reason
+        assert "Do NOT hand-author the record" in reason
+        assert "having declined" in reason
+
     def test_refused_when_phrase_is_not_canonical(self, tmp_path):
         """A cherry-picked "yes go ahead" must not authorize a product —
         the sentence has to name the slug."""

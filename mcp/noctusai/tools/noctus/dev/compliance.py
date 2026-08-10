@@ -14774,11 +14774,29 @@ def _verify_authorization_phrase(
     if detail:
         return False, detail
     if not any(_norm(expected) in _norm(t) for t in texts):
+        # THE ONE-TURN LAG. The harness flushes a user message to the
+        # transcript when its TURN ENDS, so a phrase typed in the turn that
+        # is currently running is not on disk yet and cannot be verified —
+        # `author` is always one turn behind the authorization.
+        #
+        # That is the right security property (evidence must be durable
+        # before it counts), but the refusal has to SAY so. Discovered by
+        # probing this gate an hour after shipping it: without this branch
+        # the message reads "the user must type it themselves", which an
+        # agent that just watched the user type it will either loop on or —
+        # far worse — resolve by deciding the rule is broken and routing
+        # around it. That is the exact failure this gate exists to prevent,
+        # so a confusing refusal here is a safety bug, not a UX nit.
         return False, (
             f"the canonical phrase was NOT found in any message the user "
             f"actually typed in session {session_id} "
-            f"({len(texts)} human-authored message(s) scanned). The user must "
-            f"type it themselves: {expected!r}"
+            f"({len(texts)} human-authored message(s) scanned). "
+            f"Expected: {expected!r}\n"
+            "If the user typed it DURING THE TURN YOU ARE IN, this is "
+            "expected and NOT a refusal of their authorization: the "
+            "transcript is flushed at turn end, so re-run `author` on your "
+            "next turn and it will verify. Do NOT hand-author the record, "
+            "and do NOT treat this as the user having declined."
         )
     return True, ""
 

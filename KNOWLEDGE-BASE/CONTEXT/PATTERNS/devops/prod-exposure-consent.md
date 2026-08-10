@@ -111,6 +111,12 @@ An earlier sketch used a free-form `authorization_quote`. That is barely stronge
 
 `isSidechain` records are excluded (a subagent's conversation is not the user speaking), as are `tool_result` blocks and all `assistant` records. A missing or unreadable transcript is a **loud failure**, never an empty pass — so an absent transcript can never read as consent.
 
+### The one-turn lag (and why the refusal message matters)
+
+The harness flushes a user message to the transcript when its **turn ends**. A phrase typed during the turn an agent is currently executing is therefore **not on disk yet** — `action=author` is always one turn behind the authorization. Re-running it on the next turn verifies normally.
+
+This is the right property (evidence must be durable before it counts), but it makes the *wording* of the refusal safety-critical. Found by probing this gate an hour after shipping it: the original message said "the user must type it themselves", which an agent that had just watched the user type it would either loop on, or resolve by concluding the gate is broken and routing around it — the exact failure mode this gate exists to prevent. A confusing refusal on a security gate is a safety bug, not a UX nit. Pinned by `TestVerifyAuthorizationPhrase::test_refusal_explains_the_one_turn_lag`.
+
 ### The honest limit
 
 The transcript is a local plaintext file. This is **not** tamper-proof: an agent with write access could fabricate a record. What changes is the shape of the failure. Before, the shortcut was typing four lines of YAML and telling yourself the user approved — reachable by degrees, under pressure, while believing you are being helpful. After, the same shortcut requires forging the harness's append-only log: explicit, deliberate, and auditable. **The threat model is a well-meaning agent under pressure, not an adversary** — and against that, "you must point at something you did not write" is the property that matters. `transcript_sha256` is recorded so later tampering is detectable after the fact.
