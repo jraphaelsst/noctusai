@@ -32,12 +32,10 @@ no-autoupdate: true
 # MUST be last. The service target is the in-network name on noctus-net
 # (== compose service == noctus-<slug> container), reached by name because
 # cloudflared shares the network — never a published host port.
+
 ingress:
-  # apex → core
   - hostname: noctusai.com
     service: http://core:8000
-
-  # per-product subdomains
   - hostname: core.noctusai.com
     service: http://core:8000
   - hostname: erp-imobiliario.noctusai.com
@@ -56,22 +54,18 @@ ingress:
     service: http://dev-team:8009
   - hostname: social-wiring.noctusai.com
     service: http://social-wiring:8011
-
-  # short-name aliases (live edge convenience hosts)
+  - hostname: orbity.noctusai.com
+    service: http://orbity:8010
+  - hostname: igig.noctusai.com
+    service: http://igig:8013
   - hostname: erp.noctusai.com
     service: http://erp-imobiliario:8001
   - hostname: social.noctusai.com
     service: http://social-wiring:8011
-
-  # self-hosted infra (noctus-services project — NOT registry products)
   - hostname: n8n.noctusai.com
     service: http://n8n:5678
   - hostname: waha.noctusai.com
     service: http://waha:3000
-
-  # legacy standalone container on :5000 (must be attached to noctus-net)
   - hostname: legacy.noctusai.com
     service: http://legacy:5000
-
-  # catch-all — REQUIRED, MUST be the last rule. Unmatched host → 404.
   - service: http_status:404

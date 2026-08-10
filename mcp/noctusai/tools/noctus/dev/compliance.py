@@ -15017,6 +15017,79 @@ def _validate_prod_consent_record(
     return {"status": "valid", "detail": "", "data": data}
 
 
+def check_tunnel_ingress_snapshot_sync(
+    repo_root: Path | None = None,
+) -> list[dict]:
+    """`deploy/tunnel/ingress.yml` calls itself SINGLE SOURCE OF TRUTH — this
+    is the gate that makes that true for the one derived artifact living in
+    the repo.
+
+    **The incident (2026-08-10, publishing igig).** `compose.tunnel.yml`
+    mounts `./`, so the live cloudflared config is whichever directory the
+    tunnel was brought up from — on the VPS, a gitignored copy under
+    `projects/production-deploy-migration/`. Adding igig's route to the
+    canonical `ingress.yml` therefore changed NOTHING live, silently, and
+    the route had to be hand-patched into the deploy-local copy. The same
+    rot had already reached the committed `config.yml.template`, whose
+    `ingress:` snapshot was two routes stale (`igig`, `orbity`).
+
+    A "canonical" file nothing derives from is a comment, not a contract —
+    the hand-maintained-list failure mode this repo already gates elsewhere
+    (`KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`).
+
+    **Scope, honestly.** A pre-commit hook cannot see the VPS, so this
+    checks the artifact it CAN reach: the committed template's hostname→
+    service map must equal `ingress.yml`'s. The live-config half is covered
+    by `noctus.dev.tunnel_config action='check'`, which diffs the running
+    VPS config over SSH — named here so the split is explicit rather than
+    an unstated gap.
+    """
+    root = Path(repo_root) if repo_root is not None else Path(REPO_ROOT)
+    ingress_p = root / "deploy" / "tunnel" / "ingress.yml"
+    tpl_p = root / "deploy" / "tunnel" / "config.yml.template"
+    if not ingress_p.is_file() or not tpl_p.is_file():
+        return []  # not a noc tree / tunnel not configured — silent skip
+    try:
+        from .tunnel_config import parse_ingress, parse_config_hostmap
+        routes = parse_ingress(ingress_p.read_text(encoding="utf-8"))
+        declared = {r["hostname"]: r["service"] for r in routes}
+        snapshot = parse_config_hostmap(tpl_p.read_text(encoding="utf-8"))
+    except Exception as e:  # malformed YAML is itself the finding
+        return [{
+            "file": "deploy/tunnel/ingress.yml",
+            "issue": f"tunnel ingress could not be parsed/derived: {e}",
+            "severity": "high",
+            "symbol": "tunnel-ingress-unparseable",
+        }]
+
+    missing = sorted(set(declared) - set(snapshot))
+    stale = sorted(set(snapshot) - set(declared))
+    changed = sorted(h for h in set(declared) & set(snapshot)
+                     if declared[h] != snapshot[h])
+    if not (missing or stale or changed):
+        return []
+    parts = []
+    if missing:
+        parts.append(f"declared in ingress.yml but MISSING from the template: {missing}")
+    if stale:
+        parts.append(f"in the template but no longer declared: {stale}")
+    if changed:
+        parts.append(f"service target differs: {changed}")
+    return [{
+        "file": "deploy/tunnel/config.yml.template",
+        "issue": (
+            "tunnel config snapshot has DRIFTED from deploy/tunnel/ingress.yml "
+            "(the declared single source of truth) — " + "; ".join(parts) +
+            ". Regenerate the template's `ingress:` block from ingress.yml "
+            "(noctus.dev.tunnel_config action='render'), and apply to the live "
+            "VPS with action='apply' confirm=True. "
+            "KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md."
+        ),
+        "severity": "high",
+        "symbol": "tunnel-ingress-snapshot-drift",
+    }]
+
+
 def _prod_exposure_consent_message(slug: str, reason: str) -> str:
     """The self-explanatory failure message — teaches the boundary, not
     just names the violation."""

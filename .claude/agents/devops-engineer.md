@@ -20,6 +20,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/prod-cache-container.md
   - CONTEXT/PATTERNS/devops/ssh-deploy-key-restrictions.md
   - CONTEXT/PATTERNS/devops/product-lockfile-and-slug-drift.md
+  - CONTEXT/PATTERNS/devops/tunnel-ingress-source-of-truth.md
   - CONTEXT/PATTERNS/common/push-time-embedding-gate.md
   - CONTEXT/PATTERNS/common/memory-embeddings.md
   - CONTEXT/PATTERNS/common/corpus-embeddings.md
@@ -48,6 +49,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`
 - **Base-image dep freshness.** `build-base-images.sh` carries a build-time dep-completeness gate (every declared seed-FE dep must resolve in the built image); stale cached base silently fails on clean recreate. → `KB § PATTERNS/devops/base-image-dep-freshness.md`
 - **Product lockfile & slug-set drift.** A product's lockfile snapshot or a hardcoded slug list silently stops tracking what it mirrors (N=3: `@dnd-kit`/`recharts`/`ALL_SLUGS`); fix scoped (`npm install <dep>` or a surgical splice), never a bare `npm install` (re-resolves the whole tree). Gated locally in pre-commit §6d/§6e, not CI-only. → `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`
+- **Tunnel ingress is the source of truth — derive the config, don't hand-edit it.** `deploy/tunnel/ingress.yml` claimed canonicity for 3 months while `compose.tunnel.yml` mounted `./`, so the LIVE config was a gitignored copy under `projects/` and editing the canonical file changed nothing live, silently; `deploy <slug>` is not done until `tunnel_config action='check'` is in_sync AND the DNS CNAME exists. cloudflared runs as uid 65532 — a root-owned credentials JSON crash-loops it into a fleet-wide CF 530. Keeper `check_tunnel_ingress_snapshot_sync`. → `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md`
 - **Dev↔prod parity — verify in the PRODUCTION SHAPE.** ⭐ platform's highest-recurrence drift. Dev-green ≠ prod-works. → `KB § PATTERNS/devops/dev-prod-parity.md`
 - **Deploy-config contract (the 3-legged gate).** Every dev↔prod-divergent knob routes through seed (no per-product env-divergence in compose). `prod_config_parity` is the 3rd leg, pre-deploy. → `KB § PATTERNS/devops/deploy-config-contract.md`
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`

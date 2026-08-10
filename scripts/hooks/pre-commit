@@ -323,6 +323,21 @@ fi
 # infra/build-and-push.sh IS the production-promotion decision (the fleet
 # runs :latest built from main — no later gate reviews this again). Also
 # refuses a deploy/consent/*.prod.yml staged alongside any other path
+# ── tunnel ingress is the SINGLE SOURCE OF TRUTH ─────────────────────────────
+# deploy/tunnel/ingress.yml says so in its first line; this makes it true for
+# the derived artifact that lives in the repo. 2026-08-10: the committed
+# template was 2 routes stale AND the live VPS config was a gitignored
+# deploy-local copy nothing derived from, so editing the "canonical" file
+# changed nothing live, silently.
+STAGED_TUNNEL=$(git diff --cached --name-only 2>/dev/null | grep -E '^deploy/tunnel/(ingress\.yml|config\.yml\.template)$' || true)
+if [[ -n "$STAGED_TUNNEL" ]] && have_py; then
+    echo "[pre-commit] tunnel ingress staged — verifying the snapshot is derived..."
+    if ! "$PY" "$CLI" --check-tunnel-ingress-snapshot-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] TUNNEL-INGRESS drift. Regenerate the template from ingress.yml (noctus.dev.tunnel_config action='render'), then apply to the live VPS with action='apply' confirm=True. A canonical file nothing derives from is a comment, not a contract. See KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md." >&2
+        exit 1
+    fi
+fi
+
 # (consent commits must be isolated).
 STAGED_PROD_EXPOSURE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/docker-compose\.prod\.yml|deploy/tunnel/ingress\.yml|scripts/infra/build-and-push\.sh|deploy/consent/.*\.prod\.yml)$' || true)
 if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then

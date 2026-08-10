@@ -80,6 +80,7 @@ def register_all(server) -> None:
     from . import phase_learnings
     from . import predeploy_check
     from . import prod_consent
+    from . import tunnel_config
     from . import products
     from . import promotion
     from . import propagate
@@ -194,6 +195,7 @@ def register_all(server) -> None:
     phase_learnings.register(server)
     predeploy_check.register(server)
     prod_consent.register(server)
+    tunnel_config.register(server)
     products.register(server)
     promotion.register(server)
     propagate.register(server)
