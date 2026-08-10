@@ -147,6 +147,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── product-icon-registry.md
 │   │   │   ├── product-internal-wiring.md
 │   │   │   ├── product-lockfile-and-slug-drift.md
+│   │   │   ├── product-working-scope.md
 │   │   │   ├── tunnel-ingress-source-of-truth.md
 │   │   │   ├── products-consume-canonical-organs.md
 │   │   │   ├── project-execution.md
@@ -282,6 +283,7 @@ KNOWLEDGE-BASE/
 | Notifications (`public.notifications`, field mapping) | `CONTEXT/PATTERNS/backend/notifications.md` |
 | Shared-library conventions (privatize / absorb / rename; catalog tool) | `CONTEXT/PATTERNS/architect/shared-library-conventions.md` |
 | Project execution (phase-header ticks, improvements block, improvements.md retrospective tool) | `CONTEXT/PATTERNS/architect/project-execution.md` |
+| Product working scope (`ativo` + `deploy_scope` = which products we touch and where; inactive never live; reactivation lands in dev) | `CONTEXT/PATTERNS/architect/product-working-scope.md` |
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/common/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctus.dev.lgpd_flag tool) | `CONTEXT/PATTERNS/security/lgpd.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/backend/llm-usage.md` |

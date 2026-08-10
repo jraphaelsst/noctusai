@@ -6,6 +6,11 @@ import { api } from '../lib/api';
 import { NotificationBell } from '../components/NotificationBell';
 import { Header, useTheme } from "@noctusai/lib/design-system";
 import { ProductIcon } from '../lib/product-icon';
+import {
+  DeployScopeToggle,
+  StatusToggle,
+  type DeployScope,
+} from '../components/ProductStateControls';
 
 interface Product {
   id: string;
@@ -16,6 +21,8 @@ interface Product {
   url_base: string;
   cor: string;
   has_access: boolean;
+  ativo?: boolean;
+  deploy_scope?: DeployScope;
 }
 
 interface Subscription {
@@ -35,6 +42,8 @@ export function Dashboard() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
+  // Per-card in-flight guard for the admin working-guide toggles.
+  const [busySlug, setBusySlug] = useState<string | null>(null);
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
 
@@ -70,6 +79,32 @@ export function Dashboard() {
     }
     fetchData();
   }, [authLoading, user]);
+
+  /** Apply a working-guide change from a card, then re-read `/api/auth/me` so
+   *  the grid reflects what the server actually persisted (a deactivation also
+   *  demotes the scope, and a deactivated product drops out of the list). */
+  async function applyGuideChange(product: Product, call: () => Promise<unknown>) {
+    setBusySlug(product.slug);
+    try {
+      await call();
+      const meRes = await api.get('/api/auth/me');
+      setProducts(meRes.products || []);
+    } catch (err: any) {
+      toast.error(err?.message || 'Falha ao atualizar o produto');
+    } finally {
+      setBusySlug(null);
+    }
+  }
+
+  const setActivation = (product: Product, ativo: boolean) =>
+    applyGuideChange(product, () =>
+      api.post(`/api/products/${product.id}/activation`, { ativo }),
+    );
+
+  const setScope = (product: Product, deploy_scope: DeployScope) =>
+    applyGuideChange(product, () =>
+      api.post(`/api/products/${product.id}/deploy-scope`, { deploy_scope }),
+    );
 
   async function launchProduct(product: Product) {
     if (!product.has_access) return;
@@ -234,13 +269,42 @@ export function Dashboard() {
               }`}
               onClick={() => launchProduct(product)}
             >
-              {deployed[product.slug] === false && (
-                <span
-                  className="absolute top-3 right-3 inline-flex items-center rounded-full bg-warning-light text-warning-foreground px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                  title="Em desenvolvimento — ainda não publicado neste ambiente"
+              {/* Admins get the working-guide toggles inline on the card, so
+                  flipping a product's scope does not require a trip to the
+                  admin panel. Non-admins keep the plain informational badge.
+
+                  Only DEACTIVATION is reachable here: /api/auth/me returns
+                  active products only, so an inactive product has no card to
+                  toggle back from — reactivation lives in /admin/product-control,
+                  which is the surface that can see the ignored bucket. */}
+              {isAdmin ? (
+                <div
+                  className="absolute top-3 right-3 flex items-center gap-1.5"
+                  onClick={e => e.stopPropagation()}
                 >
-                  dev
-                </span>
+                  <DeployScopeToggle
+                    ativo={product.ativo !== false}
+                    deployScope={product.deploy_scope ?? 'dev'}
+                    busy={busySlug === product.slug}
+                    onToggle={next => setScope(product, next)}
+                  />
+                  <StatusToggle
+                    ativo={product.ativo !== false}
+                    deployScope={product.deploy_scope ?? 'dev'}
+                    busy={busySlug === product.slug}
+                    size="xs"
+                    onToggle={next => setActivation(product, next)}
+                  />
+                </div>
+              ) : (
+                deployed[product.slug] === false && (
+                  <span
+                    className="absolute top-3 right-3 inline-flex items-center rounded-full bg-warning-light text-warning-foreground px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                    title="Em desenvolvimento — ainda não publicado neste ambiente"
+                  >
+                    dev
+                  </span>
+                )
               )}
               <div className="mb-3"><ProductIcon name={product.icone} color={product.cor} /></div>
               <h3 className="text-lg font-semibold text-foreground mb-1">{product.nome}</h3>

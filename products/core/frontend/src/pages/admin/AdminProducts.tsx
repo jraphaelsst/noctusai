@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { ProductIcon } from '../../lib/product-icon';
+import {
+  ColorPickerButton,
+  DeployScopeToggle,
+  EditIconButton,
+  StatusToggle,
+  type DeployScope,
+} from '../../components/ProductStateControls';
 
 interface Product {
   id: string;
@@ -11,6 +18,9 @@ interface Product {
   url_base: string;
   cor: string;
   ativo: boolean;
+  // Working scope — stored INTENT ("where do we work this product?"), distinct
+  // from `/api/products/deployment-status`, which reports runtime reachability.
+  deploy_scope: DeployScope;
   created_at: string;
 }
 
@@ -86,6 +96,10 @@ export function AdminProducts() {
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState(EMPTY_PRODUCT_FORM);
+  // Per-row in-flight guard: the guide toggles write to the server, so the row
+  // being mutated disables its own controls rather than letting a double-click
+  // race two transitions against each other.
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productLicenses, setProductLicenses] = useState<License[]>([]);
@@ -179,8 +193,15 @@ export function AdminProducts() {
     e.preventDefault();
     try {
       if (editingProductId) {
-        const { slug, ...updateData } = productForm;
-        await api.patch(`/api/products/${editingProductId}`, updateData);
+        // Send ONLY the three human-owned presentation fields. Previously the
+        // whole form went up minus the slug, which meant an edit re-asserted
+        // `icone` and `url_base` from whatever the form happened to hold —
+        // quietly overwriting values the system owns.
+        await api.patch(`/api/products/${editingProductId}`, {
+          nome: productForm.nome,
+          descricao: productForm.descricao,
+          cor: productForm.cor,
+        });
       } else {
         await api.post('/api/products', productForm);
       }
@@ -195,29 +216,51 @@ export function AdminProducts() {
     }
   }
 
-  async function handleDeactivateProduct(id: string) {
-    if (!confirm('Desativar este produto?')) return;
-    try {
-      await api.delete(`/api/products/${id}`);
-      await fetchProducts();
-      if (selectedProduct?.id === id) {
-        setSelectedProduct(null);
-      }
-    } catch (err: any) {
-      alert(err.message);
+  /** Re-read the row after any guide mutation and keep the detail pane honest.
+   *  The server is the authority on the resulting state — deactivating also
+   *  demotes the scope, so echoing an optimistic local guess would show a
+   *  combination the backend just refused to persist. */
+  async function refreshAfterMutation(id: string) {
+    await fetchProducts();
+    if (selectedProduct?.id === id) {
+      const res = await api.get(`/api/products/${id}`);
+      setSelectedProduct(res.data);
     }
   }
 
-  async function handleReactivateProduct(id: string) {
+  async function handleSetActivation(id: string, ativo: boolean) {
+    setBusyId(id);
     try {
-      await api.patch(`/api/products/${id}`, { ativo: true });
-      await fetchProducts();
-      if (selectedProduct?.id === id) {
-        const res = await api.get(`/api/products/${id}`);
-        setSelectedProduct(res.data);
-      }
+      await api.post(`/api/products/${id}/activation`, { ativo });
+      await refreshAfterMutation(id);
     } catch (err: any) {
       alert(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleSetDeployScope(id: string, deploy_scope: DeployScope) {
+    setBusyId(id);
+    try {
+      await api.post(`/api/products/${id}/deploy-scope`, { deploy_scope });
+      await refreshAfterMutation(id);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleSetColor(id: string, cor: string) {
+    setBusyId(id);
+    try {
+      await api.patch(`/api/products/${id}`, { cor });
+      await refreshAfterMutation(id);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -348,35 +391,43 @@ export function AdminProducts() {
                 className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Icone (emoji)</label>
-              <input
-                type="text"
-                value={productForm.icone}
-                onChange={e => setProductForm({ ...productForm, icone: e.target.value })}
-                placeholder="Ex: 🏠"
-                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">URL Base</label>
-              <input
-                type="text"
-                value={productForm.url_base}
-                onChange={e => setProductForm({ ...productForm, url_base: e.target.value })}
-                placeholder="Ex: http://localhost:8080"
-                required={!editingProductId}
-                className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
+            {/* Icone / URL Base / Slug are SYSTEM-managed — the scaffolder and
+                the url-roster tooling own them, and hand-editing them here is
+                how the catalog drifts away from the fleet it describes. They
+                stay on the API for those tools; they are deliberately absent
+                from this modal on EDIT. Creation still needs them, since there
+                is no scaffolder run behind a hand-made row. */}
+            {!editingProductId && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Icone</label>
+                  <input
+                    type="text"
+                    value={productForm.icone}
+                    onChange={e => setProductForm({ ...productForm, icone: e.target.value })}
+                    placeholder="Ex: Box"
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">URL Base</label>
+                  <input
+                    type="text"
+                    value={productForm.url_base}
+                    onChange={e => setProductForm({ ...productForm, url_base: e.target.value })}
+                    placeholder="Ex: http://localhost:8080"
+                    required
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Cor</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="color"
-                  value={productForm.cor}
-                  onChange={e => setProductForm({ ...productForm, cor: e.target.value })}
-                  className="w-10 h-8 p-0 border-none cursor-pointer rounded"
+              <div className="flex gap-3 items-center">
+                <ColorPickerButton
+                  cor={productForm.cor}
+                  onPick={hex => setProductForm({ ...productForm, cor: hex })}
                 />
                 <input
                   type="text"
@@ -442,28 +493,20 @@ export function AdminProducts() {
             </h1>
             <p className="text-muted-foreground mt-1">{selectedProduct.slug}</p>
           </div>
-          <div className="flex gap-2">
-            <button
-              className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-              onClick={() => openEditProduct(selectedProduct)}
-            >
-              Editar
-            </button>
-            {selectedProduct.ativo ? (
-              <button
-                className="text-sm bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
-                onClick={() => handleDeactivateProduct(selectedProduct.id)}
-              >
-                Desativar
-              </button>
-            ) : (
-              <button
-                className="text-sm bg-success/10 text-success rounded-md px-3 py-1.5 hover:bg-success/20 transition-colors"
-                onClick={() => handleReactivateProduct(selectedProduct.id)}
-              >
-                Ativar
-              </button>
-            )}
+          <div className="flex items-center gap-3">
+            <StatusToggle
+              ativo={selectedProduct.ativo}
+              deployScope={selectedProduct.deploy_scope}
+              busy={busyId === selectedProduct.id}
+              onToggle={next => handleSetActivation(selectedProduct.id, next)}
+            />
+            <DeployScopeToggle
+              ativo={selectedProduct.ativo}
+              deployScope={selectedProduct.deploy_scope}
+              busy={busyId === selectedProduct.id}
+              onToggle={next => handleSetDeployScope(selectedProduct.id, next)}
+            />
+            <EditIconButton onClick={() => openEditProduct(selectedProduct)} />
           </div>
         </div>
 
@@ -481,22 +524,28 @@ export function AdminProducts() {
               <span className="text-muted-foreground">{selectedProduct.cor}</span>
             </div>
             <div className="flex items-center gap-2">
-              <strong className="text-foreground">Status:</strong>
-              <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                selectedProduct.ativo ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
-              }`}>
-                {selectedProduct.ativo ? 'Ativo' : 'Inativo'}
+              <strong className="text-foreground">Escopo de trabalho:</strong>
+              <span className="text-muted-foreground">
+                {!selectedProduct.ativo
+                  ? 'Inativo — nao tocamos neste produto'
+                  : selectedProduct.deploy_scope === 'live'
+                    ? 'Ativo + LIVE — trabalhamos em producao'
+                    : 'Ativo + DEV — trabalhamos apenas em dev'}
               </span>
             </div>
+            {/* Runtime reachability is a SEPARATE fact from the working scope
+                above: the scope is what we intend, this is what is actually
+                up right now. Showing both makes a mismatch visible instead of
+                letting one silently stand in for the other. */}
             <div className="flex items-center gap-2">
-              <strong className="text-foreground">Deploy:</strong>
+              <strong className="text-foreground">Container agora:</strong>
               <DeploymentBadge deployed={deployed[selectedProduct.slug]} />
               <span className="text-muted-foreground text-xs">
                 {deployed[selectedProduct.slug] === undefined
                   ? 'verificando...'
                   : deployed[selectedProduct.slug]
-                    ? 'container ativo neste ambiente'
-                    : 'nao publicado neste ambiente (dev)'}
+                    ? 'alcancavel neste ambiente'
+                    : 'nao alcancavel neste ambiente'}
               </span>
             </div>
           </div>
@@ -747,45 +796,32 @@ export function AdminProducts() {
                 <td className="px-4 py-3 text-foreground">{product.slug}</td>
                 <td className="px-4 py-3 text-muted-foreground">{product.url_base}</td>
                 <td className="px-4 py-3">
-                  <span
-                    className="inline-block w-3.5 h-3.5 rounded-full"
-                    style={{ backgroundColor: product.cor }}
+                  <ColorPickerButton
+                    cor={product.cor}
+                    busy={busyId === product.id}
+                    onPick={hex => handleSetColor(product.id, hex)}
                   />
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                    product.ativo ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
-                  }`}>
-                    {product.ativo ? 'Ativo' : 'Inativo'}
-                  </span>
+                  <StatusToggle
+                    ativo={product.ativo}
+                    deployScope={product.deploy_scope}
+                    busy={busyId === product.id}
+                    onToggle={next => handleSetActivation(product.id, next)}
+                  />
                 </td>
                 <td className="px-4 py-3">
-                  <DeploymentBadge deployed={deployed[product.slug]} />
+                  <DeployScopeToggle
+                    ativo={product.ativo}
+                    deployScope={product.deploy_scope}
+                    busy={busyId === product.id}
+                    onToggle={next => handleSetDeployScope(product.id, next)}
+                  />
                 </td>
                 <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
                 <td className="px-4 py-3">
-                  <div className="flex gap-2" onClick={e => e.stopPropagation()}>
-                    <button
-                      className="text-xs border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
-                      onClick={() => openEditProduct(product)}
-                    >
-                      Editar
-                    </button>
-                    {product.ativo ? (
-                      <button
-                        className="text-xs bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
-                        onClick={() => handleDeactivateProduct(product.id)}
-                      >
-                        Desativar
-                      </button>
-                    ) : (
-                      <button
-                        className="text-xs bg-success/10 text-success rounded-md px-3 py-1.5 hover:bg-success/20 transition-colors"
-                        onClick={() => handleReactivateProduct(product.id)}
-                      >
-                        Ativar
-                      </button>
-                    )}
+                  <div onClick={e => e.stopPropagation()}>
+                    <EditIconButton onClick={() => openEditProduct(product)} />
                   </div>
                 </td>
               </tr>

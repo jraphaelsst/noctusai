@@ -22,6 +22,7 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md
   - CONTEXT/PATTERNS/architect/dev-team.md
   - CONTEXT/PATTERNS/architect/project-execution.md
+  - CONTEXT/PATTERNS/architect/product-working-scope.md
   - CONTEXT/PATTERNS/architect/component-bundle-tool.md
   - CONTEXT/PATTERNS/architect/dev-toolkit-scaffolders.md
   - CONTEXT/PATTERNS/architect/mcp-tool-conventions.md
@@ -61,6 +62,8 @@ A crisp recommendation: `[F]ormalize` / `[R]efactor` / `[A]ccept-with-rationale`
 **Seed** → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/seed-lib-layout.md` · `KB § PATTERNS/architect/seed-workspace.md` · `KB § PATTERNS/architect/seed-absorption.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/architect/shared-library-conventions.md`.
 **Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md` · `KB § PATTERNS/architect/dev-team.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
+
+**Product working scope** — the catalog (`ativo` + `deploy_scope`) IS the working guide: ativo+live ⇒ work in prod, ativo+dev ⇒ dev only, inativo ⇒ don't touch. Read it before scoping any product work. → `KB § PATTERNS/architect/product-working-scope.md`.
 **MCP toolkit & tooling** → `KB § PATTERNS/architect/mcp-tool-conventions.md` · `KB § PATTERNS/architect/mcp-first-scripts.md` · `KB § PATTERNS/architect/dev-toolkit-scaffolders.md` · `KB § PATTERNS/architect/noc-graph.md` · `KB § PATTERNS/architect/component-bundle-tool.md` · `KB § PATTERNS/architect/component-list-and-validation.md`.
 **Guides** → `KB § GUIDES/new-product.md` · `KB § GUIDES/seed-first-design.md` · `KB § GUIDES/absorb-seed-workspace.md` · `KB § GUIDES/product-body-caching.md`.
 
