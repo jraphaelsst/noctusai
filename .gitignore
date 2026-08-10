@@ -36,6 +36,14 @@ venv/
 # on the VPS by `cloudflared tunnel create`; deploy-local, never committed. Enforces
 # the deploy_state.py D3 invariant (tunnel/*.json must be gitignored).
 **/tunnel/*.json
+# cloudflared ZONE-SCOPED origin certificate, written by `cloudflared tunnel
+# login`. Strictly more powerful than the per-tunnel credentials JSON above:
+# it can create/modify DNS for the whole noctusai.com zone. deploy/tunnel/ is a
+# TRACKED directory, so without this line a `tunnel login` on the VPS drops a
+# committable zone credential next to ingress.yml. Caught 2026-08-10 before the
+# login was run, not after. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md
+**/tunnel/cert.pem
+**/tunnel/*.pem
 
 # Build
 dist/

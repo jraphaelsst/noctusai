@@ -41,6 +41,18 @@ chown 65532:65532 deploy/tunnel/<TUNNEL_ID>.json && chmod 600 deploy/tunnel/<TUN
 
 The failure is loud and fast (`docker logs noctus-tunnel` says it in one line), but only if you actually probe the edge after a tunnel change — verify, don't assume.
 
+## `deploy/tunnel/` is a TRACKED directory holding untracked secrets
+
+Three artifacts live there and all three must stay gitignored:
+
+| File | What it is | Ignored by |
+|---|---|---|
+| `config.yml` | the live cloudflared config | `**/tunnel/config.yml` |
+| `<TUNNEL_ID>.json` | per-tunnel credentials | `**/tunnel/*.json` |
+| `cert.pem` | **zone-scoped** origin certificate | `**/tunnel/cert.pem` (added 2026-08-10) |
+
+`cert.pem` was uncovered until 2026-08-10 — caught **before** `cloudflared tunnel login` was run, not after. It is strictly more powerful than the tunnel credentials JSON: the JSON proves which tunnel you are, `cert.pem` can create or modify DNS for the **entire zone**. A `tunnel login` on the VPS drops it right next to `ingress.yml` in a tracked directory. Pinned by `TestTunnelSecretsAreGitignored`, which asserts all three via `git check-ignore` rather than trusting the file to stay correct.
+
 ## DNS is a separate, human-gated step
 
 Routing and DNS are two different artifacts. `route-dns.sh <TUNNEL_NAME>` reads hostnames straight from `ingress.yml` and creates the proxied CNAMEs — idempotent, safe to re-run. It requires the **zone-scoped `cert.pem`** from `cloudflared tunnel login`, which is an interactive browser flow and is deliberately **not** wired into any auto-deploy path: creating public DNS is outward-facing and stays a human action. An agent with only the tunnel credentials JSON cannot do it, and should say so rather than improvise.

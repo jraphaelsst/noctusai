@@ -116,3 +116,31 @@ class TestCheckTunnelIngressSnapshotSync:
         root = _tree(tmp_path, "routes:\n  - hostname: x\n", LIVE)
         issues = check_tunnel_ingress_snapshot_sync(repo_root=root)
         assert issues and issues[0]["symbol"] == "tunnel-ingress-unparseable"
+
+
+class TestTunnelSecretsAreGitignored:
+    """deploy/tunnel/ is a TRACKED directory that holds three secrets-or-live
+    artifacts. All must be ignored, or a routine `git add -A` commits them.
+
+    `cert.pem` was NOT covered until 2026-08-10 — caught before
+    `cloudflared tunnel login` was run, not after. It is strictly more
+    powerful than the per-tunnel credentials JSON: it can create or modify
+    DNS for the entire zone.
+    """
+
+    @pytest.mark.parametrize("name", [
+        "config.yml",                                   # live config
+        "6e9ccdc5-4d99-4d5e-b9f9-1da2fe99f56c.json",    # tunnel credentials
+        "cert.pem",                                     # ZONE credential
+    ])
+    def test_tunnel_secret_is_gitignored(self, name):
+        import subprocess
+        repo = Path(__file__).resolve().parents[3]
+        r = subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", f"deploy/tunnel/{name}"],
+            capture_output=True,
+        )
+        assert r.returncode == 0, (
+            f"deploy/tunnel/{name} is NOT gitignored — it would be committable "
+            "from a tracked directory"
+        )
