@@ -132,8 +132,18 @@ scripts/archive-clean-last-sweep.log
 /PLANO-LANCAMENTO-LIVRO.md
 /PLANO-LANCAMENTO-LIVRO.docx
 
-# Local .env backups — contain secrets, never track
-.env.bak.*
+# Local .env backups — contain secrets, never track.
+# `.env.bak.*` (dot) was the original rule and MISSED every backup the tooling
+# actually writes, which uses a HYPHEN (`.env.bak-seed-add`,
+# `.env.bak-waha-20260606-065951`). Three such files sat untracked-but-committable
+# in the VPS checkout carrying JWT_SECRET / ENCRYPTION_KEY / OPENAI_API_KEY /
+# GOOGLE_OAUTH_CLIENT_SECRET — same shape as the tunnel cert.pem gap, found
+# 2026-08-10. The bare `*` covers both separators and any suffix.
+.env.bak*
+# Fleet cache env, written on the VPS by the deploy tooling — carries
+# NOCTUS_CACHE_PG_PASSWORD + the Postgres DSN. Lives in the TRACKED
+# deploy/fleet/ directory, so it needs a rule the same way tunnel/ does.
+.env.fleet
 
 # Lead-control spreadsheet — 12k client names + phone numbers (LGPD). Imported to
 # Supabase locally, never committed. See products/social-wiring/projects/leads-module-PROJECT.md D6.

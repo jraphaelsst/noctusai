@@ -39,6 +39,32 @@ DEPLOY_LOCAL_FILES: list[dict[str, str]] = [
             "by `cloudflared tunnel create`, chmod 600, never committed."
         ),
     },
+    {
+        "pattern": "**/tunnel/*.pem",
+        "reason": (
+            "cloudflared ZONE-SCOPED origin certificate (cert.pem), written by "
+            "`cloudflared tunnel login`. Strictly more powerful than the "
+            "credentials JSON above: it can create or modify DNS for the whole "
+            "noctusai.com zone. deploy/tunnel/ is TRACKED, so an unignored write "
+            "lands next to ingress.yml."
+        ),
+    },
+    {
+        "pattern": ".env.bak*",
+        "reason": (
+            "local .env backups written by the deploy/seed tooling — carry "
+            "JWT_SECRET / ENCRYPTION_KEY / OPENAI_API_KEY / "
+            "GOOGLE_OAUTH_CLIENT_SECRET. The predecessor rule `.env.bak.*` used a "
+            "DOT and matched none of the hyphen-suffixed names actually written."
+        ),
+    },
+    {
+        "pattern": ".env.fleet",
+        "reason": (
+            "fleet cache env under the TRACKED deploy/fleet/ directory — carries "
+            "NOCTUS_CACHE_PG_PASSWORD + NOCTUS_CACHE_POSTGRES_DSN."
+        ),
+    },
 ]
 
 # Invariants this manifest asserts (documented here; enforced by predeploy_check
