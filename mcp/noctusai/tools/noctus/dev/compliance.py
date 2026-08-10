@@ -14656,6 +14656,69 @@ def _resolve_roadmap_milestone(consent_ref: str, root: Path) -> tuple[bool, str]
     return False, f"no line in {rel!r} contains both {anchor!r} and a ✅ marker"
 
 
+#: `promptSource` values that mean A HUMAN PUT THIS TEXT HERE.
+#:
+#: `typed` — the user composed it at the prompt box.
+#: `suggestion_accepted` — the agent proposed the exact string and the user
+#: clicked to accept it. Included deliberately (2026-08-09): this is the
+#: "click to agree" pattern, where the counterparty writes the words and the
+#: human performs the affirmative act. The record is still HARNESS-written —
+#: an agent cannot fabricate an acceptance — and provenance is preserved in
+#: the consent record, so an auditor can always tell the two apart.
+_HUMAN_PROMPT_SOURCES = frozenset({"typed", "suggestion_accepted"})
+
+
+def _matches_authorization_intent(slug: str, text: str) -> bool:
+    """Does `text` express authorization to publish `slug` to production?
+
+    **CONJUNCTIVE, not fuzzy.** All three must be present in the SAME
+    message, or it does not match:
+
+      1. an explicit performative verb — `authorize` / `authorise` /
+         `approve` (a wish is not a decision: "I want igig live" is not
+         authorization, and neither is "finish the igig deploy to prod"),
+      2. the SLUG — so an approval of something else can never be
+         repurposed for this product,
+      3. a production token — `prod` / `production`.
+
+    Negation-guarded: "do not authorize", "unauthorized", "isn't approved"
+    and friends never match.
+
+    **Why a heuristic at all, when the canonical phrase is exact-matchable.**
+    Exact-only produced a FALSE NEGATIVE on a real, unmistakable, repeated
+    authorization (2026-08-09: the user typed "i authorize the igig deploy
+    all the way to prod" and the gate rejected it). A gate that refuses
+    genuine consent teaches the user that the gate is broken — which is how
+    gates get bypassed. A false negative on a consent gate is a defect, the
+    same class as the YAML-quoting bug fixed the same day.
+
+    The conjunction is what keeps it honest. Verified against this very
+    session's real messages: it matches the two genuine authorizations and
+    NONE of "finish igig deploy to prod. i need it live on vps", "lets
+    finish this deploy", "can u rollback...", or "lets redesign the gate
+    and probe it using igig".
+    """
+    import re
+
+    if not text or not slug:
+        return False
+    t = " ".join(text.split()).casefold()
+    if slug.casefold() not in t:
+        return False
+    if not re.search(r"\b(prod|production)\b", t):
+        return False
+    verb = re.search(r"\b(authoriz\w*|authoris\w*|approv\w*)\b", t)
+    if not verb:
+        return False
+    # Negation guard — inspect the ~40 chars before the verb.
+    window = t[max(0, verb.start() - 40):verb.start()]
+    if re.search(r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|without|un)\s*$", window):
+        return False
+    if re.search(r"\bunauthoriz|\bunauthoris|\bnot authoriz|\bnever authoriz", t):
+        return False
+    return True
+
+
 def _canonical_authorization_phrase(slug: str) -> str:
     """The EXACT sentence a user types in-session to authorize prod exposure.
 
@@ -14678,8 +14741,8 @@ def _human_authored_transcript_texts(
     record shapes carry human text, and BOTH are required — checking only
     the first silently misses authorizations given mid-turn:
 
-      * `type="user"` with `promptSource="typed"` — a prompt typed at the
-        prompt box. Tool results are ALSO `type="user"`, which is why
+      * `type="user"` with `promptSource` in `_HUMAN_PROMPT_SOURCES` — see
+        below. Tool results are ALSO `type="user"`, which is why
         `promptSource` (not `type`) is the discriminator; skill injections
         additionally carry `isMeta=true`.
       * `type="queue-operation"` with `operation="enqueue"` — a message
@@ -14690,9 +14753,12 @@ def _human_authored_transcript_texts(
     Sidechain (subagent) records are excluded: a subagent's conversation is
     not the user speaking to the tech-lead.
 
-    Returns `(texts, detail)`. An empty list with a non-empty `detail` is a
-    hard failure (transcript absent/unreadable) — never treated as "no
-    authorization found", so a missing transcript can never read as consent.
+    Returns `(entries, detail)` where each entry is `(source, text)` —
+    provenance is carried, not flattened away, so the consent record can
+    state HOW the authorization was given. An empty list with a non-empty
+    `detail` is a hard failure (transcript absent/unreadable) — never
+    treated as "no authorization found", so a missing transcript can never
+    read as consent.
     """
     import json
 
@@ -14700,7 +14766,7 @@ def _human_authored_transcript_texts(
     if not matches:
         return [], f"no transcript found for session {session_id}"
 
-    texts: list[str] = []
+    entries: list[tuple[str, str]] = []
     for path in matches:
         try:
             raw = path.read_text(encoding="utf-8", errors="replace")
@@ -14719,20 +14785,21 @@ def _human_authored_transcript_texts(
             rtype = rec.get("type")
             if rtype == "queue-operation":
                 if rec.get("operation") == "enqueue":
-                    texts.append(str(rec.get("content") or ""))
+                    entries.append(("queued", str(rec.get("content") or "")))
                 continue
-            if rtype != "user" or rec.get("promptSource") != "typed" or rec.get("isMeta"):
+            source = rec.get("promptSource")
+            if rtype != "user" or source not in _HUMAN_PROMPT_SOURCES or rec.get("isMeta"):
                 continue
             content = (rec.get("message") or {}).get("content")
             if isinstance(content, str):
-                texts.append(content)
+                entries.append((str(source), content))
             elif isinstance(content, list):
                 for block in content:
                     # `tool_result` blocks are the agent's own output echoed
                     # back — never the human speaking.
                     if isinstance(block, dict) and block.get("type") == "text":
-                        texts.append(str(block.get("text") or ""))
-    return texts, ""
+                        entries.append((str(source), str(block.get("text") or "")))
+    return entries, ""
 
 
 def _verify_authorization_phrase(
@@ -14764,16 +14831,32 @@ def _verify_authorization_phrase(
     expected = _canonical_authorization_phrase(slug)
     def _norm(s: str) -> str:
         return " ".join(s.split()).casefold()
-    if _norm(phrase) != _norm(expected):
-        return False, (
-            f"authorization.phrase is not the canonical sentence for '{slug}'. "
-            f"Expected exactly: {expected!r}"
-        )
 
-    texts, detail = _human_authored_transcript_texts(session_id, home=home)
+    entries, detail = _human_authored_transcript_texts(session_id, home=home)
     if detail:
         return False, detail
-    if not any(_norm(expected) in _norm(t) for t in texts):
+
+    # The recorded `phrase` must itself be a real authorization for THIS
+    # slug — either the canonical sentence, or an explicit performative
+    # authorization (verb ∧ slug ∧ prod). This is checked BEFORE the
+    # transcript lookup so a record carrying an innocuous sentence is
+    # rejected on its own terms.
+    if _norm(phrase) != _norm(expected) and not _matches_authorization_intent(slug, phrase):
+        return False, (
+            f"authorization.phrase does not express authorization to publish "
+            f"'{slug}' to production. Use the canonical sentence "
+            f"({expected!r}), or an explicit statement containing an "
+            f"authorizing verb, the slug, and prod/production. Note: "
+            f"'deploy {slug} to prod' is an INSTRUCTION, not a promotion "
+            f"decision — it does not authorize prod exposure."
+        )
+
+    # …and it must actually appear in something the human wrote.
+    found = any(
+        _norm(phrase) in _norm(t) or _matches_authorization_intent(slug, t)
+        for _src, t in entries
+    )
+    if not found:
         # THE ONE-TURN LAG. The harness flushes a user message to the
         # transcript when its TURN ENDS, so a phrase typed in the turn that
         # is currently running is not on disk yet and cannot be verified —
@@ -14788,17 +14871,34 @@ def _verify_authorization_phrase(
         # around it. That is the exact failure this gate exists to prevent,
         # so a confusing refusal here is a safety bug, not a UX nit.
         return False, (
-            f"the canonical phrase was NOT found in any message the user "
-            f"actually typed in session {session_id} "
-            f"({len(texts)} human-authored message(s) scanned). "
-            f"Expected: {expected!r}\n"
-            "If the user typed it DURING THE TURN YOU ARE IN, this is "
+            f"no authorization for '{slug}' was found in any message the "
+            f"user actually wrote in session {session_id} "
+            f"({len(entries)} human-authored message(s) scanned). "
+            f"Ask for: {expected!r}\n"
+            "If the user said it DURING THE TURN YOU ARE IN, this is "
             "expected and NOT a refusal of their authorization: the "
             "transcript is flushed at turn end, so re-run `author` on your "
             "next turn and it will verify. Do NOT hand-author the record, "
             "and do NOT treat this as the user having declined."
         )
     return True, ""
+
+
+def _find_authorization_evidence(
+    slug: str, session_id: str, home: Path | None = None
+) -> tuple[str, str] | None:
+    """Return `(source, text)` of the human message that authorizes `slug`,
+    or None. Used to record WHAT the user actually said, verbatim, rather
+    than restating it in the agent's own words."""
+    entries, detail = _human_authored_transcript_texts(session_id, home=home)
+    if detail:
+        return None
+    canonical = _canonical_authorization_phrase(slug)
+    norm = lambda s: " ".join(s.split()).casefold()  # noqa: E731
+    for source, text in entries:
+        if norm(canonical) in norm(text) or _matches_authorization_intent(slug, text):
+            return source, " ".join(text.split())
+    return None
 
 
 def _validate_prod_consent_record(

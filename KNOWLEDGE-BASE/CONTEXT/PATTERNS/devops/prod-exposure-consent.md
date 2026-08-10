@@ -100,6 +100,26 @@ An earlier sketch used a free-form `authorization_quote`. That is barely stronge
 1. **It embeds the slug.** An agent cannot repurpose an unrelated "yes, go ahead" from earlier in the conversation as authorization for *this* product.
 2. **It is exact-matchable.** No intent classification, no fuzzy matching, no judgement call inside a keeper.
 
+### Accepting natural authorization — the conjunctive heuristic
+
+Exact-matching the canonical sentence alone produced a **false negative on real consent**: the user typed *"i authorize the igig deploy all the way to prod"* and the gate rejected it. A gate that refuses genuine authorization teaches its user that the gate is broken, which is how gates get bypassed — the same class of defect as the YAML-quoting bug, and fixed for the same reason.
+
+`_matches_authorization_intent` accepts a message when **all three** are present together, negation-guarded:
+
+1. an explicit **performative verb** — `authorize` / `authorise` / `approve`,
+2. the **slug**,
+3. a **production token** — `prod` / `production`.
+
+**"deploy igig to prod" deliberately does NOT match.** It is an instruction to an agent, not a promotion decision. If it authorized prod exposure, every deploy request would self-authorize and the gate would be equivalent to deleted — precisely the orbity incident's shape. A wish ("I want igig live") fails for the same reason: it lacks a performative verb.
+
+The regression corpus is **real** — every string in `TestAuthorizationIntentHeuristic` is an actual message from the session in which this was written, sorted into genuine / instruction / negation. That is what keeps the heuristic honest: it is pinned against the exact conversation that motivated it.
+
+The consent record stores the user's **own words verbatim** (`authorization.phrase`) plus `prompt_source`, never the agent's restatement — so an auditor reads what was actually said, and how.
+
+### `suggestion_accepted` counts as human
+
+`promptSource` distinguishes `typed` (the user composed it) from `suggestion_accepted` (the agent proposed the exact string; the user clicked accept). Both count, because the second is the **click-to-agree** pattern — the counterparty writes the words, the human performs the affirmative act — and the record is still harness-written, so an agent cannot fabricate an acceptance. Provenance is preserved in `authorization.prompt_source` so the two are never conflated. Any other `promptSource` is not human.
+
 ### What counts as "the user said it"
 
 `_human_authored_transcript_texts` reads the harness-written `~/.claude/projects/*/<session_id>.jsonl` and accepts exactly two record shapes:
@@ -164,6 +184,7 @@ python mcp/noctusai/cli.py --check-prod-exposure-consent
 ## History
 
 - **2026-07-20** — Shipped closing the orbity incident (prod-serving six weeks before validation, zero consent decision on record). Keeper + mechanism (`scaffold_product` invariant + `prod_consent` tool) + regression test proving fire/pass/silent + 8-way sync, same commit.
+- **2026-08-09 (same day, second pass)** — **Conjunctive intent matching + `suggestion_accepted`.** Exact-only matching false-negatived a real authorization; the user pushed back mid-deploy. Loosened *deliberately and tightly*: verb ∧ slug ∧ prod, negation-guarded, pinned against the session's real messages. The line held where it matters — `deploy <slug> to prod` still does not authorize, because an instruction is not a promotion decision. Provenance (`prompt_source`) and the user's verbatim words are now stored in the record.
 - **2026-08-09** — **Verified-transcription redesign.** Two things were wrong, found while igig waited on M5:
   - **A false negative that made the gate look arbitrary.** `consent_ref` shipped **unquoted** in the template from introduction. A milestone anchor is normally `M5: prod promote`, so the value carries `": "` — an unquoted YAML scalar containing `": "` is a `ScannerError`, not a string. **Every record authored faithfully from the documented template failed at the parse step**, presenting to the author as "the gate rejected my consent" rather than "your YAML is malformed". Quoting is the whole fix.
   - **An unverifiable authorship rule.** See the section above. Replaced "the user must type the file" with "the user must type the sentence, and the gate checks". Strictly stronger (the old rule verified *nothing* about who wrote the file) and strictly lower friction.

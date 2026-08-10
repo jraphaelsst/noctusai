@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_prod_exposure_consent,
     _human_authored_transcript_texts,
+    _matches_authorization_intent,
     _resolve_roadmap_milestone,
     _validate_prod_consent_record,
     _verify_authorization_phrase,
@@ -424,7 +425,7 @@ class TestHumanAuthoredTranscriptTexts:
         _write_transcript(tmp_path, "s1", [_typed("hello there")])
         texts, detail = _human_authored_transcript_texts("s1", home=tmp_path)
         assert detail == ""
-        assert texts == ["hello there"]
+        assert texts == [("typed", "hello there")]
 
     def test_mid_turn_queued_message_counts(self, tmp_path):
         """The regression that motivated reading BOTH shapes: a real
@@ -436,7 +437,7 @@ class TestHumanAuthoredTranscriptTexts:
              "content": "sent while you were working"},
         ])
         texts, _ = _human_authored_transcript_texts("s2", home=tmp_path)
-        assert texts == ["sent while you were working"]
+        assert texts == [("queued", "sent while you were working")]
 
     def test_tool_results_and_meta_and_sidechain_excluded(self, tmp_path):
         _write_transcript(tmp_path, "s3", [
@@ -469,7 +470,7 @@ class TestVerifyAuthorizationPhrase:
         ok, reason = _verify_authorization_phrase(
             "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
         assert not ok
-        assert "NOT found" in reason
+        assert "was found in any message" in reason
 
     def test_refusal_explains_the_one_turn_lag(self, tmp_path):
         """The harness flushes a user message at TURN END, so a phrase typed
@@ -586,3 +587,79 @@ class TestConsentRefQuotingFalseNegative:
     def test_shipped_template_is_quoted(self):
         from tools.noctus.dev.prod_consent import _TEMPLATE
         assert "consent_ref: '" in _TEMPLATE
+
+
+class TestAuthorizationIntentHeuristic:
+    """CONJUNCTIVE, not fuzzy: performative verb ∧ slug ∧ prod token.
+
+    The corpus below is REAL — every string is an actual message from the
+    2026-08-09 session in which this heuristic was written. Exact-matching
+    alone had produced a false negative on a genuine, repeated
+    authorization, and a consent gate that refuses real consent is how
+    gates get bypassed.
+    """
+
+    GENUINE = [
+        "i authorize the igig deploy all the way to prod.",
+        "I authorize igig to be published to production.",
+        "ok — I approve igig for production",
+    ]
+    NOT_AUTHORIZATION = [
+        # An INSTRUCTION to deploy is not a promotion decision. If this
+        # matched, every "deploy X to prod" would self-authorize and the
+        # gate would be equivalent to deleted — the orbity incident's shape.
+        "please deploy igig to prod",
+        'what i said was "deploy igig to prod".',
+        "hey claude, pelase contextualize then finish igig deploy to prod. i need it live on vps.",
+        "for god's sakes lets finish this deploy.",
+        "can u rollback to the moment when we didnt built the igig yet",
+        "lets redesign the gate and probe it using igig",
+        # wish ≠ decision
+        "i want igig live on prod",
+    ]
+    NEGATED = [
+        "I do not authorize igig for prod",
+        "igig is unauthorized for production",
+        "never authorize igig to production",
+    ]
+
+    @pytest.mark.parametrize("text", GENUINE)
+    def test_matches_genuine_authorization(self, text):
+        assert _matches_authorization_intent("igig", text)
+
+    @pytest.mark.parametrize("text", NOT_AUTHORIZATION)
+    def test_rejects_instructions_and_wishes(self, text):
+        assert not _matches_authorization_intent("igig", text)
+
+    @pytest.mark.parametrize("text", NEGATED)
+    def test_rejects_negations(self, text):
+        assert not _matches_authorization_intent("igig", text)
+
+    def test_authorization_for_another_slug_never_transfers(self):
+        assert not _matches_authorization_intent(
+            "igig", "I authorize orbity to be published to production.")
+
+    def test_requires_all_three_legs(self):
+        assert not _matches_authorization_intent("igig", "I authorize this to production")  # no slug
+        assert not _matches_authorization_intent("igig", "I authorize igig")               # no prod
+        assert not _matches_authorization_intent("igig", "igig goes to production")        # no verb
+
+
+class TestSuggestionAcceptedCountsAsHuman:
+    """`suggestion_accepted` — the agent proposed the string, the human
+    clicked accept. That is the click-to-agree pattern: the record is still
+    harness-written, so an agent cannot fabricate it. Provenance is kept."""
+
+    def test_suggestion_accepted_is_human_authored(self, tmp_path):
+        _write_transcript(tmp_path, "s", [{
+            "type": "user", "promptSource": "suggestion_accepted",
+            "message": {"content": PHRASE}}])
+        entries, _ = _human_authored_transcript_texts("s", home=tmp_path)
+        assert entries == [("suggestion_accepted", PHRASE)]
+
+    def test_unknown_prompt_source_is_not_human(self, tmp_path):
+        _write_transcript(tmp_path, "s", [{
+            "type": "user", "promptSource": "synthetic",
+            "message": {"content": PHRASE}}])
+        entries, _ = _human_authored_transcript_texts("s", home=tmp_path)
+        assert entries == []

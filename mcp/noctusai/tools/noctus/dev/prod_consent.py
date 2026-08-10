@@ -30,6 +30,7 @@ from workspace import resolve_caller_root
 
 from .compliance import (
     _PROD_BUILD_PUSH_REL,
+    _find_authorization_evidence,
     _PROD_COMPOSE_REL,
     _PROD_CONSENT_DIR_REL,
     _PROD_INGRESS_REL,
@@ -197,6 +198,7 @@ def _author(
     """
     import datetime as _dt
     import hashlib
+    import json
 
     if not slug or not slug.strip():
         return {"ok": False, "action": "author", "error": "slug is required"}
@@ -218,11 +220,13 @@ def _author(
             "error": "consent_ref is required (<roadmap path>#<✅ milestone>)",
         }
 
-    ok, reason = _verify_authorization_phrase(slug, {
-        "phrase": _canonical_authorization_phrase(slug),
-        "session_id": session_id,
-    })
-    if not ok:
+    evidence = _find_authorization_evidence(slug, session_id)
+    if evidence is None:
+        ok, reason = _verify_authorization_phrase(slug, {
+            "phrase": _canonical_authorization_phrase(slug),
+            "session_id": session_id,
+        })
+        reason = reason or "no authorizing message found"
         return {
             "ok": False,
             "action": "author",
@@ -230,6 +234,7 @@ def _author(
             "error": f"REFUSED — {reason}",
             "phrase_to_ask_for": _canonical_authorization_phrase(slug),
         }
+    evidence_source, evidence_text = evidence
 
     root = _resolve_root(repo_root, worktree_path)
     email = _git_author_email(root) or ""
@@ -254,7 +259,9 @@ def _author(
         f"dev_validated: true\n"
         f"recorded_by: agent\n"
         f"authorization:\n"
-        f"  phrase: \"{_canonical_authorization_phrase(slug)}\"\n"
+        # The user's OWN words, verbatim — not the agent's restatement.
+        f"  phrase: {json.dumps(evidence_text)}\n"
+        f"  prompt_source: {evidence_source}\n"
         f"  session_id: {session_id}\n"
         f"  transcript_sha256: {digest}\n"
         f"  recorded_at: {now}\n"
