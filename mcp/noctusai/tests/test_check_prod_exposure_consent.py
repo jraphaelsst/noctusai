@@ -38,7 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_prod_exposure_consent,
+    _human_authored_transcript_texts,
     _resolve_roadmap_milestone,
+    _validate_prod_consent_record,
+    _verify_authorization_phrase,
 )
 
 
@@ -184,7 +187,12 @@ class TestCheckProdExposureConsent:
         assert "ALL_SLUGS" in msg
         assert "production-promotion decision" in msg
         assert "NO LATER GATE" in msg
-        assert "An agent MUST NOT create the consent record on the user's behalf." in msg
+        # The agent boundary is still stated, in the post-2026-08-09 wording:
+        # an agent may transcribe a decision, never manufacture one. The
+        # message must also teach the verified path, not just forbid.
+        assert "An agent may RECORD the user's decision; it must never invent one." in msg
+        assert "I authorize orbity to be published to production." in msg
+        assert "action=challenge" in msg
         assert "KB § PATTERNS/devops/prod-exposure-consent.md" in msg
 
 
@@ -379,3 +387,189 @@ class TestResolveRoadmapMilestone:
         )
         assert ok is False
         assert "not found" in reason
+
+
+# ── Agent-recorded consent (redesigned 2026-08-09) ───────────────────────────
+#
+# The gate used to require the USER to hand-type the YAML. For a user who
+# works entirely through agents that is pure friction, and worse, it was
+# UNVERIFIABLE: nothing stopped an agent from writing the file and asserting
+# the user approved — which is exactly what was attempted twice on
+# 2026-08-09. The redesign keeps the decision the user's but makes the proof
+# mechanical: a canonical sentence, matched against the harness-written
+# session transcript, which the agent does not author.
+
+
+def _write_transcript(home: Path, session_id: str, records: list[dict]) -> Path:
+    import json
+    d = home / ".claude" / "projects" / "-some-project"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{session_id}.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    return p
+
+
+def _typed(text: str) -> dict:
+    return {"type": "user", "promptSource": "typed",
+            "message": {"content": text}}
+
+
+PHRASE = "I authorize demo to be published to production."
+
+
+class TestHumanAuthoredTranscriptTexts:
+    """Only what the HUMAN wrote counts as evidence."""
+
+    def test_typed_prompt_counts(self, tmp_path):
+        _write_transcript(tmp_path, "s1", [_typed("hello there")])
+        texts, detail = _human_authored_transcript_texts("s1", home=tmp_path)
+        assert detail == ""
+        assert texts == ["hello there"]
+
+    def test_mid_turn_queued_message_counts(self, tmp_path):
+        """The regression that motivated reading BOTH shapes: a real
+        mid-turn authorization appeared ONLY as a queue-operation."""
+        _write_transcript(tmp_path, "s2", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": "sent while you were working"},
+            {"type": "queue-operation", "operation": "remove",
+             "content": "sent while you were working"},
+        ])
+        texts, _ = _human_authored_transcript_texts("s2", home=tmp_path)
+        assert texts == ["sent while you were working"]
+
+    def test_tool_results_and_meta_and_sidechain_excluded(self, tmp_path):
+        _write_transcript(tmp_path, "s3", [
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "content": PHRASE}]}},
+            {"type": "user", "promptSource": "typed", "isMeta": True,
+             "message": {"content": PHRASE}},
+            {"type": "user", "promptSource": "typed", "isSidechain": True,
+             "message": {"content": PHRASE}},
+            {"type": "assistant", "message": {"content": PHRASE}},
+        ])
+        texts, _ = _human_authored_transcript_texts("s3", home=tmp_path)
+        assert texts == [], "agent-side records must never count as authorization"
+
+    def test_absent_transcript_is_a_loud_failure_not_an_empty_pass(self, tmp_path):
+        texts, detail = _human_authored_transcript_texts("nope", home=tmp_path)
+        assert texts == []
+        assert "no transcript found" in detail
+
+
+class TestVerifyAuthorizationPhrase:
+    def test_verified_when_user_typed_it(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed(f"ok fine. {PHRASE}")])
+        ok, reason = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert ok, reason
+
+    def test_refused_when_user_never_typed_it(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed("just ship it already")])
+        ok, reason = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert not ok
+        assert "NOT found" in reason
+
+    def test_refused_when_phrase_is_not_canonical(self, tmp_path):
+        """A cherry-picked "yes go ahead" must not authorize a product —
+        the sentence has to name the slug."""
+        _write_transcript(tmp_path, "s", [_typed("yes go ahead")])
+        ok, reason = _verify_authorization_phrase(
+            "demo", {"phrase": "yes go ahead", "session_id": "s"}, home=tmp_path)
+        assert not ok
+        assert "canonical" in reason
+
+    def test_refused_when_phrase_authorizes_a_DIFFERENT_slug(self, tmp_path):
+        _write_transcript(tmp_path, "s", [
+            _typed("I authorize otherproduct to be published to production.")])
+        ok, _ = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert not ok
+
+    @pytest.mark.parametrize("auth", [None, "a string", {}, {"phrase": PHRASE}])
+    def test_refused_on_malformed_authorization_block(self, auth, tmp_path):
+        ok, _ = _verify_authorization_phrase("demo", auth, home=tmp_path)
+        assert not ok
+
+
+class TestValidateRecordRecordedByAgent:
+    def test_grandfathered_record_without_recorded_by_still_valid(self, tmp_path):
+        """Purely additive: every pre-2026-08-09 record stays valid."""
+        root = _init_repo(tmp_path)
+        ref = _write_roadmap_with_milestone(root, "demo", "M1: prod promote")
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "roadmap")
+        _write_consent_record(root, "demo", consent_ref=ref)
+        assert _validate_prod_consent_record("demo", root)["status"] == "valid"
+
+    def test_recorded_by_agent_without_authorization_is_invalid(self, tmp_path):
+        root = _init_repo(tmp_path)
+        ref = _write_roadmap_with_milestone(root, "demo", "M1: prod promote")
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "roadmap")
+        p = root / "deploy" / "consent" / "demo.prod.yml"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            f"consented_by: {AUTHOR_EMAIL}\nconsented_on: '2026-08-09'\n"
+            f"consent_ref: \"{ref}\"\ndev_validated: true\nrecorded_by: agent\n"
+        )
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "consent")
+        result = _validate_prod_consent_record("demo", root, home=tmp_path / "home")
+        assert result["status"] == "invalid"
+        assert "unverified" in result["detail"]
+
+    def test_recorded_by_agent_with_verified_phrase_is_valid(self, tmp_path):
+        root = _init_repo(tmp_path)
+        home = tmp_path / "home"
+        _write_transcript(home, "sess-1", [_typed(PHRASE)])
+        ref = _write_roadmap_with_milestone(root, "demo", "M1: prod promote")
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "roadmap")
+        p = root / "deploy" / "consent" / "demo.prod.yml"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            f"consented_by: {AUTHOR_EMAIL}\nconsented_on: '2026-08-09'\n"
+            f"consent_ref: \"{ref}\"\ndev_validated: true\nrecorded_by: agent\n"
+            f"authorization:\n  phrase: \"{PHRASE}\"\n  session_id: sess-1\n"
+        )
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "consent")
+        result = _validate_prod_consent_record("demo", root, home=home)
+        assert result["status"] == "valid", result["detail"]
+
+    def test_unknown_recorded_by_is_invalid(self, tmp_path):
+        root = _init_repo(tmp_path)
+        ref = _write_roadmap_with_milestone(root, "demo", "M1: prod promote")
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "roadmap")
+        p = root / "deploy" / "consent" / "demo.prod.yml"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            f"consented_by: {AUTHOR_EMAIL}\nconsented_on: '2026-08-09'\n"
+            f"consent_ref: \"{ref}\"\ndev_validated: true\nrecorded_by: nobody\n"
+        )
+        _git(root, "add", "-A"); _git(root, "commit", "-m", "consent")
+        assert _validate_prod_consent_record("demo", root)["status"] == "invalid"
+
+
+class TestConsentRefQuotingFalseNegative:
+    """The template shipped `consent_ref` UNQUOTED from 2026-07-20. A
+    milestone anchor contains ': ', so the value was a YAML ScannerError —
+    every record authored faithfully from the documented template failed at
+    the PARSE step, presenting as "the gate rejected my consent"."""
+
+    def test_unquoted_consent_ref_containing_colon_space_fails_to_parse(self):
+        import yaml
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_load(
+                "consented_by: a@b.com\nconsented_on: '2026-08-09'\n"
+                "consent_ref: roadmaps/x.md#M5: prod promote\ndev_validated: true\n"
+            )
+
+    def test_quoted_consent_ref_parses(self):
+        import yaml
+        d = yaml.safe_load(
+            "consented_by: a@b.com\nconsented_on: '2026-08-09'\n"
+            "consent_ref: 'roadmaps/x.md#M5: prod promote'\ndev_validated: true\n"
+        )
+        assert d["consent_ref"] == "roadmaps/x.md#M5: prod promote"
+
+    def test_shipped_template_is_quoted(self):
+        from tools.noctus.dev.prod_consent import _TEMPLATE
+        assert "consent_ref: '" in _TEMPLATE

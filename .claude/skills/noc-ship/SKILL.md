@@ -21,7 +21,7 @@ version: 1.1.0
 - R4 human-gated: PRESENT {push cmd + range + evidence} → explicit user go → execute. Never auto-push `main`/`prod`.
 - The slim prod image is structurally different (no start.sh/registry/node, baked dist, env-only config) — verify in the PRODUCTION SHAPE, not just dev-green (`noc` highest-recurrence drift class).
 - Prod services sit behind the CF tunnel ⇒ any programmatic caller needs a browser User-Agent (1010 WAF). SSO verify: `noctus.dev.sso_smoke`.
-- **Prod-exposure precheck** — before promote, `python mcp/noctusai/cli.py --check-prod-exposure-consent` (should already be clean; the pre-commit gate refuses an un-consented product registration at commit time). Bless/promote is a whole-repo-state decision — it is NEVER a per-product "should this be public" decision, and an agent MUST NOT author `deploy/consent/*.prod.yml` on the user's behalf. → `KB § PATTERNS/devops/prod-exposure-consent.md`.
+- **Prod-exposure precheck** — before promote, `python mcp/noctusai/cli.py --check-prod-exposure-consent` (should already be clean; the pre-commit gate refuses an un-consented product registration at commit time). Bless/promote is a whole-repo-state decision — it is NEVER a per-product "should this be public" decision. An agent may RECORD the user's decision but never invent one: ask them to type the canonical phrase (`prod_consent action=challenge slug=<slug>`), then `action=author`, which REFUSES unless that phrase is verified against the session transcript. → `KB § PATTERNS/devops/prod-exposure-consent.md`.
 
 ## Depth
 `KB § PATTERNS/architect/branching-and-merging.md §0.2` · `KB § GUIDES/production-deploy.md` (+ §2a safe pull) · `KB § PATTERNS/devops/dev-prod-parity.md` · `KB § PATTERNS/devops/prod-exposure-consent.md`.

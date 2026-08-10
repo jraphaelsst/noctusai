@@ -329,7 +329,7 @@ if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then
     echo "[pre-commit] prod-exposure surface staged — verifying consent gate..."
     if ! "$PY" "$CLI" --check-prod-exposure-consent --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] PROD-EXPOSURE-CONSENT check FAILED. Commit aborted." >&2
-        echo "[pre-commit] Registering a product on a prod-exposure surface IS the promotion decision — the user (not an agent) must author deploy/consent/<slug>.prod.yml first, in its own commit. See KB § PATTERNS/devops/prod-exposure-consent.md." >&2
+        echo "[pre-commit] Registering a product on a prod-exposure surface IS the promotion decision. deploy/consent/<slug>.prod.yml must land first, in its own commit. The decision is the USER's: either they hand-author the record, or they type the canonical phrase in-session ('noctus.dev.prod_consent action=challenge slug=<slug>') and an agent transcribes it via action=author — which REFUSES unless that phrase is found in the harness-written session transcript. See KB § PATTERNS/devops/prod-exposure-consent.md." >&2
         exit 1
     fi
 fi

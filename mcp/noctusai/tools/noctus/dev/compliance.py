@@ -14656,7 +14656,136 @@ def _resolve_roadmap_milestone(consent_ref: str, root: Path) -> tuple[bool, str]
     return False, f"no line in {rel!r} contains both {anchor!r} and a ✅ marker"
 
 
-def _validate_prod_consent_record(slug: str, root: Path) -> dict:
+def _canonical_authorization_phrase(slug: str) -> str:
+    """The EXACT sentence a user types in-session to authorize prod exposure.
+
+    Canonical (not free-form) for two reasons. It embeds the slug, so an
+    agent cannot repurpose some unrelated "yes ok go ahead" from earlier in
+    the conversation as authorization for THIS product. And being fixed, it
+    is exact-matchable — no intent classification, no fuzzy matching, no
+    judgement call inside a keeper.
+    """
+    return f"I authorize {slug} to be published to production."
+
+
+def _human_authored_transcript_texts(
+    session_id: str, home: Path | None = None
+) -> tuple[list[str], str]:
+    """Return every message in `session_id` that the HUMAN actually wrote.
+
+    This is the evidence layer the agent-recorded consent path rests on.
+    Claude Code writes the session transcript; the agent does not. Two
+    record shapes carry human text, and BOTH are required — checking only
+    the first silently misses authorizations given mid-turn:
+
+      * `type="user"` with `promptSource="typed"` — a prompt typed at the
+        prompt box. Tool results are ALSO `type="user"`, which is why
+        `promptSource` (not `type`) is the discriminator; skill injections
+        additionally carry `isMeta=true`.
+      * `type="queue-operation"` with `operation="enqueue"` — a message
+        sent WHILE the agent was working. Verified against a real
+        transcript on 2026-08-09: the user's mid-turn message appeared
+        only in this shape, never as a `promptSource="typed"` record.
+
+    Sidechain (subagent) records are excluded: a subagent's conversation is
+    not the user speaking to the tech-lead.
+
+    Returns `(texts, detail)`. An empty list with a non-empty `detail` is a
+    hard failure (transcript absent/unreadable) — never treated as "no
+    authorization found", so a missing transcript can never read as consent.
+    """
+    import json
+
+    matches = sorted((home or Path.home()).glob(f".claude/projects/*/{session_id}.jsonl"))
+    if not matches:
+        return [], f"no transcript found for session {session_id}"
+
+    texts: list[str] = []
+    for path in matches:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return [], f"transcript {path} unreadable: {e}"
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict) or rec.get("isSidechain"):
+                continue
+            rtype = rec.get("type")
+            if rtype == "queue-operation":
+                if rec.get("operation") == "enqueue":
+                    texts.append(str(rec.get("content") or ""))
+                continue
+            if rtype != "user" or rec.get("promptSource") != "typed" or rec.get("isMeta"):
+                continue
+            content = (rec.get("message") or {}).get("content")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    # `tool_result` blocks are the agent's own output echoed
+                    # back — never the human speaking.
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(str(block.get("text") or ""))
+    return texts, ""
+
+
+def _verify_authorization_phrase(
+    slug: str, auth: object, home: Path | None = None
+) -> tuple[bool, str]:
+    """Verify an `authorization:` block against the session transcript.
+
+    **What this buys, stated honestly.** The transcript is a local plaintext
+    file, so this is not tamper-proof: an agent with write access could
+    fabricate a record. What changes is the SHAPE of the failure. Today an
+    agent can satisfy "user-authored consent" by typing four lines of YAML
+    and telling itself the user approved — a rationalization, and one that
+    has already been attempted twice in this repo (2026-08-09). Under this
+    gate the same shortcut requires forging the harness's append-only log:
+    an explicit, deliberate, auditable act that no honest agent reaches by
+    degrees. The threat model here is a well-meaning agent under pressure,
+    not an adversary — and against that, "you must point at something you
+    did not write" is the property that matters.
+    """
+    if not isinstance(auth, dict):
+        return False, "authorization: must be a mapping"
+    phrase = str(auth.get("phrase") or "").strip()
+    session_id = str(auth.get("session_id") or "").strip()
+    if not phrase:
+        return False, "authorization.phrase is missing/empty"
+    if not session_id:
+        return False, "authorization.session_id is missing/empty"
+
+    expected = _canonical_authorization_phrase(slug)
+    def _norm(s: str) -> str:
+        return " ".join(s.split()).casefold()
+    if _norm(phrase) != _norm(expected):
+        return False, (
+            f"authorization.phrase is not the canonical sentence for '{slug}'. "
+            f"Expected exactly: {expected!r}"
+        )
+
+    texts, detail = _human_authored_transcript_texts(session_id, home=home)
+    if detail:
+        return False, detail
+    if not any(_norm(expected) in _norm(t) for t in texts):
+        return False, (
+            f"the canonical phrase was NOT found in any message the user "
+            f"actually typed in session {session_id} "
+            f"({len(texts)} human-authored message(s) scanned). The user must "
+            f"type it themselves: {expected!r}"
+        )
+    return True, ""
+
+
+def _validate_prod_consent_record(
+    slug: str, root: Path, home: Path | None = None
+) -> dict:
     """Validate `deploy/consent/<slug>.prod.yml` AS COMMITTED IN HEAD (not
     merely staged/on-disk — the consent record must land in its own prior
     commit before the registration commit can pass).
@@ -14707,6 +14836,30 @@ def _validate_prod_consent_record(slug: str, root: Path) -> dict:
             ),
             "data": data,
         }
+    # `recorded_by` distinguishes WHO TYPED THE FILE from WHOSE DECISION it
+    # records. Absent ⇒ "user" — every record authored before 2026-08-09 was
+    # hand-written by definition, so grandfathered records stay valid and
+    # this leg is purely additive.
+    recorded_by = str(data.get("recorded_by") or "user").strip().lower()
+    if recorded_by not in ("user", "agent"):
+        return {
+            "status": "invalid",
+            "detail": f"recorded_by must be 'user' or 'agent', got {recorded_by!r}",
+            "data": data,
+        }
+    if recorded_by == "agent":
+        # The line the whole redesign turns on: an agent may TRANSCRIBE a
+        # decision the user made, never manufacture one. The proof is a
+        # canonical sentence found in the harness-written transcript — a
+        # record the agent did not author. No quote ⇒ no consent, and the
+        # refusal is loud rather than a silent downgrade to "user".
+        ok, reason = _verify_authorization_phrase(slug, data.get("authorization"), home=home)
+        if not ok:
+            return {
+                "status": "invalid",
+                "detail": f"recorded_by: agent, but the authorization is unverified — {reason}",
+                "data": data,
+            }
     return {"status": "valid", "detail": "", "data": data}
 
 
@@ -14723,20 +14876,29 @@ def _prod_exposure_consent_message(slug: str, reason: str) -> str:
         f"whether '{slug}' should be public. This must be a decision the "
         "USER makes, never a side-effect of an agent registering a "
         "product.\n\n"
-        f"What the USER must do: author {_PROD_CONSENT_DIR_REL}/{slug}."
-        "prod.yml, in its OWN isolated commit (no other path in that "
-        "commit), containing:\n"
-        "  consented_by: <the user's git-config user.email>\n"
-        "  consented_on: <YYYY-MM-DD>\n"
-        "  consent_ref: <path/to/roadmap.md>#<milestone text, also marked "
-        "✅ on that same line>\n"
-        "  dev_validated: true\n"
-        "Commit that file FIRST (its own commit); only THEN can a commit "
-        "that registers the slug on the three surfaces land. "
-        "`noctus.dev.prod_consent action=request slug=<slug>` prints this "
-        "exact template.\n\n"
-        "An agent MUST NOT create the consent record on the user's "
-        "behalf. KB § PATTERNS/devops/prod-exposure-consent.md."
+        f"The record is {_PROD_CONSENT_DIR_REL}/{slug}.prod.yml, committed "
+        "in its OWN isolated commit (no other path in that commit), BEFORE "
+        "the commit that registers the slug. Two ways to produce it:\n\n"
+        "  (a) The USER hand-authors it:\n"
+        "        consented_by: <the user's git-config user.email>\n"
+        "        consented_on: <YYYY-MM-DD>\n"
+        "        consent_ref: '<path/to/roadmap.md>#<milestone, also marked "
+        "✅ on that same line>'\n"
+        "        dev_validated: true\n"
+        "      (quote consent_ref — a milestone anchor contains ': ', which "
+        "is a YAML parse error unquoted)\n\n"
+        "  (b) An AGENT transcribes a decision the user made in-session — "
+        f"the user types, verbatim:\n        "
+        f"{_canonical_authorization_phrase(slug)}\n"
+        "      then `noctus.dev.prod_consent action=author slug="
+        f"{slug} session_id=<id>` writes the record with an "
+        "`authorization:` block, and the gate verifies that sentence "
+        "against the harness-written session transcript. No verified "
+        "phrase ⇒ refused.\n\n"
+        "An agent may RECORD the user's decision; it must never invent "
+        "one. `noctus.dev.prod_consent action=challenge slug=<slug>` "
+        "prints the sentence to ask for. "
+        "KB § PATTERNS/devops/prod-exposure-consent.md."
     )
 
 

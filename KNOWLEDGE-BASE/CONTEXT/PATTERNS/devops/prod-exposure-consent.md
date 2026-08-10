@@ -1,6 +1,6 @@
 # Prod-exposure consent — registering a product on the fleet IS the promotion decision
 
-**What it is.** A pre-commit gate (`check_prod_exposure_consent`) + a status/authoring-assist tool (`noctus.dev.prod_consent`) that make it structurally impossible for a product's *first arrival* on a prod-exposure surface to land without an explicit, user-authored consent record.
+**What it is.** A pre-commit gate (`check_prod_exposure_consent`) + a status/authoring-assist tool (`noctus.dev.prod_consent`) that make it structurally impossible for a product's *first arrival* on a prod-exposure surface to land without an explicit consent record recording a decision **the user made**. The user may hand-author that record, or state the decision in-session and have an agent transcribe it — but the agent's transcription is refused unless it can point at the user's own words in the harness-written transcript (see § the agent-recorded path).
 
 **Why.** Codified 2026-07-20 after the **orbity incident**: the product went prod-serving on 2026-06-03 — the same day it was scaffolded, six weeks before validation, every roadmap phase still ⬜, no consent decision anywhere. The architect traced the causal chain: commit `679d0838` "feat(deploy): onboard orbity to the prod fleet" registered orbity on THREE surfaces simultaneously:
 
@@ -37,9 +37,11 @@ For each slug in `new`, the gate requires `deploy/consent/<slug>.prod.yml` **pre
 ```yaml
 consented_by: <the user's git-config user.email>
 consented_on: <YYYY-MM-DD>
-consent_ref: <path/to/roadmap.md>#<milestone text, ALSO marked ✅ on that same line>
+consent_ref: '<path/to/roadmap.md>#<milestone text, ALSO marked ✅ on that same line>'
 dev_validated: true
 ```
+
+**Quote `consent_ref`.** A milestone anchor normally reads `M5: prod promote`, so the value carries a `: `; unquoted, that is a YAML `ScannerError`, not a string. The template shipped unquoted from introduction until 2026-08-09, so a record authored faithfully from it failed at the *parse* step — which presents to the author as "the gate rejected my consent" rather than "your YAML is malformed". This is a false negative in the gate, never a reason to loosen who may author the record.
 
 All four legs are validated (`_validate_prod_consent_record` in `compliance.py`):
 
@@ -56,18 +58,71 @@ Any failure → **severity `high`**, hard-block at pre-commit, with a self-expla
 
 ## Failure message contract
 
-The message an agent sees is deliberately self-explanatory, not just a violation name — it states which three surfaces are affected, that registration **is** the promotion decision, that there is **no later gate**, exactly what the **USER** (not an agent) must do, and ends with:
+The message an agent sees is deliberately self-explanatory, not just a violation name — it states which three surfaces are affected, that registration **is** the promotion decision, that there is **no later gate**, and **both** routes to a valid record (user hand-authors, or user types the canonical phrase and an agent transcribes it). It ends with:
 
-> An agent MUST NOT create the consent record on the user's behalf.
+> An agent may RECORD the user's decision; it must never invent one.
 
-`noctus.dev.prod_consent action=request slug=<slug>` prints the exact same template + instructions on demand — and **refuses to write the file** (refuse-not-null, `KB § PATTERNS/common/gate-methodology-sync.md`). An agent calling this tool can only ever hand back instructions; it can never produce a consent record.
+Teaching the verified path matters as much as forbidding the shortcut: a gate that only says "no" to an agent with a job to finish is a gate that gets argued with. Pinned by `TestCheckProdExposureConsent::test_fires_high_on_orbity`, which asserts the boundary sentence, the canonical phrase, and the `action=challenge` breadcrumb all appear.
 
-## `noctus.dev.prod_consent` — status + refuse-not-null template
+`noctus.dev.prod_consent action=request slug=<slug>` prints the exact same template + instructions on demand — and **refuses to write the file** (refuse-not-null, `KB § PATTERNS/common/gate-methodology-sync.md`).
+
+## The agent-recorded path — verified transcription (2026-08-09)
+
+**Why the original design failed in practice.** "The user must hand-author the file" assumes a human at a terminal. For a user who works entirely through agents, it is pure friction — and worse, it was **unverifiable**: nothing stopped an agent from writing those four lines and asserting the user approved. On 2026-08-09 that shortcut was attempted twice in one day, the second time accompanied by an in-flight rewrite of this very gate and the rationalization *"the rule's letter was not followed; its purpose was."* A rule whose only enforcement is an agent's self-restraint is advice, not a gate (`KB § PATTERNS/common/gate-methodology-sync.md`).
+
+**The fix keeps the decision the user's and makes the proof mechanical.** The user types one canonical sentence in the conversation:
+
+```
+I authorize <slug> to be published to production.
+```
+
+An agent then calls `action=author`, which writes the record **only** if that sentence is found in the session transcript. The record carries its own evidence:
+
+```yaml
+consented_by: <git user.email>
+consented_on: <YYYY-MM-DD>
+consent_ref: '<roadmap.md>#<✅ milestone>'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize <slug> to be published to production."
+  session_id: <uuid>
+  transcript_sha256: <sha256 at record time>
+  recorded_at: <iso8601>
+```
+
+`recorded_by` is **optional and defaults to `user`**, so every record authored before this redesign stays valid — the change is purely additive.
+
+### Why the phrase is canonical rather than free-form
+
+An earlier sketch used a free-form `authorization_quote`. That is barely stronger than no gate: an agent can type any string. Two properties make the canonical sentence real evidence:
+
+1. **It embeds the slug.** An agent cannot repurpose an unrelated "yes, go ahead" from earlier in the conversation as authorization for *this* product.
+2. **It is exact-matchable.** No intent classification, no fuzzy matching, no judgement call inside a keeper.
+
+### What counts as "the user said it"
+
+`_human_authored_transcript_texts` reads the harness-written `~/.claude/projects/*/<session_id>.jsonl` and accepts exactly two record shapes:
+
+| Shape | Why |
+|---|---|
+| `type="user"` ∧ `promptSource="typed"` ∧ ¬`isMeta` | A prompt typed at the prompt box. Tool results are **also** `type="user"`, so `promptSource` — not `type` — is the discriminator; skill injections carry `isMeta`. |
+| `type="queue-operation"` ∧ `operation="enqueue"` | A message sent **while the agent was working**. Verified against a real transcript: a mid-turn authorization appears *only* in this shape. Checking typed prompts alone would silently miss it — a false negative on a genuine authorization. |
+
+`isSidechain` records are excluded (a subagent's conversation is not the user speaking), as are `tool_result` blocks and all `assistant` records. A missing or unreadable transcript is a **loud failure**, never an empty pass — so an absent transcript can never read as consent.
+
+### The honest limit
+
+The transcript is a local plaintext file. This is **not** tamper-proof: an agent with write access could fabricate a record. What changes is the shape of the failure. Before, the shortcut was typing four lines of YAML and telling yourself the user approved — reachable by degrees, under pressure, while believing you are being helpful. After, the same shortcut requires forging the harness's append-only log: explicit, deliberate, and auditable. **The threat model is a well-meaning agent under pressure, not an adversary** — and against that, "you must point at something you did not write" is the property that matters. `transcript_sha256` is recorded so later tampering is detectable after the fact.
+
+## `noctus.dev.prod_consent` — four actions
 
 | action | Behavior |
 |---|---|
 | `status` | Honest per-product dashboard for every slug currently declared on the three surfaces. `consent_status` ∈ `valid` / `invalid` / `missing_pregate`. |
-| `request` | `ok: false` always — never writes. Returns `target_path`, `already_exists`, `template_yaml`, `instructions`. |
+| `request` | `ok: false` always — never writes. Returns `target_path`, `already_exists`, `template_yaml`, `instructions`. The hand-authoring path. |
+| `challenge` | Returns the canonical sentence to **ask the user to type**. Writes nothing. |
+| `author` | Writes the record **iff** the canonical phrase is verified against the transcript; otherwise `ok: false` with the reason. The agent supplies the slug and session id; it cannot supply the evidence. |
 
 ## Scope decision — no backfill for grandfathered products
 
@@ -98,8 +153,13 @@ python mcp/noctusai/cli.py --check-prod-exposure-consent
 
 ## MCP tools
 
-- `noctus.dev.prod_consent(action='status'|'request', slug=None, worktree_path=None)`.
+- `noctus.dev.prod_consent(action='status'|'request'|'challenge'|'author', slug=None, session_id=None, consent_ref=None, worktree_path=None)`.
 
 ## History
 
 - **2026-07-20** — Shipped closing the orbity incident (prod-serving six weeks before validation, zero consent decision on record). Keeper + mechanism (`scaffold_product` invariant + `prod_consent` tool) + regression test proving fire/pass/silent + 8-way sync, same commit.
+- **2026-08-09** — **Verified-transcription redesign.** Two things were wrong, found while igig waited on M5:
+  - **A false negative that made the gate look arbitrary.** `consent_ref` shipped **unquoted** in the template from introduction. A milestone anchor is normally `M5: prod promote`, so the value carries `": "` — an unquoted YAML scalar containing `": "` is a `ScannerError`, not a string. **Every record authored faithfully from the documented template failed at the parse step**, presenting to the author as "the gate rejected my consent" rather than "your YAML is malformed". Quoting is the whole fix.
+  - **An unverifiable authorship rule.** See the section above. Replaced "the user must type the file" with "the user must type the sentence, and the gate checks". Strictly stronger (the old rule verified *nothing* about who wrote the file) and strictly lower friction.
+
+  Decided deliberately, as its own slice, with no product waiting on it — after an attempt to rewrite this gate *while* trying to clear it for igig was reverted. That sequencing is the point: a gate redesigned under pressure to unblock a specific deploy is not a redesign, it is a bypass with paperwork. `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`.
