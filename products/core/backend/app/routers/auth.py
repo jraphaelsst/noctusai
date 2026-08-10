@@ -193,8 +193,22 @@ async def get_me(authorization: Optional[str] = Header(None)):
     from app.dependencies import get_licensed_product_ids
     licensed_product_ids = get_licensed_product_ids(db, org_id)
 
-    # Get all products (for the marketplace view)
-    all_products = db.table("products").select("*").eq("ativo", True).order("nome").execute()
+    # Get all products (for the marketplace view).
+    #
+    # Platform admins ALSO see inactive products, so they can reactivate one
+    # straight from the dashboard card instead of having to open the admin
+    # panel. Everyone else sees only active products — an inactive product is
+    # one we have agreed not to work on, and it must not appear in a normal
+    # user's marketplace.
+    #
+    # `role` comes from the profile already loaded above (the same field the
+    # frontend derives `isAdmin` from), so this costs no extra query and
+    # cannot disagree with the client's own view of who is an admin.
+    is_platform_admin = profile.get("role") == "admin"
+    products_query = db.table("products").select("*")
+    if not is_platform_admin:
+        products_query = products_query.eq("ativo", True)
+    all_products = products_query.order("nome").execute()
 
     # Resolve url_base through the seed-side resolver so each product's
     # frontend URL adapts to the deploy environment (env-driven) without

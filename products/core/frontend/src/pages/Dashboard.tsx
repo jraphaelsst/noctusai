@@ -259,24 +259,38 @@ export function Dashboard() {
 
         {/* Products grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...products].sort((a, b) => Number(b.has_access) - Number(a.has_access)).map(product => (
+          {[...products]
+            // Inactive products sink to the bottom (admins only — nobody else
+            // receives them), then the usual has-access ordering applies.
+            .sort(
+              (a, b) =>
+                Number(a.ativo === false) - Number(b.ativo === false) ||
+                Number(b.has_access) - Number(a.has_access),
+            )
+            .map(product => {
+            const inactive = product.ativo === false;
+            return (
             <div
               key={product.id}
-              className={`relative bg-card rounded-lg border border-border shadow-sm p-6 transition-all ${
-                product.has_access
-                  ? 'cursor-pointer hover:shadow-md hover:border-primary/30'
-                  : 'opacity-60 cursor-not-allowed'
+              className={`relative bg-card rounded-lg border shadow-sm p-6 transition-all ${
+                inactive
+                  ? 'border-dashed border-border opacity-50 cursor-not-allowed'
+                  : product.has_access
+                    ? 'border-border cursor-pointer hover:shadow-md hover:border-primary/30'
+                    : 'border-border opacity-60 cursor-not-allowed'
               }`}
-              onClick={() => launchProduct(product)}
+              // An inactive product is one we have agreed not to work on —
+              // it must not be launchable, even for the admin who can see it.
+              onClick={() => { if (!inactive) launchProduct(product); }}
             >
               {/* Admins get the working-guide toggles inline on the card, so
                   flipping a product's scope does not require a trip to the
                   admin panel. Non-admins keep the plain informational badge.
 
-                  Only DEACTIVATION is reachable here: /api/auth/me returns
-                  active products only, so an inactive product has no card to
-                  toggle back from — reactivation lives in /admin/product-control,
-                  which is the surface that can see the ignored bucket. */}
+                  Admins also RECEIVE inactive products from /api/auth/me (see
+                  the role branch there), so reactivation works right here —
+                  an inactive card renders dimmed and non-launchable, but its
+                  status toggle is live. Non-admins never see those rows. */}
               {isAdmin ? (
                 <div
                   className="absolute top-3 right-3 flex items-center gap-1.5"
@@ -310,7 +324,12 @@ export function Dashboard() {
               <h3 className="text-lg font-semibold text-foreground mb-1">{product.nome}</h3>
               <p className="text-sm text-muted-foreground mb-4">{product.descricao}</p>
 
-              {product.has_access ? (
+              {inactive ? (
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <span>⏸</span>
+                  Inativo — reative pelo botao acima
+                </div>
+              ) : product.has_access ? (
                 <div className="flex items-center gap-1.5 text-sm font-medium text-success-foreground">
                   <span className="text-success">●</span>
                   {launching === product.slug ? 'Abrindo...' : 'Acessar'}
@@ -323,7 +342,8 @@ export function Dashboard() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </main>
     </div>

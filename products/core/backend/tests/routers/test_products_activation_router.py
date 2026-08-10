@@ -181,6 +181,103 @@ class TestDeployScope:
 # PATCH must NOT be a back door around the transition rules
 # ---------------------------------------------------------------------------
 
+class TestGuideChangesAreAudited:
+    """A working-guide change decides which products the team touches, so
+    "who moved this, and from what?" must be answerable afterwards.
+
+    The audit call is patched at its use site so these assert the CONTRACT
+    (it is called, with the before/after states) without needing a real
+    audit_logs table.
+    """
+
+    @staticmethod
+    def _patch_audit(monkeypatch):
+        calls = []
+
+        async def _fake_log(**kwargs):
+            calls.append(kwargs)
+            return {}
+
+        import app.routers.products as products_router
+        monkeypatch.setattr(products_router.audit_service, "log", _fake_log)
+        return calls
+
+    def test_deactivation_records_the_scope_it_was_demoted_from(
+        self, admin_client, monkeypatch
+    ):
+        calls = self._patch_audit(monkeypatch)
+        admin_client.mock_supabase.set_table_data(
+            "products", _product(ativo=True, deploy_scope="live")
+        )
+
+        resp = admin_client.post("/api/products/prod-1/activation", json={"ativo": False})
+        assert resp.status_code == 200
+
+        assert len(calls) == 1
+        entry = calls[0]
+        assert entry["action"] == "product.deactivated"
+        assert entry["resource_type"] == "product"
+        # The point of the entry: it was LIVE before, dev after.
+        assert entry["details"]["before"] == {"ativo": True, "deploy_scope": "live"}
+        assert entry["details"]["after"]["deploy_scope"] == "dev"
+        assert entry["details"]["after"]["ativo"] is False
+
+    def test_activation_is_audited(self, admin_client, monkeypatch):
+        calls = self._patch_audit(monkeypatch)
+        admin_client.mock_supabase.set_table_data(
+            "products", _product(ativo=False, deploy_scope="dev")
+        )
+
+        resp = admin_client.post("/api/products/prod-1/activation", json={"ativo": True})
+        assert resp.status_code == 200
+        assert calls and calls[0]["action"] == "product.activated"
+
+    def test_deploy_scope_change_is_audited(self, admin_client, monkeypatch):
+        calls = self._patch_audit(monkeypatch)
+        admin_client.mock_supabase.set_table_data(
+            "products", _product(ativo=True, deploy_scope="dev")
+        )
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "live"}
+        )
+        assert resp.status_code == 200
+        assert calls and calls[0]["action"] == "product.deploy_scope_changed"
+        assert calls[0]["details"]["before"]["deploy_scope"] == "dev"
+        assert calls[0]["details"]["after"]["deploy_scope"] == "live"
+
+    def test_refused_scope_change_is_not_audited(self, admin_client, monkeypatch):
+        """A 409 changed nothing, so it must not leave a trail suggesting it did."""
+        calls = self._patch_audit(monkeypatch)
+        admin_client.mock_supabase.set_table_data(
+            "products", _product(ativo=False, deploy_scope="dev")
+        )
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "live"}
+        )
+        assert resp.status_code == 409
+        assert calls == []
+
+    def test_audit_failure_does_not_break_the_transition(
+        self, admin_client, monkeypatch
+    ):
+        """The operator already saw the toggle flip; a logging fault must not
+        retroactively fail it. It is logged loudly instead."""
+        async def _boom(**kwargs):
+            raise RuntimeError("audit backend down")
+
+        import app.routers.products as products_router
+        monkeypatch.setattr(products_router.audit_service, "log", _boom)
+        admin_client.mock_supabase.set_table_data(
+            "products", _product(ativo=True, deploy_scope="live")
+        )
+
+        resp = admin_client.post("/api/products/prod-1/activation", json={"ativo": False})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["deploy_scope"] == "dev"
+
+
 class TestPatchCannotBypassTheRules:
     @pytest.mark.parametrize("field,value", [
         ("ativo", False),

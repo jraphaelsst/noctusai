@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { ProductIcon } from '../../lib/product-icon';
 import {
@@ -54,6 +55,26 @@ const EMPTY_PRODUCT_FORM = {
   url_base: '',
   cor: '#6366f1',
 };
+
+/** Column widths, declared ONCE and reused by every bucket section.
+ *
+ *  Each section is its own <table>, and independent tables size their columns
+ *  independently — without a shared fixed colgroup the sections would visibly
+ *  misalign as soon as one bucket held a longer product name than another. */
+function ProductCols() {
+  return (
+    <colgroup>
+      <col className="w-[22%]" />
+      <col className="w-[15%]" />
+      <col className="w-[22%]" />
+      <col className="w-[6%]" />
+      <col className="w-[9%]" />
+      <col className="w-[9%]" />
+      <col className="w-[9%]" />
+      <col className="w-[8%]" />
+    </colgroup>
+  );
+}
 
 function statusBadgeClasses(s: string): string {
   if (s === 'active') return 'bg-success/10 text-success';
@@ -753,12 +774,24 @@ export function AdminProducts() {
   }
 
   // --- List View ---
+  const bucketCounts = {
+    prod: products.filter(p => bucketOf(p) === 'prod').length,
+    dev: products.filter(p => bucketOf(p) === 'dev').length,
+    ignore: products.filter(p => bucketOf(p) === 'ignore').length,
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Produtos</h1>
-          <p className="text-muted-foreground mt-1">{products.length} produtos cadastrados</p>
+          {/* Working-state counts, carried over from the retired Controle
+              page — the catalog total alone does not answer the question this
+              page exists for ("what are we actually working on?"). */}
+          <p className="text-muted-foreground mt-1">
+            {products.length} produtos · {bucketCounts.prod} em producao ·{' '}
+            {bucketCounts.dev} em dev · {bucketCounts.ignore} ignorados
+          </p>
         </div>
         <button
           className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
@@ -768,108 +801,131 @@ export function AdminProducts() {
         </button>
       </div>
 
-      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nome</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Slug</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">URL Base</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Cor</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Deploy</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Licencas</th>
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
-            </tr>
-          </thead>
-          {/* Sectorized by working state — the SAME three buckets as
-              /admin/product-control, from the same shared `bucketOf`. The
-              catalog is no longer a flat alphabetical list: which bucket a
-              product sits in is the thing you actually scan for, so the table
-              groups by it and sorts by name within each group.
+      {/* Sectorized by working state — one bordered card per bucket, spaced
+          apart, so the three groups read as distinct sets rather than one long
+          list. Buckets come from the shared `bucketOf`/`BUCKETS`, so this page
+          and the guide can never disagree about what "in production" means.
 
-              One <tbody> per bucket keeps every column aligned across sections
-              (a nested table per group would let column widths drift apart).
-              Empty buckets render nothing rather than an empty header — a
-              section that says "0" is noise on a page whose job is the list. */}
-          {BUCKETS.map(bucket => {
-            const rows = products
-              .filter(p => bucketOf(p) === bucket.key)
-              .sort((a, b) => a.nome.localeCompare(b.nome));
-            if (rows.length === 0) return null;
-            return (
-              <tbody key={bucket.key} className="divide-y divide-border">
-                <tr>
-                  <td colSpan={8} className="px-4 py-2 border-y border-border bg-muted/40">
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bucket.headerTone}`}
+          `table-fixed` + a shared <ProductCols/> means every section resolves
+          identical column widths — separate tables would otherwise size their
+          columns independently and the sections would visibly misalign. */}
+      <div className="space-y-6">
+        {BUCKETS.map(bucket => {
+          const rows = products
+            .filter(p => bucketOf(p) === bucket.key)
+            .sort((a, b) => a.nome.localeCompare(b.nome));
+          if (rows.length === 0) return null;
+          return (
+            <section
+              key={bucket.key}
+              className={`bg-card rounded-lg border-2 ${bucket.tone} shadow-sm overflow-hidden`}
+            >
+              <header className="px-4 py-3 border-b border-border bg-muted/40">
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bucket.headerTone}`}
+                  >
+                    {bucket.title}
+                  </span>
+                  <span className="text-xs text-muted-foreground">({rows.length})</span>
+                  <span className="text-xs text-muted-foreground">· {bucket.rule}</span>
+                </div>
+              </header>
+              <table className="w-full text-sm table-fixed">
+                <ProductCols />
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nome</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Slug</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">URL Base</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Cor</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Deploy</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Licencas</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {rows.map(product => {
+                    // Intent vs reality: this product is marked for prod but its
+                    // container is not reachable here, or it is ignored yet still
+                    // running. Neither is an error; both are worth seeing, and
+                    // this warning is the one thing the retired Controle page
+                    // showed that this table did not.
+                    const reachable = deployed[product.slug];
+                    const mismatch =
+                      reachable !== undefined &&
+                      ((bucket.key === 'prod' && !reachable) ||
+                        (bucket.key === 'ignore' && reachable));
+                    return (
+                      <tr
+                        key={product.id}
+                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => selectProduct(product)}
                       >
-                        {bucket.title}
-                      </span>
-                      <span className="text-xs text-muted-foreground">({rows.length})</span>
-                      <span className="text-xs text-muted-foreground">· {bucket.rule}</span>
-                    </div>
-                  </td>
-                </tr>
-                {rows.map(product => (
-              <tr
-                key={product.id}
-                className="cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => selectProduct(product)}
-              >
-                <td className="px-4 py-3 font-medium text-foreground">
-                  <div className="flex items-center gap-2">
-                    <ProductIcon name={product.icone || 'Box'} color={product.cor} size="sm" />
-                    {product.nome}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-foreground">{product.slug}</td>
-                <td className="px-4 py-3 text-muted-foreground">{product.url_base}</td>
-                <td className="px-4 py-3">
-                  <ColorPickerButton
-                    cor={product.cor}
-                    busy={busyId === product.id}
-                    onPick={hex => handleSetColor(product.id, hex)}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <StatusToggle
-                    ativo={product.ativo}
-                    deployScope={product.deploy_scope}
-                    busy={busyId === product.id}
-                    onToggle={next => handleSetActivation(product.id, next)}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <DeployScopeToggle
-                    ativo={product.ativo}
-                    deployScope={product.deploy_scope}
-                    busy={busyId === product.id}
-                    onToggle={next => handleSetDeployScope(product.id, next)}
-                  />
-                </td>
-                <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
-                <td className="px-4 py-3">
-                  <div onClick={e => e.stopPropagation()}>
-                    <EditIconButton onClick={() => openEditProduct(product)} />
-                  </div>
-                </td>
-              </tr>
-                ))}
-              </tbody>
-            );
-          })}
-          {products.length === 0 && (
-            <tbody>
-              <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                  Nenhum produto cadastrado. Crie o primeiro!
-                </td>
-              </tr>
-            </tbody>
-          )}
-        </table>
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <ProductIcon name={product.icone || 'Box'} color={product.cor} size="sm" />
+                            <span className="truncate">{product.nome}</span>
+                            {mismatch && (
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] text-warning shrink-0"
+                                title={
+                                  bucket.key === 'prod'
+                                    ? 'Marcado para producao, mas o container nao esta alcancavel neste ambiente'
+                                    : 'Produto ignorado, mas o container ainda esta rodando'
+                                }
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                                container
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-foreground truncate">{product.slug}</td>
+                        <td className="px-4 py-3 text-muted-foreground truncate">{product.url_base}</td>
+                        <td className="px-4 py-3">
+                          <ColorPickerButton
+                            cor={product.cor}
+                            busy={busyId === product.id}
+                            onPick={hex => handleSetColor(product.id, hex)}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusToggle
+                            ativo={product.ativo}
+                            deployScope={product.deploy_scope}
+                            busy={busyId === product.id}
+                            onToggle={next => handleSetActivation(product.id, next)}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <DeployScopeToggle
+                            ativo={product.ativo}
+                            deployScope={product.deploy_scope}
+                            busy={busyId === product.id}
+                            onToggle={next => handleSetDeployScope(product.id, next)}
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>
+                        <td className="px-4 py-3">
+                          <div onClick={e => e.stopPropagation()}>
+                            <EditIconButton onClick={() => openEditProduct(product)} />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </section>
+          );
+        })}
+        {products.length === 0 && (
+          <div className="bg-card rounded-lg border border-border shadow-sm px-4 py-8 text-center text-muted-foreground">
+            Nenhum produto cadastrado. Crie o primeiro!
+          </div>
+        )}
       </div>
 
       {renderProductModal()}

@@ -61,17 +61,33 @@ hand-editing them is how the catalog drifts from the fleet it describes.
 
 ## 4 · Surfaces
 
-- **`/admin/product-control`** — the centralized board, grouped by the three
-  states. Grouping is the point: the buckets *are* the decision.
-- **`/admin/products`** — the catalog table; Status and Deploy columns are the
-  same toggles, colour opens a palette popover, edit is an icon.
-- **Dashboard cards** — admin-only inline toggles for quick changes. Only
-  deactivation is reachable there: `/api/auth/me` returns active products only,
-  so reactivation lives on the control board, which can see the ignored bucket.
+- **`/admin/products`** — the single catalog + control surface. Sectorized into
+  the three buckets (spaced cards, one per bucket), each row carrying the Status
+  and Deploy toggles, a colour palette popover, an edit icon, licence count, and
+  the container-mismatch warning.
+- **Dashboard cards** — admin-only inline toggles for quick changes. Admins also
+  *receive* inactive products from `/api/auth/me` (role-branched there), so a
+  deactivated product still renders — dimmed, non-launchable — and can be
+  reactivated in place. Non-admins never see those rows.
 
-All three consume `products/core/frontend/src/components/ProductStateControls.tsx`.
-A hand-rolled fourth copy would let the rules drift between surfaces, and a guide
-that disagrees with itself is worse than no guide.
+Both consume `products/core/frontend/src/components/ProductStateControls.tsx`,
+which also owns `bucketOf` / `BUCKETS`. A hand-rolled third copy would let the
+rules drift between surfaces, and a guide that disagrees with itself is worse
+than no guide.
+
+> **Retired: `/admin/product-control`.** A separate control board existed briefly
+> and was merged into `/admin/products` (2026-08-10) — it was a strict subset
+> apart from two things, both carried over: the container-mismatch warning and
+> the per-bucket counts. Two pages doing the same job is drift waiting to happen.
+
+## 4a · Auditing
+
+Every transition writes to `public.audit_logs` via `app.services.audit_service`:
+`product.activated` · `product.deactivated` · `product.deploy_scope_changed`,
+each recording BEFORE and AFTER `{ativo, deploy_scope}` — the interesting part
+of a deactivation is what it was demoted *from*. A refused (409) change writes
+nothing, because nothing changed. The write is best-effort: an audit failure is
+logged loudly but never rolls back a transition the operator already saw succeed.
 
 ## 5 · Before you touch a product
 

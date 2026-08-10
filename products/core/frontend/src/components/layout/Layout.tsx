@@ -16,7 +16,6 @@ import {
   PackageOpen,
   Brain,
   FileText,
-  SlidersHorizontal,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
@@ -39,7 +38,6 @@ const NAV_GROUPS: NavGroup[] = [
       { name: 'Chaves LLM', href: '/api-keys', icon: Brain },
       { name: 'Planos', href: '/admin/plans', icon: ClipboardList },
       { name: 'Produtos', href: '/admin/products', icon: Package },
-      { name: 'Controle', href: '/admin/product-control', icon: SlidersHorizontal },
       { name: 'Faturamento', href: '/admin/billing', icon: Wallet },
       { name: 'Webhooks', href: '/admin/webhooks', icon: Webhook },
       { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },

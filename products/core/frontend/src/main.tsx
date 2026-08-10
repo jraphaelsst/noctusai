@@ -34,7 +34,6 @@ const AdminSubscriptions = lazy(() => import('./pages/admin/AdminSubscriptions')
 const AdminApiKeys = lazy(() => import('./pages/admin/AdminApiKeys').then(m => ({ default: m.AdminApiKeys })));
 const AdminPlans = lazy(() => import('./pages/admin/AdminPlans').then(m => ({ default: m.AdminPlans })));
 const AdminProducts = lazy(() => import('./pages/admin/AdminProducts').then(m => ({ default: m.AdminProducts })));
-const AdminProductControl = lazy(() => import('./pages/admin/AdminProductControl').then(m => ({ default: m.AdminProductControl })));
 const AdminBilling = lazy(() => import('./pages/admin/AdminBilling').then(m => ({ default: m.AdminBilling })));
 const AdminWebhooks = lazy(() => import('./pages/admin/AdminWebhooks').then(m => ({ default: m.AdminWebhooks })));
 const AdminAnalytics = lazy(() => import('./pages/admin/AdminAnalytics').then(m => ({ default: m.AdminAnalytics })));
@@ -73,7 +72,6 @@ const App = createProductApp({
     { path: '/admin/api-keys', component: AdminApiKeys },
     { path: '/admin/plans', component: AdminPlans },
     { path: '/admin/products', component: AdminProducts },
-    { path: '/admin/product-control', component: AdminProductControl },
     { path: '/admin/billing', component: AdminBilling },
     { path: '/admin/webhooks', component: AdminWebhooks },
     { path: '/admin/analytics', component: AdminAnalytics },

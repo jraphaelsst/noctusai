@@ -24,10 +24,11 @@ transition rule that a generic field write cannot express. See
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
+from app.services import audit_service
 from app.schemas.products import (
     ProductActivation,
     ProductCreate,
@@ -158,6 +159,57 @@ async def atualizar_product(
     return {"data": result.data[0]}
 
 
+def _guide_state(row: dict) -> dict:
+    """SNAPSHOT the two guide fields as plain values.
+
+    Deliberately a copy, not a reference into the row. The pre-write read and
+    the post-write result can be the same underlying object (the test double
+    updates rows in place, and nothing in the real client contract forbids
+    it), so holding the row itself would make `before` silently become
+    `after` — an audit trail that always reports "no change".
+    """
+    return {"ativo": row.get("ativo"), "deploy_scope": row.get("deploy_scope")}
+
+
+async def _audit_guide_change(
+    user, request, action: str, product: dict, before: dict, after: dict
+) -> None:
+    """Record a working-guide transition to `public.audit_logs`.
+
+    These two axes decide which products the team touches and where, so a
+    change to them is a governance event, not a cosmetic edit — "who moved
+    igig to dev, and when?" has to be answerable after the fact. Both the
+    BEFORE and AFTER state are stored, because the interesting part of a
+    deactivation is usually what it was demoted FROM.
+
+    Best-effort by design: a failure to record must never roll back a
+    transition the operator already saw succeed. It is logged loudly instead
+    of swallowed — a silent `except: pass` here would make the audit trail
+    quietly incomplete, which is worse than no trail at all.
+    """
+    try:
+        await audit_service.log(
+            user_id=(user or {}).get("id") if isinstance(user, dict) else getattr(user, "id", None),
+            org_id=None,
+            action=action,
+            resource_type="product",
+            resource_id=str(product.get("id")),
+            details={
+                "slug": product.get("slug"),
+                "nome": product.get("nome"),
+                "before": before,
+                "after": after,
+            },
+            request=request,
+        )
+    except Exception:
+        logger.exception(
+            "audit log FAILED for product guide change (action=%s product=%s) — "
+            "the transition itself succeeded; the trail is incomplete",
+            action, product.get("slug"),
+        )
+
+
 def _apply_activation(db, product_id: str, ativo: bool) -> dict:
     """THE single place the status transition is expressed.
 
@@ -184,6 +236,7 @@ def _apply_activation(db, product_id: str, ativo: bool) -> dict:
 async def definir_activation(
     product_id: str,
     body: ProductActivation,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """Activate / deactivate a product (platform admin only) — the STATUS axis.
@@ -195,10 +248,24 @@ async def definir_activation(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
+    # Read BEFORE the write — a deactivation's audit entry is only meaningful
+    # if it records the scope the product was demoted FROM.
+    prior = db.table("products").select("*").eq("id", product_id).execute()
+    if not prior.data:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    before = _guide_state(prior.data[0])
+
     row = _apply_activation(db, product_id, body.ativo)
     logger.info(
         "Product %s: %s (deploy_scope forced to dev)",
         product_id, "activated" if body.ativo else "deactivated",
+    )
+    await _audit_guide_change(
+        user, request,
+        action="product.activated" if body.ativo else "product.deactivated",
+        product=row,
+        before=before,
+        after=_guide_state(row),
     )
     return {"data": row}
 
@@ -207,6 +274,7 @@ async def definir_activation(
 async def definir_deploy_scope(
     product_id: str,
     body: ProductDeployScope,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """Move a product between `live` and `dev` working scope (admin only).
@@ -219,9 +287,10 @@ async def definir_deploy_scope(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    current = db.table("products").select("ativo").eq("id", product_id).execute()
+    current = db.table("products").select("*").eq("id", product_id).execute()
     if not current.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
+    before = _guide_state(current.data[0])
 
     if body.deploy_scope == "live" and current.data[0].get("ativo") is not True:
         raise HTTPException(
@@ -242,20 +311,44 @@ async def definir_deploy_scope(
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
     logger.info("Product %s deploy_scope -> %s", product_id, body.deploy_scope)
+    await _audit_guide_change(
+        user, request,
+        action="product.deploy_scope_changed",
+        product=result.data[0],
+        before=before,
+        after=_guide_state(result.data[0]),
+    )
     return {"data": result.data[0]}
 
 
 @router.delete("/{product_id}")
-async def desativar_product(product_id: str, authorization: Optional[str] = Header(None)):
+async def desativar_product(
+    product_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
     """Soft-delete a product by setting ativo = false (platform admin only).
 
     Retained for existing callers; delegates to the same transition helper as
     `POST /{id}/activation` so it cannot drift into leaving a deactivated
-    product marked `live`.
+    product marked `live` — and audits through the same path, so a
+    deactivation is recorded no matter which endpoint performed it.
     """
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
+    prior = db.table("products").select("*").eq("id", product_id).execute()
+    if not prior.data:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    before = _guide_state(prior.data[0])
+
     row = _apply_activation(db, product_id, False)
     logger.info(f"Product deactivated: {product_id}")
+    await _audit_guide_change(
+        user, request,
+        action="product.deactivated",
+        product=row,
+        before=before,
+        after=_guide_state(row),
+    )
     return {"data": row}
