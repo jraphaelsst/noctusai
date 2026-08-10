@@ -228,6 +228,20 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── igig 8013 — agency ERP (CRM, marca, esteira, distribuição, financeiro) ─
+  igig:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-igig:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-igig
+    expose:
+      - "8013"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8013/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
 networks:
   noctus-net:
     name: noctus-net

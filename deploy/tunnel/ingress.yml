@@ -63,6 +63,9 @@ routes:
   - hostname: orbity.noctusai.com
     service:  http://orbity:8010
 
+  - hostname: igig.noctusai.com
+    service:  http://igig:8013
+
   # ── Short-name aliases (live edge convenience hosts) ─────────────────
   # Shorter public hostnames pointing at the SAME containers as the
   # full-slug subdomains above — kept alongside, not replacing, them.
