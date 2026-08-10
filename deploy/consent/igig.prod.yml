@@ -1,0 +1,11 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-08-09
+consent_ref: 'project-history/roadmaps/igig-2026-08.md#M5: prod promote'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "i authorize the igig deploy all the way to prod."
+  prompt_source: typed
+  session_id: 2aca815e-9313-4dc5-9d58-4a653ba80f21
+  transcript_sha256: de6662d0de79252bae8bc92177f187a26236a2c76a9ff57bff85a8c125553ae3
+  recorded_at: 2026-08-10T02:49:34+00:00
