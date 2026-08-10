@@ -24,6 +24,8 @@ import { AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { ProductIcon } from '../../lib/product-icon';
 import {
+  BUCKETS,
+  bucketOf,
   DeployScopeToggle,
   StatusToggle,
   type DeployScope,
@@ -40,39 +42,6 @@ interface Product {
   ativo: boolean;
   deploy_scope: DeployScope;
 }
-
-type Bucket = 'prod' | 'dev' | 'ignore';
-
-function bucketOf(p: Product): Bucket {
-  if (!p.ativo) return 'ignore';
-  return p.deploy_scope === 'live' ? 'prod' : 'dev';
-}
-
-const BUCKETS: {
-  key: Bucket;
-  title: string;
-  rule: string;
-  tone: string;
-}[] = [
-  {
-    key: 'prod',
-    title: 'Producao',
-    rule: 'Ativo + LIVE — validamos em dev e promovemos para prod.',
-    tone: 'border-success/40',
-  },
-  {
-    key: 'dev',
-    title: 'Desenvolvimento',
-    rule: 'Ativo + DEV — trabalhamos e publicamos apenas em dev; nao chega em prod.',
-    tone: 'border-warning/40',
-  },
-  {
-    key: 'ignore',
-    title: 'Ignorados',
-    rule: 'Inativo — nao tocamos no codigo deste produto.',
-    tone: 'border-border',
-  },
-];
 
 export function AdminProductControl() {
   const [products, setProducts] = useState<Product[]>([]);

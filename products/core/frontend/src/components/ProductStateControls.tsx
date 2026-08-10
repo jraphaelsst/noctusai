@@ -21,6 +21,62 @@ import { Check, Pencil } from 'lucide-react';
 
 export type DeployScope = 'live' | 'dev';
 
+// ---------------------------------------------------------------------------
+// Bucketing — the three working states, defined ONCE
+// ---------------------------------------------------------------------------
+
+export type Bucket = 'prod' | 'dev' | 'ignore';
+
+/** Minimal shape needed to bucket a row — both the control board and the
+ *  catalog table pass their own richer Product type, which structurally
+ *  satisfies this. */
+export interface BucketableProduct {
+  ativo: boolean;
+  deploy_scope: DeployScope;
+}
+
+/** The single definition of "which bucket is this product in?".
+ *
+ *  Lives here rather than in either page because BOTH the control board and
+ *  the catalog table group by it. Two copies of this function is precisely how
+ *  the two screens would start disagreeing about what "in production" means. */
+export function bucketOf(p: BucketableProduct): Bucket {
+  if (!p.ativo) return 'ignore';
+  return p.deploy_scope === 'live' ? 'prod' : 'dev';
+}
+
+export const BUCKETS: {
+  key: Bucket;
+  title: string;
+  rule: string;
+  /** Border tone for the control board's card sections. */
+  tone: string;
+  /** Row tint + accent for the catalog table's section header rows. */
+  headerTone: string;
+}[] = [
+  {
+    key: 'prod',
+    title: 'Producao',
+    rule: 'Ativo + LIVE — validamos em dev e promovemos para prod.',
+    tone: 'border-success/40',
+    headerTone: 'bg-success/10 text-success',
+  },
+  {
+    key: 'dev',
+    title: 'Desenvolvimento',
+    rule: 'Ativo + DEV — trabalhamos e publicamos apenas em dev; nao chega em prod.',
+    tone: 'border-warning/40',
+    headerTone: 'bg-warning-light text-warning-foreground',
+  },
+  {
+    key: 'ignore',
+    title: 'Ignorados',
+    rule: 'Inativo — nao tocamos no codigo deste produto.',
+    tone: 'border-border',
+    headerTone: 'bg-muted text-muted-foreground',
+  },
+];
+
 /** The curated palette the colour popover offers. Free-form hex stays
  *  available underneath — these are the fast path, not a restriction. */
 export const PRODUCT_COLORS: { hex: string; label: string }[] = [

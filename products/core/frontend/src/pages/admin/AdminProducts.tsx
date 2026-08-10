@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { ProductIcon } from '../../lib/product-icon';
 import {
+  BUCKETS,
+  bucketOf,
   ColorPickerButton,
   DeployScopeToggle,
   EditIconButton,
@@ -780,8 +782,37 @@ export function AdminProducts() {
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Acoes</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
-            {products.map(product => (
+          {/* Sectorized by working state — the SAME three buckets as
+              /admin/product-control, from the same shared `bucketOf`. The
+              catalog is no longer a flat alphabetical list: which bucket a
+              product sits in is the thing you actually scan for, so the table
+              groups by it and sorts by name within each group.
+
+              One <tbody> per bucket keeps every column aligned across sections
+              (a nested table per group would let column widths drift apart).
+              Empty buckets render nothing rather than an empty header — a
+              section that says "0" is noise on a page whose job is the list. */}
+          {BUCKETS.map(bucket => {
+            const rows = products
+              .filter(p => bucketOf(p) === bucket.key)
+              .sort((a, b) => a.nome.localeCompare(b.nome));
+            if (rows.length === 0) return null;
+            return (
+              <tbody key={bucket.key} className="divide-y divide-border">
+                <tr>
+                  <td colSpan={8} className="px-4 py-2 border-y border-border bg-muted/40">
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bucket.headerTone}`}
+                      >
+                        {bucket.title}
+                      </span>
+                      <span className="text-xs text-muted-foreground">({rows.length})</span>
+                      <span className="text-xs text-muted-foreground">· {bucket.rule}</span>
+                    </div>
+                  </td>
+                </tr>
+                {rows.map(product => (
               <tr
                 key={product.id}
                 className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -825,15 +856,19 @@ export function AdminProducts() {
                   </div>
                 </td>
               </tr>
-            ))}
-            {products.length === 0 && (
+                ))}
+              </tbody>
+            );
+          })}
+          {products.length === 0 && (
+            <tbody>
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                   Nenhum produto cadastrado. Crie o primeiro!
                 </td>
               </tr>
-            )}
-          </tbody>
+            </tbody>
+          )}
         </table>
       </div>
 
