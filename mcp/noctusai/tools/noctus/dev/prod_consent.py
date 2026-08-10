@@ -34,6 +34,7 @@ from .compliance import (
     _PROD_COMPOSE_REL,
     _PROD_CONSENT_DIR_REL,
     _PROD_INGRESS_REL,
+    _authorization_tier,
     _canonical_authorization_phrase,
     _git_author_email,
     _prod_exposure_declared_and_baseline,
@@ -262,6 +263,7 @@ def _author(
         # The user's OWN words, verbatim — not the agent's restatement.
         f"  phrase: {json.dumps(evidence_text)}\n"
         f"  prompt_source: {evidence_source}\n"
+        f"  tier: {_authorization_tier(slug, evidence_text) or 'unknown'}\n"
         f"  session_id: {session_id}\n"
         f"  transcript_sha256: {digest}\n"
         f"  recorded_at: {now}\n"

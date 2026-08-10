@@ -14668,55 +14668,76 @@ def _resolve_roadmap_milestone(consent_ref: str, root: Path) -> tuple[bool, str]
 _HUMAN_PROMPT_SOURCES = frozenset({"typed", "suggestion_accepted"})
 
 
-def _matches_authorization_intent(slug: str, text: str) -> bool:
-    """Does `text` express authorization to publish `slug` to production?
+#: Verbs that GRANT permission — the user is conferring a right.
+_PERFORMATIVE_VERBS = r"authoriz\w*|authoris\w*|approv\w*|allow\w*|permit\w*|consent\w*|sanction\w*"
+#: Verbs that DIRECT the action — the user is naming this product for prod.
+_DIRECTIVE_VERBS = r"deploy\w*|publish\w*|ship\w*|launch\w*|promot\w*|releas\w*|go[- ]live"
+#: Markers that make a sentence hypothetical, negated, or deferred.
+_NON_COMMITTAL = (
+    r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|won't|wont|without|"
+    r"stop|avoid|hold off|not yet|before|until|unless|if|whether|should we|"
+    r"can we|could we|would we|do we|are we|when do|how do|what if)\b"
+)
 
-    **CONJUNCTIVE, not fuzzy.** All three must be present in the SAME
-    message, or it does not match:
 
-      1. an explicit performative verb — `authorize` / `authorise` /
-         `approve` (a wish is not a decision: "I want igig live" is not
-         authorization, and neither is "finish the igig deploy to prod"),
-      2. the SLUG — so an approval of something else can never be
-         repurposed for this product,
-      3. a production token — `prod` / `production`.
+def _authorization_tier(slug: str, text: str) -> str | None:
+    """Classify `text` as authorization for publishing `slug` to production.
 
-    Negation-guarded: "do not authorize", "unauthorized", "isn't approved"
-    and friends never match.
+    Returns `"performative"` (the user granted permission — "I authorize /
+    allow / approve …"), `"directive"` (the user named this product for
+    production — "… and then deploy igig to prod"), or None.
 
-    **Why a heuristic at all, when the canonical phrase is exact-matchable.**
-    Exact-only produced a FALSE NEGATIVE on a real, unmistakable, repeated
-    authorization (2026-08-09: the user typed "i authorize the igig deploy
-    all the way to prod" and the gate rejected it). A gate that refuses
-    genuine consent teaches the user that the gate is broken — which is how
-    gates get bypassed. A false negative on a consent gate is a defect, the
-    same class as the YAML-quoting bug fixed the same day.
+    **Both tiers require the SLUG and a production token.** That is the
+    non-negotiable part, and the reason is concrete: without slug-binding,
+    one "deploy to prod" buried in a long prompt would authorize whatever
+    product the agent happened to be registering — including one the user
+    was not thinking about. Slug-binding is what makes the record mean
+    something specific.
 
-    The conjunction is what keeps it honest. Verified against this very
-    session's real messages: it matches the two genuine authorizations and
-    NONE of "finish igig deploy to prod. i need it live on vps", "lets
-    finish this deploy", "can u rollback...", or "lets redesign the gate
-    and probe it using igig".
+    **Why `directive` counts at all** (widened 2026-08-09 at the user's
+    explicit request). The orbity incident was an agent registering a
+    product with NO user statement whatsoever. A user who names a product
+    for production HAS decided — they are the sole owner of this fleet,
+    there is no second stakeholder to protect. And "is it ready?" is
+    carried by DIFFERENT legs (`dev_validated: true` and the ✅ milestone),
+    so the consent leg does not have to answer it.
+
+    **What this trades, stated plainly.** An operational instruction now
+    doubles as a promotion decision, so the user cannot ask for a prod
+    deploy of a NEW product without also consenting to it being public.
+    That is the point for a single-owner fleet, and it would be the wrong
+    default for a team where the person asking is not the person who may
+    decide. Recorded in the consent file as `authorization.tier` so the
+    distinction is never lost.
     """
     import re
 
     if not text or not slug:
-        return False
+        return None
     t = " ".join(text.split()).casefold()
     if slug.casefold() not in t:
-        return False
+        return None
     if not re.search(r"\b(prod|production)\b", t):
-        return False
-    verb = re.search(r"\b(authoriz\w*|authoris\w*|approv\w*)\b", t)
-    if not verb:
-        return False
-    # Negation guard — inspect the ~40 chars before the verb.
-    window = t[max(0, verb.start() - 40):verb.start()]
-    if re.search(r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|without|un)\s*$", window):
-        return False
-    if re.search(r"\bunauthoriz|\bunauthoris|\bnot authoriz|\bnever authoriz", t):
-        return False
-    return True
+        return None
+    if re.search(r"\bun(authoriz|authoris|approv)\w*", t):
+        return None
+
+    for tier, pattern in (("performative", _PERFORMATIVE_VERBS),
+                          ("directive", _DIRECTIVE_VERBS)):
+        for m in re.finditer(rf"\b({pattern})\b", t):
+            # Look back over the clause for negation / hypothetical framing.
+            start = max(0, m.start() - 60)
+            window = t[start:m.start()]
+            clause = window.rsplit(".", 1)[-1].rsplit(",", 1)[-1]
+            if re.search(_NON_COMMITTAL, clause):
+                continue
+            return tier
+    return None
+
+
+def _matches_authorization_intent(slug: str, text: str) -> bool:
+    """Bool wrapper over `_authorization_tier` — see there for the design."""
+    return _authorization_tier(slug, text) is not None
 
 
 def _canonical_authorization_phrase(slug: str) -> str:

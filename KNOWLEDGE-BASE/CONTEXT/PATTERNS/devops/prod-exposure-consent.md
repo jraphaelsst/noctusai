@@ -100,7 +100,25 @@ An earlier sketch used a free-form `authorization_quote`. That is barely stronge
 1. **It embeds the slug.** An agent cannot repurpose an unrelated "yes, go ahead" from earlier in the conversation as authorization for *this* product.
 2. **It is exact-matchable.** No intent classification, no fuzzy matching, no judgement call inside a keeper.
 
-### Accepting natural authorization — the conjunctive heuristic
+### Two tiers of authorization — both SLUG-BOUND
+
+`_authorization_tier` classifies a human message as:
+
+| tier | shape | example |
+|---|---|---|
+| `performative` | the user **grants permission** | "i authorize / allow / approve igig … prod" |
+| `directive` | the user **names this product for production** | "…fix the tests, then deploy igig to prod" |
+| `None` | anything else | "should we deploy igig to prod?", "dont deploy igig to prod yet" |
+
+Both require, in the same message: a matching **verb**, the **slug**, and a **prod/production** token — with negation and hypothetical framing ("not", "before", "until", "should we", "hold off") disqualifying the match.
+
+**The slug requirement is never traded away.** Without it, one "deploy to prod" buried in a long prompt would authorize whatever product the agent happened to be registering — including one the user was not thinking about. `"and then deploy to prod"` authorizes nothing; `"i authorize igig to prod"` authorizes only igig, never orbity.
+
+**Why `directive` counts** (widened 2026-08-09, at the user's explicit request, *after* igig's own consent had already been recorded and the deploy unblocked — so the change was not made to clear a blocked path). The orbity incident was an agent registering a product with **no user statement whatsoever**. A user who names a product for production has decided; on a single-owner fleet there is no second stakeholder the gate is protecting. And "is it ready?" is carried by **different legs** — `dev_validated: true` and the ✅ milestone — so the consent leg does not have to answer it.
+
+**What this trades, plainly.** An operational instruction now doubles as a promotion decision: the user cannot ask for a prod deploy of a NEW product without also consenting to it being public. That is correct for a single-owner fleet and would be **wrong** for a team where the person asking is not the person entitled to decide. The tier is stored in the record (`authorization.tier`), so any later audit can separate "granted permission" from "asked for the deploy" without guesswork.
+
+### The conjunctive matcher
 
 Exact-matching the canonical sentence alone produced a **false negative on real consent**: the user typed *"i authorize the igig deploy all the way to prod"* and the gate rejected it. A gate that refuses genuine authorization teaches its user that the gate is broken, which is how gates get bypassed — the same class of defect as the YAML-quoting bug, and fixed for the same reason.
 

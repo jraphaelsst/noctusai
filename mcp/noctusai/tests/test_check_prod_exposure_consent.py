@@ -40,6 +40,7 @@ from tools.noctus.dev.compliance import (  # noqa: E402
     check_prod_exposure_consent,
     _find_authorization_evidence,
     _human_authored_transcript_texts,
+    _authorization_tier,
     _matches_authorization_intent,
     _resolve_roadmap_milestone,
     _validate_prod_consent_record,
@@ -591,59 +592,77 @@ class TestConsentRefQuotingFalseNegative:
 
 
 class TestAuthorizationIntentHeuristic:
-    """CONJUNCTIVE, not fuzzy: performative verb ∧ slug ∧ prod token.
+    """Two tiers, both SLUG-BOUND. Corpus is REAL — every string is an
+    actual message from the 2026-08-09 session that produced this code.
 
-    The corpus below is REAL — every string is an actual message from the
-    2026-08-09 session in which this heuristic was written. Exact-matching
-    alone had produced a false negative on a genuine, repeated
-    authorization, and a consent gate that refuses real consent is how
-    gates get bypassed.
+    `performative` — the user grants permission ("I authorize/allow…").
+    `directive`    — the user names this product for prod ("…then deploy
+                     igig to prod"). Widened at the user's explicit
+                     request; defensible because readiness is carried by
+                     OTHER legs (dev_validated + the ✅ milestone), and
+                     because the orbity incident was an agent acting with
+                     no user statement at all.
+
+    The slug requirement is non-negotiable in BOTH tiers: without it, one
+    "deploy to prod" in a long prompt authorizes whatever product the
+    agent happens to be registering.
     """
 
-    GENUINE = [
+    PERFORMATIVE = [
         "i authorize the igig deploy all the way to prod.",
         "I authorize igig to be published to production.",
-        "ok — I approve igig for production",
+        "i allow deploy of igig to production",
+        "you may publish igig to prod — approved",
+        "i permit igig to go to production",
+    ]
+    DIRECTIVE = [
+        "please deploy igig to prod",
+        "...fix the tests, update the docs, and then deploy igig to prod",
+        "hey claude, pelase contextualize then finish igig deploy to prod. i need it live on vps.",
+        "ship igig to production when you're done",
     ]
     NOT_AUTHORIZATION = [
-        # An INSTRUCTION to deploy is not a promotion decision. If this
-        # matched, every "deploy X to prod" would self-authorize and the
-        # gate would be equivalent to deleted — the orbity incident's shape.
-        "please deploy igig to prod",
-        'what i said was "deploy igig to prod".',
-        "hey claude, pelase contextualize then finish igig deploy to prod. i need it live on vps.",
-        "for god's sakes lets finish this deploy.",
-        "can u rollback to the moment when we didnt built the igig yet",
-        "lets redesign the gate and probe it using igig",
-        # wish ≠ decision
-        "i want igig live on prod",
-    ]
-    NEGATED = [
-        "I do not authorize igig for prod",
+        # negated / deferred / hypothetical
+        "dont deploy igig to prod yet",
+        "do not authorize igig for prod",
         "igig is unauthorized for production",
-        "never authorize igig to production",
+        "should we deploy igig to prod?",
+        "before we deploy igig to prod, run the tests",
+        "hold off on the igig prod deploy",
+        "until igig is validated, do not deploy it to prod",
+        # not slug-bound — the property that must never be traded away
+        "and then deploy to prod",
+        "i allow deploy to production",
+        # someone else's product
+        "I authorize orbity to be published to production.",
+        # no prod token / no verb
+        "lets redesign the gate and probe it using igig",
+        "igig is looking good",
     ]
 
-    @pytest.mark.parametrize("text", GENUINE)
-    def test_matches_genuine_authorization(self, text):
-        assert _matches_authorization_intent("igig", text)
+    @pytest.mark.parametrize("text", PERFORMATIVE)
+    def test_performative_tier(self, text):
+        assert _authorization_tier("igig", text) == "performative"
+
+    @pytest.mark.parametrize("text", DIRECTIVE)
+    def test_directive_tier(self, text):
+        assert _authorization_tier("igig", text) == "directive"
 
     @pytest.mark.parametrize("text", NOT_AUTHORIZATION)
-    def test_rejects_instructions_and_wishes(self, text):
-        assert not _matches_authorization_intent("igig", text)
+    def test_rejected(self, text):
+        assert _authorization_tier("igig", text) is None
 
-    @pytest.mark.parametrize("text", NEGATED)
-    def test_rejects_negations(self, text):
-        assert not _matches_authorization_intent("igig", text)
+    def test_slug_binding_is_never_traded_away(self):
+        """The single most important property: consent for one product can
+        never authorize another, and a slug-less grant authorizes nothing."""
+        assert _authorization_tier("igig", "i authorize deploy to prod") is None
+        assert _authorization_tier("orbity", "i authorize igig to prod") is None
 
-    def test_authorization_for_another_slug_never_transfers(self):
-        assert not _matches_authorization_intent(
-            "igig", "I authorize orbity to be published to production.")
-
-    def test_requires_all_three_legs(self):
-        assert not _matches_authorization_intent("igig", "I authorize this to production")  # no slug
-        assert not _matches_authorization_intent("igig", "I authorize igig")               # no prod
-        assert not _matches_authorization_intent("igig", "igig goes to production")        # no verb
+    def test_bool_wrapper_agrees_with_tier(self):
+        for text in self.PERFORMATIVE + self.DIRECTIVE:
+            assert _matches_authorization_intent("igig", text)
+        for text in self.NOT_AUTHORIZATION:
+            assert not _matches_authorization_intent("igig", text)
 
 
 class TestSuggestionAcceptedCountsAsHuman:
@@ -687,5 +706,18 @@ class TestEvidenceIsTheUsersSentenceNotTheWholeBlob:
         assert "you said" not in sentence
 
     def test_returns_none_when_nothing_authorizes(self, tmp_path):
-        _write_transcript(tmp_path, "s", [_typed("please deploy igig to prod")])
+        # NB: "please deploy igig to prod" DOES authorize since 2026-08-09
+        # (tier=directive, at the user's explicit request). These do not —
+        # no slug binding, and a deferral.
+        _write_transcript(tmp_path, "s", [
+            _typed("and then deploy to prod"),
+            _typed("dont deploy igig to prod yet"),
+        ])
         assert _find_authorization_evidence("igig", "s", home=tmp_path) is None
+
+    def test_directive_evidence_is_captured_with_its_sentence(self, tmp_path):
+        _write_transcript(tmp_path, "s", [
+            _typed("run the tests, update the changelog. then deploy igig to prod.")])
+        got = _find_authorization_evidence("igig", "s", home=tmp_path)
+        assert got is not None
+        assert got[1] == "then deploy igig to prod."
