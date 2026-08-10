@@ -371,3 +371,4 @@
 {"ts": "2026-08-09", "event": "worktree-sweep", "path": ".claude/worktrees/igig-foundation", "branch": "feat/igig-foundation", "sha": "056300f7a96fc3aaa3647f66b5fdc21d1bc0db6a", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-10", "event": "worktree-sweep", "path": ".claude/worktrees/tunnel-ssot", "branch": "feat/tunnel-ssot", "sha": "773480b2d816555fae53c955be8dea9c3e26fd7a", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-10", "event": "worktree-sweep", "path": ".claude/worktrees/igig-consent", "branch": "feat/igig-consent", "sha": "0b73b2cdebf2fc88bb905eff3585e437060a2e9b", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-10", "event": "worktree-sweep", "path": ".claude/worktrees/scaffold-index-html-identity", "branch": "feat/consent-gate-redesign", "sha": "4b0234d8d1274677b20f16c14c9a68fb5afed932", "reason": "task_branch cleanup (learn-before-delete)"}
