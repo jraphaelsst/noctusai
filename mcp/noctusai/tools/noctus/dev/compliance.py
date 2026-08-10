@@ -14890,14 +14890,29 @@ def _find_authorization_evidence(
     """Return `(source, text)` of the human message that authorizes `slug`,
     or None. Used to record WHAT the user actually said, verbatim, rather
     than restating it in the agent's own words."""
+    import re
+
     entries, detail = _human_authored_transcript_texts(session_id, home=home)
     if detail:
         return None
     canonical = _canonical_authorization_phrase(slug)
     norm = lambda s: " ".join(s.split()).casefold()  # noqa: E731
     for source, text in entries:
-        if norm(canonical) in norm(text) or _matches_authorization_intent(slug, text):
-            return source, " ".join(text.split())
+        flat = " ".join(text.split())
+        if norm(canonical) not in norm(flat) and not _matches_authorization_intent(slug, flat):
+            continue
+        # Narrow to the AUTHORIZING SENTENCE. A real message often quotes
+        # the agent back at itself (2026-08-09: the matching message was
+        # ~900 chars, most of it the agent's own text pasted in). Storing
+        # the whole blob would put the AGENT's words inside the field that
+        # is supposed to hold the USER's, which defeats the audit property.
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", flat):
+            s = sentence.strip()
+            if not s:
+                continue
+            if norm(canonical) in norm(s) or _matches_authorization_intent(slug, s):
+                return source, s
+        return source, flat  # matched across sentences; keep it whole
     return None
 
 

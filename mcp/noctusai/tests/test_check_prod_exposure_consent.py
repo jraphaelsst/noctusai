@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_prod_exposure_consent,
+    _find_authorization_evidence,
     _human_authored_transcript_texts,
     _matches_authorization_intent,
     _resolve_roadmap_milestone,
@@ -663,3 +664,28 @@ class TestSuggestionAcceptedCountsAsHuman:
             "message": {"content": PHRASE}}])
         entries, _ = _human_authored_transcript_texts("s", home=tmp_path)
         assert entries == []
+
+
+class TestEvidenceIsTheUsersSentenceNotTheWholeBlob:
+    """The record must hold the USER's words. A real message often quotes
+    the agent back at itself — storing the whole blob would put the AGENT's
+    text inside the field reserved for the user's, defeating the audit."""
+
+    def test_extracts_only_the_authorizing_sentence(self, tmp_path):
+        blob = (
+            "you said: 'M5: prod promote - do not mark this until you have "
+            "exercised the build'. do you understand why i cant handle this "
+            "manually? the date was a mistype. "
+            "i authorize the igig deploy all the way to prod."
+        )
+        _write_transcript(tmp_path, "s", [_typed(blob)])
+        got = _find_authorization_evidence("igig", "s", home=tmp_path)
+        assert got is not None
+        source, sentence = got
+        assert source == "typed"
+        assert sentence == "i authorize the igig deploy all the way to prod."
+        assert "you said" not in sentence
+
+    def test_returns_none_when_nothing_authorizes(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed("please deploy igig to prod")])
+        assert _find_authorization_evidence("igig", "s", home=tmp_path) is None
