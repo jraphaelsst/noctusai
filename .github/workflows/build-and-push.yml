@@ -102,38 +102,84 @@ jobs:
       # (noctus.dev.promote / deploy_pull already report `rebuild: [<slug>...]`).
       # Drift fixed 2026-06-03: a push used to rebuild the WHOLE fleet because it
       # passed no `products` arg → build-and-push.sh's "empty = ALL" default fired.
-      #   • workflow_dispatch → honor the explicit `products` input (empty = ALL).
-      #   • push touching seed/** or the build scripts → ALL (shared base changed).
-      #   • push touching only products/<slug>/ → just those slugs.
-      #   • push with no usable base (first push / force) → ALL (safe default).
+      #   • workflow_dispatch → honor the explicit `products` input (empty = ALL fleet).
+      #   • push touching seed/** or the build scripts → the ACTIVE SET (shared base
+      #     changed, so every product we still maintain images for must rebuild).
+      #   • push touching only products/<slug>/ → those slugs ∩ the active set.
+      #   • push with no usable base (first push / force) → the ACTIVE SET.
       #   • push touching none of the above (e.g. only a deleted file) → SKIP.
-      - name: Determine products to build (changed-only scoping)
+      #
+      # 2026-08-11 — ACTIVE-SET SCOPING (why "ALL" is gone from the push paths).
+      # A `seed/**` edit used to mean "rebuild the WHOLE fleet": 11 services from
+      # docker-compose.prod.yml, including the 7 products that are `ativo=false` in the
+      # catalog and that we have explicitly decided not to touch. A one-line package.json
+      # change cost a full 11-product build and put churn on images nobody deploys.
+      # The build set now comes from `deploy/fleet/build-scope.txt` (derived from the
+      # catalog: ativo=true AND deploy_scope='live', plus `core`). The FLEET file stays
+      # the source of truth for what CAN run; this narrows what a PUSH rebuilds. An
+      # inactive product keeps running its last-built image until it is reactivated.
+      # `workflow_dispatch` still bypasses this entirely — that is the manual override.
+      - name: Determine products to build (active-set ∩ changed-only scoping)
         id: scope
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=dispatch" >> "$GITHUB_OUTPUT"
             echo "products=${{ github.event.inputs.products }}" >> "$GITHUB_OUTPUT"
-            echo "scope: workflow_dispatch → '${{ github.event.inputs.products }}' (empty = ALL)"; exit 0
+            echo "scope: workflow_dispatch → '${{ github.event.inputs.products }}' (empty = ALL fleet; manual override, build-scope.txt ignored)"; exit 0
           fi
+
+          # ── the active set ────────────────────────────────────────────────────────
+          SCOPE_FILE="deploy/fleet/build-scope.txt"
+          FLEET_COMPOSE="deploy/fleet/docker-compose.prod.yml"
+          if [ ! -f "$SCOPE_FILE" ]; then
+            echo "::error::$SCOPE_FILE is missing — it declares which products get images built. Restore it (regenerate with 'python mcp/noctusai/cli.py --refresh-build-scope') or run this workflow via workflow_dispatch."
+            exit 1
+          fi
+          ACTIVE="$(grep -vE '^\s*(#|$)' "$SCOPE_FILE" | tr -d '\r' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+          if [ -z "$ACTIVE" ]; then
+            echo "::error::$SCOPE_FILE lists no products — refusing to build nothing silently."
+            exit 1
+          fi
+          # A slug here that no longer exists in the fleet would silently never build.
+          # Fail loudly instead (mirrors build-and-push.sh's own fleet-membership check).
+          for s in $ACTIVE; do
+            if ! grep -qE "^  ${s}:" "$FLEET_COMPOSE"; then
+              echo "::error::build-scope.txt lists '$s' but it is absent from $FLEET_COMPOSE — stale scope file. Regenerate with 'python mcp/noctusai/cli.py --refresh-build-scope'."
+              exit 1
+            fi
+          done
+          echo "active set (deploy/fleet/build-scope.txt): $ACTIVE"
+
           BEFORE="${{ github.event.before }}"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            echo "mode=all" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
-            echo "scope: no usable base ($BEFORE) → ALL (safe default)"; exit 0
+            echo "mode=active" >> "$GITHUB_OUTPUT"; echo "products=$ACTIVE" >> "$GITHUB_OUTPUT"
+            echo "scope: no usable base ($BEFORE) → ACTIVE SET '$ACTIVE'"; exit 0
           fi
           CHANGED="$(git diff --name-only "$BEFORE" "${{ github.sha }}")"
           echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
           if echo "$CHANGED" | grep -qE '^(seed/|scripts/infra/build-(and-push|base-images)\.sh$)'; then
-            echo "mode=all" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
-            echo "scope: seed/ or build-script changed → ALL (shared base)"; exit 0
+            echo "mode=active" >> "$GITHUB_OUTPUT"; echo "products=$ACTIVE" >> "$GITHUB_OUTPUT"
+            echo "scope: seed/ or build-script changed → ACTIVE SET '$ACTIVE' (inactive products deliberately skipped)"; exit 0
           fi
-          SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+          SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u)"
           if [ -z "$SLUGS" ]; then
             echo "mode=none" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
             echo "scope: no product/<slug> files changed → SKIP build"; exit 0
           fi
-          echo "mode=subset" >> "$GITHUB_OUTPUT"; echo "products=$SLUGS" >> "$GITHUB_OUTPUT"
-          echo "scope: changed products → '$SLUGS'"
+          # Intersect with the active set — and SAY what was dropped (no silent caps).
+          KEEP=""; DROP=""
+          for s in $SLUGS; do
+            if printf '%s\n' $ACTIVE | grep -qx "$s"; then KEEP="$KEEP $s"; else DROP="$DROP $s"; fi
+          done
+          KEEP="$(echo "$KEEP" | sed 's/^ *//;s/ *$//')"; DROP="$(echo "$DROP" | sed 's/^ *//;s/ *$//')"
+          [ -n "$DROP" ] && echo "::notice::skipping inactive product(s): $DROP — changed, but not in deploy/fleet/build-scope.txt. Activate them (or use workflow_dispatch) to build."
+          if [ -z "$KEEP" ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"; echo "products=" >> "$GITHUB_OUTPUT"
+            echo "scope: only inactive products changed ($DROP) → SKIP build"; exit 0
+          fi
+          echo "mode=subset" >> "$GITHUB_OUTPUT"; echo "products=$KEEP" >> "$GITHUB_OUTPUT"
+          echo "scope: changed ∩ active → '$KEEP'"
 
       # PROD-PIN fix: :latest moves ONLY for a prod-ref build (push to `prod`,
       # or a workflow_dispatch run explicitly opting in via move_latest=true —

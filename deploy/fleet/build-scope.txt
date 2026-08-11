@@ -1,0 +1,37 @@
+# build-scope.txt — WHICH PRODUCTS GET IMAGES BUILT. One slug per line.
+#
+# 🔴 GENERATED — do not hand-edit. Regenerate with:
+#     python mcp/noctusai/cli.py --refresh-build-scope
+# (MCP: noctus.dev.refresh_build_scope). Hand-editing reintroduces exactly the
+# drift class `check_hardcoded_product_slug_set` exists to prevent.
+#
+# WHY THIS EXISTS. `build-and-push.yml` used to treat any change under `seed/**` as
+# "rebuild the WHOLE fleet", because a shared base moved. With 11 services in
+# `docker-compose.prod.yml` that meant a full rebuild for a one-line edit — including
+# products that are `ativo=false` in the catalog and that we do not touch.
+#
+# THIS IS THE BUILD SET, NOT THE FLEET SET:
+#   deploy/fleet/docker-compose.prod.yml  — what CAN run on the VPS (the fleet)
+#   deploy/fleet/build-scope.txt (here)   — what we MAINTAIN IMAGES FOR
+# The fleet file stays the source of truth for `build-and-push.sh`'s ALL_SLUGS and for
+# what the VPS runs; this only narrows what a PUSH-triggered build rebuilds. An
+# inactive product keeps running its last-built image until it is reactivated.
+#
+# DERIVED FROM THE CATALOG:
+#     SELECT slug FROM public.products WHERE ativo = true AND deploy_scope = 'live'
+# plus `core`, the platform shell (deliberately not a `products` row).
+# `build-and-push.yml` REFUSES a slug here that is absent from the fleet compose, so a
+# stale row fails the build loudly instead of silently skipping a product.
+#
+# ESCAPE HATCH: a manual `workflow_dispatch` run ignores this file entirely — pass an
+# explicit `products` list, or leave it empty to rebuild every fleet slug.
+#
+# Last refresh: 2026-08-11 — 5 live + 1 platform.
+# Excluded (inactive): adconnect, daily-life, dev-team, personal-finance, therapy-platform
+
+core
+erp-imobiliario
+igig
+orbity
+seed
+social-wiring

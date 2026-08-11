@@ -162,3 +162,51 @@ gotcha above) · `KB § PATTERNS/common/gate-methodology-sync.md` (gate ships
 with mechanism, same commit) · `KB § PATTERNS/architect/project-execution.md`
 § DRY recurrence rule (N=3 triggered this doc) · `feedback_hardcoded_product_slug_set_keeper`
 (the original Stage-2 memory this axis's Python-AST leg codifies).
+
+## Third axis — the BUILD SET is not the FLEET SET (2026-08-11)
+
+The same "derive, don't hand-maintain" rule, applied to a question the earlier
+two axes never asked: *which products should a push actually rebuild?*
+
+`build-and-push.yml` treated any change under `seed/**` as **rebuild the whole
+fleet** — correct reasoning (a shared base moved) with a wrong denominator. The
+fleet is `docker-compose.prod.yml`: **11** services, of which **7 are
+`ativo=false`** in the catalog and are products we have explicitly decided not
+to touch (`KB § PATTERNS/architect/product-working-scope.md`). So a one-line
+`package.json` edit cost a full 11-product build and put image churn on things
+nobody deploys. This landed the same day the fleet moved to PROD-ONLY, where
+build minutes and disk are exactly the thing being conserved.
+
+**Two files, two questions — do not conflate them:**
+
+| File | Answers | Consumed by |
+|---|---|---|
+| `deploy/fleet/docker-compose.prod.yml` | what CAN run on the VPS (the fleet) | `build-and-push.sh` `ALL_SLUGS`, the VPS |
+| `deploy/fleet/build-scope.txt` | what we MAINTAIN IMAGES FOR (the active set) | `build-and-push.yml` push-triggered scoping |
+
+An inactive product keeps serving its last-built image until it is reactivated —
+nothing is torn down; it just stops being rebuilt.
+
+**Derived, never hand-typed.** The active set is a CATALOG fact
+(`ativo = true AND deploy_scope = 'live'`, plus `core`, the platform shell that
+deliberately has no `products` row), so `noctus.dev.refresh_build_scope` /
+`--refresh-build-scope` generates the file. Hand-editing it recreates precisely
+the frozen-slug-literal class the first axis exists to prevent.
+
+**Both silent failure modes are made loud** — this is the whole design:
+
+- *A live product missing from the scope* → its image silently stops being
+  built. `refresh_build_scope` **refuses to write** a scope file whose live set
+  has no fleet service, naming the offender.
+- *A scope slug with no fleet service* → silently never builds while looking
+  healthy. The workflow **hard-fails** (`::error::`) and names
+  `--refresh-build-scope` as the fix.
+- *A changed product dropped for being inactive* → announced via `::notice::`,
+  never silently truncated (the no-silent-caps rule).
+
+**Escape hatch:** `workflow_dispatch` ignores the file entirely — pass explicit
+`products`, or leave empty for the full fleet. Manual override stays manual.
+
+Pinned by `mcp/noctusai/tests/test_build_scope.py` (20 tests), which also
+asserts the workflow text still reads the scope file, still fails loudly, and
+still announces drops — the shell lives in YAML, so no other suite executes it.
