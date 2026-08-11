@@ -407,3 +407,4 @@
 {"ts": "2026-08-11", "event": "worktree-sweep", "path": ".claude/worktrees/unfreeze-exact-overrides", "branch": "feat/unfreeze-exact-overrides", "sha": "f425c294bafc00331eb1d3aaf17fcccb57b90a44", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-11", "event": "worktree-sweep", "path": ".claude/worktrees/skill-dep-update", "branch": "feat/skill-dep-update", "sha": "24c5ddfa0929d65af7aaa09876ca197b908d6fb5", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-11", "event": "worktree-sweep", "path": ".claude/worktrees/spa-render-gate", "branch": "feat/spa-render-gate", "sha": "305c1968462cf017d2e14ea4e13b455caf92442e", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-11", "event": "worktree-sweep", "path": ".claude/worktrees/dep-skill-stale-base-note", "branch": "feat/dep-skill-stale-base-note", "sha": "5bf6120358d03fe5215c4cc9aea81ae7cd1fb88b", "reason": "task_branch cleanup (learn-before-delete)"}
