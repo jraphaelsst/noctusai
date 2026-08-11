@@ -25,16 +25,61 @@ your registrar (NS → Cloudflare)             │      docker, external `noctus
 
 ---
 
-## 0.1 · Dev-first validation gate — prod-deploy is a PROMOTION, never first-contact 🔴
+## 0.1 · 🔴 SUPERSEDED 2026-08-11 — the dev fleet is DORMANT; the gate moved
 
-**The rule (2026-06-01, born from a real drift):** code reaches prod ONLY as a *promotion of a build already validated on the running dev fleet*. We work mainly on `dev`; deploying to `dev` ≠ deploying to prod, but a prod deploy REQUIRES a green dev first. The drift this closes: a session blessed→promoted→deployed straight to prod while the local **dev fleet was still serving STALE source** (the primary checkout hadn't been FF'd to `origin/dev`) — so prod got code that had never actually run anywhere. `predeploy_check` (§P5) is *static* (vite build + pytest + config-parity); it is necessary but NOT sufficient — it never *runs* the change against a live fleet.
+> **This section described a dev-fleet validation gate that no longer exists.**
+> The owner suspended the local Docker dev fleet indefinitely on 2026-08-11:
+> the containers cost storage that only prod earns back. **Prod-only.**
+> Canonical record + revival criteria: `KB § PATTERNS/devops/dev-fleet-dormant.md`.
+>
+> Dormant = the `dev-noctus-*` **containers**. The `dev` **git branch**,
+> self-branching, and `dev`→`main`→`prod` are **untouched** — branches cost no
+> storage. Do not conflate them.
 
-**The dev-deploy step (the missing leg — uses existing tooling, no new tool):**
-1. **Sync the primary** — after worktree integrates, `git merge --ff-only origin/dev` in the primary checkout so its bind-mount (`./backend`, `./frontend` → the dev container's `vite --watch` + `uvicorn --reload`) AND the active git hooks reflect current `dev`. A stale primary = a dev fleet running old code = a false "it works." (Cross-checkout note: real work flows to `origin/dev` via `task_branch` integrates from worktrees, so the primary's local `dev` does NOT auto-advance — FF it explicitly. Ledger churn that stranded the primary's `dev`: see `[[feedback_auto_ledger_appends_strand_on_primary]]`.)
-2. **Deploy to the dev fleet** — `./start.sh <slug>` (whole fleet: bare `./start.sh`); add `build` (`./start.sh <slug> build`) ONLY when deps/Dockerfile changed — otherwise a `docker restart dev-noctus-<slug>` is enough (bind-mount + watchers pick up the synced source). The dev fleet is bind-mount+watch (`runtime-watch` target), so code changes need no image rebuild — but they DO need the container to actually be running the synced source.
-3. **Validate** — `noctus.dev.smoke_fleet` (fleet health) + hit the actually-changed route/endpoint on `localhost:<port>` (functional) + `noctus.dev.predeploy_check <slug>` (keepers/static). GREEN on all three = the build has earned a bless.
+**What the old gate bought, and what replaces it.** The 2026-06-01 rule was:
+code reaches prod only as a promotion of a build already *running* on the dev
+fleet. It closed a real drift (a session shipped to prod while the dev fleet
+served stale source, so prod got code that had never run anywhere). That
+rule's honest weakness was always that `predeploy_check` is *static* — it
+never runs the change against a live fleet.
 
-Only THEN: bless (§0.2/§2b) → promote (§2b) → `deploy_pull` → `deploy_image` (§2a). The dev fleet is the **validation environment**; prod is the promotion target. (`skill noc-ship` step 0 enforces this.)
+We are now accepting that exact exposure deliberately: **prod is first-contact
+for the running image.** Say it plainly rather than pretending the gate is
+still there. The compensating net, all MANDATORY:
+
+1. **`predeploy_check <slug>` for every active product** — host-side, but it
+   runs a REAL `vite build` + the backend suite + prod-config value parity.
+   Now the primary functional evidence, not a supplement.
+2. **CI green on the exact sha** — no longer advisory. A dev smoke can no
+   longer stand in for it. Sole exception: a diff that is entirely
+   `project-history/`/docs, proven with `git diff --name-only`.
+3. **`deploy_image`'s health probe + AUTO-ROLLBACK (§2a C2)** — the load-
+   bearing control. A broken image never stays serving; the container reverts
+   to the `:previous` snapshot on a failed probe. This is what makes
+   prod-first defensible at all.
+4. **`prod-backup`** — code rollback pointer, snapshotted by `promote`.
+5. **Post-deploy prod smoke (§0.1a below)** — the only runtime evidence left.
+
+Still FF the primary checkout to `origin/dev` after integrating — not for a
+bind-mount any more, but so the active git hooks and local tooling read the
+shipped tree.
+
+## 0.1a · Post-deploy prod smoke — MANDATORY 🔴
+
+A deploy is not done until this passes:
+
+- `noctus.vps.health` → all healthy, 0 unhealthy.
+- each ACTIVE product's `/api/health` → 200, probed **internally**
+  (`noctus.vps.exec --container`) *and* through the **public edge**
+  (programmatic callers need a browser User-Agent or CF WAF 1010 rejects).
+- read `startup_hook_error` in that payload: a product whose lifespan hook
+  failed still returns 200 and reports the failure there, so `status: "ok"`
+  alone is not the answer (`KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`).
+
+On failure: **roll back, do not debug forward in prod.**
+
+Order: `predeploy_check` (all active) → CI green → bless (§0.2/§2b) → promote
+(§2b) → `deploy_pull` → `deploy_image` (§2a) → prod smoke.
 
 ## 1 · Code delivery = git (never rsync)
 

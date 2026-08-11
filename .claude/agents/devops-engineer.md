@@ -10,6 +10,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/base-image-dep-freshness.md
   - CONTEXT/PATTERNS/devops/deploy-config-contract.md
   - CONTEXT/PATTERNS/devops/dev-prod-parity.md
+  - CONTEXT/PATTERNS/devops/dev-fleet-dormant.md
   - CONTEXT/PATTERNS/devops/ci-security-gates.md
   - CONTEXT/PATTERNS/devops/ci-embedding-cache-gate.md
   - CONTEXT/PATTERNS/devops/ci-deploy-prod.md
@@ -51,6 +52,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Product lockfile & slug-set drift.** A product's lockfile snapshot or a hardcoded slug list silently stops tracking what it mirrors (N=3: `@dnd-kit`/`recharts`/`ALL_SLUGS`); fix scoped (`npm install <dep>` or a surgical splice), never a bare `npm install` (re-resolves the whole tree). Gated locally in pre-commit §6d/§6e, not CI-only. → `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`
 - **Tunnel ingress is the source of truth — derive the config, don't hand-edit it.** `deploy/tunnel/ingress.yml` claimed canonicity for 3 months while `compose.tunnel.yml` mounted `./`, so the LIVE config was a gitignored copy under `projects/` and editing the canonical file changed nothing live, silently; `deploy <slug>` is not done until `tunnel_config action='check'` is in_sync AND the DNS CNAME exists. cloudflared runs as uid 65532 — a root-owned credentials JSON crash-loops it into a fleet-wide CF 530. Keeper `check_tunnel_ingress_snapshot_sync`. → `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md`
 - **Dev↔prod parity — verify in the PRODUCTION SHAPE.** ⭐ platform's highest-recurrence drift. Dev-green ≠ prod-works. → `KB § PATTERNS/devops/dev-prod-parity.md`
+- **🔴 PROD-ONLY — the dev FLEET is DORMANT (2026-08-11, owner's decision); the `dev` BRANCH is not.** No `./start.sh` in any workflow, never re-add a dev-container gate, never "restore" the fleet as a side effect of another task. Prod is first-contact for the running image ⇒ `predeploy_check` + CI-green MANDATORY, `deploy_image` auto-rollback is the backstop, post-deploy prod smoke closes it. Revival is the owner's cost decision. → `KB § PATTERNS/devops/dev-fleet-dormant.md`
 - **Deploy-config contract (the 3-legged gate).** Every dev↔prod-divergent knob routes through seed (no per-product env-divergence in compose). `prod_config_parity` is the 3rd leg, pre-deploy. → `KB § PATTERNS/devops/deploy-config-contract.md`
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`
 - **Prod cache container.** `pgvector/pgvector:pg16` service in `deploy/fleet/compose.infra.prod.yml`; profile-gated (`--profile cache` / `--profile full`); volume `noctus-cache-pg-data`; internal-only via `noctus-net`. → `KB § PATTERNS/devops/prod-cache-container.md`

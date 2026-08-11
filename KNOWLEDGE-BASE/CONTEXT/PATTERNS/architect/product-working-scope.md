@@ -12,8 +12,8 @@
 
 | `ativo` | `deploy_scope` | What it means for our work |
 |---|---|---|
-| `true` | `live` | **Work it in PROD.** Normal flow: dev-validate → bless → promote → deploy. |
-| `true` | `dev` | **Work it in DEV only.** Deploy to the dev fleet while working on it; it must **not** reach the prod environment. |
+| `true` | `live` | **Work it in PROD.** Flow: `predeploy_check` + CI green → bless → promote → `deploy_pull`/`deploy_image` → prod smoke. |
+| `true` | `dev` | **Work it, but it has NOWHERE to deploy right now.** 🔴 The dev fleet is DORMANT (2026-08-11) — this is a PARKING state, not a workflow: land the code on the `dev` branch and stop. Do not invent a substitute environment, and do not promote it. → `KB § PATTERNS/devops/dev-fleet-dormant.md` |
 | `false` | (forced `dev`) | **IGNORE.** Do not touch this product's code at all. |
 
 `deploy_scope` is stored **INTENT**, deliberately distinct from
@@ -24,9 +24,10 @@ there" inexpressible — exactly the state a wind-down needs. Both are shown in 
 admin UI, and a disagreement between them is surfaced, never silently reconciled.
 
 **Depth of work is unchanged.** Scope selects the *destination*, not the rigour:
-a `live` product still earns prod only by passing the dev-validate gate first
-(`KB § GUIDES/production-deploy.md`). A `dev` product runs the same gates and
-stops at the dev fleet.
+a `live` product still earns prod only by passing the full gate first
+(`KB § GUIDES/production-deploy.md § 0.1`). A `dev`-scoped product runs the same
+gates and then **stops at the `dev` branch** — since 2026-08-11 there is no dev
+fleet to deploy it to, so `ativo`+`dev` parks work rather than routing it.
 
 ## 2 · Two invariants, enforced not trusted
 
@@ -95,8 +96,9 @@ logged loudly but never rolls back a transition the operator already saw succeed
 SELECT slug, ativo, deploy_scope FROM public.products ORDER BY slug;
 ```
 
-`ativo = false` → stop. `deploy_scope = 'dev'` → do the work, deploy to the dev
-fleet, do **not** promote. `deploy_scope = 'live'` → the full pipeline applies.
+`ativo = false` → stop. `deploy_scope = 'dev'` → do the work, land it on the
+`dev` branch, do **not** promote — and note there is no dev fleet to deploy to
+while it is dormant. `deploy_scope = 'live'` → the full pipeline applies.
 
 Migration: `products/core/backend/migrations/042_product_deploy_scope.sql`.
 Related: `KB § PATTERNS/architect/git-branch-model.md` (dev vs prod lines) ·
