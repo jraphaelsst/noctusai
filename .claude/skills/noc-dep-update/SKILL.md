@@ -40,7 +40,13 @@ Gated by `check_override_is_range` (severity `high`; pre-commit when an npm mani
 **Check OUR constraints before concluding upstream incompatibility.** In order:
 
 1. `grep -n '"<pkg>"' seed/*/frontend/package.json products/*/frontend/package.json` — do `peerDependencies` / `overrides` / `dependencies` **agree** with the proposed version? A single-package PR cannot fix a three-site contradiction, so it will fail forever.
-2. Is the failing job even about this dep? Most red dependabot PRs here are **stale-base** failures (Trivy / MCP Toolkit / Bandit) that pass on current `dev`. Rebase before diagnosing.
+2. Is the failing job even about this dep? Most red dependabot PRs here are **stale-base** failures (Trivy / MCP Toolkit / Bandit / Embedding Cache Validate) that pass on current `dev`. **Rebase before diagnosing** — `gh pr comment <n> --body "@dependabot rebase"`.
+
+   🔴 **Why staleness is the normal state here, not neglect.** This repo's GitHub **default branch is `dev`**, so every dependabot PR targets `dev` — the fastest-moving branch we have (a single session can push it ten times). A PR is stale minutes after it opens, and its red checks describe an old `dev`, not the bump. Expect to rebase before reading any dependabot red.
+
+   Do **not** "fix" this by pointing dependabot at `main` (`target-branch:`) or by switching the default branch: `main` only ever advances by an FF `bless` from `dev`, so a PR merged straight into `main` would put a commit there that `dev` lacks and **break the FF-only bless model**. Targeting `dev` is correct; the queue is a **periodic drain**, not a live-green board.
+
+   Measured 2026-08-11: one rebase sweep took the queue from **27 red → 9**, and dependabot auto-closed 7 PRs as already-satisfied.
 3. Only after 1–2 come back clean is it genuinely upstream.
 
 **Majors are coordinated migrations, not bumps** — `.github/dependabot.yml` ignores react-router semver-majors for exactly this reason. Do them by hand (Gate 3).
