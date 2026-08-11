@@ -97,3 +97,54 @@ class TestScan:
         assert res["total"] == 0
         assert res["status"] == "clean"
         assert res["exit_code"] == 0
+
+
+class TestFrozenHistoryIsNotDebt:
+    """Archived `git format-patch` output is a RECORD, not live code.
+
+    2026-08-11, caught in CI on `main`: salvaging `feat/harness-audit-refit`
+    before deleting it wrote the branch's patch under
+    `project-history/orphan-remote-archive-.../*.patch`. That patch embeds
+    source lines verbatim — including a `NOC-REMEDIATE[codify]` marker with no
+    date — so `check_codification_debt` reported a NEW high-severity malformed
+    marker and reddened the compliance baseline.
+
+    The marker is unfixable by construction: editing an archived patch would
+    falsify the history it exists to preserve. So the scanner must not look.
+    """
+
+    MALFORMED = "# NOC-REMEDIATE[codify]: no date here so this is malformed\n"
+
+    def test_marker_inside_an_archived_patch_is_ignored(self, tmp_path):
+        r = _repo(tmp_path, {
+            "project-history/orphan-remote-archive-2026-08-11/feat_x/0001-thing.patch":
+                "From abc123 Mon Sep 17 00:00:00 2001\n"
+                "Subject: [PATCH] a thing\n"
+                "--- a/mod.py\n+++ b/mod.py\n@@ -1 +1,2 @@\n+" + self.MALFORMED,
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, res
+
+    def test_the_same_marker_in_LIVE_code_still_fires(self, tmp_path):
+        """The exclusion must be surgical — prove it did not mute the detector."""
+        r = _repo(tmp_path, {"mod.py": self.MALFORMED})
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 1
+        assert res["exit_code"] == 1, "a malformed marker in live code is still a defect"
+
+    def test_a_non_patch_file_under_project_history_still_counts(self, tmp_path):
+        """Only `.patch` files are frozen. A roadmap/notes markdown under
+        project-history/ is editable prose and stays in scope."""
+        r = _repo(tmp_path, {
+            "project-history/roadmaps/thing.md":
+                "# NOC-REMEDIATE[codify]: real deferral — 2026-08-01\n",
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 1
+
+    def test_a_patch_OUTSIDE_project_history_still_counts(self, tmp_path):
+        """Scoped to the archive dir, not to the extension — a stray patch in
+        the working tree is not sanctioned history."""
+        r = _repo(tmp_path, {"scratch/wip.patch": self.MALFORMED})
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 1

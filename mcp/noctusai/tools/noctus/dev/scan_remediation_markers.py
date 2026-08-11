@@ -42,6 +42,24 @@ _DEFINING_DOCS = (
 )
 
 
+def _is_frozen_history(path: str) -> bool:
+    """A verbatim RECORD of past code, not live code.
+
+    `git format-patch` output archived by `salvage_before_delete` embeds whole
+    source files as `+` lines — markers and all. Scanning them asks "is this
+    deferral still open?" of a snapshot that is, by construction, immutable:
+    the marker cannot be fixed, because editing an archived patch would falsify
+    the record it exists to preserve.
+
+    Found 2026-08-11, in CI, on `main`: archiving `feat/harness-audit-refit`
+    for deletion carried a `NOC-REMEDIATE[codify]` line inside the patch, and
+    `check_codification_debt` reported it as a NEW high-severity malformed
+    marker — a compliance regression manufactured purely by recording history.
+    A gate that fires on its own archive is a scope error, not debt.
+    """
+    return path.startswith("project-history/") and path.endswith(".patch")
+
+
 def _is_defining_doc(path: str) -> bool:
     # The marker-machinery's own source + test files are self-reference: their
     # tests carry fixture markers (true/false-positive shapes) that must not
@@ -90,7 +108,7 @@ def _iter_markers(root: Path) -> list[dict]:
     today = date.today()
     out: list[dict] = []
     for path, lineno, content in _git_grep(root):
-        if _is_defining_doc(path):
+        if _is_defining_doc(path) or _is_frozen_history(path):
             continue
         m = _MARKER_RE.search(content)
         if not m:
