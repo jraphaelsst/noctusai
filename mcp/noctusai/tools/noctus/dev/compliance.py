@@ -8291,12 +8291,19 @@ def check_status_pagina_role_parity(repo_root: Path | None = None) -> list[dict]
     if not root.exists():
         return issues
 
+    # Reachability runs FIRST and unconditionally. It has to: every early
+    # return below is conditioned on dev-visibility migrations existing, and
+    # "no such migration" is precisely the state reachability exists to
+    # report. Appending it at the end of the function (the first shape of
+    # this change) meant the blind spot stayed blind — caught by
+    # `test_producao_only_product_is_flagged`.
+    issues.extend(_check_status_pagina_dev_reachability(root))
+
     roles_ts = root / "seed" / "lib" / "frontend" / "src" / "roles.ts"
     migrations = sorted(root.glob("**/migrations/*status_pagina_dev_visibility.sql"))
     if not migrations:
-        # Nothing to compare against — not a violation (a fresh clone before
-        # the fan-out, or the files were renamed). Silent only because there
-        # is genuinely no contract in the tree to break.
+        # No role arrays to compare. Not a violation on its own — the
+        # reachability pass above already covers the dangerous case.
         return issues
 
     if not roles_ts.exists():
@@ -8371,6 +8378,101 @@ def check_status_pagina_role_parity(repo_root: Path | None = None) -> list[dict]
                 ),
                 "severity": "high",
             })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# The parity half above compares migrations that EXIST. It is structurally
+# blind to the worse case: a product whose `status_pagina` policies return
+# 'desenvolvimento' rows to NOBODY, because it has no dev-visibility policy at
+# all. There is nothing to compare, so the loop above never runs and the gate
+# reports green — which is exactly how the original defect shipped fleet-wide
+# and hid `meta`/`instagram_insights` for months.
+#
+# Derived, NOT a hand-maintained roster (`§1 hand-maintained lists drift`):
+# the condition is read off the migrations themselves — a product is flagged
+# only when EVERY policy it declares on `status_pagina` filters on
+# `'producao'`. A product with any other policy shape (erp's pre-seed
+# `has_role(dev)` + `tipo_pagina` policies, for instance) has a reachable
+# non-producao branch and is left alone without needing an allowlist entry.
+# ---------------------------------------------------------------------------
+
+# The name alternation is load-bearing: real policy names in this fleet are
+# quoted Portuguese phrases WITH SPACES ("Devs podem ver páginas gerais em
+# desenvolvimento"). A `[^"\s]+` name pattern silently matches none of them,
+# which made erp — whose entire dev-visibility mechanism lives in such
+# policies — look like it had only `todos_veem_producao` and get flagged.
+# A regex that quietly captures nothing is the silent-error shape.
+# `_SP_` prefix = status_pagina-scoped. NOT optional: `_CREATE_POLICY_RE` /
+# `_DROP_POLICY_RE` are already taken at module level (line ~3119) by the RLS
+# self-reference keeper, with different named groups. Defining them again down
+# here silently REBOUND the earlier names for the whole module, and that
+# keeper started raising IndexError on `m.group("table")`. Caught by
+# `test_compliance.py::test_all_products_compliant`.
+_SP_POLICY_NAME = r'(?:"([^"]+)"|([A-Za-z_]\w*))'
+_SP_CREATE_POLICY_RE = re.compile(
+    rf"CREATE\s+POLICY\s+{_SP_POLICY_NAME}\s+ON\s+[\w\-\"]+\.status_pagina\b(.*?);",
+    re.IGNORECASE | re.DOTALL,
+)
+_SP_DROP_POLICY_RE = re.compile(
+    rf"DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?{_SP_POLICY_NAME}\s+ON\s+[\w\-\"]+\.status_pagina\b",
+    re.IGNORECASE,
+)
+
+
+def _check_status_pagina_dev_reachability(root: Path) -> list[dict]:
+    """Flag a product whose every `status_pagina` policy filters on 'producao'.
+
+    Such a product's `status='desenvolvimento'` rows are returned to no role
+    at all, which makes every frontend branch that reads them DEAD CODE — the
+    page simply never appears, for anyone, with no error anywhere.
+    """
+    issues: list[dict] = []
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return issues
+
+    for product_dir in sorted(p for p in products_dir.iterdir() if p.is_dir()):
+        migrations = sorted((product_dir / "backend" / "migrations").glob("*.sql"))
+        if not migrations:
+            continue
+
+        # Replay in migration-number order so a later DROP retires an earlier
+        # CREATE, exactly as the database sees it.
+        policies: dict[str, str] = {}
+        for path in migrations:
+            try:
+                sql = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for quoted, bare in _SP_DROP_POLICY_RE.findall(sql):
+                policies.pop(quoted or bare, None)
+            for quoted, bare, body in _SP_CREATE_POLICY_RE.findall(sql):
+                policies[quoted or bare] = body
+
+        if not policies:
+            continue  # product does not own a status_pagina table
+
+        if any("producao" not in body for body in policies.values()):
+            continue  # at least one policy admits a non-producao row
+
+        issues.append({
+            "product": product_dir.name,
+            "file": f"products/{product_dir.name}/backend/migrations/",
+            "issue": (
+                f"every `status_pagina` policy in `{product_dir.name}` filters on "
+                f"status='producao' ({sorted(policies)}) — a 'desenvolvimento' row "
+                f"is returned to NOBODY, so the frontend's dev/owner branch is "
+                f"unreachable and an in-development page is invisible even to its "
+                f"author. Add the `*_status_pagina_dev_visibility.sql` migration "
+                f"(role array must equal the seed `DEV_ROLES`). NOTE: the parity "
+                f"half of this keeper cannot see this case — it compares "
+                f"migrations that exist, and here there are none. Per "
+                f"`KB § PATTERNS/frontend/status-pagina-dev-visibility.md`."
+            ),
+            "severity": "high",
+        })
 
     return issues
 

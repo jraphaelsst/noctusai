@@ -66,6 +66,59 @@ _FRAMEWORK_NAMES: frozenset[str] = frozenset({
 _DEFAULT_TOOLS_DIR = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus"
 
 
+# ─── The reference universe (why `dead_function` used to lie) ──────────────
+#
+# `dead_function` reports a module-level def with no reference anywhere in
+# the SCANNED tree. Until 2026-08-10 the scanned tree was `tools/noctus/`
+# alone — but almost nothing in `tools/` is called from inside `tools/`.
+# The real callers live one level up and one level over:
+#
+#   mcp/noctusai/cli.py        `--check-primary-checkout-commit` →
+#                              `from tools.noctus.dev.compliance import ...`
+#   mcp/noctusai/server.py     MCP tool registration
+#   mcp/noctusai/tests/        the regression suites
+#   scripts/hooks/pre-commit   the git hooks that INVOKE those cli flags
+#
+# So every keeper in `compliance.py` — `check_primary_checkout_commit`,
+# `check_tunnel_ingress_snapshot_sync`, … — was reported as HIGH-severity
+# dead code with the suggestion "verify cross-module callers via grep, then
+# delete". Acting on that list would have deleted the gates that enforce the
+# methodology. A detector whose top finding is "delete your own safety nets"
+# is not advisory noise; it is actively dangerous, and the human "verify via
+# grep" step it delegated to is exactly the step that gets skipped in a
+# 1,591-item backlog.
+#
+# The fix is to make the tool do that grep. These roots are scanned for
+# REFERENCES only — findings still come exclusively from `tools_dir`, so
+# widening the universe can only ever REMOVE findings, never add one. That
+# asymmetry is the whole design: for a detector that suggests deletion, a
+# false positive costs a deleted gate and a false negative costs one line of
+# surviving dead code.
+_REF_ROOTS: tuple[Path, ...] = (
+    REPO_ROOT / "mcp" / "noctusai",
+    REPO_ROOT / "scripts",
+)
+
+# Non-Python consumers scanned TEXTUALLY (identifier tokens only). Git hooks
+# are extension-less shell; CI calls tools by name from YAML. Markdown is
+# deliberately EXCLUDED — docs name functions constantly, and letting a KB
+# mention count as a caller would silence the detector everywhere.
+_TEXTUAL_REF_SUFFIXES: frozenset[str] = frozenset({"", ".sh", ".bash", ".yml", ".yaml"})
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# NOTE: matched against every part of the ABSOLUTE path, so a directory name
+# here also excludes anything living beneath it. Do NOT add `.claude` — a
+# self-branching worktree lives at `<repo>/.claude/worktrees/<slug>/`, and
+# adding it silently made the scanner walk ZERO files whenever it ran from a
+# worktree (i.e. in every real session), reporting a clean tree by scanning
+# nothing at all.
+_SKIP_DIRS: frozenset[str] = frozenset({
+    "__pycache__", ".venv", "venv", "node_modules", ".git",
+    "dist", "build", ".mypy_cache", ".pytest_cache",
+})
+
+
 # ─── AST helpers ───────────────────────────────────────────────────────────
 
 
@@ -86,6 +139,32 @@ def _name_references(tree: ast.Module) -> dict[str, int]:
         elif isinstance(node, ast.Attribute):
             counts[node.attr] = counts.get(node.attr, 0) + 1
     return counts
+
+
+def _module_exports(tree: ast.Module) -> set[str]:
+    """Names listed in a module-level ``__all__``.
+
+    ``__all__ = ["list_targets", ...]`` is a list of STRING CONSTANTS, so no
+    ``ast.Name`` node carries the function's name and `_all_names_referenced`
+    cannot see it. A module that deliberately publishes a symbol as part of
+    its public API is the opposite of dead code — reporting it as deletable
+    inverts the author's stated intent.
+    """
+    out: set[str] = set()
+    for node in tree.body:
+        targets = (
+            node.targets if isinstance(node, ast.Assign)
+            else [node.target] if isinstance(node, ast.AnnAssign)
+            else []
+        )
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            for elt in value.elts:
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    out.add(elt.value)
+    return out
 
 
 def _all_names_referenced(tree: ast.Module) -> set[str]:
@@ -116,13 +195,44 @@ def _all_names_referenced(tree: ast.Module) -> set[str]:
     return names
 
 
-def _build_tree_wide_refs(files: list[Path]) -> set[str]:
-    """First-pass scan: aggregate every referenced name across every .py
-    in the tree. Used by ``dead_function`` to avoid false positives on
-    public functions that are imported by sibling modules.
+def _build_tree_wide_refs(
+    files: list[Path], ref_roots: tuple[Path, ...] | None = None,
+) -> set[str]:
+    """Aggregate every referenced name across the scanned files PLUS the
+    consumer roots that actually call into them.
+
+    ``dead_function`` subtracts this set, so anything added here can only
+    suppress a finding — never create one. See the ``_REF_ROOTS`` block
+    above for why scanning ``tools/`` alone made the detector report the
+    platform's own keepers as deletable.
+
+    Args:
+        files: the files being scanned for findings.
+        ref_roots: extra roots to harvest references from. Defaults to
+            ``_REF_ROOTS``; pass an empty tuple for the legacy
+            scanned-tree-only behaviour (the tests use this to prove the
+            widening is what fixes the false positive).
     """
+    roots = _REF_ROOTS if ref_roots is None else ref_roots
+
+    py_files: set[Path] = set(files)
+    textual_files: set[Path] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        py_files.update(_walk_python_files(root))
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if any(part in _SKIP_DIRS for part in path.parts):
+                continue
+            if path.suffix == ".py":
+                continue
+            if path.suffix in _TEXTUAL_REF_SUFFIXES:
+                textual_files.add(path)
+
     out: set[str] = set()
-    for path in files:
+    for path in py_files:
         try:
             source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -132,6 +242,16 @@ def _build_tree_wide_refs(files: list[Path]) -> set[str]:
         except SyntaxError:
             continue
         out |= _all_names_referenced(tree)
+        out |= _module_exports(tree)
+
+    # Shell hooks and CI YAML call these through the CLI, not through an
+    # import — a token scan is the only way to see them.
+    for path in textual_files:
+        try:
+            out |= set(_IDENTIFIER_RE.findall(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+
     return out
 
 
@@ -279,11 +399,9 @@ def _walk_python_files(root: Path) -> list[Path]:
     .venv, etc.)."""
     if not root.is_dir():
         return []
-    skip_dirs = {"__pycache__", ".venv", "venv", "node_modules", ".git",
-                 "dist", "build", ".mypy_cache", ".pytest_cache"}
     out: list[Path] = []
     for path in root.rglob("*.py"):
-        if any(part in skip_dirs for part in path.parts):
+        if any(part in _SKIP_DIRS for part in path.parts):
             continue
         out.append(path)
     return sorted(out)
@@ -325,9 +443,12 @@ def _scan_one_file(
     # does NOT contribute to references[func.name]. Reference count of 0
     # means truly no in-file caller.
     func_names = {f.name for f in funcs}
+    exported = _module_exports(tree)
     for func in funcs:
         if func.name in _FRAMEWORK_NAMES:
             continue
+        if func.name in exported:
+            continue  # declared public API via __all__ — see _module_exports
         if func.name.startswith("__"):
             continue  # dunders are framework-dispatched
         # Decorated functions are presumed used by their decorator

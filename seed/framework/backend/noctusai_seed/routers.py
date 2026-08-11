@@ -27,7 +27,7 @@ Usage::
 import logging
 from typing import Optional, Sequence
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from noctusai_lib.domain.invitations import (
     create_invitation,
@@ -60,8 +60,27 @@ def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRoute
     router = APIRouter(tags=["Health"])
 
     @router.get("/api/health")
-    async def health_check():
-        return {"status": "ok", "version": version, "product": product_name}
+    async def health_check(request: Request):
+        # `startup_hook_error` is the NAMED DESTINATION for a product
+        # `lifespan_startup` hook that raised. The seed deliberately no longer
+        # lets such a failure abort the boot (see the block comment in
+        # `noctusai_seed.app.create_product_app`'s lifespan), so this field is
+        # the thing that keeps it from being a silent fallback: `null` on a
+        # clean boot, the exception's `Type: message` when the hook failed.
+        #
+        # The HTTP status stays 200 and `status` stays "ok" on purpose — the
+        # container healthcheck + the deploy probe both read this endpoint, and
+        # the API genuinely IS serving; a failed side-effect hook must not be
+        # reported as "this product is down". Degradation is a FIELD, not a
+        # status code. → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md
+        return {
+            "status": "ok",
+            "version": version,
+            "product": product_name,
+            "startup_hook_error": getattr(
+                request.app.state, "startup_hook_error", None
+            ),
+        }
 
     return router
 

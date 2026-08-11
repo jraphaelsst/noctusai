@@ -287,13 +287,53 @@ def create_product_app(
             )
 
             _apply_sqlite(settings)
+
+        # A product startup hook is a SIDE EFFECT (recover stuck rows, schedule
+        # pending jobs, start a scheduler) — never a precondition for serving.
+        # Letting it raise out of `lifespan` makes uvicorn print "Application
+        # startup failed. Exiting." and kill the process, so ONE transient
+        # upstream hiccup (a PostgREST TLS reset, Redis not up yet) takes the
+        # whole product down and it never recovers on its own. That is exactly
+        # what stranded erp-imobiliario on the dev fleet for 13 days
+        # (2026-08-10) while prod — same code, healthy network — served fine.
+        #
+        # This is NOT a silent fallback: the failure is logged at ERROR with
+        # the full traceback AND parked on `app.state.startup_hook_error`,
+        # which `/api/health` reports verbatim (see
+        # `noctusai_seed.routers._create_health_router`). The named destination
+        # is that field — an operator reading health sees a degraded boot
+        # instead of a container that merely refuses to exist.
+        # → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md
+        app.state.startup_hook_error = None
         if lifespan_startup:
-            await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
+            try:
+                await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
+            except Exception as exc:  # noqa: BLE001 — see the block comment above
+                app.state.startup_hook_error = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    "%s: lifespan_startup hook %r FAILED — the API is starting "
+                    "anyway and serving DEGRADED; /api/health reports "
+                    "startup_hook_error. Whatever this hook was supposed to do "
+                    "(recovery / scheduling) did NOT happen.",
+                    name,
+                    getattr(lifespan_startup, "__name__", lifespan_startup),
+                )
         try:
             yield
         finally:
             if lifespan_shutdown:
-                await lifespan_shutdown() if _is_coroutine(lifespan_shutdown) else lifespan_shutdown()
+                # Same reasoning on the way out, plus one more: an exception
+                # here would skip `shutdown_llm()` below and leak the provider
+                # pools on every shutdown.
+                try:
+                    await lifespan_shutdown() if _is_coroutine(lifespan_shutdown) else lifespan_shutdown()
+                except Exception:  # noqa: BLE001 — see above
+                    logger.exception(
+                        "%s: lifespan_shutdown hook %r FAILED — continuing "
+                        "framework cleanup so LLM provider pools still close.",
+                        name,
+                        getattr(lifespan_shutdown, "__name__", lifespan_shutdown),
+                    )
             # Framework-level cleanup — release LLM provider pools.
             await shutdown_llm()
 

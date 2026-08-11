@@ -2,12 +2,15 @@
   "name": "noctusai-mcp-ts-tools",
   "private": true,
   "version": "1.0.0",
-  "description": "Node/ts-morph helper scripts invoked by mcp/noctusai/tools/noctus/dev/*.py for real TypeScript AST edits (KB § PATTERNS/common/ast.md — AST-first, never regex). NOT a product frontend dependency — do not import from products/*/frontend.",
+  "description": "Node/ts-morph helper scripts invoked by mcp/noctusai/tools/noctus/dev/*.py for real TypeScript AST edits (KB \u00a7 PATTERNS/common/ast.md \u2014 AST-first, never regex). NOT a product frontend dependency \u2014 do not import from products/*/frontend.",
   "type": "module",
   "scripts": {
     "ts-ast-edit": "node ts_ast_edit.mjs"
   },
   "dependencies": {
     "ts-morph": "^24.0.0"
+  },
+  "overrides": {
+    "brace-expansion@^2.0.0": "^2.1.4"
   }
 }

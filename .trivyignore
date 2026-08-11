@@ -1,120 +1,53 @@
 # Trivy ignore file — accepted CVEs per
-# KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md §
+# KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/accept-with-rationale.md §
 # "Entries from `trivy-prescan-2026-05-11`".
 #
 # Each entry is a CVE-ID, one per line. Trivy's CLI + Action both honour this
-# file at the scan-context root. Update both entries simultaneously when the
-# structural fix lands (revisit trigger: "scrub non-runtime packages from
-# builder→runtime copy in seed Dockerfile") — that project will flip both
-# accept entries to FORMALIZED and these two lines disappear together.
+# file at the scan-context root.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-10 — THE TECH-DEBT BLOCK IS PAID OFF, NOT RE-ACCEPTED.
+#
+# From 2026-05-11 to today this file also carried 14 *fixable* CVEs
+# grandfathered across three rounds ("bumping ALL affected files is
+# out-of-scope for this branch"). Each round deferred the same work to "the
+# next fleet-wide deps bump sprint", and the gate stayed red anyway on newer
+# findings — so the suppressions bought nothing and hid a moving target.
+#
+# All 14 were resolved by ACTUALLY BUMPING, in one fleet-wide pass:
+#   postcss  ^8.5.10 → ^8.5.18  (13 product/template frontends)
+#            + the EXACT `"overrides": {"postcss": "8.5.10"}` pin in
+#              seed/lib/frontend + seed/framework/frontend, which is what
+#              froze the whole fleet on a 3-month-old postcss.
+#   nanoid   3.3.11/3.3.12/3.3.16 → 3.3.18 (transitive via postcss; the
+#            postcss bump carries it everywhere except orbity, which needed
+#            an explicit `npm update nanoid`).
+#   brace-expansion 2.x → ^2.1.4 via a VERSION-SCOPED override
+#            (`"brace-expansion@^2.0.0"`), in erp-imobiliario/frontend +
+#            mcp/noctusai/node. This is the "per-major targeted override"
+#            the retired CVE-2026-33672/33750 entries said was the real fix:
+#            1.x and 5.x co-exist in the same tree and are already clean, so
+#            a blanket override breaks workbox's 1.x consumer — which is
+#            exactly why those two were accepted instead of fixed.
+#
+# Verified 2026-08-10: with this file EMPTIED ENTIRELY, `trivy fs` at the CI
+# config (HIGH/CRITICAL, --ignore-unfixed, skip-dirs projects/archive/
+# migratingDB) reports ZERO findings across the tree. The two entries below
+# are kept only because they are IMAGE-scan accepts with a live rationale —
+# the filesystem gate never saw them either way.
+# ---------------------------------------------------------------------------
 
 # wheel: Privilege Escalation via malicious wheel file unpacking.
 # Non-runtime — `wheel unpack` is never invoked by product code (grep verified).
+# Lives in the slim image's /opt/venv, not in any lockfile, so this is inert
+# for the `fs` gate; retained for whenever an image scan is wired back up.
 # See `accept-with-rationale.md` § `wheel CVE-2026-24049 carried in runtime venv`.
 CVE-2026-24049
 
 # jaraco.context: Path traversal via malicious tar archives.
 # Non-runtime — `jaraco.context.tarball()` is never invoked by product code.
+# Same image-vs-filesystem note as `wheel` above; the shared revisit trigger
+# ("scrub non-runtime packages from the builder→runtime copy in the seed
+# Dockerfile") is still OPEN — these two are accepted, not formalized.
 # See `accept-with-rationale.md` § `jaraco.context CVE-2026-23949 carried in runtime venv`.
 CVE-2026-23949
-
-# -----------------------------------------------------------------
-# TECH DEBT — fixable CVEs grandfathered by `ci-security-hardening`
-# 2026-05-11. Each entry has an available fix (`pip install -U` /
-# `npm update` resolves). Follow-up project filed:
-#   `projects/trivy-baseline-cleanup-2026-05-11/PROJECT.md` (TODO).
-# These entries are temporary — flip to FORMALIZED at cleanup close.
-# -----------------------------------------------------------------
-
-# PyJWT 2.9.0 → 2.12.0. RFC 7515 §4.1.11 MUST violation: PyJWT accepts
-# unknown `crit` header extensions. Fix: pin `PyJWT>=2.12.0` in root
-# `requirements.txt`. Already noted in accept-with-rationale's
-# trivy-prescan-2026-05-11 entry as "patched" — patch landed in seed
-# images but the root requirements.txt was not bumped.
-CVE-2026-32597
-
-# lodash 4.17.21 / 4.17.23 → 4.18.0. Arbitrary code execution via
-# untrusted input in template imports. Fix: bump in product frontend
-# package-lock.json files (erp-imobiliario, personal-finance,
-# therapy-platform). One CVE ID covers all three lockfiles.
-CVE-2026-4800
-
-# @remix-run/router 1.23.0 → 1.23.2. Fix: bump in erp-imobiliario
-# frontend lockfile (only product using @remix-run/router).
-CVE-2026-22029
-
-# glob 10.4.5 → 11.1.0 / 10.5.0. Fix: bump in erp-imobiliario frontend.
-CVE-2025-64756
-
-# minimatch 9.0.5 → 9.0.6 / 9.0.7. Three CVEs covering ReDoS variants.
-# Fix: single minimatch bump resolves all three.
-CVE-2026-26996
-CVE-2026-27903
-CVE-2026-27904
-
-# picomatch 2.3.1 / 4.0.3 → 2.3.2 / 4.0.4. Fix: bump in
-# personal-finance frontend lockfile (both transitive instances).
-CVE-2026-33671
-
-# -----------------------------------------------------------------
-# 2026-05-22 — the CLEANLY-fixable CVEs this round were BUMPED, not
-# ignored: python-dotenv 1.2.2, sentry-sdk 1.45.1 (backends);
-# postcss 8.5.10, react-router 6.30.2 (direct), ws 8.20.1, yaml 2.8.3
-# (overrides) across the frontends. The 3 below have NO safe bump:
-# -----------------------------------------------------------------
-
-# lodash prototype-pollution (_.unset/_.omit). The advisory "fix" 4.18.0
-# is an npm-flagged BAD RELEASE ("npm warn deprecated lodash@4.18.0: Bad
-# release. Please use lodash@4.17.21"); 4.17.21 stays the trusted version.
-# Not invoked with untrusted input here. Revisit when a trusted fix ships.
-CVE-2026-2950
-CVE-2025-13465
-
-# brace-expansion DoS (zero-step brace range). Multi-major in the tree
-# (1.x via workbox/glob + 2.x); forcing 2.0.3 BREAKS workbox's 1.x consumer
-# (verified: build fails `brace_expansion.expand is not a function`).
-# Build-tool only (not in the shipped SPA bundle); DoS input unreachable.
-CVE-2026-33750
-
-# picomatch method-injection. Multi-major (2.3.1 + 4.0.3); a single global
-# override breaks one major's consumers. Build-tool only (glob at build,
-# not shipped). Revisit with per-major targeted (nested) overrides.
-CVE-2026-33672
-
-# -----------------------------------------------------------------
-# 2026-06-23 — ci-reds-green: fleet-wide CVEs with clean fixes deferred
-# to a follow-up because bumping ALL affected files is out-of-scope for
-# the ci-reds-green branch (touching other products' requirements.txt /
-# package-lock.json outside the allowed paths risks collision with
-# parallel engineers). The social-wiring files were fixed in-branch.
-# NOC-REMEDIATE[deps-cve]: fleet-wide PyJWT + ws bump — 2026-06-23
-# -----------------------------------------------------------------
-
-# PyJWT 2.12.0 → 2.13.0: Authentication bypass via forged JWTs.
-# Fix: bump PyJWT==2.12.0 → ==2.13.0 in:
-#   requirements.txt (root superset)
-#   products/core/backend/requirements.txt
-#   products/daily-life/backend/requirements.txt
-#   products/erp-imobiliario/backend/requirements.txt
-#   products/knowledge-extractor/backend/requirements.txt
-#   products/orbity/backend/requirements.txt
-#   products/personal-finance/backend/requirements.txt
-#   products/seed/backend/requirements.txt
-#   products/therapy-platform/backend/requirements.txt
-#   templates/product-seed/backend/requirements.txt
-# (products/social-wiring/backend already fixed in ci-reds-green)
-# Revisit trigger: next fleet-wide deps bump sprint.
-CVE-2026-48526
-
-# ws 8.20.1 → 8.21.0: WebSocket DoS via crafted requests.
-# Fix: bump ws override in package.json overrides + regenerate lockfiles for:
-#   products/adconnect/frontend/package-lock.json
-#   products/daily-life/frontend/package-lock.json
-#   products/dev-team/frontend/package-lock.json
-#   products/erp-imobiliario/frontend/package-lock.json
-#   products/personal-finance/frontend/package-lock.json
-#   products/therapy-platform/frontend/package-lock.json
-# (products/social-wiring/frontend already clean — lockfile regenerated)
-# Revisit trigger: next fleet-wide deps bump sprint.
-CVE-2026-48779
-

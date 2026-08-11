@@ -33,6 +33,29 @@ version: 2
 #
 # NEEDS-CI-VERIFICATION: the next push that runs the Dependency Graph workflow
 # should go green once Dependabot no longer attempts the editable-path manifests.
+#
+# ---------------------------------------------------------------------------
+# 2026-08-10 — GROUPING + PR CEILING (why every entry now carries them)
+#
+# Ungrouped, this config opened ONE branch PER PACKAGE PER DIRECTORY. With 15
+# entries × N packages that reached **105 open dependabot branches**, the
+# oldest 69 days stale. Nobody triaged them, because 105 single-package PRs is
+# not a review queue — it is noise that makes the genuinely urgent security
+# bump indistinguishable from a `date-fns` minor.
+#
+#   groups.all.patterns: ["*"]  → one PR per directory per week, all bumps in
+#                                 it; a single lockfile regeneration, a single
+#                                 CI run, a single review.
+#   open-pull-requests-limit: 2 → a hard ceiling per entry. Version updates
+#                                 stop piling up; SECURITY updates are exempt
+#                                 from this limit by GitHub's own rules, which
+#                                 is exactly the priority ordering we want.
+#
+# The 105 stale branches were deleted the same day after the CVEs they carried
+# were resolved directly (see `.trivyignore`'s 2026-08-10 block — postcss,
+# nanoid, brace-expansion, ws bumped fleet-wide). Dependabot re-opens anything
+# still outstanding on its next run, grouped this time.
+# ---------------------------------------------------------------------------
 
 updates:
   # ── Python (pip) ──────────────────────────────────────────────────────────
@@ -44,6 +67,11 @@ updates:
     directory: "/seed/lib/backend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "python"
@@ -54,6 +82,11 @@ updates:
     directory: "/seed/framework/backend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "python"
@@ -64,6 +97,11 @@ updates:
     directory: "/dev_team"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "python"
@@ -76,6 +114,11 @@ updates:
     directory: "/seed/lib/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -84,6 +127,11 @@ updates:
     directory: "/seed/framework/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -92,6 +140,11 @@ updates:
     directory: "/products/core/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -100,6 +153,11 @@ updates:
     directory: "/products/social-wiring/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -108,6 +166,11 @@ updates:
     directory: "/products/adconnect/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -116,6 +179,11 @@ updates:
     directory: "/products/daily-life/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -124,6 +192,11 @@ updates:
     directory: "/products/erp-imobiliario/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -132,6 +205,11 @@ updates:
     directory: "/products/knowledge-extractor/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -140,6 +218,11 @@ updates:
     directory: "/products/personal-finance/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -148,6 +231,11 @@ updates:
     directory: "/products/therapy-platform/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -156,6 +244,11 @@ updates:
     directory: "/products/dev-team/frontend"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "javascript"
@@ -166,6 +259,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 2
+    groups:
+      all:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "github-actions"

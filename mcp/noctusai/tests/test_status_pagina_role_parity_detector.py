@@ -136,9 +136,90 @@ class TestUnverifiableIsReportedNotSwallowed:
         assert check_status_pagina_role_parity(repo_root=tmp_path / "nope") == []
 
 
+class TestDevReachability:
+    """The BLIND SPOT half, added 2026-08-10.
+
+    The parity loop above iterates over dev-visibility migrations that EXIST.
+    A product with none of them has nothing to compare, so the keeper returned
+    green over the worse defect: every `status_pagina` policy filters on
+    'producao', so a 'desenvolvimento' row reaches NOBODY and the frontend's
+    dev/owner branch is unreachable code. That is the original fleet-wide bug
+    the parity check was written in response to — and the check could not see
+    it. Found on `adconnect` + `dev-team`, both of which got the migration.
+    """
+
+    def _product(self, tmp_path: Path, name: str, *sql_bodies: str) -> Path:
+        roles_dir = tmp_path / "seed" / "lib" / "frontend" / "src"
+        roles_dir.mkdir(parents=True, exist_ok=True)
+        (roles_dir / "roles.ts").write_text(
+            "export const DEV_ROLES: OrgRole[] = ['owner', 'dev', 'admin'];\n",
+            encoding="utf-8",
+        )
+        mig = tmp_path / "products" / name / "backend" / "migrations"
+        mig.mkdir(parents=True, exist_ok=True)
+        for i, body in enumerate(sql_bodies, start=1):
+            (mig / f"{i:03d}_init.sql").write_text(body, encoding="utf-8")
+        return tmp_path
+
+    PRODUCAO_ONLY = (
+        'CREATE POLICY "todos_veem_producao" ON demo.status_pagina\n'
+        "    FOR SELECT USING (status = 'producao');\n"
+    )
+    DEV_POLICY = (
+        'CREATE POLICY "dev_veem_desenvolvimento" ON demo.status_pagina\n'
+        "    FOR SELECT TO authenticated USING (\n"
+        "        status = 'desenvolvimento'\n"
+        "        AND public.current_org_role() = ANY (ARRAY['owner', 'dev', 'admin'])\n"
+        "    );\n"
+    )
+
+    def test_producao_only_product_is_flagged(self, tmp_path: Path):
+        root = self._product(tmp_path, "demo", self.PRODUCAO_ONLY)
+        issues = check_status_pagina_role_parity(repo_root=root)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "demo"
+        assert "returned to NOBODY" in issues[0]["issue"]
+
+    def test_adding_the_dev_policy_clears_it(self, tmp_path: Path):
+        root = self._product(
+            tmp_path, "demo", self.PRODUCAO_ONLY, self.DEV_POLICY
+        )
+        assert check_status_pagina_role_parity(repo_root=root) == []
+
+    def test_a_non_producao_policy_of_ANY_shape_clears_it(self, tmp_path: Path):
+        """erp-imobiliario predates the seed shape: its dev visibility comes
+        from `has_role(uid,'dev') AND tipo_pagina='geral'`, with no status
+        predicate at all. That is a genuinely reachable branch, so it must
+        pass WITHOUT an allowlist entry — the check is derived, not rostered."""
+        erp_shape = (
+            'CREATE POLICY "Devs podem ver paginas gerais" ON demo.status_pagina\n'
+            "    FOR SELECT USING (has_role(auth.uid(), 'dev') AND tipo_pagina = 'geral');\n"
+        )
+        root = self._product(tmp_path, "demo", self.PRODUCAO_ONLY, erp_shape)
+        assert check_status_pagina_role_parity(repo_root=root) == []
+
+    def test_a_later_drop_retires_an_earlier_create(self, tmp_path: Path):
+        """Policies are replayed in migration order, as the database sees
+        them — a dev policy that a later migration DROPs must re-flag."""
+        drop = 'DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON demo.status_pagina;\n'
+        root = self._product(
+            tmp_path, "demo", self.PRODUCAO_ONLY, self.DEV_POLICY, drop
+        )
+        issues = check_status_pagina_role_parity(repo_root=root)
+        assert len(issues) == 1
+        assert "returned to NOBODY" in issues[0]["issue"]
+
+    def test_product_without_status_pagina_is_ignored(self, tmp_path: Path):
+        root = self._product(
+            tmp_path, "demo", "CREATE TABLE demo.widgets (id uuid primary key);\n"
+        )
+        assert check_status_pagina_role_parity(repo_root=root) == []
+
+
 class TestLiveTree:
     def test_the_real_repo_is_in_parity(self):
-        """The fleet itself must satisfy the contract this keeper encodes."""
+        """The fleet itself must satisfy the contract this keeper encodes —
+        BOTH halves: role parity and dev reachability."""
         from settings import REPO_ROOT
 
         assert check_status_pagina_role_parity(repo_root=Path(REPO_ROOT)) == []

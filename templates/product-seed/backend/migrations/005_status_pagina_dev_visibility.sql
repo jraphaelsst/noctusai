@@ -7,7 +7,7 @@
 -- only "todos_veem_producao", USING status='producao') — so without this
 -- migration every NEW product inherits the same defect: a 'desenvolvimento'
 -- row is never returned to anyone (not even dev/owner) through the FE's
--- authenticated product-client read (seed/lib/frontend/src/page-status.ts
+-- authenticated product-client read ({{SCHEMA_NAME}}/lib/frontend/src/page-status.ts
 -- usePageStatus). This migration makes the {{SCHEMA_NAME}} canonical shape correct
 -- day-1 for future products.
 --
@@ -54,6 +54,6 @@ CREATE POLICY "dev_veem_desenvolvimento" ON {{SCHEMA_NAME}}.status_pagina
     );
 
 -- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
--- DEV_ROLES const (seed/lib/frontend/src/roles.ts). There is no shared
+-- DEV_ROLES const ({{SCHEMA_NAME}}/lib/frontend/src/roles.ts). There is no shared
 -- source between this SQL literal and that TS const today; keeping them in
 -- lockstep is a manual contract until a keeper enforces it.

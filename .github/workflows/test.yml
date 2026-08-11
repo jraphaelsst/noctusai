@@ -327,18 +327,24 @@ jobs:
           done
 
   trivy-fs-scan:
-    # Filesystem-level dependency scan. Complements the per-image scan
-    # inside `docker-images-build` by reading lockfiles directly
-    # (requirements.txt, package-lock.json, etc.) BEFORE any image
-    # builds. Faster signal + lower cost on dep-only changes.
+    # Filesystem-level dependency scan — reads lockfiles directly
+    # (requirements.txt, package-lock.json, etc.), so it catches dependency
+    # CVEs without building anything. This is the ONLY Trivy job in CI: the
+    # per-image scan this comment used to point at (`docker-images-build`)
+    # no longer exists — verified 2026-08-10, no such job in any workflow.
     #
-    # Config bit-for-bit matches the T9 spec recorded in
-    # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/accept-with-rationale.md §
+    # Config follows the T9 spec recorded in
+    # `KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/accept-with-rationale.md §
     # "Entries from trivy-prescan-2026-05-11"`:
-    #   - aquasec/trivy:0.49.1 (pinned, not @latest)
     #   - --severity HIGH,CRITICAL
     #   - --ignore-unfixed
-    #   - respects `.trivyignore` at repo root (2 accepted CVEs)
+    #   - respects `.trivyignore` at repo root
+    #
+    # As of 2026-08-10 the tree is clean with the ignorefile EMPTIED
+    # ENTIRELY — the 2 remaining entries are image-scan accepts this job
+    # never sees. If this job goes red, a real fixable CVE landed; bump it,
+    # do not add a line to `.trivyignore` (14 such lines accumulated between
+    # 2026-05-11 and 2026-06-23 and none of them ever got revisited).
     name: Trivy filesystem scan (deps)
     runs-on: ubuntu-latest
     permissions:
