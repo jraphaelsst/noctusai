@@ -10,7 +10,12 @@ The `project-history/vector-costs.ndjson` ledger records every refresh-batch tha
 
 ## Protocol
 
-1. **Read the ledger** — `project-history/vector-costs.ndjson`. Each row:
+1. **Read the ledger** — prefer `noctus.dev.vector_costs_report` / `..._total`, which read the
+   tracked ledger `project-history/vector-costs.ndjson` **and** the untracked spool
+   `project-history/.vector-costs-spool.ndjson` together. Rows are spooled when written and
+   folded into the ledger at the next commit, so reading the ndjson alone under-reports
+   everything since the last commit. → `KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit`.
+   Each row:
    ```
    {ts, namespace, model, provider, doc_count, chunk_count,
     estimated_tokens, estimated_cost_usd,

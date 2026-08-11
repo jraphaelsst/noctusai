@@ -40,7 +40,12 @@ Tests-green ≠ verified-in-production. This command scaffolds the **verificatio
    - Load `.env` via `python-dotenv`
    - Call `configure_llm(LLMConfig(key_provider=...))`
    - Run the live refresh / cluster / consult
-   - Assert: rows landed in cache OR new line in `vector-costs.ndjson` OR ranked hits returned
+   - Assert: rows landed in cache OR the cost ledger grew OR ranked hits returned.
+     ⚠ Check the ledger via `noctus.dev.vector_costs_total` (or `cli.py --vector-costs-total`),
+     NOT by reading `vector-costs.ndjson`: a fresh embed appends to the untracked spool
+     `project-history/.vector-costs-spool.ndjson` and is only folded into the tracked ledger
+     at the next commit. Reading the ledger file alone reports "no new row" for work that
+     definitely ran — a false negative. → `KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit`
 
 6. **Spawn in parallel** via `run_in_background=True` Bash calls. Don't idle-poll (per `KB § PATTERNS/common/dont-block-on-background.md`). Schedule a `ScheduleWakeup` fallback heartbeat (1200s) in case a task stalls silently.
 
@@ -75,7 +80,7 @@ Tests-green ≠ verified-in-production. This command scaffolds the **verificatio
 ## Anti-patterns
 
 - DON'T skip Pass A because "the tests passed." Tests are at the module level; verify exercises the MCP tool + the side effects.
-- DON'T run Pass B without checking `vector-costs.ndjson` BEFORE and AFTER — that's the E5 cost-ledger gate.
+- DON'T run Pass B without checking the cost ledger BEFORE and AFTER — that's the E5 cost-ledger gate. Read it with `noctus.dev.vector_costs_total`, never by `cat`-ing the ndjson (that misses the un-drained spool → false negative).
 - DON'T spawn all Pass B in serial — parallel via background tasks, per the dont-block rule.
 
 ## Composes with

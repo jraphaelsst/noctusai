@@ -513,18 +513,27 @@ if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
     fi
 fi
 
-# ─── 10c. Vector-costs ledger AUTO-STAGE (2026-05-31) ───────────
+# ─── 10c. Vector-costs: DRAIN the spool, then auto-stage the ledger ───────────
 # `project-history/vector-costs.ndjson` is an APPEND-ONLY machine-generated
 # telemetry ledger — embed/cost-log tools append to it; it is NEVER hand-
-# authored. Left dirty it lingers across sessions and gets re-surfaced as
-# "drift" at every /contextualize (observed 5×). UNLIKE CLAUDE.md/KB docs,
-# the concurrent-writer guard of leg 2 does NOT apply: appended cost lines
-# are independent + ownership-free, so folding another worktree's appended
-# line into THIS commit is harmless and exactly what we want. So if the
-# ledger is dirty (staged or unstaged), auto-stage it — it rides along with
-# whatever is being committed, BY CONSTRUCTION, and never lingers. (The
-# pre-push sibling leg sweeps the push-time refresh churn that lands AFTER
-# the last commit.) KB § PATTERNS/common/vector-cost-tracking.md § Auto-commit.
+# authored. UNLIKE CLAUDE.md/KB docs, the concurrent-writer guard of leg 2 does
+# NOT apply: appended cost lines are independent + ownership-free, so folding
+# another worktree's appended line into THIS commit is harmless and desired.
+#
+# 2026-08-11 — THIS IS THE ONLY PLACE THE TRACKED LEDGER IS EVER WRITTEN.
+# Cost rows now land in an untracked write-ahead spool
+# (`project-history/.vector-costs-spool.ndjson`, gitignored) whenever they are
+# produced. Here — the one moment a real commit is being built — we fold them
+# into the ledger and stage it, so they ride along with whatever is being
+# committed. The pre-push sweep that used to make a separate `chore(cost-log)`
+# commit is GONE: that commit could not join the push that created it, so it rode
+# the NEXT push, moved the branch tip, and cancelled the in-flight CI run for the
+# sha that mattered. Drain-then-stage removes the ledger-only commit entirely.
+# Best-effort throughout — telemetry must never block a commit.
+# KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
+if have_py; then
+    "$PY" "$CLI" --vector-costs-drain-spool 2>&1 | sed 's/^/[pre-commit] cost-log: /' || true
+fi
 if have_py && git status --porcelain -- project-history/vector-costs.ndjson 2>/dev/null | grep -q .; then
     git add -- project-history/vector-costs.ndjson \
       && echo "[pre-commit] auto-staged vector-costs.ndjson (append-only ledger — rides along by construction)"

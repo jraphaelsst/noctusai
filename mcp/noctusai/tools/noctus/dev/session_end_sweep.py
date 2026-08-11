@@ -70,11 +70,18 @@ _LEDGER_PATHS = [
 
 def _ledger_git_runner(cmd: list[str]) -> tuple[int, str, str]:
     """git runner for `commit_and_ff_push_ledger`. `cmd` already starts with
-    'git' (the helper builds the full `git -C <root> …`). Runs with the refresh
-    + cost-log-auto-commit SKIP flags set, so the FF-push it issues canNOT trigger
-    an embedding refresh → canNOT append a fresh cost row → the delivery converges
-    in ONE push (this is what makes 'session ends local==remote' hold)."""
-    env = {**os.environ, "NOCTUS_SKIP_EMBED_REFRESH": "1", "NOCTUS_SKIP_COSTLOG_COMMIT": "1"}
+    'git' (the helper builds the full `git -C <root> …`). Runs with the embedding
+    refresh SKIPPED, so the FF-push it issues canNOT trigger a refresh → canNOT
+    append a fresh cost row → the delivery converges in ONE push (this is what
+    makes 'session ends local==remote' hold).
+
+    NOTE (2026-08-11): the companion `NOCTUS_SKIP_COSTLOG_COMMIT=1` was dropped
+    here because the pre-push cost-log auto-commit it disabled no longer exists —
+    cost rows spool untracked and are folded in at pre-commit, so a push can no
+    longer spawn a ledger commit at all. Setting a flag nothing reads is dead
+    routing. KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
+    """
+    env = {**os.environ, "NOCTUS_SKIP_EMBED_REFRESH": "1"}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         return r.returncode, r.stdout, r.stderr

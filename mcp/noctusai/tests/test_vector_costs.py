@@ -1,7 +1,8 @@
 """Regression tests for the vector embedding cost tracking module.
 
 Covers:
-- log_refresh_batch (append + empty-ledger behaviour)
+- log_refresh_batch (appends to the untracked SPOOL, not the tracked ledger —
+  see test_vector_cost_spool.py for the spool→ledger fold and why it exists)
 - estimate_tokens (with tiktoken available, and fallback)
 - estimate_cost (table lookup, unknown model)
 - report aggregation (day / week / month)
@@ -27,11 +28,23 @@ from tools.noctus.dev import vector_costs as vc  # noqa: E402
 
 @pytest.fixture
 def tmp_ledger(tmp_path, monkeypatch):
-    """Redirect LEDGER_PATH to a temp file so tests don't touch the real ledger."""
+    """Redirect LEDGER_PATH *and* SPOOL_PATH to temp files.
+
+    Both must be patched: readers concatenate the ledger and the spool, so
+    patching only the ledger would let a test read the developer's REAL spool and
+    fail (or pass) on unrelated local state.
+    """
     ledger = tmp_path / "project-history" / "vector-costs.ndjson"
     ledger.parent.mkdir(parents=True)
     monkeypatch.setattr(vc, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(vc, "SPOOL_PATH", tmp_path / "project-history" / ".vector-costs-spool.ndjson")
     return ledger
+
+
+@pytest.fixture
+def tmp_spool(tmp_ledger):
+    """The temp spool that `log_refresh_batch` actually writes to."""
+    return vc.SPOOL_PATH
 
 
 # ── estimate_tokens ───────────────────────────────────────────────────────────
@@ -118,7 +131,7 @@ class TestEstimateCost:
 # ── log_refresh_batch ─────────────────────────────────────────────────────────
 
 class TestLogRefreshBatch:
-    def test_appends_row(self, tmp_ledger):
+    def test_appends_row(self, tmp_spool):
         r = vc.log_refresh_batch(
             namespace="kb-embeddings",
             model="text-embedding-3-small",
@@ -127,7 +140,7 @@ class TestLogRefreshBatch:
             estimated_tokens=9000,
         )
         assert r["ok"] is True
-        lines = tmp_ledger.read_text().strip().splitlines()
+        lines = tmp_spool.read_text().strip().splitlines()
         assert len(lines) == 1
         row = json.loads(lines[0])
         assert row["namespace"] == "kb-embeddings"
@@ -139,7 +152,7 @@ class TestLogRefreshBatch:
         assert "ts" in row
         assert isinstance(row["estimated_cost_usd"], float)
 
-    def test_cost_computed_from_table_when_none(self, tmp_ledger):
+    def test_cost_computed_from_table_when_none(self, tmp_spool):
         r = vc.log_refresh_batch(
             namespace="test-ns",
             model="text-embedding-3-small",
@@ -151,7 +164,7 @@ class TestLogRefreshBatch:
         row = r["row"]
         assert abs(row["estimated_cost_usd"] - 0.02) < 1e-9
 
-    def test_explicit_cost_overrides_table(self, tmp_ledger):
+    def test_explicit_cost_overrides_table(self, tmp_spool):
         r = vc.log_refresh_batch(
             namespace="test-ns",
             model="text-embedding-3-small",
@@ -162,7 +175,7 @@ class TestLogRefreshBatch:
         )
         assert abs(r["row"]["estimated_cost_usd"] - 99.99) < 1e-6
 
-    def test_actual_fields_default_none_backcompat(self, tmp_ledger):
+    def test_actual_fields_default_none_backcompat(self, tmp_spool):
         """Omitting actuals records explicit nulls — old readers stay happy."""
         r = vc.log_refresh_batch(
             namespace="kb-embeddings",
@@ -174,7 +187,7 @@ class TestLogRefreshBatch:
         assert r["row"]["actual_tokens"] is None
         assert r["row"]["actual_cost_usd"] is None
 
-    def test_actual_cost_derived_from_actual_tokens(self, tmp_ledger):
+    def test_actual_cost_derived_from_actual_tokens(self, tmp_spool):
         """When actual_tokens given but actual_cost omitted, cost = table rate."""
         r = vc.log_refresh_batch(
             namespace="code-embeddings-organs",
@@ -190,7 +203,7 @@ class TestLogRefreshBatch:
         # The estimate is preserved alongside — drift is observable.
         assert row["estimated_tokens"] == 250
 
-    def test_explicit_actual_cost_preserved(self, tmp_ledger):
+    def test_explicit_actual_cost_preserved(self, tmp_spool):
         r = vc.log_refresh_batch(
             namespace="kb-embeddings",
             model="text-embedding-3-small",
@@ -203,7 +216,7 @@ class TestLogRefreshBatch:
         assert r["row"]["actual_tokens"] == 512
         assert abs(r["row"]["actual_cost_usd"] - 0.00001234) < 1e-12
 
-    def test_multiple_appends_accumulate(self, tmp_ledger):
+    def test_multiple_appends_accumulate(self, tmp_spool):
         for i in range(3):
             vc.log_refresh_batch(
                 namespace="kb-embeddings",
@@ -212,24 +225,24 @@ class TestLogRefreshBatch:
                 chunk_count=i + 1,
                 estimated_tokens=100,
             )
-        lines = tmp_ledger.read_text().strip().splitlines()
+        lines = tmp_spool.read_text().strip().splitlines()
         assert len(lines) == 3
 
-    def test_empty_ledger_creates_file(self, tmp_ledger):
-        assert not tmp_ledger.exists()
+    def test_empty_spool_creates_file(self, tmp_spool):
+        assert not tmp_spool.exists()
         vc.log_refresh_batch(
             namespace="ns", model="text-embedding-3-small",
             doc_count=0, chunk_count=0, estimated_tokens=0,
         )
-        assert tmp_ledger.exists()
+        assert tmp_spool.exists()
 
-    def test_source_ref_stored(self, tmp_ledger):
+    def test_source_ref_stored(self, tmp_spool):
         vc.log_refresh_batch(
             namespace="ns", model="text-embedding-3-small",
             doc_count=1, chunk_count=2, estimated_tokens=100,
             source_ref="session:2026-05-26",
         )
-        row = json.loads(tmp_ledger.read_text().strip())
+        row = json.loads(tmp_spool.read_text().strip())
         assert row["source_ref"] == "session:2026-05-26"
 
 

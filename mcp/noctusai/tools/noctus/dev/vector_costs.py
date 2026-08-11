@@ -59,7 +59,31 @@ from settings import REPO_ROOT
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
+#: The DURABLE, git-tracked ledger. Written by EXACTLY ONE thing: `drain_spool()`,
+#: called from the pre-commit hook. Never appended to directly by a running tool —
+#: see SPOOL_PATH for why.
 LEDGER_PATH = REPO_ROOT / "project-history" / "vector-costs.ndjson"
+
+#: The UNTRACKED write-ahead spool (gitignored). Every cost row lands here first.
+#:
+#: WHY (2026-08-11, replaces the push-time auto-commit): cost rows are appended as
+#: a side-effect of work whose timing we do not control — most of all the pre-push
+#: embedding refreshes, which run AFTER the last commit and after the push refs are
+#: already negotiated. Appending those straight into a TRACKED file left it dirty at
+#: a moment when nothing could commit it, so the hook swept it into a follow-up
+#: `chore(cost-log)` commit. That commit could not join the push that created it, so
+#: it rode the NEXT push — moving the branch tip and CANCELLING the in-flight CI run
+#: for the sha that actually mattered (`concurrency: cancel-in-progress`). Five runs
+#: died that way in one session; the churn also produced 20+ ledger-only commits.
+#:
+#: The invariant that fixes it: **the tracked ledger only ever changes inside a real
+#: commit.** Writes go to this untracked spool at any time (a dirty untracked file is
+#: invisible to `git status --porcelain` on tracked paths, to CI, and to drift scans);
+#: pre-commit drains the spool into the ledger and stages it, so the rows ride along
+#: with whatever is being committed — folded in, never a commit of their own.
+#: Readers concatenate both, so an un-drained row is never missing from a report.
+#: KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
+SPOOL_PATH = REPO_ROOT / "project-history" / ".vector-costs-spool.ndjson"
 
 # ── Cost table ────────────────────────────────────────────────────────────────
 # USD per 1 million tokens.
@@ -158,43 +182,96 @@ def log_refresh_batch(
         "actual_cost_usd": actual_cost_usd,
         "source_ref": source_ref,
     }
+    # Always the SPOOL, never the tracked ledger — see SPOOL_PATH. The caller may
+    # be running at any point in the git lifecycle (mid-session, or inside pre-push
+    # after the refs are negotiated); only pre-commit is allowed to move a row into
+    # the tracked file, because only there can it ride inside a real commit.
     try:
-        LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LEDGER_PATH.open("a", encoding="utf-8") as fh:
+        SPOOL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with SPOOL_PATH.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
         logger.debug(
-            "vector_costs: logged batch ns=%s chunks=%d tokens=%d cost=%.6f",
+            "vector_costs: spooled batch ns=%s chunks=%d tokens=%d cost=%.6f",
             namespace, chunk_count, estimated_tokens, cost_estimate_usd,
         )
-        return {"ok": True, "path": str(LEDGER_PATH), "row": row}
+        return {"ok": True, "path": str(SPOOL_PATH), "spooled": True, "row": row}
     except OSError as exc:
-        logger.error("vector_costs: failed to write ledger: %s", exc)
+        logger.error("vector_costs: failed to write cost spool: %s", exc)
         return {"ok": False, "error": str(exc), "row": row}
 
 
+def drain_spool() -> dict:
+    """Fold every spooled cost row into the tracked ledger; empty the spool.
+
+    The ONLY writer of `LEDGER_PATH`. Called from the pre-commit hook (which then
+    `git add`s the ledger), so spooled rows land inside a real commit instead of
+    forcing a ledger-only commit of their own. Idempotent and safe to call when the
+    spool is absent or empty — that is the common case.
+
+    Ordering: rows are appended in spool order, which is write order. The ledger is
+    an append-only time series; `report()` sorts by `ts`, so a drain that interleaves
+    with an older ledger tail is still read correctly.
+
+    Crash-safety: the ledger append is flushed BEFORE the spool is truncated, so an
+    interruption can at worst duplicate a row (harmless for cost telemetry) and can
+    never lose one.
+
+    Returns `{ok, drained, ledger, spool}`; `drained` is the row count folded in.
+    """
+    if not SPOOL_PATH.exists():
+        return {"ok": True, "drained": 0, "ledger": str(LEDGER_PATH), "spool": str(SPOOL_PATH)}
+    try:
+        spooled = [ln for ln in SPOOL_PATH.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        if not spooled:
+            SPOOL_PATH.unlink(missing_ok=True)
+            return {"ok": True, "drained": 0, "ledger": str(LEDGER_PATH), "spool": str(SPOOL_PATH)}
+        LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LEDGER_PATH.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(spooled) + "\n")
+            fh.flush()
+        SPOOL_PATH.unlink(missing_ok=True)
+        logger.debug("vector_costs: drained %d spooled row(s) into the ledger", len(spooled))
+        return {
+            "ok": True,
+            "drained": len(spooled),
+            "ledger": str(LEDGER_PATH),
+            "spool": str(SPOOL_PATH),
+        }
+    except OSError as exc:
+        # Never fatal: this runs inside pre-commit and must not block a commit.
+        logger.error("vector_costs: failed to drain cost spool: %s", exc)
+        return {"ok": False, "error": str(exc), "drained": 0}
+
+
 def _read_ledger(namespace: str | None = None, since: str | None = None) -> list[dict]:
-    """Read + filter NDJSON rows from the ledger.
+    """Read + filter NDJSON rows from the ledger AND the not-yet-drained spool.
+
+    Both are read so a report is never missing the rows that have been written but
+    not yet folded into a commit (i.e. everything since the last commit). Without
+    this, deferring the ledger write to commit-time would silently under-report
+    recent cost — trading one problem for a quieter one.
 
     `since` is an ISO date string (YYYY-MM-DD or full ISO-8601); rows whose
     `ts` field is < `since` are excluded.
     """
-    if not LEDGER_PATH.exists():
-        return []
     rows: list[dict] = []
-    with LEDGER_PATH.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if namespace is not None and row.get("namespace") != namespace:
-                continue
-            if since is not None and row.get("ts", "") < since:
-                continue
-            rows.append(row)
+    for path in (LEDGER_PATH, SPOOL_PATH):
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if namespace is not None and row.get("namespace") != namespace:
+                    continue
+                if since is not None and row.get("ts", "") < since:
+                    continue
+                rows.append(row)
     return rows
 
 
@@ -318,8 +395,10 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.vector_costs_log_batch",
         description=(
-            "Append a vector embedding cost row to "
-            "`project-history/vector-costs.ndjson`. "
+            "Append a vector embedding cost row to the untracked write-ahead spool "
+            "`project-history/.vector-costs-spool.ndjson`; the pre-commit hook folds "
+            "spooled rows into the tracked `project-history/vector-costs.ndjson` "
+            "ledger so they ride inside a real commit. "
             "Called internally by cache modules (kb_embeddings, etc.) at the "
             "end of each refresh run. `cost_estimate_usd` is computed from the "
             "built-in cost table when omitted. "
@@ -346,6 +425,23 @@ def register(server) -> None:
             provider=provider,
             source_ref=source_ref,
         )
+
+    @server.tool(
+        name="noctus.dev.vector_costs_drain_spool",
+        description=(
+            "Fold every row from the untracked cost spool "
+            "`project-history/.vector-costs-spool.ndjson` into the tracked ledger "
+            "`project-history/vector-costs.ndjson`, then empty the spool. "
+            "Normally you do NOT call this by hand — the pre-commit hook runs it and "
+            "stages the ledger, so cost rows ride inside a real commit instead of "
+            "forcing a ledger-only `chore(cost-log)` commit (which moved the branch "
+            "tip and cancelled in-flight CI). Idempotent; a no-op when the spool is "
+            "empty. Returns {ok, drained, ledger, spool}. "
+            "KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit."
+        ),
+    )
+    def _drain_spool() -> dict:
+        return drain_spool()
 
     @server.tool(
         name="noctus.dev.vector_costs_report",
@@ -385,10 +481,12 @@ def register(server) -> None:
 
 __all__ = [
     "LEDGER_PATH",
+    "SPOOL_PATH",
     "COST_PER_MILLION_TOKENS",
     "estimate_tokens",
     "estimate_cost",
     "log_refresh_batch",
+    "drain_spool",
     "report",
     "total",
     "register",

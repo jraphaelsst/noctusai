@@ -148,3 +148,14 @@ scripts/archive-clean-last-sweep.log
 # Lead-control spreadsheet — 12k client names + phone numbers (LGPD). Imported to
 # Supabase locally, never committed. See products/social-wiring/projects/leads-module-PROJECT.md D6.
 /CONTROLE LEADS*.xlsx
+
+# Vector-cost write-ahead spool (2026-08-11). Cost rows are appended here as a
+# side-effect of embedding work whose timing we do not control — notably the
+# pre-push refreshes, which run AFTER the last commit and after the push refs are
+# negotiated. Keeping the spool UNTRACKED is the whole fix: nothing tracked goes
+# dirty at a moment when nothing can commit it, so the hook no longer needs to
+# invent a `chore(cost-log)` commit (which rode the next push and cancelled that
+# push's CI run). pre-commit folds the spool into the TRACKED
+# project-history/vector-costs.ndjson ledger inside a real commit.
+# KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
+project-history/.vector-costs-spool.ndjson

@@ -204,7 +204,7 @@ result = embed_text(description, namespace="codification_radar")
   high-volume callers, prefer a batch refresh pattern with one summary row.
 - **Failure-tolerant**: logging errors never propagate to the embed result.
 
-## Auto-commit by construction — the ledger never lingers dirty (2026-05-31)
+## Fold-into-commit — the ledger only ever changes inside a commit (2026-08-11)
 
 The ledger is **committed, not gitignored** (see Constraints). But it is also
 written as a *side-effect* of routine work — every embed (tool call) and every
@@ -216,32 +216,58 @@ This recurred **5 times**, and ~**7 of every 30 commits** were manual
 | Timing | Who appends | Why it lingered |
 |---|---|---|
 | **Mid-work** | MCP embed tools / cache `refresh()` during a session | dirty until the next commit happened to include it |
-| **Push-time** | the pre-push embedding-cache refreshes (kb/code/corpus/**memory**) | appended **after** the last commit, so it can't be folded into *this* push (refs already negotiated) → orphaned at session end |
+| **Push-time** | the pre-push embedding-cache refreshes (kb/code/corpus/**memory**) | appended **after** the last commit, so it can't be folded into *this* push (refs already negotiated) |
 
-The fix is **not** a human remembering to commit it — it is *by construction*,
-two symmetric git-hook legs (both best-effort, never blocking):
+### The first fix, and why it was worse than the problem
 
-1. **pre-commit auto-stage** (`scripts/hooks/pre-commit`, leg 10c): if the
-   ledger is dirty, `git add` it into **whatever** is being committed. It rides
-   along with every real commit. Safe — and this is the key insight — because
-   the ledger is **append-only + machine-generated + ownership-free**: the
-   concurrent-writer guard that protects CLAUDE.md/KB (pre-commit leg 2, "never
-   sweep another agent's uncommitted edits") does **NOT** apply, since folding a
-   sibling worktree's appended cost row into this commit is harmless and desired.
-2. **pre-push sweep** (`scripts/hooks/pre-push`): after the refreshes append the
-   push-time churn, commit it as a path-limited `chore(cost-log): … [auto]`
-   commit on the current branch. The tree stays **clean** by construction; at
-   worst the branch is "ahead by 1" (a normal local commit) and the next push
-   carries it. Guards: skip on protected-branch deploys (main/prod), detached
-   HEAD, or mid-merge/rebase; escape hatch `NOCTUS_SKIP_COSTLOG_COMMIT=1`.
+The 2026-05-31 answer was symmetric hook legs: pre-commit auto-staged a dirty
+ledger, and **pre-push swept the push-time churn into a `chore(cost-log)` commit**.
+The tree did stay clean. But a commit created in pre-push **cannot join the push
+that created it** — the refs are already negotiated — so it sat local, "ahead by
+1", and rode the **next** push. That moved the branch tip, and `test.yml` carries
+`concurrency: cancel-in-progress`, so it **cancelled the in-flight CI run for the
+sha we actually cared about**. Five CI runs died that way in one session
+(2026-08-10); `git log --grep=cost-log` showed **20+** commits of pure churn. The
+user reported the friction three times before it was root-caused.
+
+**The lesson is the shape, not the file**: the fix moved the *symptom* (dirty
+tracked file) without moving the *cause* (a tracked file being written at a moment
+when nothing can commit it). A cleanup step that runs where it cannot clean up
+will always displace the mess somewhere less visible — here, into CI scheduling,
+which is exactly where nobody was looking for a cost-ledger bug.
+
+### The invariant that actually holds
+
+> **The tracked ledger only ever changes inside a real commit.**
+
+| Leg | Where | What |
+|---|---|---|
+| **write** | anywhere, any time | `log_refresh_batch()` appends to the **untracked** spool `project-history/.vector-costs-spool.ndjson` (gitignored). An untracked file is not a dirty tracked tree — no drift, no CI trigger, nothing to sweep. |
+| **drain** | `scripts/hooks/pre-commit` leg 10c **only** | `--vector-costs-drain-spool` folds the spool into the ledger, then leg 10c `git add`s it. The rows ride along with whatever is being committed. `drain_spool()` is the **sole writer** of `LEDGER_PATH`. |
+| **read** | `report()` / `total()` | concatenate **ledger + spool**, so an un-drained row is never missing from a report. Deferring the write must not silently under-report cost. |
+
+Pre-push now creates **no commit at all**. The `NOCTUS_SKIP_COSTLOG_COMMIT`
+escape hatch is gone with the block it disabled (removed from `session_end_sweep`
+too — a flag nothing reads is dead routing).
+
+Crash-safety: the ledger append is flushed **before** the spool is truncated, so
+an interruption can at worst duplicate a row (harmless for telemetry) and can
+never lose one. Ordering is write-order; `report()` buckets by `ts`.
+
+**Pinned by** `mcp/noctusai/tests/test_vector_cost_spool.py` — including two
+hook-text guards (`test_pre_push_makes_no_cost_log_commit`, and that pre-commit
+drains *before* it stages), because re-adding the commit is a one-line edit that
+no other suite would catch.
 
 **General rule** (sibling of [[funnel-self-satisfies-preconditions]]): a
 git-tracked file that is **machine-appended as a side-effect of routine work**
-must be swept into commits *by the tooling*, never left for a human to notice —
-an append-only ownership-free ledger is auto-staged on commit and auto-committed
-on push, so "dirty working tree" is structurally impossible. Auto-staging is
-**only** safe for this file class (append-only, machine-generated, no line
-ownership); never auto-sweep hand-authored content.
+must be swept into commits *by the tooling*, never left for a human to notice.
+But the sweep belongs at **commit time**, the only moment the tooling can put a
+row where it belongs. If a side-effect fires where it cannot be committed, make
+the side-effect land somewhere **untracked** and fold it in later — never invent
+a commit to hold it. Auto-staging is **only** safe for this file class
+(append-only, machine-generated, no line ownership); never auto-sweep
+hand-authored content.
 
 ## Universality
 

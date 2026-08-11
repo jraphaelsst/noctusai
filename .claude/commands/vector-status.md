@@ -22,7 +22,10 @@ The vector platform spans 5 keeper-mirror caches (`keeper-patterns`, `agent-cont
    - `--check-kb-embeddings-cache-freshness` (severity warning)
    - `--check-code-embeddings-cache-freshness` (severity warning)
 
-3. **Cost ledger snapshot** — `project-history/vector-costs.ndjson`:
+3. **Cost ledger snapshot** — via `noctus.dev.vector_costs_total` (it reads the tracked
+   `project-history/vector-costs.ndjson` **plus** the not-yet-folded-in spool
+   `project-history/.vector-costs-spool.ndjson`; reading the ndjson alone misses every row
+   written since the last commit):
    - Total rows, lifetime spend, last refresh per namespace.
    - If `--detail` argument, list each namespace's last entry.
 

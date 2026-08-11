@@ -12,11 +12,12 @@
 #   2. DELETION of a protected branch is ALWAYS refused.
 #   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused.
 #
-# It ALSO change-gates the embedding-cache refresh (below) and, because those
-# refreshes append to the git-tracked vector-costs.ndjson ledger AFTER the last
-# commit, auto-sweeps that push-time churn into a `chore(cost-log)` commit so the
-# tree never lingers dirty (KB § PATTERNS/common/vector-cost-tracking.md § Auto-commit;
-# escape hatch NOCTUS_SKIP_COSTLOG_COMMIT=1; skipped on protected-branch deploys).
+# It ALSO change-gates the embedding-cache refresh (below). Those refreshes log
+# cost rows to an UNTRACKED spool, so this hook dirties nothing tracked and makes
+# NO commit of its own — a commit created here cannot join the push that created
+# it, so it would ride the next push and cancel that push's CI run. The tracked
+# ledger is written only by pre-commit leg 10c.
+# (KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.)
 #
 # Sanctioned deploy:  NOCTUS_ALLOW_MAIN_PUSH=1 git push origin dev:main
 # Hard bypass (rare): git push --no-verify
@@ -140,46 +141,26 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
     fi
 fi
 
-# ─── Cost-ledger churn auto-commit (2026-05-31) ─────────────────────────
-# The embedding refreshes above APPEND cost rows to the git-tracked
-# `project-history/vector-costs.ndjson` ledger. They run at PUSH time —
-# AFTER the last commit — so the new row is orphaned dirty and CANNOT be
-# folded into THIS push (the refs are already negotiated). Left alone it
-# lingers to the next session and re-surfaces as "drift" (observed 5× →
-# this fix; ~7 of every 30 commits were manual `chore(cost-log)` cleanups).
-# So sweep it HERE into a path-limited chore commit on the current branch:
-# the working tree stays CLEAN by construction. At worst the branch is
-# "ahead by 1" (a normal local commit), carried up on the next push — never
-# a dirty file. Mirror of the pre-commit "vector-costs auto-stage" leg.
-#   • Best-effort: NEVER blocks the push (|| true throughout).
-#   • Branch-guarded: skip detached HEAD / mid-merge / mid-rebase.
-#   • Deploy-safe: skip when this push targets a protected branch (main/prod) —
-#     a sanctioned deploy must not grow new commits.
-#   • Escape hatch: NOCTUS_SKIP_COSTLOG_COMMIT=1.
-# KB § PATTERNS/common/vector-cost-tracking.md § Auto-commit.
-if [[ -z "${NOCTUS_SKIP_COSTLOG_COMMIT:-}" && -n "$REPO_ROOT_PP" ]]; then
-    _pushing_protected=0
-    while read -r _l_ref _l_oid _r_ref _r_oid; do
-        [[ -z "${_r_ref:-}" ]] && continue
-        [[ "$_r_ref" =~ $PROTECTED_RE ]] && _pushing_protected=1
-    done <<< "$PUSH_LINES"
-
-    if [[ "$_pushing_protected" -eq 0 ]] \
-       && git -C "$REPO_ROOT_PP" status --porcelain -- project-history/vector-costs.ndjson 2>/dev/null | grep -q .; then
-        _cur_branch="$(git -C "$REPO_ROOT_PP" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-        _git_dir="$(git -C "$REPO_ROOT_PP" rev-parse --absolute-git-dir 2>/dev/null || true)"
-        if [[ -n "$_cur_branch" && -n "$_git_dir" \
-              && ! -f "$_git_dir/MERGE_HEAD" && ! -d "$_git_dir/rebase-merge" && ! -d "$_git_dir/rebase-apply" ]]; then
-            echo "[pre-push] sweeping push-time cost-ledger churn into a chore commit (tree stays clean)..."
-            git -C "$REPO_ROOT_PP" add -- project-history/vector-costs.ndjson || true
-            git -C "$REPO_ROOT_PP" commit \
-                -m "chore(cost-log): push-time embedding-refresh churn [auto]" \
-                -m "Auto-swept by pre-push so the append-only ledger never lingers dirty." \
-                -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" \
-                -- project-history/vector-costs.ndjson 2>&1 | tail -2 | sed 's/^/[pre-push] cost-log: /' || true
-        fi
-    fi
-fi
+# ─── Cost-ledger churn: NOTHING TO DO HERE (2026-08-11) ─────────────────────
+# 🔴 DO NOT RE-ADD A COMMIT HERE. This block used to sweep the push-time cost
+# rows into a path-limited `chore(cost-log)` commit, because the refreshes above
+# append AFTER the last commit and left the tracked ledger dirty.
+#
+# That fixed "dirty tree" and bought a worse bug. A commit created in pre-push
+# CANNOT join the push that created it (the refs are already negotiated), so it
+# sat local, "ahead by 1", and rode the NEXT push — moving the branch tip and
+# cancelling the in-flight CI run for the sha we actually cared about
+# (`test.yml` has `concurrency: cancel-in-progress`). Five CI runs died that way
+# in a single session, and the ledger accreted 20+ commits of pure churn.
+#
+# The real fix is upstream, not here: cost rows now land in an UNTRACKED spool
+# (`project-history/.vector-costs-spool.ndjson`), so the refreshes above dirty
+# nothing tracked, and pre-commit leg 10c folds the spool into the ledger inside
+# a real commit. Push time no longer has a ledger problem to solve.
+#
+# Regression-pinned by `test_pre_push_makes_no_cost_log_commit` in
+# mcp/noctusai/tests/test_vector_cost_spool.py.
+# KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
 
 # ─── branch-tree mirror keeper (§5, hard-block on dev push) ────────────────
 # For every non-delete branch being pushed TO dev, check that a valid branch-pointer
