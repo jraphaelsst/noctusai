@@ -210,3 +210,66 @@ the frozen-slug-literal class the first axis exists to prevent.
 Pinned by `mcp/noctusai/tests/test_build_scope.py` (20 tests), which also
 asserts the workflow text still reads the scope file, still fails loudly, and
 still announces drops — the shell lives in YAML, so no other suite executes it.
+
+## Fourth axis — an EXACT `overrides` entry is a fleet-wide FREEZE (2026-08-11)
+
+Same family, opposite direction: the first three axes are about a mirror going
+**stale**; this one is about a constraint that can never move **at all**.
+
+**N=3 in a single day** — `postcss "8.5.10"`, `ws "8.20.1"`,
+`react-router "6.30.4"`. Every one was added by a *security* cleanup
+("resolve Dependabot npm alerts"): **the CVE fix created the freeze.**
+
+Three properties compound, and none is visible at review time:
+
+1. **It wins over everything.** An override forces that version for every
+   transitive occurrence, overriding peer ranges and direct deps. npm emits no
+   warning about the contradiction — the override simply wins.
+2. **It never moves.** An exact value is not a range, so `npm install` (even
+   `--package-lock-only`) can never upgrade it.
+3. **It is invisible.** It is not in `dependencies`, so a reviewer reading the
+   dependency list never sees the constraint that is actually binding.
+
+### The load-bearing insight: the LOCKFILE is already the freeze
+
+CI builds with `npm ci`, which installs `package-lock.json` **exactly**. Nothing
+floats at build time regardless of whether the declared value is `^8.5.18` or
+`8.5.18`. Proof from the 2026-08-11 unfreeze: converting all 20 exact overrides
+to carets produced **zero lockfile change** across 14 manifests.
+
+So an exact override adds **no** reproducibility and removes **all**
+upgradeability — a strictly dominated option, not a tradeoff.
+
+### Why the blast radius is always fleet-wide
+
+The seed is the amplifier. One override in `seed/lib` + `seed/framework` is
+copied into 12 products + the template: **one pin becomes 14**. This is the
+`overrides`-specific corollary of "seed defaults = canonical answer" — an exact
+version is never a canonical answer, it is a snapshot of one afternoon.
+
+### How react-router actually failed
+
+`peerDependencies: react-router-dom ^6.0.0` + `overrides: react-router 6.30.4` +
+Dependabot pushing `react-router-dom@7`. **Three declaration sites, no coherence
+check**, so the PR contradicted the repo and could never go green — which read as
+*upstream incompatibility* when it was entirely self-inflicted. The real
+migration was package.json-only: the whole API surface across 172 files is 11
+symbols, all unchanged in v7, needing **zero** source edits.
+
+### The rule
+
+> **An `overrides` entry MUST be a range. The caret holds the CVE floor and pins
+> the major; the lockfile pins the resolution.**
+
+Per-product divergence needs **no new mechanism**: a product that must lag pins
+in its **own `dependencies`** — scoped to one product, visible where reviewers
+look, and it cannot leak to the other 11. That is the sanctioned escape hatch,
+and `check_override_is_range` deliberately does **not** flag it.
+
+Enforced by `check_override_is_range` (severity `high`) — pre-commit when an npm
+manifest is staged, plus the `check_all_products()` aggregate. Opt-out for a
+genuine freeze: a `pin-ok` / `deliberate-freeze` rationale comment. CLI:
+`python mcp/noctusai/cli.py --check-override-is-range`. Pinned by
+`mcp/noctusai/tests/test_check_override_is_range.py` (22 tests, both directions —
+including that `8.x` is a RANGE, which a naive "starts with a digit" check
+misclassifies).

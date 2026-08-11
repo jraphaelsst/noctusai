@@ -385,6 +385,26 @@ if [[ -n "$STAGED_LOCKFILE_DEPS" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis. Exact-override freeze gate (blocking, only when an npm ──────
+# manifest is staged) ────────────────────────────────────────────────────
+# Keeper `check_override_is_range` + `KB § PATTERNS/devops/product-lockfile-
+# and-slug-drift.md § Fourth axis`. An EXACT version in npm `overrides` wins
+# over every peer range and direct dep, can never be moved by `npm install`,
+# and is invisible in the dependency list — while adding NO reproducibility,
+# because package-lock.json already pins the resolution for `npm ci`. The seed
+# copies overrides into 12 products, so one pin freezes the fleet. N=3 on
+# 2026-08-11 (postcss, ws, react-router), each introduced by a *security*
+# cleanup: the CVE fix created the freeze. Catch the 4th at commit time.
+STAGED_NPM_MANIFEST=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/frontend/package\.json|seed/(lib|framework)/frontend/package\.json|templates/product-seed/frontend/package\.json|mcp/noctusai/node/package\.json)$' || true)
+if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
+    echo "[pre-commit] npm manifest staged — checking overrides are ranges, not exact pins..."
+    if ! "$PY" "$CLI" --check-override-is-range --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] OVERRIDE-IS-RANGE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Use a RANGE (e.g. \"^8.5.18\" instead of \"8.5.18\") — same CVE floor, same major, still upgradeable. package-lock.json is already the freeze; an exact override only removes your ability to patch. If the freeze is deliberate, add a 'pin-ok' rationale comment. See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md § Fourth axis." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
 # .tsx changed) ──────────────────────────────────────────────────────────
 # Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-

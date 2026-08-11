@@ -5643,6 +5643,132 @@ def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# `check_override_is_range` — an EXACT version in npm `overrides` is a
+# fleet-wide HARD FREEZE, not a dependency choice.
+#
+# Three properties compound, and all three are invisible at review time:
+#   1. It WINS over everything — forces that version for every transitive
+#      occurrence, overriding peer ranges and direct deps, with no npm warning.
+#   2. It NEVER MOVES — an exact value is not a range, so `npm install` (even
+#      `--package-lock-only`) can never upgrade it.
+#   3. It is INVISIBLE — not in `dependencies`, so nobody reading the dep list
+#      sees the constraint that is actually binding.
+#
+# And it buys NOTHING: `package-lock.json` is already the freeze (CI builds with
+# `npm ci`, which installs the lockfile exactly). So an exact override adds zero
+# reproducibility and removes all upgradeability — a strictly dominated option.
+#
+# The seed amplifies it: one override in seed/lib + seed/framework is copied into
+# 12 products + the template, so one pin becomes 14.
+#
+# N=3 on 2026-08-11 — postcss "8.5.10", ws "8.20.1", react-router "6.30.4", each
+# added by a *security* cleanup ("resolve Dependabot npm alerts"). The CVE fix
+# created the freeze. react-router's froze the fleet on v6 while Dependabot
+# pushed v7, producing a PR that contradicted the repo and could never go green;
+# it read as upstream incompatibility when it was entirely self-inflicted.
+#
+# Fix: use a RANGE. `^8.5.18` holds the CVE floor AND keeps receiving patches;
+# the caret also pins the MAJOR, so no silent major bump.
+# Opt-out: a `pin-ok` / `deliberate-freeze` rationale keyword in a nearby comment
+# (mirrors `check_hardcoded_product_slug_set`'s convention) for the rare genuine
+# freeze — e.g. a package whose next patch is known-broken.
+#
+# Severity: `high`.
+# KB § PATTERNS/devops/product-lockfile-and-slug-drift.md § Fourth axis.
+# ---------------------------------------------------------------------------
+
+#: EXACT = a COMPLETE semver literal and nothing else: `8.5.10`, `1.0.0-rc.1`.
+#: Matching merely "starts with a digit" is wrong — `8.x`, `8.5.x` and `1.2.*` all
+#: start with a digit and are RANGES (caught by test_ranges_are_clean[8.x]).
+#: Everything else is left alone: range operators (`^ ~ > < =`), wildcards, hyphen
+#: ranges, `npm:` aliases, `file:`/`link:`/`git`/URL specifiers, and `$dep` refs.
+_EXACT_VERSION_RE = re.compile(
+    r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
+
+#: Rationale keywords that mark a deliberate, reviewed freeze.
+_PIN_OK_KEYWORDS = ("pin-ok", "deliberate-freeze", "exact-pin-ok")
+
+#: Where fleet npm manifests live. Globs, not a frozen slug list — a new product
+#: is covered the moment it exists (the sibling rule of this doc's first axis).
+_OVERRIDE_MANIFEST_GLOBS = (
+    "seed/*/frontend/package.json",
+    "products/*/frontend/package.json",
+    "templates/product-seed/frontend/package.json",
+    "mcp/noctusai/node/package.json",
+)
+
+
+def _iter_override_entries(text: str):
+    """Yield `(key, version, lineno)` for each string entry of the top-level
+    `overrides` object. Text-scanned rather than json-parsed so the LINE NUMBER
+    is reportable — a keeper that cannot point at the line makes the human
+    re-find it, which is how a gate becomes noise."""
+    lines = text.splitlines()
+    depth = 0
+    in_overrides = False
+    start_depth = 0
+    for i, line in enumerate(lines, 1):
+        if not in_overrides:
+            if re.search(r'"overrides"\s*:\s*\{', line):
+                in_overrides = True
+                start_depth = depth
+                depth += line.count("{") - line.count("}")
+                continue
+            depth += line.count("{") - line.count("}")
+            continue
+        m = re.search(r'"([^"]+)"\s*:\s*"([^"]+)"', line)
+        if m:
+            yield m.group(1), m.group(2), i
+        depth += line.count("{") - line.count("}")
+        if depth <= start_depth:
+            in_overrides = False
+
+
+def check_override_is_range(repo_root: Path | None = None) -> list[dict]:
+    """Every npm `overrides` entry must be a RANGE, never an exact version.
+
+    See the block comment above for why an exact override is a fleet-wide freeze
+    that buys no reproducibility the lockfile does not already provide.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    for pattern in _OVERRIDE_MANIFEST_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            rel = str(path.relative_to(root))
+            lowered = text.lower()
+            if any(k in lowered for k in _PIN_OK_KEYWORDS):
+                continue  # reviewed, deliberate freeze
+            for key, version, lineno in _iter_override_entries(text):
+                if not _EXACT_VERSION_RE.match(version):
+                    continue
+                issues.append({
+                    "product": rel.split("/")[1] if rel.startswith("products/") else "<seed>",
+                    "file": rel,
+                    "issue": (
+                        f"`{rel}:{lineno}` freezes `overrides.{key}` at the EXACT "
+                        f"version `{version}`. An exact override wins over every "
+                        f"peer range and direct dep, can never be upgraded by "
+                        f"`npm install`, and is invisible in the dependency list — "
+                        f"yet adds NO reproducibility, because package-lock.json "
+                        f"already pins the resolution for `npm ci`. It is a "
+                        f"fleet-wide freeze (the seed copies overrides into 12 "
+                        f"products). Use a RANGE instead: `\"{key}\": \"^{version}\"` "
+                        f"— same CVE floor, same major, still upgradeable. If this "
+                        f"freeze is deliberate, add a `pin-ok` rationale comment. "
+                        f"Per `feedback_exact_pin_in_overrides_freezes_the_fleet`."
+                    ),
+                    "severity": "high",
+                })
+    return issues
+
+
 def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]:
     """A clean `npm ci` uses ONLY package-lock.json — never re-resolves from
     package.json. When a product's package.json declares a required dep
@@ -9987,6 +10113,9 @@ def check_all_products() -> tuple[int, list]:
     # recharts/@radix-ui-react-tabs, ALL_SLUGS) — a product's lockfile
     # snapshot of a required dep goes stale relative to its own package.json.
     all_issues.extend(check_product_lockfile_dep_sync())
+    # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
+    # entry is a fleet-wide freeze that buys nothing the lockfile does not.
+    all_issues.extend(check_override_is_range())
     # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
     # doc-symbology / symbol-first authoring methodology (warn-only).
     all_issues.extend(check_doc_symbology_drift())
