@@ -119,6 +119,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -132,6 +142,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -145,6 +165,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -158,6 +188,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -171,6 +211,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -184,6 +234,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -197,6 +257,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -210,6 +280,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -223,6 +303,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -236,6 +326,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
@@ -249,6 +349,16 @@ updates:
       all:
         patterns:
           - "*"
+    # react-router MAJORS are coordinated fleet migrations, not bumps: the version is
+    # declared in THREE places that must move together (seed peerDependencies, the
+    # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
+    # contradicts the other two and can never go green. We did v6->v7 by hand on
+    # 2026-08-11; v8 gets the same treatment. Minors/patches still flow normally.
+    ignore:
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-router"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "javascript"
