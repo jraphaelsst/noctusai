@@ -10,11 +10,29 @@ name: Embedding Cache Gate
 
 on:
   pull_request:
+    # A TRIGGER'S SCOPE IS ITS CONTRACT (2026-08-11). This gate validates the KB +
+    # code EMBEDDING caches, which index exactly `.md` (KB) and `.py`/`.ts`/`.tsx`
+    # (code_embeddings `_PY_EXTS` + `_TS_EXTS`). It NEVER indexes package.json or
+    # a lockfile.
+    #
+    # The last entry used to be a bare `products/seed/**`, so every npm dependency
+    # PR touching `products/seed/frontend/package.json` fired this whole job —
+    # apt + pip install + cache gates — for a file the caches cannot see. On a
+    # dependabot PR the repo secrets are unavailable, so the tunnel is skipped and
+    # the run cannot do real validation anyway; it just burned CI and painted the
+    # PR red for a reason unrelated to the bump. That is 4 of the 9 red dependabot
+    # PRs on 2026-08-11 (all four `products/seed/frontend/*`).
+    #
+    # Narrowed to the extensions the caches actually index. Keep this list and
+    # `code_embeddings._PY_EXTS`/`_TS_EXTS` in step — widening one without the
+    # other re-opens the same false-red.
     paths:
       - "KNOWLEDGE-BASE/**/*.md"
       - "mcp/**/*.py"
       - "noctusai_lib/**/*.py"
-      - "products/seed/**"
+      - "products/seed/**/*.py"
+      - "products/seed/**/*.ts"
+      - "products/seed/**/*.tsx"
   workflow_dispatch:
 
 # Cancel in-progress runs on the same branch so two rapid pushes don't

@@ -139,3 +139,31 @@ fleet is green, so a happy-path-only suite would prove nothing). That suite also
 carries an autouse guard that fails any test attempting a real network call:
 while writing it, one test omitted its fake and silently smoke-tested LIVE PROD,
 passing for the wrong reason.
+
+## A CI trigger's scope is its contract, too (2026-08-11)
+
+`embedding-cache-gate.yml` triggered on a bare `products/seed/**`. That gate
+validates the KB + code **embedding** caches, which index exactly `.md` and
+`.py`/`.ts`/`.tsx` — never `package.json` or a lockfile. So every npm dependency
+PR touching `products/seed/frontend/package.json` fired the whole job (apt + pip
+install + cache gates) for a file the caches cannot see.
+
+Two compounding effects:
+
+- **Wasted CI**, on a workflow that could not do real validation anyway:
+  dependabot PRs receive no repo secrets, so the prod-cache tunnel is skipped and
+  every gate step falls to `continue-on-error`.
+- **A false red on the PR**, for a reason unrelated to the bump — which is how a
+  dependency queue becomes unreadable. Four of the nine red dependabot PRs that
+  day were exactly this, all `products/seed/frontend/*`.
+
+Narrowed to the indexed extensions. The trigger list and
+`code_embeddings._PY_EXTS`/`_TS_EXTS` must move together, and
+`mcp/noctusai/tests/test_embedding_cache_gate_scope.py` asserts they do — plus
+that no entry ends in a bare `**`, which is how the over-broad glob got in.
+
+**The general rule** (third instance in one day, after hound reading only
+`tools/` and the marker scan reading archived `.patch` files): before shipping or
+trusting any scanner, gate, or CI trigger, answer *what does it look at?* and
+*what does it actually depend on?* — and make the two match. A trigger scoped
+wider than its subject does not fail loudly; it produces confident noise.
