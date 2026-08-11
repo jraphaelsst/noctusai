@@ -69,6 +69,7 @@ def register_all(server) -> None:
     from . import kb_recurrence_radar
     from . import keeper_pattern
     from . import build_scope
+    from . import spa_smoke
     from . import ensure_product_url_roster
     from . import lgpd
     from . import master_prompts
@@ -185,6 +186,7 @@ def register_all(server) -> None:
     kb_recurrence_radar.register(server)
     keeper_pattern.register(server)
     build_scope.register(server)
+    spa_smoke.register(server)
     ensure_product_url_roster.register(server)
     lgpd.register(server)
     master_prompts.register(server)

@@ -312,6 +312,7 @@ def main():
     parser.add_argument("--compose-brief", action="store_true", help="Auto-compose an engineer dispatch brief by querying kb-embeddings, auto-improvement, and agent-context keeper-mirror caches. Requires --files (comma-sep target files) and --description. Optionally --agent to pin agent; omit for auto-routing. Graceful-degrade when caches are empty. MCP: noctus.dev.engineer_brief_compose. KB § PATTERNS/common/agent-context-architecture.md.")
     parser.add_argument("--files", metavar="FILES", help="Comma-separated target file paths for --compose-brief (e.g. mcp/noctusai/tools/noctus/dev/foo.py,mcp/noctusai/cli.py).")
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
+    parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--refresh-build-scope", action="store_true", help="Regenerate deploy/fleet/build-scope.txt — the products whose images a PUSH-triggered build rebuilds. Derived from the catalog (ativo=true AND deploy_scope='live') plus core. Run after activating/deactivating a product. Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. MCP: noctus.dev.refresh_build_scope. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--vector-costs-drain-spool", action="store_true", help="Fold the untracked cost spool (project-history/.vector-costs-spool.ndjson) into the tracked vector-costs.ndjson ledger and empty it. Run by the pre-commit hook so cost rows ride inside a real commit instead of a ledger-only chore commit. Idempotent. MCP: noctus.dev.vector_costs_drain_spool. KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.")
     parser.add_argument("--vector-costs-report", action="store_true", help="Aggregate the vector embedding cost ledger by day/week/month. Filter with --namespace and --since; granularity with --group-by. MCP: noctus.dev.vector_costs_report. KB § PATTERNS/common/vector-cost-tracking.md.")
@@ -2236,6 +2237,20 @@ def main():
             print(f"  {BOLD}Auto-improvement context:{RESET} {len(result['auto_improvement_context'])} entry(ies)\n")
             print(result["brief"])
         sys.exit(0)
+
+    elif args.spa_smoke:
+        from tools.noctus.dev.spa_smoke import spa_smoke as _spa
+        result = _spa()
+        if not result.get("ok") and result.get("status") == "error":
+            print(f"  {RED}\u2717 spa-smoke: {result.get('error')}{RESET}")
+            sys.exit(1)
+        for r in result.get("results", []):
+            mark = f"{GREEN}\u2713{RESET}" if r["ok"] else f"{RED}\u2717{RESET}"
+            print(f"  {mark} {r['slug']:<18} {r['url']}")
+            for f in r.get("failures", []):
+                print(f"      {RED}{f}{RESET}")
+        print(f"  {result.get('summary','')}")
+        sys.exit(0 if result.get("ok") else 1)
 
     elif args.refresh_build_scope:
         from tools.noctus.dev.build_scope import refresh_build_scope as _rbs
