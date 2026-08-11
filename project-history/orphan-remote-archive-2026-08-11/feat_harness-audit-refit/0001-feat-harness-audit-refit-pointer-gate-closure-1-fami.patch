@@ -1,0 +1,1117 @@
+From 1c8ff8ec7e6bb79fa1b6d6b59e361d06ec6880a9 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Tue, 14 Jul 2026 16:44:25 -0300
+Subject: [PATCH] =?UTF-8?q?feat(harness):=20audit=20refit=20=E2=80=94=20po?=
+ =?UTF-8?q?inter-gate=20closure,=20=C2=A71=20family=20consolidation,=20GC?=
+ =?UTF-8?q?=20exhaust,=20protocol=20trims,=203=20new=20skills?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+2026-07 harness audit remediation (all lossless per lossless-doc-refactor):
+
+- Pointer integrity: kb_sync gate now scans .claude/commands/ (the one
+  8-way surface it skipped — codify.md shipped 2 broken refs silently);
+  fixed codify.md ×2 + noc-roadmap template path; KB legend corrected to
+  KNOWLEDGE-BASE/CONTEXT/X; normalized KB § CONTEXT/ long-form to shorthand.
+- Budgets: MEMORY.md keeper recalibrated 60→40 KB (harness truncates ~50 KB
+  — old cap sat above the silent-failure threshold), entry cap 500→300;
+  router keeper gains rule-COUNT ceiling (55; §1 had grown to 72).
+- §1 consolidation 72→49 rules: cache/orchestration/knowledge-lifecycle/
+  doc-discipline families collapse to 1 line each, members verbatim in 4
+  new family-index KB docs (unowned-commons allowlisted); evidence + AST
+  pair-merges.
+- GC exhaust: /codify gains retirement leg (promotion retires the MEMORY.md
+  index line); new /gc command + methodology-gc.md pattern.
+- Protocol trims: KB-autostage hazard + cc9e69b forensics moved to
+  bypass-rationalization-anti-patterns.md §7; rationalization catalog
+  compressed to pointer; protocol-doc carve-out made explicit in
+  agent-context-architecture.md; orchestrator §17.6 citation corrected to
+  §18/§21; executor cache-first boilerplate deduped to engineer-seed §0.
+- New skills: noc-contract-first, noc-mcp-tool, noc-archive-absorb
+  (repetitive-procedure-→-skill gaps); organ-consume-check triggers moved
+  into description; /contextualize now points at skill (single source).
+
+Gates: kb_sync ✓ router ✓ 93 keeper tests ✓
+
+Lenses: tech-lead
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .claude/agents/backend-engineer.md            |  2 +-
+ .claude/agents/devops-engineer.md             |  3 +-
+ .claude/agents/engineer-seed.md               | 13 +++---
+ .claude/agents/frontend-engineer.md           |  2 +-
+ .claude/agents/orchestrator-operator.md       |  4 +-
+ .claude/commands/baselines.md                 |  4 +-
+ .claude/commands/codification-radar.md        |  6 +--
+ .claude/commands/codify.md                    |  7 +--
+ .claude/commands/contextualize.md             |  6 +--
+ .claude/commands/cost-report.md               |  4 +-
+ .claude/commands/gc.md                        | 31 +++++++++++++
+ .claude/commands/refresh-caches.md            |  2 +-
+ .claude/commands/vector-status.md             |  2 +-
+ .claude/commands/verify-pass.md               |  4 +-
+ .claude/skills/noc-archive-absorb/SKILL.md    | 30 ++++++++++++
+ .claude/skills/noc-contextualize/SKILL.md     |  4 +-
+ .claude/skills/noc-contract-first/SKILL.md    | 28 +++++++++++
+ .claude/skills/noc-mcp-tool/SKILL.md          | 28 +++++++++++
+ .claude/skills/noc-new-product/SKILL.md       |  2 +-
+ .../skills/noc-organ-consume-check/SKILL.md   | 11 +----
+ .claude/skills/noc-roadmap/SKILL.md           |  2 +-
+ CLAUDE.md                                     | 43 ++++-------------
+ .../architect/orchestration-family-index.md   | 21 +++++++++
+ .../common/agent-context-architecture.md      |  9 ++++
+ .../bypass-rationalization-anti-patterns.md   | 14 ++++++
+ .../PATTERNS/common/cache-family-index.md     | 18 ++++++++
+ .../common/doc-discipline-family-index.md     | 16 +++++++
+ .../knowledge-lifecycle-family-index.md       | 17 +++++++
+ .../CONTEXT/PATTERNS/common/methodology-gc.md | 29 ++++++++++++
+ KNOWLEDGE-BASE/INDEX.md                       | 12 ++++-
+ mcp/noctusai/tests/test_claude_md_router.py   | 19 ++++++++
+ mcp/noctusai/tests/test_kb_sync.py            | 29 ++++++++++++
+ mcp/noctusai/tests/test_memory_md_index.py    | 34 ++++++++++++--
+ mcp/noctusai/tools/kb_sync.py                 | 13 +++++-
+ mcp/noctusai/tools/noctus/dev/compliance.py   | 46 +++++++++++++++++--
+ 35 files changed, 426 insertions(+), 89 deletions(-)
+ create mode 100644 .claude/commands/gc.md
+ create mode 100644 .claude/skills/noc-archive-absorb/SKILL.md
+ create mode 100644 .claude/skills/noc-contract-first/SKILL.md
+ create mode 100644 .claude/skills/noc-mcp-tool/SKILL.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/orchestration-family-index.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/cache-family-index.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/doc-discipline-family-index.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md
+ create mode 100644 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-gc.md
+
+diff --git a/.claude/agents/backend-engineer.md b/.claude/agents/backend-engineer.md
+index 885e52fc..3ba1851b 100644
+--- a/.claude/agents/backend-engineer.md
++++ b/.claude/agents/backend-engineer.md
+@@ -47,7 +47,7 @@ owns_kb:
+ Implement server-side slices to the architect's contracts — routers → services → schemas, RLS-scoped data access, integrations. Don't re-decide architecture; if a contract feels wrong, surface to the architect rather than diverge silently.
+ 
+ ## Domain rules (specialist L1)
+-- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
++- **Cache-first discovery.** Apply engineer-seed §0 verbatim (caches discover; `grep`/`Read` confirm; grep-first is a logged slip). → `.claude/agents/engineer-seed.md §0` · `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Seed-first by construction.** `create_product_app(name, schema, settings, routers)` + `standard_routers=[…]`; never re-implement `create_database_module` / `create_dependencies`; compose deps, don't fork. → `KB § PATTERNS/backend/backend.md` · `KB § 03-SEED-ARCHITECTURE.md`
+ - **FastAPI dep factory pattern.** Module-level slots default `None`, populated by `configure_X_module(...)`, dep reads at request-time — never module-level singletons that bind at import. → `KB § PATTERNS/backend/backend.md`
+ - **Auth wiring via factory.** `make_get_current_user_org(...)`; `ProductDependencies.get_*` deps WITHOUT `Depends()` (the 422 trap). → `KB § backend/07-AUTH-SECURITY.md`
+diff --git a/.claude/agents/devops-engineer.md b/.claude/agents/devops-engineer.md
+index 2c54bdb6..ad5edefe 100644
+--- a/.claude/agents/devops-engineer.md
++++ b/.claude/agents/devops-engineer.md
+@@ -40,7 +40,7 @@ owns_kb:
+ Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
+ 
+ ## Domain rules (specialist L1)
+-- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
++- **Cache-first discovery.** Apply engineer-seed §0 verbatim (caches discover; `grep`/`Read` confirm; grep-first is a logged slip). → `.claude/agents/engineer-seed.md §0` · `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/devops/containerization.md`
+ - **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/devops/containerization.md` §1a
+ - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`
+@@ -62,7 +62,6 @@ Wire features into containers + CI + the production fleet. Don't decide service
+ - **OpenAI connector MCP** (`mcp/openai_mcp/`). 9 tools wrapping OpenAI API + the 4 search engines: embed / chat / vision / transcribe / search.{kb,code,memory,corpus} / diagnostics. Reuses noctusai venv. `.mcp.json` wire-up per-operator. → `KB § INTEGRATIONS/openai-mcp.md`
+ - **Tmp-artifact cleanup (orchestrator-only).** `noctus.dev.tmp_cleanup` purges retired `/tmp/*.patch` files left by the engineer-brief-patch-file-first pattern (patch-id-on-`origin/dev` OR aged-out ≥14d OR malformed → delete; fresh-unmatched kept). 🔒 **ORCHESTRATOR-ONLY** — invoked by `orchestrator-operator` as a standing end-of-tick step; devops-engineer OWNS the KB doc but does NOT call the tool (same shape as `release` / `deploy_pull` / `archive`). DRY-RUN default. Bounded scope: `/tmp/*.patch` ONLY (never harness state, never repo files). → `KB § PATTERNS/common/tmp-artifact-cleanup.md`
+ - **Cache-portable architecture (Tier-1 + Tier-2).** `<git-common-dir>/noctusai/cache/*.sqlite` (Tier-1, shared by ALL worktrees of this repo — one physical SQLite per cache, NOT per-worktree) + prod pgvector `noctus-cache-pg:5432` (Tier-2, machine-portable). Sync: `cache_deploy_mirror` (local → remote) + `cache_pull` (remote → local, auto-on-empty default ON; opt-out `NOCTUS_DISABLE_AUTO_CACHE_PULL=1`). One-time legacy `.claude/cache/` migration (copy, not move, sentinel-gated). 11 cache-path sites consolidated through `cache_backend.cache_path()` + `cache_dir()`. Concurrent-refresh guard: `acquire_refresh_lock()` (fcntl flock, non-blocking) wraps every CLI refresh handler — second writer skips cleanly, no SQLite write storms. → `KB § PATTERNS/common/cache-portable-architecture.md`
+-- **Cache-as-agent-tool — the caches ARE the search engines.** When researching anything (design / methodology / code / structure / history / who-owns-what), REACH FOR A CACHE FIRST. Two flavors: semantic (vector — `kb_search` / `code_search` / `memory_search` / `corpus_search`) + structural (graph — `noctus.graph.*` over 23k+ nodes / 38k+ edges). `grep` / `Read` are CONFIRMATION tools, not DISCOVERY tools. → `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Vectorize → embed → cache (the unified pipeline, META-RULE).** Any vectorize/embed/cache slice follows the SAME 3-leg shape: (1) caching-architecture decision FIRST (extend an existing cache by `chunk_kind` before spawning a sibling; N≥3 same-shape ⇒ extend), (2) embed via `noctusai_lib.integrations.llm.generate_embedding` ONLY (never inline OpenAI; cost-log to `vector-costs.ndjson`; deterministic `source_sha` gates idempotency), (3) cache persistence with the 3-leg mirror contract (eager + lazy + freshness keeper) + WAL + `acquire_refresh_lock`. 6+ existing instantiations (4 vector caches + organ chunk + build-learn re-embed). → `KB § PATTERNS/common/vectorize-embed-cache-framework.md`
+ - **Secrets discipline.** No secrets in code / commits / logs; `.env` dev-only + `.gitignore`d; rotate on every leak. → `KB § PATTERNS/devops/environment.md` · security advisor for review
+ - **Incident response.** Triage → mitigate → root-cause → document (timeline, RCA, remediation PRs, runbook update, post-mortem). Mitigation > root-cause during the incident.
+diff --git a/.claude/agents/engineer-seed.md b/.claude/agents/engineer-seed.md
+index 46f04538..b944c295 100644
+--- a/.claude/agents/engineer-seed.md
++++ b/.claude/agents/engineer-seed.md
+@@ -17,7 +17,7 @@ owns_kb: []
+ 
+ # engineer-seed — standing protocol
+ 
+-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the protocol (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `orchestrator-operator`). **Owns no KB domain — it's the protocol every specialist executor applies.**
++> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a **protocol doc** under the explicit protocol-doc carve-out in `KB § PATTERNS/common/agent-context-architecture.md § Protocol-doc carve-out` (procedure allowed; incident forensics / SHAs / duplicated catalogs still live in KB; no line-count exemption from discipline: KB-duplicated depth is still the anti-pattern). **Owns no KB domain — it's the protocol every specialist executor applies.**
+ 
+ This is the **default protocol** for every noctusai engineer dispatch. Briefs are expected to be ≤50 lines and reference this doc. Anything not overridden in the brief applies as written here.
+ 
+@@ -54,7 +54,7 @@ git rev-parse HEAD ; git rev-parse origin/dev
+ 
+ ## 1a. Anti-divergence on-disk verification (MANDATORY before any "ready"/success return)
+ 
+-The harness file overlay can report `Edit`/`Write`/`Read` **success while the on-disk git worktree stays clean** — work exists only in the overlay and is **lost** when the agent ends. Real lost-work incidents (≥2): one engineer caught+recovered, one did not and its deliverable vanished. **Your own `git status`/`grep` are served the same diverged overlay, so a naive self-check passes falsely.** Before reporting ready:
++The harness file overlay can report `Edit`/`Write`/`Read` **success while the on-disk git worktree stays clean** — work exists only in the overlay and is **lost** when the agent ends (≥2 real lost-work incidents; depth: `KB § PATTERNS/common/harness-overlay-worktree-divergence.md`). **Your own `git status`/`grep` are served the same diverged overlay, so a naive self-check passes falsely.** Before reporting ready:
+ 
+ 1. After staging, run `git -C <worktree> diff --cached --name-only` AND `git -C <worktree> status --porcelain` — your files MUST appear.
+ 2. `grep`/`cat` the **actual on-disk file** for the change text — not an Edit "success" message.
+@@ -115,7 +115,7 @@ The pointer is metadata, never a substitute for the §2 stage-only / §3 return
+ - Do NOT `git commit`. Architect commits after review.
+ - Do NOT `git push`. Architect pushes.
+ - If you stage and the architect later finds surprise files, that's a slip. Verify via `git diff --cached --name-only` before reporting "ready-for-commit."
+-- **KB-autostage hook hazard — the structural reason engineers never commit, and how the architect commits scoped.** `scripts/hooks/pre-commit` (CLAUDE.md §4 sync rule) runs `git add` on *every* modified `KNOWLEDGE-BASE/**`, `CLAUDE.md`, `CLAUDE/*.md`, `INDEX.md`, and `PROJECT-HISTORY.md` on every commit. In a multi-agent dirty tree this means a pathspec / "scoped" `git commit <paths>` is **NOT actually scoped** — it silently absorbs other agents' unstaged KB/doc work under your message (commit-only-your-own-work violation). Consequences: (a) engineers therefore NEVER `git commit` — architect-only, no exceptions; (b) the architect, committing a scoped change while the tree is dirty, MUST either `git commit --no-verify <explicit paths>` with the bypass rationale written into the commit message, **or** commit from a clean tree — and MUST always verify `git show --stat HEAD` immediately after; surprise files ⇒ `git reset --soft HEAD^` recover (local/unpushed = zero loss) + re-commit scoped. The KB docs' own sync is verified when the proper consolidation commit lands them. Recurrence 2026-05-17 (cc9e69b: a 2-file conftest commit swept 7 unrelated KB docs incl. another agent's unreviewed edit; soft-reset-recovered → re-committed as 7137af0).
++- **KB-autostage hook hazard — the structural reason engineers never commit.** The pre-commit hook auto-stages every modified KB/CLAUDE/INDEX doc, so a "scoped" `git commit <paths>` in a dirty multi-agent tree silently absorbs peers' unstaged work. Engineers NEVER `git commit`; the architect's scoped-commit recipe + the `cc9e69b` recurrence forensics live at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md §7`.
+ 
+ ## 2a. Terminal commit-guarantee (no uncommitted own-work left behind)
+ 
+@@ -199,10 +199,9 @@ You run inside the dispatching session's runtime, which already has the **stdio
+ 
+ - Never `cd <main-repo>` from inside a worktree (sticky cwd risk; use `git -C <path>` instead)
+ - Never `git push --force` / `git reset --hard` without architect direction
+-- **NEVER `--no-verify` on `git commit` OR `git push`.** Both invoke pre-commit hooks; both bypass safety. The "commit-only is harmless, only push needs the gates" rationalization is **structurally wrong** — pre-commit hooks fire on `commit`, NOT on `push`; a `commit --no-verify` skips ALL keepers (kb_sync · check_claude_md_router · check_eight_way_sync · keeper-pattern-cache refresh). The commit IS the verification event. Bypassing it then pushing the unverified commit is strictly worse than bypassing only the push gate.
+-- **Do not rationalize.** 5 forbidden rationalizations: (a) *"commit-only, not push"* — refuted above; (b) *"I'm fixing the broken tool, the rule applies to OTHER changes"* — even tool-fixers surface; the broken tool is what the surface-note is for; (c) *"the hook failure is a false-positive / pre-existing drift"* — the tech-lead decides false-positive vs real, not you; (d) *"it's harmless / no functional impact"* — the rule is about role-split, not impact; silent bypass breaks the safety-net-firing → learnings → methodology-evolution loop; (e) *"I'll surface in scoped-improvement after the commit"* — the surface-note is the BLOCK mechanism; after-the-fact surfacing is missed-the-window. Full catalog + worked example + refutations at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`.
+-- Rationalization match ⇒ STOP + file `kind="surface"` proposal per `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md § 2.6` + return `status=blocked`. Tech-lead resolves (authorize-with-rationale-on-file ∨ resolve-the-gate-root-cause ∨ re-scope-the-slice).
+-- `--no-verify` is allowed ONLY when the architect's brief authorizes it with a written rationale (e.g. doc reconciliation hitting a known phase-state hook scope issue), or — architect-side — for a scoped commit in a dirty multi-agent tree per §2 (KB-autostage-hook bypass; rationale MUST be in the commit message). Silence in the brief = forbidden. Worked example of an autonomous slip that should have surfaced instead: `ea7514e7` build-learn-cache codification (2026-05-29) — `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md § 3`.
++- **NEVER `--no-verify` on `git commit` OR `git push`.** Pre-commit hooks fire on `commit`, not `push` — the commit IS the verification event; a `commit --no-verify` skips ALL keepers.
++- **Do not rationalize.** The 5 forbidden rationalization shapes (commit-only-not-push · tool-fixer-exception · false-positive-call · harmless · surface-after-the-fact) are catalogued + individually refuted at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md §2`, with the `ea7514e7` worked example at §3. Rationalization match ⇒ STOP + file `kind="surface"` proposal per §2.6 + return `status=blocked`; the tech-lead resolves.
++- `--no-verify` is allowed ONLY with a written brief authorization, or architect-side for the scoped dirty-tree commit per §2 above (rationale in the commit message — `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md §7`). Silence in the brief = forbidden.
+ 
+ ## 10. Symbol-first when authoring dense docs
+ 
+diff --git a/.claude/agents/frontend-engineer.md b/.claude/agents/frontend-engineer.md
+index 533fb5d1..147c994a 100644
+--- a/.claude/agents/frontend-engineer.md
++++ b/.claude/agents/frontend-engineer.md
+@@ -25,7 +25,7 @@ owns_kb:
+ Build UI slices via the seed factories — pages, hooks, design-system usage, complete loading/empty/error/success states. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.
+ 
+ ## Domain rules (specialist L1)
+-- **Cache-first discovery.** Your first move when discovering a path / pattern / convention / similar code / prior decision is an MCP cache call (`noctus.dev.kb_search` / `code_search` / `memory_search` / `corpus_search` semantic; `noctus.graph.*` structural). `grep` / `Read` are CONFIRMATION tools after the cache narrows scope. Reaching for `grep` before a cache call IS a methodology slip — log as `scoped-improvement:` and switch. → `KB § PATTERNS/common/cache-as-agent-tool.md`
++- **Cache-first discovery.** Apply engineer-seed §0 verbatim (caches discover; `grep`/`Read` confirm; grep-first is a logged slip). → `.claude/agents/engineer-seed.md §0` · `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Build via seed factories.** `createProductApp({ routes, Layout, ...infra.appConfig })` · `createProductLayout(...)` · `createViteConfig({ port })` — NEVER hand-wire AuthProvider / Router / QueryClient / ErrorBoundary; the seed/infra provides them. → `KB § PATTERNS/frontend/frontend.md` · `KB § 03-SEED-ARCHITECTURE.md`
+ - **Hooks in dedicated files.** One `hooks/useEntity.ts` per entity; NEVER inline `useQuery` / `useMutation` in page components. → `KB § PATTERNS/frontend/frontend.md`
+ - **Wired to real data + page-scoped CRUD.** Every UI surface (a) hits a real endpoint that returns real data ∧ (b) owns its CRUD on the same page. Ship all four states (loading / empty / error / success). Run `noctus.dev.scan_wiring` before claiming done. → `KB § PATTERNS/frontend/product-internal-wiring.md`
+diff --git a/.claude/agents/orchestrator-operator.md b/.claude/agents/orchestrator-operator.md
+index f0e227cb..4b3ab850 100644
+--- a/.claude/agents/orchestrator-operator.md
++++ b/.claude/agents/orchestrator-operator.md
+@@ -7,7 +7,7 @@ owns_kb: []
+ 
+ # orchestrator-operator — standing instructions
+ 
+-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a procedure-heavy meta-agent per `KB § PATTERNS/common/agent-context-architecture.md` — the body IS the procedure (procedure-doc carve-out from the lean-L1 shape; same carve-out applies to `engineer-seed`). **Owns no KB domain.**
++> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This is a **protocol doc** under the explicit protocol-doc carve-out in `KB § PATTERNS/common/agent-context-architecture.md § Protocol-doc carve-out` (procedure allowed; KB-duplicated depth + incident forensics still live in KB). **Owns no KB domain.**
+ 
+ You are the **operator** half of the autonomous-operator-via-subagent pattern (Option D — see `KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md`). The **architect** stays in the main session with the user; you are dispatched per ScheduleWakeup tick (or by explicit "drain inbox" prompt) to drain the dispatcher inbox in an **isolated context** so the architect's conversation state stays clean.
+ 
+@@ -149,7 +149,7 @@ The architect MAY explicitly authorize overlap with an `Args:` line `overlap-ack
+ 
+ Engineers working in **different products** (e.g. PF backend + therapy backend) are by definition file-disjoint and need no overlap check. The check fires only when briefs name **the same product** OR **the same shared library path** (`seed/`, `noctusai_lib/`, `mcp/`).
+ 
+-This rule mirrors the architect-side rule in `KB § PATTERNS/architect/branching-and-merging.md § 17.6` — operator inherits it because the operator does the actual `Agent` spawning.
++This rule mirrors the architect-side wave-dispatch collision-class rule in `KB § PATTERNS/architect/branching-and-merging.md §18/§21` — operator inherits it because the operator does the actual `Agent` spawning. (Citation corrected 2026-07-14: previously pointed at §17.6, which is findings.md Write-authorization.)
+ 
+ ## Detect-don't-presume (calibration from pilot tick 1)
+ 
+diff --git a/.claude/commands/baselines.md b/.claude/commands/baselines.md
+index cabd69d4..c337af9c 100644
+--- a/.claude/commands/baselines.md
++++ b/.claude/commands/baselines.md
+@@ -49,6 +49,6 @@ Diff: <same shape>
+ 
+ ## Composes with
+ 
+-- `KB § CONTEXT/PATTERNS/common/vector-baseline.md` (the KB pattern)
+-- `KB § CONTEXT/PATTERNS/common/code-recurrence-baseline.md` (sister pattern)
++- `KB § PATTERNS/common/vector-baseline.md` (the KB pattern)
++- `KB § PATTERNS/common/code-recurrence-baseline.md` (sister pattern)
+ - `/codification-radar` — radar surfaces s1→s3 candidates; baseline surfaces ratified-reviewed findings. Read together for full signal picture.
+diff --git a/.claude/commands/codification-radar.md b/.claude/commands/codification-radar.md
+index 2249a079..b016e029 100644
+--- a/.claude/commands/codification-radar.md
++++ b/.claude/commands/codification-radar.md
+@@ -43,8 +43,8 @@ The radar is the **sensor** of the methodology-codification-pipeline (s1-emergen
+ 
+ ## Composes with
+ 
+-- `KB § CONTEXT/PATTERNS/common/methodology-codification-pipeline.md` (the 4-stage path)
+-- `KB § CONTEXT/PATTERNS/common/scoped-auto-improvement.md` (the ledger this reads)
+-- `KB § CONTEXT/PATTERNS/common/kb-recurrence-radar.md` (sister tool — semantic consult before editing)
++- `KB § PATTERNS/common/methodology-codification-pipeline.md` (the 4-stage path)
++- `KB § PATTERNS/common/scoped-auto-improvement.md` (the ledger this reads)
++- `KB § PATTERNS/common/kb-recurrence-radar.md` (sister tool — semantic consult before editing)
+ - `/codify` (the decide-and-apply half)
+ - `/baselines` (ratified findings, complementary view)
+diff --git a/.claude/commands/codify.md b/.claude/commands/codify.md
+index 2069ed63..8b950b1c 100644
+--- a/.claude/commands/codify.md
++++ b/.claude/commands/codify.md
+@@ -6,7 +6,7 @@ description: Evaluate whether a rule / request / methodology surface should be c
+ 
+ You are running the **codify** protocol. The user invoked `/codify $ARGUMENTS`.
+ 
+-**Premise (do not skip):** codifiable discipline → a mechanical gate is cheaper (a keeper costs ~0 agent tokens/turn + removes the "did the agent remember?" failure mode) and more reliable. This is **Stage 4** of `KB § PATTERNS/methodology-codification-pipeline.md`. But **code does not replace prose** (code = WHAT/HOW the gate; prose = WHY/history/exceptions/when-to-override — keep both) and **not all discipline is codifiable** (judgment rules stay Stage 3). Your job is to find the *real* opportunities and say **honestly whether to apply or not**.
++**Premise (do not skip):** codifiable discipline → a mechanical gate is cheaper (a keeper costs ~0 agent tokens/turn + removes the "did the agent remember?" failure mode) and more reliable. This is **Stage 4** of `KB § PATTERNS/common/methodology-codification-pipeline.md`. But **code does not replace prose** (code = WHAT/HOW the gate; prose = WHY/history/exceptions/when-to-override — keep both) and **not all discipline is codifiable** (judgment rules stay Stage 3). Your job is to find the *real* opportunities and say **honestly whether to apply or not**.
+ 
+ **This command's own *detection* half is now mechanical.** `check_codification_debt` (a keeper in the compliance gate) reads every `NOC-REMEDIATE[codify]` marker each run, so a deferred codification can never go silent in prose. `/codify` is the **DECISION layer over that always-on detector**: the keeper *surfaces* the backlog; you *judge* it (apply / defer / stays-prose). When you defer, you feed the detector — you leave a `[codify]` marker (step 5), never bury the deferral in free prose.
+ 
+@@ -28,7 +28,7 @@ Judgment-dependent ("no quick fixes", "accept-vs-refactor", "right seam?", "real
+ 3. **Verify it isn't already codified** — grep the 50+ `check_*` in `mcp/noctusai/tools/noctus/dev/compliance.py` + the `noctus.dev.scan_*` tools. (Explore-audits over-report; always verify against the actual keeper corpus.)
+ 4. **Classify each** against the criteria → ripeness **HIGH** (all 3, easy predicate) / **MED** (criteria met, predicate has edges) / **LOW/DEFER** (N<3, or judgment-edged) / **STAYS-PROSE** (judgment).
+ 5. **Decide + state it** — for each: APPLY-NOW / DEFER (with the missing criterion) / STAYS-PROSE (with why). This explicit "whether we should or not" is the deliverable the user asked for.
+-6. **Apply the ripe ones** (s1→s4): build the `check_*` keeper (deterministic gate) OR a `noctus.dev.scan_*` tool (advisory query) — use `noctus.dev.scaffold_keeper` / `scaffold_mcp_tool`; add a **colocated regression test** (`check_detector_has_regression_test` requires it); add to the compliance baseline with cited triage if it surfaces pre-existing debt; **eight-way sync** (KB pattern + CLAUDE.md/topical pointer + memory). **Keep the prose** — trim it to rationale + a pointer to the gate, never delete it. **When a built keeper retires a `[codify]` marker, delete that marker** (it has graduated; the doc's codification footer flips to the keeper name).
++6. **Apply the ripe ones** (s1→s4): build the `check_*` keeper (deterministic gate) OR a `noctus.dev.scan_*` tool (advisory query) — use `noctus.dev.scaffold_keeper` / `scaffold_mcp_tool`; add a **colocated regression test** (`check_detector_has_regression_test` requires it); add to the compliance baseline with cited triage if it surfaces pre-existing debt; **eight-way sync** (KB pattern + CLAUDE.md/topical pointer + memory). **Keep the prose** — trim it to rationale + a pointer to the gate, never delete it. **When a built keeper retires a `[codify]` marker, delete that marker** (it has graduated; the doc's codification footer flips to the keeper name). **Retire the source memory** — promotion REPLACES the auto-memory index line: delete the promoted entry's line from `MEMORY.md` (move it to `memory/ARCHIVE-INDEX.md`; the body file stays on disk for vector recall). A promoted rule that still loads from `MEMORY.md` is double-paid context every session — the promotion-without-retirement bug (2026-07 harness audit found 20/20 sampled §1 rules still indexed).
+ 7. **Defer the not-yet-ripe ones with a marker, NOT prose** — leave a structured `NOC-REMEDIATE[codify]: <rule> — <why deferred> — <YYYY-MM-DD>` in the rule's **durable** KB doc (never `projects/` — it gets archived) so `check_codification_debt` tracks it until it ripens. Burying the deferral in free prose is the gap this gate closes.
+ 8. **Report** — the candidate table (rule · predicate · ripeness · decision), what you applied, what you deferred-with-a-marker, and what you deliberately left as prose (with reason). If nothing is ripe, say "pipeline is drained here — nothing to codify; here's why each stays prose / deferred." That's a healthy result, not a failure.
+ 
+@@ -37,6 +37,7 @@ Judgment-dependent ("no quick fixes", "accept-vs-refactor", "right seam?", "real
+ - Never delete the rationale prose when codifying — the keeper enforces, the doc explains.
+ - A deferral is a `[codify]` **marker**, not a sentence — "we should codify X someday" written in prose is invisible to the gate and WILL be forgotten (the exact gap `check_codification_debt` closes).
+ - A keeper that would false-positive across the seed/products is NOT ripe — design the predicate carefully or defer.
++- **Promotion without retirement is a bug, not a default** — every APPLY-NOW ends with the MEMORY.md index line retired (step 6). If you promoted and didn't retire, the codification is incomplete. `/gc` sweeps for strays, but the same-commit retirement is the by-construction leg.
+ - The compliance gate is **regression-semantics** (no NEW high/critical), not score==100 — a new keeper surfacing pre-existing debt goes in the baseline with cited triage, it doesn't break the gate. (`[codify]` markers are `warning`-severity — they surface without blocking.)
+ 
+-Reference: `KB § PATTERNS/methodology-codification-pipeline.md` · `projects/codification-backlog-drain/PROJECT.md` (the standing audit + waves).
++Reference: `KB § PATTERNS/common/methodology-codification-pipeline.md` · `projects/codification-backlog-drain/PROJECT.md` (the standing audit + waves).
+diff --git a/.claude/commands/contextualize.md b/.claude/commands/contextualize.md
+index 1314c095..297cc6b9 100644
+--- a/.claude/commands/contextualize.md
++++ b/.claude/commands/contextualize.md
+@@ -25,11 +25,9 @@ The contextualization is **graph-shaped**: the noc-graph cache (8th keeper-mirro
+    - `noctus.graph.query "" kinds=["kb_chapter"]` — top-level KB chapters (01-PHILOSOPHY, 02-LANDSCAPE, 03-SEED-ARCHITECTURE, …).
+    - `noctus.graph.neighbors landscape:CLAUDE.md depth=1` — what the always-on router routes to.
+ 
+-4. **Read the depth set ONLY when graph orientation is not enough** — `noc-contextualize` skill's core read order:
+-   `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`.
+-   Stop when you have enough for the task. The rest is on-demand.
++4. **Read the depth set ONLY when graph orientation is not enough** — follow the core read order in `.claude/skills/noc-contextualize/SKILL.md` step 3 (single source — deliberately not restated here; two hand-maintained copies drift).
+ 
+-5. **Print the mental model** before touching anything (the fresh-agent contract): seed-first · living/self-improving methodology · 8-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact · **empersonate the tech-lead (you ARE the orchestrator) — dispatching-branching-first default; PROACTIVELY parallelize file-disjoint non-collision slices via `task_branch action=start` + agent dispatch; inline only when the task is specific AND parallelizing offers no wall-clock gain**. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
++5. **Hold the mental model + empersonate the tech-lead** — apply `.claude/skills/noc-contextualize/SKILL.md` step 4 verbatim (the fresh-agent contract; same single-source rule), then print the model as one line of the orientation report.
+ 
+ ## Output
+ 
+diff --git a/.claude/commands/cost-report.md b/.claude/commands/cost-report.md
+index a08f5531..2b310992 100644
+--- a/.claude/commands/cost-report.md
++++ b/.claude/commands/cost-report.md
+@@ -76,6 +76,6 @@ Estimate calibration:
+ 
+ ## Composes with
+ 
+-- `KB § CONTEXT/PATTERNS/common/vector-cost-tracking.md`
++- `KB § PATTERNS/common/vector-cost-tracking.md`
+ - `/vector-status` (broader health view; this is the spend slice)
+-- `KB § CONTEXT/PATTERNS/common/vector-calibration.md` (reasoning-driven calibration may suggest threshold changes to reduce cost)
++- `KB § PATTERNS/common/vector-calibration.md` (reasoning-driven calibration may suggest threshold changes to reduce cost)
+diff --git a/.claude/commands/gc.md b/.claude/commands/gc.md
+new file mode 100644
+index 00000000..61a22e8e
+--- /dev/null
++++ b/.claude/commands/gc.md
+@@ -0,0 +1,31 @@
++---
++description: Methodology garbage-collection — the exhaust leg of the capture pipeline. Retires promoted memories, flags §1 rule-family consolidation, sweeps stale/orphaned memory entries, and reports budget health for the always-on surfaces.
++---
++
++# /gc — methodology garbage-collection
++
++You are running the **methodology-GC** protocol. The user invoked `/gc $ARGUMENTS`.
++
++**Premise:** the methodology has world-class *capture* (triage → memory → `/codify` → keeper) and this command is its *exhaust*. Without GC, always-on surfaces grow monotonically: `MEMORY.md` gets harness-truncated (silent recall loss), CLAUDE.md §1 outgrows what a session can apply, and promoted rules keep loading twice. Origin: the 2026-07 harness audit (MEMORY.md 419 lines → 55% truncated including Active Project Decisions; 20/20 sampled §1 rules double-indexed). → `KB § PATTERNS/common/methodology-gc.md`
++
++**Cadence:** monthly, or immediately when `check_memory_md_index` / the router rule-count budget warns.
++
++## Protocol
++
++1. **Measure budgets** — report each vs. its ceiling:
++   - `MEMORY.md`: lines (ceiling 200) + bytes (ceiling 20KB) + lines >200 chars (ceiling 0).
++   - CLAUDE.md §1: `- **` rule count (target 50; keeper `check_claude_md_router` hard-caps at 55).
++   - `KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/`: file count (junk-drawer threshold 50 — propose a topical split above it).
++2. **Retire promoted memories** — for each MEMORY.md index entry whose rule now lives in CLAUDE.md §1, a `CLAUDE/<topic>.md`, or a keeper: move the index line to `memory/ARCHIVE-INDEX.md` (same directory as `MEMORY.md`). NEVER delete the body file — vector recall still reaches it (learn-before-archive).
++3. **Sweep stale sections** — `Completed`, `Checkpoints`, and any `Active Project Decisions` entry older than 3 months: verify against the codebase/git (codebase is source of truth), then archive the resolved ones the same way. Re-order what remains: **Active Project Decisions and open items go ABOVE the long tail** — harness truncation is positional; the top of the file is the part guaranteed to load.
++4. **Sweep orphans** — memory files absent from both `MEMORY.md` and `ARCHIVE-INDEX.md`: index the live ones, archive the superseded ones. (`ls memory/*.md` vs. grep of both indexes.)
++5. **Flag §1 consolidation candidates** — ≥4 §1 rules sharing one family (cache, branching/dispatch, …) ⇒ propose collapsing to a single family line pointing at a KB family-index doc. Propose only; §1 edits are router surgery — apply with user consent, keeper-gated.
++6. **Report** — budgets before/after, entries retired/archived/re-indexed, consolidation proposals. If everything is within budget: say so and stop — a no-op GC is a healthy result.
++
++## Guardrails
++- **Learn-before-archive is absolute** — GC moves *index lines*, never deletes *body files*. `ARCHIVE-INDEX.md` preserves every retired line (name + hook), so nothing is unfindable.
++- Verify before archiving a "stale" project decision — docs drift; the tree wins. An entry that looks stale but reflects live state gets a refreshed hook instead of the archive.
++- §1 and keeper changes ride the normal gates (`check_claude_md_router`, kb_sync) — never `--no-verify`.
++- GC is not `/codify` — it retires and consolidates what's already decided; it never promotes new rules. If step 2 surfaces an unpromoted ripe candidate, hand it to `/codify`.
++
++Reference: `KB § PATTERNS/common/methodology-gc.md` · `KB § PATTERNS/common/methodology-codification-pipeline.md` (this command closes its loop) · `KB § PATTERNS/common/persistent-files-absorption.md`.
+diff --git a/.claude/commands/refresh-caches.md b/.claude/commands/refresh-caches.md
+index 4af8e367..16706a44 100644
+--- a/.claude/commands/refresh-caches.md
++++ b/.claude/commands/refresh-caches.md
+@@ -48,7 +48,7 @@ Report per-cache outcome:
+ 
+ ## Composes with
+ 
+-- `KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md` (this command's umbrella pattern)
++- `KB § PATTERNS/common/cache-auto-freshness.md` (this command's umbrella pattern)
+ - Pre-commit hook legs 9b/9c/10 (per-cache auto-refresh on staged changes)
+ - `post-merge` + `post-checkout` git hooks (automatic refresh after pull / branch switch)
+ - `/vector-status` (post-refresh sanity check)
+diff --git a/.claude/commands/vector-status.md b/.claude/commands/vector-status.md
+index a45abb75..40d8d70c 100644
+--- a/.claude/commands/vector-status.md
++++ b/.claude/commands/vector-status.md
+@@ -70,5 +70,5 @@ Recent calibration decisions: <last 5 rows>
+ 
+ ## Anti-patterns
+ 
+-- DON'T blindly trigger refresh on every stale signal — refresh is metered. Reason about cost first (see `KB § CONTEXT/PATTERNS/common/vector-calibration.md`).
++- DON'T blindly trigger refresh on every stale signal — refresh is metered. Reason about cost first (see `KB § PATTERNS/common/vector-calibration.md`).
+ - DON'T treat warning-severity freshness as a blocker — vector search is advisory.
+diff --git a/.claude/commands/verify-pass.md b/.claude/commands/verify-pass.md
+index 64bcbaa0..1b3e88a0 100644
+--- a/.claude/commands/verify-pass.md
++++ b/.claude/commands/verify-pass.md
+@@ -80,7 +80,7 @@ Tests-green ≠ verified-in-production. This command scaffolds the **verificatio
+ 
+ ## Composes with
+ 
+-- `KB § CONTEXT/PATTERNS/common/dont-block-on-background.md` (run pattern)
+-- `KB § CONTEXT/PATTERNS/common/roadmap-tracking.md` (verify-pending column)
++- `KB § PATTERNS/common/dont-block-on-background.md` (run pattern)
++- `KB § PATTERNS/common/roadmap-tracking.md` (verify-pending column)
+ - `/cost-report` (estimation calibration)
+ - `/vector-status` (pre-flight health)
+diff --git a/.claude/skills/noc-archive-absorb/SKILL.md b/.claude/skills/noc-archive-absorb/SKILL.md
+new file mode 100644
+index 00000000..085d04d8
+--- /dev/null
++++ b/.claude/skills/noc-archive-absorb/SKILL.md
+@@ -0,0 +1,30 @@
++---
++name: noc-archive-absorb
++description: Use at EVERY teardown / archive / close-out moment — triggers "archive this project", "close out findings.md", "delete the worktree", "we're done with this project", "clean up the project folder", "absorb the findings". The two-leg gate — absorption (learnings → durable homes) + recovery pointer — BEFORE anything is archived or deleted.
++version: 1.0.0
++---
++
++# noc-archive-absorb — nothing durable dies in an archive
++
++🔴 **The loss this kills:** findings.md / PROJECT.md decisions / proposals vanish into `archive/` unread; a worktree with un-salvaged learnings gets deleted; six weeks later the same lesson is re-learned at full price. Archive is a MOVE of the residue, never the FATE of the knowledge.
++
++## Workflow
++
++1. **Absorb-on-contact first (the cheap path)** — the discipline is absorb AS insights surface, not at teardown: a findings.md entry naming a pattern → KB the same commit; a "we should always X" decision → memory entry or KB pattern now; a new agent/skill/tool the project shipped → registered in its harness home BEFORE archive. If this ran all project, step 2 is a no-op checklist.
++2. **At-teardown checklist (the safety net)** — before `noctus.dev.archive <slug>` or ANY worktree removal:
++   - `findings.md`: every slip/error/lesson/knowledge entry codified to a durable home (mark IN-FLIGHT-PROCESSED) or surfaced as a follow-up with a named destination.
++   - `PROJECT.md` §11 live-patterns-log: every concrete decision absorbed OR cataloged in accept-with-rationale.
++   - `proposals/*.md`: same rule.
++3. **Record the recovery pointer** — `project-history/worktree-salvage.ndjson` or `ledger.ndjson` row (branch + SHA + one-line what-was-there). For worktrees, `noctus.dev.salvage_before_delete` / `task_branch action=cleanup` carry this leg mechanically.
++4. **Only then archive/delete** — `noctus.dev.archive <slug>` / worktree removal.
++5. **Memory index discipline** — a new memory entry from the absorption goes ABOVE the long tail in `MEMORY.md`, one line, <200 chars (truncation is positional — the tail is what the harness drops).
++
++## Guardrails
++- ⚠️ "Archive now, absorb later" is the anti-pattern this skill exists for — later never comes; the archive IS the absorb deadline.
++- ⚠️ Deleting a worktree without the salvage leg trips learn-before-archive; the tools carry the pointer leg mechanically — use them instead of raw `rm`/`git worktree remove`.
++- Both legs are required: absorption without a recovery pointer loses the trail; a pointer without absorption preserves residue nobody will re-read.
++
++## Depth
++`KB § PATTERNS/common/persistent-files-absorption.md` (canonical home — durable destinations, triggers, checklist) · `KB § PATTERNS/common/learn-before-archive.md` (the salvage gate + 5 preserve-categories + enforcement ladder) · `KB § PATTERNS/common/methodology-gc.md` (the retirement sibling — same learn-before-archive invariant applied to MEMORY.md) · `KB § PATTERNS/common/storage-hygiene.md` §2.3 (recovery-pointer mechanics).
++
++Born from N≥2 recurrence: two §1 rules + a tool existed but the close-out procedure had no skill; `noc-hygiene` step 4 covered only the salvage half (2026-07-14 harness audit).
+diff --git a/.claude/skills/noc-contextualize/SKILL.md b/.claude/skills/noc-contextualize/SKILL.md
+index 45742ca3..e0beb9e8 100644
+--- a/.claude/skills/noc-contextualize/SKILL.md
++++ b/.claude/skills/noc-contextualize/SKILL.md
+@@ -15,8 +15,8 @@ If you are already working / already oriented, this is a NO-OP — skip it (re-r
+    - `noctus.graph.report` — counts, hot clusters, anchor surfaces.
+    - `noctus.graph.query "<keyword>" kinds=["harness_skill","harness_command","harness_agent","kb_chapter"]` — find the right skill / agent / chapter without grep.
+    - `noctus.graph.neighbors agent:architect depth=1 edge_kinds=["owns_kb","invokes_skill"]` — see what an agent owns + invokes.
+-3. **Follow the core set in order** (only when needed; the graph often replaces step 3 for keyword-shaped questions): `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § CONTEXT/02-LANDSCAPE.md` → `KB § CONTEXT/01-PHILOSOPHY.md` → `KB § CONTEXT/03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`. Stop when you have enough; the rest is on-demand.
+-4. **Hold the mental model + empersonate the tech-lead** before touching anything: seed-first · living/self-improving methodology · 8-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact. **You ARE the orchestrator from this point on**: dispatching-branching-first by default — PROACTIVELY decompose work into file-disjoint non-collision slices and dispatch engineers in parallel via `task_branch action=start` + Agent calls; inline only when the task is specific AND parallelizing offers no wall-clock gain. The 9 specialist agents + 14 procedure skills exist so parallel work is the cheap default. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
++3. **Follow the core set in order** (only when needed; the graph often replaces step 3 for keyword-shaped questions): `CLAUDE.md` §1 → `KB § AGENT-CONTEXT.md` → `KB § 02-LANDSCAPE.md` → `KB § 01-PHILOSOPHY.md` → `KB § 03-SEED-ARCHITECTURE.md` → `KB § INDEX.md` → `MEMORY.md`. Stop when you have enough; the rest is on-demand.
++4. **Hold the mental model + empersonate the tech-lead** before touching anything: seed-first · living/self-improving methodology · 8-way sync · codebase is source of truth · no silent errors · branching-first · AST-first · fix-on-contact. **You ARE the orchestrator from this point on**: dispatching-branching-first by default — PROACTIVELY decompose work into file-disjoint non-collision slices and dispatch engineers in parallel via `task_branch action=start` + Agent calls; inline only when the task is specific AND parallelizing offers no wall-clock gain. The specialist agents (`.claude/agents/`) + procedure skills (`.claude/skills/`) exist so parallel work is the cheap default. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`.
+ 
+ ## When the graph is the answer
+ 
+diff --git a/.claude/skills/noc-contract-first/SKILL.md b/.claude/skills/noc-contract-first/SKILL.md
+new file mode 100644
+index 00000000..951edbb6
+--- /dev/null
++++ b/.claude/skills/noc-contract-first/SKILL.md
+@@ -0,0 +1,28 @@
++---
++name: noc-contract-first
++description: Use BEFORE any connected BE/FE work — triggers "wire the frontend to the backend", "connect this endpoint", "build the API and the UI", "FE consumes the new route", "contract-first", "both sides of the feature". Author the endpoint contract ONCE; both sides build to it. The DEFAULT for product-organ features, not an option.
++version: 1.0.0
++---
++
++# noc-contract-first — pin the contract, then build both sides to it
++
++🔴 **The drift this kills:** two engineers (or two inline passes) each *guess* the shape — `{data:[...]}` vs `[...]`, `id` vs `name`, envelope vs bare — and the mismatch surfaces as a broken page AFTER both report green. The contract is authored ONCE, verbatim in both briefs, and becomes the acceptance gate for BOTH slices.
++
++## Workflow
++
++1. **Author/extract the contract skeleton FIRST** — per endpoint: path+method · request field names+types · response shape (envelope-vs-bare + EXACT field names) · status codes (success + typed errors) · auth posture (dependency, org-scoping). When one side already exists, EXTRACT the contract from it field-by-field — do not assume; extraction is where the drift gets caught.
++2. **Stateful/action endpoints pin 4 more legs** (shapes alone are NOT sufficient — 2026-06-05 refinement): side-effects + state-after ("after this call, X is already true") · error taxonomy (`status → cause → user-facing message`) · strictness (extra fields ignored vs rejected) · deprecations (name what the change makes vestigial). Discriminator: stateless data-fetch = shapes suffice; stateful/action = all four or the consumer re-derives behavior and drifts.
++3. **Embed the contract verbatim in BOTH briefs** — BE builds *to* it, FE consumes *to* it. No rediscovery tax, no divergent assumptions.
++4. **Dispatch BE + FE in parallel** (file-disjoint → C1 per the orchestration family). Wall-clock = `max`, not `sum`.
++5. **Each side's tests assert against the contract** — never against a private mock of a guessed shape.
++6. **Close with ONE E2E-shape check** — a real-endpoint curl or contract test hitting the live route asserting the FE-consumed shape. Mocked-hook tests never catch BE↔FE drift.
++
++## Guardrails
++- ⚠️ Skipping step 1 and "aligning at integration" IS the anti-pattern — integration is where the drift is most expensive.
++- Carve-out (justify + log): a trivial single-side change that does not alter the contract (pure BE refactor behind a stable shape; pure CSS/copy tweak).
++- Full-stack features extend the same discipline to DB/RLS + persisted client state → `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md § Composes with`.
++
++## Depth
++`KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` (canonical home — skeleton, the 4 stateful legs, worked examples) · `KB § PATTERNS/architect/orchestration-family-index.md` (dispatch mechanics) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (brief plumbing).
++
++Born from N≥2 recurrence: named the DEFAULT in CLAUDE.md §1 since 2026-06 yet had no skill (2026-07-14 harness audit — repetitive-procedure-→-skill gap).
+diff --git a/.claude/skills/noc-mcp-tool/SKILL.md b/.claude/skills/noc-mcp-tool/SKILL.md
+new file mode 100644
+index 00000000..72fa23c0
+--- /dev/null
++++ b/.claude/skills/noc-mcp-tool/SKILL.md
+@@ -0,0 +1,28 @@
++---
++name: noc-mcp-tool
++description: Use when authoring ANY new repo automation — triggers "write a script for X", "automate this", "add a helper script", "new scripts/ file", "make a tool that…". New automation defaults to a `noctus.dev.*` MCP tool (scaffolded, tested, agent-callable), NEVER a bare `scripts/*.sh|*.py` one-off. Three named shell carve-outs only.
++version: 1.0.0
++---
++
++# noc-mcp-tool — new automation IS an MCP tool
++
++🔴 **The slip this kills:** a capability with a plausible second consumer (another agent, another session, Claude Code) written as a private shell one-off — untested, undiscoverable, flat-folder accretion. Promotion is cheap (`scaffold_mcp_tool` emits the skeleton); the shell one-off is the demotion.
++
++## Workflow
++
++1. **Check the three shell carve-outs first** — shell is correct ONLY for: `[carve:hook]` git-hook entry (thin dispatcher `exec cli.py --<flag>`; the LOGIC still goes to MCP) · `[carve:bootstrap]` pre-venv bootstrap (chicken-and-egg) · `[carve:docker]` thin docker plumbing with no extractable logic. Anything else → MCP tool. A carve-out claim REQUIRES a manifest row in `KB § PATTERNS/architect/mcp-first-scripts.md §3` + an accept-with-rationale entry — claim without paperwork is a silent error.
++2. **Check it doesn't already exist** — `noctus.dev.kb_search` / `code_search` over the toolkit + `mcp/noctusai/catalog.md`; extending an existing `noctus.dev.*` tool beats spawning a near-duplicate.
++3. **Scaffold** — `noctus.dev.scaffold_mcp_tool` → tool under `mcp/noctusai/tools/noctus/dev/` + `cli.py --<flag>` + colocated `Test*` (the regression test is keeper-required: `check_detector_has_regression_test`).
++4. **Namespace** — extend `noctus.dev.*` (standing user decision 2026-05-18; no new namespaces without consent).
++5. **8-way sync same commit** — catalog row + KB pattern/section if the tool embodies a rule + CLAUDE.md/topical pointer when behavioral.
++6. **Pre-commit-invoked logic** — absorb into the MCP tool; keep the hook as a thin `cli.py` shim (stable shell entry, single-sourced logic).
++
++## Guardrails
++- ⚠️ `check_new_script_lacks_mcp_analog` trips on a new top-level `scripts/*.{sh,py}` without a manifest row — surface it, don't ship it undecided.
++- An already-shell capability with a plausible second consumer is a bystander MCP-first opportunity → apply-now or defer-with-destination (flag it; silent skip = silent-error shape).
++- Don't bare-Python around a missing tool from inside a dispatch — surface the allowlist gap instead.
++
++## Depth
++`KB § PATTERNS/architect/mcp-first-scripts.md` (canonical home — rule, carve-outs, manifest) · `KB § 06-AGENTS.md` (toolkit shape) · `KB § PATTERNS/compliance/testing.md` (regression-test-the-detector).
++
++Born from N≥2 recurrence: MCP-first has been a §1 rule with a keeper since 2026-05 yet the authoring procedure had no skill (2026-07-14 harness audit — repetitive-procedure-→-skill gap).
+diff --git a/.claude/skills/noc-new-product/SKILL.md b/.claude/skills/noc-new-product/SKILL.md
+index 93b3f534..88e32fcf 100644
+--- a/.claude/skills/noc-new-product/SKILL.md
++++ b/.claude/skills/noc-new-product/SKILL.md
+@@ -23,4 +23,4 @@ version: 1.0.0
+ - "Sandbox / isolated / testing-ground" instead → `noctus.dev.create_testing_ground`, not this.
+ 
+ ## Depth
+-`KB § GUIDES/new-product.md` · `KB § CONTEXT/03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/frontend/core-url-routing.md`.
++`KB § GUIDES/new-product.md` · `KB § 03-SEED-ARCHITECTURE.md` · `KB § PATTERNS/frontend/core-url-routing.md`.
+diff --git a/.claude/skills/noc-organ-consume-check/SKILL.md b/.claude/skills/noc-organ-consume-check/SKILL.md
+index 55743862..7471f1d1 100644
+--- a/.claude/skills/noc-organ-consume-check/SKILL.md
++++ b/.claude/skills/noc-organ-consume-check/SKILL.md
+@@ -1,19 +1,10 @@
+ ---
+ name: noc-organ-consume-check
+-description: Check the canonical organ catalog before building any FE component; prevent silent re-forks of validated seed organs.
+-triggers:
+-  - "before scaffolding a product"
+-  - "is this component canonical"
+-  - "should I import this from seed"
+-  - "build a new component"
+-  - "create a new FE component"
+-  - "add a component to frontend"
++description: Check the canonical organ catalog BEFORE building any FE component — triggers "build a new component", "create a new FE component", "add a component to frontend", "is this component canonical", "should I import this from seed", "before scaffolding a product". Prevents silent re-forks of validated seed organs; the router reads this description, so triggers live HERE (the only skill that kept them in a separate YAML list was invisible to phrase-matching — fixed 2026-07-14).
+ ---
+ 
+ # Skill: noc-organ-consume-check
+ 
+-> **Auto-trigger phrases:** "before scaffolding a product", "is this component canonical", "should I import this from seed", "build a new component", "create a new FE component", "add a component to frontend"
+-
+ ---
+ 
+ ## Procedure
+diff --git a/.claude/skills/noc-roadmap/SKILL.md b/.claude/skills/noc-roadmap/SKILL.md
+index d32f6978..3526a9ae 100644
+--- a/.claude/skills/noc-roadmap/SKILL.md
++++ b/.claude/skills/noc-roadmap/SKILL.md
+@@ -19,7 +19,7 @@ If the work fits in one session and one PR — it's a project, not a roadmap. Us
+ ## Workflow
+ 
+ 1. **Slug + month** — `<kebab-slug>-YYYY-MM.md`. Example: `cache-backend-portability-2026-05.md`. Month is when the roadmap was AUTHORED (decisions decay; the month signals freshness).
+-2. **Drop the template** — copy `templates/roadmap.md` (see Template section below) into `project-history/roadmaps/<slug>-YYYY-MM.md`. Fill the sections in order — don't skip "Open questions" or "Anti-goals"; those are the gold.
++2. **Drop the template** — copy `.claude/skills/noc-roadmap/template.md` (inlined in the Template section below) into `project-history/roadmaps/<slug>-YYYY-MM.md`. Fill the sections in order — don't skip "Open questions" or "Anti-goals"; those are the gold.
+ 3. **Trigger conditions are first-class** — every deferred phase MUST list a named trigger (T1/T2/...). "When the trigger fires" beats "when we feel like it" for surviving context-resets.
+ 4. **Decision log** — append to it; don't rewrite. Old decisions explain current state.
+ 5. **Retrospective** — fill at first trigger fire. Captures lessons absorbed back to KB/memory.
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 81e070cf..6c8f875b 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -25,8 +25,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ - **No quick fixes.** A fix touching N products for one reason is at the wrong level — go to the root. → `KB § 01-PHILOSOPHY.md`
+ - **No workarounds / no monkey-patching (incl. tests).** Patching our own guard means the test no longer exercises it. → `KB § PATTERNS/compliance/testing.md`
+ - **Auth tests: assert strict `== 401`, never `in (401, 404|422)`.** The non-401 branch is a false-green (route-absent ∨ validation-before-auth); only static AST catches it. → `KB § PATTERNS/compliance/auth-boundary-false-green.md`
+-- **Estimate off evidence, not structure.** Cross-cutting layers hide cost; open the files before sizing. → `KB § 01-PHILOSOPHY.md`
+-- **Codebase is source of truth.** Docs/memory/reports drift; verify against the tree first, code wins. → `KB § 01-PHILOSOPHY.md`
++- **Evidence discipline.** Estimate off evidence, not structure (open the files before sizing); codebase is source of truth — docs/memory/reports drift, code wins. → `KB § 01-PHILOSOPHY.md`
+ - **Cache-first search — reach for a cache BEFORE grep / Read.** Semantic via `*_search`, structural via `noctus.graph.*`; grep/Read are confirmation tools, not discovery. → `KB § PATTERNS/common/cache-as-agent-tool.md`
+ - **Fix-on-contact for pre-existing debt.** Surface-only = a silent-error one level up; fix in-flight then surface. → `KB § 01-PHILOSOPHY.md`
+ - **Drift-fix-on-contact.** Git leftovers (untracked-at-root, orphan branches, uncommitted worktrees) + broken methodology pointers + stale process artifacts: PAUSE → resolve → surface-if-blocked → update docs the resolution touches → continue. Silent-skip = silent-error shape. → `KB § PATTERNS/common/drift-fix-on-contact.md` · skill `noc-self-branch`
+@@ -40,8 +39,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ - **Componentize everything.** If another product will need it, build it shared from day one. → `KB § 04-SHARED-LIBRARY.md`
+ - **Reading & research discipline.** Whole-file reads waste budget; narrow-read + delegate breadth to Explore. → `KB § PATTERNS/common/agent-reading-discipline.md`
+ - **Replication-to-seed symmetry.** The trigger is LANGUAGE — "per-product X" IS the slip; right count = zero. → `KB § PATTERNS/architect/project-execution.md` · agent `architect`
+-- **AST-first.** If a compiler/type-checker parses the file, edit it via libcst/ts-morph, never regex. → `KB § PATTERNS/common/ast.md`
+-- **Flag MCP-first / AST-first opportunities proactively.** Silent skipping = silent-error shape. → `KB § 01-PHILOSOPHY.md`
++- **AST-first.** If a compiler/type-checker parses the file, edit it via libcst/ts-morph, never regex; flag MCP-first / AST-first opportunities proactively — silent skipping = silent-error shape. → `KB § PATTERNS/common/ast.md`
+ - **MCP-first scripts.** A new automation IS an agent-exposable capability → a `noctus.dev.*` tool. → `KB § PATTERNS/architect/mcp-first-scripts.md`
+ - **Hygiene scanning.** Run hound/mole/keeper-analog sweeps before walking away; teardown = salvage-before-delete via a tool. → `KB § PATTERNS/common/storage-hygiene.md` · skill `noc-hygiene`
+ - **Triage at decision time.** "Accept" is a real landing only with paperwork; recurrence flips accept→formalize. → `KB § PATTERNS/common/accept-with-rationale.md`
+@@ -50,43 +48,22 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ - **Always-hardening posture.** Every surfaced pattern (incl. explanation-as-signal) is a methodology-improvement opportunity; announce LOUDLY, apply before ship. → `KB § 01-PHILOSOPHY.md` · skills `skill-scout` / `codify`
+ - **Branching — ONE unified methodology.** Worktree isolation is the primitive: isolate off `origin/dev` → integrate clean → never switch a shared HEAD. → `KB § PATTERNS/common/branching.md` · skill `noc-self-branch`
+ - **`main` is production; `dev` is integration.** Everyday work + pushes → `dev`; `main`/`prod` only by explicit consent; **prod-deploy promotes a dev-fleet-validated build** (deploy+smoke on dev, never first-contact); branch model is phased (target `prod`=code-only). → `KB § PATTERNS/architect/git-branch-model.md` · skill `noc-ship`
+-- **Branching-first orchestration.** Orchestrator=architect (stays with user), subagents=engineers; inline below the cutoff. → `KB § 01-PHILOSOPHY.md` · skill `noc-branch-dispatch`
+-- **Parallelization-first orchestration.** Real specialized-agents-in-parallel is the DEFAULT mindset (each `.claude/agents/<name>` brings its lens); serial / inline only when shared-state, single-coherent-voice, or below the inline cutoff. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`
+-- **FE↔BE contract-first dispatch — default for connected BE/FE work.** Author the endpoint contract (shapes/field-names/envelope-vs-bare/status) FIRST; both build to it. → `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md`
+-- **Don't block on background tasks — keep working in parallel.** Idle-polling a running bash/agent burns session budget; queue independent background work + foreground docs/gates instead, consolidate on completion. → `KB § PATTERNS/common/dont-block-on-background.md`
++- **Orchestration & dispatch — FAMILY (9 rules).** Parallelization-first default (specialists in parallel; inline=empersonate, 3rd inline build step ⇒ dispatch) · FE↔BE contract-first · don't-block-on-background · wave-dispatch collision-class (C1/C2/C3 at DISPATCH) · dispatch-with-PROJECT / return-with-notes · twice-reverted collision ⇒ STOP · optional Lenses trailer. → `KB § PATTERNS/architect/orchestration-family-index.md` · skill `noc-branch-dispatch`
+ - **Dispatch via `task_branch`, NEVER Agent `isolation: "worktree"`.** 🔴 Agent isolation forks from an arbitrary base (NOT `origin/dev`) — stale-base bug. Two-level: self-branch off `origin/dev` → `task_branch action=start` per engineer → dispatch in. → `KB § PATTERNS/architect/parallelization-first-orchestration.md`
+-- **Inline = empersonate; don't over-inline.** Inline-dev in the specialist's lens (discipline + owns_kb); orchestrator leverage = fan-out — serial inline bulk-build is slow + incomplete; break big modules into dispatches, 3rd inline build step ⇒ dispatch. → `KB § PATTERNS/architect/parallelization-first-orchestration.md`
+-- **Lenses-applied commit trailer (optional).** Inline-deved commits carry a `Lenses: <name>` trailer → auditable via `git log --grep "Lenses:"`. → `KB § PATTERNS/common/lenses-applied-trailer.md`
+ - **Self-branching mode.** 🔴 ABSOLUTE: never work on `dev`; every writing task auto-isolates off `origin/dev`. → `KB § PATTERNS/common/self-branching-mode.md` · skill `noc-self-branch`
+-- **Knowledge tracking — durable findings.** findings.md = what-we-LEARNED; in-flight comms processed same commit, not parked. → `KB § 01-PHILOSOPHY.md`
+-- **Wave-based dispatch + collision-class.** Merge cleanliness is decided at DISPATCH (C1/C2/C3), not at merge. → `KB § PATTERNS/architect/branching-and-merging.md §18/§21`
++- **Knowledge lifecycle — FAMILY (5 rules).** findings.md durable + processed same-commit · persistent-files absorption BEFORE archive (both legs) · learn-before-archive (salvage tool) · roadmaps in `project-history/roadmaps/` · promotion retires the MEMORY.md index line (`/gc` sweeps strays). → `KB § PATTERNS/common/knowledge-lifecycle-family-index.md`
+ - **Pilot-products-first refactor cadence.** Prove a seed/lib change on 3 pilots before fan-out. → `KB § PATTERNS/architect/project-execution.md`
+ - **No silent errors.** No `except: pass`, no silent fallback, no deferral without a named destination; ambiguity → ask. → `KB § 01-PHILOSOPHY.md`
+ - **Remediation markers.** A batch-able deferral lives in-code as `NOC-REMEDIATE[<class>]` — the named destination. → `KB § PATTERNS/common/remediation-markers.md`
+-- **Doc-propagation sync.** A rule/tool change lives in KB ↔ CLAUDE.md ↔ memory ↔ tool-code the same commit. → `KB § 01-PHILOSOPHY.md`
++- **Doc-set discipline — FAMILY (6 rules, keeper-backed).** 8-way sync (`check_eight_way_sync`) · doc-propagation same-commit · durable surfaces self-contained · symbol-first (lossless swap) · lossless doc-refactor · router pointer-only (`check_claude_md_router`). → `KB § PATTERNS/common/doc-discipline-family-index.md`
+ - **Keeper-check before doc'ing.** Query the local keeper-pattern cache before authoring any gated doc (agent/skill/CLAUDE.md/MEMORY.md/KB) — author from the live contract, not memory; the cache mirrors `compliance.py` via pre-commit refresh + lazy rebuild + `check_keeper_cache_freshness`. → `KB § PATTERNS/common/keeper-pattern-cache.md` · `KB § PATTERNS/common/keeper-check-before-docing.md`
+ - **Agent-context architecture — lean L1 over canonical depth.** `.claude/agents/<name>.md` is the specialist INDEX (rule + `→` pointer); `owns_kb:` declares domain; KB holds depth; agent-context cache holds the compact extract. Keepers `check_agent_kb_alignment` + `check_agent_context_cache_freshness` enforce. → `KB § PATTERNS/common/agent-context-architecture.md`
+ - **Scoped auto-improvement + consult-before-editing.** Dispatches surface `drift-found:`/`scoped-improvement:`; tech-lead RESOLVES, engineers SURFACE; consult BEFORE editing any doc/agent; log open entries with a `resolve_when` so landed drift self-closes. → `KB § PATTERNS/common/scoped-auto-improvement.md`
+-- **Dispatch with PROJECT — return with notes.** Tech-lead writes PROJECT.md §4a routing before dispatch; engineer/inline-lens returns a `delivery` note, or a `surface` note + BLOCK when re-routing mid-flight. → `KB § PATTERNS/common/dispatch-with-project-and-notes.md`
+-- **KB vector search — markdown canonical, vector DB is enrichment.** 4th keeper-mirror cache (`.claude/cache/kb-embeddings.sqlite`, sqlite-vec + OpenAI embed via seed lib); ADDITIVE semantic-search + `kb_neighbors`/`kb_similar`/`kb_validate_owns_kb`/generic `vector_*` primitives. Markdown stays canonical. Keeper `check_kb_vector_canonical` advisory-only. → `KB § PATTERNS/common/kb-vector-search.md`
+-- **noc-graph — structured graph of the platform.** 8th keeper-mirror (`.claude/cache/noc-graph.sqlite`); materializes code+KB+memory+harness+landscape+cli+history as queryable nodes/edges; fresh agents reach `/contextualize` + `noctus.graph.*` instead of composing 5 scans; keeper `check_noc_graph_cache_freshness` advisory-only. → `KB § PATTERNS/architect/noc-graph.md` · skill `noc-contextualize`
+-- **Persistent-files absorption.** findings.md/PROJECT.md/lessons MUST land in KB/memory BEFORE archive — recovery pointer + absorption both legs. → `KB § PATTERNS/common/persistent-files-absorption.md`
+-- **Learn-before-archive.** Before any destructive op preserve what would be LOST; tool `noctus.dev.salvage_before_delete`. → `KB § PATTERNS/common/learn-before-archive.md`
+-- **Roadmap tracking — multi-session project plans.** Multi-slice initiatives live in `project-history/roadmaps/<slug>-YYYY-MM.md` (durable, mutable — `projects/` is ephemeral, ndjson is event-shaped). Goal + slice table + decision log + retrospective. Absorb lessons → KB/memory. → `KB § PATTERNS/common/roadmap-tracking.md`
+-- **Durable surfaces self-contained.** A config/script ref into `projects/`/`archive/` breaks loudly when archived. → `KB § 01-PHILOSOPHY.md`
+-- **Symbol-first for dense / AI-intended docs.** Lossless-swap test gates each prose→symbol swap; `→`=routes, `⇒`=implies. → `KB § PATTERNS/common/doc-symbology.md`
++- **Cache platform — FAMILY (6 rules).** WAL+busy_timeout locking · two-tier auto-freshness (heal-on-contact) · Tier-1/Tier-2 portability · vectorize→embed→cache 3-leg pipeline · kb-vector (markdown canonical) · noc-graph orientation. → `KB § PATTERNS/common/cache-family-index.md`
+ - **Context budget discipline.** The auto-loaded budget compounds every reply. MCP keep-list: `noctusai`+`supabase`+`n8n`+`waha`. → `KB § 01-PHILOSOPHY.md`
+-- **Lossless doc-refactor.** Changing the doc-set itself is methodology surgery — lossless proven, not asserted. → `KB § PATTERNS/common/lossless-doc-refactor.md`
+-- **CLAUDE.md is the always-on router — keep it pointer-only.** §1 = principle + map (one-line rule + `→` pointer); procedures in skills, depth in KB; re-bloat is gated. → `KB § PATTERNS/common/claude-md-router-discipline.md`
+-- **8-way sync — methodology surfaces stay aligned.** Eight first-class surfaces (CLAUDE.md / MEMORY.md / `.claude/agents/` / KB / CONTEXTUALIZE.md / `.claude/skills/` / `.claude/commands/` / `.claude/cache/`) carry methodology PROSE or consumption — caches are the live agent read path. Enforced by `check_eight_way_sync` (composes per-surface sub-keepers). → `KB § PATTERNS/common/eight-way-sync.md`
+ - **Versioning — SemVer with explicit pre-release stages.** `MAJOR.MINOR.PATCH[-alpha|beta|rc]`; contract bumps follow Conventional-Commits→SemVer; source of truth `/VERSION`. → `KB § PATTERNS/common/versioning.md`
+-- **Cache-locking discipline — WAL + busy_timeout on every keeper-mirror SQLite cache.** WAL = readers never block the writer; busy_timeout = a contending writer waits instead of erroring `database is locked` (WAL doesn't serialize writer-vs-writer). Single helper `cache_backend.apply_locking_pragmas`. → `KB § PATTERNS/common/cache-locking-discipline.md`
+-- **Cache auto-freshness — two-tier + heal-on-contact.** Structural caches refresh pre-commit AND self-heal on check (`settle_structural_caches`, zero-OpenAI); embedding caches warn-only. → `KB § PATTERNS/common/cache-auto-freshness.md`
+-- **Cache-portable architecture — TWO-TIER persistent + machine-portable.** Tier-1 local (shared by all worktrees of this repo); Tier-2 prod pgvector mirror; auto-pull-on-empty for fresh-clone bootstrap. → `KB § PATTERNS/common/cache-portable-architecture.md`
+-- **Vectorize → embed → cache (the unified pipeline).** Any vectorize/embed/cache slice follows the SAME 3-leg pipeline: (1) caching-architecture decision (extend before spawn), (2) embed via `noctusai_lib.integrations.llm` (cost-log), (3) cache with source-sha invariant + 3-leg mirror contract. → `KB § PATTERNS/common/vectorize-embed-cache-framework.md`
+ - **Sibling workspaces consume noc read-only, whole.** Trimming the inherited surface breaks seed-first analysis + sync. → `KB § PATTERNS/architect/seed-workspace.md`
+ - **Divergent-architecture absorptions → house container model.** One container, `serve_spa`, seed base image; no fleet carve-out. → `KB § PATTERNS/devops/containerization.md §12a` · skill `noc-absorb-product`
+-- **Parallel-agent collision protocol.** Twice-reverted → STOP, wait, continue non-colliding; no collision-report project. → `KB § PATTERNS/architect/project-execution.md`
+ 
+ ---
+ 
+@@ -96,9 +73,9 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ 
+ **Specialist subagents** (`.claude/agents/`): `architect` · `security` · `compliance-reviewer` (advisors — read-only, consulted) · `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (executors — worktree + commit-own-branch-only) · `skill-scout` (vendors skills in-home) · `orchestrator-operator`. **Tech-lead = the orchestrator** (the conversational session that owns all git/merge/deploy; no agent file). → `KB § 06-AGENTS.md` · `KB § PATTERNS/architect/dev-team.md`.
+ 
+-**Procedure skills** (`.claude/skills/`, auto-trigger on phrases): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `skill-creator`.
++**Procedure skills** (`.claude/skills/`, auto-trigger on phrases): `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `skill-creator`.
+ 
+-**Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/vector-status` (cache health overview) · `/baselines` (kb + code ratification status) · `/codification-radar` (s1/s2 → s3 promotion candidates) · `/cost-report` (vector-costs.ndjson analysis) · `/verify-pass` (verify-pending pass scaffolding) · `/refresh-caches` (orchestrated all-cache refresh).
++**Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/gc` (methodology garbage-collection — retire promoted memories, budget sweep) · `/vector-status` (cache health overview) · `/baselines` (kb + code ratification status) · `/codification-radar` (s1/s2 → s3 promotion candidates) · `/cost-report` (vector-costs.ndjson analysis) · `/verify-pass` (verify-pending pass scaffolding) · `/refresh-caches` (orchestrated all-cache refresh).
+ 
+ **Architecture & depth** (KB): philosophy → `01-PHILOSOPHY.md` · landscape → `02-LANDSCAPE.md` · seed → `03-SEED-ARCHITECTURE.md` · shared-lib → `04-SHARED-LIBRARY.md` · infra → `05-INFRASTRUCTURE.md` · MCP toolkit/agents → `06-AGENTS.md` · gamification → `07-GAMIFICATION.md`.
+ 
+@@ -123,8 +100,8 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
+ 
+ CLAUDE.md, `CLAUDE/<topic>.md`, `.claude/skills/`, `.claude/agents/`, and `KB § INDEX.md` stay in sync — add/rename/delete a KB file or a skill/agent and every referencing layer updates the same commit.
+ 
+-**Pre-commit hook enforces it** (`scripts/hooks/pre-commit`): syncs `products/seed/`→`templates/product-seed/` if staged; runs `noctus.dev.kb_sync` to regenerate counts + **block** on any unresolved `KB § …` pointer in `CLAUDE.md`/`CLAUDE/*.md`/`.claude/agents/*.md`/`KB/**`, any KB doc missing from `INDEX.md`, or any `products/<slug>/` lacking a `02-LANDSCAPE.md` roster row; and runs `check_claude_md_router` (`--check-claude-md-router`) to **block** a re-bloated router when `CLAUDE.md` is staged (`KB § PATTERNS/common/claude-md-router-discipline.md`).
++**Pre-commit hook enforces it** (`scripts/hooks/pre-commit`): syncs `products/seed/`→`templates/product-seed/` if staged; runs `noctus.dev.kb_sync` to regenerate counts + **block** on any unresolved `KB § …` pointer in `CLAUDE.md`/`CLAUDE/*.md`/`.claude/agents/*.md`/`.claude/skills/*/SKILL.md`/`.claude/commands/*.md`/`KB/**`, any KB doc missing from `INDEX.md`, or any `products/<slug>/` lacking a `02-LANDSCAPE.md` roster row; and runs `check_claude_md_router` (`--check-claude-md-router`) to **block** a re-bloated router when `CLAUDE.md` is staged (`KB § PATTERNS/common/claude-md-router-discipline.md`).
+ 
+ Manual: `python mcp/noctusai/cli.py --verify-kb-sync` · `--check-claude-md-router` · `--update-kb-counts [--check]`. Fresh clone: `bash scripts/install-hooks.sh`. Bypass (rarely correct): `git commit --no-verify`.
+ 
+-> Throughout, `KB § X` = `KNOWLEDGE-BASE/X`.
++> Throughout, `KB § X` = `KNOWLEDGE-BASE/CONTEXT/X` (topical depth: `PATTERNS/` · `GUIDES/` · `INTEGRATIONS/` · `0N-*.md` …). The two root-level indexes are the exception: `KB § INDEX.md` and `KB § AGENT-CONTEXT.md` live at `KNOWLEDGE-BASE/` directly.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/orchestration-family-index.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/orchestration-family-index.md
+new file mode 100644
+index 00000000..dde4f37a
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/architect/orchestration-family-index.md
+@@ -0,0 +1,21 @@
++# Orchestration & dispatch — family index (§1 consolidation)
++
++> **Family-line pattern:** CLAUDE.md §1 carries ONE line for this family; the member rules live here VERBATIM (lossless move, 2026-07-14 harness-audit `/gc` consolidation). Each member keeps its own depth doc.
++
++Four orchestration rules stay standalone in §1 because they are 🔴-grade safety absolutes or the primitive itself: **Branching — ONE unified methodology** (the worktree primitive), **`main` is production; `dev` is integration**, **Dispatch via `task_branch`, NEVER Agent `isolation: "worktree"`** (stale-base bug), and **Self-branching mode** (🔴 ABSOLUTE: never work on `dev`).
++
++## Members (verbatim from §1)
++
++- **Branching-first orchestration.** Orchestrator=architect (stays with user), subagents=engineers; inline below the cutoff. → `KB § 01-PHILOSOPHY.md` · skill `noc-branch-dispatch`
++- **Parallelization-first orchestration.** Real specialized-agents-in-parallel is the DEFAULT mindset (each `.claude/agents/<name>` brings its lens); serial / inline only when shared-state, single-coherent-voice, or below the inline cutoff. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`
++- **FE↔BE contract-first dispatch — default for connected BE/FE work.** Author the endpoint contract (shapes/field-names/envelope-vs-bare/status) FIRST; both build to it. → `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · skill `noc-contract-first`
++- **Don't block on background tasks — keep working in parallel.** Idle-polling a running bash/agent burns session budget; queue independent background work + foreground docs/gates instead, consolidate on completion. → `KB § PATTERNS/common/dont-block-on-background.md`
++- **Inline = empersonate; don't over-inline.** Inline-dev in the specialist's lens (discipline + owns_kb); orchestrator leverage = fan-out — serial inline bulk-build is slow + incomplete; break big modules into dispatches, 3rd inline build step ⇒ dispatch. → `KB § PATTERNS/architect/parallelization-first-orchestration.md`
++- **Lenses-applied commit trailer (optional).** Inline-deved commits carry a `Lenses: <name>` trailer → auditable via `git log --grep "Lenses:"`. → `KB § PATTERNS/common/lenses-applied-trailer.md`
++- **Wave-based dispatch + collision-class.** Merge cleanliness is decided at DISPATCH (C1/C2/C3), not at merge. → `KB § PATTERNS/architect/branching-and-merging.md §18/§21`
++- **Dispatch with PROJECT — return with notes.** Tech-lead writes PROJECT.md §4a routing before dispatch; engineer/inline-lens returns a `delivery` note, or a `surface` note + BLOCK when re-routing mid-flight. → `KB § PATTERNS/common/dispatch-with-project-and-notes.md`
++- **Parallel-agent collision protocol.** Twice-reverted → STOP, wait, continue non-colliding; no collision-report project. → `KB § PATTERNS/architect/project-execution.md`
++
++## Why a family line
++
++Nine §1 lines described one workflow — how the tech-lead decomposes, dispatches, and integrates parallel work. They fire together (a dispatch decision touches parallelization + contract + collision-class + PROJECT routing in the same breath), so one router hop into this index loses nothing while returning ~8 always-on lines of budget. → `KB § PATTERNS/common/methodology-gc.md`
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-context-architecture.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-context-architecture.md
+index d6229ba5..ca771337 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-context-architecture.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/agent-context-architecture.md
+@@ -58,6 +58,15 @@ Rules:
+ - **Body-pointer mirror** — every owns_kb path appears at least once in the body as a `KB § <path>` pointer (keeper-enforced; otherwise the declaration is dead).
+ - **`engineer-seed.md` exempt** — it's the protocol meta-doc, not a specialist; owns no KB.
+ 
++## Protocol-doc carve-out (made explicit 2026-07-14 — harness audit)
++
++`engineer-seed.md` and `orchestrator-operator.md` are **protocol docs**, not specialist indexes: their body IS a standing procedure that briefs and KB docs reference by section number, so the lean-L1 line ceiling does not apply to them. Previously this carve-out was self-asserted inside the two agent files while this doc only exempted engineer-seed from *owning KB* — that gap is closed here (the 2026-07 audit flagged the unsupported self-grant).
++
++What the carve-out does NOT exempt (the discipline still applies in full):
++- **No KB-duplicated depth** — a catalog/recipe authored in BOTH the agent file and a KB doc is the drift factory this pattern exists to prevent; the agent file keeps rule + pointer, KB keeps the body.
++- **No incident forensics** — commit SHAs, dated incident narratives, and recovery walk-throughs live in the KB doc the section cites (worked example: the KB-autostage hazard + `cc9e69b` forensics moved to `bypass-rationalization-anti-patterns.md §7`, 2026-07-14).
++- **Section-number stability** — briefs and KB docs reference these protocols by §; renumbering is a breaking change, prefer in-place trims.
++
+ ## Keeper enforcement (3 legs, mirroring the keeper-pattern-cache contract)
+ 
+ **Leg 1 — `check_agent_kb_alignment` (Phase A, this commit).** For each `.claude/agents/<name>.md` with `owns_kb:`:
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md
+index fbe8ff5f..a9e135b6 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/bypass-rationalization-anti-patterns.md
+@@ -212,3 +212,17 @@ The corrective commit retracts the hypocrisy claim in 62560ede's message non-des
+ - Counter-evidence agent — harness run id `ac7b836a102219219` on branch `feat/close-no-verify-commit-loophole` (the parallel slice that delivered the same work clean).
+ - Auto-improvement entry — `2026-05-29T09:19:06` `target="KB § PATTERNS/common/bypass-rationalization-anti-patterns.md + ..."` (the original codification entry) + `2026-05-29` `target="tech-lead orchestrator --no-verify slip on 62560ede"` `status="closed"` (this corrective).
+ - Cross-link — once `background-engineer-safety-discipline.md` lands on dev (parallel reapply slice), it inherits this § 6 by reference; the broader doc's "Do not invoke authority to override safety" clause cites this addendum.
++
++## 7 · KB-autostage hook hazard — why engineers never commit + the architect's scoped-commit recipe
++
++(Moved here 2026-07-14 from `engineer-seed.md §2` — the agent file keeps the rule + pointer; this section is the canonical depth.)
++
++`scripts/hooks/pre-commit` (CLAUDE.md §4 sync rule) runs `git add` on *every* modified `KNOWLEDGE-BASE/**`, `CLAUDE.md`, `CLAUDE/*.md`, `INDEX.md`, and `PROJECT-HISTORY.md` on every commit. In a multi-agent dirty tree this means a pathspec / "scoped" `git commit <paths>` is **NOT actually scoped** — it silently absorbs other agents' unstaged KB/doc work under your message (commit-only-your-own-work violation).
++
++Consequences:
++- **(a) Engineers never `git commit`** — architect-only, no exceptions. This is the structural reason behind the engineer stage-only contract, not a trust judgment.
++- **(b) The architect**, committing a scoped change while the tree is dirty, MUST either `git commit --no-verify <explicit paths>` with the bypass rationale written into the commit message, **or** commit from a clean tree — and MUST always verify `git show --stat HEAD` immediately after. Surprise files ⇒ `git reset --soft HEAD^` recover (local/unpushed = zero loss) + re-commit scoped. The KB docs' own sync is verified when the proper consolidation commit lands them.
++
++**Recurrence 2026-05-17** (`cc9e69b`): a 2-file conftest commit swept 7 unrelated KB docs including another agent's unreviewed edit; soft-reset-recovered → re-committed as `7137af0`. This incident is why the recipe above exists.
++
++This section is also the named home of the architect-side `--no-verify` carve-out referenced throughout this doc ("the `engineer-seed.md §2` KB-autostage-hook carve-out shape") — the ONE legitimate `--no-verify` use, always with the rationale in the commit message.
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/cache-family-index.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/cache-family-index.md
+new file mode 100644
+index 00000000..0f00d1e1
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/cache-family-index.md
+@@ -0,0 +1,18 @@
++# Cache platform — family index (§1 consolidation)
++
++> **Family-line pattern:** CLAUDE.md §1 carries ONE line for this family; the member rules live here VERBATIM (lossless move, 2026-07-14 harness-audit `/gc` consolidation — §1 had grown to 72 always-on rules). Each member keeps its own depth doc; this index is the router hop between the §1 family line and the member docs.
++
++Two cache rules stay standalone in §1 because they are per-turn behavioral defaults, not platform mechanics: **cache-first search** (`cache-as-agent-tool.md`) and **keeper-check before doc'ing** (`keeper-pattern-cache.md`).
++
++## Members (verbatim from §1)
++
++- **KB vector search — markdown canonical, vector DB is enrichment.** 4th keeper-mirror cache (`.claude/cache/kb-embeddings.sqlite`, sqlite-vec + OpenAI embed via seed lib); ADDITIVE semantic-search + `kb_neighbors`/`kb_similar`/`kb_validate_owns_kb`/generic `vector_*` primitives. Markdown stays canonical. Keeper `check_kb_vector_canonical` advisory-only. → `KB § PATTERNS/common/kb-vector-search.md`
++- **noc-graph — structured graph of the platform.** 8th keeper-mirror (`.claude/cache/noc-graph.sqlite`); materializes code+KB+memory+harness+landscape+cli+history as queryable nodes/edges; fresh agents reach `/contextualize` + `noctus.graph.*` instead of composing 5 scans; keeper `check_noc_graph_cache_freshness` advisory-only. → `KB § PATTERNS/architect/noc-graph.md` · skill `noc-contextualize`
++- **Cache-locking discipline — WAL + busy_timeout on every keeper-mirror SQLite cache.** WAL = readers never block the writer; busy_timeout = a contending writer waits instead of erroring `database is locked` (WAL doesn't serialize writer-vs-writer). Single helper `cache_backend.apply_locking_pragmas`. → `KB § PATTERNS/common/cache-locking-discipline.md`
++- **Cache auto-freshness — two-tier + heal-on-contact.** Structural caches refresh pre-commit AND self-heal on check (`settle_structural_caches`, zero-OpenAI); embedding caches warn-only. → `KB § PATTERNS/common/cache-auto-freshness.md`
++- **Cache-portable architecture — TWO-TIER persistent + machine-portable.** Tier-1 local (shared by all worktrees of this repo); Tier-2 prod pgvector mirror; auto-pull-on-empty for fresh-clone bootstrap. → `KB § PATTERNS/common/cache-portable-architecture.md`
++- **Vectorize → embed → cache (the unified pipeline).** Any vectorize/embed/cache slice follows the SAME 3-leg pipeline: (1) caching-architecture decision (extend before spawn), (2) embed via `noctusai_lib.integrations.llm` (cost-log), (3) cache with source-sha invariant + 3-leg mirror contract. → `KB § PATTERNS/common/vectorize-embed-cache-framework.md`
++
++## Why a family line
++
++Six §1 lines shared one platform framework; a session that needs cache mechanics needs ALL of them (they compose — locking + freshness + portability + pipeline are legs of the same contract), so one router hop loses nothing while returning ~5 always-on lines of budget. Consolidation is `/gc` step 5 output; the ceiling that forces it is the router keeper's rule-count cap. → `KB § PATTERNS/common/methodology-gc.md`
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/doc-discipline-family-index.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/doc-discipline-family-index.md
+new file mode 100644
+index 00000000..253e6207
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/doc-discipline-family-index.md
+@@ -0,0 +1,16 @@
++# Doc-set discipline — family index (§1 consolidation)
++
++> **Family-line pattern:** CLAUDE.md §1 carries ONE line for this family; the member rules live here VERBATIM (lossless move, 2026-07-14 harness-audit `/gc` consolidation). Each member keeps its own depth doc.
++
++## Members (verbatim from §1)
++
++- **8-way sync — methodology surfaces stay aligned.** Eight first-class surfaces (CLAUDE.md / MEMORY.md / `.claude/agents/` / KB / CONTEXTUALIZE.md / `.claude/skills/` / `.claude/commands/` / `.claude/cache/`) carry methodology PROSE or consumption — caches are the live agent read path. Enforced by `check_eight_way_sync` (composes per-surface sub-keepers). → `KB § PATTERNS/common/eight-way-sync.md`
++- **Doc-propagation sync.** A rule/tool change lives in KB ↔ CLAUDE.md ↔ memory ↔ tool-code the same commit. → `KB § 01-PHILOSOPHY.md`
++- **Durable surfaces self-contained.** A config/script ref into `projects/`/`archive/` breaks loudly when archived. → `KB § 01-PHILOSOPHY.md`
++- **Symbol-first for dense / AI-intended docs.** Lossless-swap test gates each prose→symbol swap; `→`=routes, `⇒`=implies. → `KB § PATTERNS/common/doc-symbology.md`
++- **Lossless doc-refactor.** Changing the doc-set itself is methodology surgery — lossless proven, not asserted. → `KB § PATTERNS/common/lossless-doc-refactor.md`
++- **CLAUDE.md is the always-on router — keep it pointer-only.** §1 = principle + map (one-line rule + `→` pointer); procedures in skills, depth in KB; re-bloat is gated. → `KB § PATTERNS/common/claude-md-router-discipline.md`
++
++## Why a family line
++
++Six §1 lines governed one activity — editing the methodology doc-set itself — and every one of them is ALSO mechanically enforced (`check_eight_way_sync`, `check_claude_md_router`, kb_sync pointer gates), so the always-on prose was the redundant layer. The family line keeps the routing; the keepers keep the teeth. This consolidation was itself performed under these rules (lossless: each member's verbatim text is preserved here; 8-way sync: family docs + INDEX + router landed same commit). → `KB § PATTERNS/common/methodology-gc.md`
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md
+new file mode 100644
+index 00000000..dccb210e
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md
+@@ -0,0 +1,17 @@
++# Knowledge lifecycle — family index (§1 consolidation)
++
++> **Family-line pattern:** CLAUDE.md §1 carries ONE line for this family; the member rules live here VERBATIM (lossless move, 2026-07-14 harness-audit `/gc` consolidation). Each member keeps its own depth doc.
++
++The capture-side siblings stay standalone in §1: **build-learn-cache mindset** (body-DRY, per-artifact) and **triage at decision time**. This family is the durable-knowledge END of the loop — what happens to knowledge when work closes.
++
++## Members (verbatim from §1)
++
++- **Knowledge tracking — durable findings.** findings.md = what-we-LEARNED; in-flight comms processed same commit, not parked. → `KB § 01-PHILOSOPHY.md`
++- **Persistent-files absorption.** findings.md/PROJECT.md/lessons MUST land in KB/memory BEFORE archive — recovery pointer + absorption both legs. → `KB § PATTERNS/common/persistent-files-absorption.md` · skill `noc-archive-absorb`
++- **Learn-before-archive.** Before any destructive op preserve what would be LOST; tool `noctus.dev.salvage_before_delete`. → `KB § PATTERNS/common/learn-before-archive.md` · skill `noc-archive-absorb`
++- **Roadmap tracking — multi-session project plans.** Multi-slice initiatives live in `project-history/roadmaps/<slug>-YYYY-MM.md` (durable, mutable — `projects/` is ephemeral, ndjson is event-shaped). Goal + slice table + decision log + retrospective. Absorb lessons → KB/memory. → `KB § PATTERNS/common/roadmap-tracking.md` · skill `noc-roadmap`
++- **Methodology GC — retirement as a first-class leg.** Promotion to an always-on surface retires the spawning MEMORY.md index line same commit; `/gc` sweeps strays + keeps always-on budgets. → `KB § PATTERNS/common/methodology-gc.md`
++
++## Why a family line
++
++These rules are one lifecycle — capture → absorb → archive → retire — and fire at the same moments (project close, teardown, wrap-up). One router hop into this index loses nothing while returning ~4 always-on lines of budget. → `KB § PATTERNS/common/methodology-gc.md`
+diff --git a/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-gc.md b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-gc.md
+new file mode 100644
+index 00000000..b0e8123b
+--- /dev/null
++++ b/KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/methodology-gc.md
+@@ -0,0 +1,29 @@
++# Methodology GC — retirement as a first-class leg
++
++> **Rule:** every capture pipeline needs an exhaust. Promotion to an always-on surface (CLAUDE.md §1 · keeper · `CLAUDE/<topic>.md`) RETIRES the memory index line that spawned it, same commit; `/gc` sweeps the strays on a monthly cadence and keeps the always-on surfaces inside their budgets.
++
++## Why this exists (2026-07 harness audit)
++
++The methodology accumulated capture mechanisms for years — triage, auto-memory, `/codify`, auto-improvement ledger, keepers — and zero decay mechanisms. Measured consequences:
++
++- `MEMORY.md` reached 419 lines / 56KB; the harness truncates on load, so **~55% of the index (including `Active Project Decisions`) was silently invisible every session**. Truncation is positional — the stalest content (top) loaded, the operationally current tail didn't.
++- **20/20 sampled CLAUDE.md §1 rules were still also indexed in MEMORY.md** — every promoted rule paid context twice, forever (promotion-without-retirement).
++- §1 grew to 72 always-on rules; `PATTERNS/common/` to 73 files. Both keepers were green — they gate *shape*, not *growth*.
++
++The general lesson: **a green gate on shape does not bound accumulation.** Growth needs its own budget + its own exhaust.
++
++## The mechanism (two legs, gate-methodology-sync compliant)
++
++1. **By-construction leg** — `/codify` step 6 ends with retirement: the promoted entry's `MEMORY.md` line moves to `memory/ARCHIVE-INDEX.md` (body file untouched — vector recall still reaches it).
++2. **Backstop leg** — `/gc` (`.claude/commands/gc.md`): budget measurement (MEMORY.md ≤200 lines / ≤20KB target, keeper caps 40KB; §1 target 50 rules, keeper caps 55; `common/` ≤50 files), stray-promotion retirement, stale-section sweep, orphan re-indexing, §1 family-consolidation proposals. Keeper `check_memory_md_index` (advisory) fires the cadence.
++
++## Invariants
++
++- **Learn-before-archive:** GC moves index lines, never deletes body files. `ARCHIVE-INDEX.md` preserves every retired line.
++- **Positional loading:** `MEMORY.md` orders active/open content first; archives and long-tail reference live at the bottom or out of the file entirely.
++- **Verify-then-archive:** an entry is retired because the tree proves it resolved/promoted — never because it *looks* old.
++- **GC ≠ codify:** GC never promotes; ripe candidates surfaced mid-sweep route to `/codify`.
++
++## Consumers
++
++`/gc` · `/codify` (step 6 retirement) · `check_memory_md_index` (advisory keeper) · the auto-memory writing discipline (new entries go above the long tail, one line, <200 chars).
+diff --git a/KNOWLEDGE-BASE/INDEX.md b/KNOWLEDGE-BASE/INDEX.md
+index 64569bdb..34b3c589 100644
+--- a/KNOWLEDGE-BASE/INDEX.md
++++ b/KNOWLEDGE-BASE/INDEX.md
+@@ -38,6 +38,7 @@ KNOWLEDGE-BASE/
+ │   │   │   ├── bypass-rationalization-anti-patterns.md
+ │   │   │   ├── cache-as-agent-tool.md
+ │   │   │   ├── cache-auto-freshness.md
++│   │   │   ├── cache-family-index.md
+ │   │   │   ├── cache-locking-discipline.md
+ │   │   │   ├── cache-portable-architecture.md
+ │   │   │   ├── cache-telemetry.md
+@@ -51,6 +52,7 @@ KNOWLEDGE-BASE/
+ │   │   │   ├── dispatch-warmup.md
+ │   │   │   ├── dispatch-with-project-and-notes.md
+ │   │   │   ├── doc-to-code-drift.md
++│   │   │   ├── doc-discipline-family-index.md
+ │   │   │   ├── dont-block-on-background.md
+ │   │   │   ├── engineer-output-linter.md
+ │   │   │   ├── doc-symbology.md
+@@ -64,6 +66,8 @@ KNOWLEDGE-BASE/
+ │   │   │   ├── lossless-doc-refactor.md
+ │   │   │   ├── methodology-codification-pipeline.md
+ │   │   │   ├── methodology-execution-discipline.md
++│   │   │   ├── methodology-gc.md
++│   │   │   ├── knowledge-lifecycle-family-index.md
+ │   │   │   ├── learn-before-archive.md
+ │   │   │   ├── orphan-branch-sweeper.md
+ │   │   │   ├── product-centroid-drift.md
+@@ -113,7 +117,8 @@ KNOWLEDGE-BASE/
+ │   │   │   ├── mcp-first-scripts.md
+ │   │   │   ├── mcp-tool-conventions.md
+ │   │   │   ├── noc-graph.md
+-│   │   │   ├── parallelization-first-orchestration.md
++│   │   │   ├── orchestration-family-index.md
++│   │   ├── parallelization-first-orchestration.md
+ │   │   │   ├── products-consume-canonical-organs.md
+ │   │   │   ├── project-execution.md
+ │   │   │   ├── seed-absorption.md
+@@ -318,6 +323,11 @@ KNOWLEDGE-BASE/
+ | Two-session Architect/Operator pattern — split one Claude Code workspace into two concurrent sessions (A = Architect: conversation / planning / KB / memory writes / NO git; B = Operator: ALL git ops + engineer dispatch execution + hound/mole/verify sweeps); coordination via gitignored `.claude/dispatcher.md` (unified Inbox `## Pending`/`## Completed` + Outbox `## Outbox`); strict ownership maps (git / memory / KB / MCP); anti-patterns (concurrent git push, both editing outbox, operator surfacing to user, memory clobbers); setup recipe + smoke test + `/loop` variant + 5-question pilot-vs-defer rubric + Option-D (single-session subagent) trade-off table | `CONTEXT/PATTERNS/architect/two-session-architect-operator.md` |
+ | Methodology execution discipline — the BEHAVIORAL half of the prevention system (machinery catches drift after the fact; this is how agents behave so the net rarely fires). Three principles: (1) **close the loop** — "works"≠"done"; nothing dangles (branch integrated-or-salvaged · origin branch deleted post-integration · worktree removed · docs/caches synced · no orphan ref/pointer); whoever pushes a branch owns its cleanup; (2) **work within the grain** — know the gates before acting (CLAUDE.md word cap + pointer-only §1 · pre-commit keepers · change-gated pre-push · branch protection) so you execute cleanly instead of tripping them; a foreseeable trip is a planning miss; (3) **a fired gate is a learning event, never a bypass** — STOP → understand → fix-or-surface → codify if recurring; never `--no-verify`/fight-the-linter/blind-delete. The PROCESS axis of the complementary learning pair with `product-dev-learning-ground.md` (craft axis): neither alone is enough — perfect methodology + un-compounding craft stagnates; great craft + leaky process drifts; together the system improves on both axes every touch. Born 2026-05-30 after the 330-dangling-remote cleanup | `CONTEXT/PATTERNS/common/methodology-execution-discipline.md` |
+ | Product-dev is its own learning ground — the CRAFT axis complement to `methodology-execution-discipline.md`: same "friction is a learning event" mindset applied to how we BUILD products (development technique), not how we work (process). The methodology learning loop (s1→s4 pipeline) is mature; this names CRAFT improvement as a first-class compounding loop too. Rule: a product bug that recurs / an approach that failed / a pattern that proved out → (1) fix, (2) capture the technique lesson via `build-learn-cache` (sidecar/graph, 8 categories), (3) promote a recurrence (N≥2) into the dev-technique pattern library `KB § PATTERNS/backend\|frontend/*` — the craft analog of the methodology codification pipeline. Distinct destination: craft lessons → backend/frontend patterns; methodology lessons → common/architect + s1→s4. Standing user value, re-enforced 2026-05-30 as product dev resumes. Complementarity thesis: two flywheels, the org compounds only when both spin | `CONTEXT/PATTERNS/common/product-dev-learning-ground.md` |
++| Cache platform — family index (§1 consolidation): the six cache-platform §1 rules verbatim (kb-vector-search · noc-graph · cache-locking WAL+busy_timeout · two-tier auto-freshness · Tier-1/Tier-2 portability · vectorize→embed→cache 3-leg pipeline) behind ONE CLAUDE.md family line; cache-first-search + keeper-check-before-doc'ing stay standalone (per-turn behavioral defaults). Lossless move per lossless-doc-refactor; born 2026-07-14 harness-audit `/gc` consolidation (§1 was 72 rules) | `CONTEXT/PATTERNS/common/cache-family-index.md` |
++| Doc-set discipline — family index (§1 consolidation): the six doc-set §1 rules verbatim (8-way sync · doc-propagation same-commit · durable surfaces self-contained · symbol-first · lossless doc-refactor · router pointer-only) behind ONE family line — every member is ALSO keeper-enforced (`check_eight_way_sync` / `check_claude_md_router` / kb_sync), so the always-on prose was the redundant layer | `CONTEXT/PATTERNS/common/doc-discipline-family-index.md` |
++| Knowledge lifecycle — family index (§1 consolidation): the five durable-knowledge §1 rules verbatim (findings.md durable · persistent-files absorption both-legs · learn-before-archive · roadmap tracking · methodology-GC retirement) behind ONE family line; capture-side siblings (build-learn-cache, triage) stay standalone | `CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md` |
++| Orchestration & dispatch — family index (§1 consolidation): the nine dispatch-workflow §1 rules verbatim (branching-first · parallelization-first · FE↔BE contract-first · don't-block-on-background · inline=empersonate · Lenses trailer · wave-dispatch collision-class · dispatch-with-PROJECT · collision protocol) behind ONE family line; the 🔴 safety absolutes (self-branching, task_branch-never-Agent-isolation, main-is-production, branching-primitive) stay standalone | `CONTEXT/PATTERNS/architect/orchestration-family-index.md` |
++| Methodology GC — retirement as a first-class leg: every capture pipeline needs an exhaust; promotion to an always-on surface (CLAUDE.md §1 / keeper / topical) RETIRES the spawning MEMORY.md index line same commit (`/codify` step 6), and `/gc` sweeps strays monthly + keeps always-on budgets (MEMORY.md keeper cap 40 KB — BELOW the ~50 KB harness-truncation threshold; §1 target 50 rules, keeper caps 55; `PATTERNS/common/` ≤50 files). Born from the 2026-07 harness audit: MEMORY.md at 419 lines was ~55% silently truncated on load (including Active Project Decisions) while the old 60 KB cap stayed green, and 20/20 sampled §1 rules were double-indexed (promotion-without-retirement). Invariants: learn-before-archive (index lines move to `memory/ARCHIVE-INDEX.md`, body files never deleted — vector recall still reaches them) · positional loading (active content first; truncation eats the tail) · verify-then-archive (tree wins over "looks stale") · GC never promotes (ripe candidates route to `/codify`). Core lesson: a green gate on SHAPE does not bound ACCUMULATION — growth needs its own budget + exhaust | `CONTEXT/PATTERNS/common/methodology-gc.md` |
+ | Methodology codification pipeline — the 4-stage path that turns conversation rules into deterministic keeper detectors (Stage 1 emerges → Stage 2 memory entry → Stage 3 KB pattern doc + CLAUDE.md pointer → Stage 4 `check_*` function with colocated test); names the keeper as the **codification layer** of the methodology rather than a regulatory silo; codification criteria (deterministic predicate + recurrence ≥3 + clear remediation); 5 worked examples walked through all 4 stages (LGPD-first, webhook 5-pin, status-code-assertion rule, slowapi-pep563 gotcha, hygiene-compliance in-flight); what legitimately stays at Stage 3 (judgment-dependent / context-dependent / methodology-in-pilot / aesthetic); how to promote a rule between stages; why naming the pipeline matters | `CONTEXT/PATTERNS/common/methodology-codification-pipeline.md` |
+ | Repetitive procedure → skill (N≥2 recurrence) — **DRY for procedures** (sibling of the code-DRY rule + the methodology-codification pipeline): when the same multi-step orient→act procedure runs a second time on the platform it becomes a skill candidate; at N≥3 it MUST be codified as a `.claude/skills/noc-<verb-noun>/SKILL.md` skill via the `skill-creator` skill; four-gate procedure qualifier (multi-step ∧ orient→act ∧ auto-triggerable-on-phrases ∧ generalizable-beyond-one-instance); recipe (recognize at N=2 announce-loudly → decide procedure-vs-incidental via the four gates → author via skill-creator → verify 8-way sync); 5 anti-patterns (skill-blooming = near-duplicate of existing skill — use `code_similar_to_text` / `noctus.graph.query kinds=["harness_skill"]` Leg-A discovery before authoring · skill-scope-creep = drift past trigger phrases → split-not-bloat · inline-only-convenience = gate-4-fails → findings.md not skill · procedure-without-trigger = description is "Use when…" not verbatim phrases · single-MCP-call-as-skill = document the tool better instead); worked example = the 2026-05-28 ship of `noc-wrap-up` + `noc-verify-seed` + `noc-triage` codified together (auto-improvement ndjson entry 2026-05-28T14:20:01.531684, same-commit s2→s3 compression sourced from pre-existing memory entries — overdue per this rule's threshold and the very pattern that motivated codifying the threshold); Stage 4 keeper `check_recent_skills_have_index_provenance` deferred (advisory-only, audits new noc-* dirs for `Born from N≥2 recurrence at <source>` provenance) | `CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md` |
+ | Build-learn-cache mindset (not only during dev) — **body-DRY** (the third sibling closing the recurrence-codification triad with code-DRY + skill-DRY + methodology-codification-pipeline): every artifact we build or touch — component / page / functionality / integration / function / organ — accumulates KNOWLEDGE that gets CACHED alongside the artifact itself, in real-time AS WE BUILD (not at wrap-up), and continues to accumulate during refactor / bug-fix / integration / deploy. Eight knowledge categories (the schema): (1) `known_facts` load-bearing facts · (2) `errors_encountered` errors hit + resolutions (for the next builder to avoid) · (3) `drifts_surfaced` two-leg footer `drift-found:` entries indexed BACK to the artifact that triggered them · (4) `alternatives_considered` paths tried + rejection reason (so the next builder doesn't re-litigate) · (5) `manual_validation_log` user reports + agent manual probes (hybrid with automated tests — not noise, real signal) · (6) `integration_test_status` current pass/fail + last_run · (7) `e2e_test` path + last_run + result + triggers (every artifact ships AT LEAST one e2e path) · (8) `bugs_fixed_during_dev` paired with fixing commit (recursive — bugs found while populating the cache itself land here). Two storage shapes compose by lifespan: sidecar `<artifact>.knowledge.yaml` for stable artifacts (queryable by grep + `noctus.dev.unified_query`); noc-graph node fields + `project-history/build-knowledge.ndjson` event stream for emergent organs (queryable via `noctus.graph.query kinds=["artifact_knowledge"]`). The cache is **append-only across the artifact's lifetime** (refactor/bugfix/integration/deploy all append) — that's what makes it source-of-truth. Wrap-up becomes a **completeness check** ("did we capture all 8 categories for the artifacts we touched?"), not the capture activity itself. Anti-patterns: wrap-up-only capture (loses 80% of journey) · automated tests only (loses real manual-validation signal) · cache-artifact-lose-journey (alternatives + errors = 90% of dev cost) · knowledge in commit messages only (not queryable by intent) · per-session findings.md only (knowledge dies with worktree) · one-shot e2e with no status field. Worked example = the seed-organs-cache project active 2026-05-29 (the body-layer companion that materializes this rule's schema as a seed primitive); recursive proof = this codification's own journey IS this KB doc's own first knowledge-cache entry. Stage 4 keeper `check_artifact_has_knowledge_sidecar` deferred — lands after seed-organs-cache ships the body since the storage shape has to exist first. Composes with project-execution `findings absorption` (extends granularity from project-scoped + close-only to artifact-scoped + real-time) · repetitive-task-skill-codification (skill-DRY sibling) · methodology-codification-pipeline (s1→s4 cadence) · noc-graph (new `artifact_knowledge` node kind + `learned_from`/`surfaced_drift` edges) · scoped-auto-improvement (two-leg footer is the source stream for drifts_surfaced + bugs_fixed_during_dev) · persistent-files-absorption (same family, finer granularity) · cache-as-agent-tool (build-knowledge cache becomes a consultable cache) · dispatch-with-project-and-notes (dispatch brief carries the build-learn-cache obligation) | `CONTEXT/PATTERNS/common/build-learn-cache-mindset.md` |
+diff --git a/mcp/noctusai/tests/test_claude_md_router.py b/mcp/noctusai/tests/test_claude_md_router.py
+index 4267af5a..d65319b1 100644
+--- a/mcp/noctusai/tests/test_claude_md_router.py
++++ b/mcp/noctusai/tests/test_claude_md_router.py
+@@ -65,3 +65,22 @@ class TestClaudeMdRouter:
+ 
+     def test_missing_file_no_crash(self, tmp_path):
+         assert check_claude_md_router(repo_root=tmp_path) == []
++
++    def test_rule_count_over_ceiling_flagged(self, tmp_path):
++        # Invariant 4 (2026-07-14 harness audit): shape gates alone let §1
++        # grow to 72 always-on rules while staying green. Count > 55 must
++        # flag with the consolidate-a-family remediation.
++        rules = "".join(
++            f"- **Rule {i}.** One-liner clause. → `KB § x.md`\n" for i in range(56)
++        )
++        self._write(tmp_path, "## 1 · Universal rules\n\n" + rules + "\n## 2 · Map\n")
++        issues = check_claude_md_router(repo_root=tmp_path)
++        assert any("56 rules (cap 55)" in i["issue"] for i in issues)
++        assert any("family" in i["issue"] for i in issues)
++
++    def test_rule_count_at_ceiling_passes(self, tmp_path):
++        rules = "".join(
++            f"- **Rule {i}.** One-liner clause. → `KB § x.md`\n" for i in range(55)
++        )
++        self._write(tmp_path, "## 1 · Universal rules\n\n" + rules + "\n## 2 · Map\n")
++        assert check_claude_md_router(repo_root=tmp_path) == []
+diff --git a/mcp/noctusai/tests/test_kb_sync.py b/mcp/noctusai/tests/test_kb_sync.py
+index b27f738f..d5d4a3f0 100644
+--- a/mcp/noctusai/tests/test_kb_sync.py
++++ b/mcp/noctusai/tests/test_kb_sync.py
+@@ -491,3 +491,32 @@ def test_methodology_gap_real_repo_zero_gaps():
+         f"real tree — these must be fixed before committing:\n"
+         + "\n".join(f"  {g}" for g in gaps)
+     )
++
++
++def test_methodology_gap_dangling_ref_in_command_file(tmp_path):
++    """(g) .claude/commands/*.md is a scanned surface (added 2026-07-14,
++    harness-audit-refit): a dangling `KB §` ref in a command file MUST be
++    returned as a gap. Regression pin for the codify.md incident — two broken
++    refs shipped silently because commands were the one 8-way-sync surface
++    the gate skipped."""
++    _mk_gap_tree(tmp_path)
++    commands = tmp_path / ".claude" / "commands"
++    commands.mkdir(parents=True, exist_ok=True)
++    (commands / "my-command.md").write_text(
++        "Stage 4 of `KB § PATTERNS/missing-pipeline.md`.\n"
++    )
++    gaps = methodology_reference_gaps(tmp_path)
++    assert any("missing-pipeline.md" in g for g in gaps), (
++        f"Expected a gap for missing-pipeline.md but got: {gaps}"
++    )
++
++
++def test_methodology_gap_resolvable_ref_in_command_file_passes(tmp_path):
++    """(h) A command-file ref that resolves under CONTEXT/ (the blessed
++    shorthand) must NOT be flagged."""
++    _mk_gap_tree(tmp_path)
++    commands = tmp_path / ".claude" / "commands"
++    commands.mkdir(parents=True, exist_ok=True)
++    (commands / "ok-command.md").write_text("See `KB § PATTERNS/real.md`.\n")
++    gaps = methodology_reference_gaps(tmp_path)
++    assert gaps == [], f"Expected no gaps but got: {gaps}"
+diff --git a/mcp/noctusai/tests/test_memory_md_index.py b/mcp/noctusai/tests/test_memory_md_index.py
+index ae3ca223..801815c6 100644
+--- a/mcp/noctusai/tests/test_memory_md_index.py
++++ b/mcp/noctusai/tests/test_memory_md_index.py
+@@ -43,24 +43,48 @@ class TestMemoryMdIndex:
+         assert check_memory_md_index(repo_root=repo_root, home=home) == []
+ 
+     def test_bloated_entry_flagged(self, tmp_path):
+-        bloated = "- [Title](file.md) — " + ("word " * 130) + "\n"
+-        assert len(bloated.rstrip("\n")) > 500
++        # 2026-07-14 recalibration: cap dropped 500 → 300 (target discipline
++        # is <200 chars; 300 blocks the multi-clause essays).
++        bloated = "- [Title](file.md) — " + ("word " * 70) + "\n"
++        assert len(bloated.rstrip("\n")) > 300
+         repo_root, home = self._setup(tmp_path, bloated)
+         issues = check_memory_md_index(repo_root=repo_root, home=home)
+         assert any("bloated" in i["issue"] and "file.md" in i["issue"] for i in issues)
+         assert all(i["severity"] == "high" for i in issues)
+ 
++    def test_entry_between_old_and_new_cap_flagged(self, tmp_path):
++        # Regression pin for the recalibration itself: a 350-char entry passed
++        # the old 500 cap but must fail the 300 cap.
++        entry = "- [Title](file.md) — " + ("x" * 340) + "\n"
++        assert 300 < len(entry.rstrip("\n")) < 500
++        repo_root, home = self._setup(tmp_path, entry)
++        issues = check_memory_md_index(repo_root=repo_root, home=home)
++        assert any("bloated" in i["issue"] for i in issues)
++
+     def test_malformed_entry_flagged(self, tmp_path):
+         repo_root, home = self._setup(tmp_path, "- [Bad entry without link\n")
+         issues = check_memory_md_index(repo_root=repo_root, home=home)
+         assert any("malformed" in i["issue"] for i in issues)
+ 
+     def test_total_budget_flagged(self, tmp_path):
+-        big = "# M\n" + "\n".join(f"- [t{i}](f{i}.md) — short" for i in range(3500)) + "\n"
+-        assert len(big.encode("utf-8")) > 60 * 1024
++        # 2026-07-14 recalibration: cap dropped 60 → 40 KB. The harness
++        # TRUNCATES MEMORY.md on load at ~50 KB — at 56 KB the bottom ~55% of
++        # the index was silently invisible while the old 60 KB cap stayed
++        # green. The budget must sit BELOW the silent-failure threshold.
++        big = "# M\n" + "\n".join(f"- [t{i}](f{i}.md) — short" for i in range(2200)) + "\n"
++        assert len(big.encode("utf-8")) > 40 * 1024
+         repo_root, home = self._setup(tmp_path, big)
+         issues = check_memory_md_index(repo_root=repo_root, home=home)
+-        assert any("cap 60 KB" in i["issue"] for i in issues)
++        assert any("cap 40 KB" in i["issue"] for i in issues)
++
++    def test_file_between_old_and_new_budget_flagged(self, tmp_path):
++        # Regression pin: a ~45 KB file passed the old 60 KB cap but sits in
++        # the harness-truncation danger zone — must fail the 40 KB cap.
++        mid = "# M\n" + "\n".join(f"- [t{i}](f{i}.md) — short" for i in range(1900)) + "\n"
++        assert 40 * 1024 < len(mid.encode("utf-8")) < 60 * 1024
++        repo_root, home = self._setup(tmp_path, mid)
++        issues = check_memory_md_index(repo_root=repo_root, home=home)
++        assert any("cap 40 KB" in i["issue"] for i in issues)
+ 
+     def test_non_entry_lines_ignored(self, tmp_path):
+         # Section headers, blanks, blockquotes, narrative prose: not entry lines.
+diff --git a/mcp/noctusai/tools/kb_sync.py b/mcp/noctusai/tools/kb_sync.py
+index 48f1d6b0..48a65661 100644
+--- a/mcp/noctusai/tools/kb_sync.py
++++ b/mcp/noctusai/tools/kb_sync.py
+@@ -298,7 +298,8 @@ def verify_kb_sync() -> KBSyncResult:
+     # advisory only (forward-refs allowed per CLAUDE.md). Reports any
+     # ref whose target does not resolve in the KB index.
+     out.write("Checking methodology surfaces for broken KB doc refs "
+-              "(KB § shorthand + literal + .claude/agents + KB→KB)...\n")
++              "(KB § shorthand + literal + .claude/{agents,skills,commands} "
++              "+ KB→KB)...\n")
+     for gap in methodology_reference_gaps(root):
+         err.write(
+             f"  ✗ BROKEN: {gap} (methodology surface references a KB "
+@@ -381,6 +382,8 @@ def methodology_reference_gaps(root: Path) -> list[str]:
+       * ``CLAUDE.md``
+       * ``CLAUDE/**/*.md``
+       * ``.claude/agents/*.md``
++      * ``.claude/skills/*/SKILL.md``
++      * ``.claude/commands/*.md``
+       * every ``KNOWLEDGE-BASE/**/*.md``
+ 
+     Memory files are deliberately excluded — they live outside the repo
+@@ -468,6 +471,14 @@ def methodology_reference_gaps(root: Path) -> list[str]:
+         for p in sorted(skills_dir.glob("*/SKILL.md")):
+             if p.is_file():
+                 surfaces.append(p)
++    # .claude/commands/*.md  (added 2026-07-14, harness-audit-refit: commands
++    # are a first-class 8-way-sync surface but were the ONE surface the gate
++    # skipped — codify.md shipped two broken KB § refs silently for weeks.)
++    commands_dir = root / ".claude" / "commands"
++    if commands_dir.is_dir():
++        for p in sorted(commands_dir.glob("*.md")):
++            if p.is_file():
++                surfaces.append(p)
+     # KNOWLEDGE-BASE/**/*.md
+     for p in kb_dir.rglob("*.md"):
+         if p.is_file() and not any(
+diff --git a/mcp/noctusai/tools/noctus/dev/compliance.py b/mcp/noctusai/tools/noctus/dev/compliance.py
+index d4d86a6b..b53e6134 100644
+--- a/mcp/noctusai/tools/noctus/dev/compliance.py
++++ b/mcp/noctusai/tools/noctus/dev/compliance.py
+@@ -8613,6 +8613,13 @@ def check_all_products() -> tuple[int, list]:
+ # v3.0 form is gated. Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
+ _CLAUDE_MD_MAX_WORDS = 2500           # whole-file budget (synthesis is ~1.4k; cap blocks re-bloat)
+ _CLAUDE_MD_MAX_RULE_WORDS = 60        # a §1 bullet beyond this is an inlined body
++# Rule-COUNT ceiling (2026-07-14 harness audit): the shape gates above bound
++# each rule but not their NUMBER — §1 grew monotonically to 72 always-on
++# rules while the keeper stayed green (green-gate-on-shape ≠ bounded
++# accumulation). Hard cap 55; /gc consolidation target is 50 (family lines →
++# KB § PATTERNS/common/methodology-gc.md). Tripping this cap is the forcing
++# function for a family consolidation, not an invitation to trim words.
++_CLAUDE_MD_MAX_S1_RULES = 55
+ _CLAUDE_MD_SECTION1_RE = re.compile(r"^##\s+1\s*[·.]")   # "## 1 · Universal rules"
+ _CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …" header
+ 
+@@ -8620,12 +8627,15 @@ _CLAUDE_MD_NEXT_SECTION_RE = re.compile(r"^##\s+\d")      # the next "## N …"
+ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+     """CLAUDE.md is the always-on router — keep it pointer-only.
+ 
+-    Gates three deterministic invariants of the harness-agents-skills pattern:
++    Gates four deterministic invariants of the harness-agents-skills pattern:
+       1. whole-file word budget (<= _CLAUDE_MD_MAX_WORDS),
+       2. every §1 rule bullet is ONE line, carries a `→` pointer, and is
+          <= _CLAUDE_MD_MAX_RULE_WORDS words,
+       3. §1 contains NO prose body lines (only `- ` rule bullets + the section
+-         header + blanks / `---` / `>`); an inlined body is the re-bloat tell.
++         header + blanks / `---` / `>`); an inlined body is the re-bloat tell,
++      4. §1 rule COUNT <= _CLAUDE_MD_MAX_S1_RULES — shape gates alone let the
++         count grow to 72 (2026-07-14 audit); over-cap = consolidate a family
++         (KB § PATTERNS/common/methodology-gc.md), don't trim words.
+ 
+     Stage-4 codification of the v4.0 router refactor (2026-05-25).
+     Depth: `KB § PATTERNS/common/claude-md-router-discipline.md`.
+@@ -8655,6 +8665,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+         })
+ 
+     in_section1 = False
++    s1_rule_count = 0
+     for line_no, raw in enumerate(text.splitlines(), start=1):
+         if _CLAUDE_MD_SECTION1_RE.match(raw):
+             in_section1 = True
+@@ -8667,6 +8678,7 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+         if not stripped or stripped == "---" or stripped.startswith(">"):
+             continue
+         if stripped.startswith("- "):
++            s1_rule_count += 1
+             words = len(stripped.split())
+             if "→" not in stripped:
+                 issues.append({
+@@ -8697,6 +8709,18 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+                 ),
+                 "severity": "high",
+             })
++    if s1_rule_count > _CLAUDE_MD_MAX_S1_RULES:
++        issues.append({
++            "product": "<docs>",
++            "file": "CLAUDE.md",
++            "issue": (
++                f"CLAUDE.md §1 has {s1_rule_count} rules (cap "
++                f"{_CLAUDE_MD_MAX_S1_RULES}) — always-on rule count is a budget; "
++                f"consolidate a rule FAMILY into one line + a family-index KB doc "
++                f"(KB § PATTERNS/common/methodology-gc.md), don't trim words."
++            ),
++            "severity": "high",
++        })
+     return issues
+ 
+ 
+@@ -8712,8 +8736,15 @@ def check_claude_md_router(repo_root: Path | None = None) -> list[dict]:
+ # edits). It gates at `validate` + the `--check-memory-md-index` CLI flag, and
+ # is silently skipped if the per-project memory dir isn't configured (other
+ # developers / forks). Optional true-auto-gate = a Claude Code Stop hook.
+-_MEMORY_MD_MAX_KB = 60                    # whole-file budget (live ~47 KB; cap blocks regression toward 88 KB)
+-_MEMORY_MD_MAX_ENTRY_CHARS = 500          # per-entry-line cap (worst pre-trim: 2,042 chars)
++# Budget recalibration (2026-07-14 harness audit): the harness TRUNCATES
++# MEMORY.md on load at ~50 KB — at 56 KB the bottom ~55% of the index
++# (including `Active Project Decisions`) was silently invisible every
++# session while the keeper stayed green, because the old 60 KB cap was
++# calibrated against the historical 88 KB incident, not the actual load
++# boundary. A budget must sit BELOW the platform's silent-failure
++# threshold, with headroom for growth between GC passes (/gc).
++_MEMORY_MD_MAX_KB = 40                    # whole-file budget (harness truncates ~50 KB; headroom for ~1 entry/day between monthly /gc passes)
++_MEMORY_MD_MAX_ENTRY_CHARS = 300          # per-entry-line cap (target discipline is <200; 300 blocks the multi-clause essays)
+ 
+ 
+ def _memory_md_path(repo_root: Path, home: Path | None = None) -> Path:
+@@ -8832,6 +8863,13 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
+     "CONTEXT/PATTERNS/common/absorption-ships-consume-docs.md",
+     "CONTEXT/PATTERNS/common/storage-hygiene.md",
+     "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
++    # §1 family-index docs + GC pattern (2026-07-14 harness audit): CLAUDE.md
++    # family lines route EVERY agent here — universal commons by construction.
++    "CONTEXT/PATTERNS/common/methodology-gc.md",
++    "CONTEXT/PATTERNS/common/cache-family-index.md",
++    "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",
++    "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",
++    "CONTEXT/PATTERNS/architect/orchestration-family-index.md",
+     "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
+     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
+     "CONTEXT/PATTERNS/common/funnel-self-satisfies-preconditions.md",  # universal commons: a shared funnel/factory/adapter must self-satisfy its config/env preconditions (never "caller MUST call setup()"), applies to every lens that authors a single-entry helper
+-- 
+2.51.2
+

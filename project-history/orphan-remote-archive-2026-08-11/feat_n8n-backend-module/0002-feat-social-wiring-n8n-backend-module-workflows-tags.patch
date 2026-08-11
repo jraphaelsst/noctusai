@@ -1,0 +1,2820 @@
+From edeea5dd472a873e9543c43a62937f64ec57004f Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Thu, 16 Jul 2026 20:23:42 -0300
+Subject: [PATCH 2/2] =?UTF-8?q?feat(social-wiring):=20n8n=20backend=20modu?=
+ =?UTF-8?q?le=20=E2=80=94=20workflows/tags/settings/folders?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds app/modules/n8n/ (S3 of the n8n-workflows-page project): routers +
+services + schemas mirroring the youtube module's shape (bare typed
+responses, concrete response_model, Depends(get_current_user_org)).
+Consumes the seed n8n adapter (feat/n8n-seed-adapter, this branch's
+base) via a DI-seam client factory — never re-rolls HTTP, never lets
+an incomplete credential silently degrade into FakeN8nClient data.
+
+- workflows: list (client/unassigned scope) + assign/unassign
+  (tag-preserving) + patch (rename/activate/folder-move) + delete +
+  run (409 pre-check, zero side effects when blocked) + executions +
+  tags.
+- settings: GET derives status from the decrypted credential (never
+  trusts the stored status column); PUT merges partial credential
+  updates, resolves tag_id via a live lookup, and actively pings.
+- folders: CRUD over the documented (not-yet-merged) n8n_folders /
+  n8n_workflow_placement shape — cycle-guard (422), sibling-name
+  conflict (409), delete-with-reassignment (absent reassign_to ⇒ root,
+  per the FE's binding contract clarification).
+
+app/main.py is untouched — a peer branch is live there; the tech-lead
+wires MODULES at integration. 55 new tests, all green, run against the
+worktree's own seed copy (verified via purge_shadowing_editable_finders
++ the running app's logged seed_version=runtime:fe52c096).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md        |   4 +-
+ .../backend/app/modules/n8n/__init__.py       |  58 +++
+ .../app/modules/n8n/routers/__init__.py       |   0
+ .../app/modules/n8n/routers/folders.py        | 158 ++++++
+ .../app/modules/n8n/routers/settings.py       | 169 +++++++
+ .../app/modules/n8n/routers/workflows.py      | 464 ++++++++++++++++++
+ .../app/modules/n8n/schemas/__init__.py       |   0
+ .../backend/app/modules/n8n/schemas/common.py |  40 ++
+ .../app/modules/n8n/schemas/folders.py        |  44 ++
+ .../app/modules/n8n/schemas/settings.py       |  50 ++
+ .../app/modules/n8n/schemas/workflows.py      | 115 +++++
+ .../app/modules/n8n/services/__init__.py      |   0
+ .../modules/n8n/services/account_resolver.py  | 234 +++++++++
+ .../modules/n8n/services/folders_service.py   | 338 +++++++++++++
+ .../backend/tests/modules/n8n/__init__.py     |   0
+ .../backend/tests/modules/n8n/conftest.py     | 251 ++++++++++
+ .../tests/modules/n8n/test_folders_router.py  | 208 ++++++++
+ .../tests/modules/n8n/test_settings_router.py | 140 ++++++
+ .../modules/n8n/test_workflows_router.py      | 361 ++++++++++++++
+ 19 files changed, 2632 insertions(+), 2 deletions(-)
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/__init__.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/routers/__init__.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/routers/folders.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/routers/settings.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/routers/workflows.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/schemas/__init__.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/schemas/common.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/schemas/folders.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/schemas/settings.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/schemas/workflows.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/services/__init__.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/services/account_resolver.py
+ create mode 100644 products/social-wiring/backend/app/modules/n8n/services/folders_service.py
+ create mode 100644 products/social-wiring/backend/tests/modules/n8n/__init__.py
+ create mode 100644 products/social-wiring/backend/tests/modules/n8n/conftest.py
+ create mode 100644 products/social-wiring/backend/tests/modules/n8n/test_folders_router.py
+ create mode 100644 products/social-wiring/backend/tests/modules/n8n/test_settings_router.py
+ create mode 100644 products/social-wiring/backend/tests/modules/n8n/test_workflows_router.py
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+index f6e2a2aa..976c28ba 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+@@ -41,10 +41,10 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
+ | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
+ | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
+-| Social Wiring | 17 | 24 | 53 | 28 | 77 | 989 |
++| Social Wiring | 17 | 24 | 53 | 28 | 80 | 1,044 |
+ | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
+ | Orbity | 11 | 12 | 20 | 20 | 33 | 658 |
+-| **Total** | **193** | **201** | **318** | **182** | **489** | **6,248** |
++| **Total** | **193** | **201** | **318** | **182** | **492** | **6,303** |
+ <!-- kb-counts:end:inventory -->
+ 
+ ## Database
+diff --git a/products/social-wiring/backend/app/modules/n8n/__init__.py b/products/social-wiring/backend/app/modules/n8n/__init__.py
+new file mode 100644
+index 00000000..fa5f1a1f
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/__init__.py
+@@ -0,0 +1,58 @@
++"""``n8n`` — social-wiring product module (n8n-workflows-page S3).
++
++Consumes the seed n8n adapter (``noctusai_lib.integrations.n8n`` —
++Protocol + Fake + Real + factory, shipped by the sibling
++``feat/n8n-seed-adapter`` slice this branch is stacked on) to expose
++the per-client workflow-management surface: list/assign/rename/toggle/
++delete/run workflows, tags, executions, folder tree, and the
++Settings-tab credential + client-tag configuration.
++
++Seam contract
++─────────────
++``app/main.py`` iterates ``MODULES`` — a list of zero-arg callables,
++each returning a ``ModuleRegistration``. This module exposes
++:func:`register`. Wiring it into the app is a single ``MODULES``
++append in ``main.py`` at integration time (deliberately NOT done by
++this slice — a peer branch is live in ``app/main.py`` concurrently;
++the tech-lead registers this module when merging both).
++
++What ``register()`` does
++────────────────────────
++Returns this module's three routers (workflows+tags, settings,
++folders) — all mounted under the ``/api/n8n`` prefix. No extra
++``standard_routers`` beyond the product's base set.
++
++Routes
++──────
++    GET/POST/PATCH/DELETE  /api/n8n/workflows*     (routers/workflows.py)
++    GET/POST               /api/n8n/tags           (routers/workflows.py)
++    GET/PUT                /api/n8n/settings       (routers/settings.py)
++    GET/POST/PATCH/DELETE  /api/n8n/folders*       (routers/folders.py)
++"""
++from __future__ import annotations
++
++from typing import Any
++
++
++def register() -> Any:
++    """Return this module's :class:`~app.main.ModuleRegistration`.
++
++    Imported and invoked by the ``main.py`` assembly loop. ``app.main``
++    is already imported by the time the loop runs, so importing
++    ``ModuleRegistration`` here is not circular (same pattern as
++    ``app.modules.youtube.register``).
++    """
++    from app.main import ModuleRegistration
++    from app.modules.n8n.routers import folders, settings, workflows
++
++    return ModuleRegistration(
++        routers=[
++            workflows.router,
++            settings.router,
++            folders.router,
++        ],
++        standard_routers=(),
++    )
++
++
++__all__ = ["register"]
+diff --git a/products/social-wiring/backend/app/modules/n8n/routers/__init__.py b/products/social-wiring/backend/app/modules/n8n/routers/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/products/social-wiring/backend/app/modules/n8n/routers/folders.py b/products/social-wiring/backend/app/modules/n8n/routers/folders.py
+new file mode 100644
+index 00000000..a8eb616e
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/routers/folders.py
+@@ -0,0 +1,158 @@
++"""n8n folder-tree HTTP surface.
++
++Endpoints:
++    GET    /api/n8n/folders                    list an account's folder tree (flat; FE nests client-side)
++    POST   /api/n8n/folders                     create
++    PATCH  /api/n8n/folders/{folder_id}         rename / reparent / reorder
++    DELETE /api/n8n/folders/{folder_id}         delete (reassigning children + placed workflows)
++
++GET/POST carry ``account_id`` (which account's tree). PATCH/DELETE
++target an existing row uniquely identified by ``folder_id`` and derive
++org ownership FROM THE ROW ITSELF — the contract's body shape for
++those two methods carries no ``account_id`` (can't be spoofed to a
++different account this way either).
++
++``DELETE .../folders/{id}?reassign_to=<uuid>`` — the FE (S4, already
++shipped) OMITS the query param entirely to mean "reassign to root"
++(a literal ``"null"`` string would 422 against ``Optional[UUID]``
++parsing); this is now the binding encoding both sides share.
++"""
++from __future__ import annotations
++
++from typing import Optional
++from uuid import UUID
++
++from fastapi import APIRouter, Depends, HTTPException, Query, status
++
++from app.dependencies import coerce_org_uuid, get_current_user_org
++from app.modules.n8n.schemas.common import N8nFolderOut
++from app.modules.n8n.schemas.folders import N8nFolderCreateIn, N8nFolderUpdateIn
++from app.modules.n8n.services.account_resolver import (
++    get_account_service,
++    get_admin_client_dep,
++    resolve_n8n_account,
++)
++from app.modules.n8n.services.folders_service import (
++    UNSET,
++    FolderCycleError,
++    FolderNameConflict,
++    FolderNotFound,
++    FoldersService,
++    get_folders_service,
++)
++from app.services.integration_account_service import IntegrationAccountService
++
++router = APIRouter(prefix="/api/n8n", tags=["n8n"])
++
++
++def _out(row) -> N8nFolderOut:
++    return N8nFolderOut(id=row.id, name=row.name, parent_id=row.parent_id, position=row.position)
++
++
++def _require_owned_folder(folders_svc: FoldersService, folder_id: UUID, org_id: UUID):
++    """404 unknown folder, 403 belongs to a different org — mirrors
++    ``resolve_n8n_account``'s split, derived from the folder row's own
++    ``org_id`` column rather than a caller-supplied ``account_id``."""
++    row = folders_svc.get(folder_id)
++    if row is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="folder not found")
++    if row.org_id != org_id:
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            detail="folder does not belong to your organization",
++        )
++    return row
++
++
++@router.get("/folders", response_model=list[N8nFolderOut])
++def list_folders(
++    account_id: UUID = Query(...),
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++) -> list[N8nFolderOut]:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, account_id, org_id)
++    return [_out(f) for f in folders_svc.list_for_account(account_id, org_id)]
++
++
++@router.post("/folders", response_model=N8nFolderOut, status_code=status.HTTP_201_CREATED)
++def create_folder(
++    body: N8nFolderCreateIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++) -> N8nFolderOut:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, body.account_id, org_id)
++    try:
++        row = folders_svc.create(
++            org_id=org_id,
++            account_id=body.account_id,
++            name=body.name,
++            parent_id=body.parent_id,
++        )
++    except FolderNotFound as exc:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
++    except FolderNameConflict as exc:
++        # GUESS: 409 for a UNIQUE(account_id, parent_id, name) violation —
++        # the contract's status table doesn't name a "folder name conflict"
++        # class explicitly; 409 is the closest fit among the allowed codes
++        # (a state-conflict, same family as "run blocked").
++        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
++    return _out(row)
++
++
++@router.patch("/folders/{folder_id}", response_model=N8nFolderOut)
++def update_folder(
++    folder_id: UUID,
++    body: N8nFolderUpdateIn,
++    auth: tuple = Depends(get_current_user_org),
++    folders_svc: FoldersService = Depends(get_folders_service),
++) -> N8nFolderOut:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    _require_owned_folder(folders_svc, folder_id, org_id)
++
++    parent_arg: object = UNSET
++    if "parent_id" in body.model_fields_set:
++        parent_arg = body.parent_id
++
++    try:
++        row = folders_svc.update(
++            folder_id, name=body.name, parent_id=parent_arg, position=body.position
++        )
++    except FolderNotFound as exc:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
++    except FolderCycleError as exc:
++        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
++    except FolderNameConflict as exc:
++        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
++    return _out(row)
++
++
++@router.delete("/folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
++def delete_folder(
++    folder_id: UUID,
++    reassign_to: Optional[UUID] = Query(default=None),
++    auth: tuple = Depends(get_current_user_org),
++    folders_svc: FoldersService = Depends(get_folders_service),
++) -> None:
++    """``reassign_to`` absent ⇒ children folders + placed workflows
++    move to root (the binding FE encoding — see module docstring)."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    _require_owned_folder(folders_svc, folder_id, org_id)
++    try:
++        folders_svc.delete(folder_id, reassign_to=reassign_to)
++    except FolderNotFound as exc:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
++    except FolderCycleError as exc:
++        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
++
++
++__all__ = ["router"]
+diff --git a/products/social-wiring/backend/app/modules/n8n/routers/settings.py b/products/social-wiring/backend/app/modules/n8n/routers/settings.py
+new file mode 100644
+index 00000000..06500be1
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/routers/settings.py
+@@ -0,0 +1,169 @@
++"""n8n Settings tab — GET/PUT /api/n8n/settings.
++
++GET DERIVES the incomplete state: if the decrypted credential has no
++``base_url``, ``status='error'`` is reported regardless of what the
++stored ``status`` column says. Pre-reshape rows say ``'validated'``
++and are lying — there is deliberately no backfill script, because
++credentials are Fernet BYTEA and invisible to SQL. This derivation
++self-heals the moment the operator reconnects via PUT.
++
++Auth pattern: ``Depends(get_current_user_org)`` per
++``KB § PATTERNS/backend.md § Auth — canonical pattern``.
++"""
++from __future__ import annotations
++
++import asyncio
++from datetime import datetime, timezone
++from uuid import UUID
++
++from fastapi import APIRouter, Depends, HTTPException, Query, status
++from noctusai_lib.integrations.n8n import N8nError
++
++from app.dependencies import coerce_org_uuid, get_current_user_org
++from app.modules.n8n.schemas.common import N8nTagOut
++from app.modules.n8n.schemas.settings import N8nSettingsOut, N8nSettingsUpdateIn
++from app.modules.n8n.services.account_resolver import (
++    client_tag_out,
++    decrypt_or_503,
++    get_account_service,
++    get_admin_client_dep,
++    get_n8n_client_factory,
++    resolve_n8n_account,
++)
++from app.services.integration_account_service import IntegrationAccountService
++
++router = APIRouter(prefix="/api/n8n", tags=["n8n"])
++
++
++@router.get("/settings", response_model=N8nSettingsOut)
++def get_settings_route(
++    account_id: UUID = Query(...),
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++) -> N8nSettingsOut:
++    """Never triggers an n8n API call by itself — same "don't spend
++    quota / round-trips on a page load" rule
++    ``youtube/routers/settings.py``'s ``get_youtube_status`` follows.
++    ``reachable`` is always ``None`` here; PUT actively pings."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    account = resolve_n8n_account(svc, admin, account_id, org_id)
++    credential = decrypt_or_503(svc, account_id, org_id)
++
++    base_url = (credential or {}).get("base_url") or None
++    api_key = (credential or {}).get("api_key") or None
++    tag = client_tag_out(account)
++    derived_status = "error" if not base_url else (account.status or "validated")
++
++    return N8nSettingsOut(
++        account_id=account.id,
++        base_url=base_url,
++        has_api_key=bool(api_key),
++        tag=N8nTagOut(**tag) if tag else None,
++        status=derived_status,
++        reachable=None,
++    )
++
++
++@router.put("/settings", response_model=N8nSettingsOut)
++def put_settings_route(
++    body: N8nSettingsUpdateIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nSettingsOut:
++    """Partial update: only the supplied fields are written. The
++    resulting ``base_url``/``api_key`` pair is used to actively PING
++    n8n (unlike GET) so the operator gets immediate feedback on a
++    just-entered credential — GUESS: a ping failure does NOT fail the
++    request (the credential is still saved; ``reachable=False`` +
++    ``status='error'`` report the degraded state instead of a 502).
++    The contract doesn't say whether a PUT-time ping failure should
++    502 the whole request or just report degraded state; this slice
++    chose "always save, report reachability honestly" since blocking
++    the save on a transient n8n blip would be a worse UX than the
++    save-then-report-broken alternative. Flagged since the FE can't
++    see this choice either way.
++
++    ``tag_id`` is resolved to ``{id, name}`` via a live ``list_tags()``
++    call — GUESS: the contract only carries ``tag_id`` (no name), and
++    both the settings-derivation rule and ``N8nTagOut`` need a name,
++    so this slice looks it up rather than persisting a bare id.
++    Requires complete credentials (424 if ``tag_id`` is supplied
++    without them — nothing to resolve it against); 404 if the id
++    doesn't match any tag on the instance.
++    """
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    account = resolve_n8n_account(svc, admin, body.account_id, org_id)
++    current_credential = decrypt_or_503(svc, body.account_id, org_id)
++
++    merged = dict(current_credential or {})
++    if body.base_url is not None:
++        merged["base_url"] = body.base_url.strip()
++    if body.api_key is not None:
++        merged["api_key"] = body.api_key
++
++    base_url = merged.get("base_url") or None
++    api_key = merged.get("api_key") or None
++
++    resolved_tag = client_tag_out(account)
++    if body.tag_id is not None:
++        if not base_url or not api_key:
++            raise HTTPException(
++                status.HTTP_424_FAILED_DEPENDENCY,
++                detail="cannot resolve tag_id without a complete base_url + api_key.",
++            )
++        client = client_factory(base_url=base_url, api_key=api_key)
++        try:
++            tags = asyncio.run(client.list_tags())
++        except N8nError as exc:
++            raise HTTPException(
++                status.HTTP_502_BAD_GATEWAY, detail=f"n8n error: {exc}"
++            ) from exc
++        match = next((t for t in tags if t.id == body.tag_id), None)
++        if match is None:
++            raise HTTPException(
++                status.HTTP_404_NOT_FOUND,
++                detail=f"tag {body.tag_id!r} not found on this n8n instance",
++            )
++        resolved_tag = {"id": match.id, "name": match.name}
++
++    reachable: bool | None = None
++    if base_url and api_key:
++        client = client_factory(base_url=base_url, api_key=api_key)
++        try:
++            reachable = asyncio.run(client.ping())
++        except N8nError:
++            reachable = False
++
++    if body.base_url is not None or body.api_key is not None:
++        svc.update_credential(
++            account_id=body.account_id, org_id=org_id, credential_dict=merged
++        )
++
++    derived_status = "validated" if (base_url and api_key and reachable) else "error"
++    channel_info = dict(account.channel_info or {})
++    if resolved_tag is not None:
++        channel_info["tag"] = resolved_tag
++    updated_account = svc.update_channel_info(
++        account_id=body.account_id,
++        org_id=org_id,
++        channel_info=channel_info,
++        status=derived_status,
++        last_synced_at=datetime.now(timezone.utc),
++    )
++
++    return N8nSettingsOut(
++        account_id=updated_account.id,
++        base_url=base_url,
++        has_api_key=bool(api_key),
++        tag=N8nTagOut(**resolved_tag) if resolved_tag else None,
++        status="error" if not base_url else derived_status,
++        reachable=reachable,
++    )
++
++
++__all__ = ["router"]
+diff --git a/products/social-wiring/backend/app/modules/n8n/routers/workflows.py b/products/social-wiring/backend/app/modules/n8n/routers/workflows.py
+new file mode 100644
+index 00000000..a52abb51
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/routers/workflows.py
+@@ -0,0 +1,464 @@
++"""n8n workflows + tags + executions HTTP surface.
++
++Endpoints:
++    GET    /api/n8n/workflows                      list (scoped by client tag / unassigned)
++    POST   /api/n8n/workflows/{id}/assign           add the account's client tag
++    DELETE /api/n8n/workflows/{id}/assign           remove it (+ clear placement)
++    PATCH  /api/n8n/workflows/{id}                  rename / activate-deactivate / move folder
++    DELETE /api/n8n/workflows/{id}                  delete (+ clear placement)
++    POST   /api/n8n/workflows/{id}/run              webhook dispatch (409 if not can_run — zero side effects)
++    GET    /api/n8n/workflows/{id}/executions       list
++    GET    /api/n8n/tags                            list
++    POST   /api/n8n/tags                            create
++
++``account_id`` = ``integration_accounts.id`` (provider='n8n'). No
++accounts endpoint here — the FE reads the existing
++``/api/integrations/accounts``.
++
++Status codes (uniform across the whole n8n module):
++    401 unauthenticated · 403 account outside caller's org ·
++    404 unknown account/workflow/tag · 409 run blocked ·
++    424 our credential is missing/incomplete ·
++    502 n8n unreachable/auth-failed upstream.
++
++Auth pattern: ``Depends(get_current_user_org)`` per
++``KB § PATTERNS/backend.md § Auth — canonical pattern`` (see
++``app/modules/youtube/routers/settings.py:16-19`` for why this dep is
++canonical over ``Depends(get_user_client)``).
++
++Routes are sync ``def`` (house convention — every router in this
++product is sync; FastAPI dispatches sync handlers to a threadpool so
++the ``IntegrationAccountService`` blocking-I/O calls don't stall the
++event loop). The seed n8n adapter's ``N8nClient`` Protocol is
++``async``-only, so each route bridges via a single local ``async def``
++helper + ONE ``asyncio.run(...)`` call — never several sequential
++``asyncio.run`` calls per route (wasteful event-loop spin-up), and
++matches the ``asyncio.run(provider.authorization_url(...))`` bridging
++``integration_accounts_router.py`` already uses for the seed's async
++OAuth provider.
++"""
++from __future__ import annotations
++
++import asyncio
++from typing import Literal, Optional
++from uuid import UUID
++
++from fastapi import APIRouter, Depends, HTTPException, Query, status
++from noctusai_lib.integrations.n8n import N8nError, instance_root, raw_to_workflow
++
++from app.dependencies import coerce_org_uuid, get_current_user_org
++from app.modules.n8n.schemas.common import N8nFolderOut, N8nTagOut
++from app.modules.n8n.schemas.workflows import (
++    N8nAccountIdIn,
++    N8nExecutionListResponse,
++    N8nExecutionOut,
++    N8nRunResult,
++    N8nTagCreateIn,
++    N8nWorkflowListResponse,
++    N8nWorkflowOut,
++    N8nWorkflowPatchIn,
++)
++from app.modules.n8n.services.account_resolver import (
++    build_n8n_client,
++    client_tag_out,
++    decrypt_or_503,
++    get_account_service,
++    get_admin_client_dep,
++    get_n8n_client_factory,
++    resolve_n8n_account,
++    translate_n8n_error,
++)
++from app.modules.n8n.services.folders_service import FoldersService, get_folders_service
++from app.services.integration_account_service import IntegrationAccountService
++
++router = APIRouter(prefix="/api/n8n", tags=["n8n"])
++
++
++def _not_runnable_reason(workflow) -> str:
++    """Mirror the seed adapter's private ``HttpxN8nClient.
++    _not_runnable_reason`` (not exported — ``n8n_adapter.py``'s
++    ``__all__`` is ``["HttpxN8nClient"]`` only). Small, deliberate
++    duplication of 4 lines rather than reaching into a private
++    symbol."""
++    if not workflow.has_webhook_node:
++        return "workflow has no webhook trigger node"
++    if not workflow.active:
++        return "workflow is inactive (a webhook only fires while active)"
++    if workflow.archived:
++        return "workflow is archived"
++    return "workflow is not runnable"  # unreachable in practice — can_run implies one of the above
++
++
++def _to_out(workflow, *, base_url: str, folder_id: Optional[UUID]) -> N8nWorkflowOut:
++    return N8nWorkflowOut(
++        id=workflow.id,
++        name=workflow.name,
++        active=workflow.active,
++        archived=workflow.archived,
++        tags=[N8nTagOut(id=t.id, name=t.name) for t in workflow.tags],
++        folder_id=folder_id,
++        can_run=workflow.can_run,
++        run_blocked_reason=None if workflow.can_run else _not_runnable_reason(workflow),
++        open_url=f"{instance_root(base_url)}/workflow/{workflow.id}",
++        updated_at=workflow.updated_at,
++    )
++
++
++# ─── GET /api/n8n/workflows ─────────────────────────────────────────────
++@router.get("/workflows", response_model=N8nWorkflowListResponse)
++def list_workflows(
++    account_id: UUID = Query(...),
++    scope: Literal["client", "unassigned"] = Query(...),
++    include_archived: bool = Query(default=False),
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nWorkflowListResponse:
++    """``scope='client'`` → workflows carrying the account's configured
++    tag. ``scope='unassigned'`` → workflows carrying NO tags at all
++    (GUESS: "no client tag" is read as "no tags whatsoever" — this
++    consumer is the only writer of n8n tags on the instance, per the
++    seed adapter's docstring on why a tag is "the only viable
++    multi-tenant scoping key"; flagged since it's load-bearing and the
++    FE cannot see this reading). ``scope='client'`` with NO tag
++    configured yet returns an empty list, not an error — a freshly
++    connected client legitimately has zero assigned workflows.
++    """
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    account = resolve_n8n_account(svc, admin, account_id, org_id)
++    credential = decrypt_or_503(svc, account_id, org_id)
++    client, base_url, _api_key = build_n8n_client(client_factory, credential)
++    tag = client_tag_out(account)
++
++    async def _fetch():
++        return await client.list_workflows(include_archived=include_archived)
++
++    try:
++        workflows = asyncio.run(_fetch())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    if scope == "client":
++        workflows = (
++            [w for w in workflows if any(t.id == tag["id"] for t in w.tags)]
++            if tag is not None
++            else []
++        )
++    else:
++        workflows = [w for w in workflows if not w.tags]
++
++    placements = folders_svc.get_placements(account_id)
++    folders = folders_svc.list_for_account(account_id, org_id)
++
++    return N8nWorkflowListResponse(
++        workflows=[
++            _to_out(w, base_url=base_url, folder_id=placements.get(w.id))
++            for w in workflows
++        ],
++        folders=[
++            N8nFolderOut(id=f.id, name=f.name, parent_id=f.parent_id, position=f.position)
++            for f in folders
++        ],
++    )
++
++
++# ─── assign / unassign ──────────────────────────────────────────────────
++@router.post("/workflows/{workflow_id}/assign", response_model=N8nWorkflowOut)
++def assign_workflow(
++    workflow_id: str,
++    body: N8nAccountIdIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nWorkflowOut:
++    """Add the account's client tag to the workflow's tag set,
++    PRESERVING every other tag already on the workflow. 424 if the
++    account has no client tag configured yet — GUESS: widening 424
++    (normally "credential incomplete") to also cover "no client tag
++    configured" since both are "the connect card is incomplete, fix it
++    via Settings" states; flagged since the contract's literal 424
++    definition only mentions the credential.
++    """
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    account = resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    tag = client_tag_out(account)
++    if tag is None:
++        raise HTTPException(
++            status.HTTP_424_FAILED_DEPENDENCY,
++            detail=(
++                "no client tag configured for this account. Configure one "
++                "via PUT /api/n8n/settings first."
++            ),
++        )
++
++    async def _assign():
++        raw = await client.get_workflow(workflow_id)
++        current = raw_to_workflow(raw)
++        tag_ids = sorted({t.id for t in current.tags} | {tag["id"]})
++        await client.set_workflow_tags(workflow_id, tag_ids)
++        raw2 = await client.get_workflow(workflow_id)
++        return raw_to_workflow(raw2)
++
++    try:
++        workflow = asyncio.run(_assign())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    placements = folders_svc.get_placements(body.account_id)
++    return _to_out(workflow, base_url=base_url, folder_id=placements.get(workflow_id))
++
++
++@router.delete("/workflows/{workflow_id}/assign", response_model=N8nWorkflowOut)
++def unassign_workflow(
++    workflow_id: str,
++    body: N8nAccountIdIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nWorkflowOut:
++    """Remove the account's client tag, preserving every other tag.
++    ALSO clears the placement row (the workflow leaves the client's
++    folder tree) — per the contract."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    account = resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, base_url, _api_key = build_n8n_client(client_factory, credential)
++    tag = client_tag_out(account)
++
++    async def _unassign():
++        raw = await client.get_workflow(workflow_id)
++        current = raw_to_workflow(raw)
++        remaining = [t.id for t in current.tags if tag is None or t.id != tag["id"]]
++        await client.set_workflow_tags(workflow_id, remaining)
++        raw2 = await client.get_workflow(workflow_id)
++        return raw_to_workflow(raw2)
++
++    try:
++        workflow = asyncio.run(_unassign())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    folders_svc.clear_placement(account_id=body.account_id, workflow_id=workflow_id)
++    return _to_out(workflow, base_url=base_url, folder_id=None)
++
++
++# ─── PATCH /api/n8n/workflows/{id} ──────────────────────────────────────
++@router.patch("/workflows/{workflow_id}", response_model=N8nWorkflowOut)
++def patch_workflow(
++    workflow_id: str,
++    body: N8nWorkflowPatchIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nWorkflowOut:
++    """Rename (``name``) / activate-deactivate (``active``) are n8n-side
++    writes via the client. ``folder_id`` is LOCAL-only (the placement
++    table) — never touches n8n. Uses ``model_fields_set`` to
++    distinguish "folder_id not supplied" (leave placement unchanged)
++    from "folder_id explicitly null" (move to root) — same tri-state
++    pattern as ``IntegrationAccountUpdate.client_id``."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    async def _patch():
++        workflow = None
++        if body.active is not None:
++            workflow = await (
++                client.activate(workflow_id) if body.active else client.deactivate(workflow_id)
++            )
++        if body.name is not None:
++            workflow = await client.rename(workflow_id, body.name)
++        if workflow is None:
++            raw = await client.get_workflow(workflow_id)
++            workflow = raw_to_workflow(raw)
++        return workflow
++
++    try:
++        workflow = asyncio.run(_patch())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    if "folder_id" in body.model_fields_set:
++        folders_svc.set_placement(
++            org_id=org_id,
++            account_id=body.account_id,
++            workflow_id=workflow_id,
++            folder_id=body.folder_id,
++        )
++
++    placements = folders_svc.get_placements(body.account_id)
++    return _to_out(workflow, base_url=base_url, folder_id=placements.get(workflow_id))
++
++
++# ─── DELETE /api/n8n/workflows/{id} ─────────────────────────────────────
++@router.delete(
++    "/workflows/{workflow_id}",
++    status_code=status.HTTP_204_NO_CONTENT,
++    response_model=None,
++)
++def delete_workflow(
++    workflow_id: str,
++    body: N8nAccountIdIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    folders_svc: FoldersService = Depends(get_folders_service),
++    client_factory=Depends(get_n8n_client_factory),
++) -> None:
++    """Hard-to-reverse — n8n's ``DELETE /workflows/{id}`` is not
++    API-undoable. Clears the local placement row on success."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, _base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    try:
++        asyncio.run(client.delete_workflow(workflow_id))
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    folders_svc.clear_placement(account_id=body.account_id, workflow_id=workflow_id)
++
++
++# ─── POST /api/n8n/workflows/{id}/run ───────────────────────────────────
++@router.post("/workflows/{workflow_id}/run", response_model=N8nRunResult)
++def run_workflow(
++    workflow_id: str,
++    body: N8nAccountIdIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nRunResult:
++    """``can_run`` is checked BEFORE any dispatch attempt — a blocked
++    workflow raises 409 with ZERO side effects (``run_via_webhook`` is
++    never called in that branch). Never fakes a dispatch."""
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, _base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    async def _run():
++        raw = await client.get_workflow(workflow_id)
++        workflow = raw_to_workflow(raw)
++        if not workflow.can_run:
++            return None, workflow
++        result = await client.run_via_webhook(workflow)
++        return result, workflow
++
++    try:
++        result, workflow = asyncio.run(_run())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    if result is None:
++        raise HTTPException(status.HTTP_409_CONFLICT, detail=_not_runnable_reason(workflow))
++
++    return N8nRunResult(
++        workflow_id=result.workflow_id,
++        dispatched=result.dispatched,
++        http_status=result.http_status,
++    )
++
++
++# ─── GET /api/n8n/workflows/{id}/executions ─────────────────────────────
++@router.get("/workflows/{workflow_id}/executions", response_model=N8nExecutionListResponse)
++def list_executions(
++    workflow_id: str,
++    account_id: UUID = Query(...),
++    limit: int = Query(default=20, ge=1, le=250),
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nExecutionListResponse:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, account_id, org_id)
++    credential = decrypt_or_503(svc, account_id, org_id)
++    client, _base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    try:
++        executions = asyncio.run(client.list_executions(workflow_id=workflow_id, limit=limit))
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    return N8nExecutionListResponse(
++        executions=[
++            N8nExecutionOut(
++                id=e.id,
++                status=e.status,
++                mode=e.mode,
++                started_at=e.started_at,
++                stopped_at=e.stopped_at,
++            )
++            for e in executions
++        ]
++    )
++
++
++# ─── GET / POST /api/n8n/tags ────────────────────────────────────────────
++@router.get("/tags", response_model=list[N8nTagOut])
++def list_tags(
++    account_id: UUID = Query(...),
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    client_factory=Depends(get_n8n_client_factory),
++) -> list[N8nTagOut]:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, account_id, org_id)
++    credential = decrypt_or_503(svc, account_id, org_id)
++    client, _base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    try:
++        tags = asyncio.run(client.list_tags())
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    return [N8nTagOut(id=t.id, name=t.name) for t in tags]
++
++
++@router.post("/tags", response_model=N8nTagOut, status_code=status.HTTP_201_CREATED)
++def create_tag(
++    body: N8nTagCreateIn,
++    auth: tuple = Depends(get_current_user_org),
++    svc: IntegrationAccountService = Depends(get_account_service),
++    admin=Depends(get_admin_client_dep),
++    client_factory=Depends(get_n8n_client_factory),
++) -> N8nTagOut:
++    _user, _token, raw_org = auth
++    org_id = coerce_org_uuid(raw_org)
++    resolve_n8n_account(svc, admin, body.account_id, org_id)
++    credential = decrypt_or_503(svc, body.account_id, org_id)
++    client, _base_url, _api_key = build_n8n_client(client_factory, credential)
++
++    try:
++        tag = asyncio.run(client.create_tag(body.name))
++    except N8nError as exc:
++        raise translate_n8n_error(exc) from exc
++
++    return N8nTagOut(id=tag.id, name=tag.name)
++
++
++__all__ = ["router"]
+diff --git a/products/social-wiring/backend/app/modules/n8n/schemas/__init__.py b/products/social-wiring/backend/app/modules/n8n/schemas/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/products/social-wiring/backend/app/modules/n8n/schemas/common.py b/products/social-wiring/backend/app/modules/n8n/schemas/common.py
+new file mode 100644
+index 00000000..f6a0b86a
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/schemas/common.py
+@@ -0,0 +1,40 @@
++"""Shared value shapes reused across the n8n module's three routers.
++
++``N8nTagOut`` backs both the workflows tags surface (GET/POST
++/api/n8n/tags, and each workflow's ``tags`` list) and the Settings
++tab's configured client-tag. ``N8nFolderOut`` backs both the folder
++tree endpoints and ``N8nWorkflowListResponse.folders``. Pulled out
++here (rather than duplicated per schema file, or left to import from
++whichever file happened to define it first) so neither workflows.py
++nor settings.py nor folders.py owns the other's value type.
++"""
++from __future__ import annotations
++
++from typing import Optional
++from uuid import UUID
++
++from pydantic import BaseModel
++
++
++class N8nTagOut(BaseModel):
++    """An n8n workflow tag. n8n tag ids are opaque strings (not UUIDs)."""
++
++    id: str
++    name: str
++
++
++class N8nFolderOut(BaseModel):
++    """A local (product-side) workflow-organization folder.
++
++    Distinct from n8n tags — folders are NOT synced to n8n; they live
++    entirely in ``social_wiring.n8n_folders`` (migration 024, shipped
++    by a sibling unmerged branch this slice codes against without
++    re-authoring)."""
++
++    id: UUID
++    name: str
++    parent_id: Optional[UUID] = None
++    position: int = 0
++
++
++__all__ = ["N8nTagOut", "N8nFolderOut"]
+diff --git a/products/social-wiring/backend/app/modules/n8n/schemas/folders.py b/products/social-wiring/backend/app/modules/n8n/schemas/folders.py
+new file mode 100644
+index 00000000..1ec470a9
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/schemas/folders.py
+@@ -0,0 +1,44 @@
++"""Pydantic schemas for the n8n folder-tree surface.
++
++``N8nFolderOut`` lives in ``schemas/common.py`` (shared with
++``N8nWorkflowListResponse.folders``) — this file only carries the
++request bodies.
++"""
++from __future__ import annotations
++
++from typing import Optional
++from uuid import UUID
++
++from pydantic import BaseModel, Field
++
++__all__ = ["N8nFolderCreateIn", "N8nFolderUpdateIn"]
++
++
++class N8nFolderCreateIn(BaseModel):
++    account_id: UUID
++    name: str = Field(min_length=1)
++    parent_id: Optional[UUID] = None
++
++    class Config:
++        extra = "forbid"
++
++
++class N8nFolderUpdateIn(BaseModel):
++    """PATCH /api/n8n/folders/{folder_id} body — deliberately carries
++    NO ``account_id`` (the contract's shape): the folder row itself
++    carries ``org_id``/``account_id``, so the router derives ownership
++    from the row rather than a caller-supplied id (can't be spoofed to
++    a different account this way).
++
++    ``parent_id`` uses ``model_fields_set`` at the router to
++    distinguish "not supplied" (leave parent unchanged) from
++    "explicitly null" (reparent to root) — same tri-state pattern as
++    ``N8nWorkflowPatchIn.folder_id``.
++    """
++
++    name: Optional[str] = Field(default=None, min_length=1)
++    parent_id: Optional[UUID] = None
++    position: Optional[int] = Field(default=None, ge=0)
++
++    class Config:
++        extra = "forbid"
+diff --git a/products/social-wiring/backend/app/modules/n8n/schemas/settings.py b/products/social-wiring/backend/app/modules/n8n/schemas/settings.py
+new file mode 100644
+index 00000000..00268bea
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/schemas/settings.py
+@@ -0,0 +1,50 @@
++"""Pydantic schemas for the n8n Settings tab — GET/PUT /api/n8n/settings.
++
++Boundary types — the decrypted ``api_key`` never appears in a response
++model (``has_api_key: bool`` only), same discipline
++``youtube/schemas/settings.py`` applies to the OAuth token bundle.
++"""
++from __future__ import annotations
++
++from typing import Optional
++from uuid import UUID
++
++from pydantic import BaseModel
++
++from app.modules.n8n.schemas.common import N8nTagOut
++
++__all__ = ["N8nSettingsOut", "N8nSettingsUpdateIn"]
++
++
++class N8nSettingsOut(BaseModel):
++    """Connection state for the Settings → n8n tab.
++
++    ``status`` is DERIVED (see routers/settings.py's GET handler
++    docstring) — never a raw passthrough of the stored ``status``
++    column, which can lie for pre-reshape rows. ``reachable`` is
++    ``None`` on every GET (never pings n8n on a page load — same rule
++    ``youtube/routers/settings.py``'s ``get_youtube_status`` follows);
++    PUT actively pings and reports the real outcome.
++    """
++
++    account_id: UUID
++    base_url: Optional[str] = None
++    has_api_key: bool
++    tag: Optional[N8nTagOut] = None
++    status: str
++    reachable: Optional[bool] = None
++
++
++class N8nSettingsUpdateIn(BaseModel):
++    """PUT /api/n8n/settings body. All fields besides ``account_id``
++    are optional — a partial update (e.g. rotating just the api_key,
++    or only picking a tag) leaves the other stored fields untouched.
++    """
++
++    account_id: UUID
++    base_url: Optional[str] = None
++    api_key: Optional[str] = None
++    tag_id: Optional[str] = None
++
++    class Config:
++        extra = "forbid"
+diff --git a/products/social-wiring/backend/app/modules/n8n/schemas/workflows.py b/products/social-wiring/backend/app/modules/n8n/schemas/workflows.py
+new file mode 100644
+index 00000000..30858918
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/schemas/workflows.py
+@@ -0,0 +1,115 @@
++"""Pydantic schemas for the n8n workflows + tags + executions surface.
++
++Bare typed responses (no envelope), concrete ``response_model`` on
++every route — mirrors ``app/modules/youtube/schemas/video.py``'s
++shape. ``N8nWorkflowOut`` deliberately never carries ``nodes`` /
++``connections`` — those are the seed adapter's ``Workflow`` value
++object's own design (heavy payload; see
++``noctusai_lib.integrations.n8n.types.Workflow`` docstring) and this
++schema mirrors that omission on the HTTP boundary too.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++from uuid import UUID
++
++from pydantic import BaseModel, Field
++
++from app.modules.n8n.schemas.common import N8nFolderOut, N8nTagOut
++
++__all__ = [
++    "N8nWorkflowOut",
++    "N8nWorkflowListResponse",
++    "N8nExecutionOut",
++    "N8nExecutionListResponse",
++    "N8nRunResult",
++    "N8nAccountIdIn",
++    "N8nWorkflowPatchIn",
++    "N8nTagCreateIn",
++]
++
++
++class N8nWorkflowOut(BaseModel):
++    """A workflow projected for the FE — run-eligibility + local
++    folder placement pre-computed so the FE never re-derives
++    ``can_run`` from raw node data."""
++
++    id: str
++    name: str
++    active: bool
++    archived: bool
++    tags: list[N8nTagOut] = Field(default_factory=list)
++    folder_id: Optional[UUID] = None
++    can_run: bool
++    run_blocked_reason: Optional[str] = None
++    open_url: str
++    updated_at: Optional[datetime] = None
++
++
++class N8nWorkflowListResponse(BaseModel):
++    """GET /api/n8n/workflows response. ``folders`` is the account's
++    FULL folder tree (not scope-filtered) — the FE renders the tree
++    navigation independent of which bucket (client/unassigned) is
++    selected."""
++
++    workflows: list[N8nWorkflowOut]
++    folders: list[N8nFolderOut]
++
++
++class N8nExecutionOut(BaseModel):
++    id: int
++    status: Optional[str] = None
++    mode: Optional[str] = None
++    started_at: Optional[datetime] = None
++    stopped_at: Optional[datetime] = None
++
++
++class N8nExecutionListResponse(BaseModel):
++    executions: list[N8nExecutionOut]
++
++
++class N8nRunResult(BaseModel):
++    """Response for POST /api/n8n/workflows/{id}/run. Never fabricated
++    — mirrors the seed adapter's ``RunResult`` (``raw`` is dropped;
++    the FE only needs dispatched/http_status)."""
++
++    workflow_id: str
++    dispatched: bool
++    http_status: Optional[int] = None
++
++
++class N8nAccountIdIn(BaseModel):
++    """Shared body shape for the account-scoped mutation endpoints
++    that take no other fields (assign / unassign / delete / run)."""
++
++    account_id: UUID
++
++    class Config:
++        extra = "forbid"
++
++
++class N8nWorkflowPatchIn(BaseModel):
++    """PATCH /api/n8n/workflows/{id} body. All fields besides
++    ``account_id`` are optional; ``folder_id`` uses
++    ``model_fields_set`` at the router to distinguish "not supplied"
++    (leave placement unchanged) from "explicitly null" (move to
++    root) — same tri-state pattern as
++    ``integration_accounts_router.IntegrationAccountUpdate.client_id``.
++    """
++
++    account_id: UUID
++    name: Optional[str] = Field(default=None, min_length=1)
++    active: Optional[bool] = None
++    folder_id: Optional[UUID] = None
++
++    class Config:
++        extra = "forbid"
++
++
++class N8nTagCreateIn(BaseModel):
++    account_id: UUID
++    name: str = Field(min_length=1)
++
++    class Config:
++        extra = "forbid"
+diff --git a/products/social-wiring/backend/app/modules/n8n/services/__init__.py b/products/social-wiring/backend/app/modules/n8n/services/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/products/social-wiring/backend/app/modules/n8n/services/account_resolver.py b/products/social-wiring/backend/app/modules/n8n/services/account_resolver.py
+new file mode 100644
+index 00000000..36dad8a2
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/services/account_resolver.py
+@@ -0,0 +1,234 @@
++"""Shared account-resolution + n8n-client DI seams for the n8n module.
++
++Every n8n route needs the same three things:
++
++1. An org-scoped ``IntegrationAccountService`` (``get_account_service``
++   DI seam — mirrors ``integration_accounts_router.get_account_service``;
++   NOT formalized into a shared helper because that router file is a
++   peer's live zone this slice must not touch — see the returned
++   ``scoped-improvement:`` note).
++2. The caller's ``integration_accounts`` row resolved with the
++   contract's explicit 404-vs-403 split (``resolve_n8n_account``).
++3. A properly-typed ``N8nClient`` built from the account's decrypted
++   credential WITHOUT silently falling back to ``FakeN8nClient`` when
++   the credential is incomplete — ``get_n8n_client()``'s deferred-
++   config default (no creds ⇒ Fake) is exactly the "succeeds empty"
++   trap ``require_complete_n8n_credential`` exists to prevent. A route
++   that skipped this check and called ``get_n8n_client()`` straight
++   from a half-filled credential would silently serve the FE
++   ``FakeN8nClient``'s seeded demo workflows instead of a loud 424 —
++   the exact silent-error shape this house forbids.
++"""
++from __future__ import annotations
++
++from typing import Any, Optional
++from uuid import UUID
++
++from fastapi import Depends, HTTPException, status
++from noctusai_lib.integrations.n8n import (
++    N8nClient,
++    N8nError,
++    N8nNotFoundError,
++    N8nWorkflowNotRunnableError,
++    get_n8n_client,
++)
++
++from app.config import SocialWiringSettings
++from app.dependencies import get_admin_client, get_settings
++from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
++from app.services.integration_account_service import (
++    IntegrationAccount,
++    IntegrationAccountService,
++    build_integration_account_service,
++)
++
++_SCHEMA = "social_wiring"
++_ACCOUNTS_TABLE = "integration_accounts"
++_PROVIDER = "n8n"
++
++__all__ = [
++    "get_account_service",
++    "get_admin_client_dep",
++    "get_n8n_client_factory",
++    "resolve_n8n_account",
++    "decrypt_or_503",
++    "require_complete_n8n_credential",
++    "build_n8n_client",
++    "translate_n8n_error",
++    "client_tag_out",
++]
++
++
++def get_admin_client_dep() -> Any:
++    """DI seam wrapping ``app.dependencies.get_admin_client``.
++
++    Every n8n route needs the admin (service-role) client for
++    ``resolve_n8n_account``'s 403-vs-404 existence probe (a raw,
++    narrow, org-agnostic lookup — see that function's docstring).
++    Routing it through ``Depends(...)`` (rather than each router
++    calling ``get_admin_client()`` inline) lets tests override it via
++    ``app.dependency_overrides`` to point the probe at the SAME
++    backing store as their ``get_account_service`` override, instead
++    of exercising ``MockSupabaseClient``'s generic chain-stub API for
++    one narrow query. Per ``KB § PATTERNS/di-test-seam.md`` (Class-B).
++    """
++    return get_admin_client()
++
++
++def get_account_service(
++    cfg: SocialWiringSettings = Depends(get_settings),
++) -> IntegrationAccountService:
++    """DI seam — 503-on-ENCRYPTION_KEY-gap shape, same convention as
++    every other credential-touching router in this product. Tests
++    override via ``app.dependency_overrides[get_account_service]``.
++    Per ``KB § PATTERNS/di-test-seam.md`` (Class-B, service DI).
++    """
++    try:
++        return build_integration_account_service(
++            get_admin_client(), encryption_key=cfg.encryption_key
++        )
++    except EncryptionNotConfigured as exc:
++        raise HTTPException(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
++        ) from exc
++
++
++def get_n8n_client_factory():
++    """DI seam: a ``(base_url, api_key) -> N8nClient`` callable.
++
++    Real default: the seed's ``get_n8n_client`` factory. Tests override
++    via ``app.dependency_overrides[get_n8n_client_factory]`` to return a
++    closure over a SINGLE persistent ``FakeN8nClient`` instance (so
++    state — e.g. a tag just created, a workflow just renamed — survives
++    across the several client calls one test makes), rather than
++    monkeypatching this module's import of ``get_n8n_client``. Per
++    ``KB § PATTERNS/di-test-seam.md`` (Class-B).
++    """
++    return get_n8n_client
++
++
++def resolve_n8n_account(
++    svc: IntegrationAccountService,
++    admin_client: Any,
++    account_id: UUID,
++    org_id: UUID,
++) -> IntegrationAccount:
++    """Fetch the n8n account owner-scoped, distinguishing 404 (doesn't
++    exist, or isn't an n8n account) from 403 (exists, wrong org) — the
++    contract's explicit status-code split.
++
++    ``IntegrationAccountService.get_account`` filters ``org_id`` inline
++    and returns ``None`` for BOTH "doesn't exist" and "wrong org" (by
++    design — least-privilege, it never leaks a cross-org existence
++    signal on its own). Distinguishing the two here needs one extra,
++    narrow, ID-only probe via the ADMIN (service-role) client — bypasses
++    RLS deliberately, exactly like every other admin-client call in this
++    router family, and reveals nothing beyond `(id, org_id, provider)`.
++    """
++    account = svc.get_account(account_id, org_id)
++    if account is not None and account.provider == _PROVIDER:
++        return account
++
++    resp = (
++        admin_client.schema(_SCHEMA)
++        .table(_ACCOUNTS_TABLE)
++        .select("id,org_id,provider")
++        .eq("id", str(account_id))
++        .execute()
++    )
++    rows = resp.data or []
++    if not rows:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="n8n account not found")
++    if str(rows[0].get("org_id")) != str(org_id):
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            detail="account does not belong to your organization",
++        )
++    # Belongs to the caller's org but isn't an n8n account (wrong provider).
++    raise HTTPException(status.HTTP_404_NOT_FOUND, detail="n8n account not found")
++
++
++def decrypt_or_503(
++    svc: IntegrationAccountService, account_id: UUID, org_id: UUID
++) -> dict:
++    """``svc.decrypt_credential`` wrapped with the house 503-on-
++    key-mismatch convention (``CredentialStoreError`` — ENCRYPTION_KEY
++    rotated/tampered ciphertext — is a server misconfiguration, not an
++    incomplete-credential 424)."""
++    try:
++        return svc.decrypt_credential(account_id, org_id)
++    except CredentialStoreError as exc:
++        raise HTTPException(
++            status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
++        ) from exc
++
++
++def require_complete_n8n_credential(credential: Optional[dict]) -> tuple[str, str]:
++    """Return ``(base_url, api_key)`` or raise 424.
++
++    424 = OUR configuration is incomplete (fix the card) — GUESS: both
++    fields are required here even though the GET /settings status-
++    derivation rule only gates on ``base_url`` (per the brief). Widening
++    to also require ``api_key`` is deliberate: ``get_n8n_client()``
++    itself needs BOTH to build a real client, so a base_url-only
++    credential would otherwise silently degrade into
++    ``FakeN8nClient`` here — the exact trap this function exists to
++    close. Flagged loudly in the delivery notes since the FE cannot see
++    this widening choice.
++    """
++    base_url = (credential or {}).get("base_url") or ""
++    api_key = (credential or {}).get("api_key") or ""
++    if not base_url or not api_key:
++        raise HTTPException(
++            status.HTTP_424_FAILED_DEPENDENCY,
++            detail=(
++                "n8n account is not fully configured (missing base_url "
++                "or api_key). Complete it via PUT /api/n8n/settings."
++            ),
++        )
++    return base_url, api_key
++
++
++def build_n8n_client(factory, credential: Optional[dict]) -> tuple[N8nClient, str, str]:
++    """``require_complete_n8n_credential`` + the client-factory call in
++    one step — the shape every workflow/tag/execution route needs."""
++    base_url, api_key = require_complete_n8n_credential(credential)
++    return factory(base_url=base_url, api_key=api_key), base_url, api_key
++
++
++def translate_n8n_error(exc: N8nError) -> HTTPException:
++    """Map the seed adapter's error hierarchy onto the contract's
++    status codes.
++
++    ``N8nNotFoundError`` → our 404 (the workflow/tag this route
++    addresses doesn't exist on n8n's side either — the caller's
++    path/body param is stale). Everything else in the hierarchy (auth /
++    rate-limit / rejected / unreachable) → 502, per the contract's
++    explicit "unreachable/auth-failed upstream" grouping — n8n *has* a
++    complete credential to work with here (424 already gated that);
++    502 means n8n itself said no. ``N8nWorkflowNotRunnableError`` → 409
++    as a safety net (the run route pre-checks ``can_run`` BEFORE
++    dispatch so this branch should be unreachable in practice — no
++    request is ever sent on a blocked workflow).
++    """
++    if isinstance(exc, N8nWorkflowNotRunnableError):
++        return HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
++    if isinstance(exc, N8nNotFoundError):
++        return HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
++    return HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"n8n error: {exc}")
++
++
++def client_tag_out(account: IntegrationAccount) -> Optional[dict]:
++    """Read the client's configured n8n tag from
++    ``channel_info['tag']`` (``{'id': ..., 'name': ...}``) — the field
++    PUT /api/n8n/settings owns (the generic
++    ``IntegrationAccountService`` has no REST write path for
++    ``channel_info``; this module's settings router is the first
++    caller of ``update_channel_info`` from behind a REST route).
++    ``None`` when no tag has been configured yet.
++    """
++    info = account.channel_info or {}
++    tag = info.get("tag")
++    if isinstance(tag, dict) and tag.get("id"):
++        return {"id": str(tag["id"]), "name": str(tag.get("name") or "")}
++    return None
+diff --git a/products/social-wiring/backend/app/modules/n8n/services/folders_service.py b/products/social-wiring/backend/app/modules/n8n/services/folders_service.py
+new file mode 100644
+index 00000000..fc13c4cf
+--- /dev/null
++++ b/products/social-wiring/backend/app/modules/n8n/services/folders_service.py
+@@ -0,0 +1,338 @@
++"""FoldersService — CRUD over ``social_wiring.n8n_folders`` /
++``social_wiring.n8n_workflow_placement``.
++
++``migrations/024_n8n_folders.sql`` ships these two tables on a sibling
++unmerged branch (``feat/n8n-folders-migration``) — this slice codes
++against the DOCUMENTED shape without re-authoring a competing copy of
++that migration:
++
++    n8n_folders             — id, org_id, account_id, parent_id, name,
++                               position, timestamps.
++                               UNIQUE(account_id, parent_id, name) +
++                               partial unique (account_id, name)
++                               WHERE parent_id IS NULL.
++    n8n_workflow_placement  — org_id, account_id, workflow_id TEXT,
++                               folder_id; PK (account_id, workflow_id).
++
++All tree operations (cycle detection, sibling-name-conflict detection)
++are done in PYTHON over one ``list_for_account`` read rather than via
++``.eq(column, None)`` filters — a generic Supabase-style query builder
++(and this product's ``SQLiteClient`` dev/test double) translates
++``.eq(col, None)`` to ``col = NULL`` in SQL, which never matches (NULL
++= NULL is NULL, not true) — a real footgun for "root" (parent_id IS
++NULL) queries. Per-account folder counts are small, so one full read +
++in-memory filtering is both correct and cheap.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from typing import Any, Optional, Union
++from uuid import UUID, uuid4
++
++from app.dependencies import get_admin_client
++
++_SCHEMA = "social_wiring"
++_FOLDERS_TABLE = "n8n_folders"
++_PLACEMENT_TABLE = "n8n_workflow_placement"
++
++# Sentinel distinguishing "parent_id not supplied" (leave unchanged) from
++# "parent_id explicitly None" (reparent to root) in FoldersService.update —
++# mirrors IntegrationAccountService's `_UNSET` pattern for the same shape.
++# Public (imported by routers/folders.py) — unlike IntegrationAccountService's
++# `_UNSET`, callers outside this module need it to express "not supplied".
++UNSET = object()
++
++__all__ = [
++    "FolderRow",
++    "FolderNotFound",
++    "FolderCycleError",
++    "FolderNameConflict",
++    "FoldersService",
++    "get_folders_service",
++    "UNSET",
++]
++
++
++@dataclass(frozen=True)
++class FolderRow:
++    id: UUID
++    org_id: UUID
++    account_id: UUID
++    parent_id: Optional[UUID]
++    name: str
++    position: int
++
++
++class FolderNotFound(Exception):
++    """Folder / parent-folder / reassign_to target does not exist."""
++
++
++class FolderCycleError(Exception):
++    """Reparenting a folder into itself or one of its own descendants."""
++
++
++class FolderNameConflict(Exception):
++    """UNIQUE(account_id, parent_id, name) would be violated."""
++
++
++class FoldersService:
++    def __init__(self, client: Any):
++        self._client = client
++
++    # ─── table handles ──────────────────────────────────────────────
++    def _folders(self):
++        return self._client.schema(_SCHEMA).table(_FOLDERS_TABLE)
++
++    def _placements(self):
++        return self._client.schema(_SCHEMA).table(_PLACEMENT_TABLE)
++
++    @staticmethod
++    def _row_to_folder(row: dict) -> FolderRow:
++        raw_parent = row.get("parent_id")
++        return FolderRow(
++            id=UUID(str(row["id"])),
++            org_id=UUID(str(row["org_id"])),
++            account_id=UUID(str(row["account_id"])),
++            parent_id=UUID(str(raw_parent)) if raw_parent else None,
++            name=row["name"],
++            position=int(row.get("position") or 0),
++        )
++
++    # ─── reads ──────────────────────────────────────────────────────
++    def list_for_account(self, account_id: UUID, org_id: UUID) -> list[FolderRow]:
++        resp = (
++            self._folders()
++            .select("*")
++            .eq("account_id", str(account_id))
++            .eq("org_id", str(org_id))
++            .execute()
++        )
++        return [self._row_to_folder(r) for r in (resp.data or [])]
++
++    def get(self, folder_id: UUID) -> Optional[FolderRow]:
++        """Fetch a folder by id alone (no org filter) — callers derive
++        ownership from the returned row's ``org_id`` themselves (the
++        PATCH/DELETE routes take no ``account_id`` in the body; see
++        ``routers/folders.py``)."""
++        resp = self._folders().select("*").eq("id", str(folder_id)).execute()
++        rows = resp.data or []
++        return self._row_to_folder(rows[0]) if rows else None
++
++    @staticmethod
++    def _is_ancestor(
++        all_folders: list[FolderRow], ancestor_id: UUID, node_id: UUID
++    ) -> bool:
++        """True when ``ancestor_id`` is ``node_id`` itself, or is on
++        ``node_id``'s path to the root."""
++        by_id = {f.id: f for f in all_folders}
++        node: Optional[FolderRow] = by_id.get(node_id)
++        seen: set[UUID] = set()
++        while node is not None:
++            if node.id == ancestor_id:
++                return True
++            if node.id in seen:  # defensive: pre-existing cycle — never loop forever
++                break
++            seen.add(node.id)
++            node = by_id.get(node.parent_id) if node.parent_id else None
++        return False
++
++    # ─── writes ─────────────────────────────────────────────────────
++    def create(
++        self,
++        *,
++        org_id: UUID,
++        account_id: UUID,
++        name: str,
++        parent_id: Optional[UUID],
++    ) -> FolderRow:
++        name = name.strip()
++        siblings_source = self.list_for_account(account_id, org_id)
++        if parent_id is not None and not any(f.id == parent_id for f in siblings_source):
++            raise FolderNotFound(f"parent folder {parent_id} not found")
++        if any(f.parent_id == parent_id and f.name == name for f in siblings_source):
++            raise FolderNameConflict(
++                f"a folder named {name!r} already exists at this level"
++            )
++        now = datetime.now(timezone.utc).isoformat()
++        data = {
++            "id": str(uuid4()),
++            "org_id": str(org_id),
++            "account_id": str(account_id),
++            "parent_id": str(parent_id) if parent_id else None,
++            "name": name,
++            "position": 0,
++            "created_at": now,
++            "updated_at": now,
++        }
++        resp = self._folders().insert(data).execute()
++        rows = resp.data or []
++        if not rows:
++            raise RuntimeError("n8n_folders insert returned no data")
++        return self._row_to_folder(rows[0])
++
++    def update(
++        self,
++        folder_id: UUID,
++        *,
++        name: Optional[str] = None,
++        parent_id: Union[UUID, None, object] = UNSET,
++        position: Optional[int] = None,
++    ) -> FolderRow:
++        current = self.get(folder_id)
++        if current is None:
++            raise FolderNotFound(f"folder {folder_id} not found")
++        all_folders = self.list_for_account(current.account_id, current.org_id)
++
++        new_name = name.strip() if name is not None else current.name
++        new_parent = current.parent_id if parent_id is UNSET else parent_id
++
++        if new_parent is not None:
++            if new_parent == folder_id:
++                raise FolderCycleError("a folder cannot be its own parent")
++            if not any(f.id == new_parent for f in all_folders):
++                raise FolderNotFound(f"parent folder {new_parent} not found")
++            # Reparenting folder_id under new_parent is a cycle iff
++            # folder_id is an ancestor of new_parent (i.e. new_parent is
++            # folder_id's own descendant).
++            if self._is_ancestor(all_folders, folder_id, new_parent):
++                raise FolderCycleError(
++                    f"cannot move folder {folder_id} into its own descendant {new_parent}"
++                )
++
++        siblings = [
++            f for f in all_folders if f.parent_id == new_parent and f.id != folder_id
++        ]
++        if any(f.name == new_name for f in siblings):
++            raise FolderNameConflict(
++                f"a folder named {new_name!r} already exists at this level"
++            )
++
++        updates: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
++        if name is not None:
++            updates["name"] = new_name
++        if parent_id is not UNSET:
++            updates["parent_id"] = str(new_parent) if new_parent else None
++        if position is not None:
++            updates["position"] = position
++        if len(updates) == 1:  # nothing besides updated_at changed — no-op
++            return current
++
++        resp = self._folders().update(updates).eq("id", str(folder_id)).execute()
++        rows = resp.data or []
++        if not rows:
++            raise FolderNotFound(f"folder {folder_id} not found")
++        return self._row_to_folder(rows[0])
++
++    def delete(self, folder_id: UUID, *, reassign_to: Optional[UUID]) -> None:
++        """Delete a folder, moving its children folders + placed
++        workflows to ``reassign_to`` (``None`` ⇒ root — the FE omits
++        the query param entirely for "reassign to root", per the S4
++        FE's binding contract clarification)."""
++        current = self.get(folder_id)
++        if current is None:
++            raise FolderNotFound(f"folder {folder_id} not found")
++        all_folders = self.list_for_account(current.account_id, current.org_id)
++
++        if reassign_to is not None:
++            if not any(f.id == reassign_to for f in all_folders):
++                raise FolderNotFound(f"reassign_to folder {reassign_to} not found")
++            if reassign_to == folder_id or self._is_ancestor(
++                all_folders, folder_id, reassign_to
++            ):
++                raise FolderCycleError(
++                    "reassign_to cannot be the folder being deleted or one "
++                    "of its own descendants"
++                )
++
++        now = datetime.now(timezone.utc).isoformat()
++        has_children = any(f.parent_id == folder_id for f in all_folders)
++        if has_children:
++            self._folders().update(
++                {
++                    "parent_id": str(reassign_to) if reassign_to else None,
++                    "updated_at": now,
++                }
++            ).eq("account_id", str(current.account_id)).eq(
++                "parent_id", str(folder_id)
++            ).execute()
++
++        placements = (
++            self._placements()
++            .select("*")
++            .eq("account_id", str(current.account_id))
++            .execute()
++        ).data or []
++        has_placements = any(
++            str(p.get("folder_id") or "") == str(folder_id) for p in placements
++        )
++        if has_placements:
++            self._placements().update(
++                {"folder_id": str(reassign_to) if reassign_to else None}
++            ).eq("account_id", str(current.account_id)).eq(
++                "folder_id", str(folder_id)
++            ).execute()
++
++        self._folders().delete().eq("id", str(folder_id)).execute()
++
++    # ─── placement (workflow → folder) ─────────────────────────────
++    def get_placements(self, account_id: UUID) -> dict[str, UUID]:
++        """``{workflow_id: folder_id}`` for every PLACED workflow on
++        this account. A workflow with no row, or a row with
++        ``folder_id IS NULL``, is simply absent from the returned
++        dict — the caller treats a missing key as "at root"."""
++        rows = (
++            self._placements().select("*").eq("account_id", str(account_id)).execute()
++        ).data or []
++        out: dict[str, UUID] = {}
++        for row in rows:
++            fid = row.get("folder_id")
++            if fid:
++                out[str(row["workflow_id"])] = UUID(str(fid))
++        return out
++
++    def set_placement(
++        self,
++        *,
++        org_id: UUID,
++        account_id: UUID,
++        workflow_id: str,
++        folder_id: Optional[UUID],
++    ) -> None:
++        existing = (
++            self._placements()
++            .select("workflow_id")
++            .eq("account_id", str(account_id))
++            .eq("workflow_id", workflow_id)
++            .execute()
++        ).data or []
++        if existing:
++            self._placements().update(
++                {"folder_id": str(folder_id) if folder_id else None}
++            ).eq("account_id", str(account_id)).eq("workflow_id", workflow_id).execute()
++        else:
++            self._placements().insert(
++                {
++                    "org_id": str(org_id),
++                    "account_id": str(account_id),
++                    "workflow_id": workflow_id,
++                    "folder_id": str(folder_id) if folder_id else None,
++                }
++            ).execute()
++
++    def clear_placement(self, *, account_id: UUID, workflow_id: str) -> None:
++        """Drop the placement row entirely — the "unassign clears the
++        placement row" rule (assign/unassign live in
++        ``routers/workflows.py``) and the "delete-workflow" cleanup."""
++        self._placements().delete().eq("account_id", str(account_id)).eq(
++            "workflow_id", workflow_id
++        ).execute()
++
++
++def get_folders_service() -> FoldersService:
++    """DI seam — mirrors ``get_account_service``'s shape. n8n folders
++    carry no secrets, so there's no ENCRYPTION_KEY gap to guard here.
++    Tests override via
++    ``app.dependency_overrides[get_folders_service]``.
++    """
++    return FoldersService(get_admin_client())
+diff --git a/products/social-wiring/backend/tests/modules/n8n/__init__.py b/products/social-wiring/backend/tests/modules/n8n/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/products/social-wiring/backend/tests/modules/n8n/conftest.py b/products/social-wiring/backend/tests/modules/n8n/conftest.py
+new file mode 100644
+index 00000000..629ad8f2
+--- /dev/null
++++ b/products/social-wiring/backend/tests/modules/n8n/conftest.py
+@@ -0,0 +1,251 @@
++"""Shared fixtures for the n8n module test suite.
++
++``app/main.py`` deliberately does NOT register the n8n module yet (a
++peer branch is live in that file concurrently; the tech-lead wires
++``MODULES`` at integration time — see the module docstring on
++``app/modules/n8n/__init__.py``). This conftest mounts the three n8n
++routers onto the shared ``app.main.app`` object IN-MEMORY at test-
++collection time (``app.include_router(...)``) — this touches nothing
++on disk, never edits ``main.py``, and is exactly what the tech-lead's
++real wiring step will do at integration.
++
++Every n8n route depends on the account service / admin-client-probe /
++folders service / n8n-client-factory through DI seams
++(``app.modules.n8n.services.account_resolver`` /
++``app.modules.n8n.services.folders_service``). Rather than exercising
++``MockSupabaseClient``'s generic chain-stub API for the arbitrary
++queries those seams issue, this suite overrides all four seams to
++point at a REAL, ephemeral SQLite-backed store per test (mirrors
++``tests/services/test_integration_account_service.py``'s own
++pattern — a real SQLite client catches actual write→read propagation
++that a hand-mocked chain can silently paper over) plus a persistent
++``FakeN8nClient`` instance so state (a tag just created, a workflow
++just renamed) survives across the several client calls one test
++makes.
++"""
++from __future__ import annotations
++
++import sqlite3
++from pathlib import Path
++from uuid import UUID
++
++import pytest
++from cryptography.fernet import Fernet
++
++from app.main import app as _app
++from app.modules.n8n.routers import folders as _folders_router_mod
++from app.modules.n8n.routers import settings as _settings_router_mod
++from app.modules.n8n.routers import workflows as _workflows_router_mod
++from app.modules.n8n.services.account_resolver import (
++    get_account_service,
++    get_admin_client_dep,
++    get_n8n_client_factory,
++)
++from app.modules.n8n.services.folders_service import FoldersService, get_folders_service
++from app.services.integration_account_service import IntegrationAccountService
++from app.sqlite_client import SQLiteClient
++
++# ── mount the n8n routers onto the shared app object once, at import
++# (collection) time — BEFORE any test's `client` fixture builds a
++# TestClient around `app`. Idempotent-by-construction: this module is
++# only ever imported once per pytest process (module caching).
++_app.include_router(_workflows_router_mod.router)
++_app.include_router(_settings_router_mod.router)
++_app.include_router(_folders_router_mod.router)
++
++
++_OTHER_ORG = UUID("00000000-0000-4000-8000-00000000a002")
++
++# Matches MockUser(org_id="test-org-123")'s coerce_org_uuid(...) output —
++# the `client` fixture (tests/conftest.py) always authenticates as this
++# org. `coerce_org_uuid` (app/dependencies.py) derives a deterministic
++# UUID via `uuid.uuid5(uuid.NAMESPACE_OID, "test-org-123")` for the
++# non-UUID fixture org id — n8n fixtures seed THIS exact org so the
++# authenticated `client` fixture and this suite's sqlite-backed
++# services agree on "the caller's org".
++_CALLER_ORG = UUID("48ab962b-ec86-517e-9e42-7b581f622377")
++
++_SCHEMA_SQL = """
++CREATE TABLE IF NOT EXISTS integration_accounts (
++    id                  TEXT PRIMARY KEY,
++    org_id              TEXT NOT NULL,
++    provider            TEXT NOT NULL,
++    account_label       TEXT NOT NULL,
++    encrypted_credential TEXT NOT NULL,
++    metadata            TEXT NOT NULL DEFAULT '{}',
++    is_default          INTEGER NOT NULL DEFAULT 0,
++    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
++    updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
++    client_id           TEXT,
++    status              TEXT NOT NULL DEFAULT 'validated',
++    channel_info        TEXT NOT NULL DEFAULT '{}',
++    last_synced_at      TEXT,
++    UNIQUE (org_id, provider, account_label)
++);
++
++CREATE TABLE IF NOT EXISTS n8n_folders (
++    id          TEXT PRIMARY KEY,
++    org_id      TEXT NOT NULL,
++    account_id  TEXT NOT NULL,
++    parent_id   TEXT,
++    name        TEXT NOT NULL,
++    position    INTEGER NOT NULL DEFAULT 0,
++    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
++    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
++);
++
++CREATE TABLE IF NOT EXISTS n8n_workflow_placement (
++    -- `id` is NOT part of the documented Postgres shape (PK is the
++    -- composite (account_id, workflow_id), per migration 024's
++    -- documented columns) — it exists here ONLY because SQLiteClient's
++    -- dev-mode `_prepare_payload` unconditionally injects an `id` on
++    -- every `.insert()` regardless of table (`app/sqlite_client.py`);
++    -- production talks to the real Supabase client, which has no such
++    -- behavior. Test-harness compatibility column, not a schema claim.
++    id          TEXT,
++    org_id      TEXT NOT NULL,
++    account_id  TEXT NOT NULL,
++    workflow_id TEXT NOT NULL,
++    folder_id   TEXT,
++    PRIMARY KEY (account_id, workflow_id)
++);
++"""
++
++
++@pytest.fixture
++def n8n_sqlite(tmp_path: Path) -> SQLiteClient:
++    db_path = tmp_path / "n8n_module.sqlite3"
++    with sqlite3.connect(db_path) as conn:
++        conn.executescript(_SCHEMA_SQL)
++    return SQLiteClient(db_path)
++
++
++@pytest.fixture
++def n8n_fernet_key() -> str:
++    return Fernet.generate_key().decode("ascii")
++
++
++@pytest.fixture
++def n8n_account_service(n8n_sqlite: SQLiteClient, n8n_fernet_key: str) -> IntegrationAccountService:
++    return IntegrationAccountService(n8n_sqlite, fernet=Fernet(n8n_fernet_key.encode("utf-8")))
++
++
++@pytest.fixture
++def n8n_folders_svc(n8n_sqlite: SQLiteClient) -> FoldersService:
++    return FoldersService(n8n_sqlite)
++
++
++class _FixedN8nClientFactory:
++    """Callable ``(base_url, api_key) -> N8nClient`` returning the SAME
++    ``FakeN8nClient`` regardless of args, so state persists across the
++    several calls one test/route makes. Records the args it was called
++    with for assertions (e.g. "was the freshly-saved base_url used")."""
++
++    def __init__(self, client):
++        self.client = client
++        self.calls: list[tuple[str, str]] = []
++
++    def __call__(self, *, base_url: str, api_key: str):
++        self.calls.append((base_url, api_key))
++        return self.client
++
++
++@pytest.fixture
++def n8n_env(client, n8n_sqlite, n8n_account_service, n8n_folders_svc):
++    """The composed n8n test environment: wires all four DI seams to
++    the sqlite-backed services + a persistent FakeN8nClient, and tears
++    the overrides down after the test. Yields a small namespace:
++    ``.client`` (the authenticated AuthClient — same one every other
++    product suite uses), ``.svc``, ``.folders_svc``, ``.fake_client``,
++    ``.factory`` (the ``_FixedN8nClientFactory`` — inspect ``.calls``),
++    plus ``CALLER_ORG`` / ``OTHER_ORG`` constants for cross-org tests.
++    """
++    from noctusai_lib.integrations.n8n import FakeN8nClient
++
++    fake_client = FakeN8nClient()
++    factory = _FixedN8nClientFactory(fake_client)
++
++    _app.dependency_overrides[get_account_service] = lambda: n8n_account_service
++    # Same underlying sqlite store `n8n_account_service` writes through —
++    # `resolve_n8n_account`'s 403-vs-404 probe needs to see the same rows.
++    _app.dependency_overrides[get_admin_client_dep] = lambda: n8n_sqlite
++    _app.dependency_overrides[get_folders_service] = lambda: n8n_folders_svc
++    _app.dependency_overrides[get_n8n_client_factory] = lambda: factory
++
++    class _Env:
++        pass
++
++    env = _Env()
++    env.client = client
++    env.svc = n8n_account_service
++    env.folders_svc = n8n_folders_svc
++    env.fake_client = fake_client
++    env.factory = factory
++    env.CALLER_ORG = _CALLER_ORG
++    env.OTHER_ORG = _OTHER_ORG
++
++    yield env
++
++    for dep in (
++        get_account_service,
++        get_admin_client_dep,
++        get_folders_service,
++        get_n8n_client_factory,
++    ):
++        _app.dependency_overrides.pop(dep, None)
++
++
++def make_n8n_account(
++    svc: IntegrationAccountService,
++    *,
++    org_id: UUID = _CALLER_ORG,
++    label: str = "Primary n8n",
++    base_url: str | None = "https://n8n.example.com",
++    api_key: str | None = "test-api-key",
++    tag: dict | None = None,
++    is_default: bool = True,
++):
++    """Create + return an n8n ``IntegrationAccount`` seeded via the
++    real service (Fernet round-trip exercised, same as production).
++    ``base_url``/``api_key`` = ``None`` produces an INCOMPLETE
++    credential (424 paths). ``tag`` (``{"id", "name"}``) seeds the
++    configured client tag via ``channel_info``."""
++    credential: dict = {}
++    if base_url is not None:
++        credential["base_url"] = base_url
++    if api_key is not None:
++        credential["api_key"] = api_key
++    account = svc.create_account(
++        org_id=org_id,
++        provider="n8n",
++        account_label=label,
++        credential_dict=credential,
++        metadata={},
++        is_default=is_default,
++    )
++    if tag is not None:
++        from datetime import datetime, timezone
++
++        account = svc.update_channel_info(
++            account_id=account.id,
++            org_id=org_id,
++            channel_info={"tag": tag},
++            status="validated",
++            last_synced_at=datetime.now(timezone.utc),
++        )
++    return account
++
++
++AUTH_HEADERS = {"Authorization": "Bearer test-token-valid"}
++
++
++def delete_with_body(auth_client, url: str, json: dict):
++    """``httpx.Client.delete()`` (what ``AuthClient.delete`` forwards
++    to) does NOT accept a ``json=``/body kwarg in this httpx version —
++    only the generic ``.request()`` does. The two DELETE-with-body
++    endpoints (unassign, delete-workflow) need this helper instead of
++    ``auth_client.delete(url, json=...)``. Flagged as an interesting
++    finding — the wire contract (DELETE + JSON body) is fine; it's
++    httpx's Python convenience wrapper that's the footgun.
++    """
++    return auth_client.raw().request("DELETE", url, json=json, headers=AUTH_HEADERS)
+diff --git a/products/social-wiring/backend/tests/modules/n8n/test_folders_router.py b/products/social-wiring/backend/tests/modules/n8n/test_folders_router.py
+new file mode 100644
+index 00000000..168f9d7f
+--- /dev/null
++++ b/products/social-wiring/backend/tests/modules/n8n/test_folders_router.py
+@@ -0,0 +1,208 @@
++"""Tests for /api/n8n/folders (GET/POST) and /api/n8n/folders/{id}
++(PATCH/DELETE).
++
++Covers: auth boundary, 404/403 via account resolution (GET/POST) and
++via the folder row's own org_id (PATCH/DELETE), the 422 cycle-guard,
++409 name-conflict, and the delete-with-reassignment tree operation —
++including the binding "absent reassign_to ⇒ root" FE contract.
++"""
++from __future__ import annotations
++
++from tests.modules.n8n.conftest import make_n8n_account
++
++
++class TestAuthBoundary:
++    def test_list_folders_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().get(
++            "/api/n8n/folders", params={"account_id": "00000000-0000-0000-0000-000000000001"}
++        )
++        assert resp.status_code == 401, resp.text
++
++    def test_create_folder_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().post(
++            "/api/n8n/folders",
++            json={"account_id": "00000000-0000-0000-0000-000000000001", "name": "X"},
++        )
++        assert resp.status_code == 401, resp.text
++
++
++class TestAccountResolution:
++    def test_list_unknown_account_is_404(self, n8n_env):
++        resp = n8n_env.client.get(
++            "/api/n8n/folders", params={"account_id": "00000000-0000-0000-0000-000000009999"}
++        )
++        assert resp.status_code == 404, resp.text
++
++    def test_list_other_org_account_is_403(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, org_id=n8n_env.OTHER_ORG)
++        resp = n8n_env.client.get(
++            "/api/n8n/folders", params={"account_id": str(account.id)}
++        )
++        assert resp.status_code == 403, resp.text
++
++
++class TestCreateAndList:
++    def test_create_then_list_round_trips(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        create_resp = n8n_env.client.post(
++            "/api/n8n/folders",
++            json={"account_id": str(account.id), "name": "Cliente A"},
++        )
++        assert create_resp.status_code == 201, create_resp.text
++        folder_id = create_resp.json()["id"]
++
++        list_resp = n8n_env.client.get(
++            "/api/n8n/folders", params={"account_id": str(account.id)}
++        )
++        assert list_resp.status_code == 200, list_resp.text
++        assert [f["id"] for f in list_resp.json()] == [folder_id]
++        assert list_resp.json()[0]["parent_id"] is None
++
++    def test_create_duplicate_sibling_name_is_409(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        n8n_env.client.post(
++            "/api/n8n/folders", json={"account_id": str(account.id), "name": "Dup"}
++        )
++        resp = n8n_env.client.post(
++            "/api/n8n/folders", json={"account_id": str(account.id), "name": "Dup"}
++        )
++        assert resp.status_code == 409, resp.text
++
++    def test_create_with_unknown_parent_is_404(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/folders",
++            json={
++                "account_id": str(account.id),
++                "name": "Orphan",
++                "parent_id": "00000000-0000-0000-0000-000000009999",
++            },
++        )
++        assert resp.status_code == 404, resp.text
++
++
++class TestUpdateFolder:
++    def test_rename_and_reposition(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        folder = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Old", parent_id=None
++        )
++        resp = n8n_env.client.patch(
++            f"/api/n8n/folders/{folder.id}", json={"name": "New", "position": 3}
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["name"] == "New"
++        assert body["position"] == 3
++
++    def test_reparent_into_own_descendant_is_422(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        parent = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Parent", parent_id=None
++        )
++        child = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Child", parent_id=parent.id
++        )
++        resp = n8n_env.client.patch(
++            f"/api/n8n/folders/{parent.id}", json={"parent_id": str(child.id)}
++        )
++        assert resp.status_code == 422, resp.text
++
++    def test_self_parent_is_422(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        folder = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Solo", parent_id=None
++        )
++        resp = n8n_env.client.patch(
++            f"/api/n8n/folders/{folder.id}", json={"parent_id": str(folder.id)}
++        )
++        assert resp.status_code == 422, resp.text
++
++    def test_update_unknown_folder_is_404(self, n8n_env):
++        resp = n8n_env.client.patch(
++            "/api/n8n/folders/00000000-0000-0000-0000-000000009999", json={"name": "X"}
++        )
++        assert resp.status_code == 404, resp.text
++
++    def test_update_other_org_folder_is_403(self, n8n_env):
++        other_account = make_n8n_account(n8n_env.svc, org_id=n8n_env.OTHER_ORG)
++        foreign_folder = n8n_env.folders_svc.create(
++            org_id=n8n_env.OTHER_ORG, account_id=other_account.id, name="Not yours", parent_id=None
++        )
++        resp = n8n_env.client.patch(
++            f"/api/n8n/folders/{foreign_folder.id}", json={"name": "Hijack"}
++        )
++        assert resp.status_code == 403, resp.text
++
++
++class TestDeleteFolder:
++    def test_delete_reassigns_children_and_placements_to_explicit_target(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        root = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Root2", parent_id=None
++        )
++        doomed = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Doomed", parent_id=None
++        )
++        child = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Child", parent_id=doomed.id
++        )
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-1",
++            folder_id=doomed.id,
++        )
++
++        resp = n8n_env.client.delete(
++            f"/api/n8n/folders/{doomed.id}", params={"reassign_to": str(root.id)}
++        )
++        assert resp.status_code == 204, resp.text
++
++        remaining = {f.id: f for f in n8n_env.folders_svc.list_for_account(account.id, n8n_env.CALLER_ORG)}
++        assert doomed.id not in remaining
++        assert remaining[child.id].parent_id == root.id
++        placements = n8n_env.folders_svc.get_placements(account.id)
++        assert placements["fake-wf-1"] == root.id
++
++    def test_delete_without_reassign_to_moves_children_and_placements_to_root(self, n8n_env):
++        """The binding FE contract: an ABSENT `reassign_to` query param
++        means root, not an error and not a literal "null" string."""
++        account = make_n8n_account(n8n_env.svc)
++        doomed = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Doomed2", parent_id=None
++        )
++        child = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Child2", parent_id=doomed.id
++        )
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-2",
++            folder_id=doomed.id,
++        )
++
++        resp = n8n_env.client.delete(f"/api/n8n/folders/{doomed.id}")
++        assert resp.status_code == 204, resp.text
++
++        remaining = {f.id: f for f in n8n_env.folders_svc.list_for_account(account.id, n8n_env.CALLER_ORG)}
++        assert remaining[child.id].parent_id is None
++        placements = n8n_env.folders_svc.get_placements(account.id)
++        assert "fake-wf-2" not in placements  # root ⇒ absent from the dict
++
++    def test_delete_reassign_to_own_descendant_is_422(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        parent = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="P", parent_id=None
++        )
++        child = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="C", parent_id=parent.id
++        )
++        resp = n8n_env.client.delete(
++            f"/api/n8n/folders/{parent.id}", params={"reassign_to": str(child.id)}
++        )
++        assert resp.status_code == 422, resp.text
++
++    def test_delete_unknown_folder_is_404(self, n8n_env):
++        resp = n8n_env.client.delete("/api/n8n/folders/00000000-0000-0000-0000-000000009999")
++        assert resp.status_code == 404, resp.text
+diff --git a/products/social-wiring/backend/tests/modules/n8n/test_settings_router.py b/products/social-wiring/backend/tests/modules/n8n/test_settings_router.py
+new file mode 100644
+index 00000000..6921064d
+--- /dev/null
++++ b/products/social-wiring/backend/tests/modules/n8n/test_settings_router.py
+@@ -0,0 +1,140 @@
++"""Tests for GET/PUT /api/n8n/settings.
++
++Covers: the GET status-DERIVATION rule (base_url absence overrides the
++stored status column), auth boundary, 403/404 account resolution, and
++the PUT credential-merge + tag-resolution + reachability-ping flow.
++"""
++from __future__ import annotations
++
++from tests.modules.n8n.conftest import make_n8n_account
++
++
++class TestAuthBoundary:
++    def test_get_settings_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().get(
++            "/api/n8n/settings", params={"account_id": "00000000-0000-0000-0000-000000000001"}
++        )
++        assert resp.status_code == 401, resp.text
++
++    def test_put_settings_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().put(
++            "/api/n8n/settings",
++            json={"account_id": "00000000-0000-0000-0000-000000000001"},
++        )
++        assert resp.status_code == 401, resp.text
++
++
++class TestAccountResolution:
++    def test_get_settings_unknown_account_is_404(self, n8n_env):
++        resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": "00000000-0000-0000-0000-000000009999"}
++        )
++        assert resp.status_code == 404, resp.text
++
++    def test_get_settings_other_org_account_is_403(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, org_id=n8n_env.OTHER_ORG)
++        resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": str(account.id)}
++        )
++        assert resp.status_code == 403, resp.text
++
++
++class TestGetSettingsDerivation:
++    def test_complete_credential_reports_stored_status(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)  # base_url + api_key both present
++        resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": str(account.id)}
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["base_url"] == "https://n8n.example.com"
++        assert body["has_api_key"] is True
++        assert body["status"] == "validated"
++        assert body["reachable"] is None  # GET never pings
++
++    def test_missing_base_url_forces_error_status_even_if_stored_status_says_validated(
++        self, n8n_env
++    ):
++        """The load-bearing derivation rule: a pre-reshape row with a
++        stored status='validated' but no base_url in the decrypted
++        credential must still report status='error'."""
++        account = make_n8n_account(n8n_env.svc, base_url=None, api_key="some-key")
++        # Confirm the STORED column really does say 'validated' (the
++        # lying state this rule exists to override).
++        assert account.status == "validated"
++        resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": str(account.id)}
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["status"] == "error"
++        assert body["base_url"] is None
++
++    def test_configured_tag_is_surfaced(self, n8n_env):
++        account = make_n8n_account(
++            n8n_env.svc, tag={"id": "fake-tag-1", "name": "prod"}
++        )
++        resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": str(account.id)}
++        )
++        body = resp.json()
++        assert body["tag"] == {"id": "fake-tag-1", "name": "prod"}
++
++
++class TestPutSettings:
++    def test_saves_base_url_and_api_key_and_reports_reachable(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, base_url=None, api_key=None)
++        resp = n8n_env.client.put(
++            "/api/n8n/settings",
++            json={
++                "account_id": str(account.id),
++                "base_url": "https://n8n.new.com",
++                "api_key": "fresh-key",
++            },
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["base_url"] == "https://n8n.new.com"
++        assert body["has_api_key"] is True
++        assert body["status"] == "validated"
++        assert body["reachable"] is True
++
++        # Persisted — a subsequent GET reflects the saved credential.
++        get_resp = n8n_env.client.get(
++            "/api/n8n/settings", params={"account_id": str(account.id)}
++        )
++        assert get_resp.json()["base_url"] == "https://n8n.new.com"
++
++    def test_partial_update_leaves_other_field_untouched(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, base_url="https://n8n.old.com", api_key="k1")
++        resp = n8n_env.client.put(
++            "/api/n8n/settings",
++            json={"account_id": str(account.id), "api_key": "k2"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["base_url"] == "https://n8n.old.com"
++
++    def test_tag_id_resolves_name_via_live_lookup(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.put(
++            "/api/n8n/settings",
++            json={"account_id": str(account.id), "tag_id": "fake-tag-1"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["tag"] == {"id": "fake-tag-1", "name": "prod"}
++
++    def test_unknown_tag_id_is_404(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.put(
++            "/api/n8n/settings",
++            json={"account_id": str(account.id), "tag_id": "ghost-tag"},
++        )
++        assert resp.status_code == 404, resp.text
++
++    def test_tag_id_without_complete_credential_is_424(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, base_url=None, api_key=None)
++        resp = n8n_env.client.put(
++            "/api/n8n/settings",
++            json={"account_id": str(account.id), "tag_id": "fake-tag-1"},
++        )
++        assert resp.status_code == 424, resp.text
+diff --git a/products/social-wiring/backend/tests/modules/n8n/test_workflows_router.py b/products/social-wiring/backend/tests/modules/n8n/test_workflows_router.py
+new file mode 100644
+index 00000000..745ee608
+--- /dev/null
++++ b/products/social-wiring/backend/tests/modules/n8n/test_workflows_router.py
+@@ -0,0 +1,361 @@
++"""Tests for /api/n8n/workflows + /api/n8n/tags.
++
++Covers: auth boundary (strict 401), 403-vs-404 account resolution,
++424 on incomplete credential, scope filtering (client/unassigned),
++assign/unassign tag-preservation, the 409-run-blocked zero-side-effect
++path, and the 502 upstream-error translation.
++"""
++from __future__ import annotations
++
++from tests.modules.n8n.conftest import delete_with_body, make_n8n_account
++
++
++# ─── auth boundary ──────────────────────────────────────────────────────
++class TestAuthBoundary:
++    def test_list_workflows_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().get(
++            "/api/n8n/workflows",
++            params={"account_id": "00000000-0000-0000-0000-000000000001", "scope": "client"},
++        )
++        assert resp.status_code == 401, resp.text
++
++    def test_run_requires_auth(self, n8n_env):
++        resp = n8n_env.client.raw().post(
++            "/api/n8n/workflows/fake-wf-1/run",
++            json={"account_id": "00000000-0000-0000-0000-000000000001"},
++        )
++        assert resp.status_code == 401, resp.text
++
++
++# ─── account resolution: 403 vs 404 ─────────────────────────────────────
++class TestAccountResolution:
++    def test_unknown_account_is_404(self, n8n_env):
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": "00000000-0000-0000-0000-000000009999", "scope": "client"},
++        )
++        assert resp.status_code == 404, resp.text
++
++    def test_account_in_other_org_is_403(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, org_id=n8n_env.OTHER_ORG)
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "client"},
++        )
++        assert resp.status_code == 403, resp.text
++
++    def test_non_n8n_provider_account_is_404(self, n8n_env):
++        other = n8n_env.svc.create_account(
++            org_id=n8n_env.CALLER_ORG,
++            provider="youtube",
++            account_label="Not n8n",
++            credential_dict={"access_token": "x"},
++        )
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(other.id), "scope": "client"},
++        )
++        assert resp.status_code == 404, resp.text
++
++
++# ─── 424 incomplete credential ───────────────────────────────────────────
++class TestIncompleteCredential:
++    def test_missing_base_url_returns_424(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, base_url=None, api_key="k")
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "client"},
++        )
++        assert resp.status_code == 424, resp.text
++
++    def test_missing_api_key_returns_424(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc, base_url="https://n8n.x.com", api_key=None)
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "client"},
++        )
++        assert resp.status_code == 424, resp.text
++
++    def test_incomplete_credential_never_returns_fake_data_silently(self, n8n_env):
++        """The exact silent-error trap this module guards against:
++        get_n8n_client() would silently hand back FakeN8nClient's
++        seeded demo workflows for an incomplete credential — assert
++        that never happens (424, not 200 with data)."""
++        account = make_n8n_account(n8n_env.svc, base_url=None, api_key=None)
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "unassigned"},
++        )
++        assert resp.status_code == 424, resp.text
++
++
++# ─── scope filtering ──────────────────────────────────────────────────────
++class TestListScoping:
++    def test_unassigned_scope_returns_untagged_workflows(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "unassigned"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        ids = {w["id"] for w in body["workflows"]}
++        # FakeN8nClient seeds fake-wf-1/fake-wf-3 WITH a tag, fake-wf-2 with none.
++        assert ids == {"fake-wf-2"}
++        assert body["workflows"][0]["archived"] is False
++
++    def test_client_scope_with_no_tag_configured_is_empty_not_error(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)  # no tag configured
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "client"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["workflows"] == []
++
++    def test_client_scope_with_tag_matches_only_that_tag(self, n8n_env):
++        account = make_n8n_account(
++            n8n_env.svc, tag={"id": "fake-tag-1", "name": "prod"}
++        )
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={"account_id": str(account.id), "scope": "client"},
++        )
++        assert resp.status_code == 200, resp.text
++        ids = {w["id"] for w in resp.json()["workflows"]}
++        # fake-wf-1 carries fake-tag-1 and is not archived (default
++        # include_archived=False excludes fake-wf-3).
++        assert ids == {"fake-wf-1"}
++        wf = resp.json()["workflows"][0]
++        assert wf["can_run"] is True
++        assert wf["run_blocked_reason"] is None
++        assert wf["open_url"] == "https://n8n.example.com/workflow/fake-wf-1"
++
++    def test_include_archived_true_surfaces_archived_workflow(self, n8n_env):
++        account = make_n8n_account(
++            n8n_env.svc, tag={"id": "fake-tag-1", "name": "prod"}
++        )
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows",
++            params={
++                "account_id": str(account.id),
++                "scope": "client",
++                "include_archived": "true",
++            },
++        )
++        ids = {w["id"] for w in resp.json()["workflows"]}
++        assert ids == {"fake-wf-1", "fake-wf-3"}
++        archived_wf = next(w for w in resp.json()["workflows"] if w["id"] == "fake-wf-3")
++        assert archived_wf["can_run"] is False
++        assert archived_wf["run_blocked_reason"] == "workflow is archived"
++
++
++# ─── assign / unassign ────────────────────────────────────────────────────
++class TestAssignUnassign:
++    def test_assign_without_configured_tag_returns_424(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)  # no tag
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/fake-wf-2/assign",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 424, resp.text
++
++    def test_assign_preserves_other_tags(self, n8n_env):
++        account = make_n8n_account(
++            n8n_env.svc, tag={"id": "fake-tag-1", "name": "prod"}
++        )
++        # Pre-attach an UNRELATED tag directly on the fake client's raw
++        # workflow state (the sanctioned test hook — see FakeN8nClient's
++        # docstring) so assignment's tag-preservation is actually
++        # exercised: fake-wf-2 starts with zero tags otherwise.
++        n8n_env.fake_client.tags["other-tag"] = type(
++            n8n_env.fake_client.tags["fake-tag-1"]
++        )(id="other-tag", name="unrelated")
++        n8n_env.fake_client._raw_workflows["fake-wf-2"]["tags"] = [
++            {"id": "other-tag", "name": "unrelated"}
++        ]
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/fake-wf-2/assign",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        tag_ids = {t["id"] for t in body["tags"]}
++        assert tag_ids == {"fake-tag-1", "other-tag"}
++
++    def test_unassign_removes_only_the_client_tag_and_clears_placement(self, n8n_env):
++        account = make_n8n_account(
++            n8n_env.svc, tag={"id": "fake-tag-1", "name": "prod"}
++        )
++        # fake-wf-1 already carries fake-tag-1 (seeded). Place it in a folder first.
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-1",
++            folder_id=None,
++        )
++        resp = delete_with_body(
++            n8n_env.client,
++            "/api/n8n/workflows/fake-wf-1/assign",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["tags"] == []
++        assert body["folder_id"] is None
++        placements = n8n_env.folders_svc.get_placements(account.id)
++        assert "fake-wf-1" not in placements
++
++
++# ─── PATCH workflow ───────────────────────────────────────────────────────
++class TestPatchWorkflow:
++    def test_rename_and_deactivate(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.patch(
++            "/api/n8n/workflows/fake-wf-1",
++            json={"account_id": str(account.id), "name": "Renamed", "active": False},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["name"] == "Renamed"
++        assert body["active"] is False
++
++    def test_folder_id_null_moves_to_root(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        folder = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Bucket", parent_id=None
++        )
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-1",
++            folder_id=folder.id,
++        )
++        resp = n8n_env.client.patch(
++            "/api/n8n/workflows/fake-wf-1",
++            json={"account_id": str(account.id), "folder_id": None},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["folder_id"] is None
++
++    def test_omitted_folder_id_leaves_placement_unchanged(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        folder = n8n_env.folders_svc.create(
++            org_id=n8n_env.CALLER_ORG, account_id=account.id, name="Bucket", parent_id=None
++        )
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-1",
++            folder_id=folder.id,
++        )
++        resp = n8n_env.client.patch(
++            "/api/n8n/workflows/fake-wf-1",
++            json={"account_id": str(account.id), "name": "New name only"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["folder_id"] == str(folder.id)
++
++
++# ─── DELETE workflow ──────────────────────────────────────────────────────
++class TestDeleteWorkflow:
++    def test_delete_returns_204_and_clears_placement(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        n8n_env.folders_svc.set_placement(
++            org_id=n8n_env.CALLER_ORG,
++            account_id=account.id,
++            workflow_id="fake-wf-2",
++            folder_id=None,
++        )
++        resp = delete_with_body(
++            n8n_env.client,
++            "/api/n8n/workflows/fake-wf-2",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 204, resp.text
++        assert "fake-wf-2" not in n8n_env.fake_client._raw_workflows
++        assert "fake-wf-2" not in n8n_env.folders_svc.get_placements(account.id)
++
++    def test_delete_unknown_workflow_is_404(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = delete_with_body(
++            n8n_env.client,
++            "/api/n8n/workflows/ghost-workflow",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 404, resp.text
++
++
++# ─── run: 409 zero-side-effect + happy path ─────────────────────────────
++class TestRunWorkflow:
++    def test_run_blocked_workflow_returns_409_with_zero_side_effects(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/fake-wf-2/run",  # manual-trigger only, no webhook
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 409, resp.text
++        assert "fake-wf-2" not in n8n_env.fake_client.webhook_calls
++
++    def test_run_archived_workflow_returns_409(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/fake-wf-3/run",  # webhook, but archived
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 409, resp.text
++        assert resp.json()["error"]["message"] == "workflow is archived"
++
++    def test_run_runnable_workflow_dispatches(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/fake-wf-1/run",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["dispatched"] is True
++        assert body["workflow_id"] == "fake-wf-1"
++        assert n8n_env.fake_client.webhook_calls == ["fake-wf-1"]
++
++    def test_run_unknown_workflow_is_404(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/workflows/ghost/run",
++            json={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 404, resp.text
++
++
++# ─── executions ────────────────────────────────────────────────────────
++class TestExecutions:
++    def test_list_executions(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.get(
++            "/api/n8n/workflows/fake-wf-1/executions",
++            params={"account_id": str(account.id)},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert len(body["executions"]) == 1
++        assert body["executions"][0]["id"] == 1
++        assert body["executions"][0]["status"] == "success"
++
++
++# ─── tags ──────────────────────────────────────────────────────────────
++class TestTags:
++    def test_list_tags(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.get("/api/n8n/tags", params={"account_id": str(account.id)})
++        assert resp.status_code == 200, resp.text
++        names = {t["name"] for t in resp.json()}
++        assert names == {"prod"}
++
++    def test_create_tag(self, n8n_env):
++        account = make_n8n_account(n8n_env.svc)
++        resp = n8n_env.client.post(
++            "/api/n8n/tags", json={"account_id": str(account.id), "name": "staging"}
++        )
++        assert resp.status_code == 201, resp.text
++        assert resp.json()["name"] == "staging"
++
+-- 
+2.51.2
+

@@ -1,0 +1,106 @@
+dependabot/github_actions/actions/checkout-6 f22b0228cc3a30233dfee45698daa62b68649d42 chore(deps): bump actions/checkout from 4 to 6
+dependabot/github_actions/actions/setup-node-6 04b7b8445ce245e4c67cbc74553ea8d8e598b25a chore(deps): bump actions/setup-node from 4 to 6
+dependabot/github_actions/actions/setup-python-6 084471f9107c94455d62521e9aa203d65c3cb3ab chore(deps): bump actions/setup-python from 5 to 6
+dependabot/github_actions/docker/setup-buildx-action-4 4503e77618c5fd29a845363caa3395be81727a50 chore(deps): bump docker/setup-buildx-action from 3 to 4
+dependabot/github_actions/gitleaks/gitleaks-action-3 67c636754364b6abf32bba45ace895e0d1c30d3b chore(deps): bump gitleaks/gitleaks-action from 2 to 3
+dependabot/npm_and_yarn/mcp/noctusai/node/multi-e91c225cad ea258e177b07ab3ead0c7e96b57555cd0861d4ec chore(deps): bump brace-expansion and ts-morph in /mcp/noctusai/node
+dependabot/npm_and_yarn/products/adconnect/frontend/date-fns-4.4.0 5d96c0bd91902326d75860f88dca4413581ffcc2 chore(deps): bump date-fns in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/adconnect/frontend/hookform/resolvers-5.4.0 d8f363f9bffa936b72a727035f61f93ee3c0d11d chore(deps): bump @hookform/resolvers in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/adconnect/frontend/js-yaml-4.3.0 67e523061913710d7432ed926b5f3d133f507fce chore(deps-dev): bump js-yaml in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/adconnect/frontend/multi-ebf216889e 78f44533884601ace5ff4112cb4096e6bb02e8d8 chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/adconnect/frontend/postcss-8.5.15 9b503c7e759f9287b21d4a9a3c157a084dc3b397 chore(deps-dev): bump postcss in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/adconnect/frontend/undici-7.29.0 9d547fdab002d25897ec7de6420f4d4b88ecb520 chore(deps): bump undici in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/adconnect/frontend/vitejs/plugin-react-swc-4.3.1 a24d8aaecc917b7c25569594505569f0c4afd052 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/adconnect/frontend/zod-4.4.3 6deca44c52b4593f5a84b729c7c61ae3d5de787b chore(deps): bump zod in /products/adconnect/frontend
+dependabot/npm_and_yarn/products/core/frontend/multi-16619f3099 6a9bf7095adea0c5d41f561d1ad7ba4c26f41b36 chore(deps): bump esbuild, @vitejs/plugin-react, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/core/frontend/playwright/test-1.61.0 5e5c62296790260be4e619d8708d9e043adb40ea chore(deps-dev): bump @playwright/test in /products/core/frontend
+dependabot/npm_and_yarn/products/core/frontend/postcss-8.5.15 205ac3bfd22e9a1c7c1ed70b27ab3a36264a8eff chore(deps-dev): bump postcss in /products/core/frontend
+dependabot/npm_and_yarn/products/core/frontend/undici-7.29.0 56cdd0d4be705a9d52689cfa82f964545359a219 chore(deps): bump undici in /products/core/frontend
+dependabot/npm_and_yarn/products/core/frontend/vitejs/plugin-react-swc-4.3.1 1d602f101c21cb7dbe8921748b6198122c397519 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/daily-life/frontend/date-fns-4.4.0 8a9546a60c724e58e13eb829c66d8a65ea693199 chore(deps): bump date-fns in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/daily-life/frontend/hookform/resolvers-5.4.0 8324d2477240ef589acb6313a592d600b306d9f9 chore(deps): bump @hookform/resolvers in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/daily-life/frontend/js-yaml-4.3.0 2941b805cb815c05797dbfdf957434777103584b chore(deps-dev): bump js-yaml in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/daily-life/frontend/multi-ebf216889e a319c3848c6717dd7dc71b489aa7b55875994fd8 chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/daily-life/frontend/react-hook-form-7.77.0 e1d046cf33bc83e9b674832172655b66e3a2b050 chore(deps): bump react-hook-form in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/daily-life/frontend/undici-7.29.0 defaf8988af2489402e5472b76dea7a916c29743 chore(deps): bump undici in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/daily-life/frontend/vitejs/plugin-react-swc-4.3.1 375de8149246b21cebb4aeacc576b7b410d36b47 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/daily-life/frontend/zod-4.4.3 6e2a93629aab0ef59faffb59940afbecb9b3a21b chore(deps): bump zod in /products/daily-life/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/hookform/resolvers-5.4.0 aac01b0c725900f972d4a2560d30bfc87ae196eb chore(deps): bump @hookform/resolvers in /products/dev-team/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/multi-ebf216889e 5e59d906b1093fb677cbcc2ea2437a3b5eb1966c chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/dev-team/frontend/postcss-8.5.15 c730d182bb4101c109b8ec0ad8e3d73c58913cdf chore(deps-dev): bump postcss in /products/dev-team/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/react-hook-form-7.77.0 b0d1c54710b59d921f4e7ada0ca9766e1cee10db chore(deps): bump react-hook-form in /products/dev-team/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/recharts-3.8.1 8405073942672cbb7d3b150168c3f92d5c883d08 chore(deps): bump recharts in /products/dev-team/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/undici-7.29.0 edfe0aaae5397760966279cd6fd0a3c115951269 chore(deps): bump undici in /products/dev-team/frontend
+dependabot/npm_and_yarn/products/dev-team/frontend/vitejs/plugin-react-swc-4.3.1 9ff6e1dd8a6bc267a6dd9a4264042e11b02b0dd7 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/autoprefixer-10.5.0 7f47dc1e475fb78cf9d4e4c821496b36b1e5ce20 chore(deps-dev): bump autoprefixer in /products/erp-imobiliario/frontend
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/fast-uri-3.1.5 0a2b41b77b002d2f0a07a99b87f61b20720ea7fb chore(deps-dev): bump fast-uri in /products/erp-imobiliario/frontend
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/next-themes-0.4.6 6165d8818f6ea7b1cdb25a8b11b5ec4b789bc687 chore(deps): bump next-themes in /products/erp-imobiliario/frontend
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/radix-ui/react-slider-1.3.6 44129b204a68de8ddc11fd1b8a96712d208b699b chore(deps): bump @radix-ui/react-slider
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/radix-ui/react-toggle-group-1.1.11 570b52474bd0a3ffdf3bc5eb1482fc6f8ad976f1 chore(deps): bump @radix-ui/react-toggle-group
+dependabot/npm_and_yarn/products/erp-imobiliario/frontend/react-resizable-panels-4.11.2 760499dafcffd6ba10a3d3ded2947c8ce0dd5a43 chore(deps): bump react-resizable-panels
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/date-fns-4.4.0 d4b5f7222bf2db39f0790b848ddcaf28c8987ec8 chore(deps): bump date-fns in /products/knowledge-extractor/frontend
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/hookform/resolvers-5.4.0 695a2d08f7d7f470a50d1b24321714d0cc165a3f chore(deps): bump @hookform/resolvers
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/js-yaml-4.3.0 bd4207ec9c6b3de77cf838f61b2504e7cfad15ea chore(deps-dev): bump js-yaml in /products/knowledge-extractor/frontend
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/multi-ebf216889e f96139936bc2c898bd67f77b0e358b609b9db868 chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/react-hook-form-7.77.0 1292e072f4451fe4b5bacff5a02aa6cdd34bd0ae chore(deps): bump react-hook-form
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/vitejs/plugin-react-swc-4.3.1 fc50af70424a57e121d797fab6e3937c9623352d chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/knowledge-extractor/frontend/zod-4.4.3 603ba53a345227d9f454d33d3b1b6714b97d4dc7 chore(deps): bump zod in /products/knowledge-extractor/frontend
+dependabot/npm_and_yarn/products/orbity/frontend/undici-7.29.0 1be144e643f4f35ce2c81794d82549c6fe3b9a76 chore(deps): bump undici in /products/orbity/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/date-fns-4.4.0 353aa5c96046a1b77a43e2887a826b7ce9ca7ddf chore(deps): bump date-fns in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/flatted-3.4.2 3cef06f57c4114e15df93b8a99c03e5f16016fcd chore(deps-dev): bump flatted in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/hookform/resolvers-5.4.0 72e6c724fcad513e6907cd9a4ceb08a893194dd1 chore(deps): bump @hookform/resolvers
+dependabot/npm_and_yarn/products/personal-finance/frontend/js-yaml-4.3.0 d8f10179cc4478ad51cb37bff0a4dc8ef925c0c7 chore(deps-dev): bump js-yaml in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/multi-bf05dc1ecf ea4dc10ea4e1e69ff4a8e98c85ad9f4e3af90d66 chore(deps): bump picomatch in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/multi-ebf216889e 57d157f2bbf6c2edd9231b019161c7343028276a chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/personal-finance/frontend/postcss-8.5.24 a36110b4194e50e091d73433128c377c12ba9877 chore(deps-dev): bump postcss in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/react-day-picker-10.0.1 42bedcf4ff624f2311c7c8b9a5eb62f69637994e chore(deps): bump react-day-picker
+dependabot/npm_and_yarn/products/personal-finance/frontend/react-hook-form-7.77.0 a6224c4a626303d68b9c30a0f79239f54bb7ce6d chore(deps): bump react-hook-form in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/undici-7.29.0 030009dd1ff7f9d897e2369598bb01338ecb2fca chore(deps): bump undici in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/personal-finance/frontend/zod-4.4.3 857811a787137d71fd3aaa04707b023332cceb31 chore(deps): bump zod in /products/personal-finance/frontend
+dependabot/npm_and_yarn/products/seed/frontend/js-yaml-4.3.0 97a27c718831ce47c8a63d0467913756aa873386 chore(deps-dev): bump js-yaml in /products/seed/frontend
+dependabot/npm_and_yarn/products/seed/frontend/multi-16619f3099 78e26b31e471847306044cc448937d8729f0e268 chore(deps): bump esbuild, @vitejs/plugin-react, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/seed/frontend/postcss-8.5.23 860abe39f42f38dc8ef69be813446549b7436414 chore(deps-dev): bump postcss in /products/seed/frontend
+dependabot/npm_and_yarn/products/seed/frontend/undici-7.29.0 c6b0b6b7202564bd0b16d4757e16026af207d1ee chore(deps): bump undici in /products/seed/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/date-fns-4.4.0 090e5c44a3da95b368e657591474a0af59bcd692 chore(deps): bump date-fns in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/hookform/resolvers-5.4.0 a928c5b5974039bc2c2b05ab488e19596e1b27c7 chore(deps): bump @hookform/resolvers
+dependabot/npm_and_yarn/products/social-wiring/frontend/js-yaml-4.3.1 368689656a02d58cffcf7584cb415686f71e69c1 chore(deps-dev): bump js-yaml in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/nanoid-3.3.18 221aceb7d268f50764f84d4a954780606438876a chore(deps): bump nanoid in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/postcss-8.5.23 f376f7ce4cdcefc3f2be8aa7c864fcb4230219db chore(deps-dev): bump postcss in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/recharts-3.8.1 155ca68ad00435aacb0f27d2ae2fafb61e213dee chore(deps): bump recharts in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/undici-7.29.0 581b0a0fa025d81dda2132cbfe4fede79cdc2138 chore(deps): bump undici in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/social-wiring/frontend/vitejs/plugin-react-swc-4.3.1 28bcb884d2ec5d05aee741d131a9122a5c76c317 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/products/social-wiring/frontend/zod-4.4.3 20540fd6f077d84d5b522a91698474705e304064 chore(deps): bump zod in /products/social-wiring/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/autoprefixer-10.5.0 80f7d34be5e34e19272eba1452dfcd4e79b9ccd3 chore(deps-dev): bump autoprefixer
+dependabot/npm_and_yarn/products/therapy-platform/frontend/hookform/resolvers-5.4.0 9035084b3f6e28fe48d9607baec36707215514a8 chore(deps): bump @hookform/resolvers
+dependabot/npm_and_yarn/products/therapy-platform/frontend/js-yaml-4.3.1 976b323beca5c28571503be4c47cd6cb0ca58504 chore(deps-dev): bump js-yaml in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/multi-ebf216889e ef9214fe73b11e919a5ccce0f6c1bacb630355de chore(deps): bump esbuild, @vitejs/plugin-react-swc and vite
+dependabot/npm_and_yarn/products/therapy-platform/frontend/nanoid-3.3.18 d8b8816963c25e328670aacf81aab47967fd581d chore(deps): bump nanoid in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/postcss-8.5.26 8b1c6d24bf6d60fd068019cadacaebe92e80b6f7 chore(deps-dev): bump postcss in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/react-hook-form-7.77.0 679e2216740df34096a42ab5635079b8ef358db3 chore(deps): bump react-hook-form in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/recharts-3.8.1 ee1ab5e6959d1e05d9f948115ae3e9f398ad10af chore(deps): bump recharts in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/undici-7.29.0 12cb577955fe3ae82fd4f4c9d6f167fb1ca636a8 chore(deps): bump undici in /products/therapy-platform/frontend
+dependabot/npm_and_yarn/products/therapy-platform/frontend/vitejs/plugin-react-swc-4.3.1 a19f60fd1673d80cc4b6a433f85626fa0c7c2831 chore(deps-dev): bump @vitejs/plugin-react-swc
+dependabot/npm_and_yarn/seed/framework/frontend/babel/core-7.29.7 3e8f24efe76e4ab88a56cd8f627575769bb7e61e chore(deps-dev): bump @babel/core in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/eslint-10.4.1 59dc8b1725a2e8f6cbaf1d8c37407b8dd391976c chore(deps-dev): bump eslint in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/form-data-4.0.6 cab481ff760cb031c31e6a165d2f4415e4853691 chore(deps): bump form-data in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/globals-17.6.0 cc7f284800d6981939c85fefe73c69dd4db9e8a5 chore(deps-dev): bump globals in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/js-yaml-4.3.1 24e6dfebfe499f115ee1f75eb0fc81e7085ea6e7 chore(deps-dev): bump js-yaml in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/multi-5ea19b96cb 0b2b5fdf3bc3a13eef5dabe6bcda4b4d6394852d chore(deps): bump esbuild, @vitejs/plugin-react and vite
+dependabot/npm_and_yarn/seed/framework/frontend/multi-5eeac475f5 2549323810e6fe77191121abee584832f914bc72 chore(deps): bump brace-expansion and eslint in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/multi-7958ac4c45 798e24c8f230f9ad9a3daef9edcf2d7ada2bd513 chore(deps): bump @remix-run/router and react-router-dom
+dependabot/npm_and_yarn/seed/framework/frontend/multi-c336f0d9c2 db0ea9bfd0061423f9cbb816b3ab45cc2ff3d5c3 chore(deps-dev): bump react and @types/react in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/tanstack/react-query-5.100.14 e82d3cc1f93a4cec60ca233c49198f30ca6ae69d chore(deps-dev): bump @tanstack/react-query in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/framework/frontend/vite-8.0.16 304e46279bb8d764445ec623ac5aa9be81be69f8 chore(deps-dev): bump vite in /seed/framework/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/form-data-4.0.6 91c7dd1e5a455d11ac3b4cfdbaf6a041ec2d7904 chore(deps): bump form-data from 4.0.5 to 4.0.6 in /seed/lib/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/jsdom-29.1.1 a15c36fcbec838a679cf243e1bf5049d7d05905f chore(deps-dev): bump jsdom from 25.0.1 to 29.1.1 in /seed/lib/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/multi-3d3f0671f1 4e5f1364d0263ad292644c2212b09ad7b72a5a55 chore(deps-dev): bump react-dom and @types/react-dom
+dependabot/npm_and_yarn/seed/lib/frontend/multi-7958ac4c45 cfb398bbd21b561e4fb51d9e726f33ede99f7a94 chore(deps): bump @remix-run/router and react-router-dom
+dependabot/npm_and_yarn/seed/lib/frontend/multi-f57e1e291f 8ac518066858f6302565aadd09403a43de965d32 chore(deps): bump esbuild and vite in /seed/lib/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/supabase/supabase-js-2.107.0 a3a7bd0855e8c2833ce8a2a11d3831fb48128e7d chore(deps-dev): bump @supabase/supabase-js in /seed/lib/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/tailwind-merge-3.6.0 f79e6878d70075a03695915d12affa9670051118 chore(deps-dev): bump tailwind-merge in /seed/lib/frontend
+dependabot/npm_and_yarn/seed/lib/frontend/zustand-5.0.14 c872b3dc169439035c43a7d57daca421f5c72cb5 chore(deps-dev): bump zustand in /seed/lib/frontend
+dependabot/pip/pyjwt-2.13.0 ecd230773aa1a6089b9c05a35baac9b01ac08b22 chore(deps): bump pyjwt from 2.12.0 to 2.13.0
+dependabot/pip/seed/lib/backend/google-genai-gte-1.0.0-and-lt-2.17.0 7e589b8c4262f729222db27ada4c7e67721292ef chore(deps): update google-genai requirement in /seed/lib/backend
+dependabot/pip/seed/lib/backend/gotrue-gte-2.11.4-and-lt-2.13 590402dc355454f76e0492abfad16638b35c6a7d chore(deps): update gotrue requirement in /seed/lib/backend
+dependabot/pip/seed/lib/backend/starlette-gte-0.49.1-and-lt-1.4.0 bba394ff7440d396ed1dce60a3d516ef328c0f07 chore(deps): update starlette requirement in /seed/lib/backend
+dependabot/pip/seed/lib/backend/supabase-gte-2.9.1-and-lt-2.32 f9abb9a10814831e1d3097acffd3b6808035f78e chore(deps): update supabase requirement in /seed/lib/backend

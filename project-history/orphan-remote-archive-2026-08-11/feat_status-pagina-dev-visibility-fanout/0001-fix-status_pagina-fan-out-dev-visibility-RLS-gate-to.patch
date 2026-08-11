@@ -1,0 +1,320 @@
+From aa806fd5eabfa9086577bc0f466234706d710626 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Thu, 23 Jul 2026 13:55:16 -0300
+Subject: [PATCH] fix(status_pagina): fan out dev-visibility RLS gate to
+ orbity, personal-finance, seed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fans out the social-wiring pilot (feat/status-pagina-dev-visibility,
+migration 026/032): status_pagina had exactly ONE SELECT policy
+(todos_veem_producao, status='producao'), so the FE's authenticated
+product-client read (usePageStatus) never returned a 'desenvolvimento'
+row to anyone — not even dev/owner — making the whole desenvolvimento
+category dead in production for orbity and personal-finance.
+
+Two additive pieces per target, mirroring the pilot exactly:
+- public.current_org_role() (SECURITY DEFINER, symmetric with
+  current_org_id(), reads noctus_users.org_role — never user_metadata)
+- a SECOND, additive dev_veem_desenvolvimento SELECT policy scoped to
+  status='desenvolvimento' AND role IN (owner, dev, admin)
+
+Applied to:
+- orbity (015) — bug live, uses public.current_org_id()/noctus_users
+- personal-finance (012) — bug live, same trust root
+- seed canonical (005, products/seed + templates/product-seed via
+  noctus.dev.sync_seed_template) so new scaffolds inherit the fix day-1
+
+Verified against a disposable postgres:16 container per product: applied
+each product's full migration chain + the new file, confirmed the policy
+and helper exist via pg_policy/pg_proc, and re-applied to confirm
+idempotency.
+
+erp-imobiliario SKIPPED — already has "Devs podem ver páginas gerais em
+desenvolvimento" + "Admins podem ver todas as páginas" policies since
+001_erp_imobiliario.sql, via its own erp.app_role/has_role() model. No
+bug live there.
+
+therapy-platform SURFACED out-of-scope — has no noctus_users.org_role
+model at all; its role source is therapy.current_user_role() reading
+auth.jwt() user_metadata (patient/therapist/clinic-admin business roles,
+itself the RLS-never-key-on-user_metadata anti-pattern). Bolting the
+org_role-based policy on top would invent a role model the product
+doesn't otherwise have.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../015_status_pagina_dev_visibility.sql      | 56 +++++++++++++++++
+ .../012_status_pagina_dev_visibility.sql      | 62 +++++++++++++++++++
+ .../005_status_pagina_dev_visibility.sql      | 59 ++++++++++++++++++
+ .../005_status_pagina_dev_visibility.sql      | 59 ++++++++++++++++++
+ 4 files changed, 236 insertions(+)
+ create mode 100644 products/orbity/backend/migrations/015_status_pagina_dev_visibility.sql
+ create mode 100644 products/personal-finance/backend/migrations/012_status_pagina_dev_visibility.sql
+ create mode 100644 products/seed/backend/migrations/005_status_pagina_dev_visibility.sql
+ create mode 100644 templates/product-seed/backend/migrations/005_status_pagina_dev_visibility.sql
+
+diff --git a/products/orbity/backend/migrations/015_status_pagina_dev_visibility.sql b/products/orbity/backend/migrations/015_status_pagina_dev_visibility.sql
+new file mode 100644
+index 00000000..5a80b49d
+--- /dev/null
++++ b/products/orbity/backend/migrations/015_status_pagina_dev_visibility.sql
+@@ -0,0 +1,56 @@
++-- 015_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
++-- visible to dev / owner / admin, closing a gate that hid them from EVERYONE.
++--
++-- THE DEFECT (fan-out from the social-wiring pilot, feat/status-pagina-
++-- dev-visibility, migration 026/032): orbity.status_pagina had exactly ONE
++-- policy — todos_veem_producao, USING (status = 'producao'). The FE reads
++-- this table through the product's *authenticated* Supabase client (RLS
++-- applies), so a 'desenvolvimento' row was NEVER returned to anyone — not
++-- even owner/dev. seed/lib/frontend/src/page-status.ts's isPageVisible()
++-- desenvolvimento branch (isDevOrOwner) was therefore dead code for orbity.
++--
++-- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
++-- policies) that returns 'desenvolvimento' rows to owner/dev/admin.
++-- todos_veem_producao is untouched — this can only WIDEN visibility.
++--
++-- SAFE ROLE SOURCE (the load-bearing security decision):
++--   role comes from public.noctus_users.org_role keyed on auth.uid() — a
++--   core-managed, server-owned table. This is the SAME trust root as
++--   public.current_org_id() (already defined for orbity in 001_orbity.sql).
++--   It is 🔴 NOT user_metadata — that JWT claim is user-spoofable and must
++--   never key RLS (KB § PATTERNS/security,
++--   memory feedback_rls_never_key_on_user_metadata).
++--
++-- current_org_role() is declared in the shared `public` schema (same as
++-- current_org_id()) — CREATE OR REPLACE is idempotent across every product
++-- migration chain that (re)declares it; one definition serves the fleet.
++--
++-- Forward-only + idempotent. Apply to the noctusai Supabase (orbity schema).
++
++SET search_path = orbity, public;
++
++CREATE OR REPLACE FUNCTION public.current_org_role()
++  RETURNS text
++  LANGUAGE sql
++  STABLE SECURITY DEFINER
++  SET search_path TO 'public'
++AS $f$
++  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
++$f$;
++
++-- Additive: 'desenvolvimento' rows become readable by dev/owner/admin.
++-- TO authenticated is mandatory — anon has no auth.uid(), so
++-- current_org_role() is NULL and `NULL = ANY(...)` is false ⇒ zero rows.
++-- Scoped to 'desenvolvimento' ONLY — 'desativado' stays hidden from all.
++DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON orbity.status_pagina;
++CREATE POLICY "dev_veem_desenvolvimento" ON orbity.status_pagina
++    FOR SELECT TO authenticated
++    USING (
++        status = 'desenvolvimento'
++        AND public.current_org_role() = ANY (ARRAY['owner', 'dev', 'admin'])
++    );
++
++-- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
++-- DEV_ROLES const (seed/lib/frontend/src/roles.ts). There is no shared
++-- source between this SQL literal and that TS const today; keeping them in
++-- lockstep is a manual contract until a keeper enforces it.
+diff --git a/products/personal-finance/backend/migrations/012_status_pagina_dev_visibility.sql b/products/personal-finance/backend/migrations/012_status_pagina_dev_visibility.sql
+new file mode 100644
+index 00000000..847ebd14
+--- /dev/null
++++ b/products/personal-finance/backend/migrations/012_status_pagina_dev_visibility.sql
+@@ -0,0 +1,62 @@
++-- 012_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
++-- visible to dev / owner / admin, closing a gate that hid them from EVERYONE.
++--
++-- THE DEFECT (fan-out from the social-wiring pilot, feat/status-pagina-
++-- dev-visibility, migration 026/032): "personal-finance".status_pagina had
++-- exactly ONE policy — "Todos veem paginas em producao", USING (status =
++-- 'producao'). The 004_status_pagina.sql comment even names the intended
++-- gate ("Dev/owner see all non-desativado (via app-layer check + service
++-- role)") but no such app-layer check ever shipped for the FE nav read path.
++-- The FE reads this table through the product's *authenticated* Supabase
++-- client (seed/lib/frontend/src/page-status.ts usePageStatus), so RLS
++-- applies and a 'desenvolvimento' row was NEVER returned to anyone — not
++-- even owner/dev. isPageVisible()'s desenvolvimento branch (isDevOrOwner)
++-- was therefore dead code for personal-finance.
++--
++-- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
++-- policies) that returns 'desenvolvimento' rows to owner/dev/admin.
++-- "Todos veem paginas em producao" is untouched — this can only WIDEN
++-- visibility.
++--
++-- SAFE ROLE SOURCE (the load-bearing security decision):
++--   role comes from public.noctus_users.org_role keyed on auth.uid() — a
++--   core-managed, server-owned table. This is the SAME trust root as
++--   public.current_org_id() (already used by every personal-finance RLS
++--   policy since 001_personal_finance.sql / 008_org_scoping_transition.sql).
++--   It is 🔴 NOT user_metadata — that JWT claim is user-spoofable and must
++--   never key RLS (KB § PATTERNS/security,
++--   memory feedback_rls_never_key_on_user_metadata).
++--
++-- current_org_role() is declared in the shared `public` schema (same as
++-- current_org_id()) — CREATE OR REPLACE is idempotent across every product
++-- migration chain that (re)declares it; one definition serves the fleet.
++--
++-- Forward-only + idempotent. Apply to the noctusai Supabase (personal-finance schema).
++
++SET search_path = "personal-finance", public;
++
++CREATE OR REPLACE FUNCTION public.current_org_role()
++  RETURNS text
++  LANGUAGE sql
++  STABLE SECURITY DEFINER
++  SET search_path TO 'public'
++AS $f$
++  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
++$f$;
++
++-- Additive: 'desenvolvimento' rows become readable by dev/owner/admin.
++-- TO authenticated is mandatory — anon has no auth.uid(), so
++-- current_org_role() is NULL and `NULL = ANY(...)` is false ⇒ zero rows.
++-- Scoped to 'desenvolvimento' ONLY — 'desativado' stays hidden from all.
++DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON "personal-finance".status_pagina;
++CREATE POLICY "dev_veem_desenvolvimento" ON "personal-finance".status_pagina
++    FOR SELECT TO authenticated
++    USING (
++        status = 'desenvolvimento'
++        AND public.current_org_role() = ANY (ARRAY['owner', 'dev', 'admin'])
++    );
++
++-- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
++-- DEV_ROLES const (seed/lib/frontend/src/roles.ts). There is no shared
++-- source between this SQL literal and that TS const today; keeping them in
++-- lockstep is a manual contract until a keeper enforces it.
+diff --git a/products/seed/backend/migrations/005_status_pagina_dev_visibility.sql b/products/seed/backend/migrations/005_status_pagina_dev_visibility.sql
+new file mode 100644
+index 00000000..6b3ff282
+--- /dev/null
++++ b/products/seed/backend/migrations/005_status_pagina_dev_visibility.sql
+@@ -0,0 +1,59 @@
++-- 005_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
++-- visible to dev / owner / admin, closing a gate that hid them from EVERYONE.
++--
++-- SEED/TEMPLATE LEG of the status_pagina dev-visibility fan-out (pilot:
++-- social-wiring migration 026/032, feat/status-pagina-dev-visibility).
++-- Every product scaffolded FROM this seed copies 001_seed.sql (which ships
++-- only "todos_veem_producao", USING status='producao') — so without this
++-- migration every NEW product inherits the same defect: a 'desenvolvimento'
++-- row is never returned to anyone (not even dev/owner) through the FE's
++-- authenticated product-client read (seed/lib/frontend/src/page-status.ts
++-- usePageStatus). This migration makes the seed canonical shape correct
++-- day-1 for future products.
++--
++-- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
++-- policies) that returns 'desenvolvimento' rows to owner/dev/admin.
++-- todos_veem_producao is untouched — this can only WIDEN visibility.
++--
++-- SAFE ROLE SOURCE: role comes from public.noctus_users.org_role keyed on
++-- auth.uid() — the same trust root as public.current_org_id() (001_seed.sql).
++-- 🔴 NOT user_metadata — spoofable, must never key RLS
++-- (memory feedback_rls_never_key_on_user_metadata).
++--
++-- current_org_role() is declared in the shared `public` schema (same as
++-- current_org_id()) — CREATE OR REPLACE is idempotent across every product
++-- migration chain that (re)declares it; one definition serves the fleet.
++--
++-- Forward-only + idempotent. products/seed/ and templates/product-seed/
++-- MUST stay in sync (pre-commit hook mirrors products/seed → templates on
++-- staged change) — this file has a byte-identical sibling in
++-- templates/product-seed/backend/migrations/ with {{SCHEMA_NAME}} in place
++-- of the literal `seed` schema.
++
++SET search_path = seed, public;
++
++CREATE OR REPLACE FUNCTION public.current_org_role()
++  RETURNS text
++  LANGUAGE sql
++  STABLE SECURITY DEFINER
++  SET search_path TO 'public'
++AS $f$
++  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
++$f$;
++
++-- Additive: 'desenvolvimento' rows become readable by dev/owner/admin.
++-- TO authenticated is mandatory — anon has no auth.uid(), so
++-- current_org_role() is NULL and `NULL = ANY(...)` is false ⇒ zero rows.
++-- Scoped to 'desenvolvimento' ONLY — 'desativado' stays hidden from all.
++DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON seed.status_pagina;
++CREATE POLICY "dev_veem_desenvolvimento" ON seed.status_pagina
++    FOR SELECT TO authenticated
++    USING (
++        status = 'desenvolvimento'
++        AND public.current_org_role() = ANY (ARRAY['owner', 'dev', 'admin'])
++    );
++
++-- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
++-- DEV_ROLES const (seed/lib/frontend/src/roles.ts). There is no shared
++-- source between this SQL literal and that TS const today; keeping them in
++-- lockstep is a manual contract until a keeper enforces it.
+diff --git a/templates/product-seed/backend/migrations/005_status_pagina_dev_visibility.sql b/templates/product-seed/backend/migrations/005_status_pagina_dev_visibility.sql
+new file mode 100644
+index 00000000..d8ffa4d1
+--- /dev/null
++++ b/templates/product-seed/backend/migrations/005_status_pagina_dev_visibility.sql
+@@ -0,0 +1,59 @@
++-- 005_status_pagina_dev_visibility.sql — make 'desenvolvimento' pages
++-- visible to dev / owner / admin, closing a gate that hid them from EVERYONE.
++--
++-- SEED/TEMPLATE LEG of the status_pagina dev-visibility fan-out (pilot:
++-- social-wiring migration 026/032, feat/status-pagina-dev-visibility).
++-- Every product scaffolded FROM this {{SCHEMA_NAME}} copies 001_seed.sql (which ships
++-- only "todos_veem_producao", USING status='producao') — so without this
++-- migration every NEW product inherits the same defect: a 'desenvolvimento'
++-- row is never returned to anyone (not even dev/owner) through the FE's
++-- authenticated product-client read ({{SCHEMA_NAME}}/lib/frontend/src/page-status.ts
++-- usePageStatus). This migration makes the {{SCHEMA_NAME}} canonical shape correct
++-- day-1 for future products.
++--
++-- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
++-- policies) that returns 'desenvolvimento' rows to owner/dev/admin.
++-- todos_veem_producao is untouched — this can only WIDEN visibility.
++--
++-- SAFE ROLE SOURCE: role comes from public.noctus_users.org_role keyed on
++-- auth.uid() — the same trust root as public.current_org_id() (001_seed.sql).
++-- 🔴 NOT user_metadata — spoofable, must never key RLS
++-- (memory feedback_rls_never_key_on_user_metadata).
++--
++-- current_org_role() is declared in the shared `public` schema (same as
++-- current_org_id()) — CREATE OR REPLACE is idempotent across every product
++-- migration chain that (re)declares it; one definition serves the fleet.
++--
++-- Forward-only + idempotent. products/{{SCHEMA_NAME}}/ and templates/product-{{SCHEMA_NAME}}/
++-- MUST stay in sync (pre-commit hook mirrors products/{{SCHEMA_NAME}} → templates on
++-- staged change) — this file has a byte-identical sibling in
++-- templates/product-{{SCHEMA_NAME}}/backend/migrations/ with {{SCHEMA_NAME}} in place
++-- of the literal `{{SCHEMA_NAME}}` schema.
++
++SET search_path = {{SCHEMA_NAME}}, public;
++
++CREATE OR REPLACE FUNCTION public.current_org_role()
++  RETURNS text
++  LANGUAGE sql
++  STABLE SECURITY DEFINER
++  SET search_path TO 'public'
++AS $f$
++  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
++$f$;
++
++-- Additive: 'desenvolvimento' rows become readable by dev/owner/admin.
++-- TO authenticated is mandatory — anon has no auth.uid(), so
++-- current_org_role() is NULL and `NULL = ANY(...)` is false ⇒ zero rows.
++-- Scoped to 'desenvolvimento' ONLY — 'desativado' stays hidden from all.
++DROP POLICY IF EXISTS "dev_veem_desenvolvimento" ON {{SCHEMA_NAME}}.status_pagina;
++CREATE POLICY "dev_veem_desenvolvimento" ON {{SCHEMA_NAME}}.status_pagina
++    FOR SELECT TO authenticated
++    USING (
++        status = 'desenvolvimento'
++        AND public.current_org_role() = ANY (ARRAY['owner', 'dev', 'admin'])
++    );
++
++-- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
++-- DEV_ROLES const ({{SCHEMA_NAME}}/lib/frontend/src/roles.ts). There is no shared
++-- source between this SQL literal and that TS const today; keeping them in
++-- lockstep is a manual contract until a keeper enforces it.
+-- 
+2.51.2
+

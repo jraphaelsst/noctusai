@@ -1,0 +1,2671 @@
+From fe52c0961dcb4f87fdbfad67656e417f4b1cd494 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Thu, 16 Jul 2026 18:54:23 -0300
+Subject: [PATCH 1/2] feat(seed): add n8n Protocol+Fake+Real adapter, refactor
+ mcp/n8n to consume it
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Leg A — seed/lib/backend/noctusai_lib/integrations/n8n/ (mailchimp shape,
+Protocol+Fake+Real+factory) covers list/get/activate/deactivate/rename/
+delete workflows, execution list/get, tag list/create/set, and the
+webhook-only run_via_webhook — the only sanctioned dispatch path (n8n's
+public API has no execute endpoint). Encodes the facts measured live
+2026-07-16: full workflow objects (incl. nodes) on GET /workflows so
+can_run is computable with no N+1 but the Workflow value object never
+retains nodes; isArchived excluded by default; the browser User-Agent
+required by the Cloudflare WAF on both API and webhook calls; the
+PUT-sanitize allowlist; tag-ids-not-names; int execution ids vs str
+workflow ids. 94 new seed tests (mappers/fake/httpx-MockTransport).
+
+Leg B — mcp/n8n/api.py's normalize_base_url now delegates to the seed's
+canonical copy instead of an independent reimplementation (the fork this
+slice exists to prevent); mcp/n8n/tools/workflow.py's PUT-sanitize
+allowlist and tag-ids body-shape now import the same seed mappers
+HttpxN8nClient uses. The 16 tools' external contract, api.request_json's
+sync urllib seam, and every mcp/n8n/tests/* file are unchanged — all 32
+pass unedited.
+
+Fix-on-contact: httpx was imported by ~10 seed modules but undeclared in
+seed/lib/backend/pyproject.toml; declared explicitly.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ mcp/n8n/api.py                                |  39 +-
+ mcp/n8n/tools/workflow.py                     |  29 +-
+ .../noctusai_lib/integrations/n8n/__init__.py | 128 +++++
+ .../integrations/n8n/fake_adapter.py          | 286 +++++++++++
+ .../noctusai_lib/integrations/n8n/mappers.py  | 269 ++++++++++
+ .../integrations/n8n/n8n_adapter.py           | 337 +++++++++++++
+ .../noctusai_lib/integrations/n8n/types.py    | 327 ++++++++++++
+ seed/lib/backend/pyproject.toml               |  10 +
+ .../tests/integrations/n8n/__init__.py        |   0
+ .../tests/integrations/n8n/test_client.py     | 464 ++++++++++++++++++
+ .../integrations/n8n/test_fake_adapter.py     | 291 +++++++++++
+ .../tests/integrations/n8n/test_mappers.py    | 291 +++++++++++
+ 12 files changed, 2439 insertions(+), 32 deletions(-)
+ create mode 100644 seed/lib/backend/noctusai_lib/integrations/n8n/__init__.py
+ create mode 100644 seed/lib/backend/noctusai_lib/integrations/n8n/fake_adapter.py
+ create mode 100644 seed/lib/backend/noctusai_lib/integrations/n8n/mappers.py
+ create mode 100644 seed/lib/backend/noctusai_lib/integrations/n8n/n8n_adapter.py
+ create mode 100644 seed/lib/backend/noctusai_lib/integrations/n8n/types.py
+ create mode 100644 seed/lib/backend/tests/integrations/n8n/__init__.py
+ create mode 100644 seed/lib/backend/tests/integrations/n8n/test_client.py
+ create mode 100644 seed/lib/backend/tests/integrations/n8n/test_fake_adapter.py
+ create mode 100644 seed/lib/backend/tests/integrations/n8n/test_mappers.py
+
+diff --git a/mcp/n8n/api.py b/mcp/n8n/api.py
+index 1a58dc80..abaac4d4 100644
+--- a/mcp/n8n/api.py
++++ b/mcp/n8n/api.py
+@@ -5,6 +5,17 @@ operator's public-API key*. `request_json` is the single HTTP boundary
+ (stdlib `urllib` — zero extra deps, the same "wrap the stdlib"
+ discipline `mcp/github` applies to `subprocess`).
+ 
++`normalize_base_url` is imported from
++`noctusai_lib.integrations.n8n` (the seed's Protocol+Fake+Real
++adapter, `seed/lib/backend/noctusai_lib/integrations/n8n/`) rather
++than reimplemented here — a second independent copy is the exact fork
++this module used to risk (a stale connector-side normalizer drifting
++from the seed's own `HttpxN8nClient`). What stays connector-side by
++design: `ConfirmationRequiredError`/412 (the MCP write-gate contract),
++the 424 not-configured gate below (the seed factory's equivalent is
++"no api_key → Fake"), and `mcp/n8n/settings.py`'s env/`.env`
++single-instance resolution.
++
+ **Test seam.** n8n is an external service, so tests
+ `unittest.mock.patch("n8n.api.request_json", ...)` to feed canned
+ payloads without a network call — sanctioned by CLAUDE.md §1
+@@ -23,6 +34,7 @@ from typing import Optional
+ 
+ from _kit.errors import confirmation_required_message
+ from _kit.transport import request_json as _http_request_json
++from noctusai_lib.integrations.n8n import normalize_base_url
+ 
+ 
+ class N8nApiError(Exception):
+@@ -53,22 +65,6 @@ class ConfirmationRequiredError(N8nApiError):
+         super().__init__(confirmation_required_message(action), status=412)
+ 
+ 
+-def normalize_base_url(raw: str) -> str:
+-    """Return the API root ending in `/api/v1`, no trailing slash.
+-
+-    Accepts either the instance root (`https://n8n.example.com`) or an
+-    already-suffixed URL (`https://n8n.example.com/api/v1`) — both
+-    normalize to the same value so the operator can't get it subtly
+-    wrong in `.env`.
+-    """
+-    base = (raw or "").rstrip("/")
+-    if not base:
+-        return ""
+-    if base.endswith("/api/v1"):
+-        return base
+-    return f"{base}/api/v1"
+-
+-
+ def request_json(
+     method: str,
+     path: str,
+@@ -92,9 +88,14 @@ def request_json(
+             "N8N_API_KEY in mcp/n8n/.env (or the environment).",
+             status=424,
+         )
+-    # Delegate the urllib mechanics to the shared seam; n8n keeps its own
+-    # /api/v1 base-URL normalization + N8nApiError type + the 424 not-configured
+-    # gate above. (kit-connector-boilerplate-consolidation Wave 2 pilot.)
++    # Delegate the urllib mechanics to the shared _kit seam; `/api/v1`
++    # base-URL normalization is the seed's canonical
++    # `noctusai_lib.integrations.n8n.normalize_base_url` (re-exported below —
++    # `n8n.api.normalize_base_url` / `from n8n.api import normalize_base_url`
++    # both keep working). `N8nApiError` + the 424 not-configured gate above
++    # stay connector-side: the MCP write-gate contract, not the seed's HTTP
++    # concern. See `seed/lib/backend/noctusai_lib/integrations/n8n/` (the
++    # sibling httpx-backed adapter other consumers use directly).
+     url = f"{normalize_base_url(base_url)}{path}"
+     return _http_request_json(
+         method,
+diff --git a/mcp/n8n/tools/workflow.py b/mcp/n8n/tools/workflow.py
+index dd27e99e..84aa8f9f 100644
+--- a/mcp/n8n/tools/workflow.py
++++ b/mcp/n8n/tools/workflow.py
+@@ -10,6 +10,12 @@ envelope (`_kit.errors.typed_error`), never a fabricated success.
+ `api` is invoked via the module (`api.request_json`), NOT `from ..api
+ import request_json`, so a test `patch("n8n.api.request_json")` is
+ actually observed by these handlers.
++
++The PUT/POST-sanitize allowlist (`sanitize_workflow_put_body`) and the
++tag-ids-not-names body shape (`tag_refs_body`) are imported from
++`noctusai_lib.integrations.n8n` — the seed's canonical copies, also
++used by `HttpxN8nClient`. Kept as a single source of truth rather than
++a second connector-side reimplementation.
+ """
+ from __future__ import annotations
+ 
+@@ -19,6 +25,7 @@ from mcp.server import Server
+ from mcp.types import Tool
+ 
+ from _kit.errors import typed_error
++from noctusai_lib.integrations.n8n import sanitize_workflow_put_body, tag_refs_body
+ 
+ from .. import api
+ from ..settings import get_settings
+@@ -42,11 +49,6 @@ from ..types import (
+     TagSummary,
+ )
+ 
+-# n8n public-API PUT /workflows/{id} rejects additional properties — only
+-# these four keys are accepted. Activation/tags are managed via their own
+-# endpoints, not the workflow body.
+-_PUT_KEYS = ("name", "nodes", "connections", "settings")
+-
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -170,10 +172,11 @@ async def workflow_update(args: dict) -> dict:
+             )
+         ).model_dump()
+     # Sanitize to the PUT-accepted keys (drop id/active/tags/timestamps/…
+-    # so n8n does not 400 on additional properties). `settings` must be
+-    # present; default to {} when the source omitted it.
+-    body = {k: inp.workflow[k] for k in _PUT_KEYS if k in inp.workflow}
+-    body.setdefault("settings", inp.workflow.get("settings") or {})
++    # so n8n does not 400 on additional properties) — the seed's canonical
++    # allowlist (`noctusai_lib.integrations.n8n.sanitize_workflow_put_body`),
++    # the same one `HttpxN8nClient.rename()` uses. `settings` always ends
++    # up present; default to {} when the source omitted it.
++    body = sanitize_workflow_put_body(inp.workflow)
+     try:
+         data = api.request_json(
+             "PUT", f"/workflows/{inp.id}", body=body, **_ctx()
+@@ -198,8 +201,7 @@ async def workflow_create(args: dict) -> dict:
+                 api.ConfirmationRequiredError("n8n.workflow.create")
+             )
+         ).model_dump()
+-    body = {k: inp.workflow[k] for k in _PUT_KEYS if k in inp.workflow}
+-    body.setdefault("settings", inp.workflow.get("settings") or {})
++    body = sanitize_workflow_put_body(inp.workflow)
+     try:
+         data = api.request_json("POST", "/workflows", body=body, **_ctx())
+     except api.N8nApiError as e:
+@@ -244,8 +246,9 @@ async def workflow_set_tags(args: dict) -> dict:
+                 api.ConfirmationRequiredError("n8n.workflow.set_tags")
+             )
+         ).model_dump()
+-    # n8n PUT /workflows/{id}/tags body = [{"id": "<tagId>"}, ...]
+-    body_list = [{"id": tid} for tid in inp.tag_ids]
++    # n8n PUT /workflows/{id}/tags body = [{"id": "<tagId>"}, ...] — tag ids,
++    # never names (`noctusai_lib.integrations.n8n.tag_refs_body`).
++    body_list = tag_refs_body(inp.tag_ids)
+     try:
+         data = api.request_json(
+             "PUT", f"/workflows/{inp.id}/tags", body=body_list, **_ctx()
+diff --git a/seed/lib/backend/noctusai_lib/integrations/n8n/__init__.py b/seed/lib/backend/noctusai_lib/integrations/n8n/__init__.py
+new file mode 100644
+index 00000000..6243745c
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/integrations/n8n/__init__.py
+@@ -0,0 +1,128 @@
++"""n8n public API v1 adapter — Protocol + Fake + Real + factory.
++
++Public surface:
++- ``N8nClient`` Protocol (async methods, all operations).
++- ``FakeN8nClient`` — deterministic in-memory implementation for
++  dev + tests. Seeds three workflows covering all three run-eligibility
++  outcomes (webhook+active+not-archived / no-webhook / archived); one
++  tag; one execution. Deterministic ids.
++- ``HttpxN8nClient`` — real httpx-backed adapter (``X-N8N-API-KEY``
++  header auth, instance-root base URL).
++- ``get_n8n_client(base_url=None, api_key=None)`` — returns
++  ``FakeN8nClient`` when ``api_key`` is absent/empty,
++  ``HttpxN8nClient`` otherwise.
++- Error hierarchy: ``N8nError`` → ``N8nAuthError`` /
++  ``N8nNotFoundError`` / ``N8nRateLimitedError`` / ``N8nRejectedError``
++  / ``N8nUnreachableError`` / ``N8nWorkflowNotRunnableError``.
++- Value objects: ``Tag``, ``Workflow``, ``Execution``, ``RunResult``.
++- Pure helpers: ``normalize_base_url``, ``instance_root``,
++  ``webhook_url``, ``sanitize_workflow_put_body``,
++  ``WORKFLOW_PUT_ALLOWED_KEYS``, ``tag_refs_body``,
++  ``extract_webhook_trigger``.
++
++**Hard-won facts (measured live 2026-07-16) are carried by the code,
++not by prose** — see the docstrings on ``types.N8nClient`` and on each
++mapper in ``mappers.py`` for the full fact list (heavy list payload /
++``isArchived`` default / webhook-only run / WAF User-Agent / PUT
++sanitize / tag-ids-not-names / int-vs-str ids / no credentials
++list-endpoint / projects 403).
++
++See ``KB § PATTERNS/backend/seed-fake-real-adapter.md`` for the wiring
++recipe — this module follows the **mailchimp** shape
++(``__init__.py``/``types.py``/``mappers.py``/``fake_adapter.py``/
++``n8n_adapter.py``), NOT ``integrations/youtube/``'s
++``protocol.py``/``fake.py``/``real.py``/``factory.py`` layout, which is
++off-pattern for this family of external-HTTP-per-tenant-API-key
++adapters.
++"""
++
++from noctusai_lib.integrations.n8n.fake_adapter import FakeN8nClient
++from noctusai_lib.integrations.n8n.mappers import (
++    WORKFLOW_PUT_ALLOWED_KEYS,
++    extract_webhook_trigger,
++    instance_root,
++    normalize_base_url,
++    raw_to_execution,
++    raw_to_tag,
++    raw_to_workflow,
++    sanitize_workflow_put_body,
++    tag_refs_body,
++    webhook_url,
++)
++from noctusai_lib.integrations.n8n.n8n_adapter import HttpxN8nClient
++from noctusai_lib.integrations.n8n.types import (
++    Execution,
++    N8nAuthError,
++    N8nClient,
++    N8nError,
++    N8nNotFoundError,
++    N8nRateLimitedError,
++    N8nRejectedError,
++    N8nUnreachableError,
++    N8nWorkflowNotRunnableError,
++    RunResult,
++    Tag,
++    Workflow,
++)
++
++
++def get_n8n_client(
++    base_url: str | None = None,
++    api_key: str | None = None,
++    *,
++    timeout: float = 20.0,
++) -> N8nClient:
++    """Return a real ``HttpxN8nClient`` when both ``base_url`` and
++    ``api_key`` are set; ``FakeN8nClient`` otherwise.
++
++    Mirrors ``get_mailchimp_client()`` / ``get_whatsapp_client()`` per
++    ``KB § PATTERNS/seed-fake-real-adapter.md`` — deferred-config: no
++    credentials ⇒ Fake (so a caller boots + tests deterministically),
++    a real ``base_url``/``api_key`` pair ⇒ the httpx-backed adapter.
++
++    Usage::
++
++        # Dev / test: no real credentials needed
++        client = get_n8n_client()
++
++        # Production: base_url + api_key resolved per-tenant
++        client = get_n8n_client(base_url="https://n8n.example.com", api_key="...")
++    """
++    if not base_url or not api_key:
++        return FakeN8nClient()
++    return HttpxN8nClient(base_url, api_key, timeout=timeout)
++
++
++__all__ = [
++    # Factory
++    "get_n8n_client",
++    # Adapters
++    "FakeN8nClient",
++    "HttpxN8nClient",
++    # Protocol
++    "N8nClient",
++    # Error hierarchy
++    "N8nError",
++    "N8nAuthError",
++    "N8nNotFoundError",
++    "N8nRateLimitedError",
++    "N8nRejectedError",
++    "N8nUnreachableError",
++    "N8nWorkflowNotRunnableError",
++    # Value objects
++    "Tag",
++    "Workflow",
++    "Execution",
++    "RunResult",
++    # Pure helpers
++    "WORKFLOW_PUT_ALLOWED_KEYS",
++    "normalize_base_url",
++    "instance_root",
++    "webhook_url",
++    "sanitize_workflow_put_body",
++    "tag_refs_body",
++    "extract_webhook_trigger",
++    "raw_to_tag",
++    "raw_to_workflow",
++    "raw_to_execution",
++]
+diff --git a/seed/lib/backend/noctusai_lib/integrations/n8n/fake_adapter.py b/seed/lib/backend/noctusai_lib/integrations/n8n/fake_adapter.py
+new file mode 100644
+index 00000000..ad7d3bfb
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/integrations/n8n/fake_adapter.py
+@@ -0,0 +1,286 @@
++"""In-memory deterministic n8n client for dev + tests.
++
++Satisfies the ``N8nClient`` Protocol structurally. Seeds three
++workflows on construction, deliberately covering the three
++run-eligibility outcomes measured live 2026-07-16
++(``can_run = has_webhook_node AND active AND NOT archived``):
++
++- ``"fake-wf-1"`` — webhook trigger, active, not archived → **can_run**.
++- ``"fake-wf-2"`` — ``manualTrigger`` node only (no webhook) → not runnable.
++- ``"fake-wf-3"`` — webhook trigger but archived → not runnable.
++
++One tag (``"fake-tag-1"`` / ``"prod"``) and one execution
++(``id=1``, on ``"fake-wf-1"``) are also seeded. All ids are
++deterministic so tests can assert exact values.
++
++Lifecycle semantics that mirror the real API:
++- ``activate``/``deactivate``: flip ``active``, bump ``updatedAt``.
++- ``rename``: routes through the same
++  ``mappers.sanitize_workflow_put_body`` the real adapter's ``PUT``
++  uses — so the fake exercises the identical sanitize path.
++- ``delete_workflow``: removes the entry entirely (real API is not
++  API-undoable either).
++- ``run_via_webhook``: raises ``N8nWorkflowNotRunnableError`` for
++  ``"fake-wf-2"``/``"fake-wf-3"`` — never a faked dispatch — and
++  records dispatched ids on ``self.webhook_calls`` for assertions.
++
++Use ``client._raw_workflows["fake-wf-1"]`` etc. to inspect or seed
++state in tests. Same shape as ``FakeMailchimpClient`` per
++``KB § PATTERNS/seed-fake-real-adapter.md``.
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++from typing import Any
++
++from noctusai_lib.integrations.n8n.mappers import (
++    raw_to_execution,
++    raw_to_workflow,
++    sanitize_workflow_put_body,
++)
++from noctusai_lib.integrations.n8n.types import (
++    Execution,
++    N8nNotFoundError,
++    N8nWorkflowNotRunnableError,
++    RunResult,
++    Tag,
++    Workflow,
++)
++
++
++def _now_iso() -> str:
++    return datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
++
++
++def _webhook_node(path: str, method: str = "GET") -> dict[str, Any]:
++    return {
++        "id": f"node-webhook-{path}",
++        "name": "Webhook",
++        "type": "n8n-nodes-base.webhook",
++        "parameters": {"httpMethod": method, "path": path, "options": {}},
++        "webhookId": f"wh-{path}",
++    }
++
++
++def _manual_trigger_node() -> dict[str, Any]:
++    return {
++        "id": "node-manual",
++        "name": "Manual Trigger",
++        "type": "n8n-nodes-base.manualTrigger",
++        "parameters": {},
++    }
++
++
++class FakeN8nClient:
++    """In-memory n8n stand-in. Records state as raw n8n-shaped dicts
++    (the same shape ``HttpxN8nClient`` parses) so ``get_workflow``
++    returns realistic full fidelity and every mapper gets exercised.
++
++    Test pattern::
++
++        client = FakeN8nClient()
++        workflows = await client.list_workflows()
++        runnable = [w for w in workflows if w.can_run]
++        assert len(runnable) == 1
++    """
++
++    def __init__(self) -> None:
++        now = _now_iso()
++        self._raw_workflows: dict[str, dict[str, Any]] = {
++            "fake-wf-1": {
++                "id": "fake-wf-1",
++                "name": "Fake Runnable Webhook Flow",
++                "active": True,
++                "isArchived": False,
++                "tags": [{"id": "fake-tag-1", "name": "prod"}],
++                "nodes": [_webhook_node("fake-runnable")],
++                "connections": {},
++                "settings": {},
++                "createdAt": now,
++                "updatedAt": now,
++            },
++            "fake-wf-2": {
++                "id": "fake-wf-2",
++                "name": "Fake Manual-Trigger Flow",
++                "active": True,
++                "isArchived": False,
++                "tags": [],
++                "nodes": [_manual_trigger_node()],
++                "connections": {},
++                "settings": {},
++                "createdAt": now,
++                "updatedAt": now,
++            },
++            "fake-wf-3": {
++                "id": "fake-wf-3",
++                "name": "Fake Archived Webhook Flow",
++                "active": True,
++                "isArchived": True,
++                "tags": [{"id": "fake-tag-1", "name": "prod"}],
++                "nodes": [_webhook_node("fake-archived")],
++                "connections": {},
++                "settings": {},
++                "createdAt": now,
++                "updatedAt": now,
++            },
++        }
++        self.tags: dict[str, Tag] = {"fake-tag-1": Tag(id="fake-tag-1", name="prod")}
++        self.executions: dict[int, dict[str, Any]] = {
++            1: {
++                "id": 1,
++                "workflowId": "fake-wf-1",
++                "status": "success",
++                "mode": "webhook",
++                "finished": True,
++                "startedAt": now,
++                "stoppedAt": now,
++                "data": {"resultData": {}},
++            }
++        }
++        self._next_tag_serial = 2
++        # Test introspection — ids of workflows successfully dispatched via
++        # run_via_webhook, in call order.
++        self.webhook_calls: list[str] = []
++
++    # ------------------------------------------------------------------
++    # Workflows
++    # ------------------------------------------------------------------
++
++    async def list_workflows(
++        self, *, tag: str | None = None, include_archived: bool = False
++    ) -> list[Workflow]:
++        workflows = [raw_to_workflow(w) for w in self._raw_workflows.values()]
++        if not include_archived:
++            workflows = [w for w in workflows if not w.archived]
++        if tag:
++            workflows = [
++                w for w in workflows
++                if any(t.id == tag or t.name == tag for t in w.tags)
++            ]
++        return workflows
++
++    async def get_workflow(self, workflow_id: str) -> dict[str, Any]:
++        return dict(self._require_workflow(workflow_id))
++
++    async def activate(self, workflow_id: str) -> Workflow:
++        raw = self._require_workflow(workflow_id)
++        raw["active"] = True
++        raw["updatedAt"] = _now_iso()
++        return raw_to_workflow(raw)
++
++    async def deactivate(self, workflow_id: str) -> Workflow:
++        raw = self._require_workflow(workflow_id)
++        raw["active"] = False
++        raw["updatedAt"] = _now_iso()
++        return raw_to_workflow(raw)
++
++    async def rename(self, workflow_id: str, name: str) -> Workflow:
++        raw = self._require_workflow(workflow_id)
++        # Route through the same sanitize path the real adapter's PUT body
++        # goes through, so the fake exercises the identical allowlist logic.
++        sanitized = sanitize_workflow_put_body({**raw, "name": name})
++        raw.update(sanitized)
++        raw["updatedAt"] = _now_iso()
++        return raw_to_workflow(raw)
++
++    async def delete_workflow(self, workflow_id: str) -> None:
++        self._require_workflow(workflow_id)
++        del self._raw_workflows[workflow_id]
++
++    async def set_workflow_tags(
++        self, workflow_id: str, tag_ids: list[str]
++    ) -> list[Tag]:
++        raw = self._require_workflow(workflow_id)
++        resolved: list[Tag] = []
++        for tid in tag_ids:
++            tag = self.tags.get(tid)
++            if tag is None:
++                raise N8nNotFoundError(f"Tag {tid!r} not found", status=404)
++            resolved.append(tag)
++        raw["tags"] = [{"id": t.id, "name": t.name} for t in resolved]
++        raw["updatedAt"] = _now_iso()
++        return resolved
++
++    # ------------------------------------------------------------------
++    # Executions
++    # ------------------------------------------------------------------
++
++    async def list_executions(
++        self,
++        *,
++        workflow_id: str | None = None,
++        status: str | None = None,
++        limit: int = 20,
++    ) -> list[Execution]:
++        items = list(self.executions.values())
++        if workflow_id:
++            items = [e for e in items if str(e.get("workflowId")) == str(workflow_id)]
++        if status:
++            items = [e for e in items if e.get("status") == status]
++        items = items[:limit]
++        return [raw_to_execution(e) for e in items]
++
++    async def get_execution(
++        self, execution_id: int, *, include_data: bool = True
++    ) -> dict[str, Any]:
++        raw = self.executions.get(execution_id)
++        if raw is None:
++            raise N8nNotFoundError(f"Execution {execution_id} not found", status=404)
++        if not include_data:
++            return {k: v for k, v in raw.items() if k != "data"}
++        return dict(raw)
++
++    # ------------------------------------------------------------------
++    # Tags
++    # ------------------------------------------------------------------
++
++    async def list_tags(self) -> list[Tag]:
++        return list(self.tags.values())
++
++    async def create_tag(self, name: str) -> Tag:
++        tid = f"fake-tag-{self._next_tag_serial}"
++        self._next_tag_serial += 1
++        tag = Tag(id=tid, name=name)
++        self.tags[tid] = tag
++        return tag
++
++    # ------------------------------------------------------------------
++    # Run (webhook-only)
++    # ------------------------------------------------------------------
++
++    async def run_via_webhook(self, workflow: Workflow) -> RunResult:
++        if not workflow.can_run:
++            reason = (
++                "no webhook trigger node" if not workflow.has_webhook_node
++                else "workflow is inactive" if not workflow.active
++                else "workflow is archived"
++            )
++            raise N8nWorkflowNotRunnableError(
++                f"Workflow {workflow.id!r} ({workflow.name!r}) is not "
++                f"webhook-runnable: {reason}"
++            )
++        self.webhook_calls.append(workflow.id)
++        return RunResult(
++            workflow_id=workflow.id, dispatched=True, http_status=200, raw={"ok": True}
++        )
++
++    # ------------------------------------------------------------------
++    # Connectivity
++    # ------------------------------------------------------------------
++
++    async def ping(self) -> bool:
++        return True
++
++    # ------------------------------------------------------------------
++    # Internal helpers
++    # ------------------------------------------------------------------
++
++    def _require_workflow(self, workflow_id: str) -> dict[str, Any]:
++        raw = self._raw_workflows.get(workflow_id)
++        if raw is None:
++            raise N8nNotFoundError(f"Workflow {workflow_id!r} not found", status=404)
++        return raw
++
++
++__all__ = ["FakeN8nClient"]
+diff --git a/seed/lib/backend/noctusai_lib/integrations/n8n/mappers.py b/seed/lib/backend/noctusai_lib/integrations/n8n/mappers.py
+new file mode 100644
+index 00000000..2c9ecf09
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/integrations/n8n/mappers.py
+@@ -0,0 +1,269 @@
++"""Pure-function mappers for the n8n public API v1 adapter.
++
++Provides:
++- ``normalize_base_url(raw)`` / ``instance_root(raw)`` — the two
++  derived URLs a stored ``base_url`` (the instance root) produces:
++  API = ``{root}/api/v1``, webhook = ``{root}/webhook/{path}``.
++- ``WORKFLOW_PUT_ALLOWED_KEYS`` / ``sanitize_workflow_put_body`` — n8n's
++  ``PUT /workflows/{id}`` 400s on additional properties; this is the
++  single canonical allowlist (``name``/``nodes``/``connections``/
++  ``settings``). ``mcp/n8n/tools/workflow.py`` imports this instead of
++  keeping its own copy (Leg B — the fork this slice exists to prevent).
++- ``tag_refs_body(tag_ids)`` — n8n's ``PUT /workflows/{id}/tags`` body
++  shape: tag **ids**, not names.
++- ``extract_webhook_trigger(nodes)`` — finds the
++  ``n8n-nodes-base.webhook`` node (if any) and returns its
++  ``(method, path)``; other trigger flavors (``formTrigger``,
++  ``executeWorkflowTrigger``, ``manualTrigger``) are not webhook-runnable.
++- ``raw_to_workflow``, ``raw_to_tag``, ``raw_to_execution`` — raw dict
++  → dataclass translators.
++- ``extract_error_message(body)`` — best-effort title/detail pull from
++  an n8n error response (n8n's error shape is less uniform than
++  Mailchimp's problem+json).
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++from typing import Any, List, Optional, Sequence
++
++from noctusai_lib.integrations.n8n.types import Execution, Tag, Workflow
++
++# n8n public-API PUT /workflows/{id} (and POST /workflows) reject additional
++# properties — only these four keys are accepted. Activation state and tags
++# are managed via their own endpoints, never the workflow body. Measured live
++# 2026-07-16 (`mcp/n8n/tools/workflow.py:48` pre-lift copy).
++WORKFLOW_PUT_ALLOWED_KEYS = ("name", "nodes", "connections", "settings")
++
++# The one trigger-node type that can actually be dispatched via a public
++# webhook URL. `formTrigger` / `executeWorkflowTrigger` / `manualTrigger`
++# were all observed live on the same instance and are NOT webhook-runnable.
++_WEBHOOK_NODE_TYPE = "n8n-nodes-base.webhook"
++
++
++# ---------------------------------------------------------------------------
++# URL derivation
++# ---------------------------------------------------------------------------
++
++
++def normalize_base_url(raw: str) -> str:
++    """Return the API root ending in ``/api/v1``, no trailing slash.
++
++    Accepts either the instance root (``https://n8n.example.com``) or
++    an already-suffixed URL (``https://n8n.example.com/api/v1``) —
++    both normalize to the same value so an operator-entered value
++    can't get it subtly wrong.
++
++    >>> normalize_base_url("https://n8n.x.com")
++    'https://n8n.x.com/api/v1'
++    >>> normalize_base_url("https://n8n.x.com/")
++    'https://n8n.x.com/api/v1'
++    >>> normalize_base_url("https://n8n.x.com/api/v1")
++    'https://n8n.x.com/api/v1'
++    >>> normalize_base_url("")
++    ''
++    """
++    base = (raw or "").rstrip("/")
++    if not base:
++        return ""
++    if base.endswith("/api/v1"):
++        return base
++    return f"{base}/api/v1"
++
++
++def instance_root(raw: str) -> str:
++    """Return the bare instance root (no ``/api/v1`` suffix) — the base
++    for webhook URLs, which live outside the versioned API
++    (``{root}/webhook/{path}``, NOT ``{root}/api/v1/webhook/{path}``).
++
++    >>> instance_root("https://n8n.x.com/api/v1")
++    'https://n8n.x.com'
++    >>> instance_root("https://n8n.x.com/")
++    'https://n8n.x.com'
++    >>> instance_root("")
++    ''
++    """
++    base = (raw or "").rstrip("/")
++    if base.endswith("/api/v1"):
++        base = base[: -len("/api/v1")]
++    return base
++
++
++def webhook_url(base_url: str, path: str) -> str:
++    """Build the run-dispatch URL for a webhook-triggered workflow.
++
++    >>> webhook_url("https://n8n.x.com", "matricula-extractor")
++    'https://n8n.x.com/webhook/matricula-extractor'
++    """
++    return f"{instance_root(base_url)}/webhook/{path}"
++
++
++# ---------------------------------------------------------------------------
++# PUT-sanitize allowlist
++# ---------------------------------------------------------------------------
++
++
++def sanitize_workflow_put_body(workflow: dict[str, Any]) -> dict[str, Any]:
++    """Strip a workflow dict to the PUT/POST-accepted key-set.
++
++    Read-only/managed keys (``id``, ``active``, ``tags``, timestamps,
++    ``versionId``, ``triggerCount``, ``pinData``, ``staticData``, …)
++    are dropped so n8n does not 400 on additional properties.
++    ``settings`` always ends up present (defaulted to ``{}`` when the
++    source omitted it) — n8n's PUT body requires it.
++    """
++    body = {k: workflow[k] for k in WORKFLOW_PUT_ALLOWED_KEYS if k in workflow}
++    body.setdefault("settings", workflow.get("settings") or {})
++    return body
++
++
++# ---------------------------------------------------------------------------
++# Tag-ids-not-names
++# ---------------------------------------------------------------------------
++
++
++def tag_refs_body(tag_ids: Sequence[str]) -> list[dict[str, str]]:
++    """n8n ``PUT /workflows/{id}/tags`` body shape: ``[{"id": "<tagId>"}, ...]``
++    — tag **ids**, never names."""
++    return [{"id": tid} for tid in tag_ids]
++
++
++# ---------------------------------------------------------------------------
++# Webhook-trigger extraction
++# ---------------------------------------------------------------------------
++
++
++def extract_webhook_trigger(
++    nodes: Optional[List[dict[str, Any]]],
++) -> Optional[tuple[str, str]]:
++    """Find the first ``n8n-nodes-base.webhook`` node and return its
++    ``(method, path)``. ``None`` when no webhook trigger is present
++    (e.g. ``formTrigger``/``executeWorkflowTrigger``/``manualTrigger``
++    workflows — all observed live, none webhook-runnable).
++    """
++    for node in nodes or []:
++        if not isinstance(node, dict):
++            continue
++        if node.get("type") != _WEBHOOK_NODE_TYPE:
++            continue
++        params = node.get("parameters") or {}
++        path = params.get("path")
++        if not path:
++            continue
++        method = str(params.get("httpMethod") or "GET").upper()
++        return method, str(path)
++    return None
++
++
++# ---------------------------------------------------------------------------
++# Datetime helper
++# ---------------------------------------------------------------------------
++
++
++def _parse_dt(value: Optional[str]) -> Optional[datetime]:
++    """Parse an ISO-8601 n8n timestamp to a timezone-aware ``datetime``.
++    Returns ``None`` when ``value`` is falsy. n8n uses UTC, strings end
++    in ``Z``."""
++    if not value:
++        return None
++    normalised = value.replace("Z", "+00:00")
++    dt = datetime.fromisoformat(normalised)
++    if dt.tzinfo is None:
++        dt = dt.replace(tzinfo=timezone.utc)
++    return dt
++
++
++# ---------------------------------------------------------------------------
++# Raw → dataclass translators
++# ---------------------------------------------------------------------------
++
++
++def raw_to_tag(raw: dict[str, Any]) -> Tag:
++    """Translate an n8n /tags item into a ``Tag``."""
++    return Tag(id=str(raw.get("id", "")), name=raw.get("name", ""))
++
++
++def raw_to_workflow(raw: dict[str, Any]) -> Workflow:
++    """Translate a full n8n /workflows item into a ``Workflow`` summary.
++
++    Deliberately does NOT retain ``nodes``/``connections`` on the
++    returned value object (see ``types.Workflow`` docstring) — only the
++    derived ``has_webhook_node``/``webhook_method``/``webhook_path``/
++    ``can_run`` facts survive.
++    """
++    nodes = raw.get("nodes") or []
++    trigger = extract_webhook_trigger(nodes)
++    webhook_method, webhook_path = trigger if trigger else (None, None)
++    has_webhook = trigger is not None
++    active = bool(raw.get("active", False))
++    archived = bool(raw.get("isArchived", False))
++    tags = [
++        raw_to_tag(t)
++        for t in (raw.get("tags") or [])
++        if isinstance(t, dict) and t.get("id")
++    ]
++    return Workflow(
++        id=str(raw.get("id", "")),
++        name=raw.get("name", ""),
++        active=active,
++        archived=archived,
++        tags=tags,
++        has_webhook_node=has_webhook,
++        webhook_method=webhook_method,
++        webhook_path=webhook_path,
++        can_run=has_webhook and active and not archived,
++        created_at=_parse_dt(raw.get("createdAt")),
++        updated_at=_parse_dt(raw.get("updatedAt")),
++    )
++
++
++def raw_to_execution(raw: dict[str, Any]) -> Execution:
++    """Translate an n8n /executions item (``includeData=false`` shape)
++    into an ``Execution`` summary."""
++    workflow_id = raw.get("workflowId")
++    return Execution(
++        id=int(raw["id"]),
++        workflow_id=str(workflow_id) if workflow_id is not None else None,
++        status=raw.get("status"),
++        mode=raw.get("mode"),
++        finished=raw.get("finished"),
++        started_at=_parse_dt(raw.get("startedAt")),
++        stopped_at=_parse_dt(raw.get("stoppedAt")),
++    )
++
++
++# ---------------------------------------------------------------------------
++# Error-body extraction
++# ---------------------------------------------------------------------------
++
++
++def extract_error_message(body: Any) -> tuple[str, str]:
++    """Best-effort ``(title, detail)`` extraction from an n8n error
++    response body.
++
++    n8n's error shape is less uniform than Mailchimp's problem+json —
++    a plain ``{"message": "..."}`` is the common case, but ``title``/
++    ``detail``/``error`` have also been seen across n8n versions.
++    Returns ``("", "")`` when nothing recognizable is found — never
++    fabricated.
++    """
++    if not isinstance(body, dict):
++        return "", ""
++    title = body.get("title") or body.get("error") or ""
++    detail = body.get("detail") or body.get("message") or ""
++    return str(title), str(detail)
++
++
++__all__ = [
++    "WORKFLOW_PUT_ALLOWED_KEYS",
++    "normalize_base_url",
++    "instance_root",
++    "webhook_url",
++    "sanitize_workflow_put_body",
++    "tag_refs_body",
++    "extract_webhook_trigger",
++    "raw_to_tag",
++    "raw_to_workflow",
++    "raw_to_execution",
++    "extract_error_message",
++]
+diff --git a/seed/lib/backend/noctusai_lib/integrations/n8n/n8n_adapter.py b/seed/lib/backend/noctusai_lib/integrations/n8n/n8n_adapter.py
+new file mode 100644
+index 00000000..1385baf9
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/integrations/n8n/n8n_adapter.py
+@@ -0,0 +1,337 @@
++"""HttpxN8nClient — real n8n public API v1 adapter.
++
++Two distinct base URLs derived from one stored ``base_url`` (the
++instance root):
++
++- API calls → ``{root}/api/v1`` (``mappers.normalize_base_url``),
++  authenticated via the ``X-N8N-API-KEY`` header.
++- Webhook dispatch (``run_via_webhook``) → ``{root}/webhook/{path}``
++  (``mappers.instance_root`` / ``mappers.webhook_url``) — a DIFFERENT,
++  unauthenticated (by n8n default) surface outside the versioned API.
++
++Error mapping (``_translate``):
++- 401 / 403  → ``N8nAuthError``
++- 404        → ``N8nNotFoundError``
++- 429        → ``N8nRateLimitedError``
++- 400 / 422  → ``N8nRejectedError``
++- 5xx / network / TLS → ``N8nUnreachableError``
++
++🔴 **Cloudflare WAF 403s the default httpx/urllib User-Agent** on a
++WAF-fronted n8n instance (measured live 2026-07-16; the same class
++``mcp/_kit/transport.py:32-34`` already documents for other
++WAF-fronted connectors). ``_BROWSER_USER_AGENT`` is LOAD-BEARING on
++every request this adapter sends, including webhook dispatch.
++"""
++
++from __future__ import annotations
++
++from typing import Any, Optional
++
++import httpx
++
++from noctusai_lib.integrations.n8n.mappers import (
++    extract_error_message,
++    instance_root,
++    normalize_base_url,
++    raw_to_execution,
++    raw_to_tag,
++    raw_to_workflow,
++    sanitize_workflow_put_body,
++    tag_refs_body,
++    webhook_url,
++)
++from noctusai_lib.integrations.n8n.types import (
++    Execution,
++    N8nAuthError,
++    N8nError,
++    N8nNotFoundError,
++    N8nRateLimitedError,
++    N8nRejectedError,
++    N8nUnreachableError,
++    N8nWorkflowNotRunnableError,
++    RunResult,
++    Tag,
++    Workflow,
++)
++
++# Same string as `mcp/_kit/transport.py::BROWSER_USER_AGENT` — kept as an
++# independent constant (the seed cannot depend on `mcp/_kit`; the connector
++# depends on the seed, never the reverse) but MUST stay a real browser UA.
++_BROWSER_USER_AGENT = (
++    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
++    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
++)
++
++_MAX_LIST_PAGES = 50  # 50 * 250 = 12500 workflows — unbounded in practice
++
++
++def _not_runnable_reason(workflow: Workflow) -> str:
++    if not workflow.has_webhook_node:
++        return "no webhook trigger node"
++    if not workflow.active:
++        return "workflow is inactive (a webhook only fires while active)"
++    if workflow.archived:
++        return "workflow is archived"
++    return "not runnable"  # unreachable in practice; can_run implies one of the above
++
++
++class HttpxN8nClient:
++    """Real n8n public API v1 client backed by ``httpx.AsyncClient``.
++
++    Instantiate via the ``get_n8n_client(base_url=, api_key=)`` factory;
++    don't construct directly in product code.
++
++    Thread-safety: the underlying ``httpx.AsyncClient`` is not
++    thread-safe; use one instance per request or per coroutine chain.
++    """
++
++    def __init__(
++        self,
++        base_url: str,
++        api_key: str,
++        *,
++        timeout: float = 20.0,
++        transport: httpx.AsyncBaseTransport | None = None,
++    ) -> None:
++        self._base_url = base_url
++        self._api_root = normalize_base_url(base_url)
++        self._instance_root = instance_root(base_url)
++        self._api_key = api_key
++        self._timeout = timeout
++        # Test seam: an httpx.MockTransport here lets suites exercise the
++        # REAL _request path without monkey-patching. None → httpx default.
++        self._transport = transport
++
++    # ------------------------------------------------------------------
++    # Internal HTTP primitive — versioned API calls
++    # ------------------------------------------------------------------
++
++    async def _request(
++        self,
++        method: str,
++        path: str,
++        *,
++        params: dict[str, Any] | None = None,
++        json: object | None = None,
++    ) -> Any:
++        """Execute one authenticated ``{api_root}{path}`` request and
++        return the parsed JSON body. Empty 2xx responses (e.g. DELETE
++        204) return ``{}``. All non-2xx responses raise the typed
++        error hierarchy."""
++        url = f"{self._api_root}{path}"
++        headers = {
++            "X-N8N-API-KEY": self._api_key,
++            "User-Agent": _BROWSER_USER_AGENT,
++            "Accept": "application/json",
++        }
++        try:
++            async with httpx.AsyncClient(transport=self._transport) as http:
++                response = await http.request(
++                    method,
++                    url,
++                    params={k: v for k, v in (params or {}).items() if v is not None},
++                    json=json,
++                    headers=headers,
++                    timeout=self._timeout,
++                )
++        except (httpx.TransportError, httpx.TimeoutException) as exc:
++            raise N8nUnreachableError(str(exc), status=0) from exc
++
++        return self._translate(response)
++
++    @staticmethod
++    def _translate(response: httpx.Response) -> Any:
++        """Map an httpx Response to parsed JSON or raise the typed
++        error hierarchy."""
++        status = response.status_code
++
++        if 200 <= status < 300:
++            body = response.content
++            if not body or not body.strip():
++                return {}
++            try:
++                return response.json()
++            except ValueError:
++                return {}
++
++        try:
++            err_body = response.json()
++        except ValueError:
++            err_body = None
++        title, detail = extract_error_message(err_body)
++        message = detail or title or f"HTTP {status}"
++
++        if status in (401, 403):
++            raise N8nAuthError(message, status=status, title=title, detail=detail)
++        if status == 404:
++            raise N8nNotFoundError(message, status=status, title=title, detail=detail)
++        if status == 429:
++            raise N8nRateLimitedError(message, status=status, title=title, detail=detail)
++        if status in (400, 422):
++            raise N8nRejectedError(message, status=status, title=title, detail=detail)
++        if status >= 500:
++            raise N8nUnreachableError(message, status=status, title=title, detail=detail)
++        raise N8nError(message, status=status, title=title, detail=detail)
++
++    # ------------------------------------------------------------------
++    # Workflows
++    # ------------------------------------------------------------------
++
++    async def _list_all_workflows_raw(self) -> list[dict[str, Any]]:
++        """Follow ``nextCursor`` to a bounded depth so the caller sees
++        every workflow, not just the first page (mirrors
++        ``mcp/n8n/tools/diagnostics.py``'s cursor-follow — the
++        ``limit=1``-style truncation bug it fixed)."""
++        items: list[dict[str, Any]] = []
++        cursor: Optional[str] = None
++        pages = 0
++        while True:
++            params: dict[str, Any] = {"limit": 250}
++            if cursor:
++                params["cursor"] = cursor
++            data = await self._request("GET", "/workflows", params=params)
++            page_items = data.get("data", []) if isinstance(data, dict) else []
++            items.extend(page_items)
++            cursor = data.get("nextCursor") if isinstance(data, dict) else None
++            pages += 1
++            if not cursor or pages >= _MAX_LIST_PAGES:
++                break
++        return items
++
++    async def list_workflows(
++        self, *, tag: Optional[str] = None, include_archived: bool = False
++    ) -> list[Workflow]:
++        raw_items = await self._list_all_workflows_raw()
++        workflows = [raw_to_workflow(w) for w in raw_items]
++        if not include_archived:
++            workflows = [w for w in workflows if not w.archived]
++        if tag:
++            workflows = [
++                w for w in workflows
++                if any(t.id == tag or t.name == tag for t in w.tags)
++            ]
++        return workflows
++
++    async def get_workflow(self, workflow_id: str) -> dict[str, Any]:
++        data = await self._request("GET", f"/workflows/{workflow_id}")
++        return data if isinstance(data, dict) else {}
++
++    async def activate(self, workflow_id: str) -> Workflow:
++        await self._request("POST", f"/workflows/{workflow_id}/activate")
++        return raw_to_workflow(await self.get_workflow(workflow_id))
++
++    async def deactivate(self, workflow_id: str) -> Workflow:
++        await self._request("POST", f"/workflows/{workflow_id}/deactivate")
++        return raw_to_workflow(await self.get_workflow(workflow_id))
++
++    async def rename(self, workflow_id: str, name: str) -> Workflow:
++        current = await self.get_workflow(workflow_id)
++        body = sanitize_workflow_put_body({**current, "name": name})
++        updated = await self._request("PUT", f"/workflows/{workflow_id}", json=body)
++        if isinstance(updated, dict) and updated.get("id"):
++            return raw_to_workflow(updated)
++        return raw_to_workflow({**current, "name": name})
++
++    async def delete_workflow(self, workflow_id: str) -> None:
++        await self._request("DELETE", f"/workflows/{workflow_id}")
++
++    async def set_workflow_tags(
++        self, workflow_id: str, tag_ids: list[str]
++    ) -> list[Tag]:
++        data = await self._request(
++            "PUT", f"/workflows/{workflow_id}/tags", json=tag_refs_body(tag_ids)
++        )
++        raw_tags = data if isinstance(data, list) else (data or {}).get("tags", [])
++        return [raw_to_tag(t) for t in raw_tags if isinstance(t, dict) and t.get("id")]
++
++    # ------------------------------------------------------------------
++    # Executions
++    # ------------------------------------------------------------------
++
++    async def list_executions(
++        self,
++        *,
++        workflow_id: Optional[str] = None,
++        status: Optional[str] = None,
++        limit: int = 20,
++    ) -> list[Execution]:
++        data = await self._request(
++            "GET",
++            "/executions",
++            params={
++                "workflowId": workflow_id,
++                "status": status,
++                "limit": limit,
++                "includeData": "false",
++            },
++        )
++        items = data.get("data", []) if isinstance(data, dict) else []
++        return [raw_to_execution(e) for e in items]
++
++    async def get_execution(
++        self, execution_id: int, *, include_data: bool = True
++    ) -> dict[str, Any]:
++        data = await self._request(
++            "GET",
++            f"/executions/{execution_id}",
++            params={"includeData": "true" if include_data else "false"},
++        )
++        return data if isinstance(data, dict) else {}
++
++    # ------------------------------------------------------------------
++    # Tags
++    # ------------------------------------------------------------------
++
++    async def list_tags(self) -> list[Tag]:
++        data = await self._request("GET", "/tags", params={"limit": 250})
++        items = data.get("data", []) if isinstance(data, dict) else []
++        return [raw_to_tag(t) for t in items]
++
++    async def create_tag(self, name: str) -> Tag:
++        data = await self._request("POST", "/tags", json={"name": name})
++        return raw_to_tag(data if isinstance(data, dict) else {})
++
++    # ------------------------------------------------------------------
++    # Run (webhook-only)
++    # ------------------------------------------------------------------
++
++    async def run_via_webhook(self, workflow: Workflow) -> RunResult:
++        if not workflow.can_run:
++            raise N8nWorkflowNotRunnableError(
++                f"Workflow {workflow.id!r} ({workflow.name!r}) is not "
++                f"webhook-runnable: {_not_runnable_reason(workflow)}"
++            )
++        url = webhook_url(self._base_url, workflow.webhook_path or "")
++        method = workflow.webhook_method or "GET"
++        try:
++            async with httpx.AsyncClient(transport=self._transport) as http:
++                response = await http.request(
++                    method,
++                    url,
++                    headers={"User-Agent": _BROWSER_USER_AGENT},
++                    timeout=self._timeout,
++                )
++        except (httpx.TransportError, httpx.TimeoutException) as exc:
++            raise N8nUnreachableError(str(exc), status=0) from exc
++
++        try:
++            body = response.json() if response.content else None
++        except ValueError:
++            body = None
++        return RunResult(
++            workflow_id=workflow.id,
++            dispatched=200 <= response.status_code < 300,
++            http_status=response.status_code,
++            raw=body,
++        )
++
++    # ------------------------------------------------------------------
++    # Connectivity
++    # ------------------------------------------------------------------
++
++    async def ping(self) -> bool:
++        await self._request("GET", "/workflows", params={"limit": 1})
++        return True
++
++
++__all__ = ["HttpxN8nClient"]
+diff --git a/seed/lib/backend/noctusai_lib/integrations/n8n/types.py b/seed/lib/backend/noctusai_lib/integrations/n8n/types.py
+new file mode 100644
+index 00000000..263011ba
+--- /dev/null
++++ b/seed/lib/backend/noctusai_lib/integrations/n8n/types.py
+@@ -0,0 +1,327 @@
++"""n8n public API v1 — value objects, error hierarchy, and Protocol.
++
++Covers workflows, executions, tags, and the webhook-only run path. All
++errors carry the HTTP status plus a best-effort ``title``/``detail``
++extracted from n8n's error body so callers can build precise
++user-facing messages.
++
++Per ``KB § PATTERNS/backend/seed-fake-real-adapter.md``: the
++``N8nClient`` Protocol is the surface both ``HttpxN8nClient`` (real)
++and ``FakeN8nClient`` (in-memory deterministic) satisfy structurally.
++
++**Hard-won facts, measured against a live instance 2026-07-16 —
++encoded here so they are never re-derived by trial and error:**
++
++- ``GET /workflows`` returns FULL workflow objects including ``nodes``
++  (36 nodes on the largest of 9 live workflows). Eligibility
++  (``can_run``) is therefore computable on the list with **no N+1**
++  — but the payload is heavy, so ``Workflow`` (the list/summary value
++  object) does NOT retain ``nodes``/``connections``/``staticData``/
++  ``pinData`` beyond what the mapper needs to compute the derived
++  fields below. ``get_workflow()`` is the one method that returns the
++  full raw object (nodes included) — GET → mutate → PUT needs it.
++- ``isArchived`` exists and was true on 2 of 9 live workflows.
++  ``list_workflows(include_archived=False)`` is the default.
++- A production webhook only fires while the workflow is ``active``.
++  ⇒ ``can_run = has_webhook_node AND active AND NOT archived``. Live
++  truth on 2026-07-16: exactly 1 of 9 workflows qualified.
++- The webhook trigger node type is ``n8n-nodes-base.webhook``, with
++  ``parameters = {httpMethod, path, options}`` plus a node-level
++  ``webhookId``. ``path`` is either a friendly slug
++  (``matricula-extractor``) or a bare UUID. Other trigger flavors seen
++  live (``formTrigger``, ``executeWorkflowTrigger``, ``manualTrigger``)
++  are NOT webhook-runnable.
++- Execution ids are ``int``; workflow ids are ``str``. Never unified.
++- Credentials are write-only — the public API has no list/get
++  credential endpoint (mirrors the Mailchimp adapter's write-only
++  secret handling).
++- ``GET /projects`` → 403 (license-gated on community edition). Do not
++  build anything on projects; a client "tag" is the only viable
++  scoping key for a multi-tenant consumer.
++- There is NO public execute-workflow endpoint. ``run_via_webhook()``
++  is the only sanctioned dispatch path and raises
++  ``N8nWorkflowNotRunnableError`` — never a faked dispatch — when the
++  workflow does not satisfy ``can_run``.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from datetime import datetime
++from typing import Any, List, Optional, Protocol, runtime_checkable
++
++
++# ---------------------------------------------------------------------------
++# Error hierarchy
++# ---------------------------------------------------------------------------
++
++
++class N8nError(Exception):
++    """Base for all n8n seed-adapter errors.
++
++    ``status`` mirrors the HTTP status n8n returned (0 for transport /
++    connection failures). ``title``/``detail`` are a best-effort
++    extraction from n8n's error body (n8n's error shape is less
++    uniform than Mailchimp's problem+json; several common keys are
++    tried — see ``mappers.extract_error_message``).
++    """
++
++    def __init__(
++        self,
++        message: str = "",
++        *,
++        status: int = 0,
++        title: str = "",
++        detail: str = "",
++    ) -> None:
++        super().__init__(message or title or detail or f"n8n error (status={status})")
++        self.status = status
++        self.title = title
++        self.detail = detail
++
++
++class N8nAuthError(N8nError):
++    """401 / 403 — bad API key or insufficient permissions."""
++
++
++class N8nNotFoundError(N8nError):
++    """404 — resource does not exist."""
++
++
++class N8nRateLimitedError(N8nError):
++    """429 — request rate exceeded."""
++
++
++class N8nRejectedError(N8nError):
++    """400 / 422 — n8n rejected the payload (e.g. PUT with additional
++    properties, malformed body)."""
++
++
++class N8nUnreachableError(N8nError):
++    """Network / TLS / 5xx — transient infrastructure failure.
++
++    ``status`` is 0 for transport-level failures; 5xx for server
++    errors.
++    """
++
++
++class N8nWorkflowNotRunnableError(N8nError):
++    """``run_via_webhook()`` called on a workflow that does not satisfy
++    ``can_run`` (no webhook trigger, inactive, or archived).
++
++    A local validation failure, not an upstream HTTP error — no
++    request is ever sent. Never fake a dispatch; this is the typed,
++    loud alternative.
++    """
++
++
++# ---------------------------------------------------------------------------
++# Value objects
++# ---------------------------------------------------------------------------
++
++
++@dataclass(frozen=True)
++class Tag:
++    """An n8n workflow tag — the only viable multi-tenant scoping key
++    on a community-edition instance (``GET /projects`` is license-gated)."""
++
++    id: str
++    name: str
++
++
++@dataclass(frozen=True)
++class Workflow:
++    """A workflow list/summary value object.
++
++    Deliberately does NOT retain ``nodes``/``connections`` — those are
++    heavy (36 nodes on the largest of 9 live workflows) and
++    ``list_workflows()`` may return many of these at once. Only the
++    derived run-eligibility facts survive the mapping; call
++    ``get_workflow(id)`` for the full raw object when nodes/connections
++    are actually needed (editing, GET→mutate→PUT).
++    """
++
++    id: str
++    name: str
++    active: bool
++    archived: bool
++    tags: List[Tag] = field(default_factory=list)
++    has_webhook_node: bool = False
++    webhook_method: Optional[str] = None
++    webhook_path: Optional[str] = None
++    can_run: bool = False
++    created_at: Optional[datetime] = None
++    updated_at: Optional[datetime] = None
++
++
++@dataclass(frozen=True)
++class Execution:
++    """An execution summary (list item — ``includeData=false``).
++
++    ``get_execution(..., include_data=True)`` returns the raw dict
++    instead — the full per-node run-data (incl. the error object) is
++    the entire point of that call for debugging; wrapping it in a
++    value object would either lose fidelity or duplicate the raw dict.
++    """
++
++    id: int
++    workflow_id: Optional[str]
++    status: Optional[str]
++    mode: Optional[str]
++    finished: Optional[bool]
++    started_at: Optional[datetime]
++    stopped_at: Optional[datetime]
++
++
++@dataclass(frozen=True)
++class RunResult:
++    """Result of ``run_via_webhook()``. Never fabricated — ``dispatched``
++    reflects the real webhook response status; ``raw`` is best-effort
++    (``None`` when the webhook response body isn't JSON)."""
++
++    workflow_id: str
++    dispatched: bool
++    http_status: Optional[int]
++    raw: Any = None
++
++
++# ---------------------------------------------------------------------------
++# Client Protocol
++# ---------------------------------------------------------------------------
++
++
++@runtime_checkable
++class N8nClient(Protocol):
++    """Async n8n public API v1 adapter.
++
++    Both ``HttpxN8nClient`` (real, httpx-backed) and ``FakeN8nClient``
++    (in-memory deterministic) satisfy this Protocol structurally. All
++    methods are ``async``.
++
++    Per ``KB § PATTERNS/backend/seed-fake-real-adapter.md``: the
++    Protocol is the gold-standard contract the ``get_n8n_client(...)``
++    factory returns.
++    """
++
++    # -- Workflows -------------------------------------------------------
++
++    async def list_workflows(
++        self, *, tag: Optional[str] = None, include_archived: bool = False
++    ) -> List[Workflow]:
++        """GET /workflows (paginated, cursor-followed) → filtered client-side.
++
++        ``tag`` matches against either a tag id or a tag name on the
++        workflow (n8n's own ``tags`` query-param semantics for the
++        public API were not verified against the live instance, so
++        filtering happens locally against the already-fetched full
++        objects — correct by construction, no upstream-shape guess).
++        ``include_archived=False`` is the default (2 of 9 live
++        workflows were archived; a page showing them by default is
++        the wrong default).
++        """
++        ...
++
++    async def get_workflow(self, workflow_id: str) -> dict[str, Any]:
++        """GET /workflows/{id} — the RAW object, nodes/connections
++        included verbatim. The one method that keeps full fidelity;
++        use for GET→mutate→PUT flows (rename, workflow editing)."""
++        ...
++
++    async def activate(self, workflow_id: str) -> Workflow:
++        """POST /workflows/{id}/activate, then re-read via
++        ``get_workflow`` so the returned ``Workflow`` is never a
++        partially-fabricated guess."""
++        ...
++
++    async def deactivate(self, workflow_id: str) -> Workflow:
++        """POST /workflows/{id}/deactivate, then re-read (see ``activate``)."""
++        ...
++
++    async def rename(self, workflow_id: str, name: str) -> Workflow:
++        """GET → set ``name`` → sanitize to the PUT-accepted key-set
++        (``mappers.WORKFLOW_PUT_ALLOWED_KEYS`` — ``PUT /workflows/{id}``
++        400s on additional properties) → PUT. The only supported
++        workflow-editing verb this Protocol exposes."""
++        ...
++
++    async def delete_workflow(self, workflow_id: str) -> None:
++        """DELETE /workflows/{id} — hard-to-reverse, not API-undoable."""
++        ...
++
++    async def set_workflow_tags(
++        self, workflow_id: str, tag_ids: List[str]
++    ) -> List[Tag]:
++        """PUT /workflows/{id}/tags — takes tag **ids**, not names."""
++        ...
++
++    # -- Executions --------------------------------------------------------
++
++    async def list_executions(
++        self,
++        *,
++        workflow_id: Optional[str] = None,
++        status: Optional[str] = None,
++        limit: int = 20,
++    ) -> List[Execution]:
++        """GET /executions (``includeData=false`` — list items stay light)."""
++        ...
++
++    async def get_execution(
++        self, execution_id: int, *, include_data: bool = True
++    ) -> dict[str, Any]:
++        """GET /executions/{id} — RAW object. ``include_data=True``
++        pulls the full run payload (the error lives here); the
++        debugging entry point."""
++        ...
++
++    # -- Tags ----------------------------------------------------------------
++
++    async def list_tags(self) -> List[Tag]:
++        """GET /tags"""
++        ...
++
++    async def create_tag(self, name: str) -> Tag:
++        """POST /tags {name}"""
++        ...
++
++    # -- Run (webhook-only — there is NO public execute endpoint) -----------
++
++    async def run_via_webhook(self, workflow: Workflow) -> RunResult:
++        """Dispatch to ``{instance_root}/webhook/{workflow.webhook_path}``
++        via ``workflow.webhook_method``.
++
++        Raises ``N8nWorkflowNotRunnableError`` — never a faked
++        dispatch — when ``workflow.can_run`` is False. This is the
++        ONLY sanctioned run path: the n8n public API has no execute
++        endpoint, and the UI's internal ``/rest/workflows/run`` is
++        session-auth and MUST NOT be emulated.
++        """
++        ...
++
++    # -- Connectivity ----------------------------------------------------
++
++    async def ping(self) -> bool:
++        """Reachability probe (n8n's public API has no dedicated
++        ``/ping``): a cheap bounded read (``GET /workflows?limit=1``).
++        Returns True on success; raises the typed error hierarchy on
++        failure — reachability is never fabricated."""
++        ...
++
++
++__all__ = [
++    # Error hierarchy
++    "N8nError",
++    "N8nAuthError",
++    "N8nNotFoundError",
++    "N8nRateLimitedError",
++    "N8nRejectedError",
++    "N8nUnreachableError",
++    "N8nWorkflowNotRunnableError",
++    # Value objects
++    "Tag",
++    "Workflow",
++    "Execution",
++    "RunResult",
++    # Protocol
++    "N8nClient",
++]
+diff --git a/seed/lib/backend/pyproject.toml b/seed/lib/backend/pyproject.toml
+index 130c2333..6b08a493 100644
+--- a/seed/lib/backend/pyproject.toml
++++ b/seed/lib/backend/pyproject.toml
+@@ -88,6 +88,16 @@ dependencies = [
+     # deterministically without a system font install (dev↔prod parity). Added
+     # Added 2026-05-24 (media-creator absorption residual).
+     "resvg-py>=0.3.0",
++    # Async HTTP client — fix-on-contact: ~10 seed modules already import
++    # `httpx` (meta/_meta_api.py, mailchimp/client.py, vista/client.py,
++    # whatsapp/client.py, …) but it was never declared here, arriving only
++    # transitively via supabase/openai. noctusai_lib.integrations.n8n's
++    # HttpxN8nClient is another direct consumer; declared explicitly so a
++    # future transitive drop (or an install without supabase/openai) doesn't
++    # quietly break every httpx-based adapter — worst on the connector path,
++    # which has its own separate install. Floor matches the version already
++    # resolved transitively in the root venv (0.27.2) at declaration time.
++    "httpx>=0.27.0",
+ ]
+ 
+ [tool.setuptools.packages.find]
+diff --git a/seed/lib/backend/tests/integrations/n8n/__init__.py b/seed/lib/backend/tests/integrations/n8n/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/seed/lib/backend/tests/integrations/n8n/test_client.py b/seed/lib/backend/tests/integrations/n8n/test_client.py
+new file mode 100644
+index 00000000..16a5398d
+--- /dev/null
++++ b/seed/lib/backend/tests/integrations/n8n/test_client.py
+@@ -0,0 +1,464 @@
++"""HttpxN8nClient tests — httpx.MockTransport, no network.
++
++Covers:
++- Auth header: `X-N8N-API-KEY` on every API request.
++- User-Agent: the browser UA is sent on every request (API AND
++  webhook dispatch) — load-bearing for the Cloudflare-WAF-fronted
++  live instance.
++- Error mapping: every status-code → exact exception class.
++- `list_workflows`: cursor-follow pagination, `include_archived`
++  filtering, `tag` filtering (id or name).
++- `get_workflow`: full raw fidelity (nodes kept).
++- `activate`/`deactivate`: POST the verb, then re-GET for a
++  never-fabricated `Workflow`.
++- `rename`: GET → sanitize → PUT round-trip.
++- `delete_workflow`: DELETE, no return value.
++- `set_workflow_tags`: PUT body is `[{"id": ...}]`, never names.
++- `list_executions`/`get_execution`: params forwarded, int id.
++- `list_tags`/`create_tag`.
++- `run_via_webhook`: dispatches to the INSTANCE ROOT (not `/api/v1`),
++  uses the workflow's own method; raises
++  `N8nWorkflowNotRunnableError` with **zero HTTP calls** for a
++  non-runnable workflow.
++- `ping`.
++
++Pattern mirrors `tests/integrations/mailchimp/test_client.py`.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import json as json_lib
++from typing import Any, Callable
++
++import httpx
++import pytest
++
++from noctusai_lib.integrations.n8n.mappers import raw_to_workflow
++from noctusai_lib.integrations.n8n.n8n_adapter import HttpxN8nClient
++from noctusai_lib.integrations.n8n.types import (
++    N8nAuthError,
++    N8nNotFoundError,
++    N8nRateLimitedError,
++    N8nRejectedError,
++    N8nUnreachableError,
++    N8nWorkflowNotRunnableError,
++)
++
++
++# ---------------------------------------------------------------------------
++# MockTransport helpers
++# ---------------------------------------------------------------------------
++
++
++def _json_transport(status: int = 200, body: dict[str, Any] | None = None) -> httpx.MockTransport:
++    raw = json_lib.dumps(body if body is not None else {}).encode()
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        return httpx.Response(status, content=raw)
++
++    return httpx.MockTransport(handler)
++
++
++def _capturing_transport(
++    status: int = 200, body: dict[str, Any] | None = None
++) -> tuple[httpx.MockTransport, list[httpx.Request]]:
++    captured: list[httpx.Request] = []
++    raw = json_lib.dumps(body if body is not None else {}).encode()
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        captured.append(request)
++        return httpx.Response(status, content=raw)
++
++    return httpx.MockTransport(handler), captured
++
++
++def _routing_transport(
++    routes: dict[tuple[str, str], Callable[[httpx.Request], httpx.Response]],
++) -> tuple[httpx.MockTransport, list[httpx.Request]]:
++    """Route by (method, path) — for multi-endpoint flows (activate then
++    re-GET; rename's GET-then-PUT; …)."""
++    captured: list[httpx.Request] = []
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        captured.append(request)
++        key = (request.method, request.url.path)
++        fn = routes.get(key)
++        if fn is None:
++            raise AssertionError(f"unexpected request: {key}")
++        return fn(request)
++
++    return httpx.MockTransport(handler), captured
++
++
++def _client(
++    *, transport: httpx.MockTransport | None = None, base_url: str = "https://n8n.x.com"
++) -> HttpxN8nClient:
++    return HttpxN8nClient(base_url, "test-api-key", transport=transport)
++
++
++_WORKFLOW_RAW: dict[str, Any] = {
++    "id": "wf1",
++    "name": "My Flow",
++    "active": True,
++    "isArchived": False,
++    "tags": [{"id": "t1", "name": "prod"}],
++    "nodes": [
++        {
++            "type": "n8n-nodes-base.webhook",
++            "parameters": {"httpMethod": "POST", "path": "my-hook"},
++        }
++    ],
++    "connections": {},
++    "settings": {},
++    "createdAt": "2026-07-16T00:00:00.000Z",
++    "updatedAt": "2026-07-16T00:00:00.000Z",
++}
++
++
++# ---------------------------------------------------------------------------
++# Auth header + User-Agent
++# ---------------------------------------------------------------------------
++
++
++def test_api_key_header_sent() -> None:
++    transport, captured = _capturing_transport(status=200, body={"data": [], "nextCursor": None})
++    client = _client(transport=transport)
++    asyncio.run(client.list_workflows())
++    assert captured[0].headers.get("x-n8n-api-key") == "test-api-key"
++
++
++def test_browser_user_agent_sent_on_api_calls() -> None:
++    """Load-bearing for the Cloudflare-WAF-fronted live instance — the
++    default httpx UA is 403'd."""
++    transport, captured = _capturing_transport(status=200, body={"data": [], "nextCursor": None})
++    client = _client(transport=transport)
++    asyncio.run(client.list_workflows())
++    ua = captured[0].headers.get("user-agent", "")
++    assert "Mozilla" in ua and "python-httpx" not in ua.lower()
++
++
++def test_browser_user_agent_sent_on_webhook_dispatch() -> None:
++    """The WAF sits in front of the whole instance, not just /api/v1 —
++    webhook dispatch needs the same browser UA."""
++    transport, captured = _capturing_transport(status=200, body={"ok": True})
++    client = _client(transport=transport)
++    workflow = raw_to_workflow(_WORKFLOW_RAW)
++    asyncio.run(client.run_via_webhook(workflow))
++    ua = captured[0].headers.get("user-agent", "")
++    assert "Mozilla" in ua
++
++
++# ---------------------------------------------------------------------------
++# Error mapping
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.parametrize("status", [401, 403])
++def test_auth_error(status: int) -> None:
++    client = _client(transport=_json_transport(status=status, body={"message": "bad key"}))
++    with pytest.raises(N8nAuthError) as exc_info:
++        asyncio.run(client.ping())
++    assert exc_info.value.status == status
++
++
++def test_not_found_error() -> None:
++    client = _client(transport=_json_transport(status=404, body={"message": "not found"}))
++    with pytest.raises(N8nNotFoundError) as exc_info:
++        asyncio.run(client.get_workflow("missing"))
++    assert exc_info.value.status == 404
++
++
++def test_rate_limited_error() -> None:
++    client = _client(transport=_json_transport(status=429, body={"message": "slow down"}))
++    with pytest.raises(N8nRateLimitedError):
++        asyncio.run(client.ping())
++
++
++@pytest.mark.parametrize("status", [400, 422])
++def test_rejected_error(status: int) -> None:
++    """PUT /workflows/{id} 400s on additional properties — the exact
++    class this maps to."""
++    client = _client(
++        transport=_json_transport(status=status, body={"message": "additional properties not allowed"})
++    )
++    with pytest.raises(N8nRejectedError) as exc_info:
++        asyncio.run(client.delete_workflow("wf1"))
++    assert exc_info.value.detail == "additional properties not allowed"
++
++
++def test_unreachable_error_on_500() -> None:
++    client = _client(transport=_json_transport(status=500, body={"message": "boom"}))
++    with pytest.raises(N8nUnreachableError):
++        asyncio.run(client.ping())
++
++
++def test_transport_error_raises_unreachable() -> None:
++    def fail_handler(request: httpx.Request) -> httpx.Response:
++        raise httpx.ConnectError("Connection refused")
++
++    client = _client(transport=httpx.MockTransport(fail_handler))
++    with pytest.raises(N8nUnreachableError) as exc_info:
++        asyncio.run(client.ping())
++    assert exc_info.value.status == 0
++
++
++# ---------------------------------------------------------------------------
++# list_workflows — cursor-follow + filtering
++# ---------------------------------------------------------------------------
++
++
++def test_list_workflows_follows_cursor() -> None:
++    pages = [
++        {"data": [{**_WORKFLOW_RAW, "id": f"wf{i}"} for i in range(250)], "nextCursor": "c1"},
++        {"data": [{**_WORKFLOW_RAW, "id": "wf250"}], "nextCursor": None},
++    ]
++    calls = {"n": 0}
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        page = pages[calls["n"]]
++        calls["n"] += 1
++        return httpx.Response(200, content=json_lib.dumps(page).encode())
++
++    client = _client(transport=httpx.MockTransport(handler))
++    workflows = asyncio.run(client.list_workflows(include_archived=True))
++    assert len(workflows) == 251
++    assert calls["n"] == 2
++
++
++def test_list_workflows_excludes_archived_by_default() -> None:
++    data = {
++        "data": [
++            {**_WORKFLOW_RAW, "id": "active-wf", "isArchived": False},
++            {**_WORKFLOW_RAW, "id": "archived-wf", "isArchived": True},
++        ],
++        "nextCursor": None,
++    }
++    client = _client(transport=_json_transport(status=200, body=data))
++    workflows = asyncio.run(client.list_workflows())
++    assert {w.id for w in workflows} == {"active-wf"}
++
++
++def test_list_workflows_filters_by_tag() -> None:
++    data = {
++        "data": [
++            {**_WORKFLOW_RAW, "id": "tagged", "tags": [{"id": "t1", "name": "prod"}]},
++            {**_WORKFLOW_RAW, "id": "untagged", "tags": []},
++        ],
++        "nextCursor": None,
++    }
++    client = _client(transport=_json_transport(status=200, body=data))
++    workflows = asyncio.run(client.list_workflows(tag="t1"))
++    assert {w.id for w in workflows} == {"tagged"}
++
++
++# ---------------------------------------------------------------------------
++# get_workflow — full raw fidelity
++# ---------------------------------------------------------------------------
++
++
++def test_get_workflow_returns_full_raw_with_nodes() -> None:
++    client = _client(transport=_json_transport(status=200, body=_WORKFLOW_RAW))
++    raw = asyncio.run(client.get_workflow("wf1"))
++    assert raw["nodes"] == _WORKFLOW_RAW["nodes"]
++
++
++# ---------------------------------------------------------------------------
++# activate / deactivate — POST verb then re-GET (never fabricated)
++# ---------------------------------------------------------------------------
++
++
++def test_activate_posts_verb_then_re_reads() -> None:
++    routes = {
++        ("POST", "/api/v1/workflows/wf1/activate"): lambda r: httpx.Response(200, content=b"{}"),
++        ("GET", "/api/v1/workflows/wf1"): lambda r: httpx.Response(
++            200, content=json_lib.dumps({**_WORKFLOW_RAW, "active": True}).encode()
++        ),
++    }
++    transport, captured = _routing_transport(routes)
++    client = _client(transport=transport)
++    workflow = asyncio.run(client.activate("wf1"))
++    assert workflow.active is True
++    assert [ (r.method, r.url.path) for r in captured ] == [
++        ("POST", "/api/v1/workflows/wf1/activate"),
++        ("GET", "/api/v1/workflows/wf1"),
++    ]
++
++
++def test_deactivate_posts_verb_then_re_reads() -> None:
++    routes = {
++        ("POST", "/api/v1/workflows/wf1/deactivate"): lambda r: httpx.Response(200, content=b"{}"),
++        ("GET", "/api/v1/workflows/wf1"): lambda r: httpx.Response(
++            200, content=json_lib.dumps({**_WORKFLOW_RAW, "active": False}).encode()
++        ),
++    }
++    transport, _ = _routing_transport(routes)
++    client = _client(transport=transport)
++    workflow = asyncio.run(client.deactivate("wf1"))
++    assert workflow.active is False
++
++
++# ---------------------------------------------------------------------------
++# rename — GET → sanitize → PUT
++# ---------------------------------------------------------------------------
++
++
++def test_rename_gets_then_puts_sanitized_body() -> None:
++    put_bodies: list[dict] = []
++
++    def get_handler(request: httpx.Request) -> httpx.Response:
++        return httpx.Response(200, content=json_lib.dumps(_WORKFLOW_RAW).encode())
++
++    def put_handler(request: httpx.Request) -> httpx.Response:
++        body = json_lib.loads(request.content)
++        put_bodies.append(body)
++        return httpx.Response(200, content=json_lib.dumps({**body, "id": "wf1"}).encode())
++
++    routes = {
++        ("GET", "/api/v1/workflows/wf1"): get_handler,
++        ("PUT", "/api/v1/workflows/wf1"): put_handler,
++    }
++    transport, _ = _routing_transport(routes)
++    client = _client(transport=transport)
++    workflow = asyncio.run(client.rename("wf1", "New Name"))
++    assert workflow.name == "New Name"
++    assert set(put_bodies[0].keys()) == {"name", "nodes", "connections", "settings"}
++    assert put_bodies[0]["name"] == "New Name"
++    assert "id" not in put_bodies[0]  # id stripped — n8n 400s on extra keys
++
++
++# ---------------------------------------------------------------------------
++# delete_workflow
++# ---------------------------------------------------------------------------
++
++
++def test_delete_workflow_sends_delete() -> None:
++    transport, captured = _capturing_transport(status=200, body={})
++    client = _client(transport=transport)
++    asyncio.run(client.delete_workflow("wf1"))
++    assert captured[0].method == "DELETE"
++    assert captured[0].url.path == "/api/v1/workflows/wf1"
++
++
++# ---------------------------------------------------------------------------
++# set_workflow_tags — ids, not names
++# ---------------------------------------------------------------------------
++
++
++def test_set_workflow_tags_sends_id_objects() -> None:
++    transport, captured = _capturing_transport(
++        status=200, body=[{"id": "t1", "name": "prod"}, {"id": "t2", "name": "dev"}]
++    )
++    client = _client(transport=transport)
++    tags = asyncio.run(client.set_workflow_tags("wf1", ["t1", "t2"]))
++    body = json_lib.loads(captured[0].content)
++    assert body == [{"id": "t1"}, {"id": "t2"}]
++    assert [t.name for t in tags] == ["prod", "dev"]
++
++
++# ---------------------------------------------------------------------------
++# Executions
++# ---------------------------------------------------------------------------
++
++
++def test_list_executions_forwards_params() -> None:
++    transport, captured = _capturing_transport(status=200, body={"data": [], "nextCursor": None})
++    client = _client(transport=transport)
++    asyncio.run(client.list_executions(workflow_id="wf1", status="error", limit=5))
++    params = dict(captured[0].url.params)
++    assert params["workflowId"] == "wf1"
++    assert params["status"] == "error"
++    assert params["limit"] == "5"
++    assert params["includeData"] == "false"
++
++
++def test_get_execution_int_id_and_include_data_param() -> None:
++    transport, captured = _capturing_transport(
++        status=200, body={"id": 42, "workflowId": "wf1", "data": {"resultData": {}}}
++    )
++    client = _client(transport=transport)
++    raw = asyncio.run(client.get_execution(42, include_data=True))
++    assert raw["id"] == 42
++    assert dict(captured[0].url.params)["includeData"] == "true"
++
++
++# ---------------------------------------------------------------------------
++# Tags
++# ---------------------------------------------------------------------------
++
++
++def test_list_tags() -> None:
++    data = {"data": [{"id": "t1", "name": "prod"}], "nextCursor": None}
++    client = _client(transport=_json_transport(status=200, body=data))
++    tags = asyncio.run(client.list_tags())
++    assert [t.name for t in tags] == ["prod"]
++
++
++def test_create_tag_posts_name() -> None:
++    transport, captured = _capturing_transport(status=200, body={"id": "t9", "name": "staging"})
++    client = _client(transport=transport)
++    tag = asyncio.run(client.create_tag("staging"))
++    assert tag.id == "t9"
++    body = json_lib.loads(captured[0].content)
++    assert body == {"name": "staging"}
++
++
++# ---------------------------------------------------------------------------
++# run_via_webhook — dispatches to the INSTANCE ROOT, honest refusal
++# ---------------------------------------------------------------------------
++
++
++def test_run_via_webhook_hits_instance_root_not_api_v1() -> None:
++    transport, captured = _capturing_transport(status=200, body={"ok": True})
++    client = _client(transport=transport, base_url="https://n8n.x.com/api/v1")
++    workflow = raw_to_workflow(_WORKFLOW_RAW)
++    asyncio.run(client.run_via_webhook(workflow))
++    req = captured[0]
++    assert str(req.url) == "https://n8n.x.com/webhook/my-hook"
++    assert req.method == "POST"  # workflow's own httpMethod
++
++
++def test_run_via_webhook_no_auth_key_header() -> None:
++    """Webhook dispatch is a DIFFERENT, unauthenticated (by n8n default)
++    surface — the X-N8N-API-KEY header must NOT be attached."""
++    transport, captured = _capturing_transport(status=200, body={"ok": True})
++    client = _client(transport=transport)
++    workflow = raw_to_workflow(_WORKFLOW_RAW)
++    asyncio.run(client.run_via_webhook(workflow))
++    assert "x-n8n-api-key" not in captured[0].headers
++
++
++def test_run_via_webhook_not_runnable_raises_with_zero_http_calls() -> None:
++    def fail_handler(request: httpx.Request) -> httpx.Response:
++        raise AssertionError("must not make any HTTP call")
++
++    client = _client(transport=httpx.MockTransport(fail_handler))
++    not_runnable = raw_to_workflow({**_WORKFLOW_RAW, "active": False})
++    with pytest.raises(N8nWorkflowNotRunnableError):
++        asyncio.run(client.run_via_webhook(not_runnable))
++
++
++def test_run_via_webhook_dispatched_reflects_real_status() -> None:
++    transport, _ = _capturing_transport(status=500, body={})
++    client = _client(transport=transport)
++    workflow = raw_to_workflow(_WORKFLOW_RAW)
++    result = asyncio.run(client.run_via_webhook(workflow))
++    assert result.dispatched is False
++    assert result.http_status == 500
++
++
++# ---------------------------------------------------------------------------
++# ping
++# ---------------------------------------------------------------------------
++
++
++def test_ping_succeeds_on_2xx() -> None:
++    client = _client(transport=_json_transport(status=200, body={"data": [], "nextCursor": None}))
++    assert asyncio.run(client.ping()) is True
++
++
++def test_ping_forwards_limit_1() -> None:
++    transport, captured = _capturing_transport(status=200, body={"data": [], "nextCursor": None})
++    client = _client(transport=transport)
++    asyncio.run(client.ping())
++    assert dict(captured[0].url.params)["limit"] == "1"
+diff --git a/seed/lib/backend/tests/integrations/n8n/test_fake_adapter.py b/seed/lib/backend/tests/integrations/n8n/test_fake_adapter.py
+new file mode 100644
+index 00000000..f7ddd0e3
+--- /dev/null
++++ b/seed/lib/backend/tests/integrations/n8n/test_fake_adapter.py
+@@ -0,0 +1,291 @@
++"""Tests for FakeN8nClient — Protocol conformance + deterministic
++behavior.
++
++Covers:
++- Structural Protocol conformance (``isinstance(fake, N8nClient)``).
++- Seeded run-eligibility matrix (1 runnable / 2 not, matching the
++  live-measured 1-of-9 ratio's shape).
++- Workflow lifecycle: activate/deactivate/rename/delete.
++- Tag lifecycle: list/create/set_workflow_tags (ids not names,
++  unknown-id fails loudly).
++- Execution list/get (int id; include_data toggles the heavy payload).
++- ``run_via_webhook``: dispatches the runnable workflow, raises
++  ``N8nWorkflowNotRunnableError`` — never a faked dispatch — for the
++  other two.
++- ``ping()`` always succeeds (no network in the fake).
++"""
++
++from __future__ import annotations
++
++import asyncio
++
++import pytest
++
++from noctusai_lib.integrations.n8n import get_n8n_client
++from noctusai_lib.integrations.n8n.fake_adapter import FakeN8nClient
++from noctusai_lib.integrations.n8n.types import (
++    N8nClient,
++    N8nNotFoundError,
++    N8nWorkflowNotRunnableError,
++)
++
++
++# ---------------------------------------------------------------------------
++# Protocol conformance + factory
++# ---------------------------------------------------------------------------
++
++
++def test_fake_satisfies_protocol() -> None:
++    assert isinstance(FakeN8nClient(), N8nClient)
++
++
++def test_factory_returns_fake_when_no_credentials() -> None:
++    assert isinstance(get_n8n_client(), FakeN8nClient)
++    assert isinstance(get_n8n_client(base_url="https://x.com"), FakeN8nClient)
++    assert isinstance(get_n8n_client(api_key="k"), FakeN8nClient)
++
++
++def test_factory_returns_real_when_both_credentials_present() -> None:
++    from noctusai_lib.integrations.n8n.n8n_adapter import HttpxN8nClient
++
++    client = get_n8n_client(base_url="https://n8n.x.com", api_key="k")
++    assert isinstance(client, HttpxN8nClient)
++
++
++# ---------------------------------------------------------------------------
++# Seeded run-eligibility matrix
++# ---------------------------------------------------------------------------
++
++
++def test_seeded_workflows_cover_the_eligibility_matrix() -> None:
++    client = FakeN8nClient()
++    workflows = asyncio.run(client.list_workflows(include_archived=True))
++    by_id = {w.id: w for w in workflows}
++    assert by_id["fake-wf-1"].can_run is True
++    assert by_id["fake-wf-2"].can_run is False  # no webhook node
++    assert by_id["fake-wf-3"].can_run is False  # archived
++
++
++def test_list_workflows_excludes_archived_by_default() -> None:
++    client = FakeN8nClient()
++    workflows = asyncio.run(client.list_workflows())
++    assert "fake-wf-3" not in {w.id for w in workflows}
++
++
++def test_list_workflows_include_archived_true_shows_all() -> None:
++    client = FakeN8nClient()
++    workflows = asyncio.run(client.list_workflows(include_archived=True))
++    assert {w.id for w in workflows} == {"fake-wf-1", "fake-wf-2", "fake-wf-3"}
++
++
++def test_list_workflows_filters_by_tag_id() -> None:
++    client = FakeN8nClient()
++    workflows = asyncio.run(
++        client.list_workflows(tag="fake-tag-1", include_archived=True)
++    )
++    assert {w.id for w in workflows} == {"fake-wf-1", "fake-wf-3"}
++
++
++def test_list_workflows_filters_by_tag_name() -> None:
++    client = FakeN8nClient()
++    workflows = asyncio.run(client.list_workflows(tag="prod"))
++    assert {w.id for w in workflows} == {"fake-wf-1"}  # wf-3 archived, excluded
++
++
++# ---------------------------------------------------------------------------
++# get_workflow — full raw fidelity
++# ---------------------------------------------------------------------------
++
++
++def test_get_workflow_returns_full_raw_with_nodes() -> None:
++    client = FakeN8nClient()
++    raw = asyncio.run(client.get_workflow("fake-wf-1"))
++    assert raw["id"] == "fake-wf-1"
++    assert "nodes" in raw
++    assert raw["nodes"][0]["type"] == "n8n-nodes-base.webhook"
++
++
++def test_get_workflow_missing_raises_not_found() -> None:
++    client = FakeN8nClient()
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.get_workflow("does-not-exist"))
++
++
++def test_get_workflow_returns_a_copy_not_internal_state() -> None:
++    """Mutating the returned dict must not corrupt the fake's store."""
++    client = FakeN8nClient()
++    raw = asyncio.run(client.get_workflow("fake-wf-1"))
++    raw["name"] = "mutated"
++    fresh = asyncio.run(client.get_workflow("fake-wf-1"))
++    assert fresh["name"] != "mutated"
++
++
++# ---------------------------------------------------------------------------
++# activate / deactivate
++# ---------------------------------------------------------------------------
++
++
++def test_activate_flips_active_true() -> None:
++    client = FakeN8nClient()
++    asyncio.run(client.deactivate("fake-wf-2"))
++    w = asyncio.run(client.activate("fake-wf-2"))
++    assert w.active is True
++
++
++def test_deactivate_flips_active_false() -> None:
++    client = FakeN8nClient()
++    w = asyncio.run(client.deactivate("fake-wf-1"))
++    assert w.active is False
++    assert w.can_run is False  # inactive ⇒ not runnable
++
++
++# ---------------------------------------------------------------------------
++# rename — exercises sanitize_workflow_put_body via the fake too
++# ---------------------------------------------------------------------------
++
++
++def test_rename_updates_name_and_preserves_nodes() -> None:
++    client = FakeN8nClient()
++    w = asyncio.run(client.rename("fake-wf-1", "Renamed Flow"))
++    assert w.name == "Renamed Flow"
++    raw = asyncio.run(client.get_workflow("fake-wf-1"))
++    assert raw["name"] == "Renamed Flow"
++    assert raw["nodes"]  # preserved, not dropped by the sanitize round-trip
++
++
++def test_rename_missing_raises_not_found() -> None:
++    client = FakeN8nClient()
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.rename("does-not-exist", "x"))
++
++
++# ---------------------------------------------------------------------------
++# delete_workflow
++# ---------------------------------------------------------------------------
++
++
++def test_delete_workflow_removes_it() -> None:
++    client = FakeN8nClient()
++    asyncio.run(client.delete_workflow("fake-wf-2"))
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.get_workflow("fake-wf-2"))
++
++
++def test_delete_missing_raises_not_found() -> None:
++    client = FakeN8nClient()
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.delete_workflow("does-not-exist"))
++
++
++# ---------------------------------------------------------------------------
++# Tags
++# ---------------------------------------------------------------------------
++
++
++def test_list_tags_seeded() -> None:
++    client = FakeN8nClient()
++    tags = asyncio.run(client.list_tags())
++    assert [t.id for t in tags] == ["fake-tag-1"]
++
++
++def test_create_tag_deterministic_id() -> None:
++    client = FakeN8nClient()
++    tag = asyncio.run(client.create_tag("staging"))
++    assert tag.id == "fake-tag-2"
++    assert tag.name == "staging"
++
++
++def test_set_workflow_tags_by_id_not_name() -> None:
++    client = FakeN8nClient()
++    new_tag = asyncio.run(client.create_tag("staging"))
++    tags = asyncio.run(client.set_workflow_tags("fake-wf-2", [new_tag.id]))
++    assert [t.id for t in tags] == ["fake-tag-2"]
++
++
++def test_set_workflow_tags_unknown_id_fails_loudly() -> None:
++    client = FakeN8nClient()
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.set_workflow_tags("fake-wf-1", ["nope"]))
++
++
++# ---------------------------------------------------------------------------
++# Executions — int id, list vs. get(include_data)
++# ---------------------------------------------------------------------------
++
++
++def test_list_executions_seeded() -> None:
++    client = FakeN8nClient()
++    executions = asyncio.run(client.list_executions())
++    assert len(executions) == 1
++    assert executions[0].id == 1
++    assert isinstance(executions[0].id, int)
++
++
++def test_list_executions_filters_by_workflow_id() -> None:
++    client = FakeN8nClient()
++    executions = asyncio.run(client.list_executions(workflow_id="fake-wf-1"))
++    assert len(executions) == 1
++    executions = asyncio.run(client.list_executions(workflow_id="fake-wf-2"))
++    assert executions == []
++
++
++def test_get_execution_include_data_true_keeps_data_key() -> None:
++    client = FakeN8nClient()
++    raw = asyncio.run(client.get_execution(1, include_data=True))
++    assert "data" in raw
++
++
++def test_get_execution_include_data_false_strips_data_key() -> None:
++    client = FakeN8nClient()
++    raw = asyncio.run(client.get_execution(1, include_data=False))
++    assert "data" not in raw
++
++
++def test_get_execution_missing_raises_not_found() -> None:
++    client = FakeN8nClient()
++    with pytest.raises(N8nNotFoundError):
++        asyncio.run(client.get_execution(999))
++
++
++# ---------------------------------------------------------------------------
++# run_via_webhook — never a faked dispatch
++# ---------------------------------------------------------------------------
++
++
++def test_run_via_webhook_dispatches_runnable_workflow() -> None:
++    client = FakeN8nClient()
++    workflows = {w.id: w for w in asyncio.run(client.list_workflows())}
++    result = asyncio.run(client.run_via_webhook(workflows["fake-wf-1"]))
++    assert result.dispatched is True
++    assert result.workflow_id == "fake-wf-1"
++    assert client.webhook_calls == ["fake-wf-1"]
++
++
++def test_run_via_webhook_raises_for_no_webhook_node() -> None:
++    client = FakeN8nClient()
++    workflows = {
++        w.id: w for w in asyncio.run(client.list_workflows(include_archived=True))
++    }
++    with pytest.raises(N8nWorkflowNotRunnableError):
++        asyncio.run(client.run_via_webhook(workflows["fake-wf-2"]))
++    assert client.webhook_calls == []  # never a faked dispatch
++
++
++def test_run_via_webhook_raises_for_archived() -> None:
++    client = FakeN8nClient()
++    workflows = {
++        w.id: w for w in asyncio.run(client.list_workflows(include_archived=True))
++    }
++    with pytest.raises(N8nWorkflowNotRunnableError):
++        asyncio.run(client.run_via_webhook(workflows["fake-wf-3"]))
++    assert client.webhook_calls == []
++
++
++# ---------------------------------------------------------------------------
++# Connectivity
++# ---------------------------------------------------------------------------
++
++
++def test_ping_always_succeeds() -> None:
++    client = FakeN8nClient()
++    assert asyncio.run(client.ping()) is True
+diff --git a/seed/lib/backend/tests/integrations/n8n/test_mappers.py b/seed/lib/backend/tests/integrations/n8n/test_mappers.py
+new file mode 100644
+index 00000000..756ae66a
+--- /dev/null
++++ b/seed/lib/backend/tests/integrations/n8n/test_mappers.py
+@@ -0,0 +1,291 @@
++"""Tests for the n8n pure-function mappers.
++
++Covers:
++- ``normalize_base_url`` / ``instance_root`` / ``webhook_url``: the
++  two derived URLs from one stored instance root.
++- ``sanitize_workflow_put_body``: the PUT-accepted key allowlist.
++- ``tag_refs_body``: tag-ids-not-names.
++- ``extract_webhook_trigger``: webhook node detection vs. the other
++  trigger flavors observed live (formTrigger/executeWorkflowTrigger/
++  manualTrigger).
++- ``raw_to_workflow`` / ``raw_to_tag`` / ``raw_to_execution``: raw dict
++  → dataclass round-trips, including the ``can_run`` eligibility
++  matrix (webhook × active × archived).
++- ``extract_error_message``: best-effort n8n error-body extraction.
++"""
++
++from __future__ import annotations
++
++from noctusai_lib.integrations.n8n.mappers import (
++    WORKFLOW_PUT_ALLOWED_KEYS,
++    extract_error_message,
++    extract_webhook_trigger,
++    instance_root,
++    normalize_base_url,
++    raw_to_execution,
++    raw_to_tag,
++    raw_to_workflow,
++    sanitize_workflow_put_body,
++    tag_refs_body,
++    webhook_url,
++)
++
++
++# ---------------------------------------------------------------------------
++# URL derivation
++# ---------------------------------------------------------------------------
++
++
++def test_normalize_base_url_appends_api_v1() -> None:
++    assert normalize_base_url("https://n8n.x.com") == "https://n8n.x.com/api/v1"
++
++
++def test_normalize_base_url_strips_trailing_slash() -> None:
++    assert normalize_base_url("https://n8n.x.com/") == "https://n8n.x.com/api/v1"
++
++
++def test_normalize_base_url_idempotent_on_already_suffixed() -> None:
++    assert (
++        normalize_base_url("https://n8n.x.com/api/v1")
++        == "https://n8n.x.com/api/v1"
++    )
++
++
++def test_normalize_base_url_empty_stays_empty() -> None:
++    assert normalize_base_url("") == ""
++
++
++def test_instance_root_strips_api_v1_suffix() -> None:
++    assert instance_root("https://n8n.x.com/api/v1") == "https://n8n.x.com"
++
++
++def test_instance_root_strips_trailing_slash() -> None:
++    assert instance_root("https://n8n.x.com/") == "https://n8n.x.com"
++
++
++def test_instance_root_empty_stays_empty() -> None:
++    assert instance_root("") == ""
++
++
++def test_webhook_url_lives_outside_versioned_api() -> None:
++    assert (
++        webhook_url("https://n8n.x.com", "matricula-extractor")
++        == "https://n8n.x.com/webhook/matricula-extractor"
++    )
++
++
++def test_webhook_url_from_already_suffixed_base() -> None:
++    """Whichever shape base_url was stored in, webhook_url lands on the
++    bare instance root — never `.../api/v1/webhook/...`."""
++    assert (
++        webhook_url("https://n8n.x.com/api/v1", "abc")
++        == "https://n8n.x.com/webhook/abc"
++    )
++
++
++# ---------------------------------------------------------------------------
++# PUT-sanitize allowlist
++# ---------------------------------------------------------------------------
++
++
++def test_put_allowed_keys_are_exactly_four() -> None:
++    assert WORKFLOW_PUT_ALLOWED_KEYS == ("name", "nodes", "connections", "settings")
++
++
++def test_sanitize_strips_readonly_keys() -> None:
++    dirty = {
++        "id": "abc",
++        "name": "Flow",
++        "active": True,
++        "tags": [{"id": "1", "name": "prod"}],
++        "createdAt": "2026-01-01",
++        "updatedAt": "2026-05-19",
++        "versionId": "v9",
++        "triggerCount": 3,
++        "nodes": [{"name": "Webhook"}],
++        "connections": {"Webhook": {}},
++    }
++    body = sanitize_workflow_put_body(dirty)
++    assert set(body.keys()) == {"name", "nodes", "connections", "settings"}
++    assert body["settings"] == {}  # defaulted, source omitted it
++
++
++def test_sanitize_preserves_existing_settings() -> None:
++    body = sanitize_workflow_put_body({"name": "x", "settings": {"a": 1}})
++    assert body["settings"] == {"a": 1}
++
++
++# ---------------------------------------------------------------------------
++# Tag-ids-not-names
++# ---------------------------------------------------------------------------
++
++
++def test_tag_refs_body_uses_ids_not_names() -> None:
++    assert tag_refs_body(["t1", "t2"]) == [{"id": "t1"}, {"id": "t2"}]
++
++
++def test_tag_refs_body_empty_clears() -> None:
++    assert tag_refs_body([]) == []
++
++
++# ---------------------------------------------------------------------------
++# Webhook-trigger extraction
++# ---------------------------------------------------------------------------
++
++
++def test_extract_webhook_trigger_finds_webhook_node() -> None:
++    nodes = [
++        {
++            "type": "n8n-nodes-base.webhook",
++            "parameters": {"httpMethod": "POST", "path": "my-hook"},
++        }
++    ]
++    assert extract_webhook_trigger(nodes) == ("POST", "my-hook")
++
++
++def test_extract_webhook_trigger_defaults_method_to_get() -> None:
++    nodes = [{"type": "n8n-nodes-base.webhook", "parameters": {"path": "abc"}}]
++    assert extract_webhook_trigger(nodes) == ("GET", "abc")
++
++
++def test_extract_webhook_trigger_none_for_form_trigger() -> None:
++    nodes = [{"type": "n8n-nodes-base.formTrigger", "parameters": {}}]
++    assert extract_webhook_trigger(nodes) is None
++
++
++def test_extract_webhook_trigger_none_for_execute_workflow_trigger() -> None:
++    nodes = [{"type": "n8n-nodes-base.executeWorkflowTrigger", "parameters": {}}]
++    assert extract_webhook_trigger(nodes) is None
++
++
++def test_extract_webhook_trigger_none_for_manual_trigger() -> None:
++    nodes = [{"type": "n8n-nodes-base.manualTrigger", "parameters": {}}]
++    assert extract_webhook_trigger(nodes) is None
++
++
++def test_extract_webhook_trigger_none_for_empty_nodes() -> None:
++    assert extract_webhook_trigger([]) is None
++    assert extract_webhook_trigger(None) is None
++
++
++def test_extract_webhook_trigger_ignores_webhook_node_without_path() -> None:
++    """A webhook node without a `path` isn't dispatchable — skip it."""
++    nodes = [{"type": "n8n-nodes-base.webhook", "parameters": {}}]
++    assert extract_webhook_trigger(nodes) is None
++
++
++# ---------------------------------------------------------------------------
++# raw_to_workflow — can_run eligibility matrix
++# ---------------------------------------------------------------------------
++
++
++def _raw_workflow(**overrides: object) -> dict:
++    base = {
++        "id": "wf1",
++        "name": "Flow",
++        "active": True,
++        "isArchived": False,
++        "tags": [],
++        "nodes": [{"type": "n8n-nodes-base.webhook", "parameters": {"path": "p", "httpMethod": "GET"}}],
++        "createdAt": "2026-07-16T00:00:00.000Z",
++        "updatedAt": "2026-07-16T01:00:00.000Z",
++    }
++    base.update(overrides)
++    return base
++
++
++def test_raw_to_workflow_can_run_true_when_webhook_active_not_archived() -> None:
++    w = raw_to_workflow(_raw_workflow())
++    assert w.has_webhook_node is True
++    assert w.can_run is True
++    assert w.webhook_method == "GET"
++    assert w.webhook_path == "p"
++
++
++def test_raw_to_workflow_can_run_false_when_inactive() -> None:
++    w = raw_to_workflow(_raw_workflow(active=False))
++    assert w.has_webhook_node is True
++    assert w.can_run is False
++
++
++def test_raw_to_workflow_can_run_false_when_archived() -> None:
++    w = raw_to_workflow(_raw_workflow(isArchived=True))
++    assert w.can_run is False
++
++
++def test_raw_to_workflow_can_run_false_when_no_webhook_node() -> None:
++    w = raw_to_workflow(
++        _raw_workflow(nodes=[{"type": "n8n-nodes-base.manualTrigger", "parameters": {}}])
++    )
++    assert w.has_webhook_node is False
++    assert w.can_run is False
++    assert w.webhook_path is None
++
++
++def test_raw_to_workflow_id_is_str() -> None:
++    w = raw_to_workflow(_raw_workflow(id=123))
++    assert w.id == "123"
++    assert isinstance(w.id, str)
++
++
++def test_raw_to_workflow_maps_tags() -> None:
++    w = raw_to_workflow(_raw_workflow(tags=[{"id": "t1", "name": "prod"}]))
++    assert len(w.tags) == 1
++    assert w.tags[0].id == "t1"
++    assert w.tags[0].name == "prod"
++
++
++def test_raw_to_workflow_parses_timestamps() -> None:
++    w = raw_to_workflow(_raw_workflow())
++    assert w.created_at is not None
++    assert w.updated_at is not None
++
++
++# ---------------------------------------------------------------------------
++# raw_to_tag
++# ---------------------------------------------------------------------------
++
++
++def test_raw_to_tag() -> None:
++    t = raw_to_tag({"id": "t1", "name": "prod"})
++    assert t.id == "t1"
++    assert t.name == "prod"
++
++
++# ---------------------------------------------------------------------------
++# raw_to_execution — int id, never unified with the str workflow id
++# ---------------------------------------------------------------------------
++
++
++def test_raw_to_execution_id_is_int() -> None:
++    e = raw_to_execution({"id": 42, "workflowId": "wf1", "status": "success"})
++    assert e.id == 42
++    assert isinstance(e.id, int)
++    assert e.workflow_id == "wf1"
++    assert isinstance(e.workflow_id, str)
++
++
++def test_raw_to_execution_no_workflow_id() -> None:
++    e = raw_to_execution({"id": 1})
++    assert e.workflow_id is None
++
++
++# ---------------------------------------------------------------------------
++# extract_error_message
++# ---------------------------------------------------------------------------
++
++
++def test_extract_error_message_from_message_key() -> None:
++    title, detail = extract_error_message({"message": "Bad request"})
++    assert detail == "Bad request"
++
++
++def test_extract_error_message_from_title_detail() -> None:
++    title, detail = extract_error_message({"title": "Bad Request", "detail": "explain"})
++    assert title == "Bad Request"
++    assert detail == "explain"
++
++
++def test_extract_error_message_non_dict_body() -> None:
++    assert extract_error_message(None) == ("", "")
++    assert extract_error_message("plain text") == ("", "")
+-- 
+2.51.2
+

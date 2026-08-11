@@ -1,0 +1,576 @@
+From 3e66541d10f860a1849c25e009a5f1e2d456f3e2 Mon Sep 17 00:00:00 2001
+From: jraphaelsst <joaoraphaelsst@gmail.com>
+Date: Wed, 29 Jul 2026 15:04:41 -0300
+Subject: [PATCH] wip(erp): preserve the never-dispatched Slice-2 auth-router
+ mount
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+NOT FOR MERGE. Committed only so 420 lines of uncommitted staged work stop
+living in a prunable worktree — this branch is deliberately NOT integrated.
+
+`erp-httponly-cookie-session-2026-07` Slice 2 ("ERP backend — mount the seed
+auth router") is marked NEVER DISPATCHED; this is a partial attempt at it that
+was left staged. It must not land as-is:
+
+  · Slice 1b′ (the `createProductLayout` cookie-mode seam) is still IN PROGRESS
+    on `feat/seed-layout-session-seam`, and Slice 3 is BLOCKED on it.
+  · The roadmap explicitly flags Slice 2 as colliding with the
+    org-source-of-truth fan-out in `products/erp-imobiliario/backend/`.
+  · SEC-6 (the MINTED ACCESS TOKEN, not the session id, must reach
+    `set_session`) is a security property this partial work has not been
+    verified against.
+  · `migrations/040_api_tokens.sql` now COLLIDES — erp is at 042. It needs
+    renumbering to 043 before it could ever apply.
+
+Resuming means re-dispatching Slice 2 properly against current `dev`, not
+cherry-picking this. Recorded in the roadmap's Slice-2 row.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SJnpRnsyqyEcPFz3XXbTSd
+---
+ KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md        |   6 +-
+ .../backend/app/dependencies.py               | 177 +++++++++++++++++-
+ products/erp-imobiliario/backend/app/main.py  |  34 +++-
+ .../backend/migrations/040_api_tokens.sql     |  81 ++++++++
+ .../erp-imobiliario/backend/requirements.txt  |   5 +
+ .../erp-imobiliario/backend/tests/conftest.py |  21 +++
+ .../tests/test_auth_session_unified.py        | 104 ++++++++++
+ 7 files changed, 423 insertions(+), 5 deletions(-)
+ create mode 100644 products/erp-imobiliario/backend/migrations/040_api_tokens.sql
+ create mode 100644 products/erp-imobiliario/backend/tests/test_auth_session_unified.py
+
+diff --git a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+index 39afb20a..97e21497 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+@@ -34,7 +34,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
+ |---------|---------|----------|-------|-------|-----------|---------|
+ | Core | 29 | 14 | 29 | 0 | 50 | 539 |
+-| Erp Imobiliario | 60 | 54 | 67 | 68 | 128 | 1,816 |
++| Erp Imobiliario | 60 | 54 | 67 | 68 | 129 | 1,819 |
+ | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
+ | Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
+ | Seed | 2 | 1 | 8 | 1 | 6 | 19 |
+@@ -44,14 +44,14 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Social Wiring | 16 | 24 | 54 | 28 | 77 | 993 |
+ | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
+ | Orbity | 10 | 11 | 19 | 19 | 31 | 654 |
+-| **Total** | **191** | **200** | **318** | **181** | **487** | **6,248** |
++| **Total** | **191** | **200** | **318** | **181** | **488** | **6,251** |
+ <!-- kb-counts:end:inventory -->
+ 
+ ## Database
+ 
+ <!-- kb-counts:start:database -->
+ - **Schemas (11):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
+-- **Tables: 351** distributed across the schemas.
++- **Tables: 352** distributed across the schemas.
+ <!-- kb-counts:end:database -->
+ 
+ - **RLS enabled on every table** — see `PATTERNS/backend/database-rls.md` for the canonical rules.
+diff --git a/products/erp-imobiliario/backend/app/dependencies.py b/products/erp-imobiliario/backend/app/dependencies.py
+index 6f98059b..46501f5b 100644
+--- a/products/erp-imobiliario/backend/app/dependencies.py
++++ b/products/erp-imobiliario/backend/app/dependencies.py
+@@ -15,10 +15,12 @@ original reference adopter was the retired ``youtube-crawler`` product,
+ consolidated into ``social-wiring`` 2026-05-16).
+ """
+ import logging
++from types import SimpleNamespace
+ from typing import Optional
+ 
+-from fastapi import HTTPException
++from fastapi import Depends, HTTPException
+ from noctusai_seed import create_database_module, create_dependencies
++from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
+ from noctusai_lib.domain.action_log import log_action as _shared_log_action
+ from noctusai_lib.api.auth import (
+     first_or_none,  # noqa: F401 — re-exported for product imports
+@@ -27,6 +29,12 @@ from noctusai_lib.api.auth import (
+     make_require_role,
+     make_resolve_platform_role,
+ )
++from noctusai_lib.api.auth.session import (
++    AuthContext,
++    FakeApiTokenResolver,
++    make_get_auth_context,
++    make_token_exchanger,
++)
+ from app.config import settings
+ 
+ _db = create_database_module(settings, schema="erp")
+@@ -253,3 +261,170 @@ def get_erp_user_role(user) -> str:
+ # this product's `get_current_user` (Supabase-client-aware) and ERP role
+ # resolver. Routers consume via `Depends(require_role("admin", "owner"))`.
+ require_role = make_require_role(get_current_user, get_erp_user_role)
++
++
++# ─── Cookie-session auth infra (erp-httponly-cookie-session-2026-07 roadmap,
++# Slice 2) ───────────────────────────────────────────────────────────────
++#
++# ERP's existing `get_current_user_org` (raw Supabase JWT bearer, above) is
++# UNCHANGED and remains every one of the 61 existing routers' dep — this
++# section is ADDITIVE, mirroring `products/social-wiring/backend/app/
++# dependencies.py`'s Wave-2 auth infra: a parallel `get_current_user_org_
++# unified` dep any router can opt into for cookie-session support, the same
++# per-router opt-in rollout social-wiring used for its
++# youtube-drive-folder-fanout endpoints. No existing ERP router is migrated
++# by this slice — see the mount in `app/main.py` (`standard_routers=[...,
++# "auth"]`) for the `/api/auth/{login,me,logout}` + `/api/settings/
++# api-tokens` endpoints themselves, which do not need this dep at all
++# (`login`/`me`/`logout` never touch a per-request RLS client; the
++# api-token endpoints use `deps.get_admin_client()` / `get_core_client()`
++# service-role clients).
++
++
++def _get_session_store():
++    """Delegates to ``noctusai_seed.auth_router.get_session_store(settings)``
++    — the SAME process-local singleton the seed's ``create_auth_router``
++    mount (wired via ``standard_routers=["auth"]`` in ``app/main.py``) uses
++    internally. A second ``make_session_store(...)`` call here would
++    split-brain the in-memory Fake (dev/test, no ``redis_url``): a session
++    minted through the mounted router's own ``/login`` would be invisible
++    to a lookup running through a SEPARATE ``FakeSessionStore()`` instance.
++    See that factory's docstring for the full rationale — identical
++    reasoning to social-wiring's ``_get_session_store``.
++    """
++    return _seed_get_session_store(settings)
++
++
++_token_exchanger = None
++_token_exchanger_settings_id = None
++
++
++def _get_token_exchanger():
++    """Lazy singleton ``TokenExchanger`` (SEC-1/SEC-2) — the seam SEC-6
++    requires: a per-request RLS-scoped Supabase client for a cookie-session
++    caller MUST be built from the token this returns (a freshly-MINTED
++    Supabase access token), never the opaque ``nai_session`` cookie value /
++    session id itself. See ``get_current_user_org_unified`` below for the
++    consumer.
++
++    Real (``SupabaseTokenExchanger``) when ``settings.redis_url`` is set —
++    the per-session ``SET NX EX`` refresh lock (SEC-2) needs a live Redis
++    connection to serialize concurrent refreshes. The refresh itself always
++    runs through ``make_default_refresh_fn`` on a THROWAWAY anon
++    ``create_client(url, anon_key)`` (SEC-1 — never the shared admin
++    singleton; ``check_auth_session_mutation_on_shared_client`` guards this
++    class of regression, the 2026-05-23 core prod outage). Falls back to
++    the in-memory ``FakeTokenExchanger`` under local-dev/test (no Redis
++    configured) — mirrors ``_get_session_store``'s Fake fallback.
++
++    The lock client is a SEPARATE ``redis.asyncio`` connection from the
++    session store's — safe by construction (Redis IS the shared state, not
++    the Python object handle; ``make_session_store``'s docstring makes the
++    same argument for the store side).
++
++    Keyed by ``id(settings)`` (not memoized forever) so per-test suites
++    that construct a fresh ``Settings()`` per test get an isolated
++    exchanger instead of leaking state across tests — mirrors
++    ``noctusai_seed.auth_router.get_session_store``'s keying.
++    """
++    global _token_exchanger, _token_exchanger_settings_id
++    if _token_exchanger is None or _token_exchanger_settings_id != id(settings):
++        redis_url = getattr(settings, "redis_url", None) or None
++        lock_client = None
++        if redis_url:
++            from redis.asyncio import Redis
++
++            lock_client = Redis.from_url(redis_url, decode_responses=True)
++        _token_exchanger = make_token_exchanger(
++            _get_session_store(),
++            supabase_url=getattr(settings, "supabase_url", None) or None,
++            supabase_anon_key=getattr(settings, "supabase_anon_key", None) or None,
++            lock_client=lock_client,
++        )
++        _token_exchanger_settings_id = id(settings)
++    return _token_exchanger
++
++
++class _LazySessionStore:
++    """Defers to ``_get_session_store()`` on first method call — so wiring
++    ``get_auth_context`` at module-import time never touches Redis (test
++    collection / sqlite local-dev safety). Mirrors social-wiring's
++    ``_LazySessionStore``."""
++
++    async def create(self, **kwargs):
++        return await _get_session_store().create(**kwargs)
++
++    async def lookup(self, session_id):
++        return await _get_session_store().lookup(session_id)
++
++    async def refresh_ttl(self, session_id, ttl_seconds: int = 86400):
++        return await _get_session_store().refresh_ttl(session_id, ttl_seconds)
++
++    async def delete(self, session_id):
++        return await _get_session_store().delete(session_id)
++
++    async def read_tokens(self, session_id):
++        return await _get_session_store().read_tokens(session_id)
++
++    async def write_tokens(self, session_id, **kwargs):
++        return await _get_session_store().write_tokens(session_id, **kwargs)
++
++
++# Pure new-scheme dep (cookie + `pk_*` only — NO `legacy_jwt_resolver`). A
++# cookie-authenticated `caller_kind="user"` AuthContext's `raw_token` is
++# therefore GUARANTEED to be the session id (never a raw JWT), which is
++# exactly what `get_current_user_org_unified` below needs to call
++# `TokenExchanger.access_token_for(session_id)` unambiguously — mixing in a
++# legacy-JWT bridge here would make `raw_token` ambiguous between "session
++# id" and "raw JWT" for the SAME `caller_kind`, breaking that precondition.
++# No pk_* automation consumer is wired to ERP's business routers yet
++# (`FakeApiTokenResolver` never resolves a bearer), matching the "no
++# real-resolver need on day one" ERP-shaped choice `app/main.py`'s
++# `standard_routers=["auth"]` mount also makes.
++get_auth_context = make_get_auth_context(
++    session_store=_LazySessionStore(),
++    api_token_resolver=FakeApiTokenResolver(),
++    legacy_jwt_resolver=None,
++    session_cookie_name="nai_session",
++)
++
++
++async def get_current_user_org_unified(ctx: AuthContext = Depends(get_auth_context)):
++    """Cookie-session-aware sibling of ``get_current_user_org`` — SEC-6.
++
++    Exchanges the cookie session for a freshly-minted Supabase access token
++    (never the opaque session id) via ``TokenExchanger.access_token_for``,
++    so ``get_user_client(token)`` -> ``make_supabase_client(..., access_
++    token=...)`` -> ``client.auth.set_session(access_token, "")`` always
++    receives a REAL access token. ``check_auth_session_mutation_on_shared_
++    client`` guards the separate "which CLIENT" hazard (never the shared
++    admin singleton); this dep is the companion "which VALUE" invariant the
++    roadmap's SEC-6 line names explicitly — a cookie-derived AuthContext's
++    session id never reaches ``set_session`` as-is.
++
++    Returns the same ``(user, token, org_id)`` shape ``get_current_user_org``
++    does, so an opting-in router's existing ``db = get_user_client(token)``
++    call site needs NO change beyond the ``Depends(...)`` swap.
++
++    Not yet consumed by any existing ERP router (out of this slice's scope
++    — the 61 routers stay on ``get_current_user_org``/legacy JWT bearer,
++    unchanged); a future per-router migration opts in the same way
++    social-wiring's youtube-drive-folder-fanout endpoints did for its own
++    ``get_current_user_org_unified``.
++    """
++    if ctx.caller_kind != "user":
++        # No product/pk_* automation consumer is wired to ERP's business
++        # routers yet — `FakeApiTokenResolver` never resolves a `pk_*`
++        # bearer above, so this branch is unreachable today. Kept explicit
++        # (rather than silently coerced into a user-shaped tuple) so it
++        # fails loud instead of silently misrepresenting the caller if a
++        # real `ApiTokenResolver` is wired in later.
++        raise HTTPException(status_code=403, detail="Restricted to human users")
++
++    access_token = await _get_token_exchanger().access_token_for(ctx.raw_token)
++    user = SimpleNamespace(
++        id=str(ctx.user_id),
++        email=None,
++        user_metadata={"org_id": str(ctx.org_id)},
++    )
++    return user, access_token, str(ctx.org_id)
+diff --git a/products/erp-imobiliario/backend/app/main.py b/products/erp-imobiliario/backend/app/main.py
+index 8a29c90c..c73c3941 100644
+--- a/products/erp-imobiliario/backend/app/main.py
++++ b/products/erp-imobiliario/backend/app/main.py
+@@ -39,6 +39,38 @@ def _startup():
+     schedule_all_pending_tjsp(admin_db)
+ 
+ 
++# `"auth"` in `standard_routers` below mounts `/api/auth/{login,me,logout}`
++# + `/api/settings/api-tokens` via the seed's bare
++# `noctusai_seed.routers._build_auth_router(deps, settings, product_name,
++# version)` -> `create_auth_router(deps, settings)` (NO `api_token_resolver`
++# / `legacy_jwt_resolver` overrides) — erp-httponly-cookie-session-2026-07
++# roadmap, Slice 2. This is the SIMPLER of the two mount shapes
++# `create_auth_router`'s docstring documents (contrast
++# `products/social-wiring/backend/app/main.py`'s direct factory call),
++# correct here because, unlike social-wiring on day one:
++#   (a) ERP has no REAL `ApiTokenResolver` to inject — no `pk_*` bearer
++#       consumer exists anywhere in ERP's backend yet; the bare default
++#       `FakeApiTokenResolver()` (always-empty) costs nothing today.
++#   (b) ERP has no existing bridge to keep working on THESE 5 new
++#       endpoints specifically — the 61 pre-existing routers stay on
++#       `Depends(get_current_user_org)` (raw Supabase JWT bearer),
++#       completely unaffected by this mount; passing a
++#       `legacy_jwt_resolver` here would only matter if a caller needed
++#       `/api/auth/me`/`/logout`/the api-token endpoints to ALSO accept a
++#       legacy JWT bearer, which no caller does yet.
++#   (c) ERP's routers are a flat list (not social-wiring's per-module
++#       `register()` seam), so `standard_routers=[...]` is the
++#       least-surprise, most-conventional shape here.
++# `deps` (built internally by `create_product_app` via
++# `create_database_module(settings, schema="erp")` + `create_dependencies`)
++# already exposes `get_admin_client()` (erp-schema-scoped — where
++# `erp.api_tokens`, migration 040, lives) + `get_core_client()`
++# (`public`-scoped — where `_require_org_admin` reads `noctus_users`),
++# exactly the surface `create_auth_router` needs — no adapter shim required.
++# See `app/dependencies.py`'s "Cookie-session auth infra" section for the
++# SEC-6 per-request-RLS-client seam (`get_current_user_org_unified`), which
++# this mount does NOT need (login/me/logout never build a per-request RLS
++# client; the api-token endpoints use the service-role clients above).
+ app = create_product_app(
+     name="ERP Imobiliario",
+     schema="erp",
+@@ -108,6 +140,6 @@ app = create_product_app(
+     version="0.2.0",
+     limiter=limiter,
+     lifespan_startup=_startup,
+-    standard_routers=["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "status_paginas"],
++    standard_routers=["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "status_paginas", "auth"],
+     consent_features="app.services.ai_consent_features",
+ )
+diff --git a/products/erp-imobiliario/backend/migrations/040_api_tokens.sql b/products/erp-imobiliario/backend/migrations/040_api_tokens.sql
+new file mode 100644
+index 00000000..e4f5af85
+--- /dev/null
++++ b/products/erp-imobiliario/backend/migrations/040_api_tokens.sql
+@@ -0,0 +1,81 @@
++-- Migration: api_tokens
++-- Generated by noctus.dev.scaffold_migration on 2026-07-20
++-- Schema: erp
++--
++-- erp-httponly-cookie-session-2026-07 roadmap, Slice 2: mount the seed
++-- auth router's `/api/settings/api-tokens` management endpoints on ERP.
++-- `noctusai_seed.auth_router.create_auth_router` reads/writes an
++-- `api_tokens` table in the PRODUCT's own schema via `deps.get_admin_client()`
++-- (see that module's `create_api_token` / `list_api_tokens` / `revoke_api_token`
++-- handlers) — mirrors `products/social-wiring/backend/migrations/
++-- 001_social-wiring.sql`'s `social_wiring.api_tokens` shape (byte-identical
++-- column set; only the schema + index-name prefix differ). RLS mirrors
++-- social-wiring's `011_rls_current_org_id.sql` policy shape, using
++-- `erp.current_org_id()` (already defined by migration 032).
++
++-- ============================================================
++-- Schema lock — pin name resolution to erp, public
++-- WHY:
++--   * RLS isolation: every product's tables live in its own
++--     schema; un-locked search_path leaks resolution to
++--     whatever the caller's session set.
++--   * Cross-product safety: prevents accidental shadowing
++--     when two products define identically-named helpers
++--     (e.g. `current_org_id()`) in different schemas.
++-- IDEMPOTENT: session-level setting; no DDL emitted.
++-- ============================================================
++SET search_path = erp, public;
++
++CREATE TABLE erp.api_tokens (
++    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
++    org_id           UUID NOT NULL,
++    label            TEXT NOT NULL,
++    token_hash       TEXT NOT NULL UNIQUE,
++    token_prefix     TEXT NOT NULL,
++    scopes           TEXT[] NOT NULL DEFAULT '{}',
++    created_by       UUID,
++    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
++    last_used_at     TIMESTAMPTZ,
++    revoked_at       TIMESTAMPTZ
++);
++
++ALTER TABLE erp.api_tokens ENABLE ROW LEVEL SECURITY;
++
++CREATE POLICY "api_tokens_select_own_org" ON erp.api_tokens
++    FOR SELECT TO authenticated
++    USING (org_id = current_org_id());
++
++-- INSERT + UPDATE limited to owner/admin org_role (matches the platform's
++-- convention for sensitive config; org_role lives in public.noctus_users —
++-- the same trusted-DB gate `noctusai_seed.auth_router._require_org_admin`
++-- reads via `deps.get_core_client()`).
++CREATE POLICY "api_tokens_insert_own_org_admin" ON erp.api_tokens
++    FOR INSERT TO authenticated
++    WITH CHECK (
++        org_id = current_org_id()
++        AND EXISTS (
++            SELECT 1 FROM public.noctus_users nu
++            WHERE nu.id = (SELECT auth.uid())
++              AND nu.org_id = erp.api_tokens.org_id
++              AND nu.org_role IN ('owner', 'admin')
++        )
++    );
++
++CREATE POLICY "api_tokens_update_own_org_admin" ON erp.api_tokens
++    FOR UPDATE TO authenticated
++    USING (
++        org_id = current_org_id()
++        AND EXISTS (
++            SELECT 1 FROM public.noctus_users nu
++            WHERE nu.id = (SELECT auth.uid())
++              AND nu.org_id = erp.api_tokens.org_id
++              AND nu.org_role IN ('owner', 'admin')
++        )
++    );
++
++CREATE POLICY "api_tokens_service_role" ON erp.api_tokens
++    FOR ALL TO service_role
++    USING (true) WITH CHECK (true);
++
++CREATE INDEX idx_erp_api_tokens_org ON erp.api_tokens(org_id) WHERE revoked_at IS NULL;
++CREATE UNIQUE INDEX idx_erp_api_tokens_hash_active ON erp.api_tokens(token_hash) WHERE revoked_at IS NULL;
+diff --git a/products/erp-imobiliario/backend/requirements.txt b/products/erp-imobiliario/backend/requirements.txt
+index 3fdd0fe3..49b90605 100644
+--- a/products/erp-imobiliario/backend/requirements.txt
++++ b/products/erp-imobiliario/backend/requirements.txt
+@@ -36,6 +36,11 @@ sentry-sdk[fastapi]==1.45.1
+ # Caching (optional)
+ redis==5.0.1
+ 
++# Cookie-session encryption at rest (SEC-3, erp-httponly-cookie-session-2026-07
++# roadmap Slice 2) — noctusai_lib.security.encrypted_tokens (consumed by
++# RedisSessionStore) + this product's test-only Fernet key generation.
++cryptography>=42.0.0
++
+ # Testing
+ pytest-asyncio>=0.21.0
+ # LLM provider SDKs (multi-provider via noctusai_lib.llm — monolithic install)
+diff --git a/products/erp-imobiliario/backend/tests/conftest.py b/products/erp-imobiliario/backend/tests/conftest.py
+index f01ac2a6..3dfff1bf 100644
+--- a/products/erp-imobiliario/backend/tests/conftest.py
++++ b/products/erp-imobiliario/backend/tests/conftest.py
+@@ -43,8 +43,29 @@ mock-supabase close. Same shape as therapy's schema drift (tracked by
+ `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`).
+ Once reconciled, flip this to `validate_schema=True, schema="erp"`.
+ """
++import os as _os
+ import sys
+ from pathlib import Path
++
++from cryptography.fernet import Fernet as _Fernet
++
++# SEC-3 (erp-httponly-cookie-session-2026-07 roadmap, Slice 2) test-only key
++# — `ERPSettings.redis_url` reads the shared fleet `REDIS_URL` (root `.env`,
++# real + reachable), so `noctusai_seed.auth_router.get_session_store(settings)`
++# (called by BOTH the mounted `standard_routers=["auth"]` router AND
++# `app.dependencies._get_session_store`) runs
++# `make_session_store(require_encryption=True)`, which REFUSES to boot a
++# Redis-backed session store without `settings.session_encryption_key` set
++# — fail-loudly-on-misconfiguration is the intended SEC-3 behavior, NOT
++# something to bypass. Setting a per-session-run Fernet key here (BEFORE
++# `app.config`/`app.main` is first imported by any fixture/test) lets the
++# suite exercise the REAL Redis-backed + encrypted session store (dev-prod
++# parity — the roadmap's Slice 4 note warns "Fake store hides the
++# exchange"). Mirrors `products/social-wiring/backend/tests/conftest.py`'s
++# identical fix from Slice 1b. `setdefault` so a real `SESSION_ENCRYPTION_KEY`
++# already exported in the environment wins.
++_os.environ.setdefault("SESSION_ENCRYPTION_KEY", _Fernet.generate_key().decode())
++
+ _REPO = Path(__file__).resolve().parents[4]
+ _LIB = _REPO / "seed" / "lib" / "backend"
+ _FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+diff --git a/products/erp-imobiliario/backend/tests/test_auth_session_unified.py b/products/erp-imobiliario/backend/tests/test_auth_session_unified.py
+new file mode 100644
+index 00000000..ad6c8ead
+--- /dev/null
++++ b/products/erp-imobiliario/backend/tests/test_auth_session_unified.py
+@@ -0,0 +1,104 @@
++"""
++Cookie-session auth infra — `app.dependencies.get_current_user_org_unified`
++(erp-httponly-cookie-session-2026-07 roadmap, Slice 2).
++
++SEC-6: the caller-facing token returned by `get_current_user_org_unified`
++for a cookie-session user MUST be the freshly-MINTED Supabase access token
++(from `TokenExchanger.access_token_for`), NEVER the opaque session id
++(`AuthContext.raw_token`) itself — a cookie-derived AuthContext must never
++reach `set_session` as-is. These tests exercise the dep directly (Fakes,
++no live Redis/Supabase) rather than through the FastAPI `client` fixture,
++since `get_current_user_org_unified` is not yet wired onto any router.
++"""
++import asyncio
++from uuid import uuid4
++
++import pytest
++
++from noctusai_lib.api.auth.session import AuthContext, FakeTokenExchanger
++
++
++def _run(coro):
++    return asyncio.new_event_loop().run_until_complete(coro)
++
++
++class TestGetCurrentUserOrgUnifiedSec6:
++    def test_user_ctx_returns_exchanged_access_token_not_session_id(self, monkeypatch):
++        """The returned token is the exchanger's MINTED access token — the
++        opaque session id (`ctx.raw_token`) never leaks out as if it were
++        a usable Supabase access token."""
++        from app.dependencies import get_current_user_org_unified
++
++        session_id = "opaque-session-id-not-a-jwt"
++        minted_access_token = "eyJ-fake-minted-access-token"
++        fake_exchanger = FakeTokenExchanger(
++            tokens={session_id: minted_access_token}
++        )
++        monkeypatch.setattr(
++            "app.dependencies._get_token_exchanger", lambda: fake_exchanger
++        )
++
++        org_id = uuid4()
++        user_id = uuid4()
++        ctx = AuthContext(
++            org_id=org_id,
++            caller_kind="user",
++            user_id=user_id,
++            scopes=[],
++            raw_token=session_id,
++            api_token_id=None,
++        )
++
++        user, token, returned_org_id = _run(get_current_user_org_unified(ctx))
++
++        assert token == minted_access_token, (
++            "SEC-6: get_current_user_org_unified must return the EXCHANGED "
++            "access token"
++        )
++        assert token != session_id, (
++            "SEC-6 violation: the opaque session id must never reach the "
++            "caller as if it were a usable access token"
++        )
++        assert fake_exchanger.calls == [session_id], (
++            "the exchanger must be called with the session id (ctx.raw_token)"
++        )
++        assert str(user.id) == str(user_id)
++        assert user.user_metadata["org_id"] == str(org_id)
++        assert returned_org_id == str(org_id)
++
++    def test_product_caller_kind_rejected(self):
++        """No pk_* automation consumer is wired to ERP's business routers
++        yet (`FakeApiTokenResolver` in `get_auth_context` never resolves a
++        `pk_*` bearer) — a `caller_kind="product"` AuthContext reaching
++        this dep is unreachable today but must fail loud, not silently
++        coerce into a user-shaped tuple."""
++        from app.dependencies import get_current_user_org_unified
++        from fastapi import HTTPException
++
++        ctx = AuthContext(
++            org_id=uuid4(),
++            caller_kind="product",
++            user_id=None,
++            scopes=[],
++            raw_token="pk-token-id",
++            api_token_id=uuid4(),
++        )
++
++        with pytest.raises(HTTPException) as exc_info:
++            _run(get_current_user_org_unified(ctx))
++        assert exc_info.value.status_code == 403
++
++
++class TestSessionStoreSharedSingleton:
++    def test_get_session_store_delegates_to_seed_shared_accessor(self):
++        """`app.dependencies._get_session_store()` MUST return the SAME
++        object `noctusai_seed.auth_router.get_session_store(settings)`
++        returns — a second independent `make_session_store(...)` call
++        would split-brain the in-memory Fake (a session minted by the
++        mounted `standard_routers=["auth"]` router's own `/login` would be
++        invisible to a lookup running through a separate instance)."""
++        from app.config import settings
++        from app.dependencies import _get_session_store
++        from noctusai_seed.auth_router import get_session_store as seed_get_session_store
++
++        assert _get_session_store() is seed_get_session_store(settings)
+-- 
+2.51.2
+
