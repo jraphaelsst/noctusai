@@ -49,6 +49,7 @@ import {
   Target,
   KanbanSquare,
   Workflow,
+  TrendingUp,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -84,6 +85,7 @@ const MetaDashboard = lazyWithReload(() => import("@/pages/MetaDashboard"));
 const Leads = lazyWithReload(() => import("@/pages/leads/Leads"));
 const FunilVendas = lazyWithReload(() => import("@/pages/funil/FunilVendas"));
 const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda"));
+const PortalRoi = lazyWithReload(() => import("@/pages/PortalRoi"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -117,6 +119,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Leads", href: "/leads", icon: Target, route: "leads" },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
+      { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp, route: "portal_roi" },
     ],
   },
   {
@@ -180,6 +183,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Leads", href: "/leads", icon: Target },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow },
+      { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp },
     ],
   },
   {
@@ -237,6 +241,7 @@ export default createProductApp({
     { path: "/leads", component: Leads },
     { path: "/funil", component: FunilVendas },
     { path: "/processos-venda", component: ProcessosVenda },
+    { path: "/portal-roi", component: PortalRoi },
     { path: "/email-marketing/listas", component: EmailListas },
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },
