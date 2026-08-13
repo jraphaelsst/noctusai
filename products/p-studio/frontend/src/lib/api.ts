@@ -1,3 +1,10 @@
+// Deep entry point, not the barrel: `@noctusai/lib` re-exports the whole
+// organ set (KanbanBoard → @dnd-kit, dialogs → @radix-ui), and importing
+// it would force p-studio to install the entire organ peer set for one
+// function. `./api` is a declared export in seed/lib/frontend/package.json,
+// so this is a supported entry, not a reach into internals. When the organ
+// swap lands (roadmap T4) the peer set arrives with it.
+import { extractErrorMessage } from "@noctusai/lib/api";
 import { supabase } from "./supabase";
 
 // House single-container model: uvicorn serves the built SPA + API on the
@@ -29,10 +36,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    const detail = (data as any)?.detail;
-    const message =
-      typeof detail === "string" ? detail : detail ? JSON.stringify(detail) : `Erro ${res.status}`;
-    throw new Error(message);
+    // The seed's `configure_app` wraps every HTTPException as
+    // `{error:{code,message}}` — NOT FastAPI's raw `{detail}`. Reading
+    // `detail` alone (what this product did while it lived outside noc)
+    // degrades every backend error to "Erro <status>", silently: the
+    // request still fails, the toast just stops saying why.
+    // `extractErrorMessage` is the canonical reader and handles the seed
+    // envelope, FastAPI `detail` (string AND Pydantic's array form), and
+    // a bare `message`, so it stays correct through the transition.
+    throw new Error(extractErrorMessage(data, res.status));
   }
   return data as T;
 }

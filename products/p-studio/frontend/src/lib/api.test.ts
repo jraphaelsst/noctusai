@@ -145,13 +145,31 @@ describe("api", () => {
     await expect(api.get("/api/clientes/x")).rejects.toThrow("Cliente não encontrado");
   });
 
-  it("detail estruturado do 422 não vira [object Object]", async () => {
+  it("envelope {error:{code,message}} do seed vira a mensagem do Error", async () => {
+    // ESTE é o formato que o backend devolve desde que passou a usar
+    // `create_product_app` — `configure_app` embrulha toda HTTPException
+    // assim. Enquanto o produto vivia fora do noc, `api.ts` só lia
+    // `detail`, então todo erro do backend virava "Erro <status>" na tela:
+    // a request falhava igual, o toast é que parava de dizer por quê.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      respostaFake(
+        { error: { code: "nao_encontrado", message: "Cliente não encontrado" } },
+        { status: 404 }
+      ) as any
+    );
+
+    await expect(api.get("/api/clientes/x")).rejects.toThrow("Cliente não encontrado");
+  });
+
+  it("detail estruturado do 422 vira texto legível, não [object Object]", async () => {
     const detail = [{ loc: ["body", "nome"], msg: "Field required" }];
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       respostaFake({ detail }, { status: 422 }) as any
     );
 
-    await expect(api.post("/api/clientes", {})).rejects.toThrow(JSON.stringify(detail));
+    // `extractErrorMessage` junta os `msg` do Pydantic em vez de despejar
+    // o JSON cru — melhor que o comportamento anterior, não só diferente.
+    await expect(api.post("/api/clientes", {})).rejects.toThrow("Field required");
   });
 
   it("erro sem corpo cai na mensagem genérica com o status", async () => {
@@ -159,15 +177,15 @@ describe("api", () => {
       respostaFake(null, { status: 500, jsonThrows: true }) as any
     );
 
-    await expect(api.get("/api/dashboard")).rejects.toThrow("Erro 500");
+    await expect(api.get("/api/dashboard")).rejects.toThrow("500");
   });
 
-  it("erro sem detail também usa a mensagem genérica", async () => {
+  it("erro sem nenhum campo conhecido também usa a mensagem genérica", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       respostaFake({ algo: "outro" }, { status: 503 }) as any
     );
 
-    await expect(api.get("/api/dashboard")).rejects.toThrow("Erro 503");
+    await expect(api.get("/api/dashboard")).rejects.toThrow("503");
   });
 
   it("PATCH usa o verbo certo", async () => {
