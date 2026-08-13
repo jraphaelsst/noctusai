@@ -223,18 +223,19 @@ outros pagamentos. A tabela `provedor_eventos` **é** a fila de retry, drenada p
 
 ### Fase 0 — Auditoria (antes de qualquer código)
 
-- [ ] Ler `cadu/p-studio/README.md` + `MASTER-PROMPT.md` (todo produto tem os dois).
-- [ ] Rodar a suíte do p-studio e confirmar o baseline: `331 backend + 115 frontend`, `tsc` e build limpos.
-- [ ] Ler `KB § PATTERNS/devops/containerization.md §12a` (modelo da casa para absorção de arquitetura divergente) e a skill `noc-absorb-product`.
-- [ ] Ler `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md` — descobrir **onde** a lista de ingress é a fonte de verdade e qual keeper a guarda (`check_tunnel_ingress_snapshot_sync`).
-- [ ] Ler `KB § PATTERNS/devops/prod-exposure-consent.md` — §7-Q1 depende disso.
-- [ ] Ler `KB § PATTERNS/architect/product-working-scope.md` + o catálogo: definir `ativo` / `deploy_scope` do p-studio antes de mexer.
-- [ ] Confirmar o gate do pre-commit: todo `products/<slug>/` precisa de linha de roster em `KNOWLEDGE-BASE/02-LANDSCAPE.md`, senão o hook **bloqueia**.
-- [ ] `git fetch origin` + verificar se algum agente paralelo já mexe em ingress (protocolo pre-work fetch).
-- [ ] **Isolar em worktree a partir de `origin/dev`** antes de escrever qualquer coisa (self-branching mode é 🔴 ABSOLUTO; commit em `dev`/`main`/`prod` no checkout primário é REFUSADO por `check_primary_checkout_commit`).
-- [ ] Revisar §6 em-lugar se a auditoria invalidar algo, e registrar em §11.
+- [x] Ler `cadu/p-studio/README.md` + `MASTER-PROMPT.md` (todo produto tem os dois).
+- [x] Auditoria estrutural completa do workspace (árvore, deps, env, DB/auth, migrations, suíte, acoplamentos de plataforma) — delegada a um agente read-only.
+- [x] Ler `KB § PATTERNS/devops/containerization.md §12a` (modelo da casa para absorção de arquitetura divergente) e a skill `noc-absorb-product`.
+- [x] Ler `KB § PATTERNS/devops/prod-exposure-consent.md` — §7-Q1 depende disso. **Frase canônica solicitada ao usuário 2026-08-13; pendente.**
+- [x] Ler `KB § PATTERNS/architect/product-working-scope.md` + o catálogo: `ativo`+`deploy_scope` vivem em `public.products` (DB), não em arquivo. Decisão §7-Q3 → `live`.
+- [x] Confirmar o gate do pre-commit: linha de roster em `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` — adicionada (commit `d4a354a0`).
+- [x] `git fetch origin` + verificar agentes paralelos em ingress: nenhum.
+- [x] **Isolar em worktree a partir de `origin/dev`** — `feat/p-studio-absorption` @ `47d34f189`, worktree `.claude/worktrees/p-studio-absorption`.
+- [x] Revisar §6 em-lugar conforme a auditoria — ver §11 (entrada 2026-08-13 nº2).
+- [ ] Rodar a suíte do p-studio e confirmar o baseline. **O número da §6 original (`331 backend + 115 frontend`) estava errado**: a auditoria conta `~311 backend` (18 arquivos) + `~116 frontend` (6 arquivos). Baseline real a ratificar na Fase 1.
+- [ ] `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md` — adiado para a Fase 2 (é onde o ingress entra; ler antes de tocar no snapshot).
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+**Improvements:** ver §11 — três keepers pegaram dívida de absorção que nenhuma leitura manual tinha pego (`check_override_is_range`, `check_dependabot_product_coverage`, `check_ci_test_matrix_coverage`). É exatamente o *epoch delta* que `absorb-seed-workspace.md` prevê: a medida de quanto a metodologia da plataforma andou enquanto este produto crescia fora dela.
 
 ### Fase 1 — Absorção para `products/p-studio/`
 
@@ -348,4 +349,5 @@ outros pagamentos. A tabela `provedor_eventos` **é** a fila de retry, drenada p
 
 | Date | Change | By |
 |---|---|---|
+| 2026-08-13 | **Fase 0 fechada + Gate 1 (importar in-home) executado.** Correções ao plano, todas por evidência: (a) o baseline da §6 estava errado — não é `331+115`, a auditoria conta `~311 backend` + `~116 frontend`; (b) `cadu/p-studio/` **não é um repositório git** (nem `cadu/`), logo não há histórico a preservar e o Gate 0 "snapshot do repo de origem" não se aplica — a absorção é cópia de arquivos; (c) portas da casa reservadas 8014/8180 (o workspace usava 8020/5176, escolhidas contra um snapshot de julho do registry); (d) `KB § …` resolve sob `KNOWLEDGE-BASE/CONTEXT/`, não `KNOWLEDGE-BASE/`. Três keepers bloquearam o commit de importação e cada um apontou dívida real: `check_override_is_range` (pin exato `react-router: "6.30.4"` — congela a frota inteira, o seed copia `overrides` para 12 produtos), `check_dependabot_product_coverage` (nenhum bloco npm ⇒ Dependabot nunca olharia este produto) e `check_ci_test_matrix_coverage` (ausente das duas matrizes de teste). Todos corrigidos na origem, nenhum contornado. Riscos registrados e ainda **abertos**: a migration 002 semeia `admin@pstudio.local`/`senha123` e grava `url_base='http://localhost:5176'` em `public.products` (tabela compartilhada) — nenhuma das duas pode ir para produção como está; e `backend/.env` carrega chave Asaas de **produção** + service-role, por isso ficou fora da cópia. | Claude Opus 5 |
 | 2026-08-13 | Redigido a partir de `templates/PROJECT-TEMPLATE.md` após a sessão de integração bancária do p-studio (repo externo `cadu/`). **Sem interrogação formal** — §2 traz citações reais da sessão e §7 lista o que falta perguntar. Achados que moldaram o plano: (a) o envelope do webhook é a única lacuna que `localhost` não fecha; (b) migrations já aplicadas no Supabase compartilhado; (c) duas armadilhas corrigidas nas migrations — a 002 reescrevia a lista inteira de `pgrst.db_schemas` (teria removido `igig` do PostgREST) e a 001 fazia `CREATE OR REPLACE` em `public.current_org_id()`, função do Core de que toda RLS de todo produto depende. | Claude Opus 5 |
