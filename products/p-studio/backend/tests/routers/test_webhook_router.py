@@ -297,4 +297,4 @@ def test_webhook_sem_token_configurado_da_503(client_anon, admin_db, provedor, m
     res = client_anon.post(ROTA, json={}, headers=TOKEN)
 
     assert res.status_code == 503
-    assert "ASAAS_WEBHOOK_TOKEN" in res.json()["detail"]
+    assert "ASAAS_WEBHOOK_TOKEN" in res.json()["error"]["message"]

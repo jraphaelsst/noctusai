@@ -1,23 +1,25 @@
-"""P Studio — configuração (pydantic-settings, padrão NoctusAI)."""
-from pydantic_settings import BaseSettings, SettingsConfigDict
+"""P Studio — configuração (pydantic-settings, padrão NoctusAI seed).
+
+Estende ``ProductSettings`` do framework: os campos estruturais (Supabase,
+CORS, JWT, rate limiting) já vêm prontos por herança — aqui só entram os
+campos específicos do domínio (org_id do estúdio + provedor de cobrança).
+Absorvido pela plataforma; ``env_file`` passa a ser o ``.env`` da raiz do
+monorepo (herdado de ``ProductSettings``), não mais um `.env` local a este
+diretório.
+"""
+from noctusai_seed import ProductSettings
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+class PStudioSettings(ProductSettings):
+    """P Studio specific settings."""
 
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: str = ""
+    cors_origins: str = "@registry:own:p-studio"
 
     # Organização do estúdio. Deploy single-tenant: o backend carimba este
     # org_id em todo INSERT e a RLS confere contra public.current_org_id().
     # Se divergirem, o banco recusa a escrita — o env var é conveniência,
     # não é o controle de acesso.
     org_id: str
-
-    cors_origins: str = "http://localhost:5176"
 
     # ── Provedor de cobrança ─────────────────────────────────────────────
     # Todos com default: o app precisa subir sem credencial de banco, e a
@@ -36,4 +38,4 @@ class Settings(BaseSettings):
     asaas_webhook_token: str = ""
 
 
-settings = Settings()
+settings = PStudioSettings()

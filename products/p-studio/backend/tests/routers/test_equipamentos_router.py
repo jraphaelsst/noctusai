@@ -59,7 +59,7 @@ def test_obter_id_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.get("/api/equipamentos/00000000-0000-0000-0000-000000000999")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Equipamento não encontrado"
+    assert res.json()["error"]["message"] == "Equipamento não encontrado"
 
 
 def test_atualizar_o_numero_de_serie(client, fake_db):

@@ -168,8 +168,8 @@ def test_cliente_sem_documento_recusa_dizendo_o_campo(client, fake_db, provedor)
     res = client.post(f"/api/financeiro/{lancamento['id']}/cobranca", json={})
 
     assert res.status_code == 400
-    assert "CPF/CNPJ" in res.json()["detail"]
-    assert "Imobiliária Alfa" in res.json()["detail"]
+    assert "CPF/CNPJ" in res.json()["error"]["message"]
+    assert "Imobiliária Alfa" in res.json()["error"]["message"]
 
 
 def test_lancamento_sem_vencimento_recusa(client, fake_db, provedor):
@@ -177,7 +177,7 @@ def test_lancamento_sem_vencimento_recusa(client, fake_db, provedor):
 
     res = client.post(f"/api/financeiro/{lancamento['id']}/cobranca", json={})
     assert res.status_code == 400
-    assert "vencimento" in res.json()["detail"].lower()
+    assert "vencimento" in res.json()["error"]["message"].lower()
 
 
 def test_lancamento_ja_recebido_recusa(client, fake_db, provedor):
@@ -185,7 +185,7 @@ def test_lancamento_ja_recebido_recusa(client, fake_db, provedor):
 
     res = client.post(f"/api/financeiro/{lancamento['id']}/cobranca", json={})
     assert res.status_code == 400
-    assert "recebido" in res.json()["detail"].lower()
+    assert "recebido" in res.json()["error"]["message"].lower()
 
 
 def test_lancamento_cancelado_recusa(client, fake_db, provedor):

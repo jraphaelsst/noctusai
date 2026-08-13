@@ -19,7 +19,37 @@ Duas escolhas que fazem o fake valer a pena:
 As variáveis de ambiente são definidas ANTES de importar `app.*`: o
 `Settings()` do pydantic-settings é instanciado na importação do módulo e
 falharia sem elas.
+
+Nenhum `CORS_ORIGINS` é fixado aqui: desde a absorção pela plataforma o
+default de `app/config.py` é `@registry:own:p-studio` (resolvido por
+`noctusai_lib.config.cors_registry`), e é esse default — não um valor de
+teste hardcoded — que `tests/test_main.py` exercita. Fixar um valor aqui
+esconderia o comportamento real por trás de um valor de teste.
 """
+import sys as _sys
+from pathlib import Path as _Path
+
+_REPO = _Path(__file__).resolve().parents[4]
+_LIB = _REPO / "seed" / "lib" / "backend"
+_FRAMEWORK = _REPO / "seed" / "framework" / "backend"
+# Inject BOTH seed package roots — sem isto `noctusai_seed` fica
+# irresolvível num worktree assim que `purge_shadowing_editable_finders`
+# derruba o editable finder do venv apontando pro checkout primário. Todo
+# outro produto absorvido já carrega este bootstrap (ver
+# `products/igig/backend/tests/conftest.py`); o P Studio era o único sem
+# ele porque nasceu standalone, sem depender do `noctusai_seed`.
+for _p in (_LIB, _FRAMEWORK):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "_bootstrap_conftest_helpers",
+    _LIB / "noctusai_lib" / "testing" / "conftest_helpers.py",
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_mod.purge_shadowing_editable_finders(_LIB)
+
 import copy
 import os
 import uuid
@@ -30,7 +60,6 @@ os.environ.setdefault("SUPABASE_URL", "https://fake.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "chave-fake-de-teste")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "")
 os.environ.setdefault("ORG_ID", "00000000-0000-0000-0000-0000000000ff")
-os.environ.setdefault("CORS_ORIGINS", "http://localhost:5176")
 # Provedor de cobrança: `fake` para nada tentar rede, e um token de webhook
 # conhecido para os testes de autenticação da rota pública.
 os.environ.setdefault("PROVEDOR_COBRANCA", "fake")

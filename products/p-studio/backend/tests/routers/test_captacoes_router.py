@@ -119,7 +119,7 @@ def test_obter_id_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.get(f"/api/captacoes/{INEXISTENTE}")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Captação não encontrada"
+    assert res.json()["error"]["message"] == "Captação não encontrada"
 
 
 def test_atualizar_muda_o_status_para_captado(client, fake_db):
@@ -177,7 +177,7 @@ def test_marcar_item_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.patch(f"/api/captacoes/checklist/{INEXISTENTE}", json={"conferido": True})
     assert res.status_code == 404
-    assert res.json()["detail"] == "Item do checklist não encontrado"
+    assert res.json()["error"]["message"] == "Item do checklist não encontrado"
 
 
 def test_marcar_item_sem_conferido_da_422(client, fake_db):

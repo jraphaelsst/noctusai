@@ -68,7 +68,7 @@ def test_obter_id_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.get("/api/clientes/00000000-0000-0000-0000-000000000999")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Cliente não encontrado"
+    assert res.json()["error"]["message"] == "Cliente não encontrado"
 
 
 def test_atualizar_altera_so_o_que_foi_enviado(client, fake_db):
@@ -93,7 +93,7 @@ def test_atualizar_sem_campos_da_400(client, fake_db):
     seed = seed_basico(fake_db)
     res = client.patch(f"/api/clientes/{seed['cliente']['id']}", json={})
     assert res.status_code == 400
-    assert res.json()["detail"] == "Nada para atualizar"
+    assert res.json()["error"]["message"] == "Nada para atualizar"
 
 
 def test_atualizar_com_tipo_errado_da_422(client, fake_db):

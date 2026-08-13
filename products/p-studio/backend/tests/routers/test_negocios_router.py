@@ -114,7 +114,7 @@ def test_criar_com_servico_inexistente_da_400(client, fake_db):
         json={"cliente_id": seed["cliente"]["id"], "servico_ids": [INEXISTENTE]},
     )
     assert res.status_code == 400
-    assert "Serviço inexistente" in res.json()["detail"]
+    assert "Serviço inexistente" in res.json()["error"]["message"]
 
 
 def test_criar_sem_cliente_da_422(client):
@@ -154,7 +154,7 @@ def test_obter_devolve_o_negocio_completo(client, fake_db):
 def test_obter_id_inexistente_da_404(client):
     res = client.get(f"/api/negocios/{INEXISTENTE}")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Negócio não encontrado"
+    assert res.json()["error"]["message"] == "Negócio não encontrado"
 
 
 def test_atualizar_troca_a_lista_de_servicos(client, fake_db):

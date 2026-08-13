@@ -32,9 +32,20 @@ def test_rotas_publicas_dispensam_token(client_anon, rota):
 
 
 def test_health(client_anon):
+    """`/api/health` é o do seed (`_create_health_router`), não mais uma
+    rota local — o corpo carrega `version` e `startup_hook_error` além de
+    `status`/`product`, e `product` é o nome de exibição passado a
+    `create_product_app(name=...)` ("P Studio"), não o slug. Nenhum campo é
+    checado a mais do que isto: `version` muda com todo release, e travar o
+    valor aqui testaria o número, não o contrato.
+    """
     res = client_anon.get("/api/health")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok", "product": "p-studio"}
+    corpo = res.json()
+    assert corpo["status"] == "ok"
+    assert corpo["product"] == "P Studio"
+    assert corpo["startup_hook_error"] is None
+    assert "version" in corpo
 
 
 @pytest.mark.parametrize("rota", PROTEGIDAS)
@@ -43,8 +54,14 @@ def test_rotas_protegidas_exigem_token(client_anon, rota):
 
 
 def test_cors_libera_o_frontend(client_anon):
-    res = client_anon.get("/api/health", headers={"Origin": "http://localhost:5176"})
-    assert res.headers.get("access-control-allow-origin") == "http://localhost:5176"
+    """Desde a absorção, CORS é resolvido pelo `@registry:own:p-studio` de
+    `noctusai_lib.config.cors_registry` — não mais um `http://localhost:5176`
+    fixo (porta do Vite standalone pré-absorção, morta). O registro sempre
+    inclui os alts universais de dev (`5173`/`3000`); qual porta do P Studio
+    entra no registry é resolvido em `start.sh` (fora do escopo deste
+    slice)."""
+    res = client_anon.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert res.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
 def test_cors_nao_libera_origem_desconhecida(client_anon):
@@ -90,6 +107,11 @@ ISENTAS = {
     # Documentação do FastAPI.
     ("GET", "/docs"), ("GET", "/docs/oauth2-redirect"),
     ("GET", "/redoc"), ("GET", "/openapi.json"),
+    # Ops endpoints bakeados por `create_product_app()` (`mount_health_endpoints`):
+    # o healthcheck do container e a probe de deploy leem `/_health`/`/_ready`
+    # sem token, e `/_version` expõe só o SHA/versão do build — nenhum revela
+    # dado da organização.
+    ("GET", "/_health"), ("GET", "/_ready"), ("GET", "/_version"),
 }
 
 

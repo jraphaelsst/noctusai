@@ -67,7 +67,7 @@ def test_obter_id_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.get("/api/servicos/00000000-0000-0000-0000-000000000999")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Serviço não encontrado"
+    assert res.json()["error"]["message"] == "Serviço não encontrado"
 
 
 def test_atualizar_o_preco(client, fake_db):

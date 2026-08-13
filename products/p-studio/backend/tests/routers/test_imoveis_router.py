@@ -96,7 +96,7 @@ def test_obter_id_inexistente_da_404(client, fake_db):
     seed_basico(fake_db)
     res = client.get("/api/imoveis/00000000-0000-0000-0000-000000000999")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Imóvel não encontrado"
+    assert res.json()["error"]["message"] == "Imóvel não encontrado"
 
 
 def test_atualizar_altera_o_imovel(client, fake_db):

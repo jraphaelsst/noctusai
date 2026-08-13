@@ -68,7 +68,7 @@ def test_criar_com_etapa_fora_do_pipeline_da_422(client, fake_db):
 def test_obter_id_inexistente_da_404(client):
     res = client.get(f"/api/producoes/{INEXISTENTE}")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Produção não encontrada"
+    assert res.json()["error"]["message"] == "Produção não encontrada"
 
 
 def test_mudar_etapa_registra_evento_de_transicao(client, fake_db):

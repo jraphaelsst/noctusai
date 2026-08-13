@@ -1,16 +1,18 @@
-"""P Studio — backend FastAPI (padrão NoctusAI product).
+"""P Studio — backend FastAPI (padrão NoctusAI seed).
 
 Gestão operacional e financeira de uma produtora de fotografia e audiovisual
-imobiliário. Rodar com: uvicorn app.main:app --reload --port 8020
+imobiliário. Rodar com: uvicorn app.main:app --reload --port 8014
 
-Produto standalone construído nos moldes da plataforma NoctusAI: schema
-`p_studio` no Postgres compartilhado, RLS por organização, routers/services/
-schemas por domínio, migrations SQL numeradas. Na absorção pela plataforma,
-este app passa a ser criado por `create_product_app()` do noctusai_seed.
+Produto absorvido pela plataforma NoctusAI: schema `p_studio` no Postgres
+compartilhado, RLS por organização, routers/services/schemas por domínio,
+migrations SQL numeradas. O app é criado por `create_product_app()` do
+noctusai_seed — ver `products/igig/backend/app/main.py` para o padrão de
+referência.
 """
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
 from fastapi.responses import JSONResponse
+
+from noctusai_seed import create_product_app
 
 from app.config import settings
 from app.providers.erros import ErroProvedor
@@ -28,27 +30,26 @@ from app.routers.me_router import router as me_router
 from app.routers.negocios_router import router as negocios_router
 from app.routers.producoes_router import router as producoes_router
 
-app = FastAPI(title="P Studio", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = create_product_app(
+    name="P Studio",
+    schema="p_studio",
+    settings=settings,
+    version="0.1.0",
+    standard_routers=["health"],
+    routers=[
+        me_router,
+        dashboard_router,
+        clientes_router,
+        imoveis_router,
+        servicos_router,
+        equipamentos_router,
+        negocios_router,
+        captacoes_router,
+        producoes_router,
+        financeiro_router,
+        integracoes_router,
+    ],
 )
-
-app.include_router(me_router)
-app.include_router(dashboard_router)
-app.include_router(clientes_router)
-app.include_router(imoveis_router)
-app.include_router(servicos_router)
-app.include_router(equipamentos_router)
-app.include_router(negocios_router)
-app.include_router(captacoes_router)
-app.include_router(producoes_router)
-app.include_router(financeiro_router)
-app.include_router(integracoes_router)
 
 
 # Status do provedor que chegam ao nosso cliente sem tradução. Todo o resto
@@ -79,6 +80,13 @@ def tratar_erro_provedor(_: Request, erro: ErroProvedor) -> JSONResponse:
 
     502/504 e não 500: a falha é de um sistema a jusante, e a distinção importa
     para quem lê o log — 500 manda procurar bug nosso.
+
+    Registrado no app produzido por `create_product_app()` — o factory já
+    registra os próprios exception handlers estruturais (AppException,
+    HTTPException, ValidationError, erro do PostgREST, genérico) via
+    `configure_app()`, mas `ErroProvedor` é um tipo específico deste produto
+    e o FastAPI resolve por MRO/tipo exato, então este handler convive com
+    os do framework sem conflito.
     """
     status = REPASSADOS.get(erro.status, 502)
     return JSONResponse(
@@ -93,8 +101,3 @@ def tratar_erro_provedor(_: Request, erro: ErroProvedor) -> JSONResponse:
             "retentavel": erro.retentavel,
         },
     )
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok", "product": "p-studio"}

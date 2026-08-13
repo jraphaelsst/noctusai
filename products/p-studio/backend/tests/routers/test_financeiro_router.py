@@ -140,7 +140,7 @@ def test_criar_com_status_derivado_da_422(client, fake_db):
 def test_obter_id_inexistente_da_404(client):
     res = client.get(f"/api/financeiro/{INEXISTENTE}")
     assert res.status_code == 404
-    assert res.json()["detail"] == "Lançamento não encontrado"
+    assert res.json()["error"]["message"] == "Lançamento não encontrado"
 
 
 def test_dar_baixa_marca_recebido_com_a_data_de_hoje(client, fake_db):
