@@ -37,6 +37,7 @@ import { PortaisTable } from "@/components/portal-roi/PortaisTable";
 import {
   formatCount,
   formatMoneyOrNaoInformado,
+  formatMultipleOrNaoInformado,
   formatPercentOrNaoInformado,
   usePortalRoiResumo,
 } from "@/hooks/usePortalRoi";
@@ -103,7 +104,7 @@ export default function PortalRoi() {
             <StatTile
               icon={TrendingUp}
               label="ROI médio"
-              value={formatPercentOrNaoInformado(data!.totais.roi, true)}
+              value={formatMultipleOrNaoInformado(data!.totais.roi)}
             />
           </StatTileRow>
 

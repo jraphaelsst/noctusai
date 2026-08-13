@@ -273,20 +273,40 @@ export function formatMoneyOrNaoInformado(value: number | null | undefined): str
 }
 
 /**
- * Percent formatter for `roi` / `taxa_conversao`. Both are documented as
- * "ALREADY in percent units" (`23.4`, not `0.234`) — the same convention
- * `StatTileProps.delta` / `formatPercentDelta` document platform-wide
- * (`seed/lib/frontend/src/design-system/charts/types.ts`); the backend
- * migration MUST match it. `null` renders "—", never "0%" — same rule as
- * money.
+ * 🔴 The API returns RATIOS, not percent units. `vw_portal_roi` computes
+ * `taxa_conversao = total_vendas / total_leads` (`0.05`) and
+ * `roi = valor_vendas / investimento` (`2.5`), and
+ * `portal_roi_service._taxa_conversao` / `._roi` mirror the view exactly.
+ * The contract (§3.1) showed the fields but never stated their scale — an
+ * earlier draft of this file assumed percent units and rendered 5 % as
+ * "0,1%" and a 2.5× return as "+2,5%". Every number on the page was off by
+ * 100. Scale is now converted HERE, at the one boundary that knows it.
+ *
+ * `null` renders "—", never "0%" — same rule as money (§3.5).
  */
 export function formatPercentOrNaoInformado(
   value: number | null | undefined,
   signed = false,
 ): string {
   if (value === null || value === undefined) return "—";
-  const sign = signed && value > 0 ? "+" : "";
-  return `${sign}${value.toLocaleString("pt-BR", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`;
+  const pct = value * 100;
+  const sign = signed && pct > 0 ? "+" : "";
+  return `${sign}${pct.toLocaleString("pt-BR", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`;
+}
+
+/**
+ * `roi` is `valor_vendas / investimento` — revenue per R$1 of spend, i.e.
+ * ROAS. That is a MULTIPLE, not a percentage: 2.5 means "R$ 2,50 back per
+ * R$ 1,00 spent". Rendering it as "+250%" borrows percentage-CHANGE
+ * semantics it does not have (a 2.5× return is a +150% change, not +250%),
+ * so it gets its own formatter rather than being squeezed through the
+ * percent one.
+ */
+export function formatMultipleOrNaoInformado(
+  value: number | null | undefined,
+): string {
+  if (value === null || value === undefined) return "—";
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}×`;
 }
 
 /** Plain pt-BR thousands-separated integer — `total_leads`/`total_vendas` are never null. */

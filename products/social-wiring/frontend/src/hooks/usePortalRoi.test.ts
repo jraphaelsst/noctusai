@@ -71,6 +71,7 @@ import {
   formatCount,
   formatDateBR,
   formatMoneyOrNaoInformado,
+  formatMultipleOrNaoInformado,
   formatPercentOrNaoInformado,
   isConflictError,
   usePortalRoiCampanhas,
@@ -281,8 +282,27 @@ describe("formatters — null is never a lying zero", () => {
   });
 
   it("formatPercentOrNaoInformado signs a positive value only when signed=true", () => {
-    expect(formatPercentOrNaoInformado(12.3, true)).toBe("+12,3%");
-    expect(formatPercentOrNaoInformado(12.3, false)).toBe("12,3%");
+    expect(formatPercentOrNaoInformado(0.123, true)).toBe("+12,3%");
+    expect(formatPercentOrNaoInformado(0.123, false)).toBe("12,3%");
+  });
+
+  // 🔴 Regression pin. The API returns RATIOS, not percent units:
+  // `taxa_conversao = total_vendas / total_leads`. An earlier draft assumed
+  // percent units, so a real 5 % conversion rendered as "0,1%" — every
+  // number on the page was off by 100. These assert the ×100 conversion
+  // with the live shape (69 sales / 1 380 leads = 5 %).
+  it("formatPercentOrNaoInformado converts a RATIO to percent, not off by 100", () => {
+    expect(formatPercentOrNaoInformado(0.05)).toBe("5,0%");
+    expect(formatPercentOrNaoInformado(69 / 1380)).toBe("5,0%");
+    expect(formatPercentOrNaoInformado(1)).toBe("100,0%");
+  });
+
+  it("formatMultipleOrNaoInformado renders roi as a multiple, not a percentage", () => {
+    // roi = valor_vendas / investimento — R$ 2,50 back per R$ 1,00 spent.
+    // "+250%" would borrow percentage-CHANGE semantics it does not have.
+    expect(formatMultipleOrNaoInformado(2.5)).toBe("2,50×");
+    expect(formatMultipleOrNaoInformado(0)).toBe("0,00×");
+    expect(formatMultipleOrNaoInformado(null)).toBe("—");
   });
 
   it("formatCount treats total_leads/total_vendas as never-null, pt-BR thousands", () => {

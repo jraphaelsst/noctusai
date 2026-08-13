@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import {
   formatCount,
   formatMoneyOrNaoInformado,
+  formatMultipleOrNaoInformado,
   formatPercentOrNaoInformado,
   type PortalRoiCategoria,
   type PortalRoiPortal,
@@ -101,7 +102,7 @@ export function PortaisTable({ portais, onManage }: PortaisTableProps) {
                 <td className="px-4 py-3 tabular-nums">
                   <InformedOrDash
                     value={p.roi}
-                    formatted={formatPercentOrNaoInformado(p.roi, true)}
+                    formatted={formatMultipleOrNaoInformado(p.roi)}
                   />
                 </td>
                 <td className="px-4 py-3 tabular-nums">
