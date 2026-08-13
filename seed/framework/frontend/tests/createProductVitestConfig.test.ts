@@ -45,9 +45,9 @@ describe("createProductVitestConfig", () => {
     const aliases = config.resolve?.alias as Record<string, string>;
 
     expect(aliases["@"]).toBe(path.resolve(FAKE_PRODUCT_DIR, "./src"));
-    expect(aliases["@noctusai/lib"]).toMatch(/seed\/frontend\/lib\/src$/);
-    expect(aliases["@noctusai/seed"]).toMatch(/seed\/frontend\/framework\/src$/);
-    expect(aliases["@noctusai/seed/infra"]).toMatch(/seed\/frontend\/framework\/src\/infra\.tsx$/);
+    expect(aliases["@noctusai/lib"]).toMatch(/seed\/lib\/frontend\/src$/);
+    expect(aliases["@noctusai/seed"]).toMatch(/seed\/framework\/frontend\/src$/);
+    expect(aliases["@noctusai/seed/infra"]).toMatch(/seed\/framework\/frontend\/src\/infra\.tsx$/);
   });
 
   it("layers excludeExtra on top of defaults without dropping them", () => {
