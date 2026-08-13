@@ -59,10 +59,10 @@ jobs:
       VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
