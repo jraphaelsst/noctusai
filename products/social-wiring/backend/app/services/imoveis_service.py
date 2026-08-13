@@ -68,6 +68,15 @@ _TABLE = "imoveis"
 DEFAULT_SYNC_CONCURRENCY = 6
 VISTA_RATE_BUCKET = "vista"
 
+# `Imovel` field name → the Vista wire key it was coerced from, for the two
+# fields `normalize_place_name` canonicalizes (seed
+# `noctusai_lib.domain.real_estate.imovel`). Used only to detect + log a
+# place-name merge once per sync (roadmap `social-wiring-imoveis-vista-
+# 2026-08` Q4, extended from `Caracteristicas` to `Cidade`/`Empreendimento`
+# 2026-08-13) — never to re-derive the canonical value, which the seed
+# normalizer already owns.
+_PLACE_NAME_WIRE_KEYS = {"cidade": "Cidade", "empreendimento": "Empreendimento"}
+
 
 @dataclass
 class SyncReport:
@@ -158,6 +167,46 @@ def _imovel_to_row(imovel: Imovel, org_id: UUID, synced_at: str) -> dict:
         "vista_raw": imovel.vista_raw,
         "sincronizado_em": synced_at,
     }
+
+
+def _record_place_name_variants(
+    imovel: Imovel, variants: dict[str, dict[str, set[str]]]
+) -> None:
+    """Accumulate raw→canonical place-name spellings seen so far this sync.
+
+    Doesn't log anything — `sync()` logs ONCE, after the whole catalog has
+    been walked, so a 1919-imóvel sync doesn't produce a line per row for
+    the same collision (Q4's "log the merge once at sync time, not once per
+    row", extended from `Caracteristicas` to `Cidade`/`Empreendimento`).
+    Keyed by the CANONICAL value so multiple raw spellings that fold to it
+    accumulate in one bucket; a bucket with >1 raw spelling is a merge.
+    """
+    for field_name, wire_key in _PLACE_NAME_WIRE_KEYS.items():
+        canonical = getattr(imovel, field_name)
+        raw = imovel.vista_raw.get(wire_key)
+        if not canonical or not isinstance(raw, str):
+            continue
+        raw_clean = raw.strip()
+        if not raw_clean:
+            continue
+        variants[field_name].setdefault(canonical, set()).add(raw_clean)
+
+
+def _log_place_name_merges(
+    org_id: UUID, variants: dict[str, dict[str, set[str]]]
+) -> None:
+    """Surface any place-name spelling this sync merged — a live tenant
+    data-quality issue (roadmap Q4), not silently absorbed by the
+    normalizer. One line per (field, canonical value), not per row.
+    """
+    for field_name, by_canonical in variants.items():
+        for canonical, raw_variants in by_canonical.items():
+            if len(raw_variants) > 1:
+                logger.warning(
+                    "imoveis sync: org=%s merged %d %s spelling(s) into %r — %s",
+                    org_id, len(raw_variants), field_name, canonical,
+                    sorted(raw_variants),
+                )
 
 
 class ImoveisService:
@@ -361,6 +410,10 @@ class ImovelSyncService:
         report = SyncReport()
         started = datetime.now(timezone.utc)
         report.started_at = started.isoformat()
+        # {"cidade": {canonical: {raw spellings seen}}, "empreendimento": {...}}
+        place_name_variants: dict[str, dict[str, set[str]]] = {
+            field_name: {} for field_name in _PLACE_NAME_WIRE_KEYS
+        }
 
         first = await self._fetch_page(1, page_size, report)
         if first is None:
@@ -371,7 +424,9 @@ class ImovelSyncService:
         pages = first.pages
         synced_at = started.isoformat()
 
-        await self._process_page(first.items, org_id, synced_at, with_detalhes, report)
+        await self._process_page(
+            first.items, org_id, synced_at, with_detalhes, report, place_name_variants
+        )
 
         sem = asyncio.Semaphore(self._concurrency)
 
@@ -381,7 +436,8 @@ class ImovelSyncService:
                 if page is None:
                     return
                 await self._process_page(
-                    page.items, org_id, synced_at, with_detalhes, report
+                    page.items, org_id, synced_at, with_detalhes, report,
+                    place_name_variants,
                 )
 
         await asyncio.gather(*(one_page(p) for p in range(2, pages + 1)))
@@ -389,6 +445,8 @@ class ImovelSyncService:
         finished = datetime.now(timezone.utc)
         report.finished_at = finished.isoformat()
         report.duration_seconds = (finished - started).total_seconds()
+
+        _log_place_name_merges(org_id, place_name_variants)
 
         if not report.complete:
             # Loud, not silent. A partially-complete sync that reports success
@@ -428,9 +486,12 @@ class ImovelSyncService:
         synced_at: str,
         with_detalhes: bool,
         report: SyncReport,
+        place_name_variants: dict[str, dict[str, set[str]]],
     ) -> None:
         if with_detalhes:
             imoveis = await self._enrich(imoveis, report)
+        for imovel in imoveis:
+            _record_place_name_variants(imovel, place_name_variants)
         rows = [_imovel_to_row(i, org_id, synced_at) for i in imoveis]
         if not rows:
             return

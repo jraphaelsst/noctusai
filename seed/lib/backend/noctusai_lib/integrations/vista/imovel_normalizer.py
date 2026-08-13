@@ -30,6 +30,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     Imovel,
     clean_text,
     derive_finalidades,
+    normalize_place_name,
     parse_area,
     parse_caracteristicas,
     parse_corretores,
@@ -92,12 +93,25 @@ def vista_to_imovel(
         logradouro=clean_text(payload.get("Endereco")),
         numero=clean_text(payload.get("Numero")),
         complemento=clean_text(payload.get("Complemento")),
+        # `bairro` deliberately stays `clean_text`, NOT `normalize_place_name`,
+        # even though it is the same kind of field. The measured census
+        # found zero collisions on `Bairro` — but "no collision measured" and
+        # "cannot collide" are different claims, and `Bairro` is a long tail
+        # (60+ distinct values on this tenant, vs 18 `Cidade` / a handful of
+        # `Empreendimento`) that has never been diffed word-by-word against
+        # this normalizer's output the way `cidade`/`empreendimento` were
+        # here. Applying an unverified transform to an unverified field is
+        # exactly the failure mode this fix is guarding against elsewhere
+        # ("a rule that fixes 3 rows and breaks 30 is a worse bug than the
+        # one you started with"). NOC-REMEDIATE[bairro-place-name-census]:
+        # run the same before/after diff against every live `Bairro` value,
+        # then apply `normalize_place_name` here too — 2026-08-13.
         bairro=clean_text(payload.get("Bairro")),
-        cidade=clean_text(payload.get("Cidade")),
+        cidade=normalize_place_name(payload.get("Cidade")),
         # Public docs say `Estado`; `oneconsu-rest` only exposes `UF`. Both,
         # for tenant portability — same fallback the showcase normalizer uses.
         uf=clean_text(payload.get("UF") or payload.get("Estado")),
-        empreendimento=clean_text(payload.get("Empreendimento")),
+        empreendimento=normalize_place_name(payload.get("Empreendimento")),
         latitude=_coord(payload.get("Latitude")),
         longitude=_coord(payload.get("Longitude")),
         valor_venda=parse_money(payload.get("ValorVenda")),

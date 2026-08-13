@@ -159,6 +159,68 @@ def test_page_failure_is_recorded_not_swallowed():
     assert any("page 2" in f for f in report.page_failures)
 
 
+# ─── place-name merge logging (roadmap Q4, extended 2026-08-13) ───────────
+
+
+def test_a_place_name_collision_logs_once_per_sync_not_once_per_row(caplog):
+    """Two raw `Cidade` spellings that normalize to the same canonical value
+    must produce exactly ONE log line for the whole sync — not one per row —
+    even though every affected row is still upserted with the corrected
+    value. Mirrors the live 57/19-row `Embu das Artes`/`Embu Das Artes`
+    collision, at a scale small enough to assert precisely."""
+    client = _FakeClient()
+    adapter = FakeVistaAdapter()
+    for i in range(3):
+        adapter.add_imovel(
+            _imovel(
+                f"ONE{2000 + i}",
+                cidade="Embu das Artes",
+                vista_raw={"Cidade": "Embu das Artes"},
+            )
+        )
+    for i in range(2):
+        adapter.add_imovel(
+            _imovel(
+                f"ONE{3000 + i}",
+                cidade="Embu das Artes",  # already-normalized by the seed adapter
+                vista_raw={"Cidade": "Embu Das Artes"},  # the raw wire spelling
+            )
+        )
+
+    svc = ImovelSyncService(client, adapter)
+    with caplog.at_level("WARNING"):
+        report = asyncio.run(svc.sync(ORG, with_detalhes=False))
+
+    assert report.upserted == 5
+    merge_lines = [
+        r for r in caplog.records if "merged" in r.getMessage() and "cidade" in r.getMessage()
+    ]
+    assert len(merge_lines) == 1
+    assert "Embu das Artes" in merge_lines[0].getMessage()
+    assert "Embu Das Artes" in merge_lines[0].getMessage()
+
+
+def test_no_place_name_collision_logs_nothing(caplog):
+    """The common case — every raw spelling already matches its canonical
+    value — must not log anything about a merge."""
+    client = _FakeClient()
+    adapter = FakeVistaAdapter()
+    for i in range(3):
+        adapter.add_imovel(
+            _imovel(
+                f"ONE{4000 + i}",
+                cidade="Cotia",
+                vista_raw={"Cidade": "Cotia"},
+            )
+        )
+
+    svc = ImovelSyncService(client, adapter)
+    with caplog.at_level("WARNING"):
+        asyncio.run(svc.sync(ORG, with_detalhes=False))
+
+    assert not any("merged" in r.getMessage() for r in caplog.records)
+
+
 # ─── row mapping ──────────────────────────────────────────────────────────
 
 

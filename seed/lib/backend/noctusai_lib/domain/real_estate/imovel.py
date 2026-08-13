@@ -160,6 +160,82 @@ def _fold_accents(text: str) -> str:
     )
 
 
+# ─── Place names — the `cidade`/`empreendimento` casing collision ─────────
+#
+# Measured live 2026-08-03/13 on `oneconsu-rest`: `Cidade` carries both
+# `"Embu das Artes"` (57 rows) and `"Embu Das Artes"` (19 rows) — a quarter
+# of that city's inventory hidden from a filter keyed on the other spelling.
+# `Empreendimento` carries the same defect shape twice: `"Granja Viana II -
+# Gleba 1 e 2 - Km 26"` / `"...Ii..."` (18 rows) and `"Paisagem Renoir II e
+# III - Km 26"` / `"...Ii e Iii..."` (8 rows). Same root cause as
+# `CARACTERISTICA_COLLISIONS` above (Q4 of the
+# `social-wiring-imoveis-vista-2026-08` roadmap): a tenant-side data-entry
+# inconsistency, not a modelling choice — merge, don't pick a winner.
+#
+# **The trap that makes this non-trivial.** The two classes pull in OPPOSITE
+# directions: `"Embu Das Artes"` needs its connective LOWERED to match
+# `"Embu das Artes"`; `"Granja Viana Ii"` needs its numeral UPPERCASED to
+# match `"Granja Viana II"`. A blind `str.title()` fixes the first and
+# CAUSES the second — the `Ii`/`Iii` spellings already look exactly like a
+# naive title-case was applied upstream, so shipping one here would deepen
+# the bug rather than close it. This function classifies each word instead
+# of blanket-casing the string: a pt-BR connective (not in first position)
+# lowercases, a Roman numeral I-X uppercases, everything else title-cases —
+# and title-casing an already-correct word (accented or not) is a no-op, so
+# running this over the whole catalog is safe, not just over the 3 rows
+# known to be broken.
+
+# Connectives that stay lowercase mid-name — but NOT in first position,
+# where a leading connective is still the start of how the name is written
+# ("Do Carmo" is a place; nobody writes "do Carmo" at the start of a
+# sentence-less proper noun). Scoped to the connectives actually observed
+# on this tenant's `Cidade`/`Empreendimento` values (Q4); extend by
+# measurement, not by guessing at Portuguese grammar in general.
+_PLACE_NAME_CONNECTIVES = frozenset({"de", "da", "do", "das", "dos", "e"})
+
+# Roman numerals I-X, canonical uppercase form. An explicit whitelist
+# (rather than a general Roman-numeral regex) is deliberate: it matches
+# exactly what's measured live (`II`, `III`) and can never misfire on a
+# longer letter sequence that happens to be Roman-numeral-shaped (e.g. a
+# regex would treat `"MIL"` as ambiguous input worth scrutinizing; this
+# whitelist simply never looks at it).
+_ROMAN_NUMERALS_I_TO_X = frozenset(
+    {"I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"}
+)
+
+
+def _normalize_place_name(value: Any) -> Optional[str]:
+    """Canonicalize a Vista place name — collapses the casing-only
+    duplicates measured on `Cidade` and `Empreendimento` into one spelling.
+
+    Per-word classification, in order: (1) a connective past the first word
+    lowercases: (2) a Roman numeral I-X uppercases; (3) everything else
+    title-cases (accent-safe — `"ARTES"` → `"Artes"`, `"SÃO"` → `"São"`,
+    already-correct words are a no-op). Non-letter tokens (`"-"`, digits
+    like `"26"`) pass through `str.capitalize()` unchanged.
+
+    Idempotent by construction: every branch's output is already the fixed
+    point of that same branch, so normalizing an already-normalized value
+    changes nothing — required because this runs both at sync time (fresh
+    Vista reads) and, via the once-off migration, over rows already in the
+    mirror.
+    """
+    text = _clean(value)
+    if text is None:
+        return None
+
+    words: list[str] = []
+    for index, word in enumerate(text.split()):
+        folded = _fold_accents(word).lower()
+        if index > 0 and folded in _PLACE_NAME_CONNECTIVES:
+            words.append(folded)
+        elif word.upper() in _ROMAN_NUMERALS_I_TO_X:
+            words.append(word.upper())
+        else:
+            words.append(word.capitalize())
+    return " ".join(words)
+
+
 # ─── Caracteristicas — the 76-key amenity schema ──────────────────────────
 
 # The one real slug collision on this tenant, measured over the full 76-key
@@ -466,6 +542,7 @@ parse_count = _count
 parse_sim_nao = _sim_nao
 parse_date = _to_date
 fold_accents = _fold_accents
+normalize_place_name = _normalize_place_name
 
 
 __all__ = [
@@ -477,6 +554,7 @@ __all__ = [
     "clean_text",
     "derive_finalidades",
     "fold_accents",
+    "normalize_place_name",
     "parse_area",
     "parse_caracteristicas",
     "parse_corretores",

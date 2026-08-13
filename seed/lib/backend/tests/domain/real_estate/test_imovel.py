@@ -24,6 +24,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     Imovel,
     caracteristica_slug,
     derive_finalidades,
+    normalize_place_name,
     parse_caracteristicas,
     parse_corretores,
     parse_area,
@@ -229,6 +230,124 @@ def test_tem_caracteristica_accepts_raw_or_slugged_key(payloads):
     sim_key = next(k for k, v in detalhes["Caracteristicas"].items() if v == "Sim")
     assert imovel.tem_caracteristica(sim_key) is True
     assert imovel.tem_caracteristica(caracteristica_slug(sim_key)) is True
+
+
+# ─── normalize_place_name — the cidade/empreendimento casing collision ────
+#
+# Every case below is a real live value (roadmap
+# `social-wiring-imoveis-vista-2026-08`, Q4-extended 2026-08-13), not a
+# synthetic one — same discipline as the fixture-driven tests above: the
+# wire does things nobody would invent (here: two OPPOSITE casing defects
+# in the same 18-value city set).
+
+
+def test_the_two_live_cidade_collision_pairs_merge_to_one_spelling():
+    """The measured collision: 76 imóveis split 57/19 across two spellings
+    of the same city. Both sides must resolve to the connective-lowered
+    form — dropping either would hide a quarter of that city's inventory
+    from a filter keyed on the other spelling."""
+    assert normalize_place_name("Embu das Artes") == "Embu das Artes"
+    assert normalize_place_name("Embu Das Artes") == "Embu das Artes"
+
+
+def test_the_two_live_empreendimento_collision_pairs_merge_to_one_spelling():
+    """26 imóveis across two empreendimentos, each split between a Roman
+    numeral (II/III) and the naive-title-case shape that produced it
+    (Ii/Iii)."""
+    assert (
+        normalize_place_name("Granja Viana II - Gleba 1 e 2 - Km 26")
+        == "Granja Viana II - Gleba 1 e 2 - Km 26"
+    )
+    assert (
+        normalize_place_name("Granja Viana Ii - Gleba 1 e 2 - Km 26")
+        == "Granja Viana II - Gleba 1 e 2 - Km 26"
+    )
+    assert (
+        normalize_place_name("Paisagem Renoir II e III - Km 26")
+        == "Paisagem Renoir II e III - Km 26"
+    )
+    assert (
+        normalize_place_name("Paisagem Renoir Ii e Iii - Km 26")
+        == "Paisagem Renoir II e III - Km 26"
+    )
+
+
+# The other 16 live `Cidade` values (roadmap: 18 distinct total, 1
+# collision pair = 17 real cities; this is the un-collided 16). Every one
+# must be a no-op — this is the "fixes 3 rows, doesn't break 30" proof.
+LIVE_CIDADE_VALUES = [
+    "Cotia",
+    "Carapicuíba",
+    "Vargem Grande Paulista",
+    "Barueri",
+    "Guarujá",
+    "Osasco",
+    "Santana de Parnaíba",
+    "São Paulo",
+    "Itapecerica da Serra",
+    "Itapevi",
+    "Jandira",
+    "Ilhabela",
+    "São Roque",
+    "Ibiúna",
+    "Vinhedo",
+]
+
+
+@pytest.mark.parametrize("cidade", LIVE_CIDADE_VALUES)
+def test_every_other_live_cidade_value_is_a_no_op(cidade):
+    """Accented and connective-bearing city names alike must round-trip
+    unchanged — `Carapicuíba`/`Guarujá`/`Ibiúna` (accents), `Santana de
+    Parnaíba`/`Itapecerica da Serra` (mid-name connectives), `Vargem Grande
+    Paulista` (plain multi-word)."""
+    assert normalize_place_name(cidade) == cidade
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("I", "I"), ("ii", "II"), ("III", "III"), ("iv", "IV"), ("V", "V"),
+        ("vi", "VI"), ("vii", "VII"), ("VIII", "VIII"), ("ix", "IX"), ("x", "X"),
+    ],
+)
+def test_roman_numerals_i_to_x_always_uppercase(raw, expected):
+    assert normalize_place_name(f"Bloco {raw}") == f"Bloco {expected}"
+
+
+def test_connective_in_first_position_is_not_lowered():
+    """`"Do Carmo"` must not become `"do Carmo"` — a leading connective is
+    still the start of how the place is written."""
+    assert normalize_place_name("Do Carmo") == "Do Carmo"
+    assert normalize_place_name("do Carmo") == "Do Carmo"
+
+
+def test_connective_mid_name_is_lowered_regardless_of_input_casing():
+    assert normalize_place_name("Chácara Da Barra") == "Chácara da Barra"
+    assert normalize_place_name("Chácara da Barra") == "Chácara da Barra"
+
+
+@pytest.mark.parametrize(
+    "value",
+    LIVE_CIDADE_VALUES
+    + [
+        "Embu das Artes",
+        "Embu Das Artes",
+        "Granja Viana II - Gleba 1 e 2 - Km 26",
+        "Granja Viana Ii - Gleba 1 e 2 - Km 26",
+        "Paisagem Renoir II e III - Km 26",
+        "Paisagem Renoir Ii e Iii - Km 26",
+        "Do Carmo",
+    ],
+)
+def test_normalize_place_name_is_idempotent(value):
+    once = normalize_place_name(value)
+    assert normalize_place_name(once) == once
+
+
+def test_normalize_place_name_handles_none_and_blank():
+    assert normalize_place_name(None) is None
+    assert normalize_place_name("") is None
+    assert normalize_place_name("   ") is None
 
 
 # ─── The listar/detalhes merge ────────────────────────────────────────────
