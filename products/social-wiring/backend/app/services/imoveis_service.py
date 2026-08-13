@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.domain.real_estate import Imovel
+from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data
 from noctusai_lib.integrations import rate_limit
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,22 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ImoveisService",
     "ImovelSyncService",
+    "ImoveisLookupError",
     "SyncReport",
     "build_imoveis_service",
     "build_sync_service",
 ]
+
+# Row columns that are persistence-only (added by `_imovel_to_row`, not part
+# of the `Imovel` model) — stripped before reconstituting `Imovel(**row)`.
+_ROW_ONLY_COLUMNS = frozenset({"org_id", "sincronizado_em"})
+
+
+class ImoveisLookupError(Exception):
+    """The local `imoveis` lookup itself failed (a DB/transport problem —
+    e.g. PostgREST unreachable), as distinct from a clean miss (`None`,
+    meaning: not in the catalog). Callers that need to tell "couldn't ask"
+    apart from "asked, not there" catch this specifically."""
 
 _SCHEMA = "social_wiring"
 _TABLE = "imoveis"
@@ -214,6 +226,35 @@ class ImoveisService:
         )
         rows = result.data or []
         return rows[0] if rows else None
+
+    def get_property_data(self, org_id: UUID, codigo: str) -> Optional[PropertyData]:
+        """Resolve `codigo` against the local mirror, shaped as
+        `PropertyData` — the YouTube-metadata carrier WhatsApp intake and
+        the youtube-dashboard upload path both consume.
+
+        `None` means a clean miss: `codigo` is not in `social_wiring.imoveis`
+        for this org (either it doesn't exist on the tenant, or the sync
+        hasn't run yet) — a real, actionable fact, never silently patched
+        over with a live Vista call (roadmap
+        `social-wiring-imoveis-vista-2026-08`, P2.5: no fallback branch).
+
+        Raises `ImoveisLookupError` when the lookup ITSELF fails (the query
+        errored — a DB/transport problem), which is a different failure
+        mode from "not there" and must not be reported to the caller as a
+        plain miss.
+        """
+        from postgrest.exceptions import APIError as PostgrestAPIError
+
+        try:
+            row = self.get(org_id, codigo)
+        except PostgrestAPIError as exc:
+            raise ImoveisLookupError(
+                f"local imoveis lookup failed for {codigo!r}: {exc}"
+            ) from exc
+        if row is None:
+            return None
+        imovel = Imovel(**{k: v for k, v in row.items() if k not in _ROW_ONLY_COLUMNS})
+        return imovel_to_property_data(imovel)
 
     def _select_all(self, columns: str, org_id: UUID) -> list[dict]:
         """Fetch EVERY matching row, paginating past PostgREST's row cap.

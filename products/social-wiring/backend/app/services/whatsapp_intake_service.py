@@ -36,6 +36,7 @@ from app.schemas.whatsapp import (
 )
 from app.services import gdrive_service
 from app.services.chatbot_service import append_memory as _append_chat_memory
+from app.services.imoveis_service import ImoveisLookupError, build_imoveis_service
 from noctusai_lib.domain.real_estate import (
     PRODUCT_CODE_SCAN_PATTERN,
     PropertyData,
@@ -44,7 +45,6 @@ from noctusai_lib.domain.real_estate import (
     validate_product_code,
 )
 from noctusai_lib.integrations.vista import (
-    VistaError as CRMServiceError,
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
 )
@@ -483,18 +483,33 @@ class WhatsAppIntakeService:
         """Remove conversation state from Redis."""
         self._redis.delete(self._redis_key(phone))
 
+    def _resolve_property_local(self, code: str) -> PropertyData | None:
+        """Resolve `code` against the local `social_wiring.imoveis` mirror.
+
+        No Vista fallback on a miss — a `None` return is real information
+        (the code is not in our catalog), never silently patched over with
+        a live Vista call. Roadmap `social-wiring-imoveis-vista-2026-08`,
+        P2.5. Raises `ImoveisLookupError` when the lookup itself fails (a
+        DB/transport problem, distinct from a clean miss).
+        """
+        return build_imoveis_service(self._admin).get_property_data(
+            self._org_id, code
+        )
+
     async def lookup_property(self, product_code: str) -> dict[str, Any]:
-        """Tool-safe CRM lookup used by the OpenAI chatbot layer."""
+        """Tool-safe local-catalog lookup used by the OpenAI chatbot layer.
+
+        Resolves against `social_wiring.imoveis` — never a live Vista call
+        (roadmap `social-wiring-imoveis-vista-2026-08`, P2.5).
+        """
         code = (product_code or "").strip().upper()
         if not validate_product_code(code):
             return {"ok": False, "error": "invalid_product_code", "product_code": code}
-        if not self._crm:
-            return {"ok": False, "error": "crm_not_configured", "product_code": code}
         try:
-            data = await self._crm.get_property(code)
-        except CRMServiceError as exc:
-            logger.warning("CRM lookup failed for %s: %s", code, exc)
-            return {"ok": False, "error": "crm_lookup_failed", "message": str(exc), "product_code": code}
+            data = self._resolve_property_local(code)
+        except ImoveisLookupError as exc:
+            logger.warning("local imoveis lookup failed for %s: %s", code, exc)
+            return {"ok": False, "error": "imoveis_lookup_failed", "message": str(exc), "product_code": code}
         if not data:
             return {"ok": False, "error": "property_not_found", "product_code": code}
         metadata = build_youtube_metadata(data, code)
@@ -580,11 +595,10 @@ class WhatsAppIntakeService:
         crm_title = None
         crm_description = None
         crm_data: PropertyData | None = None
-        if self._crm:
-            try:
-                crm_data = await self._crm.get_property(code)
-            except CRMServiceError as exc:
-                logger.warning("CRM lookup failed for %s: %s", code, exc)
+        try:
+            crm_data = self._resolve_property_local(code)
+        except ImoveisLookupError as exc:
+            logger.warning("local imoveis lookup failed for %s: %s", code, exc)
         if crm_data:
             crm_title = crm_data.title
             crm_description = crm_data.description
@@ -656,11 +670,10 @@ class WhatsAppIntakeService:
         crm_title = None
         crm_description = None
         crm_data: PropertyData | None = None
-        if self._crm:
-            try:
-                crm_data = await self._crm.get_property(code)
-            except CRMServiceError as exc:
-                logger.warning("CRM lookup failed for %s: %s", code, exc)
+        try:
+            crm_data = self._resolve_property_local(code)
+        except ImoveisLookupError as exc:
+            logger.warning("local imoveis lookup failed for %s: %s", code, exc)
         if crm_data:
             crm_title = crm_data.title
             crm_description = crm_data.description
@@ -1002,19 +1015,19 @@ class WhatsAppIntakeService:
             f"⏳ Aguarde."
         )
 
-        # Fetch CRM data (best-effort)
+        # Fetch local catalog data (best-effort — no Vista fallback on a
+        # miss, roadmap `social-wiring-imoveis-vista-2026-08` P2.5).
         crm_title = None
         crm_description = None
         crm_data: PropertyData | None = None
 
-        if self._crm:
-            try:
-                crm_data = await self._crm.get_property(product_code)
-                if crm_data:
-                    crm_title = crm_data.title
-                    crm_description = crm_data.description
-            except CRMServiceError as exc:
-                logger.warning("CRM lookup failed for %s: %s", product_code, exc)
+        try:
+            crm_data = self._resolve_property_local(product_code)
+            if crm_data:
+                crm_title = crm_data.title
+                crm_description = crm_data.description
+        except ImoveisLookupError as exc:
+            logger.warning("local imoveis lookup failed for %s: %s", product_code, exc)
 
         # Auto-confirmation toggle (settings.youtube_auto_confirmation_message)
         # ------------------------------------------------------------------
@@ -2349,21 +2362,22 @@ class WhatsAppIntakeService:
             title = pending.crm_title or f"Imóvel {pending.product_code}"
             description = pending.crm_description or ""
 
-            # Fetch the CRM thumbnail (best-effort) so YT gets a real
-            # property photo instead of an auto-generated frame. The
+            # Fetch the local-catalog thumbnail (best-effort) so YT gets a
+            # real property photo instead of an auto-generated frame. The
             # download + push happens inside upload_service after the
-            # video is up; we just plumb the URL through.
+            # video is up; we just plumb the URL through. No Vista
+            # fallback on a miss/failure — roadmap
+            # `social-wiring-imoveis-vista-2026-08` P2.5.
             thumbnail_url: str | None = None
-            if self._crm:
-                try:
-                    crm_data = await self._crm.get_property(pending.product_code)
-                    if crm_data:
-                        thumbnail_url = crm_data.thumbnail_url
-                except Exception:
-                    logger.exception(
-                        "thumbnail CRM lookup failed for %s — skipping thumbnail.",
-                        pending.product_code,
-                    )
+            try:
+                crm_data = self._resolve_property_local(pending.product_code)
+                if crm_data:
+                    thumbnail_url = crm_data.thumbnail_url
+            except Exception:
+                logger.exception(
+                    "local imoveis thumbnail lookup failed for %s — skipping thumbnail.",
+                    pending.product_code,
+                )
 
             metadata = UploadMetadata(
                 title=f"{pending.product_code} — {title}"[:100],

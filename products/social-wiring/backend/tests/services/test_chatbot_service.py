@@ -181,6 +181,43 @@ class TestFileRegistry:
         assert intake.get_uploaded_file("stg-missing") is None
 
 
+class _EmptyImoveisTable:
+    """Answers every `social_wiring.imoveis` read with zero rows — a clean
+    local-catalog miss, distinct from an unconfigured/broken client."""
+
+    def select(self, *_a, **_kw):
+        return self
+
+    def eq(self, *_a, **_kw):
+        return self
+
+    def limit(self, *_a, **_kw):
+        return self
+
+    def execute(self):
+        class _Resp:
+            data: list = []
+
+        return _Resp()
+
+
+class _EmptyImoveisAdmin:
+    """`admin_supabase` stand-in whose `imoveis` reads always miss.
+
+    A bare `MagicMock()` (the shared `intake` fixture's default) breaks
+    ``ImoveisService.get_property_data`` since P2.5 made the local-catalog
+    lookup unconditional: MagicMock's default `__iter__` yields nothing,
+    so ``Imovel(**{})`` (missing the required `codigo`) raises a
+    `ValidationError` instead of the intended "not in the catalog" miss.
+    """
+
+    def schema(self, _name):
+        return self
+
+    def table(self, _name):
+        return _EmptyImoveisTable()
+
+
 class TestPrepareUploadFromFileValidation:
     @pytest.mark.asyncio
     async def test_invalid_product_code(self, intake):
@@ -218,7 +255,26 @@ class TestPrepareUploadFromFileValidation:
         }
 
     @pytest.mark.asyncio
-    async def test_happy_path_no_crm(self, intake):
+    async def test_happy_path_no_local_catalog_match(self, fake_redis):
+        """A code that isn't in `social_wiring.imoveis` (the local mirror,
+        never a live Vista call — roadmap `social-wiring-imoveis-vista-2026-08`
+        P2.5) still degrades to `manual_title`, exactly like the pre-P2.5
+        "CRM not configured" case did. Needs a real (if empty) admin-client
+        stand-in — the shared `intake` fixture's bare `MagicMock()` no
+        longer works here since the local-catalog lookup is unconditional.
+        """
+        intake = WhatsAppIntakeService(
+            waha_base_url="",
+            waha_api_key="",
+            waha_session="default",
+            redis_client=fake_redis,
+            authorized_numbers=["+5511974693365"],
+            crm_service=None,
+            admin_supabase=_EmptyImoveisAdmin(),
+            youtube_service=MagicMock(),
+            upload_dir=Path("/tmp"),
+            org_id=UUID("00000000-0000-4000-8000-000000000001"),
+        )
         intake.register_uploaded_file(
             file_id="stg-aaa",
             local_path="/tmp/uploads/staging-aaa__video.mp4",

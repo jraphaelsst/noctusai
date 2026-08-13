@@ -195,24 +195,25 @@ async def _resolve_metadata_from_product_code(
     *,
     product_code: str,
     privacy_status: str,
-    cfg: SocialWiringSettings,
+    org_id: UUID,
 ) -> UploadMetadata:
-    """Vista CRM lookup → UploadMetadata. Mirrors the chatbot intake's
-    enrichment path (``whatsapp_intake_service.prepare_upload_request``)
+    """Local-catalog lookup → UploadMetadata. Mirrors the chatbot intake's
+    enrichment path (``whatsapp_intake_service._resolve_property_local``)
     so a curl/dashboard caller gets the same title/description shape
     the WhatsApp flow produces.
 
+    Resolves against `social_wiring.imoveis` — never a live Vista call.
+    No fallback branch on a miss (roadmap
+    `social-wiring-imoveis-vista-2026-08`, P2.5): a code not in the local
+    catalog is real information, reported as 404, not silently retried
+    against Vista.
+
     HTTP error map (raised as `HTTPException`, not return values):
       - 422: invalid product code format.
-      - 503: CRM not configured (`crm_base_url`/`crm_api_key` empty).
-      - 404: code valid + CRM up, but no property found.
-      - 502: CRM returned an unexpected error.
+      - 404: code valid, but no property found in the local catalog.
+      - 502: the local lookup itself failed (DB/transport problem).
     """
-    from noctusai_lib.integrations.vista import (
-        VistaRESTAdapter as CRMService,
-        VistaError as CRMServiceError,
-        VistaNotConfigured as CRMNotConfigured,
-    )
+    from app.services.imoveis_service import ImoveisLookupError, build_imoveis_service
     from noctusai_lib.domain.real_estate import (
         build_youtube_metadata,
         validate_product_code,
@@ -226,28 +227,17 @@ async def _resolve_metadata_from_product_code(
         )
 
     try:
-        crm = CRMService(
-            base_url=cfg.crm_base_url,
-            api_key=cfg.crm_api_key,
-        )
-    except CRMNotConfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
-    try:
-        prop = await crm.get_property(code)
-    except CRMServiceError as exc:
+        prop = build_imoveis_service(get_admin_client()).get_property_data(org_id, code)
+    except ImoveisLookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"CRM lookup failed: {exc}",
+            detail=f"local imoveis lookup failed: {exc}",
         ) from exc
 
     if prop is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"no property found for product_code={code}",
+            detail=f"no property found for product_code={code} in local catalog",
         )
 
     yt_meta = build_youtube_metadata(prop, code)
@@ -369,13 +359,16 @@ async def upload_video_from_code(
     """Simplified browser upload: just the video file + a property code.
 
     The system "triggers the rest of the procedure" — title / description /
-    tags are resolved server-side from the CRM via the same path the chatbot
-    intake + drive-folder fan-out use (``_resolve_metadata_from_product_code``)
-    — so the operator never types metadata. Same staging + background-job
-    contract as ``upload_video``; returns 202 + a job_id the UI polls.
+    tags are resolved server-side from the local ``social_wiring.imoveis``
+    catalog via the same path the chatbot intake + drive-folder fan-out use
+    (``_resolve_metadata_from_product_code``) — so the operator never types
+    metadata. Never a live Vista call (roadmap
+    `social-wiring-imoveis-vista-2026-08`, P2.5). Same staging +
+    background-job contract as ``upload_video``; returns 202 + a job_id the
+    UI polls.
 
-    HTTP error map (from the resolver): 422 bad code · 503 CRM not configured ·
-    404 no property for code · 502 CRM error.
+    HTTP error map (from the resolver): 422 bad code · 404 no property for
+    code in the local catalog · 502 local lookup failed.
     """
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -391,7 +384,7 @@ async def upload_video_from_code(
     metadata = await _resolve_metadata_from_product_code(
         product_code=product_code,
         privacy_status=privacy_status,
-        cfg=cfg,
+        org_id=org_id,
     )
 
     service = _build_upload_service(token, cfg)
@@ -483,34 +476,38 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> BatchUploadCreated:
     Two input modes (validated by the schema):
       - ``metadata`` set → manual mode; title/description/tags travel
         with the request.
-      - ``product_code`` set → Vista CRM lookup mode; server fetches
-        property data + builds the same metadata shape used by the
-        chatbot intake (``build_youtube_metadata(prop, code)``).
+      - ``product_code`` set → local-catalog lookup mode; server fetches
+        the property from ``social_wiring.imoveis`` + builds the same
+        metadata shape used by the chatbot intake
+        (``build_youtube_metadata(prop, code)``). Never a live Vista
+        call — roadmap `social-wiring-imoveis-vista-2026-08`, P2.5.
 
     Returns 202 + the batch_id + the list of child jobs.
 
     HTTP error map:
       - 400: invalid folder URL / parse failure / `UploadServiceError`
         wrapping a bad operator-side input.
-      - 404: ``product_code`` mode but Vista returned no property for
-        the code.
+      - 404: ``product_code`` mode but the code isn't in the local
+        catalog.
       - 422: well-formed URL but Drive returned no acceptable videos
         (empty folder, only non-videos, sharing-permission gap, …).
-      - 503: credential-store config gap OR Vista not configured when
-        ``product_code`` mode was requested.
+      - 502: ``product_code`` mode but the local lookup itself failed
+        (DB/transport problem).
+      - 503: credential-store config gap.
     """
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     service = _build_upload_service(token, cfg)
 
-    # Resolve metadata: either explicit (manual mode) or Vista lookup.
+    # Resolve metadata: either explicit (manual mode) or a local-catalog
+    # lookup.
     if payload.metadata is not None:
         resolved_metadata = payload.metadata
     else:
         resolved_metadata = await _resolve_metadata_from_product_code(
             product_code=payload.product_code or "",
             privacy_status=payload.privacy_status,
-            cfg=cfg,
+            org_id=org_id,
         )
 
     try:

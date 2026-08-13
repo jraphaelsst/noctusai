@@ -6,8 +6,8 @@ Value objects:
     `PropertyData`
 
 Functions:
-    `build_youtube_metadata`, `validate_product_code`,
-    `extract_product_code`, `find_product_codes`
+    `build_youtube_metadata`, `imovel_to_property_data`,
+    `validate_product_code`, `extract_product_code`, `find_product_codes`
 
 Constants:
     `PRODUCT_CODE_PATTERN` (anchored, for validation),
@@ -37,7 +37,10 @@ from noctusai_lib.domain.real_estate.imovel import (
     parse_money,
     parse_sim_nao,
 )
-from noctusai_lib.domain.real_estate.metadata import build_youtube_metadata
+from noctusai_lib.domain.real_estate.metadata import (
+    build_youtube_metadata,
+    imovel_to_property_data,
+)
 from noctusai_lib.domain.real_estate.types import PropertyData
 from noctusai_lib.domain.real_estate.validators import (
     PRODUCT_CODE_PATTERN,
@@ -69,6 +72,7 @@ __all__ = [
     "parse_money",
     "parse_sim_nao",
     "build_youtube_metadata",
+    "imovel_to_property_data",
     "extract_product_code",
     "find_product_codes",
     "validate_product_code",
