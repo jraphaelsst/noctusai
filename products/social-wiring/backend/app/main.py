@@ -121,6 +121,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.imoveis_router import (
         router as imoveis_router,
     )
+    from app.routers.portal_roi_router import (
+        router as portal_roi_router,
+    )
     from app.services.meta import scheduler as meta_insights_scheduler
     from app.services import whatsapp_backfill
 
@@ -175,6 +178,7 @@ def _register_media_wiring() -> ModuleRegistration:
             integration_accounts_router,
             marcas_router,
             imoveis_router,
+            portal_roi_router,
         ],
         standard_routers=("health", "notificacoes", "team"),
     )
