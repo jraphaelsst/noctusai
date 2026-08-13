@@ -1,0 +1,23 @@
+{
+  "_procedencia": "capturado: chave de sandbox apontada para producao",
+  "gravado_em": "2026-08-13T20:32:12+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api.asaas.com/v3/customers",
+    "params": {
+      "limit": "1"
+    },
+    "body": null
+  },
+  "resposta": {
+    "status": 401,
+    "body": {
+      "errors": [
+        {
+          "code": "invalid_environment",
+          "description": "A chave de API informada não pertence a este ambiente"
+        }
+      ]
+    }
+  }
+}

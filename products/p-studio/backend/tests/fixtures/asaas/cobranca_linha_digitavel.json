@@ -1,0 +1,18 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:13+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments/pay_dqz3709qpgfb5i8e/identificationField",
+    "params": {},
+    "body": null
+  },
+  "resposta": {
+    "status": 200,
+    "body": {
+      "identificationField": "46191110000000000000012931361013215440000180000",
+      "nossoNumero": "12931361",
+      "barCode": "46192154400001800001110000000000001293136101"
+    }
+  }
+}

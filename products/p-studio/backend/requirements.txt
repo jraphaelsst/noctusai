@@ -1,0 +1,15 @@
+fastapi==0.121.0
+uvicorn[standard]==0.30.6
+supabase==2.9.1
+pydantic==2.13.4
+pydantic-settings==2.5.2
+python-dotenv==1.2.2
+# Transitivo: pydantic EmailStr → email-validator
+email-validator>=2.0.0
+# Cliente HTTP dos provedores de cobrança (app/providers/). Já vinha como
+# transitivo do supabase; agora é dependência direta, então pinado como o
+# resto. `MockTransport` (usado nos testes de contrato) vem no próprio httpx.
+httpx==0.27.2
+
+# Testes
+pytest>=8.0

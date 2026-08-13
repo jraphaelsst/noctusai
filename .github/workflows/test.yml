@@ -57,6 +57,7 @@ jobs:
           - igig
           - orbity
           - seed
+          - p-studio
 
     steps:
       - uses: actions/checkout@v7
@@ -176,6 +177,7 @@ jobs:
           - adconnect
           - dev-team
           - orbity
+          - p-studio
 
     steps:
       - uses: actions/checkout@v7
