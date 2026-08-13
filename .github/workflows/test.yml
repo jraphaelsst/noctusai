@@ -32,8 +32,10 @@ jobs:
     # OTHER 6 product backends had NO CI job, so KE's missing dep (python-docx,
     # absent from the root superset) only surfaced at deploy pre-flight, never in
     # CI (the unenforced-gate class — same as the FE-test matrix this session).
-    # Matrixed over ALL 9 products with a backend suite (2026-05-31; predeploy
-    # proved each passes). Each installs the ROOT requirements.txt (the unified
+    # Matrixed over ALL products with a backend suite (2026-05-31, 9 products;
+    # extended 2026-08-13 to igig/orbity/seed — `check_ci_test_matrix_coverage`
+    # keeps this list from silently going stale again). Each installs the ROOT
+    # requirements.txt (the unified
     # superset — check_root_requirements_superset keeps it complete) + pytest, then
     # runs that product's suite. fail-fast:false. (Per-product-install for full
     # dev↔prod parity is a tracked follow-up; the keeper makes root-install safe.)
@@ -52,6 +54,9 @@ jobs:
           - adconnect
           - daily-life
           - dev-team
+          - igig
+          - orbity
+          - seed
 
     steps:
       - uses: actions/checkout@v7
@@ -149,8 +154,11 @@ jobs:
     # verified green at the time of gating (social-wiring 19, pf 30, erp 16,
     # therapy 9, daily-life 5). 2026-05-31: core / adconnect / dev-team had FE test
     # infra but ZERO test files; each got a minimal `__harness_smoke__.test.tsx`
-    # (proves vitest+jsdom+testing-library run) so they join the gate too. Only
-    # knowledge-extractor (no vitest at all) remains out. `vitest run` fails on
+    # (proves vitest+jsdom+testing-library run) so they join the gate too.
+    # 2026-08-13: `orbity` added (real specs under src/hooks/__tests__/, found
+    # missing by `check_ci_test_matrix_coverage`). `knowledge-extractor` /
+    # `igig` / `products/seed` remain out — each has a vitest.config.ts but
+    # ZERO `*.test.ts(x)` files yet. `vitest run` fails on
     # "no test files found", so a product joins the matrix the same commit it gets
     # its first test. `fail-fast: false` so one product's red doesn't mask others.
     name: Product Frontend Tests (vitest)
@@ -167,6 +175,7 @@ jobs:
           - core
           - adconnect
           - dev-team
+          - orbity
 
     steps:
       - uses: actions/checkout@v7

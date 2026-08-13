@@ -405,6 +405,45 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-ter. Dependabot per-product coverage gate (blocking, only when ────
+# dependabot.yml OR a product frontend package.json changed) ─────────────
+# Keeper `check_dependabot_product_coverage` + `KB § PATTERNS/devops/product-
+# lockfile-and-slug-drift.md`. `.github/dependabot.yml` is a hand-maintained
+# per-product list — same class as 6d/6e above. `igig` (live since
+# 2026-08-09), `orbity`, and `products/seed` had NO npm block at all (zero
+# Dependabot coverage, silently) until 2026-08-13. A NEW PRODUCT is the
+# trigger that matters most here, and that's the case where dependabot.yml
+# itself is NOT staged — so this also fires on any products/*/frontend/
+# package.json (a brand-new product's manifest).
+STAGED_DEPENDABOT=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.github/dependabot\.yml|products/[^/]+/frontend/package\.json)$' || true)
+if [[ -n "$STAGED_DEPENDABOT" ]] && have_py; then
+    echo "[pre-commit] dependabot.yml / product frontend manifest staged — checking dependabot per-product coverage..."
+    if ! "$PY" "$CLI" --check-dependabot-product-coverage --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] DEPENDABOT-PRODUCT-COVERAGE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Run 'python mcp/noctusai/cli.py --refresh-dependabot-coverage' — it adds the missing npm block(s)/guard entries and preserves every existing comment. See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md." >&2
+        exit 1
+    fi
+fi
+
+# ─── 6e-quater. CI test-matrix coverage gate (blocking, only when ─────────
+# test.yml OR product test files changed) ─────────────────────────────────
+# Keeper `check_ci_test_matrix_coverage` + `KB § PATTERNS/devops/product-
+# lockfile-and-slug-drift.md`. `.github/workflows/test.yml`'s per-product
+# `matrix: product:` lists are the SIBLING hand-maintained list found while
+# building the dependabot gate — igig/orbity/seed backend suites and
+# orbity's frontend suite were never collected by CI (2026-08-13). Fires on
+# a NEW backend test file too (a product's first test is exactly the commit
+# that should join the matrix).
+STAGED_CI_MATRIX=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.github/workflows/test\.yml|products/[^/]+/backend/tests/.*\.py|products/[^/]+/frontend/src/.*\.test\.tsx?)$' || true)
+if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
+    echo "[pre-commit] test.yml / product test file staged — checking CI matrix coverage..."
+    if ! "$PY" "$CLI" --check-ci-test-matrix-coverage --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] CI-TEST-MATRIX-COVERAGE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Run 'python mcp/noctusai/cli.py --refresh-ci-matrix-coverage' — it appends the missing product(s) to the matrix and preserves every existing line/comment. See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
 # .tsx changed) ──────────────────────────────────────────────────────────
 # Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-

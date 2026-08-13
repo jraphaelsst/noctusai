@@ -273,3 +273,131 @@ genuine freeze: a `pin-ok` / `deliberate-freeze` rationale comment. CLI:
 `mcp/noctusai/tests/test_check_override_is_range.py` (22 tests, both directions —
 including that `8.x` is a RANGE, which a naive "starts with a digit" check
 misclassifies).
+
+## Fifth axis — a per-product COVERAGE list, not just a slug SET (2026-08-13)
+
+The first four axes are about a value (a lockfile snapshot, a slug literal, a
+build-set membership, an override version) drifting stale. This axis is the
+same class applied to a **coverage** list — a file that must carry one entry
+*per product on disk* — where the drift is an entry going **missing
+entirely**, not a stale value inside an existing entry.
+
+**The incident.** `.github/dependabot.yml` listed npm blocks for 9 of 12
+product frontends. The three missing — `igig`, `orbity`, and `products/seed`
+— are ALL in `deploy/fleet/build-scope.txt` (the live set). `igig` had been in
+production since **2026-08-09** with **zero** dependency-update coverage for
+four days: no Dependabot alert, no update PR, nothing, because nothing was
+watching that directory. Fixed by hand in `a40814b9` (2026-08-13; coverage
+12/12 + an 8-entry fleet-major `ignore:` guard added to all 14 npm blocks —
+see the Fourth axis above for what that guard is).
+
+**A second live instance, found by looking for siblings** (this doc's own
+"generalise if the evidence supports it" discipline, applied while building
+the fix). `.github/workflows/test.yml`'s per-product CI `matrix: product:`
+lists:
+
+- `product-backend-tests` (pytest): 9 of 12. Missing `igig` (17 test files),
+  `orbity` (31), `seed` (6) — every one a product with REAL,
+  currently-uncollected backend tests. The job's own comment said "Matrixed
+  over ALL 9 products with a backend suite" — true when written (2026-05-31),
+  stale the instant 3 more products joined the fleet.
+- `product-frontend-tests` (vitest): 8 of 12. Missing `orbity` (real vitest
+  spec files under `src/hooks/__tests__/`) — a real gap. `knowledge-extractor`
+  / `igig` / `products/seed` are **legitimately** absent: each has a
+  `vitest.config.ts` but zero `*.test.ts(x)` files, and `vitest run` hard-fails
+  on "no test files found" (the job's own comment states this rule). The
+  required-set predicate here is therefore **"has ≥1 qualifying test file"**,
+  never "exists on disk" — the coverage axis needs a per-surface predicate,
+  not one universal slug set.
+
+Both are the same failure shape as the first four axes:
+**a hand-maintained per-product list silently stops tracking the products
+that should be in it, discovered only after the gap already cost something**
+(missed CVE alerts for dependabot; three products' backend tests and one
+product's frontend tests never running in CI, invisible behind a permanently-
+green workflow).
+
+### Two surfaces, one class, two mechanisms (not one — and why)
+
+Per `KB § PATTERNS/common/gate-methodology-sync.md`, each surface ships
+BOTH a generator (compliance by construction) and a keeper (backstop),
+same commit:
+
+| Surface | Generator (MCP tool) | Keeper | Module |
+|---|---|---|---|
+| `.github/dependabot.yml` | `noctus.dev.refresh_dependabot_coverage` | `check_dependabot_product_coverage` | `dependabot_sync.py` |
+| `.github/workflows/test.yml` matrices | `noctus.dev.refresh_ci_matrix_coverage` | `check_ci_test_matrix_coverage` | `ci_matrix_sync.py` |
+
+They are **two mechanisms, not one parameterised engine**, because the two
+axes that would need to be shared — the YAML shape (multi-line block with a
+guard sub-section vs. a flat `- item` array) and the required-set predicate
+(dependabot: "has a `frontend/package.json`", unconditionally; CI matrix:
+"has a qualifying test file", which the dependabot surface has no analogue
+of) — are genuinely different enough that forcing one function to branch on
+both would be less readable than two small, parallel modules. What IS shared
+across both, deliberately, is the **contract**:
+
+1. **Targeted repair, never a full-file rewrite.** Both files carry
+   load-bearing hand-written rationale comments (why product
+   `requirements.txt` files are excluded from Dependabot; why the FE test
+   matrix excludes products with no spec files yet). A parser that only
+   locates block boundaries + list-item lines by regex, then splices new
+   lines in at a computed anchor index (bottom-to-top so earlier anchors
+   never shift), leaves every existing byte untouched.
+2. **Idempotent.** A second run against an already-fixed file reports
+   `in-sync` / `changed: False` and writes nothing.
+3. **Report stale, never auto-delete.** A block/entry that no longer
+   resolves (deleted product, or — CI-matrix only — a product whose
+   qualifying tests were removed) is surfaced in the `stale` field but never
+   removed automatically; restoring vs. deleting is a human call.
+4. **The required-set predicate is filesystem-derived, not catalog-derived**
+   (contrast with the Third axis's `build-scope.txt`, which deliberately IS
+   catalog-scoped to `ativo=true`). Both dependabot and CI-matrix coverage
+   should include an inactive-but-on-disk product too — a CVE or a broken
+   test in a product we're not actively deploying is still worth catching.
+
+### Gate wiring
+
+Both pre-commit-gated (blocking, severity `high`), staged-path scoped, and
+composed into `check_all_products()`:
+
+- **`--check-dependabot-product-coverage`** fires when `.github/dependabot.yml`
+  OR any `products/*/frontend/package.json` is staged — a **new product** is
+  the trigger that matters most, and that's the case where `dependabot.yml`
+  itself is NOT staged.
+- **`--check-ci-test-matrix-coverage`** fires when `.github/workflows/test.yml`
+  OR any `products/*/backend/tests/*.py` OR `products/*/frontend/src/*.test.tsx?`
+  is staged — a product's FIRST test file is exactly the commit that should
+  add it to the matrix.
+
+Fix commands: `python mcp/noctusai/cli.py --refresh-dependabot-coverage` /
+`--refresh-ci-matrix-coverage` (both accept `--dry` to preview). Pinned by
+`mcp/noctusai/tests/test_dependabot_sync.py` +
+`test_check_dependabot_product_coverage.py` (29 tests) and
+`test_ci_matrix_sync.py` + `test_check_ci_test_matrix_coverage.py` (20 tests),
+including a reconstruction of the exact pre-fix `igig`/`orbity`/`seed` shape
+against synthetic fixtures — proving the detectors would have caught the real
+historical bug, not just "the current tree happens to be clean."
+
+### Other per-product lists checked and deliberately left alone
+
+Looked for siblings beyond the two fixed above; none of these needed a new
+mechanism:
+
+- **`deploy/fleet/docker-compose.prod.yml`** and **`deploy/tunnel/ingress.yml`**
+  — these are the prod-EXPOSURE surfaces. Adding a product to either one IS
+  the promotion decision (`KB § PATTERNS/devops/prod-exposure-consent.md`),
+  gated by `check_prod_exposure_consent`. Auto-deriving a missing entry here
+  would silently promote a product to production — the opposite of what this
+  doc's mechanism should do. Left manual, deliberately.
+- **`start.sh`'s `PRODUCTS` array`** — this is the upstream **source of
+  truth** everything else in this doc derives FROM (`parse_products_registry()`
+  reads it), auto-appended by `noctus.dev.scaffold_product`. It is not itself
+  a drifting mirror.
+- **`.github/workflows/build-and-push.yml`**, **`deploy-prod.yml`**,
+  **`seed-typecheck.yml`**, **`embedding-cache-gate.yml`** — no hardcoded
+  per-product list; they already derive from `build-scope.txt` or run
+  product-agnostically.
+- **`KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`'s product roster** — already
+  gated: the pre-commit hook (`CLAUDE.md` § 4) blocks a commit that adds
+  `products/<slug>/` without a matching roster row.

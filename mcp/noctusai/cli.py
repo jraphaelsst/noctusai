@@ -180,6 +180,8 @@ def main():
     parser.add_argument("--check-override-is-range", action="store_true", help="Keeper: every npm `overrides` entry must be a RANGE (^/~/>=), never an exact version. An exact override wins over every peer range and direct dep, can never be upgraded by npm install, and is invisible in the dependency list — while adding NO reproducibility, because package-lock.json already pins the resolution for npm ci. The seed copies overrides into 12 products, so one pin freezes the fleet (postcss, ws, react-router, 2026-08-11). Opt-out: a `pin-ok`/`deliberate-freeze` rationale comment. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--check-dependabot-product-coverage", action="store_true", help="Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, no block may point at a directory whose package.json no longer exists, and every npm block must carry the 8-entry fleet-major `ignore:` guard (unguarded/partially-guarded is the actual hole). 2026-08-13 incident: igig (live since 2026-08-09), orbity, and products/seed had ZERO Dependabot coverage — nothing was watching those directories. Fix: --refresh-dependabot-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--check-ci-test-matrix-coverage", action="store_true", help="Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silently never run in CI. 2026-08-13: igig/orbity/seed backend suites + orbity's frontend suite were never collected. Fix: --refresh-ci-matrix-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
@@ -314,6 +316,8 @@ def main():
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
     parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--refresh-build-scope", action="store_true", help="Regenerate deploy/fleet/build-scope.txt — the products whose images a PUSH-triggered build rebuilds. Derived from the catalog (ativo=true AND deploy_scope='live') plus core. Run after activating/deactivating a product. Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. MCP: noctus.dev.refresh_build_scope. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--refresh-dependabot-coverage", action="store_true", help="Repair .github/dependabot.yml: add an npm block for every products/<slug>/frontend with a package.json missing one, and append the fleet-major `ignore:` guard to any npm block that lacks it (full or partial). Targeted repair, not a rewrite — every existing comment/entry survives byte-for-byte. Idempotent. Stale blocks (directory has no package.json any more) are reported, never removed. Pass --dry to preview. MCP: noctus.dev.refresh_dependabot_coverage. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--refresh-ci-matrix-coverage", action="store_true", help="Repair .github/workflows/test.yml: append every qualifying-but-missing product to the product-backend-tests / product-frontend-tests `matrix: product:` lists (qualifying = has real test files for that suite). Targeted repair — every existing line/comment survives. Idempotent. Stale entries (tests gone) are reported, never removed. Pass --dry to preview. MCP: noctus.dev.refresh_ci_matrix_coverage. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--vector-costs-drain-spool", action="store_true", help="Fold the untracked cost spool (project-history/.vector-costs-spool.ndjson) into the tracked vector-costs.ndjson ledger and empty it. Run by the pre-commit hook so cost rows ride inside a real commit instead of a ledger-only chore commit. Idempotent. MCP: noctus.dev.vector_costs_drain_spool. KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.")
     parser.add_argument("--vector-costs-report", action="store_true", help="Aggregate the vector embedding cost ledger by day/week/month. Filter with --namespace and --since; granularity with --group-by. MCP: noctus.dev.vector_costs_report. KB § PATTERNS/common/vector-cost-tracking.md.")
     parser.add_argument("--vector-costs-total", action="store_true", help="Quick total aggregate of the vector embedding cost ledger. Filter with --namespace and --since. MCP: noctus.dev.vector_costs_total.")
@@ -1351,6 +1355,30 @@ def main():
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
 
+    elif args.check_dependabot_product_coverage:
+        from tools.noctus.dev.compliance import check_dependabot_product_coverage
+        issues = check_dependabot_product_coverage()
+        if not issues:
+            print(f"  {GREEN}✓ dependabot-product-coverage: clean (every product has a guarded npm block).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} dependabot-product-coverage issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
+        blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
+        sys.exit(1 if blocking else 0)
+
+    elif args.check_ci_test_matrix_coverage:
+        from tools.noctus.dev.compliance import check_ci_test_matrix_coverage
+        issues = check_ci_test_matrix_coverage()
+        if not issues:
+            print(f"  {GREEN}✓ ci-test-matrix-coverage: clean (every qualifying product is in its matrix).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} ci-test-matrix-coverage issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
+        blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
+        sys.exit(1 if blocking else 0)
+
     elif args.check_branch_tree_mirror is not None:
         from tools.noctus.dev.compliance import check_branch_tree_mirror
         branch_arg = None if args.check_branch_tree_mirror == "__all__" else args.check_branch_tree_mirror
@@ -2265,6 +2293,52 @@ def main():
         else:
             print(f"  {GREEN}✓ build-scope written: {slugs}{RESET}")
         print(f"    excluded (inactive): {excl}")
+        sys.exit(0)
+
+    elif args.refresh_dependabot_coverage:
+        from tools.noctus.dev.dependabot_sync import sync_dependabot_coverage as _rdc
+        result = _rdc(write=not args.dry)
+        if not result.get("ok"):
+            print(f"  {RED}✗ dependabot-coverage refresh FAILED: {result.get('error')}{RESET}")
+            sys.exit(1)
+        status = result["status"]
+        added = result.get("added", [])
+        guard_fixed = result.get("guard_fixed", {})
+        stale = result.get("stale", [])
+        if status == "in-sync":
+            print(f"  {GREEN}✓ dependabot coverage already in-sync.{RESET}")
+        elif status == "would-write":
+            print(f"  {YELLOW}would add {len(added)} product block(s), fix {len(guard_fixed)} guard(s) — dry-run, nothing written.{RESET}")
+        else:
+            print(f"  {GREEN}✓ dependabot.yml repaired — added {len(added)} block(s), fixed {len(guard_fixed)} guard(s).{RESET}")
+        if added:
+            print(f"    added: {', '.join(added)}")
+        if guard_fixed:
+            for directory, gap in guard_fixed.items():
+                print(f"    guard fixed: {directory} — added {', '.join(gap)}")
+        if stale:
+            print(f"  {YELLOW}stale (reported, not removed): {', '.join(stale)}{RESET}")
+        sys.exit(0)
+
+    elif args.refresh_ci_matrix_coverage:
+        from tools.noctus.dev.ci_matrix_sync import sync_ci_matrix_coverage as _rcmc
+        result = _rcmc(write=not args.dry)
+        if not result.get("ok"):
+            print(f"  {RED}✗ ci-matrix-coverage refresh FAILED: {result.get('error')}{RESET}")
+            sys.exit(1)
+        status = result["status"]
+        added = result.get("added", {})
+        stale = result.get("stale", {})
+        if status == "in-sync":
+            print(f"  {GREEN}✓ CI test-matrix coverage already in-sync.{RESET}")
+        elif status == "would-write":
+            print(f"  {YELLOW}would add entries to {len(added)} job(s) — dry-run, nothing written.{RESET}")
+        else:
+            print(f"  {GREEN}✓ test.yml repaired — added entries to {len(added)} job(s).{RESET}")
+        for job, slugs in added.items():
+            print(f"    added to {job}: {', '.join(slugs)}")
+        for job, slugs in stale.items():
+            print(f"  {YELLOW}stale in {job} (reported, not removed): {', '.join(slugs)}{RESET}")
         sys.exit(0)
 
     elif args.vector_costs_drain_spool:

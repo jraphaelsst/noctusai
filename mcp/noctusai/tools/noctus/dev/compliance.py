@@ -5865,6 +5865,228 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
 
 
 # ---------------------------------------------------------------------------
+# `check_dependabot_product_coverage` — `.github/dependabot.yml` is a
+# hand-maintained per-product list; a THIRD instance of this doc's drift
+# class, discovered 2026-08-13. `igig` (live in prod since 2026-08-09),
+# `orbity` (live), and `products/seed` (in `deploy/fleet/build-scope.txt`)
+# had NO npm block at all — zero Dependabot coverage, silently, because
+# nothing was watching that directory. Fixed by hand in `a40814b9`
+# (12/12 coverage + an 8-entry fleet-major `ignore:` guard on all 14 npm
+# blocks); this keeper is the backstop so it never silently regresses.
+# Companion generator: `noctus.dev.refresh_dependabot_coverage`
+# (`dependabot_sync.py`) — targeted repair, never a full-file rewrite.
+#
+# Severity: `high` — a live product going dependency-CVE-blind is not a
+# style nit.
+# ---------------------------------------------------------------------------
+
+
+def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dict]:
+    """`.github/dependabot.yml`'s per-product npm blocks must mirror the
+    products actually on disk, and every npm block must carry the fleet-major
+    `ignore:` guard. Three legs, one class:
+
+    1. every `products/<slug>/frontend/package.json` on disk has a matching
+       npm block (`directory: "/products/<slug>/frontend"`) — a missing
+       block means Dependabot never opens an alert or PR for that product's
+       dependencies, invisible until a CVE lands unnoticed.
+    2. no npm block's `directory:` points at a path with no `package.json`
+       any more — a deleted/renamed product leaves a stale block; drift
+       cuts both ways.
+    3. every npm block (product AND seed/lib/seed/framework) carries the
+       full 8-entry fleet-major `ignore:` guard — present-but-unguarded (or
+       PARTIALLY guarded) is the actual hole this class hides: a block that
+       exists LOOKS handled, so a partial guard is worse than none.
+
+    Fix: `noctus.dev.refresh_dependabot_coverage` for legs 1 + 3 (targeted —
+    never a full-file rewrite; every existing comment/entry survives). Leg 2
+    is report-only there too — removing a block is a human call.
+
+    Per the 2026-08-13 incident: `igig`/`orbity`/`products/seed` carried
+    zero dependency-update coverage while live. Severity `high`.
+    """
+    from tools.noctus.dev.dependabot_sync import (
+        DEPENDABOT_REL,
+        MAJOR_GUARD_DEPS,
+        _dependabot_npm_dirs,
+        _has_npm_manifest,
+        _npm_product_blocks,
+        _on_disk_product_slugs,
+        _parse_blocks,
+    )
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    path = root / DEPENDABOT_REL
+    if not path.is_file():
+        return issues
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", path, exc)
+        return issues
+
+    blocks = _parse_blocks(lines)
+    npm_by_slug = _npm_product_blocks(blocks)
+    on_disk = _on_disk_product_slugs(root)
+    rel = str(DEPENDABOT_REL)
+
+    for slug in sorted(on_disk - set(npm_by_slug)):
+        issues.append({
+            "product": slug,
+            "file": rel,
+            "issue": (
+                f"products/{slug}/frontend has a package.json but "
+                f"{rel} has NO npm block for it — Dependabot never watches "
+                f"this product's dependencies (no security alert, no update "
+                f"PR, nothing). The 2026-08-13 incident: igig (live since "
+                f"2026-08-09), orbity, and products/seed carried zero "
+                f"coverage this way. Fix: "
+                f"`noctus.dev.refresh_dependabot_coverage`."
+            ),
+            "severity": "high",
+        })
+
+    for _block, dir_rel in _dependabot_npm_dirs(blocks):
+        if _has_npm_manifest(root, dir_rel):
+            continue
+        product = dir_rel.split("/")[1] if dir_rel.startswith("products/") else "<seed>"
+        issues.append({
+            "product": product,
+            "file": rel,
+            "issue": (
+                f"{rel} has an npm block for `{dir_rel}` but that directory "
+                f"has no package.json any more (deleted/renamed) — "
+                f"Dependabot will fail to resolve a manifest that doesn't "
+                f"exist. Remove the stale block (a human call — this keeper "
+                f"never auto-deletes)."
+            ),
+            "severity": "high",
+        })
+
+    for block in blocks:
+        if block.ecosystem != "npm" or not block.directory:
+            continue
+        gap = sorted(set(MAJOR_GUARD_DEPS) - block.ignore_names)
+        if not gap:
+            continue
+        dir_rel = block.directory.strip("/")
+        product = dir_rel.split("/")[1] if dir_rel.startswith("products/") else "<seed>"
+        shape = "unguarded" if not (block.ignore_names & set(MAJOR_GUARD_DEPS)) else "partially guarded"
+        issues.append({
+            "product": product,
+            "file": rel,
+            "issue": (
+                f"npm block `{block.directory}` in {rel} is {shape} — "
+                f"missing {', '.join(gap)} from the fleet-major `ignore:` "
+                f"guard. A grouped `all`-pattern PR can silently carry a "
+                f"coordinated-migration major (React/TypeScript/vite/"
+                f"react-router) as if it were a routine bump — the exact "
+                f"hole a40814b9 closed. Fix: "
+                f"`noctus.dev.refresh_dependabot_coverage`."
+            ),
+            "severity": "high",
+        })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_ci_test_matrix_coverage` — `.github/workflows/test.yml`'s per-product
+# `matrix: product:` lists are a SECOND hand-maintained per-product list found
+# while building the dependabot gate (per this doc's "generalise if the
+# evidence supports it" instruction). `product-backend-tests` covered 9/12
+# (missing igig 17 test files, orbity 31, seed 6 — every one with REAL,
+# currently-uncollected backend tests); `product-frontend-tests` covered 8/12,
+# missing `orbity` (real vitest specs). `knowledge-extractor`/`igig`/
+# `products/seed` are legitimately absent from the frontend matrix — none has
+# a single `*.test.ts(x)` file yet, and `vitest run` hard-fails on "no test
+# files found" (the job's own comment documents this), so the required-set
+# predicate is "has ≥1 spec file", never "exists on disk".
+#
+# Companion generator: `noctus.dev.refresh_ci_matrix_coverage`
+# (`ci_matrix_sync.py`) — same targeted-repair contract as the dependabot one.
+#
+# Severity: `high` — a product's tests silently never running in CI is not a
+# style nit.
+# ---------------------------------------------------------------------------
+
+
+def check_ci_test_matrix_coverage(repo_root: Path | None = None) -> list[dict]:
+    """Every product that QUALIFIES for `product-backend-tests` (has
+    `backend/tests/**/test_*.py`) or `product-frontend-tests` (has
+    `frontend/src/**/*.test.ts(x)`) in `.github/workflows/test.yml` must be in
+    that job's `matrix: product:` list — a missing entry means that product's
+    tests silently never run in CI, indistinguishable from "always green"
+    until someone hand-runs pytest/vitest locally.
+
+    Per the 2026-08-13 finding: `igig`/`orbity`/`seed` backend suites and
+    `orbity`'s frontend suite were never collected by CI. Severity `high`.
+
+    Also flags a stale entry (a matrix names a product whose qualifying test
+    files are gone — deleted product or deleted last test) — lower urgency
+    than the missing case (CI already fails loudly on it: `vitest run`
+    refuses "no test files found"), but the same list-drift class, so it's
+    surfaced too.
+    """
+    from tools.noctus.dev.ci_matrix_sync import TEST_WORKFLOW_REL, _JOB_PREDICATES, _on_disk_products, _parse_matrix_lists
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    path = root / TEST_WORKFLOW_REL
+    if not path.is_file():
+        return issues
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("compliance: cannot read %s (%s)", path, exc)
+        return issues
+
+    matrix_lists = _parse_matrix_lists(lines)
+    on_disk = _on_disk_products(root)
+    rel = str(TEST_WORKFLOW_REL)
+
+    for ml in matrix_lists:
+        predicate = _JOB_PREDICATES[ml.job]
+        required = {s for s in on_disk if predicate(root, s)}
+        covered = set(ml.slugs)
+
+        for slug in sorted(required - covered):
+            issues.append({
+                "product": slug,
+                "file": rel,
+                "issue": (
+                    f"products/{slug} has real test files that qualify it "
+                    f"for `{ml.job}` in {rel}, but it's not in that job's "
+                    f"`matrix: product:` list — its tests NEVER run in CI, "
+                    f"silently (the 2026-08-13 igig/orbity/seed gap). Fix: "
+                    f"`noctus.dev.refresh_ci_matrix_coverage`."
+                ),
+                "severity": "high",
+            })
+
+        for slug in sorted(covered - required):
+            issues.append({
+                "product": slug,
+                "file": rel,
+                "issue": (
+                    f"{rel}'s `{ml.job}` matrix names `{slug}`, but it no "
+                    f"longer has qualifying test files (or no longer "
+                    f"exists) — CI already fails loudly on this (a matrix "
+                    f"job errors resolving the working-directory / "
+                    f"`vitest run` refuses \"no test files found\"), so this "
+                    f"is lower-urgency, but it's the same list-drift class. "
+                    f"Remove the stale entry."
+                ),
+                "severity": "high",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_hardcoded_fleet_size_literal` — a seed test
 # (`seed/lib/backend/tests/`) must NOT assert a frozen *fleet-size* numeric
 # literal (`len(...) >= 10`, `== 12`, `> 8`, …) against a registry-derived
@@ -10113,6 +10335,13 @@ def check_all_products() -> tuple[int, list]:
     # recharts/@radix-ui-react-tabs, ALL_SLUGS) — a product's lockfile
     # snapshot of a required dep goes stale relative to its own package.json.
     all_issues.extend(check_product_lockfile_dep_sync())
+    # 2026-08-13 (igig/orbity/products-seed had ZERO Dependabot coverage) —
+    # third instance of the mirrored-artifact-drifts class, applied to
+    # .github/dependabot.yml's per-product npm blocks + fleet-major guard.
+    all_issues.extend(check_dependabot_product_coverage())
+    # 2026-08-13 sibling (found while building the dependabot fix — same
+    # class, second surface): test.yml's per-product CI matrices.
+    all_issues.extend(check_ci_test_matrix_coverage())
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
