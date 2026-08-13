@@ -10,6 +10,7 @@ hermetic, no production-code patching.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -517,11 +518,17 @@ class TestReturnShape:
         products = _make_products_dir(tmp_path)
         _make_fake_product(products, "demo", migration_files=["001_seed.sql"])
         result = sm.scaffold_migration("demo", "thing", products_dir=products)
-        assert set(result.keys()) == {"created", "path", "number", "schema"}
+        # `warnings` is new (2026-08-13, next_migration_number wiring): the
+        # number is now computed from disk + origin/dev + local branches, and
+        # a degraded source (no git repo here — a bare tmp_path) surfaces as
+        # a warning rather than silently. Always present, normally non-empty
+        # in a hermetic tmp_path fixture (no git repo behind it).
+        assert set(result.keys()) == {"created", "path", "number", "schema", "warnings"}
         assert result["created"] is True
         assert isinstance(result["path"], str)
         assert isinstance(result["number"], int)
         assert isinstance(result["schema"], str)
+        assert isinstance(result["warnings"], list)
 
     def test_error_shape(self, tmp_path):
         products = _make_products_dir(tmp_path)
@@ -595,3 +602,259 @@ class TestWorktreeAwarePathResolution:
         )
         assert result.get("created") is True, result
         assert (sink / "sink-product" / "backend" / "migrations" / "002_thing.sql").exists()
+
+
+# ---------------------------------------------------------------------------
+# `noctus.dev.next_migration_number` — correct-by-construction numbering.
+#
+# Real `git` repos throughout this section (not the FakeGit-style injection
+# used elsewhere in the platform's test suite) — the whole point of the tool
+# is real git plumbing (origin/dev ls-tree + local-branch diffing), so a
+# fake would not exercise the code that actually matters. Every fixture
+# degrades to `pytest.skip` if git is unusable in the sandbox, mirroring
+# `TestCheckMigrationNumberCollision._git_repo()` in test_compliance.py.
+# ---------------------------------------------------------------------------
+
+
+def _git_ok(*args: str, cwd: Path) -> bool:
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+    return r.returncode == 0
+
+
+def _git_out(*args: str, cwd: Path) -> str:
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+    return r.stdout.strip()
+
+
+def _write_migration(repo: Path, product: str, name: str) -> None:
+    mig = repo / "products" / product / "backend" / "migrations"
+    mig.mkdir(parents=True, exist_ok=True)
+    (mig / name).write_text("-- migration\nSELECT 1;\n")
+
+
+def _init_repo(repo: Path) -> bool:
+    return (
+        _git_ok("init", "-q", "-b", "dev", cwd=repo)
+        and _git_ok("config", "user.email", "t@test.local", cwd=repo)
+        and _git_ok("config", "user.name", "t", cwd=repo)
+    )
+
+
+class TestNextMigrationNumberRealIncident:
+    """Reconstructs the VERIFIED 2026-08-13 incident.
+
+    `049_imoveis_place_name_collision_fix.sql` was authored in a PARALLEL
+    worktree and merged (applied to production) FIRST. THIS worktree —
+    mid-authoring `049_cliente_revisao_rejeitadas.sql` — had not rebased, so
+    its own `migrations/` directory never saw the sibling's file: the naive
+    `ls migrations/` signal alone gives `049`, the exact collision that
+    shipped and cost ~1600 lines of rework. `next_migration_number` must
+    return `050` by reading `origin/dev` directly — independent of whether
+    THIS worktree's own checkout has caught up.
+    """
+
+    def _setup(self, tmp_path: Path) -> Path | None:
+        repo = tmp_path
+        if not _init_repo(repo):
+            return None
+        # Base: erp-imobiliario ships up through 048.
+        _write_migration(repo, "erp-imobiliario", "048_prior.sql")
+        if not (_git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)):
+            return None
+        base_sha = _git_out("rev-parse", "HEAD", cwd=repo)
+
+        # The PARALLEL worktree's migration lands and merges to dev first —
+        # the real incident's `049_imoveis_place_name_collision_fix.sql`.
+        _write_migration(repo, "erp-imobiliario", "049_imoveis_place_name_collision_fix.sql")
+        if not (_git_ok("add", "-A", cwd=repo)
+                and _git_ok("commit", "-qm", "049 place-name fix", cwd=repo)):
+            return None
+        # `origin/dev` reflects the merge — a local-ref stand-in (no real
+        # remote), the same idiom test_compliance.py's `_git_repo()` uses.
+        if not _git_ok("update-ref", "refs/remotes/origin/dev", "HEAD", cwd=repo):
+            return None
+
+        # THIS worktree: branched off BEFORE the sibling's fix landed, so its
+        # own checkout has never seen it (exactly the incident's shape).
+        if not _git_ok("checkout", "-q", "-b", "feat/lead-card-hub-slice-b", base_sha, cwd=repo):
+            return None
+        return repo
+
+    def test_returns_050_before_any_work_starts(self, tmp_path):
+        repo = self._setup(tmp_path)
+        if repo is None:
+            import pytest
+            pytest.skip("git unavailable in this environment")
+
+        result = sm.next_migration_number("erp-imobiliario", products_dir=repo / "products")
+
+        assert result.get("next_number") == 50, result
+        # The claim naming the REAL incident file must be visible, sourced
+        # from origin/dev — NOT from this worktree's own (stale) disk, which
+        # never had it.
+        origin_claims = [c for c in result["claims"] if c["source"] == "origin/dev"]
+        assert any(
+            c["file"] == "049_imoveis_place_name_collision_fix.sql" for c in origin_claims
+        ), result
+
+    def test_naive_local_disk_scan_alone_would_have_returned_the_collision(self, tmp_path):
+        """Negative control proving the fix is real: THIS worktree's own
+        directory — the pre-fix signal `scaffold_migration` used to trust
+        alone — contains only `048_prior.sql`. A naive max(local NN)+1 is
+        `049`: the exact number that collided in production."""
+        repo = self._setup(tmp_path)
+        if repo is None:
+            import pytest
+            pytest.skip("git unavailable in this environment")
+
+        mig = repo / "products" / "erp-imobiliario" / "backend" / "migrations"
+        local_files = sorted(p.name for p in mig.glob("*.sql"))
+        assert local_files == ["048_prior.sql"], (
+            f"fixture sanity check failed — expected the naive local-disk view "
+            f"to be blind to the sibling's 049, got {local_files}"
+        )
+
+    def test_scaffold_migration_emits_050_not_049(self, tmp_path):
+        """End-to-end: the actual authoring tool, not just the number
+        computation, produces the collision-free file."""
+        repo = self._setup(tmp_path)
+        if repo is None:
+            import pytest
+            pytest.skip("git unavailable in this environment")
+
+        result = sm.scaffold_migration(
+            "erp-imobiliario", "cliente_revisao_rejeitadas", products_dir=repo / "products",
+        )
+        assert result.get("created") is True, result
+        assert Path(result["path"]).name == "050_cliente_revisao_rejeitadas.sql", result
+
+
+class TestNextMigrationNumberUnpushedSiblingBranch:
+    """The 2026-08-03 shape (`check_migration_number_collision`'s own origin
+    incident): a sibling branch has COMMITTED — but not PUSHED — a migration
+    that both this worktree's disk AND `origin/dev` miss. Local git refs are
+    shared across every worktree of one clone, so the branch is visible via
+    `git branch --format` even though nothing was pushed anywhere.
+    """
+
+    def _setup(self, tmp_path: Path) -> Path | None:
+        repo = tmp_path
+        if not _init_repo(repo):
+            return None
+        _write_migration(repo, "core", "040_base.sql")
+        if not (_git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)):
+            return None
+        if not _git_ok("update-ref", "refs/remotes/origin/dev", "HEAD", cwd=repo):
+            return None
+        # Sibling worktree (shares this .git) commits 041 on a branch it has
+        # NOT pushed.
+        if not _git_ok("checkout", "-q", "-b", "feat/sibling", "dev", cwd=repo):
+            return None
+        _write_migration(repo, "core", "041_sibling_work.sql")
+        if not (_git_ok("add", "-A", cwd=repo)
+                and _git_ok("commit", "-qm", "sibling 041", cwd=repo)):
+            return None
+        # Back to dev — THIS worktree's own checkout only ever had 040.
+        if not _git_ok("checkout", "-q", "dev", cwd=repo):
+            return None
+        return repo
+
+    def test_next_number_sees_unpushed_sibling_and_skips_past_it(self, tmp_path):
+        repo = self._setup(tmp_path)
+        if repo is None:
+            import pytest
+            pytest.skip("git unavailable in this environment")
+
+        result = sm.next_migration_number("core", products_dir=repo / "products")
+
+        assert result.get("next_number") == 42, result
+        branch_claims = [c for c in result["claims"] if c["source"].startswith("branch:")]
+        assert any(c["file"] == "041_sibling_work.sql" for c in branch_claims), result
+        assert any("feat/sibling" in c["source"] for c in branch_claims), result
+
+
+class TestNextMigrationNumberErrorsAndDegradation:
+    def test_missing_product_matches_scaffold_migration_error_text(self, tmp_path):
+        """Same resolver, same wording — a caller must not see two different
+        error strings for the same failure from two different tools."""
+        products = _make_products_dir(tmp_path)
+        result = sm.next_migration_number("does-not-exist", products_dir=products)
+        assert "error" in result
+        assert "not found" in result["error"]
+        assert "scaffold the product first" in result["error"].lower()
+
+    def test_empty_everywhere_is_an_error_not_a_silent_1(self, tmp_path):
+        """Mirrors scaffold_migration's own guard: an empty migrations/ dir
+        with no signal from origin/dev or any branch must NOT silently
+        propose `1` — that would step on noctus.dev.scaffold_product's
+        territory (which ships 001_seed.sql)."""
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=[])
+        result = sm.next_migration_number("demo", products_dir=products)
+        assert "error" in result
+        assert "empty migrations/" in result["error"]
+
+    def test_no_git_repo_degrades_to_disk_only_with_warnings(self, tmp_path):
+        """A bare tmp_path (no git at all, e.g. every OTHER test in this
+        file's `products_dir=` seam) must still answer correctly from disk
+        alone — degraded, not broken. `origin/dev` unavailable surfaces as a
+        warning, never a silent wrong answer."""
+        products = _make_products_dir(tmp_path)
+        _make_fake_product(products, "demo", migration_files=["001_seed.sql", "002_x.sql"])
+        result = sm.next_migration_number("demo", products_dir=products)
+        assert result.get("next_number") == 3, result
+        assert result["warnings"], "expected a warning when origin/dev cannot be read at all"
+
+    def test_git_repo_with_no_origin_dev_ref_warns_but_still_answers(self, tmp_path):
+        repo = tmp_path
+        if not _init_repo(repo):
+            import pytest
+            pytest.skip("git unavailable in this environment")
+        _write_migration(repo, "demo", "001_seed.sql")
+        if not (_git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)):
+            import pytest
+            pytest.skip("git commit unavailable in this environment")
+        # No `refs/remotes/origin/dev` created — origin/dev genuinely cannot
+        # resolve here.
+        result = sm.next_migration_number("demo", products_dir=repo / "products")
+        assert result.get("next_number") == 2, result
+        assert any("did not resolve" in w for w in result["warnings"]), result
+
+    def test_skip_fetch_true_still_reads_local_origin_dev_ref(self, tmp_path):
+        """`skip_fetch=True` must skip the network round-trip, NOT the
+        signal itself — a worktree that already has a fresh-enough
+        `origin/dev` ref locally still benefits from source 2."""
+        repo = tmp_path
+        if not _init_repo(repo):
+            import pytest
+            pytest.skip("git unavailable in this environment")
+        _write_migration(repo, "demo", "001_seed.sql")
+        if not (_git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)):
+            import pytest
+            pytest.skip("git commit unavailable in this environment")
+        if not _git_ok("update-ref", "refs/remotes/origin/dev", "HEAD", cwd=repo):
+            import pytest
+            pytest.skip("git update-ref unavailable in this environment")
+
+        result = sm.next_migration_number(
+            "demo", products_dir=repo / "products", skip_fetch=True,
+        )
+        assert result.get("next_number") == 2, result
+        origin_claims = [c for c in result["claims"] if c["source"] == "origin/dev"]
+        assert any(c["file"] == "001_seed.sql" for c in origin_claims), result
+
+
+class TestScaffoldMigrationWarningsPassthrough:
+    def test_warning_surfaces_when_origin_dev_unreadable(self, tmp_path):
+        repo = tmp_path
+        if not _init_repo(repo):
+            import pytest
+            pytest.skip("git unavailable in this environment")
+        _write_migration(repo, "demo", "001_seed.sql")
+        if not (_git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)):
+            import pytest
+            pytest.skip("git commit unavailable in this environment")
+
+        result = sm.scaffold_migration("demo", "thing", products_dir=repo / "products")
+        assert result.get("created") is True, result
+        assert result["warnings"], "expected scaffold_migration to surface the degraded source"

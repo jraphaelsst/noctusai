@@ -16,6 +16,13 @@ lifecycle so it is one call, not a hand-typed ritual:
                 clean) and surfaced loudly — never auto-resolved, never left
                 half-rebased. This is KB § branching-and-merging § 10.2 Option A
                 with `dev` substituted for the integration ref.
+                After a successful rebase, if this branch introduces a
+                migration file, `check_migration_number_collision` re-runs
+                against the (now fresh-onto-dev) worktree and BLOCKS the push
+                on any finding — the SECOND backstop for the migration-
+                numbering hazard pre-commit only warns about (Leg B) or only
+                catches once staged (Leg A). See § Migration-number collision
+                safety in KB § PATTERNS/backend/database-rls.md.
                 Known-benign refresh artifacts (cache refresh files that the
                 pre-commit hook writes as side-effects: KNOWLEDGE-BASE/
                 AGENT-CONTEXT.md, KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md,
@@ -610,6 +617,16 @@ def _settle_structural_caches(verbose: bool = False) -> dict[str, Any]:
     return report
 
 
+def _default_migration_collision_check(abs_wt_path: str) -> list[dict]:
+    """Production default for the `action='integrate'` migration-collision
+    gate — the REAL, unmodified keeper, scoped to the worktree that just
+    rebased. Lazy import (mirrors `_settle_structural_caches` / the
+    `REPO_ROOT` import elsewhere in this file) so a plain `status`/`start`
+    call never pays the compliance-module import cost."""
+    from .compliance import check_migration_number_collision
+    return check_migration_number_collision(repo_root=Path(abs_wt_path))
+
+
 def task_branch(
     action: str = "status",
     slug: str | None = None,
@@ -625,6 +642,7 @@ def task_branch(
     fs: FsOps | None = None,
     salvage_recorder: Callable[..., Any] | None = None,
     settle: Callable[..., dict[str, Any]] | None = None,
+    migration_check: Callable[[str], list[dict]] | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
@@ -633,6 +651,15 @@ def task_branch(
 
     `verbose=True` emits debug-level logging for each step of integrate/cleanup
     so future debugging is one re-run away (no code changes needed).
+
+    `migration_check` (test seam; production default is the real
+    `check_migration_number_collision`, scoped to the just-rebased worktree)
+    — the `action='integrate'` migration-number-collision gate: a SECOND
+    backstop, additional to pre-commit, that BLOCKS (not warns) when this
+    branch's own migration collides with something the fresh rebase onto
+    `origin/dev` just revealed. See the gate's inline comment in the
+    `integrate` branch below for why blocking here is safe (no legitimate
+    first-mover casualty, unlike pre-commit Leg B).
 
     `wire_env=True` (only meaningful on `action='start'`) auto-wires the §5a
     verification-env recipe into the fresh worktree AFTER it exists: symlink the
@@ -652,6 +679,11 @@ def task_branch(
     # that must not touch the real shared caches.
     settle_fn = settle if settle is not None else (
         _settle_structural_caches if run is None else None)
+    # Same "production default ONLY on the real runner" rule as settle_fn —
+    # an injected `run` means a test/custom context that must not shell out
+    # to a real `check_migration_number_collision` filesystem scan.
+    migration_check_fn = migration_check if migration_check is not None else (
+        _default_migration_collision_check if run is None else None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -748,6 +780,19 @@ def task_branch(
         if not dev or not head:
             return {**base, "status": "error", "exit_code": 1,
                     "error": f"cannot resolve {remote}/{dev_branch} or {branch}."}
+        # Migration files THIS branch introduces relative to dev, BEFORE the
+        # rebase moves anything — used below to scope the post-rebase
+        # collision gate to directories this integrate actually touches (so
+        # an unrelated product's migration collision elsewhere in the repo
+        # never false-blocks an integrate that has nothing to do with it).
+        _rc_mig, _mig_diff_out, _mig_diff_err = git("diff", "--name-only", f"{dev}...{head}")
+        introduced_migrations = sorted({
+            ln.strip() for ln in _mig_diff_out.splitlines()
+            if ln.strip().endswith(".sql") and "/backend/migrations/" in ln.strip()
+        })
+        introduced_migration_dirs = {
+            p.rsplit("/", 1)[0] for p in introduced_migrations
+        }
         ahead = _commits(git, dev, head)
         if not ahead and _is_ancestor(git, head, dev):
             return {**base, "status": "up_to_date", "exit_code": 0, "dev_sha": dev,
@@ -857,6 +902,63 @@ def task_branch(
                                     f"integrate. {detail}").strip()}
             if verbose:
                 logger.debug("task_branch.integrate: rebase succeeded; pushing to %s", dev_branch)
+            # ── Migration-number collision gate — the SECOND backstop ──
+            #
+            # Reuses `check_migration_number_collision` UNCHANGED (Leg A
+            # stays high/blocking, Leg B stays warning at pre-commit — this
+            # does NOT touch that). The worktree just rebased onto FRESH
+            # origin/dev, so Leg A's plain directory scan now sees BOTH
+            # origin/dev's migrations AND this branch's new one(s) together —
+            # a real on-disk duplicate needs no new detection logic here.
+            #
+            # WHY block here when pre-commit Leg B only warns: at pre-commit
+            # time neither of two parallel branches has "lost" yet, so
+            # blocking would punish whichever happens to commit first for
+            # something not their fault (see check_migration_number_collision's
+            # own docstring). At INTEGRATE time that ambiguity is gone — by
+            # definition, whoever calls integrate right now is the one about
+            # to land on dev, i.e. always the "merges second" party relative
+            # to any still-unmerged sibling. Blocking here has no legitimate-
+            # first-mover casualty; it just moves today's incident's discovery
+            # from "the tech-lead's eventual commit, after all the work is
+            # done" to "the moment THIS branch tries to land."
+            #
+            # Scoped to directories THIS branch's own migrations touch, so an
+            # unrelated collision elsewhere in the repo never false-blocks an
+            # integrate that has nothing to do with it.
+            if introduced_migration_dirs and migration_check_fn is not None:
+                from settings import REPO_ROOT as _REPO_ROOT  # lazy, mirrors _default_run_local
+                abs_wt_path = str((_REPO_ROOT / wt_path).resolve())
+                try:
+                    mig_findings = migration_check_fn(abs_wt_path)
+                except Exception as exc:  # never let the checker crash integrate
+                    mig_findings = []
+                    if verbose:
+                        logger.debug("task_branch.integrate: migration_check_fn raised: %s", exc)
+                relevant = [
+                    f for f in mig_findings
+                    if str(f.get("file", "")).rstrip("/") in introduced_migration_dirs
+                ]
+                if relevant:
+                    if benign_stashed:
+                        _pop_stash(runner, wt_path, verbose)
+                        benign_stashed = False
+                    return {**plan, "status": "blocked", "exit_code": 1,
+                            "introduced_migrations": introduced_migrations,
+                            "migration_collision_findings": relevant,
+                            "reason": (
+                                f"{branch} introduces a migration-number collision "
+                                f"({len(relevant)} finding(s)) — renumber before "
+                                "integrating. This is the SAME check pre-commit "
+                                "runs (check_migration_number_collision); it fires "
+                                "here too because a rebase onto fresh origin/dev "
+                                "is exactly the moment a latent (pre-commit "
+                                "warning-only) collision becomes real."),
+                            "message": (
+                                f"rebase of {branch} onto {remote}/{dev_branch} succeeded, "
+                                "but the resulting tree carries a migration-number "
+                                "collision this branch introduced. Not pushed."
+                            )}
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc == 0:
                 # Pop stash AFTER the push so the worktree ends clean (the benign
@@ -1040,7 +1142,9 @@ def register(server) -> None:
             "slug= forks a worktree on feat/<slug> off origin/dev; action="
             "'integrate' slug= rebases onto origin/dev then FF-pushes to dev "
             "(retry on the concurrent-push race; a rebase conflict is aborted + "
-            "surfaced, never auto-resolved); action='cleanup' slug= SALVAGES "
+            "surfaced, never auto-resolved; a migration file this branch "
+            "introduces is re-checked for a number collision AFTER the rebase "
+            "and BLOCKS the push if found); action='cleanup' slug= SALVAGES "
             "before deleting (learn-before-delete, KB § storage-hygiene § 2.3): "
             "records the branch+SHA recovery pointer to the tracked worktree-"
             "salvage ledger (MECHANICAL — same leg the bulk sweeps carry) + "
