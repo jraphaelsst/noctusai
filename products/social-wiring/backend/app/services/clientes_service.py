@@ -551,12 +551,19 @@ def _record_merge(
 
 
 def _repoint_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> None:
-    rows = (
-        _t(client, "negociacoes_venda")
-        .select("id,lead_id,meta_ads_lead_id,cliente_id")
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
+    # 🔴 MUST paginate. An unpaginated PostgREST select silently caps at 1 000
+    # rows and reports success — it did exactly that on the live 2026-08-13
+    # backfill, repointing 1 000 of 1 365 negociações and returning
+    # `negociacoes_orphaned: []`, i.e. "clean". The 365 left with a NULL
+    # cliente_id were invisible in the report. Note `touches` two lines below
+    # already used `_select_all`: the helper existed, in this same function,
+    # and one of the two queries simply did not use it.
+    rows = _select_all(
+        client,
+        "negociacoes_venda",
+        org_id,
+        columns="id,lead_id,meta_ads_lead_id,cliente_id",
+    )
 
     touches = _select_all(
         client, "cliente_touches", org_id, columns="origem_tabela,origem_id,cliente_id"
