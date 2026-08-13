@@ -69,9 +69,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
       - "dependencies"
       - "python"
@@ -84,9 +100,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
       - "dependencies"
       - "python"
@@ -99,9 +131,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
       - "dependencies"
       - "python"
@@ -116,9 +164,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -159,9 +223,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -202,9 +282,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -245,9 +341,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -288,9 +400,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -331,9 +459,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -374,9 +518,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -417,9 +577,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -460,9 +636,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -503,9 +695,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -546,9 +754,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps: each version is
     # declared in THREE places that must move together (seed peerDependencies, the
     # `overrides` dedupe pin, and every consumer's dependencies). A single-package PR
@@ -591,9 +815,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps — see the
     # /seed/lib/frontend block for the full rationale.
     ignore:
@@ -624,9 +864,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps — see the
     # /seed/lib/frontend block for the full rationale.
     ignore:
@@ -657,9 +913,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # FLEET-WIDE MAJORS are coordinated migrations, not bumps — see the
     # /seed/lib/frontend block for the full rationale.
     ignore:
@@ -691,9 +963,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 2
     groups:
+      # MINOR + PATCH ONLY. A bare `patterns: ["*"]` group also sweeps up every
+      # MAJOR, which is how one "bump the all group" PR ended up carrying React
+      # 18->19 + TypeScript 5->7 (#171/#173, closed 2026-08-13) and how the
+      # seed groups stayed permanently red on jsdom 25->30 / eslint 9->10 /
+      # lucide-react 0.462->1.31. A group PR is all-or-nothing: one unreviewable
+      # major makes the other twenty safe bumps unmergeable too.
+      #
+      # Restricting the group to minor+patch means majors arrive as INDIVIDUAL
+      # PRs — each independently reviewable, mergeable, or closeable — which is
+      # dependabot's default for ungrouped updates. The `ignore:` list below
+      # stays as the narrower net for the majors that are fleet-COUPLED (one
+      # version declared in 14 places), where even a single-package PR can
+      # never go green.
       all:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
       - "dependencies"
       - "github-actions"
