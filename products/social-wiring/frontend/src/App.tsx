@@ -50,6 +50,8 @@ import {
   KanbanSquare,
   Workflow,
   TrendingUp,
+  UserCheck,
+  GitMerge,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -86,6 +88,8 @@ const Leads = lazyWithReload(() => import("@/pages/leads/Leads"));
 const FunilVendas = lazyWithReload(() => import("@/pages/funil/FunilVendas"));
 const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda"));
 const PortalRoi = lazyWithReload(() => import("@/pages/PortalRoi"));
+const ClientesBoard = lazyWithReload(() => import("@/pages/clientes/ClientesBoard"));
+const RevisaoFila = lazyWithReload(() => import("@/pages/clientes/RevisaoFila"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -120,6 +124,22 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
       { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp, route: "portal_roi" },
+    ],
+  },
+  {
+    // lead-card-hub Phase 1 (PROJECT.md) — clientes is the new PERSON layer,
+    // additive alongside the leads-based group above (Phase 1 does not
+    // retire `leads`; Phases 2-5 attach the rest of the card-hub here).
+    // Each item is nav-gated by its own status_pagina row, owned by the
+    // backend slice landing the 048 migration — not seeded yet as of this
+    // slice, so both items stay hidden until that row exists.
+    key: "clientes",
+    label: "Clientes",
+    icon: UserCheck,
+    defaultOpen: true,
+    items: [
+      { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
+      { name: "Revisão de Duplicados", href: "/clientes/revisao", icon: GitMerge, route: "clientes_revisao" },
     ],
   },
   {
@@ -187,6 +207,16 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
+    key: "clientes",
+    label: "Clientes",
+    icon: UserCheck,
+    defaultOpen: true,
+    items: [
+      { name: "Clientes", href: "/clientes", icon: UserCheck },
+      { name: "Revisão de Duplicados", href: "/clientes/revisao", icon: GitMerge },
+    ],
+  },
+  {
     key: "email",
     label: "Email Marketing",
     icon: Mail,
@@ -242,6 +272,8 @@ export default createProductApp({
     { path: "/funil", component: FunilVendas },
     { path: "/processos-venda", component: ProcessosVenda },
     { path: "/portal-roi", component: PortalRoi },
+    { path: "/clientes", component: ClientesBoard },
+    { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },
