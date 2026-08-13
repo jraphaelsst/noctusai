@@ -42,18 +42,18 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 19 | 30 | 91 | 55 | 117 | 1,600 |
+| Social Wiring | 19 | 32 | 91 | 55 | 120 | 1,689 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 19 | 31 | 654 |
 | Igig | 10 | 6 | 17 | 9 | 17 | 261 |
-| **Total** | **207** | **215** | **374** | **218** | **549** | **7,177** |
+| **Total** | **207** | **217** | **374** | **218** | **552** | **7,266** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (12):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 403** declared across those schemas.
+- **Tables: 406** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
