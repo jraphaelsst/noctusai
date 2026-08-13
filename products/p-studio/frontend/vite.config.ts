@@ -1,11 +1,3 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react-swc";
-import path from "path";
+import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
 
-export default defineConfig({
-  plugins: [react()],
-  server: { port: 5176 },
-  resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
-  },
-});
+export default createViteConfig({ port: 8180, backendPort: 8020 });

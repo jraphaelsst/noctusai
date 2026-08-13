@@ -1,6 +1,16 @@
 import { supabase } from "./supabase";
 
-const BASE = import.meta.env.VITE_BACKEND_API_URL ?? "http://localhost:8020";
+// House single-container model: uvicorn serves the built SPA + API on the
+// SAME origin (via the seed `serve_spa` seam), so the default is same-origin
+// (empty string → relative fetch). `vite.config.factory.ts` `define`-rewrites
+// `VITE_BACKEND_API_URL` at build time to `window.location.origin` when
+// `VITE_SAME_ORIGIN=1` (every product Dockerfile sets it), or to the
+// registry-resolved `http://localhost:<backendPort>` for bare two-port dev.
+// Mirrors `seed/framework/frontend/src/infra.tsx`'s `createProductInfra` —
+// no hardcoded localhost fallback (a fallback surviving into the prod
+// bundle previously routed every product's FE at core's port; see
+// `KB § PATTERNS/frontend/core-url-routing.md`).
+const BASE = import.meta.env.VITE_BACKEND_API_URL ?? "";
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const {

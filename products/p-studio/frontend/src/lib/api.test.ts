@@ -18,7 +18,10 @@ vi.mock("@/lib/supabase", () => ({
 
 const { api, qs } = await import("@/lib/api");
 
-const BASE = "http://localhost:8020";
+// House single-container model: same-origin by default under vitest (no
+// `VITE_BACKEND_API_URL` env in the test env) → BASE resolves to "" and
+// requests are relative to the current origin. See `src/lib/api.ts`.
+const BASE = "";
 
 function respostaFake(
   body: unknown,
