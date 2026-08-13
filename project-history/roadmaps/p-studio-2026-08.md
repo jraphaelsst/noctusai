@@ -47,7 +47,23 @@ captured the envelope and left the entire absorption debt standing.
   preserved); frontend on the seed vite factory (same-origin API base, port
   8180); one container per `KB § PATTERNS/devops/containerization.md § 12a`
   (`FROM noctus-seed-*-base`, `serve_spa` / `SERVE_SPA_DIR`, no nginx, no
-  proxy sidecar). Suite green in the new home at the ratified baseline. → ⬜
+  proxy sidecar). Suite green in the new home at the ratified baseline.
+  → ✅ **reached 2026-08-13** (`2b75f465`, `2e4f58cc`, `dbb66c05`, `17933bdb`).
+  Ratified baseline: **330 backend** (1 skipped, 9 `ao_vivo` deselected) +
+  **116 frontend** / 6 files; `tsc` and `vite build` exit 0. The Phase-0
+  audit's "~311 + ~116" were static estimates; these are measured.
+
+  Three things this milestone turned up that the plan did not anticipate:
+  (a) moving to `create_product_app()` silently changed every HTTPException
+  envelope from `{"detail"}` to the seed's `{"error":{"code","message"}}`,
+  so every backend error in the UI would have kept failing correctly while
+  quietly ceasing to say why — caught only because slice A surfaced the
+  change instead of fixing its own tests around it; (b) `--propagate`
+  skipped p-studio in silence and exited 0, because propagate.py carried a
+  hand-maintained slug list whose stated justification (parity with two
+  shell scripts) referred to scripts that no longer exist; (c) regenerating
+  the fleet's containers corrected orbity's OCI image title, which had been
+  publishing as `noctus-seed`.
 
 - **M3: validation** — `predeploy_check p-studio` green, container healthy,
   functional probe on `localhost:8014` (`/api/health` + SPA), fleet suite
@@ -128,10 +144,12 @@ captured the envelope and left the entire absorption debt standing.
    in `app/providers/asaas.py` is the translation point if it diverges. No
    guess recorded here on purpose.
 
-2. **`/api/health` response body.** The project's success criteria require
-   `{"status":"ok","product":"p-studio"}`. The seed's standard health router may
-   return a different shape. Whichever moves, the other must be updated — the
-   criterion or the route, decided explicitly, never silently reconciled.
+2. ~~**`/api/health` response body.**~~ **Resolved 2026-08-13.** The seed's
+   router returns `{"status","version","product","startup_hook_error"}` with
+   `product` as the display name, not the slug. The **criterion moved, not the
+   route**: re-declaring a local `/api/health` would shadow the seed's in one
+   product and fork a fleet-wide contract for cosmetics. `PROJECT.md § 9`
+   updated to the real body.
 
 3. **FakeDB fidelity — N=2, one short of MUST-formalize.** Twice in the sibling
    workspace a test fake more permissive than Postgres hid a real bug: first the

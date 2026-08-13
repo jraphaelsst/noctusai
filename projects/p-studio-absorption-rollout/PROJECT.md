@@ -324,7 +324,13 @@ outros pagamentos. A tabela `provedor_eventos` **é** a fila de retry, drenada p
 
 ## 9. Success criteria
 
-- `GET https://<url-publica>/api/health` responde `{"status":"ok","product":"p-studio"}` da internet pública.
+- `GET https://<url-publica>/api/health` responde **200** da internet pública com o corpo do seed:
+  `{"status":"ok","version":"0.1.0","product":"P Studio","startup_hook_error":null}`.
+  *(Corrigido 2026-08-13. O critério original dizia `{"status":"ok","product":"p-studio"}` — a rota
+  local que o workspace declarava à mão. Ao passar para `create_product_app()` a rota passou a ser a
+  do seed, que é o contrato de toda a frota: traz `version` + `startup_hook_error`, e `product` é o
+  nome de exibição (`name=` da factory), não o slug. Movemos o critério, não a rota: re-declarar um
+  `/api/health` local sombrearia o do seed em um produto só. Quem quiser o slug tem `/_version`.)*
 - O webhook devolve **401** sem o header e **200** com ele.
 - Um pagamento feito no sandbox chega **sozinho**, sem ninguém clicar em sincronizar, e o lançamento vira `recebido` com o `pago_em` certo.
 - O envelope real está gravado como fixture com procedência, e um teste offline o reproduz.
