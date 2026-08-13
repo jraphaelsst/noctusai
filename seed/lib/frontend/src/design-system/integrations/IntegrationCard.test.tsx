@@ -10,7 +10,9 @@
  *   6. Edit-mode toggle: pencil click → form → cancel restores card
  *   7. onSave callback fires with correct patch
  *   8. onOpenModal fires on card body click
- *   9. Actions menu — onDelete, onSync, onSetDefault callbacks
+ *   9. onOpenDetails (secondary affordance)
+ *  10. No "set as default" concept — is_default is never read for a badge,
+ *      a label, or a menu action (removed 2026-08-13).
  *
  * Dual-React gap: resolved in this worktree (NOC-REMEDIATE[harness-vitest-dual-react]
  * RESOLVED 2026-05-29). Full render tests are safe.
@@ -491,5 +493,44 @@ describe("IntegrationCard onOpenDetails", () => {
     fireEvent.click(screen.getByRole("article"));
     expect(onOpenModal).toHaveBeenCalledWith(youtubeAccount);
     expect(onOpenDetails).not.toHaveBeenCalled();
+  });
+});
+
+// ── 12. No "set as default" concept ──────────────────────────────────────────
+//
+// `is_default` still exists on the BE contract (see types.ts), but the card
+// must never surface it — no star badge, no "Padrão" label, no menu action.
+// Removed 2026-08-13 per direct user request: no provider has ever had more
+// than one account per client, so the concept only produced a placeholder
+// users had to manually swap away from.
+
+describe("IntegrationCard: no set-default concept", () => {
+  it("does not render a default badge/star even when account.is_default is true", () => {
+    render(<IntegrationCard account={youtubeAccount} />);
+    expect(youtubeAccount.is_default).toBe(true); // fixture sanity check
+    expect(screen.queryByLabelText(/Conta padrão/i)).toBeNull();
+    expect(screen.queryByText(/padrão/i)).toBeNull();
+  });
+
+  it("does not render a 'Definir como padrão' menu item, even when onSetDefault-shaped handlers are irrelevant", () => {
+    render(
+      <IntegrationCard
+        account={{ ...whatsappAccount, is_default: false }}
+        onDelete={vi.fn()}
+        onSync={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Mais ações/i }));
+    expect(
+      screen.queryByRole("menuitem", { name: /Definir como padrão/i }),
+    ).toBeNull();
+    // The remaining actions are untouched by the removal.
+    expect(screen.getByRole("menuitem", { name: /Sincronizar/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Remover/i })).toBeInTheDocument();
+  });
+
+  it("IntegrationCardProps no longer accepts onSetDefault (type-level removal)", () => {
+    // @ts-expect-error — onSetDefault was removed from the public prop API.
+    render(<IntegrationCard account={youtubeAccount} onSetDefault={vi.fn()} />);
   });
 });

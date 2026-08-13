@@ -40,7 +40,6 @@ import { Input } from "@/components/ui/input";
 import {
   useIntegrationAccounts,
   useDeleteAccount,
-  useSetDefaultAccount,
   useStartProviderOAuth,
   useSubmitInstagramToken,
   type IntegrationAccount,
@@ -71,7 +70,6 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
   const oauthStart = useStartProviderOAuth(INSTAGRAM_PROVIDER);
   const submitToken = useSubmitInstagramToken();
   const deleteAccount = useDeleteAccount();
-  const setDefaultAccount = useSetDefaultAccount();
 
   // `isPending || isFetching`, never `isLoading` — v5's isLoading is FALSE
   // during a background refetch, which would drop us into the empty branch
@@ -117,18 +115,6 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
       toast.success("Conta removida");
     } catch (err: any) {
       toast.error("Erro ao remover conta", { description: err?.message });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleSetDefault(account: LibIntegrationAccount) {
-    setBusyId(account.id);
-    try {
-      await setDefaultAccount.mutateAsync(account.id);
-      toast.success("Conta padrão atualizada");
-    } catch (err: any) {
-      toast.error("Erro ao definir padrão", { description: err?.message });
     } finally {
       setBusyId(null);
     }
@@ -260,7 +246,6 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
               account={toLibAccount(acc)}
               busy={busyId === acc.id}
               onDelete={handleDelete}
-              onSetDefault={handleSetDefault}
               onOpenModal={() => setModalAccount(acc)}
             />
           ))}

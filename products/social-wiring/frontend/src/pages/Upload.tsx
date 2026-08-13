@@ -401,8 +401,13 @@ function MetadataFields({
 
 // ─── YouTube account selector ──────────────────────────────────────────
 /**
- * Renders a "YouTube account" dropdown. Defaults to the user's default account.
- * When no accounts exist, shows a CTA linking to /marcas.
+ * Renders a "YouTube account" dropdown.
+ *
+ * No "conta padrão" concept: with exactly one account (every provider's
+ * live state today — accounts are purely scoped by marca) it is
+ * auto-selected on first load. With more than one, `SelectValue`'s
+ * placeholder already forces an honest explicit choice — never labelled
+ * "padrão". When no accounts exist, shows a CTA linking to /marcas.
  */
 function YouTubeAccountPicker({
   value,
@@ -415,10 +420,11 @@ function YouTubeAccountPicker({
 }) {
   const { data: accounts = [], isLoading } = useIntegrationAccounts("youtube");
 
-  // Auto-select default on first load
-  const defaultAccount = accounts.find((a) => a.is_default) ?? accounts[0];
-  if (!value && defaultAccount) {
-    onChange(defaultAccount.id);
+  // Auto-select on first load ONLY when there is exactly one account — with
+  // more than one, the user must pick explicitly (the placeholder below).
+  const soleAccount = accounts.length === 1 ? accounts[0] : undefined;
+  if (!value && soleAccount) {
+    onChange(soleAccount.id);
   }
 
   if (isLoading) {
@@ -458,7 +464,6 @@ function YouTubeAccountPicker({
           {accounts.map((acc) => (
             <SelectItem key={acc.id} value={acc.id}>
               {acc.account_label}
-              {acc.is_default ? " (padrao)" : ""}
             </SelectItem>
           ))}
         </SelectContent>

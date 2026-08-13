@@ -85,7 +85,6 @@ import {
   useIntegrationAccounts,
   useCreateAccount,
   useUpdateAccount,
-  useSetDefaultAccount,
   useDeleteAccount,
   useSyncAccount,
   useStartYouTubeOAuth,
@@ -656,7 +655,6 @@ function ContasTab({ client }: { client: Marca }) {
   } = useIntegrationAccounts({ marcaId: client.id });
 
   const updateAcc = useUpdateAccount();
-  const setDefault = useSetDefaultAccount();
   const deleteAcc = useDeleteAccount();
   const syncAcc = useSyncAccount();
   const youtubeOAuth = useStartYouTubeOAuth();
@@ -679,12 +677,6 @@ function ContasTab({ client }: { client: Marca }) {
     } finally {
       setBusyAccId(null);
     }
-  }
-  async function handleAccSetDefault(id: string) {
-    setBusyAccId(id);
-    try { await setDefault.mutateAsync(id); toast.success("Padrão atualizado."); }
-    catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Falha."); }
-    finally { setBusyAccId(null); }
   }
   async function handleAccDelete(id: string) {
     setBusyAccId(id);
@@ -865,7 +857,6 @@ function ContasTab({ client }: { client: Marca }) {
                         busy={busyAccId === acc.id}
                         onSave={(patch) => handleAccSave(acc.id, patch as Record<string, string | null>)}
                         onDelete={() => handleAccDelete(acc.id)}
-                        onSetDefault={() => handleAccSetDefault(acc.id)}
                         onSync={() => handleAccSync(acc.id)}
                         onOpenModal={() => handleAccOpen(acc)}
                         onOpenDetails={() => setOpenIntAccount(acc)}

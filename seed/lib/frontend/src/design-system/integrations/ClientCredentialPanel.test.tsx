@@ -15,8 +15,9 @@
  *  11. Add button fires onAdd with correct clientId (client tab → clientId)
  *  12. Add button fires onAdd with null for "Sem cliente" tab
  *  13. onDelete propagated from card
- *  14. onSetDefault propagated from card
- *  15. busyAccountId disables the matching card
+ *  14. busyAccountId disables the matching card
+ *  15. No "set as default" concept — is_default is never surfaced (badge,
+ *      label, or menu action) and the prop no longer exists on the panel.
  *
  * Dual-React gap: resolved in the noctusai monorepo (NOC-REMEDIATE resolved
  * 2026-05-29). Full render tests are safe here.
@@ -310,27 +311,7 @@ describe("ClientCredentialPanel: onDelete propagated", () => {
   });
 });
 
-// ── 14. onSetDefault propagated ───────────────────────────────────────────────
-
-describe("ClientCredentialPanel: onSetDefault propagated", () => {
-  it("fires onSetDefault callback from card actions menu", () => {
-    const onSetDefault = vi.fn();
-    const nonDefault = { ...accountA1, is_default: false };
-    render(
-      <ClientCredentialPanel
-        accounts={[nonDefault]}
-        clients={[]}
-        provider="youtube"
-        onSetDefault={onSetDefault}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Mais ações/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Definir como padrão/i }));
-    expect(onSetDefault).toHaveBeenCalledWith(nonDefault);
-  });
-});
-
-// ── 15. busyAccountId disables the correct card ───────────────────────────────
+// ── 14. busyAccountId disables the correct card ───────────────────────────────
 
 describe("ClientCredentialPanel: busyAccountId", () => {
   it("card with busyAccountId shows busy overlay (disables controls)", () => {
@@ -346,5 +327,36 @@ describe("ClientCredentialPanel: busyAccountId", () => {
     // The busy overlay disables buttons — the actions button should be disabled
     const moreBtn = screen.getByRole("button", { name: /Mais ações/i });
     expect(moreBtn).toBeDisabled();
+  });
+});
+
+// ── 15. No "set as default" concept ──────────────────────────────────────────
+
+describe("ClientCredentialPanel: no set-default concept", () => {
+  it("does not render a 'Definir como padrão' menu item on any card", () => {
+    render(
+      <ClientCredentialPanel
+        accounts={[accountA1]}
+        clients={[]}
+        provider="youtube"
+        onDelete={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Mais ações/i }));
+    expect(
+      screen.queryByRole("menuitem", { name: /Definir como padrão/i }),
+    ).toBeNull();
+  });
+
+  it("ClientCredentialPanelProps no longer accepts onSetDefault (type-level removal)", () => {
+    render(
+      <ClientCredentialPanel
+        accounts={[accountA1]}
+        clients={[]}
+        provider="youtube"
+        // @ts-expect-error — onSetDefault was removed from the public prop API.
+        onSetDefault={vi.fn()}
+      />,
+    );
   });
 });

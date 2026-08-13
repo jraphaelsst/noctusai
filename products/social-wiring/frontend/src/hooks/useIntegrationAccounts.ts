@@ -189,6 +189,15 @@ export function useUpdateAccount() {
   });
 }
 
+/**
+ * 🔴 Currently UNREACHED from any UI (2026-08-13): the "conta padrão"
+ * concept was removed from every account selector/card — no provider has
+ * ever had more than one account per marca, so the concept only produced a
+ * placeholder users had to swap away from (direct user request). Kept
+ * because the backend endpoint (`PATCH .../set-default`) and the
+ * `is_default` column still exist; deleting the hook would make that pair
+ * harder to find. Do not delete without a separate decision.
+ */
 export function useSetDefaultAccount() {
   const qc = useQueryClient();
   return useMutation({

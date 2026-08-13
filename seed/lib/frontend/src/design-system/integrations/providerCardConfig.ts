@@ -152,10 +152,6 @@ const youtubeConfig: ProviderCardConfig = {
           { label: "Rótulo", value: account.account_label },
           { label: "Client ID", value: str(account.client_id) },
           {
-            label: "Padrão",
-            value: account.is_default ? "Sim" : "Não",
-          },
-          {
             label: "Último sincronismo",
             value: account.last_synced_at
               ? new Date(account.last_synced_at).toLocaleString("pt-BR")
@@ -219,10 +215,6 @@ const metaConfig: ProviderCardConfig = {
         fields: [
           { label: "Rótulo", value: account.account_label },
           { label: "Client ID", value: str(account.client_id) },
-          {
-            label: "Padrão",
-            value: account.is_default ? "Sim" : "Não",
-          },
           {
             label: "Último sincronismo",
             value: account.last_synced_at
@@ -302,7 +294,6 @@ const instagramConfig: ProviderCardConfig = {
         fields: [
           { label: "Rótulo", value: account.account_label },
           { label: "Client ID", value: str(account.client_id) },
-          { label: "Padrão", value: account.is_default ? "Sim" : "Não" },
           {
             label: "Último sincronismo",
             value: account.last_synced_at
@@ -382,10 +373,6 @@ const whatsappConfig: ProviderCardConfig = {
         title: "Conta",
         fields: [
           { label: "Rótulo", value: account.account_label },
-          {
-            label: "Padrão",
-            value: account.is_default ? "Sim" : "Não",
-          },
           {
             label: "Último sincronismo",
             value: account.last_synced_at

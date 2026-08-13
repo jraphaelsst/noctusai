@@ -19,8 +19,26 @@
  *   - providerLabel: human-readable name shown in the account dropdown
  *
  * Status badge uses `resolveStatusBadge` from @noctusai/lib for consistency.
+ *
+ * ─── No "conta padrão" concept ────────────────────────────────────────────
+ *
+ * There is no "default account" in any social-media provider — accounts are
+ * purely scoped by client (marca), and every live provider (gmail, meta,
+ * n8n, youtube) has never had more than one account per marca. The old
+ * placeholder option (value="", labelled "Conta padrão {provider}") LOOKED
+ * like a real default but its value meant "nothing selected" — with only
+ * one real account to choose from, the user always landed on that
+ * non-working placeholder and had to manually swap to the only account that
+ * could ever work. That was the entire daily friction.
+ *
+ * The fix: when there is exactly one account in scope, select it
+ * automatically — no placeholder, nothing to swap. When there are zero,
+ * keep the honest disabled "Sem contas" state. Only when there is genuinely
+ * more than one account (never observed in live data, but the component
+ * must not be incapable of it) does a placeholder reappear — labelled
+ * "Selecione uma conta", never "padrão".
  */
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Users, Youtube, ChevronDown } from "lucide-react";
 import { resolveStatusBadge } from "@noctusai/lib";
 
@@ -60,6 +78,24 @@ export function AccountSwitcher({
   const resolvedAccountId = filteredAccounts.some((a) => a.id === activeAccountId)
     ? activeAccountId
     : null;
+
+  // Exactly one account in scope ⇒ select it automatically — this is every
+  // provider's live state today. Guards on the target id so it settles in
+  // one render instead of looping.
+  useEffect(() => {
+    if (
+      filteredAccounts.length === 1 &&
+      resolvedAccountId !== filteredAccounts[0].id
+    ) {
+      setActiveAccount(provider, filteredAccounts[0].id);
+    }
+  }, [filteredAccounts, resolvedAccountId, provider, setActiveAccount]);
+
+  // The <select>'s value ahead of the effect above committing to the store —
+  // avoids a one-render flash of an empty selection for the single-account
+  // case (the effect fires after paint).
+  const selectValue =
+    resolvedAccountId ?? (filteredAccounts.length === 1 ? filteredAccounts[0].id : "");
 
   const activeAccount = accounts.find((a) => a.id === resolvedAccountId) ?? null;
 
@@ -114,21 +150,24 @@ export function AccountSwitcher({
         <div className="relative">
           <select
             id="sw-account-select"
-            value={resolvedAccountId ?? ""}
+            value={selectValue}
             onChange={(e) => setActiveAccount(provider, e.target.value || null)}
             className="h-7 appearance-none rounded-md border border-input bg-background pr-7 pl-2.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             aria-label={`Selecionar conta ${providerLabel}`}
             disabled={filteredAccounts.length === 0}
           >
-            <option value="">
-              {filteredAccounts.length === 0
-                ? `Sem contas ${providerLabel}`
-                : `Conta padrão ${providerLabel}`}
-            </option>
+            {filteredAccounts.length === 0 && (
+              <option value="">{`Sem contas ${providerLabel}`}</option>
+            )}
+            {/* Only shown when a real choice is needed — never observed in
+                live data (every provider tops out at one account per marca),
+                but the selector must not be incapable of it. */}
+            {filteredAccounts.length > 1 && (
+              <option value="">{`Selecione uma conta ${providerLabel}`}</option>
+            )}
             {filteredAccounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {(a.channel_info?.["title"] as string | undefined) || a.account_label}
-                {a.is_default ? " (padrão)" : ""}
               </option>
             ))}
           </select>

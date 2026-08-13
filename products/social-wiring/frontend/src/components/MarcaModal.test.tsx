@@ -54,7 +54,6 @@ vi.mock("@/state/useActiveAccount", () => ({
 
 const mockUseIntegrationAccounts = vi.fn();
 const mockUseUpdateAccount = vi.fn();
-const mockUseSetDefaultAccount = vi.fn();
 const mockUseDeleteAccount = vi.fn();
 const mockUseSyncAccount = vi.fn();
 const mockUseUpdateClient = vi.fn();
@@ -63,7 +62,6 @@ const mockUseDeleteClient = vi.fn();
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: mockUseIntegrationAccounts,
   useUpdateAccount: mockUseUpdateAccount,
-  useSetDefaultAccount: mockUseSetDefaultAccount,
   useDeleteAccount: mockUseDeleteAccount,
   useSyncAccount: mockUseSyncAccount,
   useCreateAccount: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
@@ -224,7 +222,6 @@ beforeEach(() => {
   mockUseUpdateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseDeleteClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseUpdateAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  mockUseSetDefaultAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: false });

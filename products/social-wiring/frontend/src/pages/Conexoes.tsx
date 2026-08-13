@@ -7,8 +7,9 @@
  *                  ConnectionDetailDialog from Conexao.tsx with QR+config panels.
  *   2. YouTube   — card listing using the IntegrationCard lib organ, grouped
  *                  by client ("Unassigned" for client_id=null).
- *                  Full card treatment: onSave / onDelete / onSetDefault / onSync
- *                  wired to real mutations. IntegrationCardModal for details.
+ *                  Full card treatment: onSave / onDelete / onSync wired to
+ *                  real mutations. IntegrationCardModal for details. No
+ *                  "conta padrão" concept — see AccountSwitcher.tsx.
  *
  * Marca management: "Gerenciar marcas" button opens MarcaManagementModal
  * inline — no new nav route. This keeps the /conexoes page as the single
@@ -57,7 +58,6 @@ import {
 import {
   useIntegrationAccounts,
   useUpdateAccount,
-  useSetDefaultAccount,
   useDeleteAccount,
   useSyncAccount,
   useAdoptLegacy,
@@ -279,7 +279,6 @@ function ClientSection({
   accounts,
   onSave,
   onDelete,
-  onSetDefault,
   onSync,
   onOpenModal,
   busyId,
@@ -288,7 +287,6 @@ function ClientSection({
   accounts: IntegrationAccount[];
   onSave: (id: string, patch: Record<string, string | null>) => void;
   onDelete: (id: string) => void;
-  onSetDefault: (id: string) => void;
   onSync: (id: string) => void;
   onOpenModal: (acc: IntegrationAccount) => void;
   busyId: string | null;
@@ -324,7 +322,6 @@ function ClientSection({
               busy={busyId === acc.id}
               onSave={(patch) => onSave(acc.id, patch as Record<string, string | null>)}
               onDelete={() => onDelete(acc.id)}
-              onSetDefault={() => onSetDefault(acc.id)}
               onSync={() => onSync(acc.id)}
               onOpenModal={() => onOpenModal(acc)}
             />
@@ -348,7 +345,6 @@ function YouTubeCardSection({
   const adopt = useAdoptLegacy("youtube");
   const oauthStart = useStartYouTubeOAuth();
   const updateAccount = useUpdateAccount();
-  const setDefaultAccount = useSetDefaultAccount();
   const deleteAccount = useDeleteAccount();
   const syncAccount = useSyncAccount();
 
@@ -425,18 +421,6 @@ function YouTubeCardSection({
       toast.success("Conta removida");
     } catch (err: any) {
       toast.error("Erro ao remover conta", { description: err?.message });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleSetDefault(id: string) {
-    setBusyId(id);
-    try {
-      await setDefaultAccount.mutateAsync(id);
-      toast.success("Conta padrão atualizada");
-    } catch (err: any) {
-      toast.error("Erro ao definir padrão", { description: err?.message });
     } finally {
       setBusyId(null);
     }
@@ -544,7 +528,6 @@ function YouTubeCardSection({
               accounts={groupAccounts}
               onSave={handleSave}
               onDelete={handleDelete}
-              onSetDefault={handleSetDefault}
               onSync={handleSync}
               onOpenModal={setModalAccount}
               busyId={busyId}

@@ -32,7 +32,6 @@ afterEach(async () => {
 
 const mockIntegrationAccounts = vi.fn();
 const mockUpdateAccount = vi.fn();
-const mockSetDefaultAccount = vi.fn();
 const mockDeleteAccount = vi.fn();
 const mockSyncAccount = vi.fn();
 const mockAdoptLegacy = vi.fn();
@@ -48,7 +47,6 @@ const mockSubmitInstagramToken = vi.fn();
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: mockIntegrationAccounts,
   useUpdateAccount: mockUpdateAccount,
-  useSetDefaultAccount: mockSetDefaultAccount,
   useDeleteAccount: mockDeleteAccount,
   useSyncAccount: mockSyncAccount,
   useAdoptLegacy: mockAdoptLegacy,
@@ -182,7 +180,6 @@ beforeEach(() => {
   });
   mockClients.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUpdateAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  mockSetDefaultAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockSyncAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockAdoptLegacy.mockReturnValue({ mutate: vi.fn(), isPending: false });

@@ -20,14 +20,12 @@ const mockAccounts = vi.fn();
 const mockStartProviderOAuth = vi.fn();
 const mockSubmitToken = vi.fn();
 const mockDeleteAccount = vi.fn();
-const mockSetDefaultAccount = vi.fn();
 
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: mockAccounts,
   useStartProviderOAuth: mockStartProviderOAuth,
   useSubmitInstagramToken: mockSubmitToken,
   useDeleteAccount: mockDeleteAccount,
-  useSetDefaultAccount: mockSetDefaultAccount,
 }));
 
 vi.mock("@noctusai/lib", () => ({
@@ -88,10 +86,6 @@ beforeEach(() => {
   });
   mockSubmitToken.mockReturnValue({ mutate: submitMutate, isPending: false });
   mockDeleteAccount.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  mockSetDefaultAccount.mockReturnValue({
-    mutateAsync: vi.fn(),
-    isPending: false,
-  });
 });
 
 async function render(marcas: any[] = []) {

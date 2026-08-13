@@ -5,7 +5,8 @@
  * Driven by an array of `IntegrationAccount` (all belonging to one provider)
  * and a `Client[]` list for the selector. The panel lets the user:
  *   - Switch the active client filter (All / specific client).
- *   - View, add, edit, set-default, sync, and delete credentials per client.
+ *   - View, add, edit, sync, and delete credentials per client. There is no
+ *     "set as default" action — see `IntegrationCard.tsx` for why.
  *
  * All data-fetching and mutations live in the consuming product; the panel
  * is a purely presentational + interaction shell (same contract as
@@ -28,7 +29,6 @@
  *   onAdd           Called when user triggers "Add account" (client_id | null).
  *   onSave          Called with (account, patch) when inline-edit is saved.
  *   onDelete        Called with (account) when user confirms delete.
- *   onSetDefault    Called with (account) to set as default.
  *   onSync          Called with (account) to trigger sync/re-validate.
  *   onOpenModal     Called with (account) to open the detail modal.
  *
@@ -157,7 +157,6 @@ interface AccountGridProps {
   busyAccountId: string | null;
   onSave?: (account: IntegrationAccount, patch: IntegrationAccountPatch) => void;
   onDelete?: (account: IntegrationAccount) => void;
-  onSetDefault?: (account: IntegrationAccount) => void;
   onSync?: (account: IntegrationAccount) => void;
   onOpenModal?: (account: IntegrationAccount) => void;
 }
@@ -168,7 +167,6 @@ function AccountGrid({
   busyAccountId,
   onSave,
   onDelete,
-  onSetDefault,
   onSync,
   onOpenModal,
 }: AccountGridProps) {
@@ -182,7 +180,6 @@ function AccountGrid({
           busy={busyAccountId === acc.id}
           onSave={onSave ? (patch) => onSave(acc, patch) : undefined}
           onDelete={onDelete}
-          onSetDefault={onSetDefault}
           onSync={onSync}
           onOpenModal={onOpenModal}
         />
@@ -221,8 +218,6 @@ export interface ClientCredentialPanelProps {
   onSave?: (account: IntegrationAccount, patch: IntegrationAccountPatch) => void;
   /** Called when the user triggers delete. */
   onDelete?: (account: IntegrationAccount) => void;
-  /** Called when the user triggers set-default. */
-  onSetDefault?: (account: IntegrationAccount) => void;
   /** Called when the user triggers sync/re-validate. */
   onSync?: (account: IntegrationAccount) => void;
   /** Called when the user opens the detail modal. */
@@ -242,7 +237,6 @@ export function ClientCredentialPanel({
   onAdd,
   onSave,
   onDelete,
-  onSetDefault,
   onSync,
   onOpenModal,
   className,
@@ -390,7 +384,6 @@ export function ClientCredentialPanel({
           busyAccountId={busyAccountId}
           onSave={onSave}
           onDelete={onDelete}
-          onSetDefault={onSetDefault}
           onSync={onSync}
           onOpenModal={onOpenModal}
         />

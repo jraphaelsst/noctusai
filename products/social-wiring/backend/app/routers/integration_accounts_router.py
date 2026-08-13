@@ -7,6 +7,13 @@ Endpoints:
     POST   /api/integrations/accounts          → create (manual entry)
     PATCH  /api/integrations/accounts/{id}     → update label/metadata/is_default
     PATCH  /api/integrations/accounts/{id}/set-default → set as default for its provider
+        🔴 Kept but currently UNREACHED from any product FE (2026-08-13): the
+        "conta padrão" UI concept was removed from every account
+        selector/card (no provider has ever had >1 account per marca, so it
+        only produced a placeholder users had to swap away from). The
+        `is_default` column + this endpoint stay — do not delete without a
+        separate decision; see `useSetDefaultAccount` in
+        `products/social-wiring/frontend/src/hooks/useIntegrationAccounts.ts`.
     DELETE /api/integrations/accounts/{id}     → delete
 
     POST   /api/integrations/accounts/youtube/oauth/start       → {auth_url, state}

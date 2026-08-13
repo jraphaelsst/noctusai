@@ -23,8 +23,17 @@
  *   - Pencil icon → toggles inline-edit mode (renders editableFields as inputs).
  *   - Save → calls `onSave(patch)` then exits edit mode.
  *   - Cancel → exits edit mode, discards draft.
- *   - Actions menu: set-default · sync/re-validate · delete.
+ *   - Actions menu: sync/re-validate · delete.
  *   - `busy` prop → disables all controls + shows spinner overlay.
+ *
+ * There is no "set as default" concept here. `IntegrationAccount.is_default`
+ * still exists on the BE contract, but the card never reads it — no badge, no
+ * label, no menu action. Every live provider (gmail, meta, n8n, youtube) has
+ * never had more than one account per client, so a UI concept for picking
+ * "the default one" never had a real second option to distinguish it from;
+ * it only produced a placeholder the user had to swap away from to see real
+ * data. `PATCH .../set-default` still exists server-side (now unreached from
+ * this organ) — see `useSetDefaultAccount` in the social-wiring product.
  *
  * The organ MUST NOT import from any `products/` path.
  */
@@ -33,7 +42,6 @@ import {
   Pencil,
   X,
   Check,
-  Star,
   Trash2,
   RefreshCw,
   MoreHorizontal,
@@ -122,7 +130,6 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
 interface ActionsMenuProps {
   account: IntegrationAccount;
   busy: boolean;
-  onSetDefault?: (account: IntegrationAccount) => void;
   onSync?: (account: IntegrationAccount) => void;
   onDelete?: (account: IntegrationAccount) => void;
 }
@@ -130,7 +137,6 @@ interface ActionsMenuProps {
 function ActionsMenu({
   account,
   busy,
-  onSetDefault,
   onSync,
   onDelete,
 }: ActionsMenuProps) {
@@ -171,21 +177,6 @@ function ActionsMenu({
           role="menu"
           className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-md border border-border bg-background py-1 shadow-md"
         >
-          {!account.is_default && onSetDefault && (
-            <button
-              role="menuitem"
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                onSetDefault(account);
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
-            >
-              <Star className="h-3.5 w-3.5" />
-              Definir como padrão
-            </button>
-          )}
           {onSync && (
             <button
               role="menuitem"
@@ -351,8 +342,6 @@ export interface IntegrationCardProps {
   onSave?: (patch: IntegrationAccountPatch) => void;
   /** Called when the user triggers the delete action. */
   onDelete?: (account: IntegrationAccount) => void;
-  /** Called when the user triggers the set-default action. */
-  onSetDefault?: (account: IntegrationAccount) => void;
   /** Called when the user triggers the sync/re-validate action. */
   onSync?: (account: IntegrationAccount) => void;
   /** Optional extra className applied to the wrapper. */
@@ -369,7 +358,6 @@ export function IntegrationCard({
   onOpenDetails,
   onSave,
   onDelete,
-  onSetDefault,
   onSync,
   className = "",
 }: IntegrationCardProps) {
@@ -475,12 +463,6 @@ export function IntegrationCard({
               <p className="truncate text-sm font-semibold text-foreground">
                 {primaryLabel}
               </p>
-              {account.is_default && (
-                <Star
-                  className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400"
-                  aria-label="Conta padrão"
-                />
-              )}
             </div>
             {config && (
               <p className="text-xs text-muted-foreground">{config.displayName}</p>
@@ -530,7 +512,6 @@ export function IntegrationCard({
           <ActionsMenu
             account={account}
             busy={busy}
-            onSetDefault={onSetDefault}
             onSync={onSync}
             onDelete={onDelete}
           />
