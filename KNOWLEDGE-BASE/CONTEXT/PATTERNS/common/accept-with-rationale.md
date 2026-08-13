@@ -684,6 +684,17 @@ state change, not a removal.
 
 - The user initially asked for one squashed commit (easy revert), then revised mid-build to **commit-per-phase** (more auditable). Per-phase won; the parked `feat/harness-agents-skills` checkpoint + a `git revert` of the phase range preserves reversibility without losing the audit trail. Recorded so the deviation from the single-commit ask is non-silent.
 
+## Entries from `p-studio-absorption-rollout` (filed 2026-08-13)
+
+### p-studio's `src/components/ui.tsx` re-implements 22 canonical organs — [A], bounded to the absorption
+
+- **Divergence:** `products/p-studio/frontend/src/components/ui.tsx` hand-rolls 22 UI primitives (Button, Input, Textarea, Select, Label, Field, Checkbox, Card, StatCard, Badge, StatusBadge, Modal, Spinner, EmptyState, ErroBox, PageHeader, Table, Th, Td, THead, TBody, BotaoExcluir). Every one shadows a canonical `@noctusai/lib` organ, so `check_canonical_organ_consumption` fires the moment p-studio is scanned. The single-file shape was itself a deliberate reaction in the originating workspace to a Lovable prototype that installed 47 shadcn components and used five.
+- **Why accept (not formalize) TODAY:** the product arrived from outside noc and the absorption's job is to port + containerize it. Folding the organ swap into the same change would (a) balloon a reviewable diff into an unreviewable one, and (b) put a large FE refactor *in front of* the container gate, which is what unblocks the public URL the whole project exists for. `KB § GUIDES/absorb-seed-workspace.md` Gate 9 is explicit that containerization is the gate, not a final polish.
+- **Not a permanent carve-out.** This is the epoch-delta the absorption guide predicts — the measurable distance the platform moved while this product grew elsewhere — and epoch delta is *paid*, not amnestied.
+- **Bound / revisit trigger:** roadmap `project-history/roadmaps/p-studio-2026-08.md` **T4** — the swap starts once M4 (prod promote) is ✅ and the product has one week of prod uptime with no rollback. If p-studio ships a *new* screen before T4 fires, that screen consumes canonical organs directly; this entry never licenses growing the local set.
+- **Explicitly NOT covered by this entry:** weakening, silencing, or scoping-out `check_canonical_organ_consumption` itself. The keeper stays as-is and is expected to fire; this entry is the rationale a reader finds when it does.
+- **Recorded by:** tech-lead, `p-studio-absorption-rollout` slice B close-out (2026-08-13). Surfaced by the dispatched frontend engineer, decided by the tech-lead — the engineer correctly declined to fix it in-flight.
+
 ## Cross-references
 
 - **The triage rule:** `KB § 01-PHILOSOPHY.md § Triage at decision time`.
