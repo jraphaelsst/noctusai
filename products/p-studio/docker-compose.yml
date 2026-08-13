@@ -1,6 +1,6 @@
-# orbity compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
+# p-studio compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
-# Project: containerization-single-container. This file at products/orbity/
+# Project: containerization-single-container. This file at products/p-studio/
 # is the reference; every other product's docker-compose.yml is generated
 # from it by scripts/propagate-composes.sh (slug + port substitution +
 # per-product VITE args). When the pattern evolves, edit THIS file and
@@ -27,10 +27,10 @@
 # first (start.sh orders this in Phase 5).
 
 services:
-  orbity:
+  p-studio:
     build:
       context: ../..
-      dockerfile: products/orbity/backend/Dockerfile
+      dockerfile: products/p-studio/backend/Dockerfile
       # ONE container, ONE shape (project: containerization-single-env).
       # The local fleet builds the `runtime-watch` target: same single
       # container, plus node + the watch entrypoint (vite build --watch +
@@ -45,15 +45,15 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_CORE_URL: ${VITE_CORE_URL:-}
-    container_name: dev-noctus-orbity
-    image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-dev}
+    container_name: dev-noctus-p-studio
+    image: ghcr.io/jraphaelsst/noctus-p-studio:${NOCTUS_IMAGE_TAG:-dev}
     env_file:
       - ../../.env
     # Source bind-mounted → edits reflect with no rebuild: vite
     # build --watch refreshes dist/, uvicorn --reload restarts on .py.
     volumes:
-      - ./backend:/app/products/orbity/backend
-      - ./frontend:/app/products/orbity/frontend
+      - ./backend:/app/products/p-studio/backend
+      - ./frontend:/app/products/p-studio/frontend
       # Anonymous volume — MUST come after the ./frontend bind-mount. The
       # host frontend/ dir has darwin-arm64 node_modules (or none); without
       # this it shadows the image's linux node_modules → the watch
@@ -61,7 +61,7 @@ services:
       # '@rollup/rollup-linux-*'". Docker seeds an anonymous volume from
       # the image layer on first create, so the container keeps its own
       # platform-correct node_modules while source stays live-editable.
-      - /app/products/orbity/frontend/node_modules
+      - /app/products/p-studio/frontend/node_modules
       - ../../seed:/app/seed
       # Same shadow problem as above, for the SEED framework/lib FE
       # node_modules: the ../../seed bind-mount (node_modules-less in any
@@ -73,7 +73,7 @@ services:
       - /app/seed/framework/frontend/node_modules
       - /app/seed/lib/frontend/node_modules
     ports:
-      - "8010:8010"
+      - "8014:8014"
     networks:
       - noctus-net
     # Restart policy is a dev↔prod-divergent knob (deploy-config-contract).
@@ -83,28 +83,28 @@ services:
     # containers (the 2026-05-29 stale-container drift). KB § PATTERNS/devops/deploy-config-contract.md.
     restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8010/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8014/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
 
-  orbity-tunnel:
+  p-studio-tunnel:
     # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at
     # this product's single container. `--protocol http2` forces TCP from
     # the start (QUIC/UDP dies behind NATs in ~5min and cannot
     # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
     image: cloudflare/cloudflared:latest
-    container_name: dev-noctus-orbity-tunnel
-    command: tunnel --no-autoupdate --protocol http2 --url http://orbity:8010
+    container_name: dev-noctus-p-studio-tunnel
+    command: tunnel --no-autoupdate --protocol http2 --url http://p-studio:8014
     depends_on:
-      orbity:
+      p-studio:
         condition: service_healthy
     networks:
       - noctus-net
     restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
     profiles:
-      - tunnel-orbity
+      - tunnel-p-studio
       - tunnel-all
 
 networks:
