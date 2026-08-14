@@ -65,11 +65,33 @@ captured the envelope and left the entire absorption debt standing.
   the fleet's containers corrected orbity's OCI image title, which had been
   publishing as `noctus-seed`.
 
-- **M3: validation** — `predeploy_check p-studio` green, container healthy,
-  functional probe on `localhost:8014` (`/api/health` + SPA), fleet suite
-  still green, `check_product_container_shape` clean for the slug. This is the
-  `KB § GUIDES/production-deploy.md § 0.1` gate that `dev_validated: true`
-  attests to. → ⬜
+- **M3: validation** — the `KB § GUIDES/production-deploy.md § 0.1` gate that
+  `dev_validated: true` attests to. → 🟡 **partial, 2026-08-14 — one leg
+  blocked on the host, not on the code.**
+
+  Green:
+  - `predeploy_check p-studio` → **ready, exit 0, 7/7** (framework_deps ·
+    frontend_build · backend_tests · deploy_local_gitignored ·
+    prod_config_parity · required_prod_env_present · cors_roster_complete).
+  - p-studio backend **330 passed** / 1 skipped / 9 deselected; frontend
+    **116** / 6 files; `tsc` + `vite build` exit 0.
+  - `--propagate both --check` → **in-sync** across the whole fleet, zero
+    stale — the derive change did not disturb the other 11 products.
+  - `test_propagate.py` 10 passed · `test_container_shape.py` 11 passed.
+
+  Blocked:
+  - **Container build + healthy + functional probe on `localhost:8014`.**
+    Docker Desktop is not running on the host (`docker info` cannot reach
+    the daemon socket). This is the leg that distinguishes "tests green"
+    from "the image actually serves", per
+    `KB § PATTERNS/devops/containerization.md § 12b` — it cannot be
+    substituted with more test runs, and claiming M3 without it would make
+    `dev_validated: true` a false attestation.
+
+  Not blocked, but the user's:
+  - Migration `004` (url_base → the house port) is **written and committed
+    but NOT applied** — the live-database write was refused by the
+    permission layer. One idempotent UPDATE.
 
 - **M4: prod promote** — `p-studio.noctusai.com`. Registers the three
   prod-exposure surfaces (`deploy/fleet/docker-compose.prod.yml` ·
