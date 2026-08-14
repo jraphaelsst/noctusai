@@ -239,16 +239,16 @@ outros pagamentos. A tabela `provedor_eventos` **é** a fila de retry, drenada p
 
 ### Fase 1 — Absorção para `products/p-studio/`
 
-- [ ] Rodar a skill `noc-absorb-product` (é o caminho canônico — não inventar um).
-- [ ] Portar backend + frontend para o modelo de um container (`serve_spa`, imagem base do seed).
-- [ ] `README.md` + `MASTER-PROMPT.md` no destino (obrigatórios desde o dia um).
-- [ ] Linha de roster em `KNOWLEDGE-BASE/02-LANDSCAPE.md` (o hook bloqueia sem ela).
-- [ ] Registrar no catálogo de produtos com `ativo` + `deploy_scope`.
-- [ ] Porta da casa atribuída (ver `noctus.dev.available_ports`).
-- [ ] Suíte verde no novo lar: mesmo baseline da Fase 0, mais nada quebrado na frota.
-- [ ] Decidir o destino de `cadu/p-studio/` (arquivar? apontar para o novo lar?) — não deixar duas cópias vivas.
+- [x] Rodar a skill `noc-absorb-product` (é o caminho canônico — não inventar um).
+- [x] Portar backend + frontend para o modelo de um container (`serve_spa`, imagem base do seed) — `create_product_app()` no backend, fábrica vite do seed no frontend, Dockerfile+compose **gerados** via `--propagate` (porta 8014, túnel profile-gated).
+- [x] `README.md` + `MASTER-PROMPT.md` no destino (vieram na cópia do Gate 1).
+- [x] Linha de roster em `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`.
+- [x] Registrar no catálogo com `ativo` + `deploy_scope` — **já estava**: `ativo=true, deploy_scope='live'` desde que a 002 rodou. Nenhuma escrita foi necessária.
+- [x] Porta da casa atribuída — 8014/8180 via `noctus.dev.reserve_port_range`; registrada em `start.sh` e derivada dali pelo `propagate`.
+- [x] Suíte verde no novo lar: **330 backend** + **116 frontend**, `tsc` e `vite build` limpos; `--propagate both --check` in-sync na frota inteira.
+- [ ] Decidir o destino de `cadu/p-studio/` — **decisão tomada, execução é do usuário**: arquivar deixando ponteiro para `products/p-studio/`. Gate 9 é explícito: nós entregamos o parecer "seguro apagar", nunca apagamos o workspace de origem.
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+**Improvements:** o `predeploy_check` pegou 7 deps de framework ausentes (auto-corrigidas); o `--propagate` estava **pulando o produto em silêncio** e saindo 0 (lista de slugs mantida à mão — agora derivada de `start.sh`); a regeneração da frota corrigiu o rótulo OCI do orbity, que publicava como `noctus-seed`. Duas suspeitas da Fase 0 foram **derrubadas** ao conferir o banco vivo em vez do arquivo — ver §11.
 
 ### Fase 2 — Deploy e URL pública 🅿️ (bloqueada em §7-Q1)
 
