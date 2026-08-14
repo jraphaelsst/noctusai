@@ -611,3 +611,44 @@ class TestPostgrestRowCap:
         )
         rows = inner.table("negociacoes_venda").select("*").execute().data
         assert all(r["cliente_id"] is not None for r in rows)
+
+
+# ── /clientes/revisao took production down on 2026-08-14 ──────────────────
+#
+# `list_review_groups` did two unbounded things at once:
+#   1. `select("*")` over `clientes` — capped at 1 000, silently dropping 177
+#      of the 1 177 identidade_incerta rows;
+#   2. `.in_("cliente_id", ids)` with ~1 000 UUIDs — PostgREST puts `in_`
+#      values in the URL QUERY STRING, so that is a ~40 KB request line. The
+#      server answered a bare 400 ("JSON could not be generated") and the
+#      review queue — the whole point of Phase 1 — showed an error page.
+#
+# These pin the batching invariant directly, because the shared mock has no
+# URL-length limit and therefore cannot reproduce the 400 on its own.
+
+class TestReviewGroupsBatching:
+    def test_batched_splits_at_the_configured_size(self):
+        items = list(range(450))
+        batches = list(svc._batched(items, svc._IN_FILTER_BATCH))
+        assert [len(b) for b in batches] == [200, 200, 50]
+        assert [x for b in batches for x in b] == items, "batching must not lose or reorder ids"
+
+    def test_in_filter_batch_keeps_the_request_line_under_8kb(self):
+        """A UUID is 36 chars; PostgREST adds quoting/commas (~38 each) and
+        the whole list rides in the query string. 8 KB is the common server
+        request-line limit."""
+        worst_case = svc._IN_FILTER_BATCH * 38
+        assert worst_case < 8000, (
+            f"a batch of {svc._IN_FILTER_BATCH} ids is ~{worst_case} bytes of "
+            "query string — that is the 400 that took /clientes/revisao down"
+        )
+
+    def test_no_unbounded_in_filter_survives_in_the_review_path(self):
+        """Structural guard: the id list must reach `in_` through `_batched`.
+        A future edit that drops the loop reintroduces the outage."""
+        import inspect
+        src = inspect.getsource(svc.list_review_groups)
+        assert "_batched(" in src, "list_review_groups must batch its in_ filter"
+        assert ".in_(\"cliente_id\", ids)" not in src, (
+            "the unbounded in_(ids) call is back — this is the 2026-08-14 outage"
+        )
