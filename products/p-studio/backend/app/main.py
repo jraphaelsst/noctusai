@@ -35,7 +35,7 @@ app = create_product_app(
     schema="p_studio",
     settings=settings,
     version="0.1.0",
-    standard_routers=["health"],
+    standard_routers=["health", "notificacoes", "team", "status_paginas"],
     routers=[
         me_router,
         dashboard_router,

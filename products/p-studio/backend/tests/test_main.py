@@ -112,12 +112,52 @@ ISENTAS = {
     # sem token, e `/_version` expõe só o SHA/versão do build — nenhum revela
     # dado da organização.
     ("GET", "/_health"), ("GET", "/_ready"), ("GET", "/_version"),
+    # `noctusai_seed.routers` — fluxo de aceite de convite, mesma categoria do
+    # webhook: quem chama ainda não tem sessão (é o link do e-mail de convite,
+    # não o navegador logado). `validate` recebe o token como query param;
+    # `accept` aceita `authorization` OPCIONAL (o caminho anônimo cria a
+    # identidade a partir de nome+senha do corpo — ver docstring de
+    # `accept_invite` em noctusai_seed/routers.py). Isenção de JWT não é
+    # isenção de autenticação: o token do convite É a credencial.
+    ("GET", "/api/team/accept/validate"), ("POST", "/api/team/accept"),
+}
+
+# Routers padrão que o P Studio passou a montar via
+# `standard_routers=["health", "notificacoes", "team", "status_paginas"]`
+# (traz o produto ao mínimo da casa — ver `products/igig/backend/app/main.py`).
+# Essas rotas checam autenticação manualmente dentro do handler
+# (`user, _ = await deps.get_current_user(authorization)` sobre um parâmetro
+# `Header(None)`), não via FastAPI `Depends(...)` — então não aparecem na
+# árvore de dependências que `_depende_de_autenticacao` caminha, mesmo sendo
+# genuinamente protegidas. Seu comportamento 401-sem-token é o exato objeto
+# de `tests/integration/test_e2e_flows.py::TestAuthBoundary` (subclasse de
+# `noctusai_lib.testing.AuthBoundarySuite`) — este guard não precisa
+# reprovar o que aquela suíte já prova; ele confia no MÓDULO (conjunto
+# fechado: só os dois arquivos do framework), não no nome da rota, então uma
+# rota nova do framework continua coberta automaticamente, e uma rota nova
+# do P Studio que esqueça `Depends(get_current_user)` continua caindo aqui.
+_MODULOS_FRAMEWORK_AUTENTICADOS = {
+    "noctusai_seed.routers",
+    "noctusai_seed.status_pagina_router",
 }
 
 
 def _depende_de_autenticacao(rota) -> bool:
-    """Procura `get_current_user` na árvore de dependências da rota."""
+    """Procura `get_current_user` na árvore de dependências da rota.
+
+    Duas formas de "autenticado" convivem desde a absorção dos
+    `standard_routers` do framework: `Depends(get_current_user)` do P Studio
+    (achado percorrendo a árvore) e a checagem manual do framework sobre
+    `Header(None)` (achada pelo módulo do endpoint — ver
+    `_MODULOS_FRAMEWORK_AUTENTICADOS` acima). Rotas do framework que NÃO
+    exigem token (`/api/health`, `/api/team/accept*`) já saíram do caminho
+    antes de chegar aqui, via `ISENTAS`.
+    """
     from app.dependencies import get_current_user
+
+    endpoint = getattr(rota, "endpoint", None)
+    if getattr(endpoint, "__module__", None) in _MODULOS_FRAMEWORK_AUTENTICADOS:
+        return True
 
     dependente = getattr(rota, "dependant", None)
     if dependente is None:
