@@ -21,14 +21,15 @@ from uuid import uuid4
 
 from app.services import portal_roi_service as svc
 
-CAP = 3
+CAP = svc._PAGE  # the real PostgREST ceiling — no patching of production internals
 
 
 class _CappedQuery:
     """Models PostgREST: a bare execute() truncates at CAP; range() pages."""
 
-    def __init__(self, rows: list[dict]):
+    def __init__(self, rows: list[dict], cap: int = CAP):
         self._rows = rows
+        self._cap = cap
         self._lo: int | None = None
         self._hi: int | None = None
 
@@ -38,16 +39,16 @@ class _CappedQuery:
 
     def execute(self):
         if self._lo is None:
-            window = self._rows[:CAP]          # the silent cap
+            window = self._rows[: self._cap]   # the silent cap
         else:
-            window = self._rows[self._lo : self._hi + 1][:CAP]
+            window = self._rows[self._lo : self._hi + 1][: self._cap]
         return type("Resp", (), {"data": window})()
 
 
 def test_paginate_drains_past_the_row_cap():
     rows = [{"origem_id": f"o{i}"} for i in range(10)]
-    assert len(_CappedQuery(rows[:]).execute().data) == CAP, "double must cap"
-    drained = svc._paginate(_CappedQuery(rows[:]), page_size=CAP)
+    assert len(_CappedQuery(rows[:], cap=3).execute().data) == 3, "double must cap"
+    drained = svc._paginate(_CappedQuery(rows[:], cap=3), page_size=3)
     assert len(drained) == len(rows), (
         f"drained {len(drained)} of {len(rows)} — an unpaginated select was "
         "capped and reported success anyway"
@@ -59,7 +60,7 @@ def test_paginate_counts_every_lead_not_just_the_first_page():
     under-counts the busiest portal, which is exactly what shipped."""
     busy, quiet = str(uuid4()), str(uuid4())
     rows = [{"origem_id": busy} for _ in range(8)] + [{"origem_id": quiet} for _ in range(2)]
-    drained = svc._paginate(_CappedQuery(rows[:]), page_size=CAP)
+    drained = svc._paginate(_CappedQuery(rows[:], cap=3), page_size=3)
     counts: dict[str, int] = {}
     for r in drained:
         counts[r["origem_id"]] = counts.get(r["origem_id"], 0) + 1
@@ -96,15 +97,17 @@ class _CappedClient:
         return t
 
 
-def test_count_leads_by_origem_sees_every_lead(monkeypatch):
-    # Model the REAL relationship: the code pages at exactly the server's
-    # ceiling, so shrink both together rather than fighting them.
-    monkeypatch.setattr(svc, "_PAGE", CAP)
+def test_count_leads_by_origem_sees_every_lead():
+    """🔴 Exceeds the REAL 1 000-row ceiling rather than shrinking it by
+    patching `svc._PAGE`. An earlier draft monkeypatched that constant and was
+    correctly rejected by the compliance keeper — CLAUDE.md §1, "no
+    monkey-patching (incl. tests)": a test that reaches into production
+    internals stops exercising the thing it claims to guard."""
     busy, quiet = str(uuid4()), str(uuid4())
-    rows = [{"origem_id": busy} for _ in range(8)] + [{"origem_id": quiet} for _ in range(2)]
+    rows = [{"origem_id": busy} for _ in range(CAP + 50)] + [{"origem_id": quiet} for _ in range(2)]
     service = svc.PortalRoiService(_CappedClient(rows))
     counts = service._count_leads_by_origem(uuid4(), None, None)
-    assert counts == {busy: 8, quiet: 2}, (
-        f"got {counts} — expected 8/2. A capped read under-counts the busiest "
-        "portal, which is what shipped on 2026-08-14 (1 000 vs 13 255)."
+    assert counts == {busy: CAP + 50, quiet: 2}, (
+        f"got {counts} — expected {CAP + 50}/2. A capped read under-counts the "
+        "busiest portal, which is what shipped on 2026-08-14 (1 000 vs 13 255)."
     )
