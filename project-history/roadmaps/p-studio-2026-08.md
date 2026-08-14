@@ -178,11 +178,39 @@ captured the envelope and left the entire absorption debt standing.
 
 Recorded here because they are live, not hypothetical:
 
-- **Migration 002 seeds `admin@pstudio.local` / `senha123`** into
-  `public.noctus_users`, and writes `url_base = 'http://localhost:5176'` into
-  `public.products` — a localhost URL in a shared platform table. Both are
-  already applied. Neither may survive into production; both need forward
-  migrations before M4.
+- ~~**Migration 002 seeds `admin@pstudio.local` / `senha123`**~~ — **checked
+  against the live database 2026-08-14, and it is NOT live.**
+  `SELECT encrypted_password = crypt('senha123', encrypted_password)` returns
+  **false** for that user. The migration FILE does hash `senha123`
+  (`002:90`), so a re-run would introduce the weak credential — but what
+  actually ran set something else, exactly as `PROJECT.md § 5` claimed. Two
+  corrections fall out: (a) the Phase-0 read that called this a live
+  vulnerability was wrong — it read the file and inferred the database;
+  (b) **the file is not a faithful record of what ran**, which is the more
+  durable hazard. Do not re-run 002 against this project, and do not trust
+  it as a description of live state. Rotating the password remains the
+  user's, per `PROJECT.md § 4`.
+
+- ~~`url_base = 'http://localhost:5176'` is a localhost URL in a shared
+  platform table~~ — **also mischaracterized.** Every one of the 13 catalog
+  rows carries `http://localhost:<port>`, including the four products
+  serving production today (`erp-imobiliario`, `igig`, `orbity`,
+  `social-wiring`). `url_base` is therefore **not** the public-routing
+  field; public routing is `PRODUCT_URL_*` in `.env`
+  (`https://{slug}.noctusai.com`, managed by
+  `noctus.dev.ensure_product_url_roster`). p-studio's row is anomalous only
+  in carrying its **old Vite port** (5176) where the fleet convention is the
+  **backend** port. Forward migration `004` aligns it to 8014. This was a
+  convention drift, not a production leak.
+
+  > Recorded rather than quietly amended, because both errors share one
+  > cause: reading a file and reporting it as the state of the world.
+  > `KB § 01-PHILOSOPHY.md` — the codebase is the source of truth for
+  > *solutions*; for *live state*, the live system is.
+
+- **`p-studio` was ALREADY `ativo=true, deploy_scope='live'`** in the catalog
+  before this project touched anything (set when 002 ran). §7-Q3's decision
+  matched what was already there; no catalog write was needed for it.
 - **`cadu/p-studio/backend/.env` holds a PRODUCTION Asaas key** (`$aact_prod_…`,
   issues real boletos with real fees) plus a `SUPABASE_SERVICE_ROLE_KEY`. It was
   excluded from the absorption copy. Production env vars are provisioned through
