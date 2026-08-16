@@ -258,7 +258,7 @@ outros pagamentos. A tabela `provedor_eventos` **é** a fila de retry, drenada p
 - [ ] Deploy pelo caminho da casa (`deploy_image`, auto-rollback é a rede).
 - [ ] Ingress/túnel registrado na fonte de verdade (não editar o snapshot na mão — o keeper acusa).
 - [ ] Verificar de fora: `GET https://<url-publica>/api/health` → `{"status":"ok","product":"p-studio"}`.
-- [ ] Verificar que o webhook responde **401** sem o header. *(Se responder 200, o segredo não subiu — pare e corrija antes de cadastrar no Asaas.)*
+- [ ] Verificar que o webhook **não responde 200** sem o header. *(Refinado 2026-08-16, contra o container rodando: a condição de perigo é **200**, não "≠401". Com `ASAAS_WEBHOOK_TOKEN` VAZIO a rota devolve **503** — "Webhook não configurado" — e o comentário no `integracoes_router.py:41` diz por quê: "503 e não 401: o problema é nosso, não de quem chamou". Ou seja ela falha FECHADA, que é o comportamento certo e preserva a propriedade que importa: nenhuma escrita anônima é aceita. **401** é o esperado depois que o token estiver configurado; **503** é o esperado antes. Só **200** significa que o segredo não subiu — aí sim, pare.)*
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 

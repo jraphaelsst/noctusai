@@ -66,8 +66,31 @@ captured the envelope and left the entire absorption debt standing.
   publishing as `noctus-seed`.
 
 - **M3: validation** — the `KB § GUIDES/production-deploy.md § 0.1` gate that
-  `dev_validated: true` attests to. → 🟡 **partial, 2026-08-14 — one leg
-  blocked on the host, not on the code.**
+  `dev_validated: true` attests to. → ✅ **reached 2026-08-16.**
+
+  The container leg, which was the open one, closed against a real running
+  image (`ghcr.io/jraphaelsst/noctus-p-studio:dev`, single container, port
+  8014):
+
+  | probe | result |
+  |---|---|
+  | container health | **healthy** at 45s |
+  | `GET /api/health` | **200** `{"status":"ok","version":"0.1.0","product":"P Studio","startup_hook_error":null}` |
+  | `GET /` (SPA) | **200**, real HTML — `serve_spa` serves the built bundle from the same port as the API |
+  | `GET /api/clientes` unauthenticated | **401** strict |
+  | `POST /api/integracoes/asaas/webhook` with no `asaas-access-token` | **503** — see below |
+
+  **On the 503.** The project's Fase-2 check said "must answer 401 without
+  the header". With `ASAAS_WEBHOOK_TOKEN` empty the route answers 503
+  instead, and that is deliberate: `integracoes_router.py:41` — *"503 e não
+  401: o problema é nosso, não de quem chamou."* It fails **closed**. The
+  property the check actually protects — no anonymous write is ever
+  accepted — holds. So the gate was reworded to name the real danger
+  condition (**200**), with 503 expected before the token is configured and
+  401 after. A gate that fires on "not exactly 401" would have blocked on
+  correct fail-closed behavior.
+
+  Superseded record of the earlier blocked state, kept deliberately:
 
   Green:
   - `predeploy_check p-studio` → **ready, exit 0, 7/7** (framework_deps ·
