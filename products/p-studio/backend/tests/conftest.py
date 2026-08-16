@@ -59,7 +59,7 @@ from types import SimpleNamespace
 os.environ.setdefault("SUPABASE_URL", "https://fake.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "chave-fake-de-teste")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "")
-os.environ.setdefault("ORG_ID", "00000000-0000-0000-0000-0000000000ff")
+os.environ.setdefault("P_STUDIO_ORG_ID", "00000000-0000-0000-0000-0000000000ff")
 # Provedor de cobrança: `fake` para nada tentar rede, e um token de webhook
 # conhecido para os testes de autenticação da rota pública.
 os.environ.setdefault("PROVEDOR_COBRANCA", "fake")
