@@ -43,9 +43,7 @@ integrating; more may have landed since.
 Exit codes captured with `pipefail`, never read off a piped `tail`.
 
 > The p-studio CORS sentinel failure noted in the previous revision of this file
-> is **gone** — it was fixed on `dev` and the rebase picked the fix up. The
-> `tsc` gap was a missing `node_modules` in the worktree; symlinked from the
-> primary (untracked, disappears with the worktree).
+> is **gone** — it was fixed on `dev` and the rebase picked the fix up.
 
 ### 🟡 The FE suite times out under parallel load, on `dev` as well
 
@@ -226,11 +224,16 @@ number. `PROJECT.md § Gate 1` has the checklist and the four open questions.
 ## What is deliberately NOT done
 
 - Not pushed, not merged, not deployed. Migration not applied.
-- **The portal splitter** (`grupo-olx` → `zap` / `viva-real` / `imovel-web`) is
-  not built: the payload does not name the portal, so there is nothing honest
-  to split on yet. `origem_raw` carries `leadOrigin / leadType`, so it stays
-  buildable the moment real traffic shows a discriminator.
-- **No ImovelWeb-direct adapter.** Working hypothesis: ImovelWeb rides this
-  same webhook once the client requests an activation code from
-  `atendimento@imovelweb.com.br`. Confirm at Gate 1 before building anything.
+- **The portal splitter is BUILT and wired, with an empty rule table.**
+  `noctusai_lib.integrations.olx.portal_split` sits on the ingest path and
+  returns the `grupo-olx` umbrella for every lead, because the payload names no
+  portal and inventing one would write a guess into Portal ROI. Gate 1 turns
+  the split into a `PortalRule(...)` entry — a data change, no migration (every
+  portal slug already ships in `CANONICAL_SOURCES`). A rule cannot be
+  constructed without an OBSERVATION in `evidence`, nor against a slug with no
+  `lead_sources` row.
+- **No ImovelWeb work here — a peer owns it.** `feat/imovelweb-portal-leads` is
+  building `noctusai_lib.integrations.imovelweb` (seed IO quartet) right now.
+  This branch deliberately stops at the Grupo OLX pipe; do not let the two
+  overlap at merge.
 - Un-migrated paging loops (finding 1) — named, not swept.

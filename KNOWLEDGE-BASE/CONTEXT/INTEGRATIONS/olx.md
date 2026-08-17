@@ -110,11 +110,45 @@ an unrecognised `page_id`.
 
 ## 5. Attribution
 
-**One canonical source slug: `grupo-olx`.** The payload does not name the
+**One canonical source slug today: `grupo-olx`.** The payload does not name the
 portal, so writing `zap` / `viva-real` / `imovel-web` per lead would be a guess
 recorded in Portal ROI as if it were data. `origem_raw` keeps
-`leadOrigin / leadType` so the splitter is buildable the moment Gate 1 says
-what actually distinguishes them.
+`leadOrigin / leadType` so the discriminator is recoverable later.
+
+**The splitter seam is built and wired; its rule table is empty.**
+`noctusai_lib.integrations.olx.portal_split` sits on the ingest path already
+(`olx_ingest_service.ingest_olx_lead` → `resolve_portal_source_slug` →
+`get_or_create_olx_source(slug)`), and returns the `grupo-olx` umbrella for
+every lead because `OLX_PORTAL_RULES` is `()`. That is the honest answer, and
+it makes the Gate-1 split a **data** change:
+
+```python
+PortalRule(
+    slug="zap",                      # must be a real lead_sources slug
+    field="extraData.sourcePortal",  # raw body first (dotted), then OlxLead attr
+    equals="ZAP",                    # or contains=… (case-insensitive)
+    evidence="delivery 4f21c…, 2026-09-02, extraData.sourcePortal='ZAP'",
+)
+```
+
+Two refusals are enforced at construction, because both failure modes end as
+permanent, wrong Portal ROI attribution that nothing downstream can distinguish
+from a fact:
+
+- **`evidence` is required and must be an OBSERVATION** — which delivery, when,
+  what the field held. "The docs imply it" does not qualify.
+- **`slug` must be one of the canonical portal slugs** (`zap`, `viva-real`,
+  `imovel-web`, `olx`, `casa-mineira`, `grupo-olx`). They already exist in
+  `seed_data.CANONICAL_SOURCES`, so a split needs no migration; an unknown slug
+  would drop the lead out of Portal ROI entirely.
+
+**`leads.external_source` stays `grupo-olx` even after a split.** It names the
+PIPE the lead arrived on and is the dedup namespace for
+`uq_sw_leads_org_external_lead` — keying it on the split slug would let one
+vendor lead land twice the day a rule changes.
+
+`MCMV_OLX` is **not** a portal (it is the Minha-Casa-Minha-Vida program) and
+must not become a rule; there is a regression test pinning that.
 
 ## 6. Endpoint inventory
 

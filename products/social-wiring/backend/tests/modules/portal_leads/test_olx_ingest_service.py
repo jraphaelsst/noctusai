@@ -164,3 +164,48 @@ class TestBackfill:
 
         assert result["ingested"] == 7
         assert result["skipped_existing"] == 0  # exactly once, not re-walked
+
+
+class TestPortalAttribution:
+    """The splitter is wired into the ingest path even though its rule
+    table is empty — so Gate 1 is a data change, not a code change."""
+
+    def test_todays_leads_all_land_on_the_umbrella_source(self, client):
+        result = olx_ingest_service.ingest_olx_lead(client, ORG, _lead())
+
+        assert result["source_slug"] == "grupo-olx"
+        source = olx_ingest_service.get_or_create_olx_source(client, ORG)
+        assert result["lead"]["origem_id"] == source["id"]
+
+    def test_a_split_resolves_a_different_source_row(self, monkeypatch):
+        """Proves the seam works end-to-end with a rule in place, without
+        shipping one. `zap` already exists in CANONICAL_SOURCES, so this
+        needs no migration — which is the property being asserted."""
+        from functools import partial
+
+        from noctusai_lib.integrations.olx import (
+            PortalRule,
+            resolve_portal_source_slug,
+        )
+        from noctusai_lib.testing import MockSupabaseClient
+
+        rule = PortalRule(
+            slug="zap", field="leadOrigin", contains="Grupo OLX",
+            evidence="test-only — never shipped in OLX_PORTAL_RULES",
+        )
+        # Injecting the RULES, not replacing the resolver: the real
+        # function still runs, so this exercises the shipped matching.
+        monkeypatch.setattr(
+            olx_ingest_service, "resolve_portal_source_slug",
+            partial(resolve_portal_source_slug, rules=(rule,)),
+        )
+
+        db = MockSupabaseClient().schema("social_wiring")
+        result = olx_ingest_service.ingest_olx_lead(db, ORG, _lead())
+
+        assert result["source_slug"] == "zap"
+        zap = olx_ingest_service.get_or_create_olx_source(db, ORG, "zap")
+        assert result["lead"]["origem_id"] == zap["id"]
+        # And it is a DIFFERENT row from the umbrella — not a rename.
+        umbrella = olx_ingest_service.get_or_create_olx_source(db, ORG)
+        assert zap["id"] != umbrella["id"]

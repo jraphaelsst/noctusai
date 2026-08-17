@@ -11,6 +11,12 @@ migration 051's ``uq_sw_leads_org_external_lead``, checked read-then-write
 before inserting rather than with ``upsert()`` (``MockRequestBuilder.
 upsert()`` is a documented no-op, so an upsert-based path tests green and
 duplicates live).
+
+``external_source`` stays the ``grupo-olx`` UMBRELLA even if the portal
+split later attributes a lead to ``zap``/``viva-real``/etc: it names the
+PIPE the lead arrived on, and it is the dedup namespace. Keying it on the
+split slug instead would let one vendor lead land twice the day a rule
+changes.
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ from noctusai_lib.integrations.olx import (
     OlxLead,
     olx_lead_to_lead_payload,
     parse_olx_lead_webhook,
+    resolve_portal_source_slug,
 )
 
 from app.modules.leads.services import dimensions_service, leads_service
@@ -61,22 +68,31 @@ def _find_existing(client: Any, org_id: UUID, origin_lead_id: str) -> Optional[d
     return rows[0] if rows else None
 
 
-def get_or_create_olx_source(client: Any, org_id: UUID) -> dict:
-    """The org's canonical ``grupo-olx`` ``lead_sources`` row.
+def get_or_create_olx_source(
+    client: Any, org_id: UUID, slug: str = OLX_SOURCE_SLUG
+) -> dict:
+    """The org's ``lead_sources`` row for ``slug``.
 
     Provisioned the same idempotent way every other canonical source is
     (``ensure_default_dimensions``); called here because this is a real
     write path, not a bare read.
+
+    ``slug`` is a parameter, not a constant, so the portal split is a DATA
+    change at Gate 1 rather than a change to this path — see
+    ``noctusai_lib.integrations.olx.portal_split``. Every canonical portal
+    slug (`zap`, `viva-real`, `imovel-web`, `olx`, `casa-mineira`) already
+    ships in ``seed_data.CANONICAL_SOURCES``, so a split resolves without
+    a migration.
     """
     for row in dimensions_service.list_sources(client, org_id):
-        if row["slug"] == OLX_SOURCE_SLUG:
+        if row["slug"] == slug:
             return row
     dimensions_service.ensure_default_dimensions(client, org_id)
     for row in dimensions_service.list_sources(client, org_id):
-        if row["slug"] == OLX_SOURCE_SLUG:
+        if row["slug"] == slug:
             return row
     raise RuntimeError(
-        f"olx_ingest_service: {OLX_SOURCE_SLUG!r} source missing after "
+        f"olx_ingest_service: {slug!r} source missing after "
         "ensure_default_dimensions — seed_data.CANONICAL_SOURCES drifted"
     )
 
@@ -131,10 +147,16 @@ def ingest_olx_lead(client: Any, org_id: UUID, lead: OlxLead) -> dict[str, Any]:
 
     store_olx_lead(client, org_id, lead)
 
-    source = get_or_create_olx_source(client, org_id)
+    # Attribution goes through the splitter, which today returns the
+    # `grupo-olx` umbrella for everything because its rule table is
+    # deliberately empty — the payload names no portal. Routing through it
+    # anyway is the point: when Gate 1 shows a real discriminator, the
+    # split is a `PortalRule` entry in the seed, not an edit here.
+    attribution = resolve_portal_source_slug(lead)
+    source = get_or_create_olx_source(client, org_id, attribution.slug)
     payload = olx_lead_to_lead_payload(lead, origem_source_id=source["id"])
     created = leads_service.create_lead(client, org_id, payload)
-    return {"lead": created, "created": True}
+    return {"lead": created, "created": True, "source_slug": attribution.slug}
 
 
 def ingest_olx_payload(client: Any, org_id: UUID, payload: dict) -> dict[str, Any]:

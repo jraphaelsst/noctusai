@@ -64,6 +64,13 @@ from .normalizers import (
     olx_timestamp_to_date,
     render_observacoes,
 )
+from .portal_split import (
+    GRUPO_OLX_PORTAL_SLUGS,
+    OLX_PORTAL_RULES,
+    PortalAttribution,
+    PortalRule,
+    resolve_portal_source_slug,
+)
 from .protocol import OlxLeadManagerAdapter
 from .real import OlxLeadManagerClient
 from .types import (
@@ -80,11 +87,13 @@ __all__ = [
     "ContractViolation",
     "FakeOlxLeadManagerClient",
     "OLX_ENDPOINT_BASELINE",
+    "GRUPO_OLX_PORTAL_SLUGS",
     "OLX_LEAD_FIELDS",
     "OLX_LEAD_MANAGER_BASE_URL",
     "OLX_LEAD_ORIGIN_MCMV",
     "OLX_LEAD_ORIGIN_STANDARD",
     "OLX_LEAD_TYPES",
+    "OLX_PORTAL_RULES",
     "OLX_PROBE_PATHS",
     "OLX_REFERENCE_URLS",
     "OLX_RESPONSE_SEMANTICS",
@@ -99,9 +108,12 @@ __all__ = [
     "OlxFieldSpec",
     "OlxLead",
     "OlxLeadManagerAdapter",
+    "PortalAttribution",
+    "PortalRule",
     "OlxLeadManagerClient",
     "OlxUpstreamError",
     "contract_summary",
+    "resolve_portal_source_slug",
     "diff_observed",
     "has_blocking_violation",
     "make_olx_lead_manager_client",
