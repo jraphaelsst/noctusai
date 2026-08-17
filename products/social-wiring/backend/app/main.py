@@ -195,6 +195,7 @@ from app.modules.media_creation import register as _register_media_creation
 from app.modules.meta_ads import register as _meta_ads
 from app.modules.n8n import register as _n8n
 from app.modules.pipeline import register as _pipeline
+from app.modules.portal_leads import register as _portal_leads
 from app.modules.scheduling import register as _scheduling
 from app.modules.youtube import register as _youtube
 
@@ -213,6 +214,7 @@ MODULES = [
     _meta_ads,
     _pipeline,
     _n8n,
+    _portal_leads,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

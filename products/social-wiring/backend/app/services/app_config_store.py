@@ -19,6 +19,7 @@ env-only when the store cannot be built, rather than raising.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 from noctusai_lib.security.app_config import (
@@ -39,6 +40,12 @@ from app.services.credential_vault import EncryptionNotConfigured, require_ferne
 
 __all__ = [
     "INSTAGRAM_APP_ID_KEY",
+    "OLX_AGENT_NAME_KEY",
+    "OLX_API_KEY_KEY",
+    "OLX_LEADS_ORG_ID_KEY",
+    "OLX_WEBHOOK_SECRET_KEY",
+    "OlxConfig",
+    "resolve_olx_config",
     "INSTAGRAM_APP_SECRET_KEY",
     "META_APP_ID_KEY",
     "META_APP_SECRET_KEY",
@@ -57,6 +64,16 @@ __all__ = [
 # the seed's `noctusai_lib.security.app_config` well-known-key pair,
 # which is Meta/Facebook-Login-specific). Same DB-first/env-fallback
 # shape as `resolve_meta_app_creds` below, keyed on these two instead.
+# Grupo OLX portal-lead keys — app-wide, NOT per-org. The webhook secret
+# is issued once per CRM (not per advertiser), so `integration_accounts`
+# would be the wrong home for it: that table is keyed
+# (org_id, provider, account_label) and would invite one copy per client
+# of a value they all share.
+OLX_WEBHOOK_SECRET_KEY = "olx_webhook_secret"
+OLX_LEADS_ORG_ID_KEY = "olx_leads_org_id"
+OLX_API_KEY_KEY = "olx_api_key"
+OLX_AGENT_NAME_KEY = "olx_agent_name"
+
 INSTAGRAM_APP_ID_KEY = "instagram_app_id"
 INSTAGRAM_APP_SECRET_KEY = "instagram_app_secret"
 
@@ -221,3 +238,56 @@ def resolve_meta_webhook_verify_token(
         except EncryptionNotConfigured:
             return env_token
     return store.get(META_WEBHOOK_VERIFY_TOKEN_KEY) or env_token
+
+
+@dataclass(frozen=True)
+class OlxConfig:
+    """Resolved Grupo OLX config. A carrier rather than a 4-tuple because
+    three of the four are secrets and positional unpacking at a call site
+    is how the wrong one ends up in the wrong header."""
+
+    webhook_secret: Optional[str] = None
+    leads_org_id: Optional[str] = None
+    api_key: Optional[str] = None
+    agent_name: Optional[str] = None
+
+    @property
+    def receiver_configured(self) -> bool:
+        return bool(self.webhook_secret)
+
+    @property
+    def lead_manager_configured(self) -> bool:
+        return bool(self.api_key) and bool(self.agent_name)
+
+
+def resolve_olx_config(
+    *,
+    settings=None,
+    store: Optional[AppConfigStore] = None,
+) -> OlxConfig:
+    """Resolve the Grupo OLX config — DB-first per key, env fallback, same
+    graceful degrade-to-env-only as :func:`resolve_meta_ads_config`.
+
+    `webhook_secret` is the per-CRM key OLX sends back as the second half
+    of ``Basic base64("vivareal:<secret>")``. Returning ``None`` when it is
+    unset anywhere is load-bearing: the receiver runs
+    ``bypass_when_unset=False``, so "unset" must mean 401, never "accept
+    anything". An open endpoint that writes leads into a CRM is worse than
+    a receiver that is temporarily down.
+    """
+    settings = settings or default_settings
+    env_secret = getattr(settings, "olx_webhook_secret", "") or None
+    env_org = getattr(settings, "olx_leads_org_id", "") or None
+    env_api_key = getattr(settings, "olx_api_key", "") or None
+    env_agent = getattr(settings, "olx_agent_name", "") or None
+    if store is None:
+        try:
+            store = build_app_config_store()
+        except EncryptionNotConfigured:
+            return OlxConfig(env_secret, env_org, env_api_key, env_agent)
+    return OlxConfig(
+        webhook_secret=store.get(OLX_WEBHOOK_SECRET_KEY) or env_secret,
+        leads_org_id=store.get(OLX_LEADS_ORG_ID_KEY) or env_org,
+        api_key=store.get(OLX_API_KEY_KEY) or env_api_key,
+        agent_name=store.get(OLX_AGENT_NAME_KEY) or env_agent,
+    )

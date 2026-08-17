@@ -322,6 +322,29 @@ class SocialWiringSettings(ProductSettings):
     # empty-token match would let anyone register our endpoint).
     meta_webhook_verify_token: str = ""
 
+    # ─── Grupo OLX portal leads (ZAP · VivaReal · OLX · ImovelWeb) ─────
+    # Dev/local fallbacks for the app-wide config in
+    # `app_integration_config` (prod stores these Fernet-encrypted; see
+    # `app/services/app_config_store.resolve_olx_config`).
+    #
+    #   • olx_webhook_secret — the per-CRM key OLX sends back as the
+    #                    second half of `Basic base64("vivareal:<key>")`.
+    #                    ONE per CRM, not per advertiser. Empty ⇒ the
+    #                    receiver 401s everything (bypass_when_unset=False):
+    #                    an open endpoint that writes leads into a CRM is
+    #                    worse than a receiver that is temporarily down.
+    #   • olx_leads_org_id — single-tenant fallback for org resolution.
+    #                    Unset ⇒ a lead whose clientListingId matches no
+    #                    imovel parks as `unresolved` rather than being
+    #                    guessed into someone's CRM.
+    #   • olx_api_key / olx_agent_name — OUTBOUND Gestor de Leads
+    #                    (`POST /v1/addLeads`), unrelated to the inbound
+    #                    secret above.
+    olx_webhook_secret: str = ""
+    olx_leads_org_id: str = ""
+    olx_api_key: str = ""
+    olx_agent_name: str = ""
+
     # ─── Instagram Business Login (Instagram-Login model) ──────────────
     # A SEPARATE app credential pair from meta_app_id/meta_app_secret
     # above — Instagram Business Login authenticates against its OWN

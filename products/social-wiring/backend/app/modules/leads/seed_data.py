@@ -94,6 +94,20 @@ CANONICAL_SOURCES: list[SourceSeed] = [
     # is `social` (Instant Forms run on Facebook/Instagram, both social
     # platforms) — a legal value per migration 025's CHECK constraint.
     {"slug": "meta-lead-ads", "label": "Meta Ads (Leads)", "categoria": "social", "cor": "#0081FB", "ordem": 23},
+    # Appended for the same reason as `meta-lead-ads`: assigned
+    # programmatically by `portal_leads/services/olx_ingest_service.py`,
+    # never resolved through SOURCE_ALIASES, so it carries no alias row.
+    #
+    # ONE slug for the whole Grupo OLX pipe, not one per portal. The
+    # delivery payload's `leadOrigin` is the constant `"Grupo OLX"` — it
+    # does NOT say whether the consumer was on ZAP, VivaReal, OLX or
+    # ImovelWeb. The pre-existing `zap` / `viva-real` / `imovel-web`
+    # slugs stay exactly as they are (spreadsheet attribution, entered by
+    # a human who knew); writing an automated lead into one of them would
+    # be a guess recorded in Portal ROI as if it were data. `origem_raw`
+    # keeps `leadOrigin / leadType` so the splitter is buildable the
+    # moment live traffic shows what actually distinguishes them.
+    {"slug": "grupo-olx", "label": "Grupo OLX (ZAP/VivaReal)", "categoria": "portal", "cor": "#6E44FF", "ordem": 24},
 ]
 
 # raw ORIGEM spelling (already normalize_alias'd below at import time) ->
